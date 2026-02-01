@@ -6,13 +6,13 @@ authors = ["Kedar Sovani <kedars@gmail.com>", "Ivan Markov", "Project CHIP Autho
 description = "Native Rust implementation of the Matter (Smart-Home) ecosystem"
 repository = "https://github.com/project-chip/matter-rs"
 readme = "README.md"
-keywords = ["matter", "smart", "smart-home", "IoT", "ESP32"]
+keywords = ["matter", "smart", "smart-home", "IoT"]
 categories = ["embedded", "network-programming"]
 license = "Apache-2.0"
 rust-version = "1.87"
 
 [features]
-default = ["os", "rustcrypto", "log", "openssl", "mbedtls"]
+default = ["os", "rustcrypto", "log"]
 #default = ["os", "mbedtls", "log"] mbedtls is broken since several months - check the root cause
 
 # Sizing
@@ -102,7 +102,7 @@ alloc = ["defmt?/alloc"]
 openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
 mbedtls = ["alloc", "dep:esp-mbedtls-sys"]
 rustcrypto = ["alloc", "digest", "cipher", "ccm", "elliptic-curve", "primeorder", "ecdsa", "sec1", "signature", "hmac", "hkdf", "pbkdf2", "crypto-bigint", "sha2", "aes", "p256", "x509-cert"]
-defmt = ["dep:defmt", "heapless/defmt-03", "embassy-time/defmt"]
+defmt = ["dep:defmt", "heapless/defmt-03", "embassy-time/defmt", "esp-mbedtls-sys?/defmt"]
 log = ["dep:log", "embassy-time/log"]
 debug-tlv-payload = []
 large-buffers = [] # TCP support

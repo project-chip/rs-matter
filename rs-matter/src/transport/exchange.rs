@@ -254,7 +254,8 @@ impl ExchangeId {
             let exchange = unwrap!(sess.exchanges[exch_index].as_mut());
 
             let mut jitter_rand = [0; 1];
-            matter.rand()(&mut jitter_rand);
+            // TODO XXX FIXME matter.rand()(&mut jitter_rand);
+            jitter_rand[0] = 100;
 
             Ok(exchange.retrans_delay_ms(jitter_rand[0]))
         })

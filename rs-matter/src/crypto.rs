@@ -19,11 +19,15 @@
 
 use core::fmt::Debug;
 
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::raw::RawMutex;
+
+pub use rand_core::{CryptoRng, CryptoRngCore, RngCore};
 
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
+use crate::utils::cell::RefCell;
 use crate::utils::init::{init, zeroed, Init, IntoFallibleInit};
+use crate::utils::sync::blocking::Mutex;
 
 pub mod dummy;
 #[cfg(feature = "mbedtls")]
@@ -264,6 +268,12 @@ impl<const N: usize> CryptoSensitive<N> {
         })
     }
 
+    pub fn zeroize(&mut self) {
+        for b in &mut self.data {
+            *b = 0;
+        }
+    }
+
     pub const fn reference(&self) -> CryptoSensitiveRef<'_, N> {
         CryptoSensitiveRef::new(&self.data)
     }
@@ -297,10 +307,7 @@ impl<const N: usize> CryptoSensitive<N> {
 
 impl<const N: usize> Drop for CryptoSensitive<N> {
     fn drop(&mut self) {
-        // Zero the material on drop
-        for b in &mut self.data {
-            *b = 0;
-        }
+        self.zeroize();
     }
 }
 
@@ -468,6 +475,12 @@ impl<const N: usize> defmt::Format for CryptoSensitiveRef<'_, N> {
     }
 }
 
+impl<'a, const N: usize> From<&'a CryptoSensitive<N>> for CryptoSensitiveRef<'a, N> {
+    fn from(cs: &'a CryptoSensitive<N>) -> Self {
+        cs.reference()
+    }
+}
+
 impl<'a, const N: usize> From<&'a [u8; N]> for CryptoSensitiveRef<'a, N> {
     fn from(data: &'a [u8; N]) -> Self {
         Self::new(data)
@@ -490,6 +503,14 @@ impl<'a, const N: usize> TryFrom<&'a [u8]> for CryptoSensitiveRef<'a, N> {
 /// swapping out its out of the box algorithms with custom (potentially HW-accelerated) ones,
 /// by decorating the original implementation and replacing only the required types and methods.
 pub trait Crypto {
+    type Rand<'a>: CryptoRngCore + Copy
+    where
+        Self: 'a;
+
+    type WeakRand<'a>: RngCore + Copy
+    where
+        Self: 'a;
+
     /// Hasher type returned by `Crypto::hash`.
     ///
     /// As per the Matter spec, the hasher should be SHA-256.
@@ -611,6 +632,12 @@ pub trait Crypto {
     where
         Self: 'a;
 
+    /// Create a new, cryptographically secure, random number generator instance.
+    fn rand(&self) -> Result<Self::Rand<'_>, Error>;
+
+    /// Create a new NON-cryptographically secure (but potentially faster), random number generator instance.
+    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, Error>;
+
     /// Create a new hasher instance.
     fn hash(&self) -> Result<Self::Hash<'_>, Error>;
 
@@ -663,6 +690,16 @@ impl<T> Crypto for &T
 where
     T: Crypto,
 {
+    type Rand<'a>
+        = T::Rand<'a>
+    where
+        Self: 'a;
+
+    type WeakRand<'a>
+        = T::WeakRand<'a>
+    where
+        Self: 'a;
+
     type Hash<'a>
         = T::Hash<'a>
     where
@@ -717,6 +754,14 @@ where
         = T::EcPoint<'a>
     where
         Self: 'a;
+
+    fn rand(&self) -> Result<Self::Rand<'_>, Error> {
+        (*self).rand()
+    }
+
+    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, Error> {
+        (*self).weak_rand()
+    }
 
     fn hash(&self) -> Result<Self::Hash<'_>, Error> {
         (*self).hash()
@@ -1040,42 +1085,131 @@ pub trait EcPoint<'a, const LEN: usize, const SCALAR_LEN: usize> {
     fn write_canon(&self, point: &mut CryptoSensitive<LEN>);
 }
 
-pub struct NoRng;
+pub struct SharedRand<M: RawMutex, T> {
+    shared: Mutex<M, RefCell<T>>,
+}
 
-impl rand_core::RngCore for NoRng {
-    fn next_u32(&mut self) -> u32 {
-        unimplemented!()
+impl<M: RawMutex, T> SharedRand<M, T> {
+    pub const fn new(rand: T) -> Self {
+        Self {
+            shared: Mutex::new(RefCell::new(rand)),
+        }
     }
 
-    fn next_u64(&mut self) -> u64 {
-        unimplemented!()
-    }
-
-    fn fill_bytes(&mut self, _dest: &mut [u8]) {
-        unimplemented!()
-    }
-
-    fn try_fill_bytes(&mut self, _dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        unimplemented!()
+    pub fn init(rand: impl Init<T>) -> impl Init<Self> {
+        init!(Self {
+            shared <- Mutex::init(RefCell::init(rand)),
+        })
     }
 }
 
-impl rand_core::CryptoRng for NoRng {}
+impl<M: RawMutex, T> rand_core::RngCore for &SharedRand<M, T>
+where
+    T: rand_core::RngCore,
+{
+    fn next_u32(&mut self) -> u32 {
+        self.shared.lock(|rand| rand.borrow_mut().next_u32())
+    }
 
-pub fn test_crypto() -> impl Crypto {
-    rustcrypto::RustCrypto::<NoopRawMutex, _, _>::new(NoRng, PKC_SECRET_KEY_ZEROED)
-    //mbedtls::MbedtlsCrypto::new()
+    fn next_u64(&mut self) -> u64 {
+        self.shared.lock(|rand| rand.borrow_mut().next_u64())
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        self.shared.lock(|rand| rand.borrow_mut().fill_bytes(dest))
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        self.shared
+            .lock(|rand| rand.borrow_mut().try_fill_bytes(dest))
+    }
+}
+
+impl<M: RawMutex, T> CryptoRng for &SharedRand<M, T> where T: CryptoRng {}
+
+pub struct WeakTestOnlyRand(u32);
+
+impl WeakTestOnlyRand {
+    const SEED: u32 = 2463534242;
+
+    pub const fn new_default() -> Self {
+        Self(Self::SEED)
+    }
+
+    pub const fn new(seed: u32) -> Self {
+        Self(seed)
+    }
+}
+
+impl RngCore for WeakTestOnlyRand {
+    fn next_u32(&mut self) -> u32 {
+        self.0 = self.0 ^ (self.0 << 13);
+        self.0 = self.0 ^ (self.0 >> 17);
+        self.0 = self.0 ^ (self.0 << 5);
+
+        self.0
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        rand_core::impls::next_u64_via_u32(self)
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        rand_core::impls::fill_bytes_via_next(self, dest)
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        rand_core::impls::fill_bytes_via_next(self, dest);
+
+        Ok(())
+    }
+}
+
+impl CryptoRng for WeakTestOnlyRand {}
+
+#[allow(unused)]
+pub fn default_crypto<'s, M, R>(
+    rand: R,
+    singleton_secret_key: CanonPkcSecretKeyRef<'s>,
+) -> impl Crypto + 's
+where
+    M: RawMutex + 's,
+    R: CryptoRngCore + 's,
+{
+    #[cfg(feature = "openssl")]
+    let crypto = openssl::OpenSslCrypto::new(singleton_secret_key);
+
+    #[cfg(all(feature = "mbedtls", not(feature = "openssl")))]
+    let crypto = mbedtls::MbedtlsCrypto::<M, _>::new(rand, singleton_secret_key);
+
+    #[cfg(all(
+        feature = "rustcrypto",
+        not(any(feature = "openssl", feature = "mbedtls"))
+    ))]
+    let crypto = rustcrypto::RustCrypto::<M, _>::new(rand, singleton_secret_key);
+
+    #[cfg(not(any(feature = "openssl", feature = "mbedtls", feature = "rustcrypto")))]
+    let crypto = dummy::DummyCrypto;
+
+    crypto
+}
+
+pub fn test_only_crypto() -> impl Crypto {
+    default_crypto::<embassy_sync::blocking_mutex::raw::NoopRawMutex, _>(
+        WeakTestOnlyRand::new_default(),
+        crate::dm::devices::test::DAC_PRIVKEY,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use crate::crypto::{
-        test_crypto, CanonPkcPublicKeyRef, CanonPkcSignatureRef, Crypto, PublicKey,
+        test_only_crypto, CanonPkcPublicKeyRef, CanonPkcSignatureRef, Crypto, PublicKey,
     };
 
     #[test]
     fn test_verify_msg_success() {
-        let crypto = test_crypto();
+        let crypto = test_only_crypto();
 
         let key = unwrap!(crypto.pub_key(PUB_KEY1));
         assert_eq!(key.verify(MSG1_SUCCESS, SIGNATURE1), true);
@@ -1083,7 +1217,7 @@ mod tests {
 
     #[test]
     fn test_verify_msg_fail() {
-        let crypto = test_crypto();
+        let crypto = test_only_crypto();
 
         let key = unwrap!(crypto.pub_key(PUB_KEY1));
         assert_eq!(key.verify(MSG1_FAIL, SIGNATURE1), false);

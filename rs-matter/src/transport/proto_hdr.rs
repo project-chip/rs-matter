@@ -446,7 +446,7 @@ fn decrypt_in_place<C: Crypto>(
 
 #[cfg(test)]
 mod tests {
-    use crate::crypto::{test_crypto, CanonAeadKeyRef};
+    use crate::crypto::{test_only_crypto, CanonAeadKeyRef};
 
     use super::*;
 
@@ -472,7 +472,7 @@ mod tests {
         parsebuf.le_u32().unwrap();
         parsebuf.le_u32().unwrap();
 
-        decrypt_in_place(test_crypto(), KEY, recvd_ctr, 0, &mut parsebuf).unwrap();
+        decrypt_in_place(test_only_crypto(), KEY, recvd_ctr, 0, &mut parsebuf).unwrap();
         assert_eq!(
             parsebuf.as_slice(),
             &[
@@ -505,7 +505,15 @@ mod tests {
             0x1b, 0x33,
         ]);
 
-        encrypt_in_place(test_crypto(), KEY, send_ctr, 0, PLAIN_HDR, &mut writebuf).unwrap();
+        encrypt_in_place(
+            test_only_crypto(),
+            KEY,
+            send_ctr,
+            0,
+            PLAIN_HDR,
+            &mut writebuf,
+        )
+        .unwrap();
         assert_eq!(
             writebuf.as_slice(),
             &[

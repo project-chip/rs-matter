@@ -28,6 +28,10 @@ use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
 
+use rand_core::RngCore;
+
+use crate::crypto::Crypto;
+use crate::dm::ChangeNotify;
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::mdns::{
     MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_PORT,
@@ -49,22 +53,32 @@ mod proto;
 /// A built-in mDNS responder for Matter, utilizing a custom mDNS protocol implementation.
 ///
 /// `no_std` and `no-alloc` and thus suitable for MCUs as well when there is no running mDNS service as part of the OS,
-pub struct BuiltinMdnsResponder<'a> {
+pub struct BuiltinMdnsResponder<'a, C> {
     matter: &'a Matter<'a>,
+    crypto: C,
+    notify: &'a dyn ChangeNotify,
 }
 
-impl<'a> BuiltinMdnsResponder<'a> {
+impl<'a, C> BuiltinMdnsResponder<'a, C>
+where
+    C: Crypto,
+{
     /// Create a new instance of the built-in mDNS responder.
     ///
     /// # Arguments
     /// * `matter` - A reference to the Matter instance that this responder will use.
-    pub const fn new(matter: &'a Matter<'a>) -> Self {
-        Self { matter }
+    pub const fn new(matter: &'a Matter<'a>, crypto: C, notify: &'a dyn ChangeNotify) -> Self {
+        Self {
+            matter,
+            crypto,
+            notify,
+        }
     }
 
     /// Run the mDNS responder.
     ///
     /// # Arguments
+    /// * `rand` - An object implementing the `RngCore` trait for generating random numbers.
     /// * `send` - An object implementing the `NetworkSend` trait for sending mDNS packets.
     /// * `recv` - An object implementing the `NetworkReceive` trait for receiving mDNS packets.
     /// * `host` - A reference to the `Host` instance that provides basic mDNS host information.
@@ -198,7 +212,10 @@ impl<'a> BuiltinMdnsResponder<'a> {
                     if let Some(reply_addr) = reply_addr {
                         if delay {
                             let mut b = [0];
-                            self.matter.rand()(&mut b);
+
+                            let mut rand = self.crypto.weak_rand()?;
+
+                            rand.fill_bytes(&mut b);
 
                             // Generate a delay between 20 and 120 ms, as per spec
                             let delay_ms = 20 + (b[0] as u32 * 100 / 256);
@@ -222,18 +239,22 @@ impl<'a> BuiltinMdnsResponder<'a> {
     }
 }
 
-impl Services for BuiltinMdnsResponder<'_> {
+impl<C> Services for BuiltinMdnsResponder<'_, C>
+where
+    C: Crypto,
+{
     fn for_each<F>(&self, mut callback: F) -> Result<(), Error>
     where
         F: FnMut(&Service) -> Result<(), Error>,
     {
-        self.matter.mdns_services(|service| {
-            Service::call_with(
-                &service,
-                self.matter.dev_det(),
-                self.matter.port(),
-                &mut callback,
-            )
-        })
+        self.matter
+            .mdns_services(&self.crypto, self.notify, |service| {
+                Service::call_with(
+                    &service,
+                    self.matter.dev_det(),
+                    self.matter.port(),
+                    &mut callback,
+                )
+            })
     }
 }

@@ -57,6 +57,8 @@ use esp_rtos::embassy::Executor;
 
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex, RawMutex};
 
+use rs_matter::crypto::rustcrypto::RustCrypto;
+use rs_matter::crypto::{Crypto, RngCore, WeakTestOnlyRand};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::clusters::net_comm::{
     NetCtl, NetCtlError, NetCtlStatus, NetworkScanInfo, NetworkType, Networks, WirelessCreds,
@@ -66,7 +68,7 @@ use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHoo
 use rs_matter::dm::clusters::wifi_diag::{
     SecurityTypeEnum, WiFiVersionEnum, WifiDiag, WirelessDiag,
 };
-use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::{SysHandler, WifiHandler};
 use rs_matter::dm::networks::wireless::{
@@ -80,7 +82,7 @@ use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
-use rs_matter::sc::pake::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
 use rs_matter::transport::network::btp::{
     AdvData, Btp, BtpContext, GattPeripheral, GattPeripheralEvent,
@@ -91,7 +93,6 @@ use rs_matter::transport::network::{
 };
 use rs_matter::utils::epoch::dummy_epoch;
 use rs_matter::utils::init::{init, Init, InitMaybeUninit};
-use rs_matter::utils::rand::dummy_rand;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, handler_chain_type, Matter, MATTER_PORT};
 
@@ -174,7 +175,6 @@ impl<'a, M: RawMutex> MatterStack<'a, M> {
                 TEST_DEV_COMM,
                 &TEST_DEV_ATT,
                 dummy_epoch,
-                dummy_rand,
                 MATTER_PORT,
             ),
             buffers <- PooledBuffers::init(0),
@@ -201,10 +201,12 @@ type AppHandler<'a> = handler_chain_type!(
     EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>
     | EmptyHandler
 );
+type AppCrypto = RustCrypto<'static, NoopRawMutex, WeakTestOnlyRand>;
 type AppDmHandler<'a> = WifiHandler<'a, &'a AppNetCtl<'a>, SysHandler<'a, AppHandler<'a>>>;
 type AppDataModel<'a> = DataModel<
     'a,
     DEFAULT_MAX_SUBSCRIPTIONS,
+    &'a AppCrypto,
     PooledBuffers<10, NoopRawMutex, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
 >;
@@ -212,6 +214,7 @@ type AppResponder<'d, 'a> = DefaultResponder<
     'd,
     'a,
     DEFAULT_MAX_SUBSCRIPTIONS,
+    &'a AppCrypto,
     PooledBuffers<10, NoopRawMutex, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
 >;
@@ -322,9 +325,47 @@ fn main() -> ! {
 
     report_size("Wireless manager", size_of_val(&*wifi_mgr), &mut aux_total);
 
+    let crypto = &*mk_static!(
+        AppCrypto,
+        RustCrypto::new(WeakTestOnlyRand::new_default(), DAC_PRIVKEY)
+    );
+
+    let mut rand = unwrap!(crypto.weak_rand());
+
+    // A Wireless handler with a sample app cluster (on-off)
+    let handler = mk_static!(
+        AppDmHandler,
+        dm_handler(
+            rand,
+            on_off::OnOffHandler::new_standalone(
+                Dataver::new_rand(&mut rand),
+                1,
+                TestOnOffDeviceLogic::new(true),
+            ),
+            net_ctl,
+            &stack.networks,
+        )
+    );
+
+    report_size("DM Handler size", size_of_val(&*handler), &mut aux_total);
+
+    // Data Model
+    let dm = &*mk_static!(
+        AppDataModel,
+        DataModel::new(
+            &stack.matter,
+            crypto,
+            &stack.buffers,
+            &stack.subscriptions,
+            (NODE, handler),
+        )
+    );
+
+    report_size("Data Model", size_of_val(dm), &mut aux_total);
+
     let mdns = mk_static!(
-        BuiltinMdnsResponder,
-        BuiltinMdnsResponder::new(&stack.matter)
+        BuiltinMdnsResponder<'static, &'static AppCrypto>,
+        BuiltinMdnsResponder::new(&stack.matter, crypto, dm)
     );
 
     let transport_send = mk_static!(
@@ -342,36 +383,6 @@ fn main() -> ! {
     report_size("Transport receive", size_of_val(&*mdns), &mut aux_total);
 
     report_size("mDNS responder", size_of_val(&*mdns), &mut aux_total);
-
-    // A Wireless handler with a sample app cluster (on-off)
-    let handler = mk_static!(
-        AppDmHandler,
-        dm_handler(
-            &stack.matter,
-            on_off::OnOffHandler::new_standalone(
-                Dataver::new_rand(stack.matter.rand()),
-                1,
-                TestOnOffDeviceLogic::new(true),
-            ),
-            net_ctl,
-            &stack.networks,
-        )
-    );
-
-    report_size("DM Handler size", size_of_val(&*handler), &mut aux_total);
-
-    // Data Model
-    let dm = mk_static!(
-        AppDataModel,
-        DataModel::new(
-            &stack.matter,
-            &stack.buffers,
-            &stack.subscriptions,
-            (NODE, handler),
-        )
-    );
-
-    report_size("Data Model", size_of_val(&*dm), &mut aux_total);
 
     // A default responder
     let responder = mk_static!(AppResponder, DefaultResponder::new(dm));
@@ -417,6 +428,7 @@ fn main() -> ! {
         "Transport task",
         size_of_val(&transport_task_fut(
             &stack.matter,
+            crypto,
             transport_send,
             transport_recv,
         )),
@@ -442,7 +454,7 @@ fn main() -> ! {
 
         unwrap!(stack
             .matter
-            .open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS));
+            .open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, crypto, dm));
     }
 
     executor.run(|spawner| {
@@ -458,6 +470,7 @@ fn main() -> ! {
         unwrap!(spawner.spawn(wifi_task(wifi_mgr)));
         unwrap!(spawner.spawn(transport_task(
             &stack.matter,
+            crypto,
             transport_send,
             transport_recv
         )));
@@ -505,7 +518,7 @@ async fn dm_task(dm: &'static AppDataModel<'static>) {
 
 #[inline(always)]
 fn mdns_task_fut<'a>(
-    mdns: &'a mut BuiltinMdnsResponder<'static>,
+    mdns: &'a mut BuiltinMdnsResponder<'static, &'static AppCrypto>,
 ) -> impl Future<Output = Result<(), Error>> + 'a {
     mdns.run(
         FakeUdp,
@@ -522,7 +535,7 @@ fn mdns_task_fut<'a>(
 }
 
 #[embassy_executor::task]
-async fn mdns_task(mdns: &'static mut BuiltinMdnsResponder<'static>) {
+async fn mdns_task(mdns: &'static mut BuiltinMdnsResponder<'static, &'static AppCrypto>) {
     info!("Starting mDNS task...");
     unwrap!(mdns_task_fut(mdns).await);
 }
@@ -554,20 +567,22 @@ async fn wifi_task(wifi_mgr: &'static mut AppWirelessMgr<'static>) {
 #[inline(always)]
 fn transport_task_fut<'a>(
     matter: &'a Matter<'a>,
+    crypto: &'a AppCrypto,
     transport_send: &'a mut AppTransport<'static>,
     transport_recv: &'a mut AppTransport<'static>,
 ) -> impl Future<Output = Result<(), Error>> + 'a {
-    matter.run_transport(transport_send, transport_recv)
+    matter.run_transport(crypto, transport_send, transport_recv)
 }
 
 #[embassy_executor::task]
 async fn transport_task(
     matter: &'static Matter<'static>,
+    crypto: &'static AppCrypto,
     transport_send: &'static mut AppTransport<'static>,
     transport_recv: &'static mut AppTransport<'static>,
 ) {
     info!("Starting transport task...");
-    unwrap!(transport_task_fut(matter, transport_send, transport_recv).await);
+    unwrap!(transport_task_fut(matter, crypto, transport_send, transport_recv).await);
 }
 
 /// Report the size of an item and accumulate it into `total`
@@ -615,7 +630,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
 fn dm_handler<'a, N>(
-    matter: &'a Matter<'a>,
+    mut rand: impl RngCore + Copy,
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
     net_ctl: &'a N,
     networks: &'a dyn Networks,
@@ -628,14 +643,14 @@ where
         &(),
         net_ctl,
         networks,
-        matter.rand(),
+        rand,
         endpoints::with_sys(
             &true,
-            matter.rand(),
+            rand,
             EmptyHandler
                 .chain(
                     EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                    Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                 )
                 .chain(
                     EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),

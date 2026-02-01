@@ -21,9 +21,8 @@ use rs_matter::dm::clusters::on_off::{
 use rs_matter::im::IMStatusCode;
 use rs_matter::im::{CmdPath, CmdStatus};
 
-use crate::common::e2e::im::commands::TestCmdResp;
+use crate::common::e2e::im::commands::{commands, TestCmdResp};
 use crate::common::e2e::im::echo_cluster;
-use crate::common::e2e::ImEngine;
 use crate::common::init_env_logger;
 use crate::{cmd_data, echo_req, echo_resp};
 
@@ -36,7 +35,7 @@ fn test_invoke_cmds_success() {
 
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
     let expected = &[echo_resp!(0, 10), echo_resp!(1, 30)];
-    ImEngine::commands(input, expected);
+    commands(input, expected);
 }
 
 #[test]
@@ -91,7 +90,7 @@ fn test_invoke_cmds_unsupported_fields() {
             None,
         )),
     ];
-    ImEngine::commands(input, expected);
+    commands(input, expected);
 }
 
 #[test]
@@ -106,7 +105,7 @@ fn test_invoke_cmd_wc_endpoint_all_have_clusters() {
     );
     let input = &[cmd_data!(path, 5)];
     let expected = &[echo_resp!(0, 10), echo_resp!(1, 15)];
-    ImEngine::commands(input, expected);
+    commands(input, expected);
 }
 
 #[test]
@@ -131,5 +130,5 @@ fn test_invoke_cmd_wc_endpoint_only_1_has_cluster() {
         IMStatusCode::Success,
         None,
     ))];
-    ImEngine::commands(input, expected);
+    commands(input, expected);
 }

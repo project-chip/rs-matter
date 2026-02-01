@@ -22,7 +22,8 @@ use core::mem::MaybeUninit;
 use num_derive::FromPrimitive;
 
 use crate::crypto::Crypto;
-use crate::error::*;
+use crate::dm::ChangeNotify;
+use crate::error::{Error, ErrorCode};
 use crate::respond::ExchangeHandler;
 use crate::tlv::{FromTLV, ToTLV};
 use crate::transport::exchange::{Exchange, MessageMeta};
@@ -221,12 +222,15 @@ impl<'a> StatusReport<'a> {
 }
 
 /// Handle messages related to the Secure Channel
-pub struct SecureChannel<C>(C);
+pub struct SecureChannel<'a, C> {
+    crypto: C,
+    notify: &'a dyn ChangeNotify,
+}
 
-impl<C: Crypto> SecureChannel<C> {
+impl<'a, C: Crypto> SecureChannel<'a, C> {
     #[inline(always)]
-    pub const fn new(crypto: C) -> Self {
-        Self(crypto)
+    pub const fn new(crypto: C, notify: &'a dyn ChangeNotify) -> Self {
+        Self { crypto, notify }
     }
 
     pub async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
@@ -242,11 +246,15 @@ impl<C: Crypto> SecureChannel<C> {
         match meta.opcode()? {
             OpCode::PBKDFParamRequest => {
                 let mut pase = MaybeUninit::uninit(); // TODO LARGE BUFFER
-                pase.init_with(Pase::init(&self.0)).handle(exchange).await
+                pase.init_with(Pase::init(&self.crypto, self.notify))
+                    .handle(exchange)
+                    .await
             }
             OpCode::CASESigma1 => {
                 let mut case = MaybeUninit::uninit(); // TODO LARGE BUFFER
-                case.init_with(Case::init(&self.0)).handle(exchange).await
+                case.init_with(Case::init(&self.crypto))
+                    .handle(exchange)
+                    .await
             }
             opcode => {
                 error!("Invalid opcode: {:?}", opcode);
@@ -256,7 +264,7 @@ impl<C: Crypto> SecureChannel<C> {
     }
 }
 
-impl<C: Crypto> ExchangeHandler for SecureChannel<C> {
+impl<C: Crypto> ExchangeHandler for SecureChannel<'_, C> {
     fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
         SecureChannel::handle(self, exchange)
     }

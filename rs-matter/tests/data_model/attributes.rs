@@ -23,8 +23,9 @@ use rs_matter::im::GenericPath;
 use rs_matter::im::IMStatusCode;
 use rs_matter::im::{AttrPath, AttrStatus};
 
+use crate::common::e2e::im::attributes::read_reqs;
 use crate::common::e2e::im::{attributes::TestAttrData, echo_cluster};
-use crate::common::e2e::ImEngine;
+use crate::common::e2e::new_default_runner;
 use crate::common::init_env_logger;
 use crate::{attr_data, attr_data_path, attr_read_status_resp};
 
@@ -61,7 +62,7 @@ fn test_read_success() {
         attr_data_path!(ep1_att2, Some(&0x5678u16)),
         attr_data_path!(ep1_attcustom, Some(&echo_cluster::ATTR_CUSTOM_VALUE)),
     ];
-    ImEngine::read_reqs(input, expected);
+    read_reqs(input, expected);
 }
 
 #[test]
@@ -108,7 +109,7 @@ fn test_read_unsupported_fields() {
         attr_read_status_resp!(&invalid_cluster, IMStatusCode::UnsupportedCluster),
         attr_read_status_resp!(&invalid_attribute, IMStatusCode::UnsupportedAttribute),
     ];
-    ImEngine::read_reqs(input, expected);
+    read_reqs(input, expected);
 }
 
 #[test]
@@ -139,7 +140,7 @@ fn test_read_wc_endpoint_all_have_clusters() {
             Some(&0x1234u16)
         ),
     ];
-    ImEngine::read_reqs(input, expected);
+    read_reqs(input, expected);
 }
 
 #[test]
@@ -162,7 +163,7 @@ fn test_read_wc_endpoint_only_1_has_cluster() {
         on_off::AttributeId::OnOff,
         Some(&false)
     )];
-    ImEngine::read_reqs(input, expected);
+    read_reqs(input, expected);
 }
 
 #[test]
@@ -294,7 +295,7 @@ fn test_read_wc_endpoint_wc_attribute() {
             Some(&1u8)
         ),
     ];
-    ImEngine::read_reqs(input, expected);
+    read_reqs(input, expected);
 }
 
 #[test]
@@ -326,7 +327,7 @@ fn test_write_success() {
         AttrStatus::from_gp(&ep1_att, IMStatusCode::Success, None),
     ];
 
-    let im = ImEngine::new_default();
+    let im = new_default_runner();
     let handler = im.handler();
 
     im.add_default_acl();
@@ -370,7 +371,7 @@ fn test_write_wc_endpoint() {
         AttrStatus::from_gp(&ep1_att, IMStatusCode::Success, None),
     ];
 
-    let im = ImEngine::new_default();
+    let im = new_default_runner();
     let handler = im.handler();
 
     im.add_default_acl();
@@ -442,7 +443,7 @@ fn test_write_unsupported_fields() {
         AttrStatus::from_gp(&wc_cluster, IMStatusCode::UnsupportedCluster, None),
         AttrStatus::from_gp(&wc_attribute, IMStatusCode::UnsupportedAttribute, None),
     ];
-    let im = ImEngine::new_default();
+    let im = new_default_runner();
     let handler = im.handler();
 
     im.add_default_acl();

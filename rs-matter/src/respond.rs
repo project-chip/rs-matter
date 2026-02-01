@@ -238,7 +238,7 @@ where
 
 /// A type alias for the "default" responder handler, which is a chained handler of the `DataModel` and `SecureChannel` handlers.
 pub type DefaultExchangeHandler<'d, 'a, const N: usize, C, B, T> =
-    ChainedExchangeHandler<&'d DataModel<'a, N, C, B, T>, SecureChannel<&'d C>>;
+    ChainedExchangeHandler<&'d DataModel<'a, N, C, B, T>, SecureChannel<'d, &'d C>>;
 
 impl<'d, 'a, const N: usize, C, B, T> Responder<'a, DefaultExchangeHandler<'d, 'a, N, C, B, T>>
 where
@@ -257,7 +257,7 @@ where
             ChainedExchangeHandler::new(
                 PROTO_ID_INTERACTION_MODEL,
                 data_model,
-                SecureChannel::new(data_model.crypto()),
+                SecureChannel::new(data_model.crypto(), data_model),
             ),
             data_model.matter(),
             0,
@@ -329,8 +329,10 @@ where
     #[allow(clippy::type_complexity)]
     pub const fn responder(
         &self,
-    ) -> &Responder<'a, ChainedExchangeHandler<&'d DataModel<'a, N, C, B, T>, SecureChannel<&'d C>>>
-    {
+    ) -> &Responder<
+        'a,
+        ChainedExchangeHandler<&'d DataModel<'a, N, C, B, T>, SecureChannel<'d, &'d C>>,
+    > {
         &self.responder
     }
 

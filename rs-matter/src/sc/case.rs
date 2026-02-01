@@ -17,6 +17,8 @@
 
 use core::{mem::MaybeUninit, num::NonZeroU8};
 
+use rand_core::RngCore;
+
 use crate::alloc;
 use crate::cert::CertRef;
 use crate::crypto::{
@@ -477,7 +479,7 @@ impl<'a, C: Crypto + 'a> Case<'a, C> {
     /// # Arguments
     /// - `exchange` - The exchange to handle the CASE protocol on
     pub async fn handle(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        let session = ReservedSession::reserve(self.session.crypto, exchange.matter()).await?;
+        let session = ReservedSession::reserve(exchange.matter(), self.session.crypto).await?;
 
         self.handle_casesigma1(exchange).await?;
 
@@ -549,13 +551,15 @@ impl<'a, C: Crypto + 'a> Case<'a, C> {
         secret_key.derive_shared_secret(&peer_pub_key, &mut self.session.shared_secret);
         //        println!("Derived secret: {:x?} len: {}", secret, len);
 
+        let mut rand = self.session.crypto.rand()?;
+
         let mut our_random = MaybeUninit::<[u8; 32]>::uninit(); // TODO MEDIUM BUFFER
         let our_random = our_random.init_zeroed();
-        (exchange.matter().rand())(our_random);
+        rand.fill_bytes(our_random);
 
         let mut resumption_id = MaybeUninit::<[u8; 16]>::uninit(); // TODO MEDIUM BUFFER
         let resumption_id = resumption_id.init_zeroed();
-        (exchange.matter().rand())(resumption_id);
+        rand.fill_bytes(resumption_id);
 
         let mut tt_hash = MaybeUninit::<Hash>::uninit(); // TODO MEDIUM BUFFER
         let tt_hash = tt_hash.init_with(Hash::init());

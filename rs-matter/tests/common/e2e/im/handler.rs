@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+use rs_matter::crypto::{Crypto, RngCore};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::on_off::{
@@ -28,7 +29,6 @@ use rs_matter::dm::{
     EpClMatcher, InvokeContext, InvokeReply, Node, ReadContext, ReadReply, WriteContext,
 };
 use rs_matter::error::Error;
-use rs_matter::Matter;
 use rs_matter::{clusters, handler_chain_type};
 
 use crate::common::e2e::E2eRunner;
@@ -66,26 +66,21 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
         ],
     };
 
-    pub fn new(matter: &'a Matter<'a>, on_off: on_off::OnOffHandler<'a, OH, LH>) -> Self {
-        let handler = with_eth(
-            &(),
-            &(),
-            matter.rand(),
-            with_sys(&false, matter.rand(), EmptyHandler),
-        );
+    pub fn new(mut rand: impl RngCore + Copy, on_off: on_off::OnOffHandler<'a, OH, LH>) -> Self {
+        let handler = with_eth(&(), &(), rand, with_sys(&false, rand, EmptyHandler));
 
         let handler = ChainedHandler::new(
             EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(echo_cluster::ID)),
-            Async(EchoHandler::new(2, Dataver::new_rand(matter.rand()))),
+            Async(EchoHandler::new(2, Dataver::new_rand(&mut rand))),
             handler,
         )
         .chain(
             EpClMatcher::new(Some(1), Some(DescHandler::CLUSTER.id)),
-            Async(DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+            Async(DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
         )
         .chain(
             EpClMatcher::new(Some(1), Some(echo_cluster::ID)),
-            Async(EchoHandler::new(3, Dataver::new_rand(matter.rand()))),
+            Async(EchoHandler::new(3, Dataver::new_rand(&mut rand))),
         )
         .chain(
             EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
@@ -141,15 +136,17 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> AsyncMetadata for E2eTestHandler
     }
 }
 
-impl<'a> E2eRunner {
+impl<C: Crypto> E2eRunner<C> {
     // For backwards compatibility
     pub fn handler(&self) -> E2eTestHandler<'_, TestOnOffDeviceLogic, NoLevelControl> {
+        let mut rand = self.crypto.rand().unwrap();
+
         let on_off_handler = on_off::OnOffHandler::new_standalone(
-            Dataver::new_rand(self.matter.rand()),
+            Dataver::new_rand(&mut rand),
             1,
             TestOnOffDeviceLogic::new(false),
         );
 
-        E2eTestHandler::new(&self.matter, on_off_handler)
+        E2eTestHandler::new(rand, on_off_handler)
     }
 }

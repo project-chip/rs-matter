@@ -32,7 +32,8 @@ use futures_lite::StreamExt;
 
 use log::info;
 
-use rs_matter::crypto::test_crypto;
+use rand::RngCore;
+use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::basic_info::{
     BasicInfoConfig, ColorEnum, PairingHintFlags, ProductAppearance, ProductFinishEnum,
 };
@@ -44,7 +45,7 @@ use rs_matter::dm::clusters::on_off::{self, OnOffHandler, OnOffHooks};
 use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
 };
-use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
@@ -118,7 +119,6 @@ fn main() -> Result<(), Error> {
         TEST_DEV_COMM,
         &TEST_DEV_ATT,
         rs_matter::utils::epoch::sys_epoch,
-        rs_matter::utils::rand::sys_rand,
         MATTER_PORT,
     ));
 
@@ -133,9 +133,14 @@ fn main() -> Result<(), Error> {
         .uninit()
         .init_with(DefaultSubscriptions::init());
 
+    // Create the crypto instance
+    let crypto = default_crypto::<NoopRawMutex, _>(rand::thread_rng(), DAC_PRIVKEY);
+
+    let mut rand = crypto.rand()?;
+
     // Our on-off cluster
     let on_off_handler = OnOffHandler::new_standalone(
-        Dataver::new_rand(matter.rand()),
+        Dataver::new_rand(&mut rand),
         1,
         TestOnOffDeviceLogic::new(false),
     );
@@ -145,16 +150,13 @@ fn main() -> Result<(), Error> {
         .uninit()
         .init_with(RefCell::init(UnitTestingHandlerData::init()));
 
-    // Create default crypto instance
-    let crypto = test_crypto();
-
     // Create the Data Model instance
     let dm = DataModel::new(
         matter,
         &crypto,
         buffers,
         subscriptions,
-        dm_handler(matter, unit_testing_data, &on_off_handler),
+        dm_handler(rand, unit_testing_data, &on_off_handler),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -179,11 +181,11 @@ fn main() -> Result<(), Error> {
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
         core::mem::size_of_val(&matter.run(&crypto, &socket, &socket)),
-        core::mem::size_of_val(&mdns::run_mdns(matter))
+        core::mem::size_of_val(&mdns::run_mdns(matter, &crypto, &dm))
     );
 
     // Run the Matter and mDNS transports
-    let mut mdns = pin!(mdns::run_mdns(matter));
+    let mut mdns = pin!(mdns::run_mdns(matter, &crypto, &dm));
     let mut transport = pin!(matter.run_transport(&crypto, &socket, &socket));
 
     // Create, load and run the persister
@@ -208,7 +210,7 @@ fn main() -> Result<(), Error> {
 
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
 
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS)?;
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
     }
 
     let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS));
@@ -265,7 +267,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off and unit testing handlers.
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
-    matter: &'a Matter<'a>,
+    mut rand: impl RngCore + Copy,
     unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
     on_off: &'a OnOffHandler<'a, OH, LH>,
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
@@ -274,14 +276,14 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
         endpoints::with_eth(
             &(),
             &UnixNetifs,
-            matter.rand(),
+            rand,
             endpoints::with_sys(
                 &false,
-                matter.rand(),
+                rand,
                 EmptyHandler
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
@@ -291,7 +293,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                         EpClMatcher::new(Some(1), Some(UnitTestingHandler::CLUSTER.id)),
                         Async(
                             UnitTestingHandler::new(
-                                Dataver::new_rand(matter.rand()),
+                                Dataver::new_rand(&mut rand),
                                 unit_testing_data,
                             )
                             .adapt(),

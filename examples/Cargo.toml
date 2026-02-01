@@ -50,5 +50,6 @@ nix = { version = "0.27", features = ["net"] }
 async-io = "2"
 futures-lite = "2"
 rs-matter = { path = "../rs-matter", features = ["async-io"] }
+rand = { version = "0.8", features = ["std", "std_rng"] }
 async-signal = "0.2"
 socket2 = "0.5"

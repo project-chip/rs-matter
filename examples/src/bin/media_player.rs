@@ -32,7 +32,8 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::info;
 
-use rs_matter::crypto::test_crypto;
+use rand::RngCore;
+use rs_matter::crypto::{default_crypto, Crypto};
 // Import the MediaPlayback, ContentLauncher and KeypadInput clusters from `rs-matter`.
 //
 // User needs to implement the `ClusterAsyncHandler` trait or the `ClusterHandler` trait
@@ -56,7 +57,7 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
-use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_CASTING_VIDEO_PLAYER;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
@@ -97,15 +98,17 @@ fn main() -> Result<(), Error> {
     // Create the subscriptions
     let subscriptions = DefaultSubscriptions::new();
 
+    // Create the crypto instance
+    let crypto = default_crypto::<NoopRawMutex, _>(rand::thread_rng(), DAC_PRIVKEY);
+
+    let mut rand = crypto.rand()?;
+
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with our custom Speaker handler
     let on_off_handler = on_off::OnOffHandler::new_standalone(
-        Dataver::new_rand(matter.rand()),
+        Dataver::new_rand(&mut rand),
         1,
         TestOnOffDeviceLogic::new(false),
     );
-
-    // Create default crypto instance
-    let crypto = test_crypto();
 
     // Create the Data Model instance
     let dm = DataModel::new(
@@ -113,7 +116,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         &buffers,
         &subscriptions,
-        dm_handler(&matter, &on_off_handler),
+        dm_handler(rand, &on_off_handler),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -131,7 +134,7 @@ fn main() -> Result<(), Error> {
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
     // Run the Matter and mDNS transports
-    let mut mdns = pin!(mdns::run_mdns(&matter));
+    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, &dm));
     let mut transport = pin!(matter.run(&crypto, &socket, &socket));
 
     // Create, load and run the persister
@@ -147,7 +150,7 @@ fn main() -> Result<(), Error> {
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
 
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS)?;
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
     }
 
     let mut persist = pin!(psm.run(&path, &matter, NO_NETWORKS));
@@ -186,7 +189,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the Media Player cluster handlers.
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
-    matter: &Matter<'_>,
+    mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
@@ -194,26 +197,26 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
         endpoints::with_eth(
             &(),
             &UnixNetifs,
-            matter.rand(),
+            rand,
             endpoints::with_sys(
                 &false,
-                matter.rand(),
+                rand,
                 EmptyHandler
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(MediaHandler::CLUSTER.id)),
-                        MediaHandler::new(Dataver::new_rand(matter.rand())).adapt(),
+                        MediaHandler::new(Dataver::new_rand(&mut rand)).adapt(),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(ContentHandler::CLUSTER.id)),
-                        ContentHandler::new(Dataver::new_rand(matter.rand())).adapt(),
+                        ContentHandler::new(Dataver::new_rand(&mut rand)).adapt(),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(KeypadInputHandler::CLUSTER.id)),
-                        KeypadInputHandler::new(Dataver::new_rand(matter.rand())).adapt(),
+                        KeypadInputHandler::new(Dataver::new_rand(&mut rand)).adapt(),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),

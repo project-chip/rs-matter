@@ -31,7 +31,6 @@
 
 #![allow(deprecated)] // Remove this once `ccm` and `elliptic_curve` update to `generic-array` 1.x
 
-use core::borrow::Borrow;
 use core::convert::TryInto;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
@@ -71,44 +70,51 @@ use x509_cert::request::CertReq;
 use x509_cert::spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned};
 
 use crate::crypto::{
-    CanonEcPointRef, CanonEcScalarRef, CanonPkcPublicKeyRef, CanonPkcSecretKey,
-    CanonPkcSecretKeyRef, CanonUint320Ref, Crypto, CryptoSensitive, CryptoSensitiveRef,
+    CanonEcPointRef, CanonEcScalarRef, CanonPkcPublicKeyRef, CanonPkcSecretKeyRef, CanonUint320Ref,
+    Crypto, CryptoSensitive, CryptoSensitiveRef, SharedRand,
 };
 use crate::error::{Error, ErrorCode};
-use crate::utils::cell::RefCell;
 use crate::utils::init::InitMaybeUninit;
-use crate::utils::sync::blocking::Mutex;
 
 extern crate alloc;
 
 /// A RustCrypto backend for the crypto traits
-pub struct RustCrypto<M: RawMutex, T, S> {
+pub struct RustCrypto<'s, M: RawMutex, T> {
     /// A shared cryptographic random number generator
-    rng: Mutex<M, RefCell<T>>,
+    rng: SharedRand<M, T>,
     /// The singleton secret key to be returned by `Crypto::singleton_singing_secret_key`
-    singleton_secret_key: S,
+    singleton_secret_key: CanonPkcSecretKeyRef<'s>,
 }
 
-impl<M: RawMutex, T, S> RustCrypto<M, T, S> {
+impl<'s, M: RawMutex, T> RustCrypto<'s, M, T> {
     /// Create a new RustCrypto backend
     ///
     /// # Arguments
     /// - `rng` - A cryptographic random number generator
     /// - `singleton_secret_key` - A singleton secret key to be returned by `Crypto::singleton_singing_secret_key`
     ///   The primary use-case for this secret key is to be used as the secret key for the Device Attestation credentials
-    pub const fn new(rng: T, singleton_secret_key: S) -> Self {
+    pub const fn new(rng: T, singleton_secret_key: CanonPkcSecretKeyRef<'s>) -> Self {
         Self {
-            rng: Mutex::new(RefCell::new(rng)),
+            rng: SharedRand::new(rng),
             singleton_secret_key,
         }
     }
 }
 
-impl<M: RawMutex, T, S> Crypto for RustCrypto<M, T, S>
+impl<M: RawMutex, T> Crypto for RustCrypto<'_, M, T>
 where
     T: CryptoRngCore,
-    S: Borrow<CanonPkcSecretKey>,
 {
+    type Rand<'a>
+        = &'a SharedRand<M, T>
+    where
+        Self: 'a;
+
+    type WeakRand<'a>
+        = &'a SharedRand<M, T>
+    where
+        Self: 'a;
+
     type Hash<'a>
         = Digest<{ super::HASH_LEN }, sha2::Sha256>
     where
@@ -187,6 +193,14 @@ where
     where
         Self: 'a;
 
+    fn rand(&self) -> Result<Self::Rand<'_>, Error> {
+        Ok(&self.rng)
+    }
+
+    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, Error> {
+        Ok(&self.rng)
+    }
+
     fn hash(&self) -> Result<Self::Hash<'_>, Error> {
         Ok(unsafe { Digest::new(sha2::Sha256::new()) })
     }
@@ -198,7 +212,10 @@ where
         pub use hmac::Mac;
 
         Ok(unsafe {
-            Digest::new(hmac::Hmac::<sha2::Sha256>::new_from_slice(key.access()).unwrap())
+            Digest::new(unwrap!(
+                hmac::Hmac::<sha2::Sha256>::new_from_slice(key.access()),
+                "Invalid HMAC key"
+            ))
         })
     }
 
@@ -226,13 +243,11 @@ where
     }
 
     fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, Error> {
-        Ok(self
-            .rng
-            .lock(|rng| unsafe { ECSecretKey::new_random(&mut *rng.borrow_mut()) }))
+        Ok(unsafe { ECSecretKey::new_random(&mut &self.rng) })
     }
 
     fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error> {
-        Ok(unsafe { ECSecretKey::new(self.singleton_secret_key.borrow().reference()) })
+        Ok(unsafe { ECSecretKey::new(self.singleton_secret_key) })
     }
 
     fn uint320(&self, uint: CanonUint320Ref<'_>) -> Result<Self::UInt320<'_>, Error> {
@@ -244,9 +259,7 @@ where
     }
 
     fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error> {
-        Ok(self
-            .rng
-            .lock(|rng| unsafe { ECScalar::new_random(&mut *rng.borrow_mut()) }))
+        Ok(unsafe { ECScalar::new_random(&mut &self.rng) })
     }
 
     fn ec_point(&self, point: CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, Error> {
@@ -333,12 +346,10 @@ where
         salt: &[u8],
         key: &mut CryptoSensitive<KEY_LEN>,
     ) {
-        unwrap!(pbkdf2::pbkdf2::<T>(
-            pass.access(),
-            salt,
-            iter as u32,
-            key.access_mut()
-        ));
+        unwrap!(
+            pbkdf2::pbkdf2::<T>(pass.access(), salt, iter as u32, key.access_mut()),
+            "PBKDF2 derivation failed"
+        );
     }
 }
 
@@ -436,13 +447,15 @@ where
     /// This function is unsafe because the caller must ensure that
     /// the curve `C` corresponds to the `KEY_LEN` and `SIGNATURE_LEN` const generics.
     unsafe fn new(pub_key: CryptoSensitiveRef<'_, KEY_LEN>) -> Self {
-        let encoded_point = EncodedPoint::<C>::from_bytes(pub_key.access()).unwrap();
+        let encoded_point = unwrap!(
+            EncodedPoint::<C>::from_bytes(pub_key.access()),
+            "Invalid public key"
+        );
 
-        Self(
-            PublicKey::<C>::from_encoded_point(&encoded_point)
-                .into_option()
-                .unwrap(),
-        )
+        Self(unwrap!(
+            PublicKey::<C>::from_encoded_point(&encoded_point).into_option(),
+            "Invalid public key"
+        ))
     }
 }
 
@@ -456,8 +469,14 @@ where
     SignatureSize<C>: ArrayLength<u8>,
 {
     fn verify(&self, data: &[u8], signature: CryptoSensitiveRef<'_, SIGNATURE_LEN>) -> bool {
-        let verifying_key = unwrap!(VerifyingKey::<C>::from_affine(*self.0.as_affine()));
-        let signature = unwrap!(Signature::<C>::from_slice(signature.access()));
+        let verifying_key = unwrap!(
+            VerifyingKey::<C>::from_affine(*self.0.as_affine()),
+            "Invalid public key"
+        );
+        let signature = unwrap!(
+            Signature::<C>::from_slice(signature.access()),
+            "Invalid signature"
+        );
 
         ecdsa::signature::Verifier::verify(&verifying_key, data, &signature).is_ok()
     }
@@ -507,7 +526,10 @@ where
     /// the curve `C` corresponds to the `KEY_LEN`, `PUB_KEY_LEN`,
     /// `SIGNATURE_LEN`, and `SHARED_SECRET_LEN` const generics.
     unsafe fn new(secret_key: CryptoSensitiveRef<'_, KEY_LEN>) -> Self {
-        Self(SecretKey::<C>::from_slice(secret_key.access()).unwrap())
+        Self(unwrap!(
+            SecretKey::<C>::from_slice(secret_key.access()),
+            "Invalid secret key"
+        ))
     }
 
     /// Create a new random EC secret key
@@ -736,7 +758,10 @@ where
     /// This function is unsafe because the caller must ensure that
     /// the curve `C` corresponds to the `LEN` const generic (i.e. its scalar length in SEC-1 representation is exactly `LEN` bytes).
     unsafe fn new(scalar: CryptoSensitiveRef<'_, LEN>) -> Self {
-        Self(Scalar::<C>::from_repr(GenericArray::from_slice(scalar.access()).clone()).unwrap())
+        Self(unwrap!(
+            Scalar::<C>::from_repr(GenericArray::from_slice(scalar.access()).clone()).into_option(),
+            "Invalid EC scalar"
+        ))
     }
 
     /// Create a new random EC scalar
@@ -792,10 +817,14 @@ where
     /// I.e. the point length in SEC-1 representation is exactly `LEN` bytes,
     /// and the scalar length in SEC-1 representation is exactly `SCALAR_LEN` bytes.
     unsafe fn new(point: CryptoSensitiveRef<'_, LEN>) -> Self {
-        let affine_point = AffinePoint::<C>::from_encoded_point(
-            &EncodedPoint::<C>::from_bytes(point.access()).unwrap(),
-        )
-        .unwrap();
+        let affine_point = unwrap!(
+            AffinePoint::<C>::from_encoded_point(&unwrap!(
+                EncodedPoint::<C>::from_bytes(point.access()),
+                "Invalid EC point"
+            ),)
+            .into_option(),
+            "Invalid EC point"
+        );
 
         Self(affine_point.into())
     }

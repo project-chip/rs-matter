@@ -161,9 +161,9 @@ where
         self.handler.read(
             ReadContextInstance::new(
                 self.exchange,
+                &self.crypto,
                 &self.handler,
                 &self.buffers,
-                &self.crypto,
                 attr,
                 notify,
             ),
@@ -234,9 +234,9 @@ where
     ) -> impl Future<Output = Result<(), Error>> + 't {
         self.handler.write(WriteContextInstance::new(
             self.exchange,
+            &self.crypto,
             &self.handler,
             &self.buffers,
-            &self.crypto,
             attr,
             data,
             notify,
@@ -314,9 +314,9 @@ where
         self.handler.invoke(
             InvokeContextInstance::new(
                 self.exchange,
+                &self.crypto,
                 &self.handler,
                 &self.buffers,
-                &self.crypto,
                 cmd,
                 data,
                 notify,

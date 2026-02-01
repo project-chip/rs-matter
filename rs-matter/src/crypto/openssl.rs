@@ -19,11 +19,7 @@
 
 #![allow(deprecated)] // Remove this once `hmac` updates to `generic-array` 1.x
 
-use core::borrow::Borrow;
 use core::ops::Mul;
-
-use crate::crypto::{CanonPkcSecretKey, CryptoSensitive, CryptoSensitiveRef};
-use crate::error::{Error, ErrorCode};
 
 use openssl::asn1::Asn1Type;
 use openssl::bn::{BigNum, BigNumContext};
@@ -44,21 +40,26 @@ use openssl::x509::{X509NameBuilder, X509ReqBuilder};
 // TODO: Use proper OpenSSL method for this
 use hmac::{Hmac, Mac};
 
+use rand_core::{CryptoRng, RngCore};
+
+use crate::crypto::{CanonPkcSecretKeyRef, CryptoSensitive, CryptoSensitiveRef};
+use crate::error::{Error, ErrorCode};
+
 /// An OpenSSL-based crypto backend
-pub struct OpenSslCrypto<S> {
+pub struct OpenSslCrypto<'s> {
     /// Elliptic curve group (secp256r1)
     ec_group: ECGroup<{ super::EC_CANON_POINT_LEN }, { super::EC_CANON_SCALAR_LEN }>,
     /// The singleton secret key to be returned by `Crypto::singleton_singing_secret_key`
-    singleton_secret_key: S,
+    singleton_secret_key: CanonPkcSecretKeyRef<'s>,
 }
 
-impl<S> OpenSslCrypto<S> {
+impl<'s> OpenSslCrypto<'s> {
     /// Create a new OpenSSL crypto backend
     ///
     /// # Arguments
     /// - `singleton_secret_key` - A singleton secret key to be returned by `Crypto::singleton_singing_secret_key`
     ///   The primary use-case for this secret key is to be used as the secret key for the Device Attestation credentials
-    pub fn new(singleton_secret_key: S) -> Self {
+    pub fn new(singleton_secret_key: CanonPkcSecretKeyRef<'s>) -> Self {
         Self {
             ec_group: unsafe { ECGroup::new(Nid::X9_62_PRIME256V1).unwrap() },
             singleton_secret_key,
@@ -66,10 +67,17 @@ impl<S> OpenSslCrypto<S> {
     }
 }
 
-impl<S> super::Crypto for OpenSslCrypto<S>
-where
-    S: Borrow<CanonPkcSecretKey>,
-{
+impl super::Crypto for OpenSslCrypto<'_> {
+    type Rand<'a>
+        = Rand
+    where
+        Self: 'a;
+
+    type WeakRand<'a>
+        = Rand
+    where
+        Self: 'a;
+
     type Hash<'a>
         = Hash<{ super::HASH_LEN }>
     where
@@ -125,6 +133,14 @@ where
     where
         Self: 'a;
 
+    fn rand(&self) -> Result<Self::Rand<'_>, Error> {
+        Ok(Rand(()))
+    }
+
+    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, Error> {
+        Ok(Rand(()))
+    }
+
     fn hash(&self) -> Result<Self::Hash<'_>, Error> {
         unsafe { Hash::new(MessageDigest::sha256()) }
     }
@@ -164,7 +180,7 @@ where
     }
 
     fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error> {
-        self.ec_scalar(self.singleton_secret_key.borrow().reference())
+        self.ec_scalar(self.singleton_secret_key)
     }
 
     fn uint320(&self, uint: super::CanonUint320Ref<'_>) -> Result<Self::UInt320<'_>, Error> {
@@ -218,6 +234,32 @@ where
         })
     }
 }
+
+/// A cryptographically secure random number generator using OpenSSL
+#[derive(Copy, Clone)]
+pub struct Rand(());
+
+impl RngCore for Rand {
+    fn next_u32(&mut self) -> u32 {
+        rand_core::impls::next_u32_via_fill(self)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        rand_core::impls::next_u64_via_fill(self)
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        openssl::rand::rand_bytes(dest).unwrap();
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+        self.fill_bytes(dest);
+
+        Ok(())
+    }
+}
+
+impl CryptoRng for Rand {}
 
 /// A hash implementation
 #[derive(Clone)]

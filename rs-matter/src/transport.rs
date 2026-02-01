@@ -23,6 +23,8 @@ use embassy_futures::select::{select, select3};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::Timer;
 
+use rand_core::RngCore;
+
 use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
@@ -32,7 +34,6 @@ use crate::tlv::TLVElement;
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
-use crate::utils::rand::Rand;
 use crate::utils::select::Coalesce;
 use crate::utils::storage::{pooled::BufferAccess, ParseBuf, WriteBuf};
 use crate::utils::sync::{IfMutex, IfMutexGuard, Notification};
@@ -82,39 +83,31 @@ pub struct TransportMgr {
     pub(crate) dropped: Notification<NoopRawMutex>,
     pub(crate) session_removed: Notification<NoopRawMutex>,
     pub session_mgr: RefCell<SessionMgr>, // For testing
-    #[allow(dead_code)]
-    rand: Rand,
     device_sai: Option<u16>,
     device_sii: Option<u16>,
 }
 
 impl TransportMgr {
     #[inline(always)]
-    pub(crate) const fn new(dev_det: &BasicInfoConfig<'_>, epoch: Epoch, rand: Rand) -> Self {
+    pub(crate) const fn new(dev_det: &BasicInfoConfig<'_>, epoch: Epoch) -> Self {
         Self {
             rx: IfMutex::new(Packet::new()),
             tx: IfMutex::new(Packet::new()),
             dropped: Notification::new(),
             session_removed: Notification::new(),
-            session_mgr: RefCell::new(SessionMgr::new(epoch, rand)),
-            rand,
+            session_mgr: RefCell::new(SessionMgr::new(epoch)),
             device_sai: dev_det.sai,
             device_sii: dev_det.sii,
         }
     }
 
-    pub(crate) fn init<'m>(
-        dev_det: &'m BasicInfoConfig<'m>,
-        epoch: Epoch,
-        rand: Rand,
-    ) -> impl Init<Self> + 'm {
+    pub(crate) fn init<'m>(dev_det: &'m BasicInfoConfig<'m>, epoch: Epoch) -> impl Init<Self> + 'm {
         init!(Self {
             rx <- IfMutex::init(Packet::init()),
             tx <- IfMutex::init(Packet::init()),
             dropped: Notification::new(),
             session_removed: Notification::new(),
-            session_mgr <- RefCell::init(SessionMgr::init(epoch, rand)),
-            rand,
+            session_mgr <- RefCell::init(SessionMgr::init(epoch)),
             device_sai: dev_det.sai,
             device_sii: dev_det.sii,
         })
@@ -838,7 +831,7 @@ impl TransportMgr {
         if !packet.header.plain.is_encrypted() {
             // Unencrypted packets can be decoded without a session, and we need to anyway do that
             // in order to determine (based on proto hdr data) whether to create a new session or not
-            packet.header.decode_remaining(crypto, None, 0, &mut pb)?;
+            packet.header.decode_remaining(&crypto, None, 0, &mut pb)?;
             packet.header.proto.adjust_reliability(true, &packet.peer);
 
             let payload_range = pb.slice_range();
@@ -848,8 +841,14 @@ impl TransportMgr {
                 // As per spec, new unencrypted sessions are only created for
                 // `PBKDFParamRequest` or `CASESigma1` unencrypted messages
 
-                let session =
-                    session_mgr.add(false, packet.peer, packet.header.plain.get_src_nodeid())?;
+                let mut rand = crypto.weak_rand()?;
+
+                let session = session_mgr.add(
+                    rand.next_u32(),
+                    false,
+                    packet.peer,
+                    packet.header.plain.get_src_nodeid(),
+                )?;
 
                 // Session created successfully: decode, indicate packet payload slice and process further
                 return session.post_recv(&packet.header, epoch);

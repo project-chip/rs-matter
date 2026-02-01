@@ -18,19 +18,15 @@
 use core::cell::Cell;
 use core::num::Wrapping;
 
-use crate::utils::rand::Rand;
+use rand_core::RngCore;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Dataver(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] Cell<Wrapping<u32>>);
 
 impl Dataver {
-    pub fn new_rand(rand: Rand) -> Self {
-        let mut bytes = [0; 4];
-
-        rand(&mut bytes);
-
-        Self::new(u32::from_le_bytes(bytes))
+    pub fn new_rand<R: RngCore>(rand: &mut R) -> Self {
+        Self::new(rand.next_u32())
     }
 
     pub const fn new(initial: u32) -> Self {

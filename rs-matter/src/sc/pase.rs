@@ -19,6 +19,8 @@ use core::num::NonZeroU8;
 use core::ops::Add;
 use core::time::Duration;
 
+use rand_core::RngCore;
+
 use spake2p::{Spake2P, VerifierData, VERIFIER_SALT_LEN};
 
 use crate::crypto::{
@@ -27,7 +29,7 @@ use crate::crypto::{
 };
 use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
-use crate::dm::{BasicContext, BasicContextInstance};
+use crate::dm::{BasicContext, BasicContextInstance, ChangeNotify};
 use crate::error::{Error, ErrorCode};
 use crate::sc::pase::spake2p::{VerifierPasswordRef, VerifierSalt, VerifierStrRef};
 use crate::sc::{check_opcode, complete_with_status, OpCode, SessionParameters};
@@ -37,7 +39,6 @@ use crate::transport::session::{ReservedSession, SessionMode};
 use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
 use crate::utils::maybe::Maybe;
-use crate::utils::rand::Rand;
 use crate::MatterMdnsService;
 
 use super::SCStatusCodes;
@@ -87,22 +88,24 @@ impl CommWindow {
     /// Initialize a commissioning window with a passcode
     ///
     /// # Arguments
+    /// - `mdns_id` - The mDNS identifier
     /// - `password` - The passcode
     /// - `discriminator` - The discriminator
     /// - `opener` - The opener info
     /// - `window_expiry` - The window expiry instant
     /// - `rand` - The random number generator
     fn init_with_pw<'a>(
+        mdns_id: u64,
         password: VerifierPasswordRef<'a>,
+        salt: &'a VerifierSalt,
         discriminator: u16,
         opener: Option<CommWindowOpener>,
         window_expiry: Duration,
-        rand: Rand,
     ) -> impl Init<Self> + 'a {
         init!(Self {
-            mdns_id: Self::mdns_id(rand),
+            mdns_id,
             discriminator,
-            verifier <- VerifierData::init_with_pw(password, rand),
+            verifier <- VerifierData::init_with_pw(password, salt),
             opener,
             window_expiry,
         })
@@ -118,16 +121,16 @@ impl CommWindow {
     /// - `opener` - The opener info
     /// - `window_expiry` - The window expiry instant
     fn init<'a>(
+        mdns_id: u64,
         verifier: VerifierStrRef<'a>,
         salt: &'a VerifierSalt,
         count: u32,
         discriminator: u16,
         opener: Option<CommWindowOpener>,
         window_expiry: Duration,
-        rand: Rand,
     ) -> impl Init<Self> + 'a {
         init!(Self {
-            mdns_id: Self::mdns_id(rand),
+            mdns_id,
             discriminator,
             verifier <- VerifierData::init(verifier, salt, count),
             opener,
@@ -156,17 +159,6 @@ impl CommWindow {
             discriminator: self.discriminator,
         }
     }
-
-    /// Generate a random mDNS identifier
-    ///
-    /// # Arguments
-    /// - `rand` - The random number generator
-    /// - Returns - A random u64 identifier
-    fn mdns_id(rand: Rand) -> u64 {
-        let mut buf = [0; 8];
-        (rand)(&mut buf);
-        u64::from_ne_bytes(buf)
-    }
 }
 
 /// The PASE manager
@@ -178,8 +170,6 @@ pub struct PaseMgr {
     session_timeout: Option<SessionEstTimeout>,
     /// The epoch function
     epoch: Epoch,
-    /// The random number generator
-    rand: Rand,
 }
 
 impl PaseMgr {
@@ -187,14 +177,12 @@ impl PaseMgr {
     ///
     /// # Arguments
     /// - `epoch` - The epoch function
-    /// - `rand` - The random number generator
     #[inline(always)]
-    pub const fn new(epoch: Epoch, rand: Rand) -> Self {
+    pub const fn new(epoch: Epoch) -> Self {
         Self {
             comm_window: Maybe::none(),
             session_timeout: None,
             epoch,
-            rand,
         }
     }
 
@@ -203,16 +191,18 @@ impl PaseMgr {
     /// # Arguments
     /// - `epoch` - The epoch function
     /// - `rand` - The random number generator
-    pub fn init(epoch: Epoch, rand: Rand) -> impl Init<Self> {
+    pub fn init(epoch: Epoch) -> impl Init<Self> {
         init!(Self {
             comm_window <- Maybe::init_none(),
             session_timeout: None,
             epoch,
-            rand,
         })
     }
 
-    pub fn comm_window(&mut self, ctx: impl BasicContext) -> Result<Option<&CommWindow>, Error> {
+    pub fn comm_window<C>(&mut self, ctx: C) -> Result<Option<&CommWindow>, Error>
+    where
+        C: BasicContext,
+    {
         let expired = self
             .comm_window
             .as_opt_ref()
@@ -244,14 +234,17 @@ impl PaseMgr {
     /// - `Err(Error)` if an error occurred
     ///   (i.e. there is another non-expired commissioning window already opened
     ///   or the timeout is invalid)
-    pub fn open_basic_comm_window(
+    pub fn open_basic_comm_window<C>(
         &mut self,
+        ctx: C,
         password: VerifierPasswordRef<'_>,
         discriminator: u16,
         timeout_secs: u16,
         opener: Option<CommWindowOpener>,
-        ctx: impl BasicContext,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        C: BasicContext,
+    {
         if self.comm_window(&ctx)?.is_some() {
             Err(ErrorCode::Busy)?;
         }
@@ -262,13 +255,22 @@ impl PaseMgr {
 
         let window_expiry = (self.epoch)().add(Duration::from_secs(timeout_secs as _));
 
+        let crypto = ctx.crypto();
+        let mut rand = crypto.rand()?;
+
+        let mdns_id = rand.next_u64();
+
+        let mut salt = [0; VERIFIER_SALT_LEN];
+        rand.fill_bytes(&mut salt);
+
         self.comm_window
             .reinit(Maybe::init_some(CommWindow::init_with_pw(
+                mdns_id,
                 password,
+                &salt,
                 discriminator,
                 opener,
                 window_expiry,
-                self.rand,
             )));
 
         ctx.matter().notify_mdns();
@@ -301,16 +303,19 @@ impl PaseMgr {
     ///   (i.e. there is another non-expired commissioning window already opened
     ///   or the timeout is invalid)
     #[allow(clippy::too_many_arguments)]
-    pub fn open_comm_window(
+    pub fn open_comm_window<C>(
         &mut self,
+        ctx: C,
         verifier: VerifierStrRef<'_>,
         salt: &VerifierSalt,
         count: u32,
         discriminator: u16,
         timeout_secs: u16,
         opener: Option<CommWindowOpener>,
-        ctx: impl BasicContext,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        C: BasicContext,
+    {
         if self.comm_window(&ctx)?.is_some() {
             Err(ErrorCode::Busy)?;
         }
@@ -321,14 +326,19 @@ impl PaseMgr {
 
         let window_expiry = (self.epoch)().add(Duration::from_secs(timeout_secs as _));
 
+        let crypto = ctx.crypto();
+        let mut rand = crypto.rand()?;
+
+        let mdns_id = rand.next_u64();
+
         self.comm_window.reinit(Maybe::init_some(CommWindow::init(
+            mdns_id,
             verifier,
             salt,
             count,
             discriminator,
             opener,
             window_expiry,
-            self.rand,
         )));
 
         ctx.matter().notify_mdns();
@@ -352,7 +362,10 @@ impl PaseMgr {
     /// # Returns
     /// - `Ok(true)` if a commissioning window was closed
     /// - `Ok(false)` if there was no commissioning window to close
-    pub fn close_comm_window(&mut self, ctx: impl BasicContext) -> Result<bool, Error> {
+    pub fn close_comm_window<C>(&mut self, ctx: C) -> Result<bool, Error>
+    where
+        C: BasicContext,
+    {
         if self.comm_window.is_some() {
             self.comm_window.clear();
             ctx.matter().notify_mdns();
@@ -466,20 +479,23 @@ struct Pake1Resp<'a> {
 /// The PASE PAKE handler
 pub struct Pase<'a, C: Crypto> {
     spake2p: Spake2P<'a, C>,
+    notify: &'a dyn ChangeNotify,
 }
 
 impl<'a, C: Crypto> Pase<'a, C> {
     /// Create a new PASE PAKE handler
-    pub const fn new(crypto: &'a C) -> Self {
+    pub const fn new(crypto: &'a C, notify: &'a dyn ChangeNotify) -> Self {
         // TODO: Can any PBKDF2 calculation be pre-computed here
         Self {
             spake2p: Spake2P::new(crypto),
+            notify,
         }
     }
 
-    pub fn init(crypto: &'a C) -> impl Init<Self> {
+    pub fn init(crypto: &'a C, notify: &'a dyn ChangeNotify) -> impl Init<Self> {
         init!(Self {
             spake2p <- Spake2P::init(crypto),
+            notify,
         })
     }
 
@@ -488,7 +504,7 @@ impl<'a, C: Crypto> Pase<'a, C> {
     /// # Arguments
     /// - `exchange` - The exchange
     pub async fn handle(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        let session = ReservedSession::reserve(self.spake2p.crypto, exchange.matter()).await?;
+        let session = ReservedSession::reserve(exchange.matter(), self.spake2p.crypto).await?;
 
         if !self.update_session_timeout(exchange, true).await? {
             return Ok(());
@@ -532,11 +548,12 @@ impl<'a, C: Crypto> Pase<'a, C> {
         let mut salt = [0; VERIFIER_SALT_LEN];
         let mut count = 0;
 
-        let ctx = BasicContextInstance::new(exchange.matter(), exchange.matter());
         let has_comm_window = {
             let matter = exchange.matter();
             let mut pase = matter.pase_mgr.borrow_mut();
 
+            let ctx =
+                BasicContextInstance::new(exchange.matter(), &self.spake2p.crypto, self.notify);
             if let Some(comm_window) = pase.comm_window(&ctx)? {
                 salt.copy_from_slice(&comm_window.verifier.salt);
                 count = comm_window.verifier.count;
@@ -558,7 +575,8 @@ impl<'a, C: Crypto> Pase<'a, C> {
                     Err(ErrorCode::Invalid)?;
                 }
 
-                (exchange.matter().pase_mgr.borrow().rand)(&mut our_random);
+                let mut rand = self.spake2p.crypto.rand()?;
+                rand.fill_bytes(&mut our_random);
 
                 let local_sessid = exchange
                     .matter()
@@ -629,7 +647,8 @@ impl<'a, C: Crypto> Pase<'a, C> {
         let has_comm_window = {
             let matter = exchange.matter();
             let mut pase = matter.pase_mgr.borrow_mut();
-            let ctx = BasicContextInstance::new(matter, matter);
+            let ctx =
+                BasicContextInstance::new(exchange.matter(), &self.spake2p.crypto, self.notify);
 
             if let Some(comm_window) = pase.comm_window(&ctx)? {
                 self.spake2p.start_verifier(&comm_window.verifier)?;

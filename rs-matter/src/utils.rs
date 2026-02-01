@@ -23,7 +23,6 @@ pub mod init;
 pub mod ipv6;
 pub mod iter;
 pub mod maybe;
-pub mod rand;
 pub mod select;
 pub mod storage;
 pub mod sync;

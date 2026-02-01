@@ -28,7 +28,7 @@ use crate::common::e2e::im::attributes::{TestAttrData, TestAttrResp};
 use crate::common::e2e::im::echo_cluster::ATTR_WRITE_DEFAULT_VALUE;
 use crate::common::e2e::im::{echo_cluster, ReplyProcessor, TestReadReq, TestReportDataMsg};
 use crate::common::e2e::tlv::TLVTest;
-use crate::common::e2e::{ImEngine, IM_ENGINE_PEER_ID};
+use crate::common::e2e::{new_default_runner, new_runner, TEST_PEER_ID};
 use crate::common::init_env_logger;
 use crate::{attr_data, attr_data_path, attr_read_status_resp};
 
@@ -59,7 +59,7 @@ fn wc_read_attribute() {
         Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
     );
 
-    let im = ImEngine::new_default();
+    let im = new_default_runner();
     let handler = im.handler();
 
     // Test1: Empty Response as no ACL matches
@@ -67,7 +67,7 @@ fn wc_read_attribute() {
 
     // Add ACL to allow our peer to only access endpoint 0
     let mut acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
-    acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
+    acl.add_subject(TEST_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(0), None, None)).unwrap();
     im.matter
         .fabric_mgr
@@ -84,7 +84,7 @@ fn wc_read_attribute() {
 
     // Add ACL to allow our peer to also access endpoint 1
     let mut acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
-    acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
+    acl.add_subject(TEST_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(1), None, None)).unwrap();
     im.matter
         .fabric_mgr
@@ -115,7 +115,7 @@ fn exact_read_attribute() {
         Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
     );
 
-    let im = ImEngine::new_default();
+    let im = new_default_runner();
     let handler = im.handler();
 
     // Test1: Unsupported Access error as no ACL matches
@@ -128,7 +128,7 @@ fn exact_read_attribute() {
 
     // Add ACL to allow our peer to access any endpoint
     let mut acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
-    acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
+    acl.add_subject(TEST_PEER_ID).unwrap();
     im.matter
         .fabric_mgr
         .borrow_mut()
@@ -176,7 +176,7 @@ fn wc_write_attribute() {
         &val1 as _,
     )];
 
-    let im = ImEngine::new_default();
+    let im = new_default_runner();
     let handler = im.handler();
 
     // Test 1: Wildcard write to an attribute without permission should return
@@ -189,7 +189,7 @@ fn wc_write_attribute() {
 
     // Add ACL to allow our peer to access one endpoint
     let mut acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
-    acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
+    acl.add_subject(TEST_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(0), None, None)).unwrap();
     im.matter
         .fabric_mgr
@@ -212,7 +212,7 @@ fn wc_write_attribute() {
 
     // Add ACL to allow our peer to access another endpoint
     let mut acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
-    acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
+    acl.add_subject(TEST_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(1), None, None)).unwrap();
     im.matter
         .fabric_mgr
@@ -259,7 +259,7 @@ fn exact_write_attribute() {
     )];
     let expected_success = &[AttrStatus::from_gp(&ep0_att, IMStatusCode::Success, None)];
 
-    let im = ImEngine::new_default();
+    let im = new_default_runner();
     let handler = im.handler();
 
     // Test 1: Exact write to an attribute without permission should return
@@ -272,7 +272,7 @@ fn exact_write_attribute() {
 
     // Add ACL to allow our peer to access any endpoint
     let mut acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
-    acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
+    acl.add_subject(TEST_PEER_ID).unwrap();
     im.matter
         .fabric_mgr
         .borrow_mut()
@@ -315,7 +315,7 @@ fn exact_write_attribute_noc_cat() {
     let noc_cat = gen_noc_cat(0xABCD, 2);
     let cat_in_acl = gen_noc_cat(0xABCD, 1);
     let cat_ids = [noc_cat, 0, 0];
-    let im = ImEngine::new(cat_ids);
+    let im = new_runner(cat_ids);
     let handler = im.handler();
 
     // Test 1: Exact write to an attribute without permission should return
@@ -357,12 +357,12 @@ fn insufficient_perms_write() {
         &val0 as _,
     )];
 
-    let im = ImEngine::new_default();
+    let im = new_default_runner();
     let handler = im.handler();
 
     // Add ACL to allow our peer with only OPERATE permission
     let mut acl = AclEntry::new(None, Privilege::OPERATE, AuthMode::Case);
-    acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
+    acl.add_subject(TEST_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(0), None, None)).unwrap();
     im.matter
         .fabric_mgr
@@ -408,7 +408,7 @@ fn insufficient_perms_write() {
 fn write_with_runtime_acl_add() {
     init_env_logger();
 
-    let im = ImEngine::new_default();
+    let im = new_default_runner();
     let handler = im.handler();
 
     let val0 = 10;
@@ -421,7 +421,7 @@ fn write_with_runtime_acl_add() {
 
     // Create ACL to allow our peer ADMIN on everything
     let mut allow_acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
-    allow_acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
+    allow_acl.add_subject(TEST_PEER_ID).unwrap();
 
     let acl_att = GenericPath::new(
         Some(0),
@@ -432,7 +432,7 @@ fn write_with_runtime_acl_add() {
 
     // Create ACL that only allows write to the ACL Cluster
     let mut basic_acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
-    basic_acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
+    basic_acl.add_subject(TEST_PEER_ID).unwrap();
     basic_acl
         .add_target(Target::new(
             Some(0),
@@ -470,7 +470,7 @@ fn test_read_data_ver() {
     // - 2 responses are expected
     init_env_logger();
 
-    let im = ImEngine::new_default();
+    let im = new_default_runner();
     let handler = im.handler();
 
     // Add ACL to allow our peer with only OPERATE permission
@@ -567,7 +567,7 @@ fn test_write_data_ver() {
     // - 2 responses are expected
     init_env_logger();
 
-    let im = ImEngine::new_default();
+    let im = new_default_runner();
     let handler = im.handler();
 
     // Add ACL to allow our peer with only OPERATE permission

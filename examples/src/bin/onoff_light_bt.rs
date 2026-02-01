@@ -37,9 +37,11 @@ use std::net::UdpSocket;
 use embassy_futures::select::{select, select4};
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
 use log::{info, warn};
 
-use rs_matter::crypto::test_crypto;
+use rand::RngCore;
+use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, NetworkType, Networks};
@@ -133,9 +135,14 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     // Create the subscriptions
     let subscriptions = DefaultSubscriptions::new();
 
+    // Create the crypto instance
+    let crypto = default_crypto::<NoopRawMutex, _>(rand::thread_rng(), DAC_PRIVKEY);
+
+    let mut rand = crypto.rand()?;
+
     // Our on-off cluster
     let on_off_handler = on_off::OnOffHandler::new_standalone(
-        Dataver::new_rand(matter.rand()),
+        Dataver::new_rand(&mut rand),
         1,
         TestOnOffDeviceLogic::new(true),
     );
@@ -148,16 +155,13 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
 
     let net_ctl = NetCtlWithStatusImpl::new(&net_ctl_state, net_ctl);
 
-    // Create default crypto instance
-    let crypto = test_crypto();
-
     // Create the Data Model instance
     let dm = DataModel::new(
         &matter,
         &crypto,
         &buffers,
         &subscriptions,
-        dm_handler(&matter, &on_off_handler, &net_ctl, &networks),
+        dm_handler(rand, &on_off_handler, &net_ctl, &networks),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -180,7 +184,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     let mut persist = pin!(psm.run(&path, &matter, Some(&networks)));
 
     // Create and run the mDNS responder
-    let mut mdns = pin!(mdns::run_mdns(&matter));
+    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, &dm));
 
     if !matter.is_commissioned() {
         // Not commissioned yet, start commissioning first
@@ -191,7 +195,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
 
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS)?;
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
 
         // The BTP transport impl
         let btp = Btp::new(BluezGattPeripheral::new(None, connection), &BTP_CONTEXT);
@@ -254,7 +258,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks, N>(
-    matter: &'a Matter<'a>,
+    mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     net_ctl: &'a N,
     networks: &'a dyn Networks,
@@ -269,14 +273,14 @@ where
             &UnixNetifs,
             net_ctl,
             networks,
-            matter.rand(),
+            rand,
             endpoints::with_sys(
                 &true,
-                matter.rand(),
+                rand,
                 EmptyHandler
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),

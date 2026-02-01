@@ -24,16 +24,27 @@
 //! pulling in any crypto dependencies. Note that this module might be retired in future
 //! and `rustcrypto` might be used as the default backend.
 
-use crate::{
-    crypto::{Crypto, CryptoSensitive, CryptoSensitiveRef},
-    error::Error,
-};
+use rand_core::{CryptoRng, RngCore};
+
+use crate::crypto::{Crypto, CryptoSensitive, CryptoSensitiveRef};
+use crate::error::Error;
 
 /// A dummy crypto backend that panics on any operation.
-#[derive(Clone)]
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DummyCrypto;
 
 impl Crypto for DummyCrypto {
+    type Rand<'a>
+        = DummyCrypto
+    where
+        Self: 'a;
+
+    type WeakRand<'a>
+        = DummyCrypto
+    where
+        Self: 'a;
+
     type Hash<'a>
         = DummyCrypto
     where
@@ -88,6 +99,14 @@ impl Crypto for DummyCrypto {
         = DummyCrypto
     where
         Self: 'a;
+
+    fn rand(&self) -> Result<Self::Rand<'_>, Error> {
+        unimplemented!()
+    }
+
+    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, Error> {
+        unimplemented!()
+    }
 
     fn hash(&self) -> Result<Self::Hash<'_>, Error> {
         unimplemented!()
@@ -303,3 +322,23 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::EcPoint<'a, LEN, SCAL
         unimplemented!()
     }
 }
+
+impl RngCore for DummyCrypto {
+    fn next_u32(&mut self) -> u32 {
+        unimplemented!()
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        unimplemented!()
+    }
+
+    fn fill_bytes(&mut self, _dest: &mut [u8]) {
+        unimplemented!()
+    }
+
+    fn try_fill_bytes(&mut self, _dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        unimplemented!()
+    }
+}
+
+impl CryptoRng for DummyCrypto {}

@@ -36,7 +36,6 @@ use crate::crypto::{
 use crate::error::{Error, ErrorCode};
 use crate::sc::SCStatusCodes;
 use crate::utils::init::{init, zeroed, Init};
-use crate::utils::rand::Rand;
 
 const MATTER_M_BIN: CanonEcPointRef = CanonEcPointRef::new(&[
     0x04, 0x88, 0x6e, 0x2f, 0x97, 0xac, 0xe4, 0x6e, 0x55, 0xba, 0x9d, 0xd7, 0x24, 0x25, 0x79, 0xf2,
@@ -570,9 +569,12 @@ pub(crate) struct VerifierData {
 }
 
 impl VerifierData {
-    pub fn init_with_pw<'a>(password: VerifierPasswordRef<'a>, rand: Rand) -> impl Init<Self> + 'a {
+    pub fn init_with_pw<'a>(
+        password: VerifierPasswordRef<'a>,
+        salt: &'a VerifierSalt,
+    ) -> impl Init<Self> + 'a {
         Self::init_empty().chain(move |this| {
-            this.configure_pw(password, rand);
+            this.configure_pw(password, salt);
 
             Ok(())
         })
@@ -599,9 +601,11 @@ impl VerifierData {
         })
     }
 
-    fn configure_pw(&mut self, password: VerifierPasswordRef<'_>, rand: Rand) {
+    fn configure_pw(&mut self, password: VerifierPasswordRef<'_>, salt: &VerifierSalt) {
         self.password = Some(password.into());
-        rand(&mut self.salt);
+        self.salt.copy_from_slice(salt);
+        self.verifier.zeroize();
+        self.count = 0;
     }
 
     fn configure_verifier(
@@ -619,7 +623,7 @@ impl VerifierData {
 
 #[cfg(test)]
 mod tests {
-    use crate::crypto::{test_crypto, Crypto, Digest, HmacHashRef, HASH_ZEROED};
+    use crate::crypto::{test_only_crypto, Crypto, Digest, HmacHashRef, HASH_ZEROED};
 
     use super::*;
 
@@ -627,7 +631,7 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_get_X() {
         for t in RFC_T {
-            let crypto = test_crypto();
+            let crypto = test_only_crypto();
             let M = unwrap!(crypto.ec_point(MATTER_M_BIN));
             let x = unwrap!(crypto.ec_scalar(t.x));
             let w0 = unwrap!(crypto.ec_scalar(t.w0));
@@ -645,7 +649,7 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_get_Y() {
         for t in RFC_T {
-            let crypto = test_crypto();
+            let crypto = test_only_crypto();
             let N = unwrap!(crypto.ec_point(MATTER_N_BIN));
             let y = unwrap!(crypto.ec_scalar(t.y));
             let w0 = unwrap!(crypto.ec_scalar(t.w0));
@@ -663,7 +667,7 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_get_ZV_as_prover() {
         for t in RFC_T {
-            let crypto = test_crypto();
+            let crypto = test_only_crypto();
             let N = unwrap!(crypto.ec_point(MATTER_N_BIN));
             let x = unwrap!(crypto.ec_scalar(t.x));
             let y = unwrap!(crypto.ec_point(t.Y));
@@ -686,7 +690,7 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_get_ZV_as_verifier() {
         for t in RFC_T {
-            let crypto = test_crypto();
+            let crypto = test_only_crypto();
             let M = unwrap!(crypto.ec_point(MATTER_M_BIN));
             let x = unwrap!(crypto.ec_point(t.X));
             let y = unwrap!(crypto.ec_scalar(t.y));
@@ -712,7 +716,7 @@ mod tests {
             0x36, 0x00,
         ];
         let mut w0w1s = CryptoSensitive::new();
-        Spake2P::new(&test_crypto()).get_w0w1s(
+        Spake2P::new(&test_only_crypto()).get_w0w1s(
             (&123456_u32.to_le_bytes()).into(),
             2000,
             SALT,
@@ -734,7 +738,7 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_get_Ke_and_cAcB() {
-        let crypto = test_crypto();
+        let crypto = test_only_crypto();
 
         for t in RFC_T {
             let mut Ke = CryptoSensitive::new();

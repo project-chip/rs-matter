@@ -827,7 +827,7 @@ pub trait CertConsumer {
 
 #[cfg(test)]
 mod tests {
-    use crate::crypto::test_crypto;
+    use crate::crypto::test_only_crypto;
     use crate::error::ErrorCode;
     use crate::tlv::{FromTLV, TLVElement, TagType, ToTLV};
     use crate::utils::storage::WriteBuf;
@@ -864,7 +864,7 @@ mod tests {
         let noc = CertRef::new(TLVElement::new(NOC1_SUCCESS));
         let icac = CertRef::new(TLVElement::new(ICAC1_SUCCESS));
         let rca = CertRef::new(TLVElement::new(RCA1_SUCCESS));
-        let a = noc.verify_chain_start(test_crypto());
+        let a = noc.verify_chain_start(test_only_crypto());
         unwrap!(
             unwrap!(unwrap!(a.add_cert(&icac, &mut buf)).add_cert(&rca, &mut buf))
                 .finalise(&mut buf)
@@ -878,7 +878,7 @@ mod tests {
         let mut buf = [0; 1000];
         let noc = CertRef::new(TLVElement::new(NOC1_SUCCESS));
         let icac = CertRef::new(TLVElement::new(ICAC1_SUCCESS));
-        let a = noc.verify_chain_start(test_crypto());
+        let a = noc.verify_chain_start(test_only_crypto());
         assert_eq!(
             Err(ErrorCode::InvalidAuthKey),
             unwrap!(a.add_cert(&icac, &mut buf))
@@ -892,7 +892,7 @@ mod tests {
         let mut buf = [0; 1000];
         let noc = CertRef::new(TLVElement::new(NOC1_AUTH_KEY_FAIL));
         let icac = CertRef::new(TLVElement::new(ICAC1_SUCCESS));
-        let a = noc.verify_chain_start(test_crypto());
+        let a = noc.verify_chain_start(test_only_crypto());
         assert_eq!(
             Err(ErrorCode::InvalidAuthKey),
             a.add_cert(&icac, &mut buf)
@@ -907,7 +907,7 @@ mod tests {
         let noc = CertRef::new(TLVElement::new(NOC_NOT_AFTER_ZERO));
         let rca = CertRef::new(TLVElement::new(RCA_FOR_NOC_NOT_AFTER_ZERO));
 
-        let v = noc.verify_chain_start(test_crypto());
+        let v = noc.verify_chain_start(test_only_crypto());
         let v = unwrap!(v.add_cert(&rca, &mut buf));
         unwrap!(v.finalise(&mut buf));
     }
@@ -917,7 +917,7 @@ mod tests {
         let mut buf = [0; 1000];
         let noc = CertRef::new(TLVElement::new(NOC1_CORRUPT_CERT));
         let icac = CertRef::new(TLVElement::new(ICAC1_SUCCESS));
-        let a = noc.verify_chain_start(test_crypto());
+        let a = noc.verify_chain_start(test_only_crypto());
         assert_eq!(
             Err(ErrorCode::InvalidSignature),
             a.add_cert(&icac, &mut buf)
