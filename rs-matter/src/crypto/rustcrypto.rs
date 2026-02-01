@@ -398,7 +398,9 @@ where
         let cipher = Ccm::<C, M, N>::new(GenericArray::from_slice(key.access()));
 
         let mut buffer = SliceBuffer::new(data, data_len);
-        cipher.encrypt_in_place(GenericArray::from_slice(nonce.access()), aad, &mut buffer)?;
+        cipher
+            .encrypt_in_place(GenericArray::from_slice(nonce.access()), aad, &mut buffer)
+            .map_err(|_| ErrorCode::BufferTooSmall)?;
 
         let len = buffer.len();
 
@@ -417,7 +419,9 @@ where
         let cipher = Ccm::<C, M, N>::new(GenericArray::from_slice(key.access()));
 
         let mut buffer = SliceBuffer::new(data, data.len());
-        cipher.decrypt_in_place(GenericArray::from_slice(nonce.access()), aad, &mut buffer)?;
+        cipher
+            .decrypt_in_place(GenericArray::from_slice(nonce.access()), aad, &mut buffer)
+            .map_err(|_| ErrorCode::BufferTooSmall)?;
 
         let len = buffer.len();
 
@@ -611,13 +615,17 @@ where
                         "x509 OID creation failed"
                     )),
                 },
-                subject_public_key: BitString::from_bytes(public_key.access())?,
+                subject_public_key: unwrap!(
+                    BitString::from_bytes(public_key.access()),
+                    "x509 BitString creation failed"
+                ),
             },
             attributes: Default::default(),
         };
 
         let mut encoded_info = SliceBuffer::new(buf, 0);
-        info.encode(&mut encoded_info)?;
+        info.encode(&mut encoded_info)
+            .map_err(|_| ErrorCode::BufferTooSmall)?;
 
         // Can't use self.sign_msg as the signature has to be in DER format
         let signing_key = SigningKey::<C>::from(&self.0);
@@ -634,10 +642,17 @@ where
                 oid: attr_type("1.2.840.10045.4.3.2"),
                 parameters: None,
             },
-            signature: BitString::from_bytes(signature_der_bytes)?,
+            signature: unwrap!(
+                BitString::from_bytes(signature_der_bytes),
+                "x509 BitString creation failed"
+            ),
         };
 
-        Ok(csr.encode_to_slice(buf)?)
+        let csr_data = csr
+            .encode_to_slice(buf)
+            .map_err(|_| ErrorCode::BufferTooSmall)?;
+
+        Ok(csr_data)
     }
 
     fn pub_key(&self) -> Self::PublicKey<'a> {
