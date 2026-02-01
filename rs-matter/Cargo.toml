@@ -12,7 +12,7 @@ license = "Apache-2.0"
 rust-version = "1.87"
 
 [features]
-default = ["os", "rustcrypto", "log"]
+default = ["os", "rustcrypto", "log", "mbedtls"]
 #default = ["os", "mbedtls", "log"] mbedtls is broken since several months - check the root cause
 
 # Sizing
@@ -135,7 +135,7 @@ pinned-init = { version = "0.0.8", default-features = false }
 # crypto
 openssl = { version = "0.10", optional = true }
 foreign-types = { version = "0.3", optional = true }
-esp-mbedtls-sys = { git = "https://github.com/esp-rs/esp-mbedtls", branch = "extra-headers", optional = true }
+esp-mbedtls-sys = { git = "https://github.com/esp-rs/esp-mbedtls", features = ["nohook"], optional = true }
 
 # rust-crypto
 # Generic traits and traitified structures

@@ -18,12 +18,13 @@
 //! MbedTLS-based crypto backend for Matter.
 
 macro_rules! merr_unwrap {
-    ($expr:expr) => {
-        match esp_mbedtls_sys::merr!($expr) {
+    ($expr:expr) => {{
+        let result = $expr;
+        match esp_mbedtls_sys::merr!(result) {
             Ok(val) => val,
             Err(err) => panic!("{}", err),
         }
-    };
+    }};
 }
 
 use core::ffi::{c_int, c_uchar, c_void};
@@ -368,13 +369,13 @@ impl<const HASH_LEN: usize> Clone for Hmac<HASH_LEN> {
 impl<const HASH_LEN: usize> super::Digest<HASH_LEN> for Hmac<HASH_LEN> {
     fn update(&mut self, data: &[u8]) {
         merr_unwrap!(unsafe {
-            esp_mbedtls_sys::mbedtls_md_update(&mut self.raw, data.as_ptr(), data.len())
+            esp_mbedtls_sys::mbedtls_md_hmac_update(&mut self.raw, data.as_ptr(), data.len())
         });
     }
 
     fn finish(mut self, out: &mut CryptoSensitive<HASH_LEN>) {
         merr_unwrap!(unsafe {
-            esp_mbedtls_sys::mbedtls_md_finish(&mut self.raw, out.access_mut().as_mut_ptr())
+            esp_mbedtls_sys::mbedtls_md_hmac_finish(&mut self.raw, out.access_mut().as_mut_ptr())
         });
     }
 }
@@ -749,6 +750,8 @@ where
         Self: 'a + 's;
 
     fn neg(&self) -> Self {
+        assert!(unsafe { esp_mbedtls_sys::mbedtls_mpi_cmp_int(&self.raw.private_Z, 1) } == 0);
+
         let mut result = ECPoint::new(self.group, self.rng);
 
         merr_unwrap!(unsafe {
@@ -756,7 +759,8 @@ where
         });
 
         merr_unwrap!(unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_copy(&mut result.raw.private_Z, &self.raw.private_Z)
+            esp_mbedtls_sys::mbedtls_mpi_lset(&mut result.raw.private_Z, 1)
+            //esp_mbedtls_sys::mbedtls_mpi_copy(&mut result.raw.private_Z, &self.raw.private_Z)
         });
 
         merr_unwrap!(unsafe {
@@ -775,7 +779,7 @@ where
 
         merr_unwrap!(unsafe {
             esp_mbedtls_sys::mbedtls_ecp_mul(
-                self.group as *const _ as *mut _,
+                &self.group.raw as *const _ as *mut _,
                 &mut result.raw,
                 &scalar.mpi.raw,
                 &self.raw,
@@ -792,7 +796,7 @@ where
 
         merr_unwrap!(unsafe {
             esp_mbedtls_sys::mbedtls_ecp_muladd(
-                self.group as *const _ as *mut _,
+                &self.group.raw as *const _ as *mut _,
                 &mut result.raw,
                 &s1.mpi.raw,
                 &self.raw,
@@ -831,7 +835,7 @@ impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN:
 
         let result = unsafe {
             esp_mbedtls_sys::mbedtls_ecdsa_verify(
-                self.group as *const _ as *mut _,
+                &self.group.raw as *const _ as *mut _,
                 hash.access_mut().as_ptr(),
                 super::HASH_LEN,
                 &self.raw,
@@ -948,7 +952,7 @@ where
 
         merr_unwrap!(unsafe {
             esp_mbedtls_sys::mbedtls_ecp_mul(
-                &self.group as *const _ as *mut _,
+                &self.group.raw as *const _ as *mut _,
                 &mut ec_ctx.private_Q,
                 &self.mpi.raw,
                 &self.group.raw.G,
@@ -992,7 +996,7 @@ where
 
         merr_unwrap!(unsafe {
             esp_mbedtls_sys::mbedtls_ecp_mul(
-                self.group as *const _ as *mut _,
+                &self.group.raw as *const _ as *mut _,
                 &mut pub_key.raw,
                 &self.mpi.raw,
                 &self.group.raw.G,
@@ -1018,7 +1022,7 @@ where
 
         merr_unwrap!(unsafe {
             esp_mbedtls_sys::mbedtls_ecdsa_sign(
-                &self.group as *const _ as *mut _,
+                &self.group.raw as *const _ as *mut _,
                 &mut r.raw,
                 &mut s.raw,
                 &self.mpi.raw,
@@ -1059,7 +1063,7 @@ where
 
         merr_unwrap!(unsafe {
             esp_mbedtls_sys::mbedtls_ecdh_compute_shared(
-                self.group as *const _ as *mut _,
+                &self.group.raw as *const _ as *mut _,
                 &mut z.raw,
                 &peer_pub_key.raw,
                 &self.mpi.raw,
