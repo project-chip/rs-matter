@@ -147,12 +147,7 @@ fn test_subscribe_events() {
                 TestReadReq {
                     ..TestReadReq::event_reqs(&[WILDCARD_PATH.clone()])
                 },
-                TestReportDataMsg::event_reports(&[event_data_path!(
-                    ep0_event1,
-                    0,
-                    2,
-                    Some(&0x41u8)
-                )]),
+                TestReportDataMsg::event_reports(&[event_data_path!(ep0_event1, 0, 2, Some(&[1u8;128]))]),
                 ReplyProcessor::none,
             ),
             &TLVTest::subscription_report(
@@ -179,18 +174,76 @@ fn test_subscribe_events() {
     );
 }
 
+#[test]
+fn test_long_read_events() {
+    init_env_logger();
+
+    let im = ImEngine::new_default();
+    let handler = im.handler();
+
+    im.add_default_acl();
+
+    let ep0_event1 = GenericPath::new(Some(0), Some(echo_cluster::ID), Some(1));
+
+    // Given there are some large-payload events available to read
+    push_events(&im, &[
+            event_data_req!(ep0_event1, 0, 2, Some(&[1u8;256])),
+            event_data_req!(ep0_event1, 0, 2, Some(&[2u8;256])),
+            event_data_req!(ep0_event1, 0, 2, Some(&[3u8;256])),
+    ]);
+
+    im.test_all(
+        &handler,
+        [
+            // When 
+            &TLVTest::read(
+                TestReadReq::event_reqs(&[WILDCARD_PATH.clone()]),
+                TestReportDataMsg::event_reports(&[
+                    event_data_path!(ep0_event1, 0, 2, Some(&[1u8;128])),
+                ]),
+                ReplyProcessor::none,
+            ) as &dyn E2eTest,
+            &TLVTest::continue_report(
+                StatusResp {
+                    status: IMStatusCode::Success,
+                },
+                TestReportDataMsg {
+                    event_reports: Some(&[
+                        event_data_path!(ep0_event1, 0, 2, Some(&[2u8;128])),
+                    ]),
+                    more_chunks: Some(true),
+                    ..Default::default()
+                },
+                ReplyProcessor::none,
+            ),
+            &TLVTest::continue_report(
+                StatusResp {
+                    status: IMStatusCode::Success,
+                },
+                TestReportDataMsg {
+                    event_reports: Some(&[
+                        event_data_path!(ep0_event1, 0, 2, Some(&[3u8;128])),
+                    ]),
+                    more_chunks: Some(false),
+                    ..Default::default()
+                },
+                ReplyProcessor::none,
+            ),
+        ],
+    );
+}
+
 fn push_events(im: &ImEngine, events: &[TestEventData]) {
     for ev in events {
         im.events
             .push(ev.path.clone(), ev.priority, |tw| -> Result<(), Error> {
                 if let Some(data) = ev.data {
                     // TODO(events) the public API shouldn't require knowing about the tag index here
-                    let mut b = [0u8; 128];
+                    let mut b = [0u8; 2048];
                     let mut wb = WriteBuf::new(&mut b[0..]);
                     data.test_to_tlv(&TLVTag::Context(EventDataTag::Data as _), &mut wb)?;
                     let end = wb.get_tail();
                     tw.write_raw_data(b[..end].iter().copied())?;
-                    tw.end()?;
                 }
                 Ok(())
             })

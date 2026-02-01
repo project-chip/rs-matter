@@ -52,6 +52,9 @@ pub type ImEngine = E2eRunner;
 // For backwards compatibility
 pub const IM_ENGINE_PEER_ID: u64 = E2eRunner::PEER_ID;
 
+// Set large enough that we can store more events than fit in an ethernet frame, so we can test "long reads"
+pub const E2E_EVENTS_BUF_SIZE: usize = 1024 * 4;
+
 /// A test runner for end-to-end tests.
 ///
 /// The runner works by instantiating two `Matter` instances, one for the local node and one for the
@@ -66,7 +69,7 @@ pub struct E2eRunner {
     matter_client: Matter<'static>,
     buffers: PooledBuffers<10, NoopRawMutex, IMBuffer>,
     pub subscriptions: Subscriptions<3>,
-    pub events: Events<64>,
+    pub events: Events<E2E_EVENTS_BUF_SIZE>,
     cat_ids: NocCatIds,
 }
 

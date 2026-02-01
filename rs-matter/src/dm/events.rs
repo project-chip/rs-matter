@@ -336,7 +336,7 @@ impl<'a, const N: usize> Drop for EventQueueWriter<'a, N> {
     fn drop(&mut self) {
         if !self.ended {
             // TODO(events) what do we do, error log?
-            todo!()
+//            todo!()
         }
     }
 }
