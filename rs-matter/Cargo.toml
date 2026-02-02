@@ -135,6 +135,7 @@ pinned-init = { version = "0.0.8", default-features = false }
 # crypto
 openssl = { version = "0.10", optional = true }
 foreign-types = { version = "0.3", optional = true }
+# TODO: Fix upstream the alignment issues when hooking algorithms
 esp-mbedtls-sys = { git = "https://github.com/esp-rs/esp-mbedtls", features = ["nohook"], optional = true }
 
 # rust-crypto

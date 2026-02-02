@@ -190,9 +190,7 @@ where
     }
 
     fn aead(&self) -> Result<Self::Aead<'_>, Error> {
-        Ok(unsafe {
-            AeadCcm::new(esp_mbedtls_sys::mbedtls_cipher_type_t_MBEDTLS_CIPHER_AES_128_CCM)
-        })
+        Ok(unsafe { AeadCcm::new(esp_mbedtls_sys::mbedtls_cipher_id_t_MBEDTLS_CIPHER_ID_AES) })
     }
 
     fn pub_key(&self, key: super::CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, Error> {
@@ -458,7 +456,7 @@ impl super::PbKdf for Pbkdf2Hmac {
 /// AEAD-CCM implementation using MbedTLS.
 pub struct AeadCcm<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize> {
     /// Cipher type
-    cipher_type: esp_mbedtls_sys::mbedtls_cipher_type_t,
+    cipher_id: esp_mbedtls_sys::mbedtls_cipher_id_t,
 }
 
 impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
@@ -469,8 +467,8 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
     /// # Safety
     /// The caller must ensure that the provided `cipher_type` corresponds to the
     /// `KEY_LEN`, `NONCE_LEN`, and `TAG_LEN` generic parameters.
-    unsafe fn new(cipher_type: esp_mbedtls_sys::mbedtls_cipher_type_t) -> Self {
-        Self { cipher_type }
+    unsafe fn new(cipher_id: esp_mbedtls_sys::mbedtls_cipher_id_t) -> Self {
+        Self { cipher_id }
     }
 }
 
@@ -496,7 +494,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
         merr_unwrap!(unsafe {
             esp_mbedtls_sys::mbedtls_ccm_setkey(
                 &mut ctx,
-                self.cipher_type,
+                self.cipher_id,
                 key.access().as_ptr(),
                 (KEY_LEN * 8) as u32,
             )
@@ -507,7 +505,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
                 &mut ctx,
                 data_len,
                 nonce.access().as_ptr(),
-                KEY_LEN,
+                NONCE_LEN,
                 aad.as_ptr(),
                 aad.len(),
                 data.as_ptr(),
@@ -542,7 +540,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
         merr_unwrap!(unsafe {
             esp_mbedtls_sys::mbedtls_ccm_setkey(
                 &mut ctx,
-                self.cipher_type,
+                self.cipher_id,
                 key.access().as_ptr(),
                 (KEY_LEN * 8) as u32,
             )
