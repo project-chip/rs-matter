@@ -31,12 +31,12 @@ pub async fn run_mdns<C: Crypto>(
 ) -> Result<(), Error> {
     #[cfg(feature = "astro-dnssd")]
     rs_matter::transport::network::mdns::astro::AstroMdnsResponder::new(matter)
-        .run()
+        .run(crypto, notify)
         .await?;
 
     #[cfg(all(feature = "zeroconf", not(feature = "astro-dnssd")))]
     rs_matter::transport::network::mdns::zeroconf::ZeroconfMdnsResponder::new(matter)
-        .run()
+        .run(crypto, notify)
         .await?;
 
     #[cfg(all(
@@ -44,7 +44,11 @@ pub async fn run_mdns<C: Crypto>(
         not(any(feature = "zeroconf", feature = "astro-dnssd"))
     ))]
     rs_matter::transport::network::mdns::resolve::ResolveMdnsResponder::new(matter)
-        .run(&rs_matter::utils::zbus::Connection::system().await.unwrap())
+        .run(
+            &rs_matter::utils::zbus::Connection::system().await.unwrap(),
+            crypto,
+            notify,
+        )
         .await?;
 
     #[cfg(all(
@@ -52,7 +56,11 @@ pub async fn run_mdns<C: Crypto>(
         not(any(feature = "resolve", feature = "zeroconf", feature = "astro-dnssd"))
     ))]
     rs_matter::transport::network::mdns::avahi::AvahiMdnsResponder::new(matter)
-        .run(&rs_matter::utils::zbus::Connection::system().await.unwrap())
+        .run(
+            &rs_matter::utils::zbus::Connection::system().await.unwrap(),
+            crypto,
+            notify,
+        )
         .await?;
 
     #[cfg(not(any(

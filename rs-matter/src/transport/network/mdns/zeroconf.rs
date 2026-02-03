@@ -23,6 +23,8 @@ use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 
 use zeroconf::{prelude::TEventLoop, service::TMdnsService, txt_record::TTxtRecord, ServiceType};
 
+use crate::crypto::Crypto;
+use crate::dm::ChangeNotify;
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::mdns::Service;
 use crate::{Matter, MatterMdnsService};
@@ -44,12 +46,20 @@ impl<'a> ZeroconfMdnsResponder<'a> {
     }
 
     /// Run the mDNS responder.
-    pub async fn run(&mut self) -> Result<(), Error> {
+    ///
+    /// # Arguments
+    /// - `crypto`: A crypto provider instance.
+    /// - `notify`: A change notification interface.
+    pub async fn run<C: Crypto>(
+        &mut self,
+        crypto: C,
+        notify: &dyn ChangeNotify,
+    ) -> Result<(), Error> {
         loop {
             self.matter.wait_mdns().await;
 
             let mut services = HashSet::new();
-            self.matter.mdns_services(|service| {
+            self.matter.mdns_services(&crypto, notify, |service| {
                 services.insert(service);
 
                 Ok(())
