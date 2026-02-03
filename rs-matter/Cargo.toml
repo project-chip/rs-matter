@@ -12,8 +12,7 @@ license = "Apache-2.0"
 rust-version = "1.87"
 
 [features]
-default = ["os", "rustcrypto", "log", "mbedtls"]
-#default = ["os", "mbedtls", "log"] mbedtls is broken since several months - check the root cause
+default = ["os", "rustcrypto", "log"]
 
 # Sizing
 

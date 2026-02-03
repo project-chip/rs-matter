@@ -260,6 +260,23 @@ impl super::Crypto for OpenSslCrypto<'_> {
             point,
         })
     }
+
+    fn ec_prime_modulus(&self) -> Result<Self::EcScalar<'_>, Error> {
+        let mut ctx = openssl_unwrap!(BigNumContext::new());
+        let mut prime = openssl_unwrap!(BigNum::new());
+        let mut pa = openssl_unwrap!(BigNum::new());
+        let mut pb = openssl_unwrap!(BigNum::new());
+
+        openssl_unwrap!(self
+            .ec_group
+            .group
+            .components_gfp(&mut prime, &mut pa, &mut pb, &mut ctx));
+
+        Ok(Self::EcScalar {
+            group: &self.ec_group,
+            scalar: prime,
+        })
+    }
 }
 
 /// A cryptographically secure random number generator using OpenSSL

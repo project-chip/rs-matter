@@ -85,13 +85,7 @@ impl<'a, C: Crypto> CryptoSpake2<'a, C> {
         // From the Matter Spec,
         //         w0 = w0s mod p
         //   where p is the order of the curve
-        const OPERAND: CanonEcScalarRef = CanonEcScalarRef::new(&[
-            0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-            0xff, 0xff, 0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2,
-            0xfc, 0x63, 0x25, 0x51,
-        ]);
-
-        self.w0 = Some(self.rem(w0s, OPERAND)?);
+        self.w0 = Some(self.mod_p(w0s)?);
 
         Ok(())
     }
@@ -100,26 +94,28 @@ impl<'a, C: Crypto> CryptoSpake2<'a, C> {
         // From the Matter Spec,
         //         w1 = w1s mod p
         //   where p is the order of the curve
-        const OPERAND: CanonEcScalarRef = CanonEcScalarRef::new(&[
-            0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-            0xff, 0xff, 0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2,
-            0xfc, 0x63, 0x25, 0x51,
-        ]);
-
-        self.w1 = Some(self.rem(w1s, OPERAND)?);
+        self.w1 = Some(self.mod_p(w1s)?);
 
         Ok(())
     }
 
-    fn rem(
-        &self,
-        value: CanonUint320Ref<'_>,
-        operand: CanonEcScalarRef<'_>,
-    ) -> Result<C::EcScalar<'a>, Error> {
-        let value = self.crypto.uint320(value)?;
-        let operand = self.expand(operand)?;
+    fn mod_p(&self, value: CanonUint320Ref<'_>) -> Result<C::EcScalar<'a>, Error> {
+        // TODO: Can this be made faster by pushing it into the Crypto backend itself?
 
-        let result = value.rem(&operand).unwrap();
+        let mut prime_modulus_canon = EC_SCALAR_ZEROED;
+        self.crypto
+            .ec_prime_modulus()?
+            .write_canon(&mut prime_modulus_canon);
+
+        let mut prime_modulus_uint = UINT320_ZEROED;
+        prime_modulus_uint.access_mut()[UINT320_CANON_LEN - EC_CANON_SCALAR_LEN..]
+            .copy_from_slice(prime_modulus_canon.access());
+
+        let prime_modulus = self.crypto.uint320(prime_modulus_uint.reference())?;
+        let value = self.crypto.uint320(value)?;
+
+        let result = unwrap!(value.rem(&prime_modulus), "Modulus operation failed");
+
         let mut result_uint = UINT320_ZEROED;
         result.write_canon(&mut result_uint);
 
@@ -128,14 +124,6 @@ impl<'a, C: Crypto> CryptoSpake2<'a, C> {
         );
 
         self.crypto.ec_scalar(result_scalar)
-    }
-
-    fn expand(&self, scalar: CanonEcScalarRef<'_>) -> Result<C::UInt320<'_>, Error> {
-        let mut operand_u320 = UINT320_ZEROED;
-        operand_u320.access_mut()[UINT320_CANON_LEN - EC_CANON_SCALAR_LEN..]
-            .copy_from_slice(scalar.access());
-
-        self.crypto.uint320(operand_u320.reference())
     }
 
     pub(crate) fn set_w0(&mut self, w0: CanonEcScalarRef<'_>) -> Result<(), Error> {
@@ -272,7 +260,7 @@ impl<'a, C: Crypto> ZV<'a, C> {
         y: &C::EcScalar<'a>,
     ) -> (C::EcPoint<'a>, C::EcPoint<'a>) {
         // As per the RFC, the operation here is:
-        //   Z = h*y*(X - w0*M)
+        //   Z = h*y*(X - w0*M) = h*y*X - h*y*w0*M
         //   V = h*y*L
 
         // We will follow the same sequence as in C++ SDK, under the assumption
@@ -285,6 +273,7 @@ impl<'a, C: Crypto> ZV<'a, C> {
         let Z = X.add_mul(y, &M.neg(), &y.mul(w0));
 
         // Cofactor for P256 is 1, so that is a No-Op
+        // TODO: We don't want to be SEcp256r1 specific though
 
         let V = L.mul(y);
 
@@ -303,8 +292,8 @@ impl<'a, C: Crypto> ZV<'a, C> {
         x: &C::EcScalar<'a>,
     ) -> (C::EcPoint<'a>, C::EcPoint<'a>) {
         // As per the RFC, the operation here is:
-        //   Z = h*x*(Y - w0*N)
-        //   V = h*w1*(Y - w0*N)
+        //   Z = h*x*(Y - w0*N) = h*x*Y - h*x*w0*N
+        //   V = h*w1*(Y - w0*N) = h*w1*Y - h*w1*w0*N
 
         // We will follow the same sequence as in C++ SDK, under the assumption
         // that the same sequence works for all embedded platforms. So the step
@@ -318,6 +307,7 @@ impl<'a, C: Crypto> ZV<'a, C> {
         let Z = Y.add_mul(x, &N_neg, &x.mul(w0));
 
         // Cofactor for P256 is 1, so that is a No-Op
+        // TODO: We don't want to be SEcp256r1 specific though
 
         let V = Y.add_mul(w1, &N_neg, &w1.mul(w0));
 
@@ -435,34 +425,32 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
     }
 
     pub(crate) fn start_verifier(&mut self, verifier: &VerifierData) -> Result<(), Error> {
-        self.spake2 = Some(CryptoSpake2::new(self.crypto)?);
+        let mut spake2 = CryptoSpake2::new(self.crypto)?;
         if let Some(pw) = verifier.password.as_ref().map(|pw| pw.reference()) {
             // Derive w0 and L from the password
             let mut w0w1s = CryptoSensitive::new();
             self.get_w0w1s(pw, verifier.count, &verifier.salt, &mut w0w1s);
 
-            if let Some(spake2) = &mut self.spake2 {
-                spake2.set_w0_from_w0s(CanonUint320Ref::new_from_slice(
-                    &w0w1s.access()[..UINT320_CANON_LEN],
-                ))?;
-                spake2.set_L_from_w1s(CanonUint320Ref::new_from_slice(
-                    &w0w1s.access()[UINT320_CANON_LEN..],
-                ))?;
-            }
+            let (w0s, w1s) = w0w1s
+                .reference()
+                .split::<UINT320_CANON_LEN, UINT320_CANON_LEN>();
+
+            spake2.set_w0_from_w0s(w0s)?;
+            spake2.set_L_from_w1s(w1s)?;
         } else {
             // Extract w0 and L from the verifier
-            if let Some(spake2) = &mut self.spake2 {
-                let (w0, p_l) = verifier
-                    .verifier
-                    .reference()
-                    .split::<EC_CANON_SCALAR_LEN, EC_CANON_POINT_LEN>();
+            let (w0, p_l) = verifier
+                .verifier
+                .reference()
+                .split::<EC_CANON_SCALAR_LEN, EC_CANON_POINT_LEN>();
 
-                spake2.set_w0(w0)?;
-                spake2.set_L(p_l)?;
-            }
+            spake2.set_w0(w0)?;
+            spake2.set_L(p_l)?;
         }
 
         self.mode = Spake2Mode::Verifier(Spake2VerifierState::Init);
+        self.spake2 = Some(spake2);
+
         Ok(())
     }
 

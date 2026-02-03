@@ -169,6 +169,10 @@ impl Crypto for DummyCrypto {
     fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
         unimplemented!()
     }
+
+    fn ec_prime_modulus(&self) -> Result<Self::EcScalar<'_>, Error> {
+        unimplemented!()
+    }
 }
 
 impl<const HASH_LEN: usize> super::Digest<HASH_LEN> for DummyCrypto {

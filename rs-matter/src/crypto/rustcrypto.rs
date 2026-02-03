@@ -269,6 +269,18 @@ where
     fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
         Ok(unsafe { ECPoint::generator() })
     }
+
+    fn ec_prime_modulus(&self) -> Result<Self::EcScalar<'_>, Error> {
+        // TODO: Un-hardcode for other curves
+        const NISTP256R1_MODULUS: CryptoSensitiveRef<'_, { super::EC_CANON_SCALAR_LEN }> =
+            CryptoSensitiveRef::new(&[
+                0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0xff, 0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2,
+                0xfc, 0x63, 0x25, 0x51,
+            ]);
+
+        Ok(unsafe { ECScalar::new(NISTP256R1_MODULUS) })
+    }
 }
 
 /// A digest implementation using RustCrypto

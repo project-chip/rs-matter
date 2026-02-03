@@ -684,6 +684,9 @@ pub trait Crypto {
 
     /// Get the EC Generator point.
     fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error>;
+
+    /// Get the EC prime modulus as an EC scalar.
+    fn ec_prime_modulus(&self) -> Result<Self::EcScalar<'_>, Error>;
 }
 
 impl<T> Crypto for &T
@@ -820,6 +823,10 @@ where
 
     fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
         (*self).ec_generator_point()
+    }
+
+    fn ec_prime_modulus(&self) -> Result<Self::EcScalar<'_>, Error> {
+        (*self).ec_prime_modulus()
     }
 }
 

@@ -251,6 +251,16 @@ where
 
         Ok(result)
     }
+
+    fn ec_prime_modulus(&self) -> Result<Self::EcScalar<'_>, Error> {
+        let mut result = ECScalar::new(&self.ec_group, &self.rng);
+
+        merr_unwrap!(unsafe {
+            esp_mbedtls_sys::mbedtls_mpi_copy(&mut result.mpi.raw, &self.ec_group.raw.P)
+        });
+
+        Ok(result)
+    }
 }
 
 /// SHA-256 hash implementation using MbedTLS.
@@ -761,13 +771,19 @@ where
             //esp_mbedtls_sys::mbedtls_mpi_copy(&mut result.raw.private_Z, &self.raw.private_Z)
         });
 
-        merr_unwrap!(unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_sub_mpi(
-                &mut result.raw.private_Y,
-                &self.group.raw.P,
-                &self.raw.private_Y,
-            )
-        });
+        if unsafe { esp_mbedtls_sys::mbedtls_mpi_cmp_int(&self.raw.private_Y, 0) } != 0 {
+            merr_unwrap!(unsafe {
+                esp_mbedtls_sys::mbedtls_mpi_sub_mpi(
+                    &mut result.raw.private_Y,
+                    &self.group.raw.P,
+                    &self.raw.private_Y,
+                )
+            });
+        } else {
+            merr_unwrap!(unsafe {
+                esp_mbedtls_sys::mbedtls_mpi_copy(&mut result.raw.private_Y, &self.raw.private_Y)
+            });
+        }
 
         result
     }
@@ -890,10 +906,19 @@ where
     for<'r> &'r R: CryptoRngCore,
 {
     fn mul(&self, other: &Self) -> Self {
+        // TODO: Can this be done faster?
+        // See the `ecp_modp` function which is unfortunately not a public API in `ecp.h`
+
         let mut result = ECScalar::new(self.group, self.rng);
 
+        let mut mpi = Mpi::new();
+
         merr_unwrap!(unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_mul_mpi(&mut result.mpi.raw, &self.mpi.raw, &other.mpi.raw)
+            esp_mbedtls_sys::mbedtls_mpi_mul_mpi(&mut mpi.raw, &self.mpi.raw, &other.mpi.raw)
+        });
+
+        merr_unwrap!(unsafe {
+            esp_mbedtls_sys::mbedtls_mpi_mod_mpi(&mut result.mpi.raw, &mpi.raw, &self.group.raw.P)
         });
 
         result
