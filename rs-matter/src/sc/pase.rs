@@ -24,8 +24,8 @@ use rand_core::RngCore;
 use spake2p::{Spake2P, VerifierData, VERIFIER_SALT_LEN};
 
 use crate::crypto::{
-    CanonEcPointRef, Crypto, CryptoSensitive, HmacHashRef, Kdf, AEAD_CANON_KEY_LEN,
-    EC_POINT_ZEROED, HMAC_HASH_ZEROED,
+    CanonEcPointRef, Crypto, CryptoSensitive, CryptoSensitiveRef, HmacHashRef, Kdf,
+    AEAD_CANON_KEY_LEN, EC_POINT_ZEROED, HMAC_HASH_ZEROED,
 };
 use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
@@ -478,24 +478,27 @@ struct Pake1Resp<'a> {
 
 /// The PASE PAKE handler
 pub struct Pase<'a, C: Crypto> {
-    spake2p: Spake2P<'a, C>,
+    crypto: C,
     notify: &'a dyn ChangeNotify,
+    spake2p: Spake2P,
 }
 
 impl<'a, C: Crypto> Pase<'a, C> {
     /// Create a new PASE PAKE handler
-    pub const fn new(crypto: &'a C, notify: &'a dyn ChangeNotify) -> Self {
+    pub const fn new(crypto: C, notify: &'a dyn ChangeNotify) -> Self {
         // TODO: Can any PBKDF2 calculation be pre-computed here
         Self {
-            spake2p: Spake2P::new(crypto),
+            crypto,
             notify,
+            spake2p: Spake2P::new(),
         }
     }
 
-    pub fn init(crypto: &'a C, notify: &'a dyn ChangeNotify) -> impl Init<Self> {
+    pub fn init(crypto: C, notify: &'a dyn ChangeNotify) -> impl Init<Self> {
         init!(Self {
-            spake2p <- Spake2P::init(crypto),
+            crypto,
             notify,
+            spake2p <- Spake2P::init(),
         })
     }
 
@@ -504,7 +507,7 @@ impl<'a, C: Crypto> Pase<'a, C> {
     /// # Arguments
     /// - `exchange` - The exchange
     pub async fn handle(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        let session = ReservedSession::reserve(exchange.matter(), self.spake2p.crypto).await?;
+        let session = ReservedSession::reserve(exchange.matter(), &self.crypto).await?;
 
         if !self.update_session_timeout(exchange, true).await? {
             return Ok(());
@@ -552,8 +555,7 @@ impl<'a, C: Crypto> Pase<'a, C> {
             let matter = exchange.matter();
             let mut pase = matter.pase_mgr.borrow_mut();
 
-            let ctx =
-                BasicContextInstance::new(exchange.matter(), &self.spake2p.crypto, self.notify);
+            let ctx = BasicContextInstance::new(exchange.matter(), &self.crypto, self.notify);
             if let Some(comm_window) = pase.comm_window(&ctx)? {
                 salt.copy_from_slice(&comm_window.verifier.salt);
                 count = comm_window.verifier.count;
@@ -565,18 +567,18 @@ impl<'a, C: Crypto> Pase<'a, C> {
         };
 
         if has_comm_window {
-            let mut our_random = [0; 32];
-            let mut initiator_random = [0; 32];
+            let mut our_random = CryptoSensitive::<32>::new();
+            let mut initiator_random = CryptoSensitive::<32>::new();
 
-            let resp = {
-                let a = PBKDFParamReq::from_tlv(&TLVElement::new(rx.payload()))?;
-                if a.passcode_id != 0 {
+            let (local_sessid, peer_sessid, resp) = {
+                let req = PBKDFParamReq::from_tlv(&TLVElement::new(rx.payload()))?;
+                if req.passcode_id != 0 {
                     error!("Can't yet handle passcode_id != 0");
                     Err(ErrorCode::Invalid)?;
                 }
 
-                let mut rand = self.spake2p.crypto.rand()?;
-                rand.fill_bytes(&mut our_random);
+                let mut rand = self.crypto.rand()?;
+                rand.fill_bytes(our_random.access_mut());
 
                 let local_sessid = exchange
                     .matter()
@@ -584,21 +586,18 @@ impl<'a, C: Crypto> Pase<'a, C> {
                     .session_mgr
                     .borrow_mut()
                     .get_next_sess_id();
-                let spake2p_data: u32 = ((local_sessid as u32) << 16) | a.initiator_ssid as u32;
-                self.spake2p.set_app_data(spake2p_data);
 
-                initiator_random[..a.initiator_random.0.len()]
-                    .copy_from_slice(a.initiator_random.0);
-                let initiator_random = &initiator_random[..a.initiator_random.0.len()];
+                initiator_random.load(CryptoSensitiveRef::try_new(req.initiator_random.0)?);
 
                 // Generate response
                 let mut resp = PBKDFParamResp {
-                    init_random: OctetStr::new(initiator_random),
-                    our_random: OctetStr::new(&our_random),
+                    init_random: OctetStr::new(initiator_random.access()),
+                    our_random: OctetStr::new(our_random.access()),
                     local_sessid,
                     params: None,
                 };
-                if !a.has_params {
+
+                if !req.has_params {
                     let params_resp = PBKDFParamRespParams {
                         count,
                         salt: OctetStr::new(&salt),
@@ -606,25 +605,29 @@ impl<'a, C: Crypto> Pase<'a, C> {
                     resp.params = Some(params_resp);
                 }
 
-                resp
+                (local_sessid, req.initiator_ssid, resp)
             };
 
-            self.spake2p.set_context()?;
-            self.spake2p.update_context(rx.payload())?;
+            let mut context = Some(self.spake2p.start_context(
+                &self.crypto,
+                local_sessid,
+                peer_sessid,
+                rx.payload(),
+            )?);
 
-            let mut context_set = false;
             exchange
                 .send_with(|_, wb| {
                     resp.to_tlv(&TagType::Anonymous, &mut *wb)?;
 
-                    if !context_set {
-                        self.spake2p.update_context(wb.as_slice())?;
-                        context_set = true;
+                    if let Some(context) = context.take() {
+                        self.spake2p.finish_context::<&C>(context);
                     }
 
                     Ok(Some(OpCode::PBKDFParamResponse.into()))
                 })
-                .await
+                .await?;
+
+            Ok(())
         } else {
             complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await
         }
@@ -640,18 +643,23 @@ impl<'a, C: Crypto> Pase<'a, C> {
         let root = get_root_node_struct(exchange.rx()?.payload())?;
 
         let a_pt: CanonEcPointRef<'_> = root.structure()?.ctx(1)?.str()?.try_into()?;
+
         let mut b_pt = EC_POINT_ZEROED;
         let mut cb = HMAC_HASH_ZEROED;
 
         let has_comm_window = {
             let matter = exchange.matter();
             let mut pase = matter.pase_mgr.borrow_mut();
-            let ctx =
-                BasicContextInstance::new(exchange.matter(), &self.spake2p.crypto, self.notify);
+            let ctx = BasicContextInstance::new(exchange.matter(), &self.crypto, self.notify);
 
             if let Some(comm_window) = pase.comm_window(&ctx)? {
-                self.spake2p.start_verifier(&comm_window.verifier)?;
-                self.spake2p.compute_b_pt_cb(a_pt, &mut b_pt, &mut cb)?;
+                self.spake2p.setup_verifier(
+                    &self.crypto,
+                    &comm_window.verifier,
+                    a_pt,
+                    &mut b_pt,
+                    &mut cb,
+                )?;
 
                 true
             } else {
@@ -691,49 +699,37 @@ impl<'a, C: Crypto> Pase<'a, C> {
         let root = get_root_node_struct(exchange.rx()?.payload())?;
 
         let ca: HmacHashRef<'_> = root.structure()?.ctx(1)?.str()?.try_into()?;
-        let result = self.spake2p.handle_ca(ca);
 
-        if result.is_ok() {
-            // Get the keys
-            let mut session_keys = CryptoSensitive::<{ AEAD_CANON_KEY_LEN * 3 }>::new(); // TODO: MEDIUM BUFFER
-            self.spake2p
-                .crypto
-                .kdf()?
-                .expand(
-                    &[],
-                    self.spake2p.ke(),
-                    SPAKE2_SESSION_KEYS_INFO,
-                    &mut session_keys,
-                )
-                .map_err(|_x| ErrorCode::InvalidData)?;
+        let status = match self.spake2p.verify(ca) {
+            Ok((local_sessid, peer_sessid, ke)) => {
+                // Get the keys
+                let mut session_keys = CryptoSensitive::<{ AEAD_CANON_KEY_LEN * 3 }>::new(); // TODO: MEDIUM BUFFER
+                self.crypto
+                    .kdf()?
+                    .expand(&[], ke, SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
+                    .map_err(|_x| ErrorCode::InvalidData)?;
 
-            // Create a session
-            let data = self.spake2p.get_app_data();
-            let peer_sessid: u16 = (data & 0xffff) as u16;
-            let local_sessid: u16 = ((data >> 16) & 0xffff) as u16;
-            let peer_addr = exchange.with_session(|sess| Ok(sess.get_peer_addr()))?;
+                // Create a session
+                let peer_addr = exchange.with_session(|sess| Ok(sess.get_peer_addr()))?;
 
-            let (dec_key, remaining) = session_keys
-                .reference()
-                .split::<AEAD_CANON_KEY_LEN, { AEAD_CANON_KEY_LEN * 2 }>();
-            let (enc_key, att_challenge) =
-                remaining.split::<AEAD_CANON_KEY_LEN, AEAD_CANON_KEY_LEN>();
+                let (dec_key, remaining) = session_keys
+                    .reference()
+                    .split::<AEAD_CANON_KEY_LEN, { AEAD_CANON_KEY_LEN * 2 }>();
+                let (enc_key, att_challenge) =
+                    remaining.split::<AEAD_CANON_KEY_LEN, AEAD_CANON_KEY_LEN>();
 
-            session.update(
-                0,
-                0,
-                peer_sessid,
-                local_sessid,
-                peer_addr,
-                SessionMode::Pase { fab_idx: 0 },
-                Some(dec_key),
-                Some(enc_key),
-                Some(att_challenge),
-            )?;
-        }
+                session.update(
+                    0,
+                    0,
+                    peer_sessid,
+                    local_sessid,
+                    peer_addr,
+                    SessionMode::Pase { fab_idx: 0 },
+                    Some(dec_key),
+                    Some(enc_key),
+                    Some(att_challenge),
+                )?;
 
-        let status = match result {
-            Ok(()) => {
                 // Complete the reserved session and thus make the `Session` instance
                 // immediately available for use by the system.
                 //

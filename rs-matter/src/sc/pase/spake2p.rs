@@ -23,519 +23,35 @@
 //! In the case of the verifier, we don't actually release the Ke until we
 //! validate that the cA is confirmed.
 
-use core::marker::PhantomData;
-
 use subtle::ConstantTimeEq;
 
 use crate::crypto::{
     CanonEcPoint, CanonEcPointRef, CanonEcScalarRef, CanonUint320Ref, Crypto, CryptoSensitive,
     CryptoSensitiveRef, Digest, EcPoint, EcScalar, Hash, HashRef, HmacHash, HmacHashRef, Kdf,
     PbKdf, UInt, EC_CANON_POINT_LEN, EC_CANON_SCALAR_LEN, EC_POINT_ZEROED, EC_SCALAR_ZEROED,
-    HASH_LEN, HASH_ZEROED, UINT320_CANON_LEN, UINT320_ZEROED,
+    HASH_LEN, HASH_ZEROED, HMAC_HASH_ZEROED, UINT320_CANON_LEN, UINT320_ZEROED,
 };
 use crate::error::{Error, ErrorCode};
 use crate::sc::SCStatusCodes;
 use crate::utils::init::{init, zeroed, Init};
 
-const MATTER_M_BIN: CanonEcPointRef = CanonEcPointRef::new(&[
-    0x04, 0x88, 0x6e, 0x2f, 0x97, 0xac, 0xe4, 0x6e, 0x55, 0xba, 0x9d, 0xd7, 0x24, 0x25, 0x79, 0xf2,
-    0x99, 0x3b, 0x64, 0xe1, 0x6e, 0xf3, 0xdc, 0xab, 0x95, 0xaf, 0xd4, 0x97, 0x33, 0x3d, 0x8f, 0xa1,
-    0x2f, 0x5f, 0xf3, 0x55, 0x16, 0x3e, 0x43, 0xce, 0x22, 0x4e, 0x0b, 0x0e, 0x65, 0xff, 0x02, 0xac,
-    0x8e, 0x5c, 0x7b, 0xe0, 0x94, 0x19, 0xc7, 0x85, 0xe0, 0xca, 0x54, 0x7d, 0x55, 0xa1, 0x2e, 0x2d,
-    0x20,
-]);
-
-const MATTER_N_BIN: CanonEcPointRef = CanonEcPointRef::new(&[
-    0x04, 0xd8, 0xbb, 0xd6, 0xc6, 0x39, 0xc6, 0x29, 0x37, 0xb0, 0x4d, 0x99, 0x7f, 0x38, 0xc3, 0x77,
-    0x07, 0x19, 0xc6, 0x29, 0xd7, 0x01, 0x4d, 0x49, 0xa2, 0x4b, 0x4f, 0x98, 0xba, 0xa1, 0x29, 0x2b,
-    0x49, 0x07, 0xd6, 0x0a, 0xa6, 0xbf, 0xad, 0xe4, 0x50, 0x08, 0xa6, 0x36, 0x33, 0x7f, 0x51, 0x68,
-    0xc6, 0x4d, 0x9b, 0xd3, 0x60, 0x34, 0x80, 0x8c, 0xd5, 0x64, 0x49, 0x0b, 0x1e, 0x65, 0x6e, 0xdb,
-    0xe7,
-]);
-
-pub struct CryptoSpake2<'a, C: Crypto> {
-    crypto: &'a C,
-    m_pt: C::EcPoint<'a>,
-    n_pt: C::EcPoint<'a>,
-    l_pt: Option<C::EcPoint<'a>>,
-    b_pt: Option<C::EcPoint<'a>>,
-    xy: Option<C::EcScalar<'a>>,
-    w0: Option<C::EcScalar<'a>>,
-    w1: Option<C::EcScalar<'a>>,
-}
-
-impl<'a, C: Crypto> CryptoSpake2<'a, C> {
-    pub fn new(crypto: &'a C) -> Result<Self, Error> {
-        Ok(Self {
-            crypto,
-            m_pt: crypto.ec_point(MATTER_M_BIN)?,
-            n_pt: crypto.ec_point(MATTER_N_BIN)?,
-            l_pt: None,
-            b_pt: None,
-            xy: None,
-            w0: None,
-            w1: None,
-        })
-    }
-
-    // Computes w0 from w0s respectively
-    pub fn set_w0_from_w0s(&mut self, w0s: CanonUint320Ref<'_>) -> Result<(), Error> {
-        // From the Matter Spec,
-        //         w0 = w0s mod p
-        //   where p is the order of the curve
-        self.w0 = Some(self.mod_p(w0s)?);
-
-        Ok(())
-    }
-
-    pub fn set_w1_from_w1s(&mut self, w1s: CanonUint320Ref<'_>) -> Result<(), Error> {
-        // From the Matter Spec,
-        //         w1 = w1s mod p
-        //   where p is the order of the curve
-        self.w1 = Some(self.mod_p(w1s)?);
-
-        Ok(())
-    }
-
-    fn mod_p(&self, value: CanonUint320Ref<'_>) -> Result<C::EcScalar<'a>, Error> {
-        // TODO: Can this be made faster by pushing it into the Crypto backend itself?
-
-        let mut prime_modulus_canon = EC_SCALAR_ZEROED;
-        self.crypto
-            .ec_prime_modulus()?
-            .write_canon(&mut prime_modulus_canon);
-
-        let mut prime_modulus_uint = UINT320_ZEROED;
-        prime_modulus_uint.access_mut()[UINT320_CANON_LEN - EC_CANON_SCALAR_LEN..]
-            .copy_from_slice(prime_modulus_canon.access());
-
-        let prime_modulus = self.crypto.uint320(prime_modulus_uint.reference())?;
-        let value = self.crypto.uint320(value)?;
-
-        let result = unwrap!(value.rem(&prime_modulus), "Modulus operation failed");
-
-        let mut result_uint = UINT320_ZEROED;
-        result.write_canon(&mut result_uint);
-
-        let result_scalar: CanonEcScalarRef<'_> = CanonEcScalarRef::new_from_slice(
-            &result_uint.access()[UINT320_CANON_LEN - EC_CANON_SCALAR_LEN..],
-        );
-
-        self.crypto.ec_scalar(result_scalar)
-    }
-
-    pub(crate) fn set_w0(&mut self, w0: CanonEcScalarRef<'_>) -> Result<(), Error> {
-        self.w0 = Some(self.crypto.ec_scalar(w0)?);
-        Ok(())
-    }
-
-    #[allow(unused)]
-    pub(crate) fn set_w1(&mut self, w1: CanonEcScalarRef<'_>) -> Result<(), Error> {
-        self.w1 = Some(self.crypto.ec_scalar(w1)?);
-        Ok(())
-    }
-
-    pub fn set_l_pt(&mut self, l: CanonEcPointRef<'_>) -> Result<(), Error> {
-        self.l_pt = Some(self.crypto.ec_point(l)?);
-        Ok(())
-    }
-
-    pub fn set_l_pt_from_w1s(&mut self, w1s: CanonUint320Ref<'_>) -> Result<(), Error> {
-        // From the Matter spec,
-        //        L = w1 * P
-        //    where P is the generator of the underlying elliptic curve
-        self.set_w1_from_w1s(w1s)?;
-        self.l_pt = Some(
-            self.crypto
-                .ec_generator_point()?
-                .mul(unwrap!(self.w1.as_ref())),
-        );
-        Ok(())
-    }
-
-    pub fn b_pt(&mut self, b_pt_out: &mut CanonEcPoint) -> Result<(), Error> {
-        // From the SPAKE2+ spec (https://datatracker.ietf.org/doc/draft-bar-cfrg-spake2plus/)
-        //   for y
-        //   - select random y between 0 to p
-        //   - Y = y*P + w0*N
-        //   - pB = Y
-        let xy = self.crypto.generate_ec_scalar()?;
-
-        let b_pt =
-            self.crypto
-                .ec_generator_point()?
-                .add_mul(&xy, &self.n_pt, unwrap!(self.w0.as_ref()));
-
-        b_pt.write_canon(b_pt_out);
-
-        self.xy = Some(xy);
-        self.b_pt = Some(b_pt);
-
-        Ok(())
-    }
-
-    pub fn tt_as_verifier(
-        &mut self,
-        context: HashRef<'_>,
-        a_pt: CanonEcPointRef<'_>,
-        b_pt: CanonEcPointRef<'_>,
-        out: &mut Hash,
-    ) -> Result<(), Error> {
-        let mut tt = self.crypto.hash()?;
-
-        // Context
-        Self::add_to_tt(&mut tt, context.access());
-        // 2 empty identifiers
-        Self::add_to_tt(&mut tt, &[]);
-        Self::add_to_tt(&mut tt, &[]);
-        // M
-        Self::add_to_tt(&mut tt, MATTER_M_BIN.access());
-        // N
-        Self::add_to_tt(&mut tt, MATTER_N_BIN.access());
-        // X = pA
-        Self::add_to_tt(&mut tt, a_pt.access());
-        // Y = pB
-        Self::add_to_tt(&mut tt, b_pt.access());
-
-        let a_pt = self.crypto.ec_point(a_pt)?;
-        let (z_pt, v_pt) = ZV::new(self.crypto).verifier(
-            unwrap!(self.w0.as_ref()),
-            unwrap!(self.l_pt.as_ref()),
-            &self.m_pt,
-            &a_pt,
-            unwrap!(self.xy.as_ref()),
-        );
-
-        let mut pt_out = EC_POINT_ZEROED;
-
-        // Z
-        z_pt.write_canon(&mut pt_out);
-        Self::add_to_tt(&mut tt, pt_out.access());
-        // V
-        v_pt.write_canon(&mut pt_out);
-        Self::add_to_tt(&mut tt, pt_out.access());
-
-        let mut sc_out = EC_SCALAR_ZEROED;
-
-        // w0
-        unwrap!(self.w0.as_ref()).write_canon(&mut sc_out);
-        Self::add_to_tt(&mut tt, sc_out.access());
-
-        tt.finish(out);
-
-        Ok(())
-    }
-
-    fn add_to_tt(tt: &mut C::Hash<'_>, data: &[u8]) {
-        tt.update(&(data.len() as u64).to_le_bytes());
-        if !data.is_empty() {
-            tt.update(data);
-        }
-    }
-}
-
-struct ZV<'a, C: Crypto>(PhantomData<&'a C>);
-
-impl<'a, C: Crypto> ZV<'a, C> {
-    pub const fn new(_crypto: &'a C) -> Self {
-        Self(PhantomData)
-    }
-
-    fn verifier(
-        &self,
-        w0: &C::EcScalar<'a>,
-        l_pt: &C::EcPoint<'a>,
-        m_pt: &C::EcPoint<'a>,
-        x_pt: &C::EcPoint<'a>,
-        y: &C::EcScalar<'a>,
-    ) -> (C::EcPoint<'a>, C::EcPoint<'a>) {
-        // As per the RFC, the operation here is:
-        //   Z = h*y*(X - w0*M) = h*y*X - h*y*w0*M
-        //   V = h*y*L
-
-        // We will follow the same sequence as in C++ SDK, under the assumption
-        // that the same sequence works for all embedded platforms. So the step
-        // of operations is:
-        //    tmp = y*w0
-        //    Z = y*X + tmp*M (M is inverted to get the 'negative' effect)
-        //    Z = h*Z (cofactor Mul)
-
-        let z_pt = x_pt.add_mul(y, &m_pt.neg(), &y.mul(w0));
-
-        // Cofactor for P256 is 1, so that is a No-Op
-        // TODO: We don't want to be SEcp256r1 specific though
-
-        let v_pt = l_pt.mul(y);
-
-        (z_pt, v_pt)
-    }
-
-    #[allow(unused)]
-    fn prover(
-        &self,
-        w0: &C::EcScalar<'a>,
-        w1: &C::EcScalar<'a>,
-        n_pt: &C::EcPoint<'a>,
-        y_pt: &C::EcPoint<'a>,
-        x: &C::EcScalar<'a>,
-    ) -> (C::EcPoint<'a>, C::EcPoint<'a>) {
-        // As per the RFC, the operation here is:
-        //   Z = h*x*(Y - w0*N) = h*x*Y - h*x*w0*N
-        //   V = h*w1*(Y - w0*N) = h*w1*Y - h*w1*w0*N
-
-        // We will follow the same sequence as in C++ SDK, under the assumption
-        // that the same sequence works for all embedded platforms. So the step
-        // of operations is:
-        //    tmp = x*w0
-        //    Z = x*Y + tmp*N (N is inverted to get the 'negative' effect)
-        //    Z = h*Z (cofactor Mul)
-
-        let n_pt_neg = n_pt.neg();
-
-        let z_pt = y_pt.add_mul(x, &n_pt_neg, &x.mul(w0));
-
-        // Cofactor for P256 is 1, so that is a No-Op
-        // TODO: We don't want to be SEcp256r1 specific though
-
-        let v_pt = y_pt.add_mul(w1, &n_pt_neg, &w1.mul(w0));
-
-        (z_pt, v_pt)
-    }
-}
-
 pub const SPAKE2_ITERATION_COUNT: u32 = 2000;
 
-pub(crate) const VERIFIER_PASSWORD_LEN: usize = 4;
-pub(crate) const VERIFIER_STR_LEN: usize = EC_CANON_SCALAR_LEN + EC_CANON_POINT_LEN;
-pub(crate) const VERIFIER_SALT_LEN: usize = 32;
+pub const VERIFIER_PASSWORD_LEN: usize = 4;
+pub const VERIFIER_STR_LEN: usize = EC_CANON_SCALAR_LEN + EC_CANON_POINT_LEN;
+pub const VERIFIER_SALT_LEN: usize = 32;
 
 pub type VerifierPassword = CryptoSensitive<VERIFIER_PASSWORD_LEN>;
 pub type VerifierPasswordRef<'a> = CryptoSensitiveRef<'a, VERIFIER_PASSWORD_LEN>;
 
-pub(crate) type VerifierStr = CryptoSensitive<VERIFIER_STR_LEN>;
-pub(crate) type VerifierStrRef<'a> = CryptoSensitiveRef<'a, VERIFIER_STR_LEN>;
+pub type VerifierStr = CryptoSensitive<VERIFIER_STR_LEN>;
+pub type VerifierStrRef<'a> = CryptoSensitiveRef<'a, VERIFIER_STR_LEN>;
 
-pub(crate) type VerifierSalt = [u8; VERIFIER_SALT_LEN];
-
-const SPAKE2P_KEY_CONFIRM_INFO: &[u8] = b"ConfirmationKeys";
-const SPAKE2P_CONTEXT_PREFIX: &[u8] = b"CHIP PAKE V1 Commissioning";
-
-#[derive(PartialEq, Copy, Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Spake2VerifierState {
-    // Initialised - w0, L are set
-    Init,
-    // Pending Confirmation - Keys are derived but pending confirmation
-    PendingConfirmation,
-    // Confirmed
-    Confirmed,
-}
-
-#[derive(PartialEq, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Spake2Mode {
-    Unknown,
-    #[allow(unused)]
-    Prover,
-    Verifier(Spake2VerifierState),
-}
-
-pub struct Spake2P<'a, C: Crypto> {
-    mode: Spake2Mode,
-    pub(crate) crypto: &'a C,
-    context: Option<C::Hash<'a>>,
-    spake2: Option<CryptoSpake2<'a, C>>,
-    ke: CryptoSensitive<16>,
-    ca: HmacHash,
-    app_data: u32,
-}
-
-impl<'a, C: Crypto> Spake2P<'a, C> {
-    pub const fn new(crypto: &'a C) -> Self {
-        Self {
-            mode: Spake2Mode::Unknown,
-            crypto,
-            context: None,
-            spake2: None,
-            ke: CryptoSensitive::new(),
-            ca: HmacHash::new(),
-            app_data: 0,
-        }
-    }
-
-    pub fn init(crypto: &'a C) -> impl Init<Self> {
-        init!(Self {
-            mode: Spake2Mode::Unknown,
-            crypto,
-            context: None,
-            spake2: None,
-            ke <- CryptoSensitive::init(),
-            ca <- HmacHash::init(),
-            app_data: 0,
-        })
-    }
-
-    pub fn set_app_data(&mut self, data: u32) {
-        self.app_data = data;
-    }
-
-    pub fn get_app_data(&mut self) -> u32 {
-        self.app_data
-    }
-
-    pub fn set_context(&mut self) -> Result<(), Error> {
-        let mut context = self.crypto.hash()?;
-        context.update(SPAKE2P_CONTEXT_PREFIX);
-        self.context = Some(context);
-        Ok(())
-    }
-
-    pub fn update_context(&mut self, buf: &[u8]) -> Result<(), Error> {
-        unwrap!(self.context.as_mut()).update(buf);
-
-        Ok(())
-    }
-
-    pub fn ke(&self) -> CryptoSensitiveRef<'_, 16> {
-        self.ke.reference()
-    }
-
-    fn get_w0w1s(
-        &self,
-        pw: VerifierPasswordRef<'_>,
-        iter: u32,
-        salt: &[u8],
-        w0w1s: &mut CryptoSensitive<{ UINT320_CANON_LEN * 2 }>,
-    ) {
-        unwrap!(self.crypto.pbkdf()).derive(pw, iter as usize, salt, w0w1s);
-    }
-
-    pub(crate) fn start_verifier(&mut self, verifier: &VerifierData) -> Result<(), Error> {
-        let mut spake2 = CryptoSpake2::new(self.crypto)?;
-        if let Some(pw) = verifier.password.as_ref().map(|pw| pw.reference()) {
-            // Derive w0 and L from the password
-            let mut w0w1s = CryptoSensitive::new();
-            self.get_w0w1s(pw, verifier.count, &verifier.salt, &mut w0w1s);
-
-            let (w0s, w1s) = w0w1s
-                .reference()
-                .split::<UINT320_CANON_LEN, UINT320_CANON_LEN>();
-
-            spake2.set_w0_from_w0s(w0s)?;
-            spake2.set_l_pt_from_w1s(w1s)?;
-        } else {
-            // Extract w0 and L from the verifier
-            let (w0, p_l) = verifier
-                .verifier
-                .reference()
-                .split::<EC_CANON_SCALAR_LEN, EC_CANON_POINT_LEN>();
-
-            spake2.set_w0(w0)?;
-            spake2.set_l_pt(p_l)?;
-        }
-
-        self.mode = Spake2Mode::Verifier(Spake2VerifierState::Init);
-        self.spake2 = Some(spake2);
-
-        Ok(())
-    }
-
-    pub fn compute_b_pt_cb(
-        &mut self,
-        a_pt: CanonEcPointRef<'_>,
-        b_pt_out: &mut CanonEcPoint,
-        cb_out: &mut HmacHash,
-    ) -> Result<(), Error> {
-        if self.mode != Spake2Mode::Verifier(Spake2VerifierState::Init) {
-            Err(ErrorCode::InvalidState)?;
-        }
-
-        if let Some(crypto_spake2) = &mut self.spake2 {
-            crypto_spake2.b_pt(b_pt_out)?;
-            if let Some(context) = self.context.take() {
-                let mut hash = HASH_ZEROED;
-                context.finish(&mut hash);
-
-                let mut tt_hash = HASH_ZEROED;
-                crypto_spake2.tt_as_verifier(
-                    hash.reference(),
-                    a_pt,
-                    b_pt_out.reference(),
-                    &mut tt_hash,
-                )?;
-
-                Self::compute_ke_ca_cb(
-                    self.crypto,
-                    tt_hash.reference(),
-                    a_pt,
-                    b_pt_out.reference(),
-                    &mut self.ke,
-                    &mut self.ca,
-                    cb_out,
-                )?;
-            }
-        }
-
-        // We are finished with using the crypto_spake2 now
-        self.spake2 = None;
-        self.mode = Spake2Mode::Verifier(Spake2VerifierState::PendingConfirmation);
-        Ok(())
-    }
-
-    pub fn handle_ca(&mut self, ca: HmacHashRef<'_>) -> Result<(), SCStatusCodes> {
-        if self.mode != Spake2Mode::Verifier(Spake2VerifierState::PendingConfirmation) {
-            return Err(SCStatusCodes::SessionNotFound);
-        }
-        self.mode = Spake2Mode::Verifier(Spake2VerifierState::Confirmed);
-        if ca.access().ct_eq(self.ca.access()).unwrap_u8() == 1 {
-            Ok(())
-        } else {
-            Err(SCStatusCodes::InvalidParameter)
-        }
-    }
-
-    fn compute_ke_ca_cb(
-        crypto: &C,
-        tt_hash: HashRef<'_>,
-        a_pt: CanonEcPointRef<'_>,
-        b_pt: CanonEcPointRef<'_>,
-        ke_out: &mut CryptoSensitive<16>,
-        ca_out: &mut HmacHash,
-        cb_out: &mut HmacHash,
-    ) -> Result<(), Error> {
-        // Step 1: Ka || Ke = Hash(TT)
-        let ka_ke = tt_hash;
-        let (ka, ke_internal) = ka_ke.split::<{ HASH_LEN / 2 }, { HASH_LEN / 2 }>();
-        ke_out.load(ke_internal);
-
-        // TODO: Remove the magic constants from here (e.g. 32, 16, etc.)
-
-        // Step 2: KcA || KcB = KDF(nil, Ka, "ConfirmationKeys")
-        let mut kca_kcb = CryptoSensitive::<32>::new();
-        crypto
-            .kdf()
-            .unwrap()
-            .expand(&[], ka, SPAKE2P_KEY_CONFIRM_INFO, &mut kca_kcb)
-            .map_err(|_x| ErrorCode::InvalidData)?;
-
-        let (kca, kcb) = kca_kcb.reference().split::<16, 16>();
-
-        // Step 3: cA = HMAC(KcA, pB), cB = HMAC(KcB, pA)
-        let mut mac = crypto.hmac(kca)?;
-        mac.update(b_pt.access());
-        mac.finish(ca_out);
-
-        let mut mac = crypto.hmac(kcb)?;
-        mac.update(a_pt.access());
-        mac.finish(cb_out);
-
-        Ok(())
-    }
-}
+pub type VerifierSalt = [u8; VERIFIER_SALT_LEN];
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub(crate) struct VerifierData {
+pub struct VerifierData {
     /// When `password` is `None`, `verifier` is expected to be set
     pub password: Option<VerifierPassword>,
     pub verifier: VerifierStr,
@@ -598,6 +114,376 @@ impl VerifierData {
     }
 }
 
+pub struct Spake2P {
+    local_sessid: u16,
+    peer_sessid: u16,
+    context_hash: Hash,
+    ke: CryptoSensitive<16>,
+    ca: HmacHash,
+}
+
+impl Spake2P {
+    pub const SPAKE2P_KEY_CONFIRM_INFO: &[u8] = b"ConfirmationKeys";
+
+    const SPAKE2P_CONTEXT_PREFIX: &[u8] = b"CHIP PAKE V1 Commissioning";
+
+    const MATTER_M_BIN: CanonEcPointRef<'static> = CanonEcPointRef::new(&[
+        0x04, 0x88, 0x6e, 0x2f, 0x97, 0xac, 0xe4, 0x6e, 0x55, 0xba, 0x9d, 0xd7, 0x24, 0x25, 0x79,
+        0xf2, 0x99, 0x3b, 0x64, 0xe1, 0x6e, 0xf3, 0xdc, 0xab, 0x95, 0xaf, 0xd4, 0x97, 0x33, 0x3d,
+        0x8f, 0xa1, 0x2f, 0x5f, 0xf3, 0x55, 0x16, 0x3e, 0x43, 0xce, 0x22, 0x4e, 0x0b, 0x0e, 0x65,
+        0xff, 0x02, 0xac, 0x8e, 0x5c, 0x7b, 0xe0, 0x94, 0x19, 0xc7, 0x85, 0xe0, 0xca, 0x54, 0x7d,
+        0x55, 0xa1, 0x2e, 0x2d, 0x20,
+    ]);
+
+    const MATTER_N_BIN: CanonEcPointRef<'static> = CanonEcPointRef::new(&[
+        0x04, 0xd8, 0xbb, 0xd6, 0xc6, 0x39, 0xc6, 0x29, 0x37, 0xb0, 0x4d, 0x99, 0x7f, 0x38, 0xc3,
+        0x77, 0x07, 0x19, 0xc6, 0x29, 0xd7, 0x01, 0x4d, 0x49, 0xa2, 0x4b, 0x4f, 0x98, 0xba, 0xa1,
+        0x29, 0x2b, 0x49, 0x07, 0xd6, 0x0a, 0xa6, 0xbf, 0xad, 0xe4, 0x50, 0x08, 0xa6, 0x36, 0x33,
+        0x7f, 0x51, 0x68, 0xc6, 0x4d, 0x9b, 0xd3, 0x60, 0x34, 0x80, 0x8c, 0xd5, 0x64, 0x49, 0x0b,
+        0x1e, 0x65, 0x6e, 0xdb, 0xe7,
+    ]);
+
+    pub const fn new() -> Self {
+        Self {
+            local_sessid: 0,
+            peer_sessid: 0,
+            context_hash: HASH_ZEROED,
+            ke: CryptoSensitive::new(),
+            ca: HMAC_HASH_ZEROED,
+        }
+    }
+
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            local_sessid: 0,
+            peer_sessid: 0,
+            context_hash <- Hash::init(),
+            ke <- CryptoSensitive::init(),
+            ca <- HmacHash::init(),
+        })
+    }
+
+    pub fn start_context<'a, C: Crypto>(
+        &mut self,
+        crypto: &'a C,
+        local_sessid: u16,
+        peer_sessid: u16,
+        request: &[u8],
+    ) -> Result<C::Hash<'a>, Error> {
+        self.local_sessid = local_sessid;
+        self.peer_sessid = peer_sessid;
+
+        let mut context = crypto.hash()?;
+        context.update(Self::SPAKE2P_CONTEXT_PREFIX);
+        context.update(request);
+
+        Ok(context)
+    }
+
+    pub fn finish_context<'a, C: Crypto>(&mut self, context: C::Hash<'a>) {
+        context.finish(&mut self.context_hash);
+    }
+
+    pub fn setup_verifier<C: Crypto>(
+        &mut self,
+        crypto: C,
+        verifier: &VerifierData,
+        a_pt: CanonEcPointRef<'_>,
+        b_pt_out: &mut CanonEcPoint,
+        cb_out: &mut HmacHash,
+    ) -> Result<(), Error> {
+        let (w0, l_pt) = if let Some(pw) = verifier.password.as_ref().map(|pw| pw.reference()) {
+            // Derive w0 and L from the password
+            let mut w0s_w1s = CryptoSensitive::new();
+            Self::compute_w0s_w1s(&crypto, pw, verifier.count, &verifier.salt, &mut w0s_w1s);
+
+            let (w0s, w1s) = w0s_w1s
+                .reference()
+                .split::<UINT320_CANON_LEN, UINT320_CANON_LEN>();
+
+            let w0 = Self::mod_p(&crypto, w0s)?;
+            let w1 = Self::mod_p(&crypto, w1s)?;
+            let l_pt = crypto.ec_generator_point()?.mul(&w1);
+
+            (w0, l_pt)
+        } else {
+            // Extract w0 and L from the verifier
+            let (w0, l_pt) = verifier
+                .verifier
+                .reference()
+                .split::<EC_CANON_SCALAR_LEN, EC_CANON_POINT_LEN>();
+
+            (crypto.ec_scalar(w0)?, crypto.ec_point(l_pt)?)
+        };
+
+        let n_pt = crypto.ec_point(Self::MATTER_N_BIN)?;
+        let (b_pt, xy) = Self::compute_b_pt_xy(&crypto, &n_pt, &w0)?;
+
+        b_pt.write_canon(b_pt_out);
+
+        let mut tt_hash = HASH_ZEROED;
+        Self::compute_verifier_tt_hash(
+            &crypto,
+            self.context_hash.reference(),
+            &w0,
+            &l_pt,
+            &crypto.ec_point(Self::MATTER_M_BIN)?,
+            a_pt,
+            b_pt_out.reference(),
+            &xy,
+            &mut tt_hash,
+        )?;
+
+        Self::compute_ke_ca_cb(
+            &crypto,
+            tt_hash.reference(),
+            a_pt,
+            b_pt,
+            &mut self.ke,
+            &mut self.ca,
+            cb_out,
+        )?;
+
+        Ok(())
+    }
+
+    pub fn verify(
+        &mut self,
+        ca: HmacHashRef<'_>,
+    ) -> Result<(u16, u16, CryptoSensitiveRef<'_, 16>), SCStatusCodes> {
+        // if self.mode != Spake2Mode::Verifier(Spake2VerifierState::PendingConfirmation) {
+        //     return Err(SCStatusCodes::SessionNotFound);
+        // }
+        // self.mode = Spake2Mode::Verifier(Spake2VerifierState::Confirmed);
+        if ca.access().ct_eq(self.ca.access()).unwrap_u8() == 1 {
+            Ok((self.local_sessid, self.peer_sessid, self.ke.reference()))
+        } else {
+            Err(SCStatusCodes::InvalidParameter)
+        }
+    }
+
+    fn compute_b_pt_xy<'a, C: Crypto>(
+        crypto: &'a C,
+        n_pt: &C::EcPoint<'a>,
+        w0: &C::EcScalar<'a>,
+    ) -> Result<(C::EcPoint<'a>, C::EcScalar<'a>), Error> {
+        // From the SPAKE2+ spec (https://datatracker.ietf.org/doc/draft-bar-cfrg-spake2plus/)
+        //   for y
+        //   - select random y between 0 to p
+        //   - Y = y*P + w0*N
+        //   - pB = Y
+        let xy = crypto.generate_ec_scalar()?;
+        let b_pt = crypto.ec_generator_point()?.add_mul(&xy, n_pt, w0);
+
+        Ok((b_pt, xy))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compute_verifier_tt_hash<'a, C: Crypto>(
+        crypto: &'a C,
+        context: HashRef<'_>,
+        w0: &C::EcScalar<'a>,
+        l_pt: &C::EcPoint<'a>,
+        m_pt: &C::EcPoint<'a>,
+        a_pt_canon: CanonEcPointRef<'_>,
+        b_pt_canon: CanonEcPointRef<'_>,
+        xy: &C::EcScalar<'a>,
+        tt_hash_out: &mut Hash,
+    ) -> Result<(), Error> {
+        let mut tt = crypto.hash()?;
+
+        let mut add_to_tt = |data: &[u8]| {
+            tt.update(&(data.len() as u64).to_le_bytes());
+            if !data.is_empty() {
+                tt.update(data);
+            }
+        };
+
+        let mut pt_out = EC_POINT_ZEROED;
+        let mut sc_out = EC_SCALAR_ZEROED;
+
+        // Context
+        add_to_tt(context.access());
+
+        // 2 empty identifiers
+        add_to_tt(&[]);
+        add_to_tt(&[]);
+
+        // M
+        add_to_tt(Self::MATTER_M_BIN.access());
+
+        // N
+        add_to_tt(Self::MATTER_N_BIN.access());
+
+        // X = pA
+        add_to_tt(a_pt_canon.access());
+
+        // Y = pB
+        add_to_tt(b_pt_canon.access());
+
+        let a_pt = crypto.ec_point(a_pt_canon)?;
+        let (z_pt, v_pt) = Self::compute_zv_verifier(crypto, w0, l_pt, m_pt, &a_pt, xy);
+
+        // Z
+        z_pt.write_canon(&mut pt_out);
+        add_to_tt(pt_out.access());
+
+        // V
+        v_pt.write_canon(&mut pt_out);
+        add_to_tt(pt_out.access());
+
+        // w0
+        w0.write_canon(&mut sc_out);
+        add_to_tt(sc_out.access());
+
+        tt.finish(tt_hash_out);
+
+        Ok(())
+    }
+
+    fn compute_ke_ca_cb<'a, C: Crypto>(
+        crypto: &'a C,
+        tt_hash: HashRef<'_>,
+        a_pt_canon: CanonEcPointRef<'_>,
+        b_pt: C::EcPoint<'a>,
+        ke_out: &mut CryptoSensitive<16>,
+        ca_out: &mut HmacHash,
+        cb_out: &mut HmacHash,
+    ) -> Result<(), Error> {
+        // Step 1: Ka || Ke = Hash(TT)
+        let ka_ke = tt_hash;
+        let (ka, ke_internal) = ka_ke.split::<{ HASH_LEN / 2 }, { HASH_LEN / 2 }>();
+        ke_out.load(ke_internal);
+
+        // TODO: Remove the magic constants from here (e.g. 32, 16, etc.)
+
+        // Step 2: KcA || KcB = KDF(nil, Ka, "ConfirmationKeys")
+        let mut kca_kcb = CryptoSensitive::<32>::new();
+        crypto
+            .kdf()
+            .unwrap()
+            .expand(&[], ka, Self::SPAKE2P_KEY_CONFIRM_INFO, &mut kca_kcb)
+            .map_err(|_x| ErrorCode::InvalidData)?;
+
+        let (kca, kcb) = kca_kcb.reference().split::<16, 16>();
+
+        let mut pt_out = EC_POINT_ZEROED;
+
+        // Step 3: cA = HMAC(KcA, pB), cB = HMAC(KcB, pA)
+        let mut mac = crypto.hmac(kca)?;
+        b_pt.write_canon(&mut pt_out);
+        mac.update(pt_out.access());
+        mac.finish(ca_out);
+
+        let mut mac = crypto.hmac(kcb)?;
+        mac.update(a_pt_canon.access());
+        mac.finish(cb_out);
+
+        Ok(())
+    }
+
+    fn compute_zv_verifier<'a, C: Crypto>(
+        _crypto: &'a C,
+        w0: &C::EcScalar<'a>,
+        l_pt: &C::EcPoint<'a>,
+        m_pt: &C::EcPoint<'a>,
+        x_pt: &C::EcPoint<'a>,
+        y: &C::EcScalar<'a>,
+    ) -> (C::EcPoint<'a>, C::EcPoint<'a>) {
+        // As per the RFC, the operation here is:
+        //   Z = h*y*(X - w0*M) = h*y*X - h*y*w0*M
+        //   V = h*y*L
+
+        // We will follow the same sequence as in C++ SDK, under the assumption
+        // that the same sequence works for all embedded platforms. So the step
+        // of operations is:
+        //    tmp = y*w0
+        //    Z = y*X + tmp*M (M is inverted to get the 'negative' effect)
+        //    Z = h*Z (cofactor Mul)
+
+        let z_pt = x_pt.add_mul(y, &m_pt.neg(), &y.mul(w0));
+
+        // Cofactor for P256 is 1, so that is a No-Op
+        // TODO: We don't want to be SEcp256r1 specific though
+
+        let v_pt = l_pt.mul(y);
+
+        (z_pt, v_pt)
+    }
+
+    #[allow(unused)]
+    fn compute_zv_prover<'a, C: Crypto>(
+        _crypto: &'a C,
+        w0: &C::EcScalar<'a>,
+        w1: &C::EcScalar<'a>,
+        n_pt: &C::EcPoint<'a>,
+        y_pt: &C::EcPoint<'a>,
+        x: &C::EcScalar<'a>,
+    ) -> (C::EcPoint<'a>, C::EcPoint<'a>) {
+        // As per the RFC, the operation here is:
+        //   Z = h*x*(Y - w0*N) = h*x*Y - h*x*w0*N
+        //   V = h*w1*(Y - w0*N) = h*w1*Y - h*w1*w0*N
+
+        // We will follow the same sequence as in C++ SDK, under the assumption
+        // that the same sequence works for all embedded platforms. So the step
+        // of operations is:
+        //    tmp = x*w0
+        //    Z = x*Y + tmp*N (N is inverted to get the 'negative' effect)
+        //    Z = h*Z (cofactor Mul)
+
+        let n_pt_neg = n_pt.neg();
+
+        let z_pt = y_pt.add_mul(x, &n_pt_neg, &x.mul(w0));
+
+        // Cofactor for P256 is 1, so that is a No-Op
+        // TODO: We don't want to be SEcp256r1 specific though
+
+        let v_pt = y_pt.add_mul(w1, &n_pt_neg, &w1.mul(w0));
+
+        (z_pt, v_pt)
+    }
+
+    fn compute_w0s_w1s<C: Crypto>(
+        crypto: C,
+        pw: VerifierPasswordRef<'_>,
+        iter: u32,
+        salt: &[u8],
+        w0w1s: &mut CryptoSensitive<{ UINT320_CANON_LEN * 2 }>,
+    ) {
+        unwrap!(crypto.pbkdf()).derive(pw, iter as usize, salt, w0w1s);
+    }
+
+    fn mod_p<'a, C: Crypto>(
+        crypto: &'a C,
+        value: CanonUint320Ref<'_>,
+    ) -> Result<C::EcScalar<'a>, Error> {
+        // TODO: Can this be made faster by pushing it into the Crypto backend itself?
+
+        let mut prime_modulus_canon = EC_SCALAR_ZEROED;
+        crypto
+            .ec_prime_modulus()?
+            .write_canon(&mut prime_modulus_canon);
+
+        let mut prime_modulus_uint = UINT320_ZEROED;
+        prime_modulus_uint.access_mut()[UINT320_CANON_LEN - EC_CANON_SCALAR_LEN..]
+            .copy_from_slice(prime_modulus_canon.access());
+
+        let prime_modulus = crypto.uint320(prime_modulus_uint.reference())?;
+        let value = crypto.uint320(value)?;
+
+        let result = unwrap!(value.rem(&prime_modulus), "Modulus operation failed");
+
+        let mut result_uint = UINT320_ZEROED;
+        result.write_canon(&mut result_uint);
+
+        let result_scalar: CanonEcScalarRef<'_> = CanonEcScalarRef::new_from_slice(
+            &result_uint.access()[UINT320_CANON_LEN - EC_CANON_SCALAR_LEN..],
+        );
+
+        crypto.ec_scalar(result_scalar)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::crypto::{test_only_crypto, Crypto, Digest, HmacHashRef, HASH_ZEROED};
@@ -609,7 +495,7 @@ mod tests {
         for t in RFC_T {
             let crypto = test_only_crypto();
 
-            let m_pt = unwrap!(crypto.ec_point(MATTER_M_BIN));
+            let m_pt = unwrap!(crypto.ec_point(Spake2P::MATTER_M_BIN));
             let x = unwrap!(crypto.ec_scalar(t.x));
             let w0 = unwrap!(crypto.ec_scalar(t.w0));
             let gen_pt = unwrap!(crypto.ec_generator_point());
@@ -628,7 +514,7 @@ mod tests {
         for t in RFC_T {
             let crypto = test_only_crypto();
 
-            let n_pt = unwrap!(crypto.ec_point(MATTER_N_BIN));
+            let n_pt = unwrap!(crypto.ec_point(Spake2P::MATTER_N_BIN));
             let y = unwrap!(crypto.ec_scalar(t.y));
             let w0 = unwrap!(crypto.ec_scalar(t.w0));
             let gen_pt = unwrap!(crypto.ec_generator_point());
@@ -647,13 +533,13 @@ mod tests {
         for t in RFC_T {
             let crypto = test_only_crypto();
 
-            let n_pt = unwrap!(crypto.ec_point(MATTER_N_BIN));
+            let n_pt = unwrap!(crypto.ec_point(Spake2P::MATTER_N_BIN));
             let x = unwrap!(crypto.ec_scalar(t.x));
             let y_pt = unwrap!(crypto.ec_point(t.y_pt));
             let w0 = unwrap!(crypto.ec_scalar(t.w0));
             let w1 = unwrap!(crypto.ec_scalar(t.w1));
 
-            let (z_pt, v_pt) = ZV::new(&crypto).prover(&w0, &w1, &n_pt, &y_pt, &x);
+            let (z_pt, v_pt) = Spake2P::compute_zv_prover(&crypto, &w0, &w1, &n_pt, &y_pt, &x);
 
             let mut point = EC_POINT_ZEROED;
 
@@ -670,13 +556,13 @@ mod tests {
         for t in RFC_T {
             let crypto = test_only_crypto();
 
-            let m_pt = unwrap!(crypto.ec_point(MATTER_M_BIN));
+            let m_pt = unwrap!(crypto.ec_point(Spake2P::MATTER_M_BIN));
             let x = unwrap!(crypto.ec_point(t.x_pt));
             let y = unwrap!(crypto.ec_scalar(t.y));
             let w0 = unwrap!(crypto.ec_scalar(t.w0));
             let l_pt = unwrap!(crypto.ec_point(t.l_pt));
 
-            let (z_pt, v_pt) = ZV::new(&crypto).verifier(&w0, &l_pt, &m_pt, &x, &y);
+            let (z_pt, v_pt) = Spake2P::compute_zv_verifier(&crypto, &w0, &l_pt, &m_pt, &x, &y);
 
             let mut point = EC_POINT_ZEROED;
 
@@ -696,16 +582,17 @@ mod tests {
             0x36, 0x00,
         ];
 
-        let mut w0w1s = CryptoSensitive::new();
-        Spake2P::new(&test_only_crypto()).get_w0w1s(
+        let mut w0s_w1s = CryptoSensitive::new();
+        Spake2P::compute_w0s_w1s(
+            test_only_crypto(),
             (&123456_u32.to_le_bytes()).into(),
             2000,
             SALT,
-            &mut w0w1s,
+            &mut w0s_w1s,
         );
 
         assert_eq!(
-            w0w1s.access(),
+            w0s_w1s.access(),
             &[
                 0xc7, 0x89, 0x33, 0x9c, 0xc5, 0xeb, 0xbc, 0xf6, 0xdf, 0x04, 0xa9, 0x11, 0x11, 0x06,
                 0x4c, 0x15, 0xac, 0x5a, 0xea, 0x67, 0x69, 0x9f, 0x32, 0x62, 0xcf, 0xc6, 0xe9, 0x19,
@@ -735,7 +622,7 @@ mod tests {
                 &crypto,
                 tt_hash.reference(),
                 t.x_pt,
-                t.y_pt,
+                crypto.ec_point(t.y_pt).unwrap(),
                 &mut ke,
                 &mut ca,
                 &mut cb,
