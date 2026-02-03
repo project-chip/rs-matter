@@ -1,5 +1,5 @@
 ---
-name: ChipToolIntegrationTests
+name: ChipTool Integration Tests
 
 on:
   push:
