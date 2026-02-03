@@ -640,9 +640,9 @@ impl<'a, C: Crypto> Pase<'a, C> {
     async fn handle_pasepake1(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
         check_opcode(exchange, OpCode::PASEPake1)?;
 
-        let root = get_root_node_struct(exchange.rx()?.payload())?;
+        let req = get_root_node_struct(exchange.rx()?.payload())?;
 
-        let a_pt: CanonEcPointRef<'_> = root.structure()?.ctx(1)?.str()?.try_into()?;
+        let a_pt: CanonEcPointRef<'_> = req.structure()?.ctx(1)?.str()?.try_into()?;
 
         let mut b_pt = EC_POINT_ZEROED;
         let mut cb = HMAC_HASH_ZEROED;
@@ -696,9 +696,9 @@ impl<'a, C: Crypto> Pase<'a, C> {
     ) -> Result<(), Error> {
         check_opcode(exchange, OpCode::PASEPake3)?;
 
-        let root = get_root_node_struct(exchange.rx()?.payload())?;
+        let req = get_root_node_struct(exchange.rx()?.payload())?;
 
-        let ca: HmacHashRef<'_> = root.structure()?.ctx(1)?.str()?.try_into()?;
+        let ca: HmacHashRef<'_> = req.structure()?.ctx(1)?.str()?.try_into()?;
 
         let status = match self.spake2p.verify(ca) {
             Ok((local_sessid, peer_sessid, ke)) => {
