@@ -252,6 +252,9 @@ impl ITests {
             cmd.arg("--quiet");
         }
 
+        // Add `--` to disambiguate checkout between branch and file
+        cmd.arg("--");
+
         self.run_command(&mut cmd)?;
 
         // Detect host platform for selective submodule initialization
