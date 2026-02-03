@@ -131,7 +131,10 @@ impl Crypto for DummyCrypto {
         unimplemented!()
     }
 
-    fn pub_key(&self, _key: super::CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, Error> {
+    fn pub_key(
+        &self,
+        _key: crate::crypto::CanonPkcPublicKeyRef<'_>,
+    ) -> Result<Self::PublicKey<'_>, Error> {
         unimplemented!()
     }
 
@@ -141,7 +144,7 @@ impl Crypto for DummyCrypto {
 
     fn secret_key(
         &self,
-        _key: super::CanonPkcSecretKeyRef<'_>,
+        _key: crate::crypto::CanonPkcSecretKeyRef<'_>,
     ) -> Result<Self::SecretKey<'_>, Error> {
         unimplemented!()
     }
@@ -150,11 +153,17 @@ impl Crypto for DummyCrypto {
         unimplemented!()
     }
 
-    fn uint320(&self, _uint: super::CanonUint320Ref<'_>) -> Result<Self::UInt320<'_>, Error> {
+    fn uint320(
+        &self,
+        _uint: crate::crypto::CanonUint320Ref<'_>,
+    ) -> Result<Self::UInt320<'_>, Error> {
         unimplemented!()
     }
 
-    fn ec_scalar(&self, _scalar: super::CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error> {
+    fn ec_scalar(
+        &self,
+        _scalar: crate::crypto::CanonEcScalarRef<'_>,
+    ) -> Result<Self::EcScalar<'_>, Error> {
         unimplemented!()
     }
 
@@ -162,7 +171,10 @@ impl Crypto for DummyCrypto {
         unimplemented!()
     }
 
-    fn ec_point(&self, _point: super::CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, Error> {
+    fn ec_point(
+        &self,
+        _point: crate::crypto::CanonEcPointRef<'_>,
+    ) -> Result<Self::EcPoint<'_>, Error> {
         unimplemented!()
     }
 
@@ -175,7 +187,7 @@ impl Crypto for DummyCrypto {
     }
 }
 
-impl<const HASH_LEN: usize> super::Digest<HASH_LEN> for DummyCrypto {
+impl<const HASH_LEN: usize> crate::crypto::Digest<HASH_LEN> for DummyCrypto {
     fn update(&mut self, _data: &[u8]) {
         unimplemented!()
     }
@@ -185,7 +197,7 @@ impl<const HASH_LEN: usize> super::Digest<HASH_LEN> for DummyCrypto {
     }
 }
 
-impl super::Kdf for DummyCrypto {
+impl crate::crypto::Kdf for DummyCrypto {
     fn expand<const IKM_LEN: usize, const KEY_LEN: usize>(
         self,
         _salt: &[u8],
@@ -197,7 +209,7 @@ impl super::Kdf for DummyCrypto {
     }
 }
 
-impl super::PbKdf for DummyCrypto {
+impl crate::crypto::PbKdf for DummyCrypto {
     fn derive<const PASS_LEN: usize, const KEY_LEN: usize>(
         self,
         _password: CryptoSensitiveRef<'_, PASS_LEN>,
@@ -209,7 +221,9 @@ impl super::PbKdf for DummyCrypto {
     }
 }
 
-impl<const KEY_LEN: usize, const NONCE_LEN: usize> super::Aead<KEY_LEN, NONCE_LEN> for DummyCrypto {
+impl<const KEY_LEN: usize, const NONCE_LEN: usize> crate::crypto::Aead<KEY_LEN, NONCE_LEN>
+    for DummyCrypto
+{
     fn encrypt_in_place<'a>(
         &mut self,
         _key: CryptoSensitiveRef<'_, KEY_LEN>,
@@ -232,8 +246,8 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize> super::Aead<KEY_LEN, NONCE_LE
     }
 }
 
-impl<const KEY_LEN: usize, const SIGNATURE_LEN: usize> super::PublicKey<'_, KEY_LEN, SIGNATURE_LEN>
-    for DummyCrypto
+impl<const KEY_LEN: usize, const SIGNATURE_LEN: usize>
+    crate::crypto::PublicKey<'_, KEY_LEN, SIGNATURE_LEN> for DummyCrypto
 {
     fn verify(&self, _msg: &[u8], _signature: CryptoSensitiveRef<SIGNATURE_LEN>) -> bool {
         unimplemented!()
@@ -245,7 +259,7 @@ impl<const KEY_LEN: usize, const SIGNATURE_LEN: usize> super::PublicKey<'_, KEY_
 }
 
 impl<const PUB_KEY_LEN: usize, const SIGNATURE_LEN: usize>
-    super::SigningSecretKey<'_, PUB_KEY_LEN, SIGNATURE_LEN> for DummyCrypto
+    crate::crypto::SigningSecretKey<'_, PUB_KEY_LEN, SIGNATURE_LEN> for DummyCrypto
 {
     type PublicKey<'s>
         = DummyCrypto
@@ -270,7 +284,8 @@ impl<
         const PUB_KEY_LEN: usize,
         const SIGNATURE_LEN: usize,
         const SHARED_SECRET_LEN: usize,
-    > super::SecretKey<'_, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN> for DummyCrypto
+    > crate::crypto::SecretKey<'_, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
+    for DummyCrypto
 {
     fn derive_shared_secret(
         &self,
@@ -285,7 +300,7 @@ impl<
     }
 }
 
-impl<const LEN: usize> super::UInt<'_, LEN> for DummyCrypto {
+impl<const LEN: usize> crate::crypto::UInt<'_, LEN> for DummyCrypto {
     fn rem(&self, _other: &Self) -> Option<Self> {
         unimplemented!()
     }
@@ -295,7 +310,7 @@ impl<const LEN: usize> super::UInt<'_, LEN> for DummyCrypto {
     }
 }
 
-impl<const LEN: usize> super::EcScalar<'_, LEN> for DummyCrypto {
+impl<const LEN: usize> crate::crypto::EcScalar<'_, LEN> for DummyCrypto {
     fn mul(&self, _other: &Self) -> Self {
         unimplemented!()
     }
@@ -305,7 +320,7 @@ impl<const LEN: usize> super::EcScalar<'_, LEN> for DummyCrypto {
     }
 }
 
-impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::EcPoint<'a, LEN, SCALAR_LEN>
+impl<'a, const LEN: usize, const SCALAR_LEN: usize> crate::crypto::EcPoint<'a, LEN, SCALAR_LEN>
     for DummyCrypto
 {
     type Scalar<'s> = DummyCrypto;

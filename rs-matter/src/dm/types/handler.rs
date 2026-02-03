@@ -17,7 +17,7 @@
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
-use crate::crypto::dummy::DummyCrypto;
+use crate::crypto::backend::dummy::DummyCrypto;
 use crate::crypto::Crypto;
 use crate::dm::IMBuffer;
 use crate::error::{Error, ErrorCode};

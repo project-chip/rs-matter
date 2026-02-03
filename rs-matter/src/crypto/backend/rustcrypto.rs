@@ -116,12 +116,12 @@ where
         Self: 'a;
 
     type Hash<'a>
-        = Digest<{ super::HASH_LEN }, sha2::Sha256>
+        = Digest<{ crate::crypto::HASH_LEN }, sha2::Sha256>
     where
         Self: 'a;
 
     type Hmac<'a>
-        = Digest<{ super::HMAC_HASH_LEN }, hmac::Hmac<sha2::Sha256>>
+        = Digest<{ crate::crypto::HMAC_HASH_LEN }, hmac::Hmac<sha2::Sha256>>
     where
         Self: 'a;
 
@@ -137,9 +137,9 @@ where
 
     type Aead<'a>
         = AeadCcm<
-        { super::AEAD_CANON_KEY_LEN },
-        { super::AEAD_NONCE_LEN },
-        { super::AEAD_TAG_LEN },
+        { crate::crypto::AEAD_CANON_KEY_LEN },
+        { crate::crypto::AEAD_NONCE_LEN },
+        { crate::crypto::AEAD_TAG_LEN },
         aes::Aes128,
         ccm::consts::U16,
         ccm::consts::U13,
@@ -149,8 +149,8 @@ where
 
     type PublicKey<'a>
         = ECPublicKey<
-        { super::PKC_CANON_PUBLIC_KEY_LEN },
-        { super::PKC_SIGNATURE_LEN },
+        { crate::crypto::PKC_CANON_PUBLIC_KEY_LEN },
+        { crate::crypto::PKC_SIGNATURE_LEN },
         p256::NistP256,
     >
     where
@@ -158,10 +158,10 @@ where
 
     type SigningSecretKey<'a>
         = ECSecretKey<
-        { super::PKC_CANON_SECRET_KEY_LEN },
-        { super::PKC_CANON_PUBLIC_KEY_LEN },
-        { super::PKC_SIGNATURE_LEN },
-        { super::PKC_SHARED_SECRET_LEN },
+        { crate::crypto::PKC_CANON_SECRET_KEY_LEN },
+        { crate::crypto::PKC_CANON_PUBLIC_KEY_LEN },
+        { crate::crypto::PKC_SIGNATURE_LEN },
+        { crate::crypto::PKC_SHARED_SECRET_LEN },
         p256::NistP256,
     >
     where
@@ -169,27 +169,31 @@ where
 
     type SecretKey<'a>
         = ECSecretKey<
-        { super::PKC_CANON_SECRET_KEY_LEN },
-        { super::PKC_CANON_PUBLIC_KEY_LEN },
-        { super::PKC_SIGNATURE_LEN },
-        { super::PKC_SHARED_SECRET_LEN },
+        { crate::crypto::PKC_CANON_SECRET_KEY_LEN },
+        { crate::crypto::PKC_CANON_PUBLIC_KEY_LEN },
+        { crate::crypto::PKC_SIGNATURE_LEN },
+        { crate::crypto::PKC_SHARED_SECRET_LEN },
         p256::NistP256,
     >
     where
         Self: 'a;
 
     type UInt320<'a>
-        = Uint<{ super::UINT320_CANON_LEN }, { nlimbs!(320) }>
+        = Uint<{ crate::crypto::UINT320_CANON_LEN }, { nlimbs!(320) }>
     where
         Self: 'a;
 
     type EcScalar<'a>
-        = ECScalar<{ super::EC_CANON_SCALAR_LEN }, p256::NistP256>
+        = ECScalar<{ crate::crypto::EC_CANON_SCALAR_LEN }, p256::NistP256>
     where
         Self: 'a;
 
     type EcPoint<'a>
-        = ECPoint<{ super::EC_CANON_POINT_LEN }, { super::EC_CANON_SCALAR_LEN }, p256::NistP256>
+        = ECPoint<
+        { crate::crypto::EC_CANON_POINT_LEN },
+        { crate::crypto::EC_CANON_SCALAR_LEN },
+        p256::NistP256,
+    >
     where
         Self: 'a;
 
@@ -272,7 +276,7 @@ where
 
     fn ec_prime_modulus(&self) -> Result<Self::EcScalar<'_>, Error> {
         // TODO: Un-hardcode for other curves
-        const NISTP256R1_MODULUS: CryptoSensitiveRef<'_, { super::EC_CANON_SCALAR_LEN }> =
+        const NISTP256R1_MODULUS: CryptoSensitiveRef<'_, { crate::crypto::EC_CANON_SCALAR_LEN }> =
             CryptoSensitiveRef::new(&[
                 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
                 0xff, 0xff, 0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2,
@@ -301,7 +305,7 @@ impl<const HASH_LEN: usize, T> Digest<HASH_LEN, T> {
     }
 }
 
-impl<const HASH_LEN: usize, T> super::Digest<HASH_LEN> for Digest<HASH_LEN, T>
+impl<const HASH_LEN: usize, T> crate::crypto::Digest<HASH_LEN> for Digest<HASH_LEN, T>
 where
     T: digest::Update + digest::FixedOutput + Clone,
 {
@@ -319,7 +323,7 @@ where
 // TODO: Generalize for more than Sha256
 pub struct HkdfSha256(());
 
-impl super::Kdf for HkdfSha256 {
+impl crate::crypto::Kdf for HkdfSha256 {
     fn expand<const IKM_LEN: usize, const KEY_LEN: usize>(
         self,
         salt: &[u8],
@@ -347,7 +351,7 @@ impl<T> Pbkdf2<T> {
     }
 }
 
-impl<T> super::PbKdf for Pbkdf2<T>
+impl<T> crate::crypto::PbKdf for Pbkdf2<T>
 where
     T: digest::KeyInit + digest::Update + digest::FixedOutput + Clone + Sync,
 {
@@ -388,7 +392,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize, C, M, N
 }
 
 impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize, C, M, N>
-    super::Aead<KEY_LEN, NONCE_LEN> for AeadCcm<KEY_LEN, NONCE_LEN, TAG_LEN, C, M, N>
+    crate::crypto::Aead<KEY_LEN, NONCE_LEN> for AeadCcm<KEY_LEN, NONCE_LEN, TAG_LEN, C, M, N>
 where
     C: cipher::BlockCipher
         + cipher::BlockSizeUser<BlockSize = ccm::consts::U16 /* TODO */>
@@ -476,7 +480,7 @@ where
 }
 
 impl<const KEY_LEN: usize, const SIGNATURE_LEN: usize, C>
-    super::PublicKey<'_, KEY_LEN, SIGNATURE_LEN> for ECPublicKey<KEY_LEN, SIGNATURE_LEN, C>
+    crate::crypto::PublicKey<'_, KEY_LEN, SIGNATURE_LEN> for ECPublicKey<KEY_LEN, SIGNATURE_LEN, C>
 where
     C: CurveArithmetic + PrimeCurve + DigestPrimitive,
     AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C> + VerifyPrimitive<C>,
@@ -566,7 +570,7 @@ impl<
         const SIGNATURE_LEN: usize,
         const SHARED_SECRET_LEN: usize,
         C,
-    > super::SigningSecretKey<'a, PUB_KEY_LEN, SIGNATURE_LEN>
+    > crate::crypto::SigningSecretKey<'a, PUB_KEY_LEN, SIGNATURE_LEN>
     for ECSecretKey<KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN, C>
 where
     C: CurveArithmetic + PrimeCurve + DigestPrimitive,
@@ -609,7 +613,7 @@ where
 
         let mut public_key = MaybeUninit::uninit();
         let public_key = public_key.init_with(CryptoSensitive::<PUB_KEY_LEN>::init()); // TODO MEDIUM BUFFER
-        super::PublicKey::write_canon(&self.pub_key(), public_key);
+        crate::crypto::PublicKey::write_canon(&self.pub_key(), public_key);
 
         let info = x509_cert::request::CertReqInfo {
             version: x509_cert::request::Version::V1,
@@ -690,7 +694,7 @@ impl<
         const SIGNATURE_LEN: usize,
         const SHARED_SECRET_LEN: usize,
         C,
-    > super::SecretKey<'a, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
+    > crate::crypto::SecretKey<'a, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
     for ECSecretKey<KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN, C>
 where
     C: CurveArithmetic + PrimeCurve + DigestPrimitive,
@@ -717,7 +721,7 @@ where
         let bytes = secret.raw_secret_bytes();
         let slice = bytes.as_slice();
 
-        assert_eq!(slice.len(), super::PKC_SHARED_SECRET_LEN);
+        assert_eq!(slice.len(), crate::crypto::PKC_SHARED_SECRET_LEN);
         shared_secret.access_mut().copy_from_slice(slice);
     }
 
@@ -748,7 +752,7 @@ impl<const LEN: usize, const LIMBS: usize> Uint<LEN, LIMBS> {
     }
 }
 
-impl<const LEN: usize, const LIMBS: usize> super::UInt<'_, LEN> for Uint<LEN, LIMBS> {
+impl<const LEN: usize, const LIMBS: usize> crate::crypto::UInt<'_, LEN> for Uint<LEN, LIMBS> {
     fn rem(&self, other: &Self) -> Option<Self> {
         let other = NonZero::new(other.0).into_option();
         other.map(|other| Self(self.0.rem(&other)))
@@ -801,7 +805,7 @@ where
     }
 }
 
-impl<'a, const LEN: usize, C> super::EcScalar<'a, LEN> for ECScalar<LEN, C>
+impl<'a, const LEN: usize, C> crate::crypto::EcScalar<'a, LEN> for ECScalar<LEN, C>
 where
     C: CurveArithmetic,
     Scalar<C>: Mul<Output = C::Scalar> + Clone,
@@ -868,7 +872,7 @@ where
     }
 }
 
-impl<'a, const LEN: usize, const SCALAR_LEN: usize, C> super::EcPoint<'a, LEN, SCALAR_LEN>
+impl<'a, const LEN: usize, const SCALAR_LEN: usize, C> crate::crypto::EcPoint<'a, LEN, SCALAR_LEN>
     for ECPoint<LEN, SCALAR_LEN, C>
 where
     C: CurveArithmetic,

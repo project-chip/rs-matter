@@ -43,7 +43,11 @@ use crate::utils::sync::blocking::Mutex;
 /// MbedTLS-based crypto backend for Matter.
 pub struct MbedtlsCrypto<'s, M: RawMutex, T> {
     /// Elliptic curve group (secp256r1)
-    ec_group: SharedECGroup<{ super::EC_CANON_POINT_LEN }, { super::EC_CANON_SCALAR_LEN }, M>,
+    ec_group: SharedECGroup<
+        { crate::crypto::EC_CANON_POINT_LEN },
+        { crate::crypto::EC_CANON_SCALAR_LEN },
+        M,
+    >,
     /// A shared cryptographic random number generator
     rng: SharedRand<M, T>,
     /// The singleton secret key to be returned by `Crypto::singleton_singing_secret_key`
@@ -69,7 +73,7 @@ impl<'s, M: RawMutex, T> MbedtlsCrypto<'s, M, T> {
     }
 }
 
-impl<M: RawMutex, T> super::Crypto for MbedtlsCrypto<'_, M, T>
+impl<M: RawMutex, T> crate::crypto::Crypto for MbedtlsCrypto<'_, M, T>
 where
     T: CryptoRngCore,
 {
@@ -89,7 +93,7 @@ where
         Self: 'a;
 
     type Hmac<'a>
-        = Hmac<{ super::HASH_LEN }>
+        = Hmac<{ crate::crypto::HASH_LEN }>
     where
         Self: 'a;
 
@@ -104,15 +108,19 @@ where
         Self: 'a;
 
     type Aead<'a>
-        = AeadCcm<{ super::AEAD_CANON_KEY_LEN }, { super::AEAD_NONCE_LEN }, { super::AEAD_TAG_LEN }>
+        = AeadCcm<
+        { crate::crypto::AEAD_CANON_KEY_LEN },
+        { crate::crypto::AEAD_NONCE_LEN },
+        { crate::crypto::AEAD_TAG_LEN },
+    >
     where
         Self: 'a;
 
     type PublicKey<'a>
         = ECPoint<
         'a,
-        { super::EC_CANON_POINT_LEN },
-        { super::EC_CANON_SCALAR_LEN },
+        { crate::crypto::EC_CANON_POINT_LEN },
+        { crate::crypto::EC_CANON_SCALAR_LEN },
         M,
         SharedRand<M, T>,
     >
@@ -122,8 +130,8 @@ where
     type SecretKey<'a>
         = ECScalar<
         'a,
-        { super::EC_CANON_SCALAR_LEN },
-        { super::EC_CANON_POINT_LEN },
+        { crate::crypto::EC_CANON_SCALAR_LEN },
+        { crate::crypto::EC_CANON_POINT_LEN },
         M,
         SharedRand<M, T>,
     >
@@ -133,8 +141,8 @@ where
     type SigningSecretKey<'a>
         = ECScalar<
         'a,
-        { super::EC_CANON_SCALAR_LEN },
-        { super::EC_CANON_POINT_LEN },
+        { crate::crypto::EC_CANON_SCALAR_LEN },
+        { crate::crypto::EC_CANON_POINT_LEN },
         M,
         SharedRand<M, T>,
     >
@@ -149,8 +157,8 @@ where
     type EcScalar<'a>
         = ECScalar<
         'a,
-        { super::EC_CANON_SCALAR_LEN },
-        { super::EC_CANON_POINT_LEN },
+        { crate::crypto::EC_CANON_SCALAR_LEN },
+        { crate::crypto::EC_CANON_POINT_LEN },
         M,
         SharedRand<M, T>,
     >
@@ -160,8 +168,8 @@ where
     type EcPoint<'a>
         = ECPoint<
         'a,
-        { super::EC_CANON_POINT_LEN },
-        { super::EC_CANON_SCALAR_LEN },
+        { crate::crypto::EC_CANON_POINT_LEN },
+        { crate::crypto::EC_CANON_SCALAR_LEN },
         M,
         SharedRand<M, T>,
     >
@@ -208,7 +216,10 @@ where
         Ok(unsafe { AeadCcm::new(esp_mbedtls_sys::mbedtls_cipher_id_t_MBEDTLS_CIPHER_ID_AES) })
     }
 
-    fn pub_key(&self, key: super::CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, Error> {
+    fn pub_key(
+        &self,
+        key: crate::crypto::CanonPkcPublicKeyRef<'_>,
+    ) -> Result<Self::PublicKey<'_>, Error> {
         self.ec_point(key)
     }
 
@@ -218,7 +229,7 @@ where
 
     fn secret_key(
         &self,
-        key: super::CanonPkcSecretKeyRef<'_>,
+        key: crate::crypto::CanonPkcSecretKeyRef<'_>,
     ) -> Result<Self::SecretKey<'_>, Error> {
         self.ec_scalar(key)
     }
@@ -227,7 +238,10 @@ where
         self.ec_scalar(self.singleton_secret_key)
     }
 
-    fn uint320(&self, uint: super::CanonUint320Ref<'_>) -> Result<Self::UInt320<'_>, Error> {
+    fn uint320(
+        &self,
+        uint: crate::crypto::CanonUint320Ref<'_>,
+    ) -> Result<Self::UInt320<'_>, Error> {
         let mut result = Mpi::new();
 
         result.set(uint.access());
@@ -235,7 +249,10 @@ where
         Ok(result)
     }
 
-    fn ec_scalar(&self, scalar: super::CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error> {
+    fn ec_scalar(
+        &self,
+        scalar: crate::crypto::CanonEcScalarRef<'_>,
+    ) -> Result<Self::EcScalar<'_>, Error> {
         let mut result = ECScalar::new(&self.ec_group, &self.rng);
         unsafe {
             result.set(scalar);
@@ -248,7 +265,10 @@ where
         unimplemented!()
     }
 
-    fn ec_point(&self, point: super::CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, Error> {
+    fn ec_point(
+        &self,
+        point: crate::crypto::CanonEcPointRef<'_>,
+    ) -> Result<Self::EcPoint<'_>, Error> {
         let mut result = ECPoint::new(&self.ec_group, &self.rng);
         unsafe {
             result.set(point);
@@ -323,14 +343,14 @@ impl Clone for Sha256 {
     }
 }
 
-impl super::Digest<{ super::HASH_LEN }> for Sha256 {
+impl crate::crypto::Digest<{ crate::crypto::HASH_LEN }> for Sha256 {
     fn update(&mut self, data: &[u8]) {
         merr_unwrap!(unsafe {
             esp_mbedtls_sys::mbedtls_sha256_update(&mut self.raw, data.as_ptr(), data.len())
         });
     }
 
-    fn finish(mut self, out: &mut CryptoSensitive<{ super::HASH_LEN }>) {
+    fn finish(mut self, out: &mut CryptoSensitive<{ crate::crypto::HASH_LEN }>) {
         merr_unwrap!(unsafe {
             esp_mbedtls_sys::mbedtls_sha256_finish(&mut self.raw, out.access_mut().as_mut_ptr())
         });
@@ -393,7 +413,7 @@ impl<const HASH_LEN: usize> Clone for Hmac<HASH_LEN> {
     }
 }
 
-impl<const HASH_LEN: usize> super::Digest<HASH_LEN> for Hmac<HASH_LEN> {
+impl<const HASH_LEN: usize> crate::crypto::Digest<HASH_LEN> for Hmac<HASH_LEN> {
     fn update(&mut self, data: &[u8]) {
         merr_unwrap!(unsafe {
             esp_mbedtls_sys::mbedtls_md_hmac_update(&mut self.raw, data.as_ptr(), data.len())
@@ -420,7 +440,7 @@ impl Hkdf {
     }
 }
 
-impl super::Kdf for Hkdf {
+impl crate::crypto::Kdf for Hkdf {
     fn expand<const IKM_LEN: usize, const KEY_LEN: usize>(
         self,
         salt: &[u8],
@@ -459,7 +479,7 @@ impl Pbkdf2Hmac {
     }
 }
 
-impl super::PbKdf for Pbkdf2Hmac {
+impl crate::crypto::PbKdf for Pbkdf2Hmac {
     fn derive<const PASS_LEN: usize, const KEY_LEN: usize>(
         self,
         password: CryptoSensitiveRef<'_, PASS_LEN>,
@@ -502,7 +522,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
 }
 
 impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
-    super::Aead<KEY_LEN, NONCE_LEN> for AeadCcm<KEY_LEN, NONCE_LEN, TAG_LEN>
+    crate::crypto::Aead<KEY_LEN, NONCE_LEN> for AeadCcm<KEY_LEN, NONCE_LEN, TAG_LEN>
 {
     fn encrypt_in_place<'a>(
         &mut self,
@@ -641,7 +661,7 @@ impl Drop for Mpi {
     }
 }
 
-impl<const LEN: usize> super::UInt<'_, LEN> for Mpi {
+impl<const LEN: usize> crate::crypto::UInt<'_, LEN> for Mpi {
     fn rem(&self, other: &Self) -> Option<Self> {
         let mut result = Mpi::new();
 
@@ -802,7 +822,7 @@ impl<const LEN: usize, const SCALAR_LEN: usize, M: RawMutex, R> Drop
 }
 
 impl<'a, const LEN: usize, const SCALAR_LEN: usize, M: RawMutex, R>
-    super::EcPoint<'a, LEN, SCALAR_LEN> for ECPoint<'a, LEN, SCALAR_LEN, M, R>
+    crate::crypto::EcPoint<'a, LEN, SCALAR_LEN> for ECPoint<'a, LEN, SCALAR_LEN, M, R>
 where
     for<'r> &'r R: CryptoRngCore,
 {
@@ -894,7 +914,8 @@ impl<
         const SIGNATURE_LEN: usize,
         M: RawMutex,
         R,
-    > super::PublicKey<'a, KEY_LEN, SIGNATURE_LEN> for ECPoint<'a, KEY_LEN, SECRET_KEY_LEN, M, R>
+    > crate::crypto::PublicKey<'a, KEY_LEN, SIGNATURE_LEN>
+    for ECPoint<'a, KEY_LEN, SECRET_KEY_LEN, M, R>
 {
     fn verify(&self, data: &[u8], signature: CryptoSensitiveRef<'_, SIGNATURE_LEN>) -> bool {
         let mut r = Mpi::new();
@@ -905,19 +926,19 @@ impl<
         r.set(r_signature);
         s.set(s_signature);
 
-        use super::Digest;
+        use crate::crypto::Digest;
 
         let mut sha256 = Sha256::new();
         sha256.update(data);
 
-        let mut hash = super::HASH_ZEROED;
+        let mut hash = crate::crypto::HASH_ZEROED;
         sha256.finish(&mut hash);
 
         let result = self.group.access(|group| unsafe {
             esp_mbedtls_sys::mbedtls_ecdsa_verify(
                 &mut group.raw,
                 hash.access_mut().as_ptr(),
-                super::HASH_LEN,
+                crate::crypto::HASH_LEN,
                 &self.raw,
                 &r.raw,
                 &s.raw,
@@ -968,7 +989,7 @@ impl<'a, const LEN: usize, const POINT_LEN: usize, M: RawMutex, R>
     }
 }
 
-impl<'a, const LEN: usize, const POINT_LEN: usize, M: RawMutex, R> super::EcScalar<'a, LEN>
+impl<'a, const LEN: usize, const POINT_LEN: usize, M: RawMutex, R> crate::crypto::EcScalar<'a, LEN>
     for ECScalar<'a, LEN, POINT_LEN, M, R>
 where
     for<'r> &'r R: CryptoRngCore,
@@ -1005,7 +1026,7 @@ impl<
         const SIGNATURE_LEN: usize,
         M: RawMutex,
         R,
-    > super::SigningSecretKey<'a, PUB_KEY_LEN, SIGNATURE_LEN>
+    > crate::crypto::SigningSecretKey<'a, PUB_KEY_LEN, SIGNATURE_LEN>
     for ECScalar<'a, KEY_LEN, PUB_KEY_LEN, M, R>
 where
     for<'r> &'r R: CryptoRngCore,
@@ -1111,12 +1132,12 @@ where
     }
 
     fn sign(&self, data: &[u8], signature: &mut CryptoSensitive<SIGNATURE_LEN>) {
-        use super::Digest;
+        use crate::crypto::Digest;
 
         let mut sha256 = Sha256::new();
         sha256.update(data);
 
-        let mut hash = super::HASH_ZEROED;
+        let mut hash = crate::crypto::HASH_ZEROED;
         sha256.finish(&mut hash);
 
         let mut r = Mpi::new();
@@ -1130,7 +1151,7 @@ where
                     &mut s.raw,
                     &self.mpi.raw,
                     hash.access().as_ptr(),
-                    super::HASH_LEN,
+                    crate::crypto::HASH_LEN,
                     Some(mbedtls_platform_rng::<R>),
                     self.rng as *const _ as *const _ as *mut _,
                 )
@@ -1139,7 +1160,7 @@ where
 
         let (r_signature, s_signature) = signature
             .access_mut()
-            .split_at_mut(super::PKC_SIGNATURE_LEN / 2);
+            .split_at_mut(crate::crypto::PKC_SIGNATURE_LEN / 2);
 
         r.write(r_signature);
         s.write(s_signature);
@@ -1154,7 +1175,7 @@ impl<
         const SHARED_SECRET_LEN: usize,
         M: RawMutex,
         R,
-    > super::SecretKey<'a, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
+    > crate::crypto::SecretKey<'a, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
     for ECScalar<'a, KEY_LEN, PUB_KEY_LEN, M, R>
 where
     for<'r> &'r R: CryptoRngCore,

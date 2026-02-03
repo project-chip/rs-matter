@@ -69,7 +69,8 @@ macro_rules! openssl_unwrap {
 /// An OpenSSL-based crypto backend
 pub struct OpenSslCrypto<'s> {
     /// Elliptic curve group (secp256r1)
-    ec_group: ECGroup<{ super::EC_CANON_POINT_LEN }, { super::EC_CANON_SCALAR_LEN }>,
+    ec_group:
+        ECGroup<{ crate::crypto::EC_CANON_POINT_LEN }, { crate::crypto::EC_CANON_SCALAR_LEN }>,
     /// The singleton secret key to be returned by `Crypto::singleton_singing_secret_key`
     singleton_secret_key: CanonPkcSecretKeyRef<'s>,
 }
@@ -88,7 +89,7 @@ impl<'s> OpenSslCrypto<'s> {
     }
 }
 
-impl super::Crypto for OpenSslCrypto<'_> {
+impl crate::crypto::Crypto for OpenSslCrypto<'_> {
     type Rand<'a>
         = Rand
     where
@@ -100,7 +101,7 @@ impl super::Crypto for OpenSslCrypto<'_> {
         Self: 'a;
 
     type Hash<'a>
-        = Hash<{ super::HASH_LEN }>
+        = Hash<{ crate::crypto::HASH_LEN }>
     where
         Self: 'a;
 
@@ -120,22 +121,28 @@ impl super::Crypto for OpenSslCrypto<'_> {
         Self: 'a;
 
     type Aead<'a>
-        = Aead<{ super::AEAD_CANON_KEY_LEN }, { super::AEAD_NONCE_LEN }, { super::AEAD_TAG_LEN }>
+        = Aead<
+        { crate::crypto::AEAD_CANON_KEY_LEN },
+        { crate::crypto::AEAD_NONCE_LEN },
+        { crate::crypto::AEAD_TAG_LEN },
+    >
     where
         Self: 'a;
 
     type PublicKey<'a>
-        = ECPoint<'a, { super::EC_CANON_POINT_LEN }, { super::EC_CANON_SCALAR_LEN }>
+        = ECPoint<'a, { crate::crypto::EC_CANON_POINT_LEN }, { crate::crypto::EC_CANON_SCALAR_LEN }>
     where
         Self: 'a;
 
     type SecretKey<'a>
-        = ECScalar<'a, { super::EC_CANON_SCALAR_LEN }, { super::EC_CANON_POINT_LEN }>
+        =
+        ECScalar<'a, { crate::crypto::EC_CANON_SCALAR_LEN }, { crate::crypto::EC_CANON_POINT_LEN }>
     where
         Self: 'a;
 
     type SigningSecretKey<'a>
-        = ECScalar<'a, { super::EC_CANON_SCALAR_LEN }, { super::EC_CANON_POINT_LEN }>
+        =
+        ECScalar<'a, { crate::crypto::EC_CANON_SCALAR_LEN }, { crate::crypto::EC_CANON_POINT_LEN }>
     where
         Self: 'a;
 
@@ -145,12 +152,13 @@ impl super::Crypto for OpenSslCrypto<'_> {
         Self: 'a;
 
     type EcScalar<'a>
-        = ECScalar<'a, { super::EC_CANON_SCALAR_LEN }, { super::EC_CANON_POINT_LEN }>
+        =
+        ECScalar<'a, { crate::crypto::EC_CANON_SCALAR_LEN }, { crate::crypto::EC_CANON_POINT_LEN }>
     where
         Self: 'a;
 
     type EcPoint<'a>
-        = ECPoint<'a, { super::EC_CANON_POINT_LEN }, { super::EC_CANON_SCALAR_LEN }>
+        = ECPoint<'a, { crate::crypto::EC_CANON_POINT_LEN }, { crate::crypto::EC_CANON_SCALAR_LEN }>
     where
         Self: 'a;
 
@@ -185,7 +193,10 @@ impl super::Crypto for OpenSslCrypto<'_> {
         Ok(unsafe { Aead::new(openssl::cipher::Cipher::aes_128_ccm()) })
     }
 
-    fn pub_key(&self, key: super::CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, Error> {
+    fn pub_key(
+        &self,
+        key: crate::crypto::CanonPkcPublicKeyRef<'_>,
+    ) -> Result<Self::PublicKey<'_>, Error> {
         self.ec_point(key)
     }
 
@@ -195,7 +206,7 @@ impl super::Crypto for OpenSslCrypto<'_> {
 
     fn secret_key(
         &self,
-        key: super::CanonPkcSecretKeyRef<'_>,
+        key: crate::crypto::CanonPkcSecretKeyRef<'_>,
     ) -> Result<Self::SecretKey<'_>, Error> {
         self.ec_scalar(key)
     }
@@ -204,13 +215,19 @@ impl super::Crypto for OpenSslCrypto<'_> {
         self.ec_scalar(self.singleton_secret_key)
     }
 
-    fn uint320(&self, uint: super::CanonUint320Ref<'_>) -> Result<Self::UInt320<'_>, Error> {
+    fn uint320(
+        &self,
+        uint: crate::crypto::CanonUint320Ref<'_>,
+    ) -> Result<Self::UInt320<'_>, Error> {
         let uint = openssl_unwrap!(BigNum::from_slice(uint.access()));
 
         Ok(uint)
     }
 
-    fn ec_scalar(&self, scalar: super::CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error> {
+    fn ec_scalar(
+        &self,
+        scalar: crate::crypto::CanonEcScalarRef<'_>,
+    ) -> Result<Self::EcScalar<'_>, Error> {
         let scalar = openssl_unwrap!(BigNum::from_slice(scalar.access()));
 
         Ok(Self::EcScalar {
@@ -233,7 +250,10 @@ impl super::Crypto for OpenSslCrypto<'_> {
         })
     }
 
-    fn ec_point(&self, point: super::CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, Error> {
+    fn ec_point(
+        &self,
+        point: crate::crypto::CanonEcPointRef<'_>,
+    ) -> Result<Self::EcPoint<'_>, Error> {
         let mut ctx = openssl_unwrap!(BigNumContext::new());
 
         let point = openssl_unwrap!(EcPoint::from_bytes(
@@ -323,7 +343,7 @@ impl<const HASH_LEN: usize> Hash<HASH_LEN> {
     }
 }
 
-impl<const HASH_LEN: usize> super::Digest<HASH_LEN> for Hash<HASH_LEN> {
+impl<const HASH_LEN: usize> crate::crypto::Digest<HASH_LEN> for Hash<HASH_LEN> {
     fn update(&mut self, data: &[u8]) {
         openssl_unwrap!(self.0.update(data));
     }
@@ -345,12 +365,12 @@ impl HmacSha256 {
     }
 }
 
-impl super::Digest<{ super::HASH_LEN }> for HmacSha256 {
+impl crate::crypto::Digest<{ crate::crypto::HASH_LEN }> for HmacSha256 {
     fn update(&mut self, data: &[u8]) {
         Mac::update(&mut self.0, data);
     }
 
-    fn finish(self, hash: &mut CryptoSensitive<{ super::HASH_LEN }>) {
+    fn finish(self, hash: &mut CryptoSensitive<{ crate::crypto::HASH_LEN }>) {
         hash.access_mut()
             .copy_from_slice(self.0.finalize().into_bytes().as_slice());
     }
@@ -366,7 +386,7 @@ impl Hkdf {
     }
 }
 
-impl super::Kdf for Hkdf {
+impl crate::crypto::Kdf for Hkdf {
     fn expand<const IKM_LEN: usize, const KEY_LEN: usize>(
         self,
         salt: &[u8],
@@ -402,7 +422,7 @@ impl Pbkdf2Hmac {
     }
 }
 
-impl super::PbKdf for Pbkdf2Hmac {
+impl crate::crypto::PbKdf for Pbkdf2Hmac {
     fn derive<const PASS_LEN: usize, const KEY_LEN: usize>(
         self,
         pass: CryptoSensitiveRef<'_, PASS_LEN>,
@@ -442,7 +462,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
 }
 
 impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
-    super::Aead<KEY_LEN, NONCE_LEN> for Aead<KEY_LEN, NONCE_LEN, TAG_LEN>
+    crate::crypto::Aead<KEY_LEN, NONCE_LEN> for Aead<KEY_LEN, NONCE_LEN, TAG_LEN>
 {
     fn encrypt_in_place<'a>(
         &mut self,
@@ -512,7 +532,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
     }
 }
 
-impl<'a, const LEN: usize> super::UInt<'a, LEN> for BigNum {
+impl<'a, const LEN: usize> crate::crypto::UInt<'a, LEN> for BigNum {
     fn rem(&self, other: &Self) -> Option<Self> {
         let mut ctx = openssl_unwrap!(BigNumContext::new());
 
@@ -581,7 +601,7 @@ impl<const LEN: usize, const SCALAR_LEN: usize> ECPoint<'_, LEN, SCALAR_LEN> {
     }
 }
 
-impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::EcPoint<'a, LEN, SCALAR_LEN>
+impl<'a, const LEN: usize, const SCALAR_LEN: usize> crate::crypto::EcPoint<'a, LEN, SCALAR_LEN>
     for ECPoint<'a, LEN, SCALAR_LEN>
 {
     type Scalar<'s>
@@ -636,7 +656,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::EcPoint<'a, LEN, SCAL
 }
 
 impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN: usize>
-    super::PublicKey<'a, KEY_LEN, SIGNATURE_LEN> for ECPoint<'a, KEY_LEN, SECRET_KEY_LEN>
+    crate::crypto::PublicKey<'a, KEY_LEN, SIGNATURE_LEN> for ECPoint<'a, KEY_LEN, SECRET_KEY_LEN>
 {
     fn verify(&self, data: &[u8], signature: CryptoSensitiveRef<'_, SIGNATURE_LEN>) -> bool {
         // First get the SHA256 of the message
@@ -700,7 +720,7 @@ impl<const LEN: usize, const POINT_LEN: usize> ECScalar<'_, LEN, POINT_LEN> {
     }
 }
 
-impl<'a, const LEN: usize, const POINT_LEN: usize> super::EcScalar<'a, LEN>
+impl<'a, const LEN: usize, const POINT_LEN: usize> crate::crypto::EcScalar<'a, LEN>
     for ECScalar<'a, LEN, POINT_LEN>
 {
     fn mul(&self, other: &Self) -> Self {
@@ -716,7 +736,7 @@ impl<'a, const LEN: usize, const POINT_LEN: usize> super::EcScalar<'a, LEN>
 }
 
 impl<'a, const LEN: usize, const POINT_LEN: usize, const SIGNATURE_LEN: usize>
-    super::SigningSecretKey<'a, POINT_LEN, SIGNATURE_LEN> for ECScalar<'a, LEN, POINT_LEN>
+    crate::crypto::SigningSecretKey<'a, POINT_LEN, SIGNATURE_LEN> for ECScalar<'a, LEN, POINT_LEN>
 {
     type PublicKey<'s>
         = ECPoint<'s, POINT_LEN, LEN>
@@ -779,9 +799,9 @@ impl<'a, const LEN: usize, const POINT_LEN: usize, const SIGNATURE_LEN: usize>
 
         let sig = openssl_unwrap!(EcdsaSig::sign(&digest, &our_ec_key));
 
-        signature.access_mut()[..super::PKC_SHARED_SECRET_LEN / 2]
+        signature.access_mut()[..crate::crypto::PKC_SHARED_SECRET_LEN / 2]
             .copy_from_slice(sig.r().to_vec().as_slice());
-        signature.access_mut()[super::PKC_SHARED_SECRET_LEN / 2..]
+        signature.access_mut()[crate::crypto::PKC_SHARED_SECRET_LEN / 2..]
             .copy_from_slice(sig.s().to_vec().as_slice());
     }
 }
@@ -792,7 +812,7 @@ impl<
         const POINT_LEN: usize,
         const SIGNATURE_LEN: usize,
         const SHARED_SECRET_LEN: usize,
-    > super::SecretKey<'a, LEN, POINT_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
+    > crate::crypto::SecretKey<'a, LEN, POINT_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
     for ECScalar<'a, LEN, POINT_LEN>
 {
     fn derive_shared_secret(

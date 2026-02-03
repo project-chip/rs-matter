@@ -57,7 +57,7 @@ use esp_rtos::embassy::Executor;
 
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex, RawMutex};
 
-use rs_matter::crypto::rustcrypto::RustCrypto;
+use rs_matter::crypto::backend::rustcrypto::RustCrypto;
 use rs_matter::crypto::{Crypto, RngCore, WeakTestOnlyRand};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::clusters::net_comm::{
