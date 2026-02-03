@@ -53,30 +53,28 @@ const MATTER_N_BIN: CanonEcPointRef = CanonEcPointRef::new(&[
     0xe7,
 ]);
 
-#[allow(non_snake_case)]
 pub struct CryptoSpake2<'a, C: Crypto> {
     crypto: &'a C,
-    M: C::EcPoint<'a>,
-    N: C::EcPoint<'a>,
+    m_pt: C::EcPoint<'a>,
+    n_pt: C::EcPoint<'a>,
+    l_pt: Option<C::EcPoint<'a>>,
+    b_pt: Option<C::EcPoint<'a>>,
     xy: Option<C::EcScalar<'a>>,
     w0: Option<C::EcScalar<'a>>,
     w1: Option<C::EcScalar<'a>>,
-    L: Option<C::EcPoint<'a>>,
-    pB: Option<C::EcPoint<'a>>,
 }
 
 impl<'a, C: Crypto> CryptoSpake2<'a, C> {
-    #[allow(non_snake_case)]
     pub fn new(crypto: &'a C) -> Result<Self, Error> {
         Ok(Self {
             crypto,
-            M: crypto.ec_point(MATTER_M_BIN)?,
-            N: crypto.ec_point(MATTER_N_BIN)?,
+            m_pt: crypto.ec_point(MATTER_M_BIN)?,
+            n_pt: crypto.ec_point(MATTER_N_BIN)?,
+            l_pt: None,
+            b_pt: None,
             xy: None,
             w0: None,
             w1: None,
-            L: None,
-            pB: None,
         })
     }
 
@@ -137,20 +135,17 @@ impl<'a, C: Crypto> CryptoSpake2<'a, C> {
         Ok(())
     }
 
-    #[allow(non_snake_case)]
-    #[allow(dead_code)]
-    pub fn set_L(&mut self, l: CanonEcPointRef<'_>) -> Result<(), Error> {
-        self.L = Some(self.crypto.ec_point(l)?);
+    pub fn set_l_pt(&mut self, l: CanonEcPointRef<'_>) -> Result<(), Error> {
+        self.l_pt = Some(self.crypto.ec_point(l)?);
         Ok(())
     }
 
-    #[allow(non_snake_case)]
-    pub fn set_L_from_w1s(&mut self, w1s: CanonUint320Ref<'_>) -> Result<(), Error> {
+    pub fn set_l_pt_from_w1s(&mut self, w1s: CanonUint320Ref<'_>) -> Result<(), Error> {
         // From the Matter spec,
         //        L = w1 * P
         //    where P is the generator of the underlying elliptic curve
         self.set_w1_from_w1s(w1s)?;
-        self.L = Some(
+        self.l_pt = Some(
             self.crypto
                 .ec_generator_point()?
                 .mul(unwrap!(self.w1.as_ref())),
@@ -158,8 +153,7 @@ impl<'a, C: Crypto> CryptoSpake2<'a, C> {
         Ok(())
     }
 
-    #[allow(non_snake_case)]
-    pub fn get_pB(&mut self, pB: &mut CanonEcPoint) -> Result<(), Error> {
+    pub fn b_pt(&mut self, b_pt_out: &mut CanonEcPoint) -> Result<(), Error> {
         // From the SPAKE2+ spec (https://datatracker.ietf.org/doc/draft-bar-cfrg-spake2plus/)
         //   for y
         //   - select random y between 0 to p
@@ -167,68 +161,67 @@ impl<'a, C: Crypto> CryptoSpake2<'a, C> {
         //   - pB = Y
         let xy = self.crypto.generate_ec_scalar()?;
 
-        let pb = self
-            .crypto
-            .ec_generator_point()?
-            .add_mul(&xy, &self.N, unwrap!(self.w0.as_ref()));
+        let b_pt =
+            self.crypto
+                .ec_generator_point()?
+                .add_mul(&xy, &self.n_pt, unwrap!(self.w0.as_ref()));
 
-        pb.write_canon(pB);
+        b_pt.write_canon(b_pt_out);
 
         self.xy = Some(xy);
-        self.pB = Some(pb);
+        self.b_pt = Some(b_pt);
 
         Ok(())
     }
 
-    #[allow(non_snake_case)]
-    pub fn get_TT_as_verifier(
+    pub fn tt_as_verifier(
         &mut self,
         context: HashRef<'_>,
-        pA: CanonEcPointRef<'_>,
-        pB: CanonEcPointRef<'_>,
+        a_pt: CanonEcPointRef<'_>,
+        b_pt: CanonEcPointRef<'_>,
         out: &mut Hash,
     ) -> Result<(), Error> {
-        let mut TT = self.crypto.hash()?;
+        let mut tt = self.crypto.hash()?;
 
         // Context
-        Self::add_to_tt(&mut TT, context.access());
+        Self::add_to_tt(&mut tt, context.access());
         // 2 empty identifiers
-        Self::add_to_tt(&mut TT, &[]);
-        Self::add_to_tt(&mut TT, &[]);
+        Self::add_to_tt(&mut tt, &[]);
+        Self::add_to_tt(&mut tt, &[]);
         // M
-        Self::add_to_tt(&mut TT, MATTER_M_BIN.access());
+        Self::add_to_tt(&mut tt, MATTER_M_BIN.access());
         // N
-        Self::add_to_tt(&mut TT, MATTER_N_BIN.access());
+        Self::add_to_tt(&mut tt, MATTER_N_BIN.access());
         // X = pA
-        Self::add_to_tt(&mut TT, pA.access());
+        Self::add_to_tt(&mut tt, a_pt.access());
         // Y = pB
-        Self::add_to_tt(&mut TT, pB.access());
+        Self::add_to_tt(&mut tt, b_pt.access());
 
-        let X = self.crypto.ec_point(pA)?;
-        let (Z, V) = ZV::new(self.crypto).verifier(
+        let a_pt = self.crypto.ec_point(a_pt)?;
+        let (z_pt, v_pt) = ZV::new(self.crypto).verifier(
             unwrap!(self.w0.as_ref()),
-            unwrap!(self.L.as_ref()),
-            &self.M,
-            &X,
+            unwrap!(self.l_pt.as_ref()),
+            &self.m_pt,
+            &a_pt,
             unwrap!(self.xy.as_ref()),
         );
 
-        let mut point = EC_POINT_ZEROED;
+        let mut pt_out = EC_POINT_ZEROED;
 
         // Z
-        Z.write_canon(&mut point);
-        Self::add_to_tt(&mut TT, point.access());
+        z_pt.write_canon(&mut pt_out);
+        Self::add_to_tt(&mut tt, pt_out.access());
         // V
-        V.write_canon(&mut point);
-        Self::add_to_tt(&mut TT, point.access());
+        v_pt.write_canon(&mut pt_out);
+        Self::add_to_tt(&mut tt, pt_out.access());
 
-        let mut scalar = EC_SCALAR_ZEROED;
+        let mut sc_out = EC_SCALAR_ZEROED;
 
         // w0
-        unwrap!(self.w0.as_ref()).write_canon(&mut scalar);
-        Self::add_to_tt(&mut TT, scalar.access());
+        unwrap!(self.w0.as_ref()).write_canon(&mut sc_out);
+        Self::add_to_tt(&mut tt, sc_out.access());
 
-        TT.finish(out);
+        tt.finish(out);
 
         Ok(())
     }
@@ -248,15 +241,12 @@ impl<'a, C: Crypto> ZV<'a, C> {
         Self(PhantomData)
     }
 
-    #[inline(always)]
-    #[allow(non_snake_case)]
-    #[allow(dead_code)]
     fn verifier(
         &self,
         w0: &C::EcScalar<'a>,
-        L: &C::EcPoint<'a>,
-        M: &C::EcPoint<'a>,
-        X: &C::EcPoint<'a>,
+        l_pt: &C::EcPoint<'a>,
+        m_pt: &C::EcPoint<'a>,
+        x_pt: &C::EcPoint<'a>,
         y: &C::EcScalar<'a>,
     ) -> (C::EcPoint<'a>, C::EcPoint<'a>) {
         // As per the RFC, the operation here is:
@@ -270,25 +260,23 @@ impl<'a, C: Crypto> ZV<'a, C> {
         //    Z = y*X + tmp*M (M is inverted to get the 'negative' effect)
         //    Z = h*Z (cofactor Mul)
 
-        let Z = X.add_mul(y, &M.neg(), &y.mul(w0));
+        let z_pt = x_pt.add_mul(y, &m_pt.neg(), &y.mul(w0));
 
         // Cofactor for P256 is 1, so that is a No-Op
         // TODO: We don't want to be SEcp256r1 specific though
 
-        let V = L.mul(y);
+        let v_pt = l_pt.mul(y);
 
-        (Z, V)
+        (z_pt, v_pt)
     }
 
-    #[inline(always)]
-    #[allow(non_snake_case)]
-    #[allow(dead_code)]
+    #[allow(unused)]
     fn prover(
         &self,
         w0: &C::EcScalar<'a>,
         w1: &C::EcScalar<'a>,
-        N: &C::EcPoint<'a>,
-        Y: &C::EcPoint<'a>,
+        n_pt: &C::EcPoint<'a>,
+        y_pt: &C::EcPoint<'a>,
         x: &C::EcScalar<'a>,
     ) -> (C::EcPoint<'a>, C::EcPoint<'a>) {
         // As per the RFC, the operation here is:
@@ -302,16 +290,16 @@ impl<'a, C: Crypto> ZV<'a, C> {
         //    Z = x*Y + tmp*N (N is inverted to get the 'negative' effect)
         //    Z = h*Z (cofactor Mul)
 
-        let N_neg = N.neg();
+        let n_pt_neg = n_pt.neg();
 
-        let Z = Y.add_mul(x, &N_neg, &x.mul(w0));
+        let z_pt = y_pt.add_mul(x, &n_pt_neg, &x.mul(w0));
 
         // Cofactor for P256 is 1, so that is a No-Op
         // TODO: We don't want to be SEcp256r1 specific though
 
-        let V = Y.add_mul(w1, &N_neg, &w1.mul(w0));
+        let v_pt = y_pt.add_mul(w1, &n_pt_neg, &w1.mul(w0));
 
-        (Z, V)
+        (z_pt, v_pt)
     }
 }
 
@@ -352,14 +340,13 @@ pub enum Spake2Mode {
     Verifier(Spake2VerifierState),
 }
 
-#[allow(non_snake_case)]
 pub struct Spake2P<'a, C: Crypto> {
     mode: Spake2Mode,
     pub(crate) crypto: &'a C,
     context: Option<C::Hash<'a>>,
     spake2: Option<CryptoSpake2<'a, C>>,
-    Ke: CryptoSensitive<16>,
-    cA: HmacHash,
+    ke: CryptoSensitive<16>,
+    ca: HmacHash,
     app_data: u32,
 }
 
@@ -370,21 +357,20 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
             crypto,
             context: None,
             spake2: None,
-            Ke: CryptoSensitive::new(),
-            cA: HmacHash::new(),
+            ke: CryptoSensitive::new(),
+            ca: HmacHash::new(),
             app_data: 0,
         }
     }
 
-    #[allow(non_snake_case)]
     pub fn init(crypto: &'a C) -> impl Init<Self> {
         init!(Self {
             mode: Spake2Mode::Unknown,
             crypto,
             context: None,
             spake2: None,
-            Ke <- CryptoSensitive::init(),
-            cA <- HmacHash::init(),
+            ke <- CryptoSensitive::init(),
+            ca <- HmacHash::init(),
             app_data: 0,
         })
     }
@@ -411,7 +397,7 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
     }
 
     pub fn ke(&self) -> CryptoSensitiveRef<'_, 16> {
-        self.Ke.reference()
+        self.ke.reference()
     }
 
     fn get_w0w1s(
@@ -436,7 +422,7 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
                 .split::<UINT320_CANON_LEN, UINT320_CANON_LEN>();
 
             spake2.set_w0_from_w0s(w0s)?;
-            spake2.set_L_from_w1s(w1s)?;
+            spake2.set_l_pt_from_w1s(w1s)?;
         } else {
             // Extract w0 and L from the verifier
             let (w0, p_l) = verifier
@@ -445,7 +431,7 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
                 .split::<EC_CANON_SCALAR_LEN, EC_CANON_POINT_LEN>();
 
             spake2.set_w0(w0)?;
-            spake2.set_L(p_l)?;
+            spake2.set_l_pt(p_l)?;
         }
 
         self.mode = Spake2Mode::Verifier(Spake2VerifierState::Init);
@@ -454,33 +440,38 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
         Ok(())
     }
 
-    #[allow(non_snake_case)]
-    pub fn handle_pA(
+    pub fn compute_b_pt_cb(
         &mut self,
-        pA: CanonEcPointRef<'_>,
-        pB: &mut CanonEcPoint,
-        cB: &mut HmacHash,
+        a_pt: CanonEcPointRef<'_>,
+        b_pt_out: &mut CanonEcPoint,
+        cb_out: &mut HmacHash,
     ) -> Result<(), Error> {
         if self.mode != Spake2Mode::Verifier(Spake2VerifierState::Init) {
             Err(ErrorCode::InvalidState)?;
         }
 
         if let Some(crypto_spake2) = &mut self.spake2 {
-            crypto_spake2.get_pB(pB)?;
+            crypto_spake2.b_pt(b_pt_out)?;
             if let Some(context) = self.context.take() {
                 let mut hash = HASH_ZEROED;
                 context.finish(&mut hash);
-                let mut TT = HASH_ZEROED;
-                crypto_spake2.get_TT_as_verifier(hash.reference(), pA, pB.reference(), &mut TT)?;
 
-                Self::get_Ke_and_cAcB(
+                let mut tt_hash = HASH_ZEROED;
+                crypto_spake2.tt_as_verifier(
+                    hash.reference(),
+                    a_pt,
+                    b_pt_out.reference(),
+                    &mut tt_hash,
+                )?;
+
+                Self::compute_ke_ca_cb(
                     self.crypto,
-                    TT.reference(),
-                    pA,
-                    pB.reference(),
-                    &mut self.Ke,
-                    &mut self.cA,
-                    cB,
+                    tt_hash.reference(),
+                    a_pt,
+                    b_pt_out.reference(),
+                    &mut self.ke,
+                    &mut self.ca,
+                    cb_out,
                 )?;
             }
         }
@@ -491,55 +482,53 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
         Ok(())
     }
 
-    #[allow(non_snake_case)]
-    pub fn handle_cA(&mut self, cA: HmacHashRef<'_>) -> Result<(), SCStatusCodes> {
+    pub fn handle_ca(&mut self, ca: HmacHashRef<'_>) -> Result<(), SCStatusCodes> {
         if self.mode != Spake2Mode::Verifier(Spake2VerifierState::PendingConfirmation) {
             return Err(SCStatusCodes::SessionNotFound);
         }
         self.mode = Spake2Mode::Verifier(Spake2VerifierState::Confirmed);
-        if cA.access().ct_eq(self.cA.access()).unwrap_u8() == 1 {
+        if ca.access().ct_eq(self.ca.access()).unwrap_u8() == 1 {
             Ok(())
         } else {
             Err(SCStatusCodes::InvalidParameter)
         }
     }
 
-    #[allow(non_snake_case)]
-    #[allow(dead_code)]
-    fn get_Ke_and_cAcB(
+    fn compute_ke_ca_cb(
         crypto: &C,
-        TT: HashRef<'_>,
-        pA: CanonEcPointRef<'_>,
-        pB: CanonEcPointRef<'_>,
-        Ke: &mut CryptoSensitive<16>,
-        cA: &mut HmacHash,
-        cB: &mut HmacHash,
+        tt_hash: HashRef<'_>,
+        a_pt: CanonEcPointRef<'_>,
+        b_pt: CanonEcPointRef<'_>,
+        ke_out: &mut CryptoSensitive<16>,
+        ca_out: &mut HmacHash,
+        cb_out: &mut HmacHash,
     ) -> Result<(), Error> {
         // Step 1: Ka || Ke = Hash(TT)
-        let KaKe = TT;
-        let (Ka, ke_internal) = KaKe.split::<{ HASH_LEN / 2 }, { HASH_LEN / 2 }>();
-        Ke.load(ke_internal);
+        let ka_ke = tt_hash;
+        let (ka, ke_internal) = ka_ke.split::<{ HASH_LEN / 2 }, { HASH_LEN / 2 }>();
+        ke_out.load(ke_internal);
 
         // TODO: Remove the magic constants from here (e.g. 32, 16, etc.)
 
         // Step 2: KcA || KcB = KDF(nil, Ka, "ConfirmationKeys")
-        let mut KcAKcB = CryptoSensitive::<32>::new();
+        let mut kca_kcb = CryptoSensitive::<32>::new();
         crypto
             .kdf()
             .unwrap()
-            .expand(&[], Ka, SPAKE2P_KEY_CONFIRM_INFO, &mut KcAKcB)
+            .expand(&[], ka, SPAKE2P_KEY_CONFIRM_INFO, &mut kca_kcb)
             .map_err(|_x| ErrorCode::InvalidData)?;
 
-        let (KcA, KcB) = KcAKcB.reference().split::<16, 16>();
+        let (kca, kcb) = kca_kcb.reference().split::<16, 16>();
 
         // Step 3: cA = HMAC(KcA, pB), cB = HMAC(KcB, pA)
-        let mut mac = crypto.hmac(KcA)?;
-        mac.update(pB.access());
-        mac.finish(cA);
+        let mut mac = crypto.hmac(kca)?;
+        mac.update(b_pt.access());
+        mac.finish(ca_out);
 
-        let mut mac = crypto.hmac(KcB)?;
-        mac.update(pA.access());
-        mac.finish(cB);
+        let mut mac = crypto.hmac(kcb)?;
+        mac.update(a_pt.access());
+        mac.finish(cb_out);
+
         Ok(())
     }
 }
@@ -616,83 +605,86 @@ mod tests {
     use super::*;
 
     #[test]
-    #[allow(non_snake_case)]
-    fn test_get_X() {
+    fn test_x() {
         for t in RFC_T {
             let crypto = test_only_crypto();
-            let M = unwrap!(crypto.ec_point(MATTER_M_BIN));
+
+            let m_pt = unwrap!(crypto.ec_point(MATTER_M_BIN));
             let x = unwrap!(crypto.ec_scalar(t.x));
             let w0 = unwrap!(crypto.ec_scalar(t.w0));
-            let P = unwrap!(crypto.ec_generator_point());
-            let r = P.add_mul(&x, &M, &w0);
+            let gen_pt = unwrap!(crypto.ec_generator_point());
+
+            let result_pt = gen_pt.add_mul(&x, &m_pt, &w0);
 
             let mut point = EC_POINT_ZEROED;
-            r.write_canon(&mut point);
+            result_pt.write_canon(&mut point);
 
-            assert_eq!(t.X.access(), point.access());
+            assert_eq!(t.x_pt.access(), point.access());
         }
     }
 
     #[test]
-    #[allow(non_snake_case)]
-    fn test_get_Y() {
+    fn test_y() {
         for t in RFC_T {
             let crypto = test_only_crypto();
-            let N = unwrap!(crypto.ec_point(MATTER_N_BIN));
+
+            let n_pt = unwrap!(crypto.ec_point(MATTER_N_BIN));
             let y = unwrap!(crypto.ec_scalar(t.y));
             let w0 = unwrap!(crypto.ec_scalar(t.w0));
-            let P = unwrap!(crypto.ec_generator_point());
-            let r = P.add_mul(&y, &N, &w0);
+            let gen_pt = unwrap!(crypto.ec_generator_point());
+
+            let result_pt = gen_pt.add_mul(&y, &n_pt, &w0);
 
             let mut point = EC_POINT_ZEROED;
-            r.write_canon(&mut point);
+            result_pt.write_canon(&mut point);
 
-            assert_eq!(t.Y.access(), point.access());
+            assert_eq!(t.y_pt.access(), point.access());
         }
     }
 
     #[test]
-    #[allow(non_snake_case)]
-    fn test_get_ZV_as_prover() {
+    fn test_zv_prover() {
         for t in RFC_T {
             let crypto = test_only_crypto();
-            let N = unwrap!(crypto.ec_point(MATTER_N_BIN));
+
+            let n_pt = unwrap!(crypto.ec_point(MATTER_N_BIN));
             let x = unwrap!(crypto.ec_scalar(t.x));
-            let y = unwrap!(crypto.ec_point(t.Y));
+            let y_pt = unwrap!(crypto.ec_point(t.y_pt));
             let w0 = unwrap!(crypto.ec_scalar(t.w0));
             let w1 = unwrap!(crypto.ec_scalar(t.w1));
 
-            let (Z, V) = ZV::new(&crypto).prover(&w0, &w1, &N, &y, &x);
+            let (z_pt, v_pt) = ZV::new(&crypto).prover(&w0, &w1, &n_pt, &y_pt, &x);
 
             let mut point = EC_POINT_ZEROED;
 
-            Z.write_canon(&mut point);
-            assert_eq!(t.Z.access(), point.access());
+            z_pt.write_canon(&mut point);
+            assert_eq!(t.z_pt.access(), point.access());
 
-            V.write_canon(&mut point);
-            assert_eq!(t.V.access(), point.access());
+            v_pt.write_canon(&mut point);
+            assert_eq!(t.v_pt.access(), point.access());
         }
     }
 
     #[test]
-    #[allow(non_snake_case)]
-    fn test_get_ZV_as_verifier() {
+    fn test_zv_verifier() {
         for t in RFC_T {
             let crypto = test_only_crypto();
-            let M = unwrap!(crypto.ec_point(MATTER_M_BIN));
-            let x = unwrap!(crypto.ec_point(t.X));
+
+            let m_pt = unwrap!(crypto.ec_point(MATTER_M_BIN));
+            let x = unwrap!(crypto.ec_point(t.x_pt));
             let y = unwrap!(crypto.ec_scalar(t.y));
             let w0 = unwrap!(crypto.ec_scalar(t.w0));
-            let l = unwrap!(crypto.ec_point(t.L));
-            let (Z, V) = ZV::new(&crypto).verifier(&w0, &l, &M, &x, &y);
+            let l_pt = unwrap!(crypto.ec_point(t.l_pt));
+
+            let (z_pt, v_pt) = ZV::new(&crypto).verifier(&w0, &l_pt, &m_pt, &x, &y);
 
             let mut point = EC_POINT_ZEROED;
 
-            Z.write_canon(&mut point);
-            assert_eq!(t.Z.access(), point.access());
+            z_pt.write_canon(&mut point);
+            assert_eq!(t.z_pt.access(), point.access());
 
-            V.write_canon(&mut point);
-            assert_eq!(t.V.access(), point.access());
+            v_pt.write_canon(&mut point);
+            assert_eq!(t.v_pt.access(), point.access());
         }
     }
 
@@ -703,6 +695,7 @@ mod tests {
             0x4, 0xa1, 0xd2, 0xc6, 0x11, 0xf0, 0xbd, 0x36, 0x78, 0x67, 0x79, 0x7b, 0xfe, 0x82,
             0x36, 0x00,
         ];
+
         let mut w0w1s = CryptoSensitive::new();
         Spake2P::new(&test_only_crypto()).get_w0w1s(
             (&123456_u32.to_le_bytes()).into(),
@@ -710,6 +703,7 @@ mod tests {
             SALT,
             &mut w0w1s,
         );
+
         assert_eq!(
             w0w1s.access(),
             &[
@@ -724,52 +718,52 @@ mod tests {
     }
 
     #[test]
-    #[allow(non_snake_case)]
-    fn test_get_Ke_and_cAcB() {
+    fn test_compute_ke_ca_cb() {
         let crypto = test_only_crypto();
 
         for t in RFC_T {
-            let mut Ke = CryptoSensitive::new();
-            let mut cA = HmacHash::new();
-            let mut cB = HmacHash::new();
-            let mut TT_hash = HASH_ZEROED;
+            let mut ke = CryptoSensitive::new();
+            let mut ca = HmacHash::new();
+            let mut cb = HmacHash::new();
+            let mut tt_hash = HASH_ZEROED;
+
             let mut hasher = unwrap!(crypto.hash());
-            hasher.update(&t.TT[..t.TT_len]);
-            hasher.finish(&mut TT_hash);
-            unwrap!(Spake2P::get_Ke_and_cAcB(
+            hasher.update(&t.tt[..t.tt_len]);
+            hasher.finish(&mut tt_hash);
+
+            unwrap!(Spake2P::compute_ke_ca_cb(
                 &crypto,
-                TT_hash.reference(),
-                t.X,
-                t.Y,
-                &mut Ke,
-                &mut cA,
-                &mut cB,
+                tt_hash.reference(),
+                t.x_pt,
+                t.y_pt,
+                &mut ke,
+                &mut ca,
+                &mut cb,
             ));
-            assert_eq!(Ke.access(), t.Ke.access());
-            assert_eq!(cA.access(), t.cA.access());
-            assert_eq!(cB.access(), t.cB.access());
+
+            assert_eq!(ke.access(), t.ke.access());
+            assert_eq!(ca.access(), t.ca.access());
+            assert_eq!(cb.access(), t.cb.access());
         }
     }
 
     // Based on vectors used in the RFC
-    #[allow(non_snake_case)]
-    #[allow(unused)]
     pub struct RFCTestVector<'a> {
         pub w0: CanonEcScalarRef<'a>,
         pub w1: CanonEcScalarRef<'a>,
         pub x: CanonEcScalarRef<'a>,
-        pub X: CanonEcPointRef<'a>,
         pub y: CanonEcScalarRef<'a>,
-        pub Y: CanonEcPointRef<'a>,
-        pub Z: CanonEcPointRef<'a>,
-        pub V: CanonEcPointRef<'a>,
-        pub L: CanonEcPointRef<'a>,
-        pub cA: HmacHashRef<'a>,
-        pub cB: HmacHashRef<'a>,
-        pub Ke: CryptoSensitiveRef<'a, 16>,
-        pub TT: &'a [u8; 547],
+        pub x_pt: CanonEcPointRef<'a>,
+        pub y_pt: CanonEcPointRef<'a>,
+        pub z_pt: CanonEcPointRef<'a>,
+        pub v_pt: CanonEcPointRef<'a>,
+        pub l_pt: CanonEcPointRef<'a>,
+        pub ca: HmacHashRef<'a>,
+        pub cb: HmacHashRef<'a>,
+        pub ke: CryptoSensitiveRef<'a, 16>,
+        pub tt: &'a [u8; 547],
         // The TT size changes, as they change the identifiers, address it through this
-        pub TT_len: usize,
+        pub tt_len: usize,
     }
 
     pub const RFC_T: [RFCTestVector; 4] = [
@@ -789,7 +783,7 @@ mod tests {
                 0x2e, 0x24, 0x84, 0x9d, 0xd3, 0x49, 0xa0, 0x5c, 0xa7, 0x9a, 0xaf, 0xb1, 0x80, 0x41,
                 0xd3, 0x0c, 0xbd, 0xb6,
             ]),
-            X: CanonEcPointRef::new(&[
+            x_pt: CanonEcPointRef::new(&[
                 0x04, 0xaf, 0x09, 0x98, 0x7a, 0x59, 0x3d, 0x3b, 0xac, 0x86, 0x94, 0xb1, 0x23, 0x83,
                 0x94, 0x22, 0xc3, 0xcc, 0x87, 0xe3, 0x7d, 0x6b, 0x41, 0xc1, 0xd6, 0x30, 0xf0, 0x00,
                 0xdd, 0x64, 0x98, 0x0e, 0x53, 0x7a, 0xe7, 0x04, 0xbc, 0xed, 0xe0, 0x4e, 0xa3, 0xbe,
@@ -801,49 +795,49 @@ mod tests {
                 0xc3, 0xca, 0xc7, 0x4f, 0xf8, 0x97, 0xf6, 0xc3, 0x44, 0x52, 0x47, 0xba, 0x1b, 0xab,
                 0x40, 0x08, 0x2a, 0x91,
             ]),
-            Y: CanonEcPointRef::new(&[
+            y_pt: CanonEcPointRef::new(&[
                 0x04, 0x41, 0x75, 0x92, 0x62, 0x0a, 0xeb, 0xf9, 0xfd, 0x20, 0x36, 0x16, 0xbb, 0xb9,
                 0xf1, 0x21, 0xb7, 0x30, 0xc2, 0x58, 0xb2, 0x86, 0xf8, 0x90, 0xc5, 0xf1, 0x9f, 0xea,
                 0x83, 0x3a, 0x9c, 0x90, 0x0c, 0xbe, 0x90, 0x57, 0xbc, 0x54, 0x9a, 0x3e, 0x19, 0x97,
                 0x5b, 0xe9, 0x92, 0x7f, 0x0e, 0x76, 0x14, 0xf0, 0x8d, 0x1f, 0x0a, 0x10, 0x8e, 0xed,
                 0xe5, 0xfd, 0x7e, 0xb5, 0x62, 0x45, 0x84, 0xa4, 0xf4,
             ]),
-            Z: CanonEcPointRef::new(&[
+            z_pt: CanonEcPointRef::new(&[
                 0x04, 0x71, 0xa3, 0x52, 0x82, 0xd2, 0x02, 0x6f, 0x36, 0xbf, 0x3c, 0xeb, 0x38, 0xfc,
                 0xf8, 0x7e, 0x31, 0x12, 0xa4, 0x45, 0x2f, 0x46, 0xe9, 0xf7, 0xb4, 0x7f, 0xd7, 0x69,
                 0xcf, 0xb5, 0x70, 0x14, 0x5b, 0x62, 0x58, 0x9c, 0x76, 0xb7, 0xaa, 0x1e, 0xb6, 0x08,
                 0x0a, 0x83, 0x2e, 0x53, 0x32, 0xc3, 0x68, 0x98, 0x42, 0x69, 0x12, 0xe2, 0x9c, 0x40,
                 0xef, 0x9e, 0x9c, 0x74, 0x2e, 0xee, 0x82, 0xbf, 0x30,
             ]),
-            V: CanonEcPointRef::new(&[
+            v_pt: CanonEcPointRef::new(&[
                 0x04, 0x67, 0x18, 0x98, 0x1b, 0xf1, 0x5b, 0xc4, 0xdb, 0x53, 0x8f, 0xc1, 0xf1, 0xc1,
                 0xd0, 0x58, 0xcb, 0x0e, 0xec, 0xec, 0xf1, 0xdb, 0xe1, 0xb1, 0xea, 0x08, 0xa4, 0xe2,
                 0x52, 0x75, 0xd3, 0x82, 0xe8, 0x2b, 0x34, 0x8c, 0x81, 0x31, 0xd8, 0xed, 0x66, 0x9d,
                 0x16, 0x9c, 0x2e, 0x03, 0xa8, 0x58, 0xdb, 0x7c, 0xf6, 0xca, 0x28, 0x53, 0xa4, 0x07,
                 0x12, 0x51, 0xa3, 0x9f, 0xbe, 0x8c, 0xfc, 0x39, 0xbc,
             ]),
-            L: CanonEcPointRef::new(&[
+            l_pt: CanonEcPointRef::new(&[
                 0x04, 0x95, 0x64, 0x5c, 0xfb, 0x74, 0xdf, 0x6e, 0x58, 0xf9, 0x74, 0x8b, 0xb8, 0x3a,
                 0x86, 0x62, 0x0b, 0xab, 0x7c, 0x82, 0xe1, 0x07, 0xf5, 0x7d, 0x68, 0x70, 0xda, 0x8c,
                 0xbc, 0xb2, 0xff, 0x9f, 0x70, 0x63, 0xa1, 0x4b, 0x64, 0x02, 0xc6, 0x2f, 0x99, 0xaf,
                 0xcb, 0x97, 0x06, 0xa4, 0xd1, 0xa1, 0x43, 0x27, 0x32, 0x59, 0xfe, 0x76, 0xf1, 0xc6,
                 0x05, 0xa3, 0x63, 0x97, 0x45, 0xa9, 0x21, 0x54, 0xb9,
             ]),
-            cA: HmacHashRef::new(&[
+            ca: HmacHashRef::new(&[
                 0xd4, 0x37, 0x6f, 0x2d, 0xa9, 0xc7, 0x22, 0x26, 0xdd, 0x15, 0x1b, 0x77, 0xc2, 0x91,
                 0x90, 0x71, 0x15, 0x5f, 0xc2, 0x2a, 0x20, 0x68, 0xd9, 0x0b, 0x5f, 0xaa, 0x6c, 0x78,
                 0xc1, 0x1e, 0x77, 0xdd,
             ]),
-            cB: HmacHashRef::new(&[
+            cb: HmacHashRef::new(&[
                 0x06, 0x60, 0xa6, 0x80, 0x66, 0x3e, 0x8c, 0x56, 0x95, 0x95, 0x6f, 0xb2, 0x2d, 0xff,
                 0x29, 0x8b, 0x1d, 0x07, 0xa5, 0x26, 0xcf, 0x3c, 0xc5, 0x91, 0xad, 0xfe, 0xcd, 0x1f,
                 0x6e, 0xf6, 0xe0, 0x2e,
             ]),
-            Ke: CryptoSensitiveRef::<16>::new(&[
+            ke: CryptoSensitiveRef::<16>::new(&[
                 0x80, 0x1d, 0xb2, 0x97, 0x65, 0x48, 0x16, 0xeb, 0x4f, 0x02, 0x86, 0x81, 0x29, 0xb9,
                 0xdc, 0x89,
             ]),
-            TT: &[
+            tt: &[
                 0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x53, 0x50, 0x41, 0x4b, 0x45, 0x32,
                 0x2b, 0x2d, 0x50, 0x32, 0x35, 0x36, 0x2d, 0x53, 0x48, 0x41, 0x32, 0x35, 0x36, 0x2d,
                 0x48, 0x4b, 0x44, 0x46, 0x20, 0x64, 0x72, 0x61, 0x66, 0x74, 0x2d, 0x30, 0x31, 0x06,
@@ -885,7 +879,7 @@ mod tests {
                 0xe3, 0x55, 0xac, 0x03, 0x48, 0x63, 0xf7, 0xff, 0xaf, 0x43, 0x90, 0xe6, 0x7d, 0x79,
                 0x8c,
             ],
-            TT_len: 547,
+            tt_len: 547,
         },
         RFCTestVector {
             w0: CanonEcScalarRef::new(&[
@@ -903,7 +897,7 @@ mod tests {
                 0x32, 0xa3, 0xa6, 0xb8, 0x3d, 0x12, 0xd2, 0xb1, 0xca, 0x5d, 0x54, 0x3f, 0x44, 0xde,
                 0xf1, 0x7d, 0xfb, 0x8d,
             ]),
-            X: CanonEcPointRef::new(&[
+            x_pt: CanonEcPointRef::new(&[
                 0x04, 0x23, 0x07, 0x79, 0x96, 0x08, 0x24, 0x07, 0x6d, 0x36, 0x66, 0xa7, 0x41, 0x8e,
                 0x4d, 0x43, 0x3e, 0x2f, 0xa1, 0x5b, 0x06, 0x17, 0x6e, 0xab, 0xdd, 0x57, 0x2f, 0x43,
                 0xa3, 0x2e, 0xcc, 0x79, 0xa1, 0x92, 0xb2, 0x43, 0xd2, 0x62, 0x43, 0x10, 0xa7, 0x35,
@@ -915,49 +909,49 @@ mod tests {
                 0x96, 0x38, 0x07, 0xad, 0xd7, 0x67, 0x81, 0x5d, 0xd0, 0x2a, 0x6f, 0x01, 0x33, 0xb4,
                 0xbc, 0x2c, 0x9e, 0xb0,
             ]),
-            Y: CanonEcPointRef::new(&[
+            y_pt: CanonEcPointRef::new(&[
                 0x04, 0x45, 0x58, 0x64, 0x2e, 0x71, 0xb6, 0x16, 0xb2, 0x48, 0xc9, 0x58, 0x3b, 0xd6,
                 0xd7, 0xaa, 0x1b, 0x39, 0x52, 0xc6, 0xdf, 0x6a, 0x9f, 0x74, 0x92, 0xa0, 0x60, 0x35,
                 0xca, 0x5d, 0x92, 0x52, 0x2d, 0x84, 0x44, 0x3d, 0xe7, 0xaa, 0x20, 0xa5, 0x93, 0x80,
                 0xfa, 0x4d, 0xe6, 0xb7, 0x43, 0x8d, 0x92, 0x5d, 0xbf, 0xb7, 0xf1, 0xcf, 0xe6, 0x0d,
                 0x79, 0xac, 0xf9, 0x61, 0xee, 0x33, 0x98, 0x8c, 0x7d,
             ]),
-            Z: CanonEcPointRef::new(&[
+            z_pt: CanonEcPointRef::new(&[
                 0x04, 0xb4, 0xe8, 0x77, 0x0f, 0x19, 0xf5, 0x8d, 0xdf, 0x83, 0xf9, 0x22, 0x0c, 0x3a,
                 0x93, 0x05, 0x79, 0x26, 0x65, 0xe0, 0xc6, 0x09, 0x89, 0xe6, 0xee, 0x9d, 0x7f, 0xa4,
                 0x49, 0xc7, 0x75, 0xd6, 0x39, 0x5f, 0x6f, 0x25, 0xf3, 0x07, 0xe3, 0x90, 0x3a, 0xc0,
                 0x45, 0xa0, 0x13, 0xfb, 0xb5, 0xa6, 0x76, 0xe8, 0x72, 0xa6, 0xab, 0xfc, 0xf4, 0xd7,
                 0xbb, 0x5a, 0xac, 0x69, 0xef, 0xd6, 0x14, 0x0e, 0xed,
             ]),
-            V: CanonEcPointRef::new(&[
+            v_pt: CanonEcPointRef::new(&[
                 0x04, 0x14, 0x1d, 0xb8, 0x3b, 0xc7, 0xd9, 0x6f, 0x41, 0xb6, 0x36, 0x62, 0x2e, 0x7a,
                 0x5c, 0x55, 0x2a, 0xd8, 0x32, 0x11, 0xff, 0x55, 0x31, 0x9a, 0xc2, 0x5e, 0xd0, 0xa0,
                 0x9f, 0x08, 0x18, 0xbd, 0x94, 0x2e, 0x81, 0x50, 0x31, 0x9b, 0xfb, 0xfa, 0x68, 0x61,
                 0x83, 0x80, 0x6d, 0xc6, 0x19, 0x11, 0x18, 0x3f, 0x6a, 0x0f, 0x59, 0x56, 0x15, 0x60,
                 0x23, 0xd9, 0x6e, 0x0f, 0x93, 0xd2, 0x75, 0xbf, 0x50,
             ]),
-            L: CanonEcPointRef::new(&[
+            l_pt: CanonEcPointRef::new(&[
                 0x04, 0x95, 0x64, 0x5c, 0xfb, 0x74, 0xdf, 0x6e, 0x58, 0xf9, 0x74, 0x8b, 0xb8, 0x3a,
                 0x86, 0x62, 0x0b, 0xab, 0x7c, 0x82, 0xe1, 0x07, 0xf5, 0x7d, 0x68, 0x70, 0xda, 0x8c,
                 0xbc, 0xb2, 0xff, 0x9f, 0x70, 0x63, 0xa1, 0x4b, 0x64, 0x02, 0xc6, 0x2f, 0x99, 0xaf,
                 0xcb, 0x97, 0x06, 0xa4, 0xd1, 0xa1, 0x43, 0x27, 0x32, 0x59, 0xfe, 0x76, 0xf1, 0xc6,
                 0x05, 0xa3, 0x63, 0x97, 0x45, 0xa9, 0x21, 0x54, 0xb9,
             ]),
-            cA: HmacHashRef::new(&[
+            ca: HmacHashRef::new(&[
                 0xe1, 0xb9, 0x25, 0x88, 0x07, 0xba, 0x47, 0x50, 0xda, 0xe1, 0xd7, 0xf3, 0xc3, 0xc2,
                 0x94, 0xf1, 0x3d, 0xc4, 0xfa, 0x60, 0xcd, 0xe3, 0x46, 0xd5, 0xde, 0x7d, 0x20, 0x0e,
                 0x2f, 0x8f, 0xd3, 0xfc,
             ]),
-            cB: HmacHashRef::new(&[
+            cb: HmacHashRef::new(&[
                 0xb9, 0xc3, 0x9d, 0xfa, 0x49, 0xc4, 0x77, 0x57, 0xde, 0x77, 0x8d, 0x9b, 0xed, 0xea,
                 0xca, 0x24, 0x48, 0xb9, 0x05, 0xbe, 0x19, 0xa4, 0x3b, 0x94, 0xee, 0x24, 0xb7, 0x70,
                 0x20, 0x81, 0x35, 0xe3,
             ]),
-            Ke: CryptoSensitiveRef::<16>::new(&[
+            ke: CryptoSensitiveRef::<16>::new(&[
                 0x69, 0x89, 0xd8, 0xf9, 0x17, 0x7e, 0xf7, 0xdf, 0x67, 0xda, 0x43, 0x79, 0x87, 0xf0,
                 0x72, 0x55,
             ]),
-            TT: &[
+            tt: &[
                 0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x53, 0x50, 0x41, 0x4b, 0x45, 0x32,
                 0x2b, 0x2d, 0x50, 0x32, 0x35, 0x36, 0x2d, 0x53, 0x48, 0x41, 0x32, 0x35, 0x36, 0x2d,
                 0x48, 0x4b, 0x44, 0x46, 0x20, 0x64, 0x72, 0x61, 0x66, 0x74, 0x2d, 0x30, 0x31, 0x06,
@@ -999,7 +993,7 @@ mod tests {
                 0xf7, 0xff, 0xaf, 0x43, 0x90, 0xe6, 0x7d, 0x79, 0x8c, 0x00, 0x00, 0x00, 0x00, 0x00,
                 0x00,
             ],
-            TT_len: 541,
+            tt_len: 541,
         },
         RFCTestVector {
             w0: CanonEcScalarRef::new(&[
@@ -1017,7 +1011,7 @@ mod tests {
                 0x63, 0xb5, 0x1f, 0xda, 0x51, 0x9a, 0x34, 0x20, 0x50, 0x1a, 0xcb, 0xe2, 0x3d, 0x53,
                 0xc2, 0x91, 0x87, 0x48,
             ]),
-            X: CanonEcPointRef::new(&[
+            x_pt: CanonEcPointRef::new(&[
                 0x04, 0xc1, 0x4d, 0x28, 0xf4, 0x37, 0x0f, 0xea, 0x20, 0x74, 0x51, 0x06, 0xce, 0xa5,
                 0x8b, 0xcf, 0xb6, 0x0f, 0x29, 0x49, 0xfa, 0x4e, 0x13, 0x1b, 0x9a, 0xff, 0x5e, 0xa1,
                 0x3f, 0xd5, 0xaa, 0x79, 0xd5, 0x07, 0xae, 0x1d, 0x22, 0x9e, 0x44, 0x7e, 0x00, 0x0f,
@@ -1029,49 +1023,49 @@ mod tests {
                 0xd0, 0xaa, 0xa4, 0x4d, 0xf2, 0x6c, 0xe7, 0x55, 0xf7, 0x8e, 0x09, 0x26, 0x44, 0xb4,
                 0x34, 0x53, 0x3a, 0x42,
             ]),
-            Y: CanonEcPointRef::new(&[
+            y_pt: CanonEcPointRef::new(&[
                 0x04, 0xd1, 0xbe, 0xe3, 0x12, 0x0f, 0xd8, 0x7e, 0x86, 0xfe, 0x18, 0x9c, 0xb9, 0x52,
                 0xdc, 0x68, 0x88, 0x23, 0x08, 0x0e, 0x62, 0x52, 0x4d, 0xd2, 0xc0, 0x8d, 0xff, 0xe3,
                 0xd2, 0x2a, 0x0a, 0x89, 0x86, 0xaa, 0x64, 0xc9, 0xfe, 0x01, 0x91, 0x03, 0x3c, 0xaf,
                 0xbc, 0x9b, 0xca, 0xef, 0xc8, 0xe2, 0xba, 0x8b, 0xa8, 0x60, 0xcd, 0x12, 0x7a, 0xf9,
                 0xef, 0xdd, 0x7f, 0x1c, 0x3a, 0x41, 0x92, 0x0f, 0xe8,
             ]),
-            Z: CanonEcPointRef::new(&[
+            z_pt: CanonEcPointRef::new(&[
                 0x04, 0xaa, 0xc7, 0x1c, 0xf4, 0xc8, 0xdf, 0x81, 0x81, 0xb8, 0x67, 0xc9, 0xec, 0xbe,
                 0xe9, 0xd0, 0x96, 0x3c, 0xaf, 0x51, 0xf1, 0x53, 0x4a, 0x82, 0x34, 0x29, 0xc2, 0x6f,
                 0xe5, 0x24, 0x83, 0x13, 0xff, 0xc5, 0xc5, 0xe4, 0x4e, 0xa8, 0x16, 0x21, 0x61, 0xab,
                 0x6b, 0x3d, 0x73, 0xb8, 0x77, 0x04, 0xa4, 0x58, 0x89, 0xbf, 0x63, 0x43, 0xd9, 0x6f,
                 0xa9, 0x6c, 0xd1, 0x64, 0x1e, 0xfa, 0x71, 0x60, 0x7c,
             ]),
-            V: CanonEcPointRef::new(&[
+            v_pt: CanonEcPointRef::new(&[
                 0x04, 0xc7, 0xc9, 0x50, 0x53, 0x65, 0xf7, 0xce, 0x57, 0x29, 0x3c, 0x92, 0xa3, 0x7f,
                 0x1b, 0xbd, 0xc6, 0x8e, 0x03, 0x22, 0x90, 0x1e, 0x61, 0xed, 0xef, 0x59, 0xfe, 0xe7,
                 0x87, 0x6b, 0x17, 0xb0, 0x63, 0xe0, 0xfa, 0x4a, 0x12, 0x6e, 0xae, 0x0a, 0x67, 0x1b,
                 0x37, 0xf1, 0x46, 0x4c, 0xf1, 0xcc, 0xad, 0x59, 0x1c, 0x33, 0xae, 0x94, 0x4e, 0x3b,
                 0x1f, 0x31, 0x8d, 0x76, 0xe3, 0x6f, 0xea, 0x99, 0x66,
             ]),
-            L: CanonEcPointRef::new(&[
+            l_pt: CanonEcPointRef::new(&[
                 0x04, 0x95, 0x64, 0x5c, 0xfb, 0x74, 0xdf, 0x6e, 0x58, 0xf9, 0x74, 0x8b, 0xb8, 0x3a,
                 0x86, 0x62, 0x0b, 0xab, 0x7c, 0x82, 0xe1, 0x07, 0xf5, 0x7d, 0x68, 0x70, 0xda, 0x8c,
                 0xbc, 0xb2, 0xff, 0x9f, 0x70, 0x63, 0xa1, 0x4b, 0x64, 0x02, 0xc6, 0x2f, 0x99, 0xaf,
                 0xcb, 0x97, 0x06, 0xa4, 0xd1, 0xa1, 0x43, 0x27, 0x32, 0x59, 0xfe, 0x76, 0xf1, 0xc6,
                 0x05, 0xa3, 0x63, 0x97, 0x45, 0xa9, 0x21, 0x54, 0xb9,
             ]),
-            cA: HmacHashRef::new(&[
+            ca: HmacHashRef::new(&[
                 0xe5, 0x64, 0xc9, 0x3b, 0x30, 0x15, 0xef, 0xb9, 0x46, 0xdc, 0x16, 0xd6, 0x42, 0xbb,
                 0xe7, 0xd1, 0xc8, 0xda, 0x5b, 0xe1, 0x64, 0xed, 0x9f, 0xc3, 0xba, 0xe4, 0xe0, 0xff,
                 0x86, 0xe1, 0xbd, 0x3c,
             ]),
-            cB: HmacHashRef::new(&[
+            cb: HmacHashRef::new(&[
                 0x07, 0x2a, 0x94, 0xd9, 0xa5, 0x4e, 0xdc, 0x20, 0x1d, 0x88, 0x91, 0x53, 0x4c, 0x23,
                 0x17, 0xca, 0xdf, 0x3e, 0xa3, 0x79, 0x28, 0x27, 0xf4, 0x79, 0xe8, 0x73, 0xf9, 0x3e,
                 0x90, 0xf2, 0x15, 0x52,
             ]),
-            Ke: CryptoSensitiveRef::<16>::new(&[
+            ke: CryptoSensitiveRef::<16>::new(&[
                 0x2e, 0xa4, 0x0e, 0x4b, 0xad, 0xfa, 0x54, 0x52, 0xb5, 0x74, 0x4d, 0xc5, 0x98, 0x3e,
                 0x99, 0xba,
             ]),
-            TT: &[
+            tt: &[
                 0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x53, 0x50, 0x41, 0x4b, 0x45, 0x32,
                 0x2b, 0x2d, 0x50, 0x32, 0x35, 0x36, 0x2d, 0x53, 0x48, 0x41, 0x32, 0x35, 0x36, 0x2d,
                 0x48, 0x4b, 0x44, 0x46, 0x20, 0x64, 0x72, 0x61, 0x66, 0x74, 0x2d, 0x30, 0x31, 0x00,
@@ -1113,7 +1107,7 @@ mod tests {
                 0xf7, 0xff, 0xaf, 0x43, 0x90, 0xe6, 0x7d, 0x79, 0x8c, 0x00, 0x00, 0x00, 0x00, 0x00,
                 0x00,
             ],
-            TT_len: 541,
+            tt_len: 541,
         },
         RFCTestVector {
             w0: CanonEcScalarRef::new(&[
@@ -1131,7 +1125,7 @@ mod tests {
                 0x64, 0x87, 0x25, 0x22, 0x2f, 0x0a, 0x54, 0xcc, 0x4c, 0x87, 0x61, 0x39, 0xef, 0xe7,
                 0xd9, 0xa2, 0x17, 0x86,
             ]),
-            X: CanonEcPointRef::new(&[
+            x_pt: CanonEcPointRef::new(&[
                 0x04, 0xa6, 0xdb, 0x23, 0xd0, 0x01, 0x72, 0x3f, 0xb0, 0x1f, 0xcf, 0xc9, 0xd0, 0x87,
                 0x46, 0xc3, 0xc2, 0xa0, 0xa3, 0xfe, 0xff, 0x86, 0x35, 0xd2, 0x9c, 0xad, 0x28, 0x53,
                 0xe7, 0x35, 0x86, 0x23, 0x42, 0x5c, 0xf3, 0x97, 0x12, 0xe9, 0x28, 0x05, 0x45, 0x61,
@@ -1143,49 +1137,49 @@ mod tests {
                 0x04, 0x4b, 0x8c, 0x3c, 0x4f, 0x76, 0x55, 0xe8, 0xbe, 0xec, 0x44, 0xa1, 0x5d, 0xcb,
                 0xca, 0xf7, 0x8e, 0x5e,
             ]),
-            Y: CanonEcPointRef::new(&[
+            y_pt: CanonEcPointRef::new(&[
                 0x04, 0x39, 0x0d, 0x29, 0xbf, 0x18, 0x5c, 0x3a, 0xbf, 0x99, 0xf1, 0x50, 0xae, 0x7c,
                 0x13, 0x38, 0x8c, 0x82, 0xb6, 0xbe, 0x0c, 0x07, 0xb1, 0xb8, 0xd9, 0x0d, 0x26, 0x85,
                 0x3e, 0x84, 0x37, 0x4b, 0xbd, 0xc8, 0x2b, 0xec, 0xdb, 0x97, 0x8c, 0xa3, 0x79, 0x2f,
                 0x47, 0x24, 0x24, 0x10, 0x6a, 0x25, 0x78, 0x01, 0x27, 0x52, 0xc1, 0x19, 0x38, 0xfc,
                 0xf6, 0x0a, 0x41, 0xdf, 0x75, 0xff, 0x7c, 0xf9, 0x47,
             ]),
-            Z: CanonEcPointRef::new(&[
+            z_pt: CanonEcPointRef::new(&[
                 0x04, 0x0a, 0x15, 0x0d, 0x9a, 0x62, 0xf5, 0x14, 0xc9, 0xa1, 0xfe, 0xdd, 0x78, 0x2a,
                 0x02, 0x40, 0xa3, 0x42, 0x72, 0x10, 0x46, 0xce, 0xfb, 0x11, 0x11, 0xc3, 0xad, 0xb3,
                 0xbe, 0x89, 0x3c, 0xe9, 0xfc, 0xd2, 0xff, 0xa1, 0x37, 0x92, 0x2f, 0xcf, 0x8a, 0x58,
                 0x8d, 0x0f, 0x76, 0xba, 0x9c, 0x55, 0xc8, 0x5d, 0xa2, 0xaf, 0x3f, 0x1c, 0x78, 0x9c,
                 0xa1, 0x79, 0x76, 0x81, 0x03, 0x87, 0xfb, 0x1d, 0x7e,
             ]),
-            V: CanonEcPointRef::new(&[
+            v_pt: CanonEcPointRef::new(&[
                 0x04, 0xf8, 0xe2, 0x47, 0xcc, 0x26, 0x3a, 0x18, 0x46, 0x27, 0x2f, 0x5a, 0x3b, 0x61,
                 0xb6, 0x8a, 0xa6, 0x0a, 0x5a, 0x26, 0x65, 0xd1, 0x0c, 0xd2, 0x2c, 0x89, 0xcd, 0x6b,
                 0xad, 0x05, 0xdc, 0x0e, 0x5e, 0x65, 0x0f, 0x21, 0xff, 0x01, 0x71, 0x86, 0xcc, 0x92,
                 0x65, 0x1a, 0x4c, 0xd7, 0xe6, 0x6c, 0xe8, 0x8f, 0x52, 0x92, 0x99, 0xf3, 0x40, 0xea,
                 0x80, 0xfb, 0x90, 0xa9, 0xba, 0xd0, 0x94, 0xe1, 0xa6,
             ]),
-            L: CanonEcPointRef::new(&[
+            l_pt: CanonEcPointRef::new(&[
                 0x04, 0x95, 0x64, 0x5c, 0xfb, 0x74, 0xdf, 0x6e, 0x58, 0xf9, 0x74, 0x8b, 0xb8, 0x3a,
                 0x86, 0x62, 0x0b, 0xab, 0x7c, 0x82, 0xe1, 0x07, 0xf5, 0x7d, 0x68, 0x70, 0xda, 0x8c,
                 0xbc, 0xb2, 0xff, 0x9f, 0x70, 0x63, 0xa1, 0x4b, 0x64, 0x02, 0xc6, 0x2f, 0x99, 0xaf,
                 0xcb, 0x97, 0x06, 0xa4, 0xd1, 0xa1, 0x43, 0x27, 0x32, 0x59, 0xfe, 0x76, 0xf1, 0xc6,
                 0x05, 0xa3, 0x63, 0x97, 0x45, 0xa9, 0x21, 0x54, 0xb9,
             ]),
-            cA: HmacHashRef::new(&[
+            ca: HmacHashRef::new(&[
                 0x71, 0xd9, 0x41, 0x27, 0x79, 0xb6, 0xc4, 0x5a, 0x2c, 0x61, 0x5c, 0x9d, 0xf3, 0xf1,
                 0xfd, 0x93, 0xdc, 0x0a, 0xaf, 0x63, 0x10, 0x4d, 0xa8, 0xec, 0xe4, 0xaa, 0x1b, 0x5a,
                 0x3a, 0x41, 0x5f, 0xea,
             ]),
-            cB: HmacHashRef::new(&[
+            cb: HmacHashRef::new(&[
                 0x09, 0x5d, 0xc0, 0x40, 0x03, 0x55, 0xcc, 0x23, 0x3f, 0xde, 0x74, 0x37, 0x81, 0x18,
                 0x15, 0xb3, 0xc1, 0x52, 0x4a, 0xae, 0x80, 0xfd, 0x4e, 0x68, 0x10, 0xcf, 0x53, 0x1c,
                 0xf1, 0x1d, 0x20, 0xe3,
             ]),
-            Ke: CryptoSensitiveRef::<16>::new(&[
+            ke: CryptoSensitiveRef::<16>::new(&[
                 0xea, 0x32, 0x76, 0xd6, 0x83, 0x34, 0x57, 0x60, 0x97, 0xe0, 0x4b, 0x19, 0xee, 0x5a,
                 0x3a, 0x8b,
             ]),
-            TT: &[
+            tt: &[
                 0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x53, 0x50, 0x41, 0x4b, 0x45, 0x32,
                 0x2b, 0x2d, 0x50, 0x32, 0x35, 0x36, 0x2d, 0x53, 0x48, 0x41, 0x32, 0x35, 0x36, 0x2d,
                 0x48, 0x4b, 0x44, 0x46, 0x20, 0x64, 0x72, 0x61, 0x66, 0x74, 0x2d, 0x30, 0x31, 0x00,
@@ -1227,7 +1221,7 @@ mod tests {
                 0x7d, 0x79, 0x8c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 0x00,
             ],
-            TT_len: 535,
+            tt_len: 535,
         },
     ];
 }

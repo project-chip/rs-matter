@@ -634,15 +634,14 @@ impl<'a, C: Crypto> Pase<'a, C> {
     ///
     /// # Arguments
     /// - `exchange` - The exchange
-    #[allow(non_snake_case)]
     async fn handle_pasepake1(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
         check_opcode(exchange, OpCode::PASEPake1)?;
 
         let root = get_root_node_struct(exchange.rx()?.payload())?;
 
-        let pA: CanonEcPointRef<'_> = root.structure()?.ctx(1)?.str()?.try_into()?;
-        let mut pB = EC_POINT_ZEROED;
-        let mut cB = HMAC_HASH_ZEROED;
+        let a_pt: CanonEcPointRef<'_> = root.structure()?.ctx(1)?.str()?.try_into()?;
+        let mut b_pt = EC_POINT_ZEROED;
+        let mut cb = HMAC_HASH_ZEROED;
 
         let has_comm_window = {
             let matter = exchange.matter();
@@ -652,7 +651,7 @@ impl<'a, C: Crypto> Pase<'a, C> {
 
             if let Some(comm_window) = pase.comm_window(&ctx)? {
                 self.spake2p.start_verifier(&comm_window.verifier)?;
-                self.spake2p.handle_pA(pA, &mut pB, &mut cB)?;
+                self.spake2p.compute_b_pt_cb(a_pt, &mut b_pt, &mut cb)?;
 
                 true
             } else {
@@ -664,8 +663,8 @@ impl<'a, C: Crypto> Pase<'a, C> {
             exchange
                 .send_with(|_, wb| {
                     let resp = Pake1Resp {
-                        pb: OctetStr::new(pB.access()),
-                        cb: OctetStr::new(cB.access()),
+                        pb: OctetStr::new(b_pt.access()),
+                        cb: OctetStr::new(cb.access()),
                     };
                     resp.to_tlv(&TagType::Anonymous, wb)?;
 
@@ -682,7 +681,6 @@ impl<'a, C: Crypto> Pase<'a, C> {
     /// # Arguments
     /// - `exchange` - The exchange
     /// - `session` - The reserved session
-    #[allow(non_snake_case)]
     async fn handle_pasepake3(
         &mut self,
         exchange: &mut Exchange<'_>,
@@ -692,8 +690,8 @@ impl<'a, C: Crypto> Pase<'a, C> {
 
         let root = get_root_node_struct(exchange.rx()?.payload())?;
 
-        let cA: HmacHashRef<'_> = root.structure()?.ctx(1)?.str()?.try_into()?;
-        let result = self.spake2p.handle_cA(cA);
+        let ca: HmacHashRef<'_> = root.structure()?.ctx(1)?.str()?.try_into()?;
+        let result = self.spake2p.handle_ca(ca);
 
         if result.is_ok() {
             // Get the keys
