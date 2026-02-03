@@ -47,7 +47,7 @@ use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, NetworkType, Networks};
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::wifi_diag::WifiDiag;
-use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
@@ -201,7 +201,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         let btp = Btp::new(BluezGattPeripheral::new(None, connection), &BTP_CONTEXT);
         let mut bluetooth = pin!(btp.run("MT", &TEST_DEV_DET, TEST_DEV_COMM.discriminator));
 
-        let mut transport = pin!(matter.run(&btp, &btp, &crypto));
+        let mut transport = pin!(matter.run(&crypto, &btp, &btp));
         let mut wifi_prov_task = pin!(async {
             NetCtlState::wait_prov_ready(&net_ctl_state, &btp).await;
             Ok(())
@@ -225,7 +225,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     let udp = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
     // Run the Matter transport
-    let mut transport = pin!(matter.run_transport(&udp, &udp, &crypto));
+    let mut transport = pin!(matter.run_transport(&crypto, &udp, &udp));
 
     // Combine all async tasks in a single one
     let all = select4(
