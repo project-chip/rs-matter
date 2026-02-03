@@ -16,7 +16,7 @@
  */
 
 //! Cryptographic backends.
-//!
+
 pub mod dummy;
 #[cfg(feature = "mbedtls")]
 pub mod mbedtls;

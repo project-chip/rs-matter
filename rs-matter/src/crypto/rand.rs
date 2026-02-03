@@ -25,17 +25,23 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::sync::blocking::Mutex;
 
+/// A utility wrapping a random number generator in a mutex for shared access.
+///
+/// Implements the `RngCore` and `CryptoRng` traits for `&SharedRand<M, T>`, where `T` is the
+/// underlying RNG type and `M` is the mutex type.
 pub struct SharedRand<M: RawMutex, T> {
     shared: Mutex<M, RefCell<T>>,
 }
 
 impl<M: RawMutex, T> SharedRand<M, T> {
+    /// Creates a new `SharedRand` instance wrapping the provided RNG.
     pub const fn new(rand: T) -> Self {
         Self {
             shared: Mutex::new(RefCell::new(rand)),
         }
     }
 
+    /// Initializes a new `SharedRand` instance using the provided RNG initializer.
     pub fn init(rand: impl Init<T>) -> impl Init<Self> {
         init!(Self {
             shared <- Mutex::init(RefCell::init(rand)),
@@ -67,15 +73,21 @@ where
 
 impl<M: RawMutex, T> CryptoRng for &SharedRand<M, T> where T: CryptoRng {}
 
+/// A weak random number generator intended for use in tests only.
+///
+/// DO NOT USE IN PRODUCTION!
 pub struct WeakTestOnlyRand(u32);
 
 impl WeakTestOnlyRand {
+    /// A fixed seed for the default constructor.
     const SEED: u32 = 2463534242;
 
+    /// Create a new `WeakTestOnlyRand` instance with a default seed.
     pub const fn new_default() -> Self {
         Self(Self::SEED)
     }
 
+    /// Create a new `WeakTestOnlyRand` instance with the specified seed.
     pub const fn new(seed: u32) -> Self {
         Self(seed)
     }

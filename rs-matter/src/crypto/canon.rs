@@ -165,17 +165,40 @@ canon!(
     CanonEcPointRef
 );
 
+/// A cryptographic material represented in a cross-platform way,
+/// as a fixed-length array in a well-defined format.
+///
+/// Thus, it can be imported into any `Crypto` provider and exported from it without
+/// worrying about endianness or other platform-specific representation issues.
+///
+/// The reason for wrapping the array with a newtype is so that the following
+/// protection measures are taken:
+/// - The material is not accidentally printed in logs or debug output.
+/// - The material has a single `access` / `access_mut` method and deliberately
+///   does not implement `Deref` or `AsRef` traits to avoid accidental leakage.
+/// - The material is zeroed out when dropped; note however that this has a limited use case,
+///   in Rust, because of the Rust move semantics.
+///
+/// Regarding sensitivity, `rs-matter` takes a radical approach and assumes that
+/// *all* cryptographic material is sensitive. Including, but not limited to:
+/// - Secret keys (obviously)
+/// - Signatures (because they can leak information about the secret key)
+/// - Hashes (because they can be pre-images of sensitive data)
+/// - Public keys (just in case)
 #[derive(Clone)]
 pub struct CryptoSensitive<const N: usize> {
+    /// The underlying data array that needs to be protected.
     data: [u8; N],
 }
 
 impl<const N: usize> CryptoSensitive<N> {
+    /// Create a new zeroed `CryptoSensitive` instance.
     #[inline(always)]
     pub const fn new() -> Self {
         Self { data: [0u8; N] }
     }
 
+    /// Create a new `CryptoSensitive` instance by loading data from the provided reference.
     pub const fn new_from_ref(other: CryptoSensitiveRef<'_, N>) -> Self {
         let mut this = Self::new();
 
@@ -184,6 +207,7 @@ impl<const N: usize> CryptoSensitive<N> {
         this
     }
 
+    /// Return an in-place initializer for a zeroed `CryptoSensitive` instance.
     #[inline(always)]
     pub fn init() -> impl Init<Self> {
         init!(Self {
@@ -191,24 +215,31 @@ impl<const N: usize> CryptoSensitive<N> {
         })
     }
 
+    /// Zeroizes the cryptographic material held by this instance.
     pub fn zeroize(&mut self) {
         for b in &mut self.data {
             *b = 0;
         }
     }
 
+    /// Get a reference to this cryptographic material.
     pub const fn reference(&self) -> CryptoSensitiveRef<'_, N> {
         CryptoSensitiveRef::new(&self.data)
     }
 
+    /// Load data from another cryptographic material reference.
     pub const fn load(&mut self, other: CryptoSensitiveRef<'_, N>) {
         self.load_from_array(other.access());
     }
 
+    /// Load data from a byte array.
     pub const fn load_from_array(&mut self, data: &[u8; N]) {
         self.data.copy_from_slice(data);
     }
 
+    /// Try to load data from a byte slice.
+    ///
+    /// Returns an error if the slice length does not match the expected length.
     pub fn try_load_from_slice(&mut self, data: &[u8]) -> Result<(), Error> {
         if data.len() != N {
             return Err(ErrorCode::InvalidData.into());
@@ -219,10 +250,16 @@ impl<const N: usize> CryptoSensitive<N> {
         Ok(())
     }
 
+    /// Access the underlying data as a byte array reference.
+    ///
+    /// NOTE: care should be taken when using this method, as it exposes the sensitive data.
     pub const fn access(&self) -> &[u8; N] {
         &self.data
     }
 
+    /// Access the underlying data as a mutable byte array reference.
+    ///
+    /// NOTE: care should be taken when using this method, as it exposes the sensitive data.
     pub const fn access_mut(&mut self) -> &mut [u8; N] {
         &mut self.data
     }
@@ -329,17 +366,23 @@ impl<const N: usize> ToTLV for CryptoSensitive<N> {
     }
 }
 
+/// A reference to cryptographic material.
+/// The non-owned equivalent of `CryptoSensitive<N>`.
 #[derive(Copy, Clone)]
 pub struct CryptoSensitiveRef<'a, const N: usize> {
     data: &'a [u8; N],
 }
 
 impl<'a, const N: usize> CryptoSensitiveRef<'a, N> {
+    /// Create a new `CryptoSensitiveRef` instance from a byte array reference.
     #[inline(always)]
     pub const fn new(material: &'a [u8; N]) -> Self {
         Self { data: material }
     }
 
+    /// Create a new `CryptoSensitiveRef` instance from a byte slice.
+    ///
+    /// Panics if the slice length does not match the expected length.
     #[inline(always)]
     pub fn new_from_slice(material: &'a [u8]) -> Self {
         assert_eq!(material.len(), N);
@@ -347,6 +390,9 @@ impl<'a, const N: usize> CryptoSensitiveRef<'a, N> {
         Self::new(Self::as_array(material).unwrap()) // TODO
     }
 
+    /// Try to create a new `CryptoSensitiveRef` instance from a byte slice.
+    ///
+    /// Returns an error if the slice length does not match the expected length.
     #[inline(always)]
     pub fn try_new(material: &'a [u8]) -> Result<Self, Error> {
         if material.len() != N {
@@ -356,6 +402,9 @@ impl<'a, const N: usize> CryptoSensitiveRef<'a, N> {
         Ok(Self::new(Self::as_array(material).unwrap())) // TODO
     }
 
+    /// Split this reference into two references of the specified lengths.
+    ///
+    /// Panics if the sum of the specified lengths does not match the length of this reference.
     pub fn split<const M1: usize, const M2: usize>(
         &self,
     ) -> (CryptoSensitiveRef<'a, M1>, CryptoSensitiveRef<'a, M2>) {
@@ -367,6 +416,9 @@ impl<'a, const N: usize> CryptoSensitiveRef<'a, N> {
         )
     }
 
+    /// Access the underlying data as a byte array reference.
+    ///
+    /// NOTE: care should be taken when using this method, as it exposes the sensitive data.
     pub const fn access(&self) -> &'a [u8; N] {
         self.data
     }
