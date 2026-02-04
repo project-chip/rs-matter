@@ -402,7 +402,9 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
+impl ClusterSyncHandler for ThreadDiagHandler<'_> {
     fn channel(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
         Ok(Nullable::new(self.diag.channel()?))
     }

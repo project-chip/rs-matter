@@ -138,7 +138,9 @@ impl ClusterHandler for DescHandler<'_> {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
+impl ClusterSyncHandler for DescHandler<'_> {
     fn device_type_list<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,

@@ -19,8 +19,6 @@ use crate::dm::Node;
 
 pub use asynch::*;
 
-use super::Async;
-
 pub trait MetadataGuard {
     fn node(&self) -> Node<'_>;
 }
@@ -116,26 +114,12 @@ where
     }
 }
 
-impl<T> Metadata for Async<T>
-where
-    T: Metadata,
-{
-    type MetadataGuard<'a>
-        = T::MetadataGuard<'a>
-    where
-        Self: 'a;
-
-    fn lock(&self) -> Self::MetadataGuard<'_> {
-        self.0.lock()
-    }
-}
-
 mod asynch {
     use core::future::Future;
 
-    use crate::dm::{Async, Node};
+    use crate::dm::Node;
 
-    use super::{Metadata, MetadataGuard};
+    use super::MetadataGuard;
 
     pub trait AsyncMetadata {
         type MetadataGuard<'a>: MetadataGuard
@@ -197,20 +181,6 @@ mod asynch {
             Self: 'a;
 
         fn lock(&self) -> impl Future<Output = Self::MetadataGuard<'_>> {
-            self.0.lock()
-        }
-    }
-
-    impl<T> AsyncMetadata for Async<T>
-    where
-        T: Metadata,
-    {
-        type MetadataGuard<'a>
-            = T::MetadataGuard<'a>
-        where
-            Self: 'a;
-
-        async fn lock(&self) -> Self::MetadataGuard<'_> {
             self.0.lock()
         }
     }

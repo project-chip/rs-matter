@@ -57,7 +57,9 @@ impl ClusterHandler for GrpKeyMgmtHandler {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
+impl ClusterSyncHandler for GrpKeyMgmtHandler {
     fn group_key_map<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,

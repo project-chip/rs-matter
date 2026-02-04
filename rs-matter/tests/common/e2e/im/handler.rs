@@ -18,14 +18,13 @@
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::on_off::{
-    self, test::TestOnOffDeviceLogic, ClusterAsyncHandler as _, NoLevelControl, OnOffHandler,
-    OnOffHooks,
+    self, test::TestOnOffDeviceLogic, ClusterHandler as _, NoLevelControl, OnOffHandler, OnOffHooks,
 };
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints::{with_eth, with_sys, EthHandler, SysHandler, ROOT_ENDPOINT_ID};
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, ChainedHandler, Dataver, EmptyHandler, Endpoint,
-    EpClMatcher, InvokeContext, InvokeReply, Node, ReadContext, ReadReply, WriteContext,
+    AsyncHandler, AsyncMetadata, ChainedHandler, Dataver, EmptyHandler, Endpoint, EpClMatcher,
+    InvokeContext, InvokeReply, Node, ReadContext, ReadReply, WriteContext,
 };
 use rs_matter::error::Error;
 use rs_matter::Matter;
@@ -38,10 +37,10 @@ use super::echo_cluster::{self, EchoHandler};
 /// A sample handler for E2E IM tests.
 pub struct E2eTestHandler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     handler_chain_type!(
-        EpClMatcher => on_off::HandlerAsyncAdaptor<OnOffHandler<'a, OH, LH>>,
-        EpClMatcher => Async<EchoHandler>,
-        EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'static>>>,
-        EpClMatcher => Async<EchoHandler>
+        EpClMatcher => on_off::HandlerAdaptor<OnOffHandler<'a, OH, LH>>,
+        EpClMatcher => EchoHandler,
+        EpClMatcher => desc::HandlerAdaptor<DescHandler<'static>>,
+        EpClMatcher => EchoHandler
         | EthHandler<'a, SysHandler<'a, EmptyHandler>>),
 );
 
@@ -76,20 +75,20 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
 
         let handler = ChainedHandler::new(
             EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(echo_cluster::ID)),
-            Async(EchoHandler::new(2, Dataver::new_rand(matter.rand()))),
+            EchoHandler::new(2, Dataver::new_rand(matter.rand())),
             handler,
         )
         .chain(
             EpClMatcher::new(Some(1), Some(DescHandler::CLUSTER.id)),
-            Async(DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+            DescHandler::new(Dataver::new_rand(matter.rand())).adapt(),
         )
         .chain(
             EpClMatcher::new(Some(1), Some(echo_cluster::ID)),
-            Async(EchoHandler::new(3, Dataver::new_rand(matter.rand()))),
+            EchoHandler::new(3, Dataver::new_rand(matter.rand())),
         )
         .chain(
             EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-            on_off::HandlerAsyncAdaptor(on_off),
+            on_off::HandlerAdaptor(on_off),
         );
 
         Self(handler)
@@ -97,8 +96,8 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
 
     pub fn echo_cluster(&self, endpoint: u16) -> &EchoHandler {
         match endpoint {
-            0 => &self.0.next.next.next.handler.0,
-            1 => &self.0.next.handler.0,
+            0 => &self.0.next.next.next.handler,
+            1 => &self.0.next.handler,
             _ => panic!(),
         }
     }

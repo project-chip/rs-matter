@@ -49,8 +49,7 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher,
-    Node,
+    AsyncHandler, AsyncMetadata, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -276,21 +275,19 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 EmptyHandler
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt(),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                        on_off::HandlerAsyncAdaptor(on_off),
+                        on_off::HandlerAdaptor(on_off),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(UnitTestingHandler::CLUSTER.id)),
-                        Async(
-                            UnitTestingHandler::new(
-                                Dataver::new_rand(matter.rand()),
-                                unit_testing_data,
-                            )
-                            .adapt(),
-                        ),
+                        UnitTestingHandler::new(
+                            Dataver::new_rand(matter.rand()),
+                            unit_testing_data,
+                        )
+                        .adapt(),
                     ),
             ),
         ),

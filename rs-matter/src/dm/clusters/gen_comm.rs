@@ -144,7 +144,9 @@ impl ClusterHandler for GenCommHandler<'_> {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
+impl ClusterSyncHandler for GenCommHandler<'_> {
     fn breadcrumb(&self, ctx: impl ReadContext) -> Result<u64, Error> {
         Ok(ctx.exchange().matter().failsafe.borrow_mut().breadcrumb())
     }

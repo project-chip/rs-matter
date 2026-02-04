@@ -71,7 +71,9 @@ impl ClusterHandler for AdminCommHandler {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
+impl ClusterSyncHandler for AdminCommHandler {
     fn window_status(&self, ctx: impl ReadContext) -> Result<CommissioningWindowStatusEnum, Error> {
         let matter = ctx.exchange().matter();
         let mut pase_mgr = matter.pase_mgr.borrow_mut();

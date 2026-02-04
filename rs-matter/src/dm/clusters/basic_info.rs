@@ -419,7 +419,9 @@ impl ClusterHandler for BasicInfoHandler {
     fn dataver_changed(&self) {
         self.0.changed();
     }
+}
 
+impl ClusterSyncHandler for BasicInfoHandler {
     fn data_model_revision(&self, ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(Self::config(ctx.exchange()).data_model_revision)
     }

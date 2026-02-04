@@ -75,7 +75,7 @@ use rs_matter::dm::networks::wireless::{
 use rs_matter::dm::networks::NetChangeNotif;
 use rs_matter::dm::subscriptions::{Subscriptions, DEFAULT_MAX_SUBSCRIPTIONS};
 use rs_matter::dm::{endpoints, IMBuffer};
-use rs_matter::dm::{Async, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node};
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -197,8 +197,8 @@ type AppBtp<'a> =
     Btp<&'a BtpContext<CriticalSectionRawMutex>, CriticalSectionRawMutex, FakeGattPeripheral>;
 type AppTransport<'a> = ChainedNetwork<FakeUdp, &'a AppBtp<'a>, fn(&Address) -> bool>;
 type AppHandler<'a> = handler_chain_type!(
-    EpClMatcher => on_off::HandlerAsyncAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>,
-    EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>
+    EpClMatcher => on_off::HandlerAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>,
+    EpClMatcher => desc::HandlerAdaptor<DescHandler<'a>>
     | EmptyHandler
 );
 type AppDmHandler<'a> = WifiHandler<'a, &'a AppNetCtl<'a>, SysHandler<'a, AppHandler<'a>>>;
@@ -635,11 +635,11 @@ where
             EmptyHandler
                 .chain(
                     EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                    Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                    desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt(),
                 )
                 .chain(
                     EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                    on_off::HandlerAsyncAdaptor(on_off),
+                    on_off::HandlerAdaptor(on_off),
                 ),
         ),
     )
