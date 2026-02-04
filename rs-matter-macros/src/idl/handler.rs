@@ -731,7 +731,7 @@ fn handler_adaptor_attribute_match(
                     let tag = #krate::dm::Reply::tag(&writer);
                     let tw = #krate::dm::Reply::writer(&mut writer);
 
-                    let attr_read_result = #krate::process_maybe_async!(<T as ClusterHandler>::#attr_method_name(
+                    let attr_read_result = <T as ClusterHandler>::#attr_method_name(
                         &self.0,
                         &ctx,
                         #krate::dm::ArrayAttributeRead::new(
@@ -739,7 +739,7 @@ fn handler_adaptor_attribute_match(
                             #krate::tlv::TLVWriteParent::new(#attr_debug_id, tw),
                             tag,
                         )?,
-                    ));
+                    ).await;
 
                     #attr_read_debug_build_end
 
@@ -756,10 +756,10 @@ fn handler_adaptor_attribute_match(
                     let tag = #krate::dm::Reply::tag(&writer);
                     let tw = #krate::dm::Reply::writer(&mut writer);
 
-                    let attr_read_result = #krate::process_maybe_async!(<T as ClusterHandler>::#attr_method_name(&self.0, &ctx, #krate::tlv::TLVBuilder::new(
+                    let attr_read_result = <T as ClusterHandler>::#attr_method_name(&self.0, &ctx, #krate::tlv::TLVBuilder::new(
                         #krate::tlv::TLVWriteParent::new(#attr_debug_id, tw),
                         tag,
-                    )?));
+                    )?).await;
 
                     #attr_read_debug_build_end
 
@@ -772,7 +772,7 @@ fn handler_adaptor_attribute_match(
     } else {
         quote!(
             AttributeId::#attr_name => {
-                let attr_read_result = #krate::process_maybe_async!(<T as ClusterHandler>::#attr_method_name(&self.0, &ctx));
+                let attr_read_result = <T as ClusterHandler>::#attr_method_name(&self.0, &ctx).await;
 
                 #attr_read_debug
 
@@ -823,7 +823,7 @@ fn handler_adaptor_attribute_write_match(
             AttributeId::#attr_name => {
                 let attr_data = #krate::dm::ArrayAttributeWrite::new(ctx.attr().list_index.clone(), ctx.data())?;
 
-                let attr_write_result = #krate::process_maybe_async!(<T as ClusterHandler>::#attr_method_name(&self.0, &ctx, attr_data.clone()));
+                let attr_write_result = <T as ClusterHandler>::#attr_method_name(&self.0, &ctx, attr_data.clone()).await;
 
                 #attr_write_debug
 
@@ -835,7 +835,7 @@ fn handler_adaptor_attribute_write_match(
             AttributeId::#attr_name => {
                 let attr_data: #attr_type = #krate::tlv::FromTLV::from_tlv(ctx.data())?;
 
-                let attr_write_result = #krate::process_maybe_async!(<T as ClusterHandler>::#attr_method_name(&self.0, &ctx, attr_data.clone()));
+                let attr_write_result = <T as ClusterHandler>::#attr_method_name(&self.0, &ctx, attr_data.clone()).await;
 
                 #attr_write_debug
 
@@ -960,7 +960,7 @@ fn handler_adaptor_command_match(
                         let tag = #krate::dm::Reply::tag(&writer);
                         let tw = #krate::dm::Reply::writer(&mut writer);
 
-                        let cmd_invoke_result = #krate::process_maybe_async!(<T as ClusterHandler>::#cmd_method_name(
+                        let cmd_invoke_result = <T as ClusterHandler>::#cmd_method_name(
                             &self.0,
                             &ctx,
                             cmd_data,
@@ -968,7 +968,7 @@ fn handler_adaptor_command_match(
                                 #krate::tlv::TLVWriteParent::new(#cmd_debug_id, tw),
                                 tag,
                             )?
-                        ));
+                        ).await;
 
                         #cmd_invoke_debug_build_end
 
@@ -984,8 +984,8 @@ fn handler_adaptor_command_match(
 
                         let writer = reply.with_command(#field_resp_cmd_code)?;
 
-                        let cmd_invoke_result = #krate::process_maybe_async!(<T as ClusterHandler>::#cmd_method_name(
-                            &self.0, &ctx, cmd_data.clone()));
+                        let cmd_invoke_result = <T as ClusterHandler>::#cmd_method_name(
+                            &self.0, &ctx, cmd_data.clone()).await;
 
                         #cmd_invoke_debug
 
@@ -998,8 +998,8 @@ fn handler_adaptor_command_match(
                 CommandId::#cmd_name => {
                     let cmd_data: #field_req = #krate::tlv::FromTLV::from_tlv(ctx.data())?;
 
-                    let cmd_invoke_result = #krate::process_maybe_async!(<T as ClusterHandler>::#cmd_method_name(
-                            &self.0, &ctx, cmd_data.clone()));
+                    let cmd_invoke_result = <T as ClusterHandler>::#cmd_method_name(
+                            &self.0, &ctx, cmd_data.clone()).await;
 
                     #cmd_invoke_debug
 
@@ -1017,14 +1017,14 @@ fn handler_adaptor_command_match(
                     let tag = #krate::dm::Reply::tag(&writer);
                     let tw = #krate::dm::Reply::writer(&mut writer);
 
-                    let cmd_invoke_result = #krate::process_maybe_async!(<T as ClusterHandler>::#cmd_method_name(
+                    let cmd_invoke_result = <T as ClusterHandler>::#cmd_method_name(
                         &self.0,
                         &ctx,
                         #krate::tlv::TLVBuilder::new(
                             #krate::tlv::TLVWriteParent::new(#cmd_debug_id, tw),
                             tag,
                         )?,
-                    ));
+                    ).await;
 
                     #cmd_invoke_debug_build_end
 
@@ -1038,7 +1038,7 @@ fn handler_adaptor_command_match(
                 CommandId::#cmd_name => {
                     let writer = reply.with_command(#field_resp_cmd_code)?;
 
-                    let cmd_invoke_result = #krate::process_maybe_async!(<T as ClusterHandler>::#cmd_method_name(&self.0, &ctx));
+                    let cmd_invoke_result = <T as ClusterHandler>::#cmd_method_name(&self.0, &ctx).await;
 
                     #cmd_invoke_debug_noarg
 
@@ -1049,7 +1049,7 @@ fn handler_adaptor_command_match(
     } else {
         quote!(
             CommandId::#cmd_name => {
-                let cmd_invoke_result = #krate::process_maybe_async!(<T as ClusterHandler>::#cmd_method_name(&self.0, &ctx));
+                let cmd_invoke_result = <T as ClusterHandler>::#cmd_method_name(&self.0, &ctx).await;
 
                 #cmd_invoke_debug_noarg
 
