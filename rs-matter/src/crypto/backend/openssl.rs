@@ -767,10 +767,18 @@ impl<'a, const LEN: usize, const POINT_LEN: usize, const SIGNATURE_LEN: usize>
 
         let sig = openssl_unwrap!(EcdsaSig::sign(&digest, &our_ec_key));
 
-        signature.access_mut()[..crate::crypto::PKC_SIGNATURE_LEN / 2]
-            .copy_from_slice(openssl_unwrap!(sig.r().to_vec_padded(crate::crypto::PKC_SIGNATURE_LEN as i32 / 2)).as_slice());
-        signature.access_mut()[crate::crypto::PKC_SIGNATURE_LEN / 2..]
-            .copy_from_slice(openssl_unwrap!(sig.s().to_vec_padded(crate::crypto::PKC_SIGNATURE_LEN as i32 / 2)).as_slice());
+        signature.access_mut()[..crate::crypto::PKC_SIGNATURE_LEN / 2].copy_from_slice(
+            openssl_unwrap!(sig
+                .r()
+                .to_vec_padded(crate::crypto::PKC_SIGNATURE_LEN as i32 / 2))
+            .as_slice(),
+        );
+        signature.access_mut()[crate::crypto::PKC_SIGNATURE_LEN / 2..].copy_from_slice(
+            openssl_unwrap!(sig
+                .s()
+                .to_vec_padded(crate::crypto::PKC_SIGNATURE_LEN as i32 / 2))
+            .as_slice(),
+        );
     }
 }
 
