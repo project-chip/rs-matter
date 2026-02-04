@@ -29,6 +29,8 @@ name = "dimmable_light"
 [features]
 default = ["log"]
 log = []
+mbedtls = ["rs-matter/mbedtls"]
+openssl = ["rs-matter/openssl"]
 zbus = ["rs-matter/zbus"]
 astro-dnssd = ["rs-matter/astro-dnssd"]
 zeroconf = ["rs-matter/zeroconf"]
