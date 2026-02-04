@@ -17,13 +17,13 @@
 
 use core::future::Future;
 
-use crate::dm::{AsyncHandler, IMBuffer};
+use crate::dm::{AsyncHandler, Events, IMBuffer};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
     AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
-    CmdRespTag, CmdStatus, IMStatusCode,
+    CmdRespTag, CmdStatus, EventFilter, EventPath, EventRespTag, IMStatusCode,
 };
-use crate::tlv::{TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
+use crate::tlv::{TLVArray, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::utils::storage::pooled::BufferAccess;
 
@@ -310,6 +310,71 @@ where
             ),
             InvokeReplyInstance::new(cmd, tw),
         )
+    }
+}
+
+pub struct EventReader<'a, const NE: usize> {
+    events: &'a Events<NE>,
+    // This is applied in combination with any event number filters that are
+    // inside the request itself; it's the "what's the min event number this subscription should see next"
+    // that's tracked with each active Subscription and updated each time we emit events to the subscriber
+    min_event_number: u64,
+}
+
+impl<'a, const NE: usize> EventReader<'a, NE> {
+    pub fn new(events: &'a Events<NE>, min_event_number: u64) -> Self {
+        Self {
+            events,
+            min_event_number,
+        }
+    }
+
+    pub async fn process_read<T: TLVWrite>(
+        &mut self,
+        paths: TLVArray<'_, EventPath>,
+        event_filters: Option<TLVArray<'_, EventFilter>>,
+        mut tw: T,
+    ) -> Result<(), Error> {
+        let tail = tw.get_tail();
+
+        let result = self.do_process_read(paths, event_filters, &mut tw).await;
+
+        if result.is_err() {
+            // If there was an error, rewind to the tail so we don't write any data.
+            tw.rewind_to(tail);
+        }
+
+        result
+    }
+
+    async fn do_process_read<T: TLVWrite>(
+        &mut self,
+        // TODO(events): Each event we go over in the for_each here should be checked to match at least one of these paths
+        _paths: TLVArray<'_, EventPath>,
+        event_filters: Option<TLVArray<'_, EventFilter>>,
+        mut tw: T,
+    ) -> Result<(), Error> {
+        self.events.for_each(async |event| {
+            if event.event_number < self.min_event_number {
+                // This event has already been seen by this subscription, skip
+                return Ok(());
+            }
+
+            // We assume the 99% case is that there is a single filter, on event-no, so just brute force filtering
+            if let Some(filters) = &event_filters {
+                for filter in filters {
+                    if let Some(event_min) = filter?.event_min {
+                        if event.event_number < event_min {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+
+            tw.start_struct(&TLVTag::Anonymous)?;
+            event.to_tlv(&TLVTag::Context(EventRespTag::Data as _), &mut tw)?;
+            tw.end_container()
+        }).await
     }
 }
 
