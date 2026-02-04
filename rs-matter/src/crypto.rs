@@ -139,11 +139,6 @@ pub trait Crypto {
     where
         Self: 'a;
 
-    /// 320-bit unsigned integer type returned by `Crypto::uint320`.
-    type UInt320<'a>: UInt<'a, UINT320_CANON_LEN>
-    where
-        Self: 'a;
-
     /// EC scalar type returned by `Crypto::ec_scalar` and `Crypto::generate_ec_scalar`.
     ///
     /// As per the Matter spec, the curve used is secp256r1 (NIST P-256).
@@ -205,11 +200,11 @@ pub trait Crypto {
     /// This is used for device attestation.
     fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error>;
 
-    /// Create a 320-bit unsigned integer instance from its canonical representation.
-    fn uint320(&self, uint: CanonUint320Ref<'_>) -> Result<Self::UInt320<'_>, Error>;
-
     /// Create an EC scalar instance from its canonical representation.
     fn ec_scalar(&self, scalar: CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error>;
+
+    /// Create an EC scalar instance from a 320-bit unsigned integer modulo the EC prime modulus.
+    fn ec_scalar_mod_p(&self, uint: CanonUint320Ref<'_>) -> Result<Self::EcScalar<'_>, Error>;
 
     /// Generate a new random EC scalar instance.
     fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error>;
@@ -219,9 +214,6 @@ pub trait Crypto {
 
     /// Get the EC Generator point.
     fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error>;
-
-    /// Get the EC prime modulus as an EC scalar.
-    fn ec_prime_modulus(&self) -> Result<Self::EcScalar<'_>, Error>;
 }
 
 impl<T> Crypto for &T
@@ -275,11 +267,6 @@ where
 
     type SigningSecretKey<'a>
         = T::SigningSecretKey<'a>
-    where
-        Self: 'a;
-
-    type UInt320<'a>
-        = T::UInt320<'a>
     where
         Self: 'a;
 
@@ -340,12 +327,12 @@ where
         (*self).singleton_singing_secret_key()
     }
 
-    fn uint320(&self, uint: CanonUint320Ref<'_>) -> Result<Self::UInt320<'_>, Error> {
-        (*self).uint320(uint)
-    }
-
     fn ec_scalar(&self, scalar: CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error> {
         (*self).ec_scalar(scalar)
+    }
+
+    fn ec_scalar_mod_p(&self, uint: CanonUint320Ref<'_>) -> Result<Self::EcScalar<'_>, Error> {
+        (*self).ec_scalar_mod_p(uint)
     }
 
     fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error> {
@@ -358,10 +345,6 @@ where
 
     fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
         (*self).ec_generator_point()
-    }
-
-    fn ec_prime_modulus(&self) -> Result<Self::EcScalar<'_>, Error> {
-        (*self).ec_prime_modulus()
     }
 }
 
@@ -565,22 +548,6 @@ where
     fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) {
         (*self).write_canon(key)
     }
-}
-
-/// Trait representing a generic unsigned integer of fixed length in BE format.
-pub trait UInt<'a, const LEN: usize>: Sized {
-    /// Compute the remainder of this integer divided by another integer.
-    ///
-    /// # Arguments
-    /// - `other`: The divisor integer.
-    ///
-    /// # Returns
-    /// - On success, returns `Some(result)` where `result` is the remainder.
-    /// - If division by zero is attempted, returns `None`.
-    fn rem(&self, other: &Self) -> Option<Self>;
-
-    /// Write the canonical representation of this integer into the given buffer.
-    fn write_canon(&self, uint: &mut CryptoSensitive<LEN>);
 }
 
 /// Trait representing an Elliptic Curve (EC) scalar value.

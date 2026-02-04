@@ -40,7 +40,7 @@ use alloc::vec;
 
 use ccm::{Ccm, NonceSize, TagSize};
 
-use crypto_bigint::{nlimbs, Limb, NonZero};
+use crypto_bigint::NonZero;
 
 use digest::Digest as _;
 
@@ -71,7 +71,8 @@ use x509_cert::spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned};
 
 use crate::crypto::{
     CanonEcPointRef, CanonEcScalarRef, CanonPkcPublicKeyRef, CanonPkcSecretKeyRef, CanonUint320Ref,
-    Crypto, CryptoSensitive, CryptoSensitiveRef, SharedRand,
+    Crypto, CryptoSensitive, CryptoSensitiveRef, SharedRand, EC_CANON_SCALAR_LEN,
+    UINT320_CANON_LEN,
 };
 use crate::error::{Error, ErrorCode};
 use crate::utils::init::InitMaybeUninit;
@@ -178,11 +179,6 @@ where
     where
         Self: 'a;
 
-    type UInt320<'a>
-        = Uint<{ crate::crypto::UINT320_CANON_LEN }, { nlimbs!(320) }>
-    where
-        Self: 'a;
-
     type EcScalar<'a>
         = ECScalar<{ crate::crypto::EC_CANON_SCALAR_LEN }, p256::NistP256>
     where
@@ -254,12 +250,24 @@ where
         Ok(unsafe { ECSecretKey::new(self.singleton_secret_key) })
     }
 
-    fn uint320(&self, uint: CanonUint320Ref<'_>) -> Result<Self::UInt320<'_>, Error> {
-        Ok(unsafe { Uint::new(uint) })
-    }
-
     fn ec_scalar(&self, scalar: CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error> {
         Ok(unsafe { ECScalar::new(scalar) })
+    }
+
+    fn ec_scalar_mod_p(&self, uint: CanonUint320Ref<'_>) -> Result<Self::EcScalar<'_>, Error> {
+        // TODO: Un-hardcode for other curves
+        const NISTP256R1_MODULUS: crypto_bigint::U320 = crypto_bigint::U320::from_be_slice(&[
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00,
+            0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xbc, 0xe6, 0xfa, 0xad,
+            0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x51,
+        ]);
+
+        let scalar = crypto_bigint::U320::from_be_slice(uint.access())
+            .rem(&unwrap!(NonZero::new(NISTP256R1_MODULUS).into_option()));
+
+        self.ec_scalar(CanonEcScalarRef::new_from_slice(
+            &scalar.to_be_bytes()[UINT320_CANON_LEN - EC_CANON_SCALAR_LEN..],
+        ))
     }
 
     fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error> {
@@ -272,18 +280,6 @@ where
 
     fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
         Ok(unsafe { ECPoint::generator() })
-    }
-
-    fn ec_prime_modulus(&self) -> Result<Self::EcScalar<'_>, Error> {
-        // TODO: Un-hardcode for other curves
-        const NISTP256R1_MODULUS: CryptoSensitiveRef<'_, { crate::crypto::EC_CANON_SCALAR_LEN }> =
-            CryptoSensitiveRef::new(&[
-                0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                0xff, 0xff, 0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2,
-                0xfc, 0x63, 0x25, 0x51,
-            ]);
-
-        Ok(unsafe { ECScalar::new(NISTP256R1_MODULUS) })
     }
 }
 
@@ -731,44 +727,6 @@ where
 
         assert_eq!(slice.len(), KEY_LEN);
         key.access_mut().copy_from_slice(slice);
-    }
-}
-
-/// A unsigned integer implementation using RustCrypto
-/// based on the `crypto-bigint` crate.
-///
-/// When using hardware acceleration, this type needs to be
-/// replaced with a custom one.
-pub struct Uint<const LEN: usize, const LIMBS: usize>(crypto_bigint::Uint<LIMBS>);
-
-impl<const LEN: usize, const LIMBS: usize> Uint<LEN, LIMBS> {
-    /// Create a new Uint from its canonical representation (BE bytes)
-    ///
-    /// # Safety
-    /// This function is unsafe because the caller must ensure that
-    /// the `LIMBS` const generic corresponds to the `LEN` const generic.
-    unsafe fn new(uint: CryptoSensitiveRef<'_, LEN>) -> Self {
-        Self(crypto_bigint::Uint::from_be_slice(uint.access()))
-    }
-}
-
-impl<const LEN: usize, const LIMBS: usize> crate::crypto::UInt<'_, LEN> for Uint<LEN, LIMBS> {
-    fn rem(&self, other: &Self) -> Option<Self> {
-        let other = NonZero::new(other.0).into_option();
-        other.map(|other| Self(self.0.rem(&other)))
-    }
-
-    fn write_canon(&self, uint: &mut CryptoSensitive<LEN>) {
-        for (src, dst) in self
-            .0
-            .as_limbs()
-            .iter()
-            .rev()
-            .cloned()
-            .zip(uint.access_mut().chunks_exact_mut(Limb::BYTES))
-        {
-            dst.copy_from_slice(&src.0.to_be_bytes());
-        }
     }
 }
 

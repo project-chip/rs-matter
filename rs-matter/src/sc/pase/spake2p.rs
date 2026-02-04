@@ -26,11 +26,10 @@
 use subtle::ConstantTimeEq;
 
 use crate::crypto::{
-    canon, CanonEcPoint, CanonEcPointRef, CanonEcScalarRef, CanonUint320Ref, Crypto,
-    CryptoSensitive, Digest, EcPoint, EcScalar, Hash, HashRef, HmacHash, HmacHashRef, Kdf, PbKdf,
-    UInt, AEAD_CANON_KEY_LEN, EC_CANON_POINT_LEN, EC_CANON_SCALAR_LEN, EC_POINT_ZEROED,
-    EC_SCALAR_ZEROED, HASH_LEN, HASH_ZEROED, HMAC_HASH_LEN, HMAC_HASH_ZEROED, UINT320_CANON_LEN,
-    UINT320_ZEROED,
+    canon, CanonEcPoint, CanonEcPointRef, Crypto, CryptoSensitive, Digest, EcPoint, EcScalar, Hash,
+    HashRef, HmacHash, HmacHashRef, Kdf, PbKdf, AEAD_CANON_KEY_LEN, EC_CANON_POINT_LEN,
+    EC_CANON_SCALAR_LEN, EC_POINT_ZEROED, EC_SCALAR_ZEROED, HASH_LEN, HASH_ZEROED, HMAC_HASH_LEN,
+    HMAC_HASH_ZEROED, UINT320_CANON_LEN,
 };
 use crate::error::{Error, ErrorCode};
 use crate::sc::SCStatusCodes;
@@ -248,8 +247,8 @@ impl Spake2P {
                 .reference()
                 .split::<UINT320_CANON_LEN, UINT320_CANON_LEN>();
 
-            let w0 = Self::mod_p(&crypto, w0s)?;
-            let w1 = Self::mod_p(&crypto, w1s)?;
+            let w0 = crypto.ec_scalar_mod_p(w0s)?;
+            let w1 = crypto.ec_scalar_mod_p(w1s)?;
             let l_pt = crypto.ec_generator_point()?.mul(&w1);
 
             (w0, l_pt)
@@ -493,41 +492,13 @@ impl Spake2P {
     ) {
         unwrap!(crypto.pbkdf()).derive(pw, iter as usize, salt, w0w1s);
     }
-
-    fn mod_p<'a, C: Crypto>(
-        crypto: &'a C,
-        value: CanonUint320Ref<'_>,
-    ) -> Result<C::EcScalar<'a>, Error> {
-        // TODO: Can this be made faster by pushing it into the Crypto backend itself?
-
-        let mut prime_modulus_canon = EC_SCALAR_ZEROED;
-        crypto
-            .ec_prime_modulus()?
-            .write_canon(&mut prime_modulus_canon);
-
-        let mut prime_modulus_uint = UINT320_ZEROED;
-        prime_modulus_uint.access_mut()[UINT320_CANON_LEN - EC_CANON_SCALAR_LEN..]
-            .copy_from_slice(prime_modulus_canon.access());
-
-        let prime_modulus = crypto.uint320(prime_modulus_uint.reference())?;
-        let value = crypto.uint320(value)?;
-
-        let result = unwrap!(value.rem(&prime_modulus), "Modulus operation failed");
-
-        let mut result_uint = UINT320_ZEROED;
-        result.write_canon(&mut result_uint);
-
-        let result_scalar: CanonEcScalarRef<'_> = CanonEcScalarRef::new_from_slice(
-            &result_uint.access()[UINT320_CANON_LEN - EC_CANON_SCALAR_LEN..],
-        );
-
-        crypto.ec_scalar(result_scalar)
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::crypto::{test_only_crypto, Crypto, Digest, HmacHashRef, HASH_ZEROED};
+    use crate::crypto::{
+        test_only_crypto, CanonEcScalarRef, Crypto, Digest, HmacHashRef, HASH_ZEROED,
+    };
 
     use super::*;
 

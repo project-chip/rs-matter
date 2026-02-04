@@ -85,11 +85,6 @@ impl Crypto for DummyCrypto {
     where
         Self: 'a;
 
-    type UInt320<'a>
-        = DummyCrypto
-    where
-        Self: 'a;
-
     type EcScalar<'a>
         = DummyCrypto
     where
@@ -153,16 +148,16 @@ impl Crypto for DummyCrypto {
         unimplemented!()
     }
 
-    fn uint320(
-        &self,
-        _uint: crate::crypto::CanonUint320Ref<'_>,
-    ) -> Result<Self::UInt320<'_>, Error> {
-        unimplemented!()
-    }
-
     fn ec_scalar(
         &self,
         _scalar: crate::crypto::CanonEcScalarRef<'_>,
+    ) -> Result<Self::EcScalar<'_>, Error> {
+        unimplemented!()
+    }
+
+    fn ec_scalar_mod_p(
+        &self,
+        _uint: crate::crypto::CanonUint320Ref<'_>,
     ) -> Result<Self::EcScalar<'_>, Error> {
         unimplemented!()
     }
@@ -179,10 +174,6 @@ impl Crypto for DummyCrypto {
     }
 
     fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
-        unimplemented!()
-    }
-
-    fn ec_prime_modulus(&self) -> Result<Self::EcScalar<'_>, Error> {
         unimplemented!()
     }
 }
@@ -296,16 +287,6 @@ impl<
     }
 
     fn write_canon(&self, _key: &mut CryptoSensitive<KEY_LEN>) {
-        unimplemented!()
-    }
-}
-
-impl<const LEN: usize> crate::crypto::UInt<'_, LEN> for DummyCrypto {
-    fn rem(&self, _other: &Self) -> Option<Self> {
-        unimplemented!()
-    }
-
-    fn write_canon(&self, _buf: &mut CryptoSensitive<LEN>) {
         unimplemented!()
     }
 }
