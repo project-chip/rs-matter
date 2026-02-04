@@ -28,8 +28,9 @@ use subtle::ConstantTimeEq;
 use crate::crypto::{
     canon, CanonEcPoint, CanonEcPointRef, CanonEcScalarRef, CanonUint320Ref, Crypto,
     CryptoSensitive, Digest, EcPoint, EcScalar, Hash, HashRef, HmacHash, HmacHashRef, Kdf, PbKdf,
-    UInt, EC_CANON_POINT_LEN, EC_CANON_SCALAR_LEN, EC_POINT_ZEROED, EC_SCALAR_ZEROED, HASH_LEN,
-    HASH_ZEROED, HMAC_HASH_LEN, HMAC_HASH_ZEROED, UINT320_CANON_LEN, UINT320_ZEROED,
+    UInt, AEAD_CANON_KEY_LEN, EC_CANON_POINT_LEN, EC_CANON_SCALAR_LEN, EC_POINT_ZEROED,
+    EC_SCALAR_ZEROED, HASH_LEN, HASH_ZEROED, HMAC_HASH_LEN, HMAC_HASH_ZEROED, UINT320_CANON_LEN,
+    UINT320_ZEROED,
 };
 use crate::error::{Error, ErrorCode};
 use crate::sc::SCStatusCodes;
@@ -46,6 +47,10 @@ pub const SPAKE2P_VERIFIER_PASSWORD_LEN: usize = 4;
 pub const SPAKE2P_VERIFIER_STR_LEN: usize = EC_CANON_SCALAR_LEN + EC_CANON_POINT_LEN;
 
 pub const SPAKE2P_VERIFIER_SALT_LEN: usize = 32;
+
+pub const SPAKE2P_RANDOM_LEN: usize = 32;
+
+pub const SPAKE2P_SESSION_KEYS_LEN: usize = AEAD_CANON_KEY_LEN * 3;
 
 canon!(SPAKE2P_KE_LEN, SPAKE2P_KE_ZEROED, Spake2pKe, Spake2pKeRef);
 canon!(SPAKE2P_W_LEN, SPAKE2P_W_ZEROED, Spake2pW, Spake2pWRef);
@@ -66,6 +71,18 @@ canon!(
     SPAKE2P_VERIFIER_SALT_ZEROED,
     Spake2pVerifierSalt,
     Spake2pVerifierSaltRef
+);
+canon!(
+    SPAKE2P_RANDOM_LEN,
+    SPAKE2P_RANDOM_ZEROED,
+    Spake2pRandom,
+    Spake2pRandomRef
+);
+canon!(
+    SPAKE2P_SESSION_KEYS_LEN,
+    SPAKE2P_SESSION_KEYS_ZEROED,
+    Spake2pSessionKeys,
+    Spake2pSessionKeysRef
 );
 
 #[derive(Debug, Clone)]
@@ -203,7 +220,8 @@ impl Spake2P {
         Ok(context)
     }
 
-    pub fn finish_context<'a, C: Crypto>(&mut self, context: C::Hash<'a>) {
+    pub fn finish_context<'a, C: Crypto>(&mut self, mut context: C::Hash<'a>, response: &[u8]) {
+        context.update(response);
         context.finish(&mut self.context_hash);
     }
 
@@ -280,10 +298,6 @@ impl Spake2P {
         &mut self,
         ca: HmacHashRef<'_>,
     ) -> Result<(u16, u16, Spake2pKeRef<'_>), SCStatusCodes> {
-        // if self.mode != Spake2Mode::Verifier(Spake2VerifierState::PendingConfirmation) {
-        //     return Err(SCStatusCodes::SessionNotFound);
-        // }
-        // self.mode = Spake2Mode::Verifier(Spake2VerifierState::Confirmed);
         if ca.access().ct_eq(self.ca.access()).unwrap_u8() == 1 {
             Ok((self.local_sessid, self.peer_sessid, self.ke.reference()))
         } else {

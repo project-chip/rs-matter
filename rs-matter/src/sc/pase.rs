@@ -24,16 +24,16 @@ use rand_core::RngCore;
 use spake2p::{Spake2P, Spake2pVerifierData};
 
 use crate::crypto::{
-    CanonEcPointRef, Crypto, CryptoSensitive, CryptoSensitiveRef, HmacHashRef, Kdf,
-    AEAD_CANON_KEY_LEN, EC_POINT_ZEROED, HMAC_HASH_ZEROED,
+    CanonEcPointRef, Crypto, HmacHashRef, Kdf, AEAD_CANON_KEY_LEN, EC_POINT_ZEROED,
+    HMAC_HASH_ZEROED,
 };
 use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{BasicContext, BasicContextInstance, ChangeNotify};
 use crate::error::{Error, ErrorCode};
 use crate::sc::pase::spake2p::{
-    Spake2pVerifierPasswordRef, Spake2pVerifierSaltRef, Spake2pVerifierStrRef,
-    SPAKE2P_VERIFIER_SALT_ZEROED,
+    Spake2pRandom, Spake2pRandomRef, Spake2pSessionKeys, Spake2pVerifierPasswordRef,
+    Spake2pVerifierSaltRef, Spake2pVerifierStrRef, SPAKE2P_VERIFIER_SALT_ZEROED,
 };
 use crate::sc::{check_opcode, complete_with_status, OpCode, SessionParameters};
 use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TagType, ToTLV};
@@ -570,8 +570,8 @@ impl<'a, C: Crypto> Pase<'a, C> {
         };
 
         if has_comm_window {
-            let mut our_random = CryptoSensitive::<32>::new();
-            let mut initiator_random = CryptoSensitive::<32>::new();
+            let mut our_random = Spake2pRandom::new();
+            let mut initiator_random = Spake2pRandom::new();
 
             let (local_sessid, peer_sessid, resp) = {
                 let req = PBKDFParamReq::from_tlv(&TLVElement::new(rx.payload()))?;
@@ -590,23 +590,18 @@ impl<'a, C: Crypto> Pase<'a, C> {
                     .borrow_mut()
                     .get_next_sess_id();
 
-                initiator_random.load(CryptoSensitiveRef::try_new(req.initiator_random.0)?);
+                initiator_random.load(Spake2pRandomRef::try_new(req.initiator_random.0)?);
 
                 // Generate response
-                let mut resp = PBKDFParamResp {
+                let resp = PBKDFParamResp {
                     init_random: OctetStr::new(initiator_random.access()),
                     our_random: OctetStr::new(our_random.access()),
                     local_sessid,
-                    params: None,
-                };
-
-                if !req.has_params {
-                    let params_resp = PBKDFParamRespParams {
+                    params: (!req.has_params).then(|| PBKDFParamRespParams {
                         count,
                         salt: OctetStr::new(salt.access()),
-                    };
-                    resp.params = Some(params_resp);
-                }
+                    }),
+                };
 
                 (local_sessid, req.initiator_ssid, resp)
             };
@@ -623,7 +618,7 @@ impl<'a, C: Crypto> Pase<'a, C> {
                     resp.to_tlv(&TagType::Anonymous, &mut *wb)?;
 
                     if let Some(context) = context.take() {
-                        self.spake2p.finish_context::<&C>(context);
+                        self.spake2p.finish_context::<&C>(context, wb.as_slice());
                     }
 
                     Ok(Some(OpCode::PBKDFParamResponse.into()))
@@ -706,7 +701,7 @@ impl<'a, C: Crypto> Pase<'a, C> {
         let status = match self.spake2p.verify(ca) {
             Ok((local_sessid, peer_sessid, ke)) => {
                 // Get the keys
-                let mut session_keys = CryptoSensitive::<{ AEAD_CANON_KEY_LEN * 3 }>::new(); // TODO: MEDIUM BUFFER
+                let mut session_keys = Spake2pSessionKeys::new(); // TODO: MEDIUM BUFFER
                 self.crypto
                     .kdf()?
                     .expand(&[], ke, SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
