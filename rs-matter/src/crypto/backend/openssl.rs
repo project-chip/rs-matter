@@ -42,7 +42,7 @@ use hmac::{Hmac, Mac};
 
 use rand_core::{CryptoRng, RngCore};
 
-use crate::crypto::{CanonPkcSecretKeyRef, CryptoSensitive, CryptoSensitiveRef};
+use crate::crypto::{CanonPkcSecretKeyRef, CanonUint320Ref, CryptoSensitive, CryptoSensitiveRef};
 use crate::error::{Error, ErrorCode};
 
 macro_rules! openssl_unwrap {
@@ -146,11 +146,6 @@ impl crate::crypto::Crypto for OpenSslCrypto<'_> {
     where
         Self: 'a;
 
-    type UInt320<'a>
-        = BigNum
-    where
-        Self: 'a;
-
     type EcScalar<'a>
         =
         ECScalar<'a, { crate::crypto::EC_CANON_SCALAR_LEN }, { crate::crypto::EC_CANON_POINT_LEN }>
@@ -215,20 +210,29 @@ impl crate::crypto::Crypto for OpenSslCrypto<'_> {
         self.ec_scalar(self.singleton_secret_key)
     }
 
-    fn uint320(
-        &self,
-        uint: crate::crypto::CanonUint320Ref<'_>,
-    ) -> Result<Self::UInt320<'_>, Error> {
-        let uint = openssl_unwrap!(BigNum::from_slice(uint.access()));
-
-        Ok(uint)
-    }
-
     fn ec_scalar(
         &self,
         scalar: crate::crypto::CanonEcScalarRef<'_>,
     ) -> Result<Self::EcScalar<'_>, Error> {
         let scalar = openssl_unwrap!(BigNum::from_slice(scalar.access()));
+
+        Ok(Self::EcScalar {
+            group: &self.ec_group,
+            scalar,
+        })
+    }
+
+    fn ec_scalar_mod_p(&self, uint: CanonUint320Ref<'_>) -> Result<Self::EcScalar<'_>, Error> {
+        let mut ctx = openssl_unwrap!(BigNumContext::new());
+        let mut order = openssl_unwrap!(BigNum::new());
+
+        openssl_unwrap!(self.ec_group.group.order(&mut order, &mut ctx));
+
+        let uint = openssl_unwrap!(BigNum::from_slice(uint.access()));
+
+        let mut scalar = openssl_unwrap!(BigNum::new());
+
+        openssl_unwrap!(scalar.checked_rem(&uint, &order, &mut ctx));
 
         Ok(Self::EcScalar {
             group: &self.ec_group,
@@ -278,23 +282,6 @@ impl crate::crypto::Crypto for OpenSslCrypto<'_> {
         Ok(Self::EcPoint {
             group: &self.ec_group,
             point,
-        })
-    }
-
-    fn ec_prime_modulus(&self) -> Result<Self::EcScalar<'_>, Error> {
-        let mut ctx = openssl_unwrap!(BigNumContext::new());
-        let mut prime = openssl_unwrap!(BigNum::new());
-        let mut pa = openssl_unwrap!(BigNum::new());
-        let mut pb = openssl_unwrap!(BigNum::new());
-
-        openssl_unwrap!(self
-            .ec_group
-            .group
-            .components_gfp(&mut prime, &mut pa, &mut pb, &mut ctx));
-
-        Ok(Self::EcScalar {
-            group: &self.ec_group,
-            scalar: prime,
         })
     }
 }
@@ -532,25 +519,6 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
     }
 }
 
-impl<'a, const LEN: usize> crate::crypto::UInt<'a, LEN> for BigNum {
-    fn rem(&self, other: &Self) -> Option<Self> {
-        let mut ctx = openssl_unwrap!(BigNumContext::new());
-
-        let mut result = openssl_unwrap!(BigNum::new());
-
-        if result.checked_rem(self, other, &mut ctx).is_ok() {
-            Some(result)
-        } else {
-            None
-        }
-    }
-
-    fn write_canon(&self, uint: &mut CryptoSensitive<LEN>) {
-        uint.access_mut()
-            .copy_from_slice(openssl_unwrap!(self.to_vec_padded(LEN as _)).as_slice());
-    }
-}
-
 /// Elliptic curve group implementation using OpenSSL
 pub struct ECGroup<const LEN: usize, const SCALAR_LEN: usize> {
     /// The underlying OpenSSL EC group
@@ -762,7 +730,7 @@ impl<'a, const LEN: usize, const POINT_LEN: usize, const SIGNATURE_LEN: usize>
         openssl_unwrap!(builder.sign(&pkey, MessageDigest::sha256()));
 
         let csr = openssl_unwrap!(builder.build().to_der());
-        if buf.len() <= csr.len() {
+        if csr.len() <= buf.len() {
             buf[..csr.len()].copy_from_slice(csr.as_slice());
 
             Ok(&buf[..csr.len()])
@@ -799,10 +767,10 @@ impl<'a, const LEN: usize, const POINT_LEN: usize, const SIGNATURE_LEN: usize>
 
         let sig = openssl_unwrap!(EcdsaSig::sign(&digest, &our_ec_key));
 
-        signature.access_mut()[..crate::crypto::PKC_SHARED_SECRET_LEN / 2]
-            .copy_from_slice(sig.r().to_vec().as_slice());
-        signature.access_mut()[crate::crypto::PKC_SHARED_SECRET_LEN / 2..]
-            .copy_from_slice(sig.s().to_vec().as_slice());
+        signature.access_mut()[..crate::crypto::PKC_SIGNATURE_LEN / 2]
+            .copy_from_slice(openssl_unwrap!(sig.r().to_vec_padded(crate::crypto::PKC_SIGNATURE_LEN as i32 / 2)).as_slice());
+        signature.access_mut()[crate::crypto::PKC_SIGNATURE_LEN / 2..]
+            .copy_from_slice(openssl_unwrap!(sig.s().to_vec_padded(crate::crypto::PKC_SIGNATURE_LEN as i32 / 2)).as_slice());
     }
 }
 
