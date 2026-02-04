@@ -19,17 +19,42 @@ use rand_core::RngCore;
 
 use crate::cert::CertRef;
 use crate::crypto::{
-    self, Aead, AeadNonceRef, CanonAeadKey, CanonAeadKeyRef, CanonPkcPublicKey,
+    self, canon, Aead, AeadNonceRef, CanonAeadKey, CanonAeadKeyRef, CanonPkcPublicKey,
     CanonPkcPublicKeyRef, CanonPkcSharedSecret, CanonPkcSignature, CanonPkcSignatureRef, Crypto,
-    CryptoSensitive, CryptoSensitiveRef, Digest, Hash, HashRef, Kdf, PublicKey, SecretKey,
-    SigningSecretKey, AEAD_CANON_KEY_LEN, AEAD_KEY_ZEROED, AEAD_TAG_LEN, AEAD_TAG_ZEROED, HASH_LEN,
-    HASH_ZEROED, PKC_CANON_PUBLIC_KEY_LEN, PKC_PUBLIC_KEY_ZEROED, PKC_SHARED_SECRET_ZEROED,
+    CryptoSensitive, Digest, Hash, HashRef, Kdf, PublicKey, SecretKey, SigningSecretKey,
+    AEAD_CANON_KEY_LEN, AEAD_KEY_ZEROED, AEAD_TAG_LEN, AEAD_TAG_ZEROED, HASH_LEN, HASH_ZEROED,
+    PKC_CANON_PUBLIC_KEY_LEN, PKC_PUBLIC_KEY_ZEROED, PKC_SHARED_SECRET_ZEROED,
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::Fabric;
 use crate::tlv::{Optional, TLVElement, TLVTag, TLVWrite};
 use crate::utils::init::{init, Init};
 use crate::utils::storage::WriteBuf;
+
+pub const CASE_RANDOM_LEN: usize = 32;
+
+pub const CASE_RESUMPTION_ID_LEN: usize = 16;
+
+pub const CASE_SESSION_KEYS_LEN: usize = AEAD_CANON_KEY_LEN * 3;
+
+canon!(
+    CASE_RANDOM_LEN,
+    CASE_RANDOM_ZEROED,
+    CaseRandom,
+    CaseRandomRef
+);
+canon!(
+    CASE_RESUMPTION_ID_LEN,
+    CASE_RESUMPTION_ID_ZEROED,
+    CaseResumptionId,
+    CaseResumptionIdRef
+);
+canon!(
+    CASE_SESSION_KEYS_LEN,
+    CASE_SESSION_KEYS_ZEROED,
+    CaseSessionKeys,
+    CaseSessionKeysRef
+);
 
 /// The CASE protocol handler type used during the CASE handshake
 pub struct CaseP<'a, C: Crypto + 'a> {
@@ -86,8 +111,8 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
         local_fabric_idx: u8,
         peer_pub_key: CanonPkcPublicKeyRef<'_>,
         request: &[u8],
-        our_random_out: &mut CryptoSensitive<32>,
-        resumption_id_out: &mut CryptoSensitive<16>,
+        our_random_out: &mut CaseRandom,
+        resumption_id_out: &mut CaseResumptionId,
         tt_hash_out: &mut Hash,
     ) -> Result<(), Error> {
         self.peer_sessid = peer_sessid;
@@ -164,10 +189,10 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
         &self,
         crypto: &C,
         fabric: &Fabric,
-        our_random: CryptoSensitiveRef<'_, 32>,
+        our_random: CaseRandomRef<'_>,
         our_hash: HashRef<'_>,
         signature: CanonPkcSignatureRef<'_>,
-        resumption_id: CryptoSensitiveRef<'_, 16>,
+        resumption_id: CaseResumptionIdRef<'_>,
         out: &mut [u8],
     ) -> Result<usize, Error> {
         let mut sigma2_key = AEAD_KEY_ZEROED;
@@ -265,7 +290,7 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
         &self,
         crypto: &C,
         ipk: CanonAeadKeyRef<'_>,
-        our_random: CryptoSensitiveRef<'_, 32>,
+        our_random: CaseRandomRef<'_>,
         our_hash: HashRef<'_>,
         key: &mut CanonAeadKey,
     ) -> Result<(), Error> {
@@ -394,7 +419,7 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
         &self,
         crypto: &C,
         ipk: CanonAeadKeyRef<'_>,
-        keys: &mut CryptoSensitive<{ AEAD_CANON_KEY_LEN * 3 }>,
+        keys: &mut CaseSessionKeys,
     ) -> Result<(), Error> {
         const SEKEYS_INFO: [u8; 11] = [
             0x53, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x4b, 0x65, 0x79, 0x73,

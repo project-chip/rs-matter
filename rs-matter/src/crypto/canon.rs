@@ -99,14 +99,20 @@ pub const AEAD_TAG_LEN: usize = 16;
 macro_rules! canon {
     ($len:expr, $zero: ident, $name:ident, $name_ref:ident) => {
         /// Canonical representation of a $name.
-        pub type $name = CryptoSensitive<$len>;
+        #[allow(unused)]
+        pub type $name = $crate::crypto::CryptoSensitive<$len>;
 
-        pub type $name_ref<'a> = CryptoSensitiveRef<'a, $len>;
+        /// Reference to a canonical $name.
+        #[allow(unused)]
+        pub type $name_ref<'a> = $crate::crypto::CryptoSensitiveRef<'a, $len>;
 
         /// Zeroed $name.
+        #[allow(unused)]
         pub const $zero: $name = $name::new();
     };
 }
+
+pub(crate) use canon;
 
 canon!(HASH_LEN, HASH_ZEROED, Hash, HashRef);
 canon!(HMAC_HASH_LEN, HMAC_HASH_ZEROED, HmacHash, HmacHashRef);

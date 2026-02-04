@@ -19,11 +19,9 @@ use core::{mem::MaybeUninit, num::NonZeroU8};
 
 use crate::alloc;
 use crate::cert::CertRef;
-use crate::crypto::{
-    CanonPkcSignature, CanonPkcSignatureRef, Crypto, CryptoSensitive, Hash, AEAD_CANON_KEY_LEN,
-};
+use crate::crypto::{CanonPkcSignature, CanonPkcSignatureRef, Crypto, Hash, AEAD_CANON_KEY_LEN};
 use crate::error::{Error, ErrorCode};
-use crate::sc::case::nego::CaseP;
+use crate::sc::case::nego::{CaseP, CaseRandom, CaseResumptionId, CaseSessionKeys};
 use crate::sc::{
     check_opcode, complete_with_status, sc_write, OpCode, SCStatusCodes, SessionParameters,
 };
@@ -141,11 +139,11 @@ impl<'a, C: Crypto> Case<'a, C> {
             .borrow_mut()
             .get_next_sess_id();
 
-        let mut our_random = MaybeUninit::<CryptoSensitive<32>>::uninit(); // TODO MEDIUM BUFFER
-        let our_random = our_random.init_with(CryptoSensitive::init());
+        let mut our_random = MaybeUninit::<CaseRandom>::uninit(); // TODO MEDIUM BUFFER
+        let our_random = our_random.init_with(CaseRandom::init());
 
-        let mut resumption_id = MaybeUninit::<CryptoSensitive<16>>::uninit(); // TODO MEDIUM BUFFER
-        let resumption_id = resumption_id.init_with(CryptoSensitive::init());
+        let mut resumption_id = MaybeUninit::<CaseResumptionId>::uninit(); // TODO MEDIUM BUFFER
+        let resumption_id = resumption_id.init_with(CaseResumptionId::init());
 
         let mut tt_hash = MaybeUninit::<Hash>::uninit(); // TODO MEDIUM BUFFER
         let tt_hash = tt_hash.init_with(Hash::init());
@@ -285,9 +283,8 @@ impl<'a, C: Crypto> Case<'a, C> {
                     initiator_noc.get_cat_ids(&mut peer_catids)?;
                     self.casep.update_tt(exchange.rx()?.payload());
 
-                    let mut session_keys =
-                        MaybeUninit::<CryptoSensitive<{ 3 * AEAD_CANON_KEY_LEN }>>::uninit(); // TODO MEDIM BUFFER
-                    let session_keys = session_keys.init_with(CryptoSensitive::init());
+                    let mut session_keys = MaybeUninit::<CaseSessionKeys>::uninit(); // TODO MEDIM BUFFER
+                    let session_keys = session_keys.init_with(CaseSessionKeys::init());
                     self.casep.compute_session_keys(
                         self.crypto,
                         fabric.ipk().op_key(),

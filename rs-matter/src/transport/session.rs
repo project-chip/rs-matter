@@ -23,9 +23,7 @@ use cfg_if::cfg_if;
 
 use rand_core::RngCore;
 
-use crate::crypto::{
-    CanonAeadKey, CanonAeadKeyRef, Crypto, CryptoSensitive, CryptoSensitiveRef, AEAD_KEY_ZEROED,
-};
+use crate::crypto::{canon, CanonAeadKey, CanonAeadKeyRef, Crypto};
 use crate::error::*;
 use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::ReliableMessage;
@@ -46,15 +44,14 @@ use super::proto_hdr::ProtoHdr;
 pub const MAX_CAT_IDS_PER_NOC: usize = 3;
 pub type NocCatIds = [u32; MAX_CAT_IDS_PER_NOC];
 
-const MATTER_AES128_KEY_SIZE: usize = 16;
+pub const ATT_CHALLENGE_LEN: usize = 16;
 
-pub type SessionKey = CanonAeadKey;
-pub type SessionKeyRef<'a> = CanonAeadKeyRef<'a>;
-
-pub type AttChallenge = CryptoSensitive<MATTER_AES128_KEY_SIZE>;
-pub type AttChallengeRef<'a> = CryptoSensitiveRef<'a, MATTER_AES128_KEY_SIZE>;
-
-pub const SESSION_KEY_ZEROED: SessionKey = AEAD_KEY_ZEROED;
+canon!(
+    ATT_CHALLENGE_LEN,
+    ATT_CHALLENGE_ZEROED,
+    AttChallenge,
+    AttChallengeRef
+);
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -93,9 +90,9 @@ pub struct Session {
     peer_nodeid: Option<u64>,
     // I find the session initiator/responder role getting confused with exchange initiator/responder
     // So, we might keep this as enc_key and dec_key for now
-    dec_key: SessionKey,
-    enc_key: SessionKey,
-    att_challenge: CryptoSensitive<MATTER_AES128_KEY_SIZE>,
+    dec_key: CanonAeadKey,
+    enc_key: CanonAeadKey,
+    att_challenge: AttChallenge,
     local_sess_id: u16,
     peer_sess_id: u16,
     msg_ctr: u32,
@@ -127,8 +124,8 @@ impl Session {
             peer_addr,
             local_nodeid: 0,
             peer_nodeid,
-            dec_key: SessionKey::new(),
-            enc_key: SessionKey::new(),
+            dec_key: CanonAeadKey::new(),
+            enc_key: CanonAeadKey::new(),
             att_challenge: AttChallenge::new(),
             peer_sess_id: 0,
             local_sess_id: 0,
@@ -155,8 +152,8 @@ impl Session {
             peer_addr,
             local_nodeid: 0,
             peer_nodeid,
-            dec_key <- SessionKey::init(),
-            enc_key <- SessionKey::init(),
+            dec_key <- CanonAeadKey::init(),
+            enc_key <- CanonAeadKey::init(),
             att_challenge <- AttChallenge::init(),
             peer_sess_id: 0,
             local_sess_id: 0,
@@ -217,14 +214,14 @@ impl Session {
         ctr
     }
 
-    pub fn get_dec_key(&self) -> Option<SessionKeyRef<'_>> {
+    pub fn get_dec_key(&self) -> Option<CanonAeadKeyRef<'_>> {
         match self.mode {
             SessionMode::Case { .. } | SessionMode::Pase { .. } => Some(self.dec_key.reference()),
             SessionMode::PlainText => None,
         }
     }
 
-    pub fn get_enc_key(&self) -> Option<SessionKeyRef<'_>> {
+    pub fn get_enc_key(&self) -> Option<CanonAeadKeyRef<'_>> {
         match self.mode {
             SessionMode::Case { .. } | SessionMode::Pase { .. } => Some(self.enc_key.reference()),
             SessionMode::PlainText => None,
@@ -542,8 +539,8 @@ impl<'a> ReservedSession<'a> {
         local_sessid: u16,
         peer_addr: Address,
         mode: SessionMode,
-        dec_key: Option<SessionKeyRef<'_>>,
-        enc_key: Option<SessionKeyRef<'_>>,
+        dec_key: Option<CanonAeadKeyRef<'_>>,
+        enc_key: Option<CanonAeadKeyRef<'_>>,
         att_challenge: Option<AttChallengeRef<'_>>,
     ) -> Result<(), Error> {
         let mut mgr = self.session_mgr.borrow_mut();

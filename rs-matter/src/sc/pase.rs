@@ -21,7 +21,7 @@ use core::time::Duration;
 
 use rand_core::RngCore;
 
-use spake2p::{Spake2P, VerifierData, VERIFIER_SALT_LEN};
+use spake2p::{Spake2P, Spake2pVerifierData};
 
 use crate::crypto::{
     CanonEcPointRef, Crypto, CryptoSensitive, CryptoSensitiveRef, HmacHashRef, Kdf,
@@ -31,7 +31,10 @@ use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{BasicContext, BasicContextInstance, ChangeNotify};
 use crate::error::{Error, ErrorCode};
-use crate::sc::pase::spake2p::{VerifierPasswordRef, VerifierSalt, VerifierStrRef};
+use crate::sc::pase::spake2p::{
+    Spake2pVerifierPasswordRef, Spake2pVerifierSaltRef, Spake2pVerifierStrRef,
+    SPAKE2P_VERIFIER_SALT_ZEROED,
+};
 use crate::sc::{check_opcode, complete_with_status, OpCode, SessionParameters};
 use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TagType, ToTLV};
 use crate::transport::exchange::{Exchange, ExchangeId};
@@ -77,7 +80,7 @@ pub struct CommWindow {
     /// The discriminator
     discriminator: u16,
     /// The verifier data
-    verifier: VerifierData,
+    verifier: Spake2pVerifierData,
     /// The opener info
     opener: Option<CommWindowOpener>,
     /// The window expiry instant
@@ -96,8 +99,8 @@ impl CommWindow {
     /// - `rand` - The random number generator
     fn init_with_pw<'a>(
         mdns_id: u64,
-        password: VerifierPasswordRef<'a>,
-        salt: &'a VerifierSalt,
+        password: Spake2pVerifierPasswordRef<'a>,
+        salt: Spake2pVerifierSaltRef<'a>,
         discriminator: u16,
         opener: Option<CommWindowOpener>,
         window_expiry: Duration,
@@ -105,7 +108,7 @@ impl CommWindow {
         init!(Self {
             mdns_id,
             discriminator,
-            verifier <- VerifierData::init_with_pw(password, salt),
+            verifier <- Spake2pVerifierData::init_with_pw(password, salt),
             opener,
             window_expiry,
         })
@@ -122,8 +125,8 @@ impl CommWindow {
     /// - `window_expiry` - The window expiry instant
     fn init<'a>(
         mdns_id: u64,
-        verifier: VerifierStrRef<'a>,
-        salt: &'a VerifierSalt,
+        verifier: Spake2pVerifierStrRef<'a>,
+        salt: Spake2pVerifierSaltRef<'a>,
         count: u32,
         discriminator: u16,
         opener: Option<CommWindowOpener>,
@@ -132,7 +135,7 @@ impl CommWindow {
         init!(Self {
             mdns_id,
             discriminator,
-            verifier <- VerifierData::init(verifier, salt, count),
+            verifier <- Spake2pVerifierData::init(verifier, salt, count),
             opener,
             window_expiry,
         })
@@ -237,7 +240,7 @@ impl PaseMgr {
     pub fn open_basic_comm_window<C>(
         &mut self,
         ctx: C,
-        password: VerifierPasswordRef<'_>,
+        password: Spake2pVerifierPasswordRef<'_>,
         discriminator: u16,
         timeout_secs: u16,
         opener: Option<CommWindowOpener>,
@@ -260,14 +263,14 @@ impl PaseMgr {
 
         let mdns_id = rand.next_u64();
 
-        let mut salt = [0; VERIFIER_SALT_LEN];
-        rand.fill_bytes(&mut salt);
+        let mut salt = SPAKE2P_VERIFIER_SALT_ZEROED;
+        rand.fill_bytes(salt.access_mut());
 
         self.comm_window
             .reinit(Maybe::init_some(CommWindow::init_with_pw(
                 mdns_id,
                 password,
-                &salt,
+                salt.reference(),
                 discriminator,
                 opener,
                 window_expiry,
@@ -306,8 +309,8 @@ impl PaseMgr {
     pub fn open_comm_window<C>(
         &mut self,
         ctx: C,
-        verifier: VerifierStrRef<'_>,
-        salt: &VerifierSalt,
+        verifier: Spake2pVerifierStrRef<'_>,
+        salt: Spake2pVerifierSaltRef<'_>,
         count: u32,
         discriminator: u16,
         timeout_secs: u16,
@@ -548,7 +551,7 @@ impl<'a, C: Crypto> Pase<'a, C> {
 
         let rx = exchange.rx()?;
 
-        let mut salt = [0; VERIFIER_SALT_LEN];
+        let mut salt = SPAKE2P_VERIFIER_SALT_ZEROED;
         let mut count = 0;
 
         let has_comm_window = {
@@ -557,7 +560,7 @@ impl<'a, C: Crypto> Pase<'a, C> {
 
             let ctx = BasicContextInstance::new(exchange.matter(), &self.crypto, self.notify);
             if let Some(comm_window) = pase.comm_window(&ctx)? {
-                salt.copy_from_slice(&comm_window.verifier.salt);
+                salt.load(comm_window.verifier.salt.reference());
                 count = comm_window.verifier.count;
 
                 true
@@ -600,7 +603,7 @@ impl<'a, C: Crypto> Pase<'a, C> {
                 if !req.has_params {
                     let params_resp = PBKDFParamRespParams {
                         count,
-                        salt: OctetStr::new(&salt),
+                        salt: OctetStr::new(salt.access()),
                     };
                     resp.params = Some(params_resp);
                 }

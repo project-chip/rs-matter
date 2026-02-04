@@ -19,10 +19,13 @@ use core::num::NonZeroU8;
 use core::time::Duration;
 
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
-use crate::crypto::{CanonAeadKeyRef, Crypto, SecretKey};
+use crate::crypto::{
+    CanonAeadKeyRef, CanonPkcSecretKey, CanonPkcSecretKeyRef, Crypto, SecretKey,
+    PKC_SECRET_KEY_ZEROED,
+};
 use crate::dm::BasicContext;
 use crate::error::{Error, ErrorCode};
-use crate::fabric::{FabricMgr, FabricSecretKey, FabricSecretKeyRef, FABRIC_SECRET_KEY_ZEROED};
+use crate::fabric::FabricMgr;
 use crate::im::IMStatusCode;
 use crate::tlv::TLVElement;
 use crate::transport::session::SessionMode;
@@ -78,7 +81,7 @@ impl From<IMStatusCode> for IMError {
 
 pub struct FailSafe {
     state: State,
-    secret_key: FabricSecretKey,
+    secret_key: CanonPkcSecretKey,
     root_ca: Vec<u8, { MAX_CERT_TLV_LEN }>,
     epoch: Epoch,
     breadcrumb: u64,
@@ -89,7 +92,7 @@ impl FailSafe {
     pub const fn new(epoch: Epoch) -> Self {
         Self {
             state: State::Idle,
-            secret_key: FABRIC_SECRET_KEY_ZEROED,
+            secret_key: PKC_SECRET_KEY_ZEROED,
             root_ca: Vec::new(),
             epoch,
             breadcrumb: 0,
@@ -99,7 +102,7 @@ impl FailSafe {
     pub fn init(epoch: Epoch) -> impl Init<Self> {
         init!(Self {
             state: State::Idle,
-            secret_key <- FabricSecretKey::init(),
+            secret_key <- CanonPkcSecretKey::init(),
             root_ca <- Vec::init(),
             epoch,
             breadcrumb: 0
@@ -216,7 +219,7 @@ impl FailSafe {
         &mut self,
         crypto: C,
         session_mode: &SessionMode,
-    ) -> Result<FabricSecretKeyRef<'_>, Error> {
+    ) -> Result<CanonPkcSecretKeyRef<'_>, Error> {
         self.update_state_timeout();
 
         self.check_state(
@@ -238,7 +241,7 @@ impl FailSafe {
         &mut self,
         crypto: C,
         session_mode: &SessionMode,
-    ) -> Result<FabricSecretKeyRef<'_>, Error> {
+    ) -> Result<CanonPkcSecretKeyRef<'_>, Error> {
         self.update_state_timeout();
 
         // Must be a CASE session

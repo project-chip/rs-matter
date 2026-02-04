@@ -21,7 +21,7 @@
 use crate::crypto::{CanonPkcPublicKeyRef, CanonPkcSecretKeyRef};
 use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::dm::clusters::dev_att::DeviceAttestation;
-use crate::sc::pase::spake2p::{VerifierPassword, VerifierPasswordRef};
+use crate::sc::pase::spake2p::{Spake2pVerifierPassword, Spake2pVerifierPasswordRef};
 use crate::BasicCommData;
 
 /// Test Device Attestation credentials
@@ -35,7 +35,9 @@ pub const TEST_PID: u16 = 0x8001;
 /// Test Basic Commissioning Data
 /// Matches what chip-tool tests expect
 pub const TEST_DEV_COMM: BasicCommData = BasicCommData {
-    password: VerifierPassword::new_from_ref(VerifierPasswordRef::new(&20202021_u32.to_le_bytes())),
+    password: Spake2pVerifierPassword::new_from_ref(Spake2pVerifierPasswordRef::new(
+        &20202021_u32.to_le_bytes(),
+    )),
     discriminator: 3840,
 };
 /// Test Basic Information

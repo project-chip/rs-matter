@@ -26,45 +26,64 @@
 use subtle::ConstantTimeEq;
 
 use crate::crypto::{
-    CanonEcPoint, CanonEcPointRef, CanonEcScalarRef, CanonUint320Ref, Crypto, CryptoSensitive,
-    CryptoSensitiveRef, Digest, EcPoint, EcScalar, Hash, HashRef, HmacHash, HmacHashRef, Kdf,
-    PbKdf, UInt, EC_CANON_POINT_LEN, EC_CANON_SCALAR_LEN, EC_POINT_ZEROED, EC_SCALAR_ZEROED,
-    HASH_LEN, HASH_ZEROED, HMAC_HASH_ZEROED, UINT320_CANON_LEN, UINT320_ZEROED,
+    canon, CanonEcPoint, CanonEcPointRef, CanonEcScalarRef, CanonUint320Ref, Crypto,
+    CryptoSensitive, Digest, EcPoint, EcScalar, Hash, HashRef, HmacHash, HmacHashRef, Kdf, PbKdf,
+    UInt, EC_CANON_POINT_LEN, EC_CANON_SCALAR_LEN, EC_POINT_ZEROED, EC_SCALAR_ZEROED, HASH_LEN,
+    HASH_ZEROED, HMAC_HASH_LEN, HMAC_HASH_ZEROED, UINT320_CANON_LEN, UINT320_ZEROED,
 };
 use crate::error::{Error, ErrorCode};
 use crate::sc::SCStatusCodes;
-use crate::utils::init::{init, zeroed, Init};
+use crate::utils::init::{init, Init};
 
-pub const SPAKE2_ITERATION_COUNT: u32 = 2000;
+pub const SPAKE2P_ITERATION_COUNT: u32 = 2000;
 
-pub const VERIFIER_PASSWORD_LEN: usize = 4;
-pub const VERIFIER_STR_LEN: usize = EC_CANON_SCALAR_LEN + EC_CANON_POINT_LEN;
-pub const VERIFIER_SALT_LEN: usize = 32;
+pub const SPAKE2P_KE_LEN: usize = 16;
 
-pub type VerifierPassword = CryptoSensitive<VERIFIER_PASSWORD_LEN>;
-pub type VerifierPasswordRef<'a> = CryptoSensitiveRef<'a, VERIFIER_PASSWORD_LEN>;
+pub const SPAKE2P_W_LEN: usize = UINT320_CANON_LEN * 2;
 
-pub type VerifierStr = CryptoSensitive<VERIFIER_STR_LEN>;
-pub type VerifierStrRef<'a> = CryptoSensitiveRef<'a, VERIFIER_STR_LEN>;
+pub const SPAKE2P_VERIFIER_PASSWORD_LEN: usize = 4;
 
-pub type VerifierSalt = [u8; VERIFIER_SALT_LEN];
+pub const SPAKE2P_VERIFIER_STR_LEN: usize = EC_CANON_SCALAR_LEN + EC_CANON_POINT_LEN;
+
+pub const SPAKE2P_VERIFIER_SALT_LEN: usize = 32;
+
+canon!(SPAKE2P_KE_LEN, SPAKE2P_KE_ZEROED, Spake2pKe, Spake2pKeRef);
+canon!(SPAKE2P_W_LEN, SPAKE2P_W_ZEROED, Spake2pW, Spake2pWRef);
+canon!(
+    SPAKE2P_VERIFIER_PASSWORD_LEN,
+    SPAKE2P_VERIFIER_PASSWORD_ZEROED,
+    Spake2pVerifierPassword,
+    Spake2pVerifierPasswordRef
+);
+canon!(
+    SPAKE2P_VERIFIER_STR_LEN,
+    SPAKE2P_VERIFIER_STR_ZEROED,
+    Spake2pVerifierStr,
+    Spake2pVerifierStrRef
+);
+canon!(
+    SPAKE2P_VERIFIER_SALT_LEN,
+    SPAKE2P_VERIFIER_SALT_ZEROED,
+    Spake2pVerifierSalt,
+    Spake2pVerifierSaltRef
+);
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct VerifierData {
+pub struct Spake2pVerifierData {
     /// When `password` is `None`, `verifier` is expected to be set
-    pub password: Option<VerifierPassword>,
-    pub verifier: VerifierStr,
+    pub password: Option<Spake2pVerifierPassword>,
+    pub verifier: Spake2pVerifierStr,
     // For the VerifierOption::Verifier, the following fields only serve
     // information purposes
-    pub salt: VerifierSalt,
+    pub salt: Spake2pVerifierSalt,
     pub count: u32,
 }
 
-impl VerifierData {
+impl Spake2pVerifierData {
     pub fn init_with_pw<'a>(
-        password: VerifierPasswordRef<'a>,
-        salt: &'a VerifierSalt,
+        password: Spake2pVerifierPasswordRef<'a>,
+        salt: Spake2pVerifierSaltRef<'a>,
     ) -> impl Init<Self> + 'a {
         Self::init_empty().chain(move |this| {
             this.configure_pw(password, salt);
@@ -74,8 +93,8 @@ impl VerifierData {
     }
 
     pub fn init<'a>(
-        verifier: VerifierStrRef<'a>,
-        salt: &'a VerifierSalt,
+        verifier: Spake2pVerifierStrRef<'a>,
+        salt: Spake2pVerifierSaltRef<'a>,
         count: u32,
     ) -> impl Init<Self> + 'a {
         Self::init_empty().chain(move |this| {
@@ -88,27 +107,31 @@ impl VerifierData {
     fn init_empty() -> impl Init<Self> {
         init!(Self {
             password: None,
-            verifier <- VerifierStr::init(),
-            salt <- zeroed(),
-            count: SPAKE2_ITERATION_COUNT,
+            verifier <- Spake2pVerifierStr::init(),
+            salt <- Spake2pVerifierSalt::init(),
+            count: SPAKE2P_ITERATION_COUNT,
         })
     }
 
-    fn configure_pw(&mut self, password: VerifierPasswordRef<'_>, salt: &VerifierSalt) {
+    fn configure_pw(
+        &mut self,
+        password: Spake2pVerifierPasswordRef<'_>,
+        salt: Spake2pVerifierSaltRef<'_>,
+    ) {
         self.password = Some(password.into());
-        self.salt.copy_from_slice(salt);
+        self.salt.load(salt);
         self.verifier.zeroize();
         self.count = 0;
     }
 
     fn configure_verifier(
         &mut self,
-        verifier: VerifierStrRef<'_>,
-        salt: &VerifierSalt,
+        verifier: Spake2pVerifierStrRef<'_>,
+        salt: Spake2pVerifierSaltRef<'_>,
         count: u32,
     ) {
         self.password = None;
-        self.salt.copy_from_slice(salt);
+        self.salt.load(salt);
         self.verifier.load(verifier);
         self.count = count;
     }
@@ -118,7 +141,7 @@ pub struct Spake2P {
     local_sessid: u16,
     peer_sessid: u16,
     context_hash: Hash,
-    ke: CryptoSensitive<16>,
+    ke: Spake2pKe,
     ca: HmacHash,
 }
 
@@ -148,7 +171,7 @@ impl Spake2P {
             local_sessid: 0,
             peer_sessid: 0,
             context_hash: HASH_ZEROED,
-            ke: CryptoSensitive::new(),
+            ke: Spake2pKe::new(),
             ca: HMAC_HASH_ZEROED,
         }
     }
@@ -158,7 +181,7 @@ impl Spake2P {
             local_sessid: 0,
             peer_sessid: 0,
             context_hash <- Hash::init(),
-            ke <- CryptoSensitive::init(),
+            ke <- Spake2pKe::init(),
             ca <- HmacHash::init(),
         })
     }
@@ -187,15 +210,21 @@ impl Spake2P {
     pub fn setup_verifier<C: Crypto>(
         &mut self,
         crypto: C,
-        verifier: &VerifierData,
+        verifier: &Spake2pVerifierData,
         a_pt: CanonEcPointRef<'_>,
         b_pt_out: &mut CanonEcPoint,
         cb_out: &mut HmacHash,
     ) -> Result<(), Error> {
         let (w0, l_pt) = if let Some(pw) = verifier.password.as_ref().map(|pw| pw.reference()) {
             // Derive w0 and L from the password
-            let mut w0s_w1s = CryptoSensitive::new();
-            Self::compute_w0s_w1s(&crypto, pw, verifier.count, &verifier.salt, &mut w0s_w1s);
+            let mut w0s_w1s = Spake2pW::new();
+            Self::compute_w0s_w1s(
+                &crypto,
+                pw,
+                verifier.count,
+                verifier.salt.access(),
+                &mut w0s_w1s,
+            );
 
             let (w0s, w1s) = w0s_w1s
                 .reference()
@@ -250,7 +279,7 @@ impl Spake2P {
     pub fn verify(
         &mut self,
         ca: HmacHashRef<'_>,
-    ) -> Result<(u16, u16, CryptoSensitiveRef<'_, 16>), SCStatusCodes> {
+    ) -> Result<(u16, u16, Spake2pKeRef<'_>), SCStatusCodes> {
         // if self.mode != Spake2Mode::Verifier(Spake2VerifierState::PendingConfirmation) {
         //     return Err(SCStatusCodes::SessionNotFound);
         // }
@@ -346,7 +375,7 @@ impl Spake2P {
         tt_hash: HashRef<'_>,
         a_pt_canon: CanonEcPointRef<'_>,
         b_pt: C::EcPoint<'a>,
-        ke_out: &mut CryptoSensitive<16>,
+        ke_out: &mut Spake2pKe,
         ca_out: &mut HmacHash,
         cb_out: &mut HmacHash,
     ) -> Result<(), Error> {
@@ -355,10 +384,8 @@ impl Spake2P {
         let (ka, ke_internal) = ka_ke.split::<{ HASH_LEN / 2 }, { HASH_LEN / 2 }>();
         ke_out.load(ke_internal);
 
-        // TODO: Remove the magic constants from here (e.g. 32, 16, etc.)
-
         // Step 2: KcA || KcB = KDF(nil, Ka, "ConfirmationKeys")
-        let mut kca_kcb = CryptoSensitive::<32>::new();
+        let mut kca_kcb = CryptoSensitive::<{ HMAC_HASH_LEN }>::new();
         crypto
             .kdf()
             .unwrap()
@@ -445,10 +472,10 @@ impl Spake2P {
 
     fn compute_w0s_w1s<C: Crypto>(
         crypto: C,
-        pw: VerifierPasswordRef<'_>,
+        pw: Spake2pVerifierPasswordRef<'_>,
         iter: u32,
         salt: &[u8],
-        w0w1s: &mut CryptoSensitive<{ UINT320_CANON_LEN * 2 }>,
+        w0w1s: &mut Spake2pW,
     ) {
         unwrap!(crypto.pbkdf()).derive(pw, iter as usize, salt, w0w1s);
     }
@@ -582,7 +609,7 @@ mod tests {
             0x36, 0x00,
         ];
 
-        let mut w0s_w1s = CryptoSensitive::new();
+        let mut w0s_w1s = Spake2pW::new();
         Spake2P::compute_w0s_w1s(
             test_only_crypto(),
             (&123456_u32.to_le_bytes()).into(),
@@ -609,7 +636,7 @@ mod tests {
         let crypto = test_only_crypto();
 
         for t in RFC_T {
-            let mut ke = CryptoSensitive::new();
+            let mut ke = Spake2pKe::new();
             let mut ca = HmacHash::new();
             let mut cb = HmacHash::new();
             let mut tt_hash = HASH_ZEROED;
@@ -647,7 +674,7 @@ mod tests {
         pub l_pt: CanonEcPointRef<'a>,
         pub ca: HmacHashRef<'a>,
         pub cb: HmacHashRef<'a>,
-        pub ke: CryptoSensitiveRef<'a, 16>,
+        pub ke: Spake2pKeRef<'a>,
         pub tt: &'a [u8; 547],
         // The TT size changes, as they change the identifiers, address it through this
         pub tt_len: usize,
@@ -720,7 +747,7 @@ mod tests {
                 0x29, 0x8b, 0x1d, 0x07, 0xa5, 0x26, 0xcf, 0x3c, 0xc5, 0x91, 0xad, 0xfe, 0xcd, 0x1f,
                 0x6e, 0xf6, 0xe0, 0x2e,
             ]),
-            ke: CryptoSensitiveRef::<16>::new(&[
+            ke: Spake2pKeRef::new(&[
                 0x80, 0x1d, 0xb2, 0x97, 0x65, 0x48, 0x16, 0xeb, 0x4f, 0x02, 0x86, 0x81, 0x29, 0xb9,
                 0xdc, 0x89,
             ]),
@@ -834,7 +861,7 @@ mod tests {
                 0xca, 0x24, 0x48, 0xb9, 0x05, 0xbe, 0x19, 0xa4, 0x3b, 0x94, 0xee, 0x24, 0xb7, 0x70,
                 0x20, 0x81, 0x35, 0xe3,
             ]),
-            ke: CryptoSensitiveRef::<16>::new(&[
+            ke: Spake2pKeRef::new(&[
                 0x69, 0x89, 0xd8, 0xf9, 0x17, 0x7e, 0xf7, 0xdf, 0x67, 0xda, 0x43, 0x79, 0x87, 0xf0,
                 0x72, 0x55,
             ]),
@@ -948,7 +975,7 @@ mod tests {
                 0x17, 0xca, 0xdf, 0x3e, 0xa3, 0x79, 0x28, 0x27, 0xf4, 0x79, 0xe8, 0x73, 0xf9, 0x3e,
                 0x90, 0xf2, 0x15, 0x52,
             ]),
-            ke: CryptoSensitiveRef::<16>::new(&[
+            ke: Spake2pKeRef::new(&[
                 0x2e, 0xa4, 0x0e, 0x4b, 0xad, 0xfa, 0x54, 0x52, 0xb5, 0x74, 0x4d, 0xc5, 0x98, 0x3e,
                 0x99, 0xba,
             ]),
@@ -1062,7 +1089,7 @@ mod tests {
                 0x15, 0xb3, 0xc1, 0x52, 0x4a, 0xae, 0x80, 0xfd, 0x4e, 0x68, 0x10, 0xcf, 0x53, 0x1c,
                 0xf1, 0x1d, 0x20, 0xe3,
             ]),
-            ke: CryptoSensitiveRef::<16>::new(&[
+            ke: Spake2pKeRef::new(&[
                 0xea, 0x32, 0x76, 0xd6, 0x83, 0x34, 0x57, 0x60, 0x97, 0xe0, 0x4b, 0x19, 0xee, 0x5a,
                 0x3a, 0x8b,
             ]),

@@ -90,7 +90,7 @@ use crate::pairing::qr::{
     no_optional_data, CommFlowType, NoOptionalData, Qr, QrPayload, QrTextType,
 };
 use crate::pairing::DiscoveryCapabilities;
-use crate::sc::pase::spake2p::VerifierPassword;
+use crate::sc::pase::spake2p::Spake2pVerifierPassword;
 use crate::sc::pase::PaseMgr;
 use crate::transport::network::{NetworkReceive, NetworkSend};
 use crate::transport::TransportMgr;
@@ -241,7 +241,7 @@ impl MatterMdnsService {
 pub struct BasicCommData {
     /// The password which is necessary to authenticate the device in either
     /// initial commissioning, or when the basic commissioning window is opened
-    pub password: VerifierPassword,
+    pub password: Spake2pVerifierPassword,
     /// The 12-bit discriminator used to differentiate between multiple devices
     pub discriminator: u16,
 }
