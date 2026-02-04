@@ -138,7 +138,7 @@ impl Spake2pVerifierData {
         self.password = Some(password.into());
         self.salt.load(salt);
         self.verifier.zeroize();
-        self.count = 0;
+        self.count = SPAKE2P_ITERATION_COUNT;
     }
 
     fn configure_verifier(
