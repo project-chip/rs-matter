@@ -68,9 +68,17 @@ jobs:
         run: |
           cargo xtask itest-setup --gitref "${{ inputs.chip_ref || 'v1.4.2-branch' }}"
 
-      - name: Run YAML Integration Tests
+      - name: Run YAML Integration Tests (with RustCrypto by default))
         run: |
           cargo xtask itest
+
+      - name: Run One YAML Integration Test with MbedTLS
+        run: |
+          cargo xtask itest --features mbedtls TestBasicInformation
+
+      - name: Run One YAML Integration Test with OpenSSL
+        run: |
+          cargo xtask itest --features openssl TestBasicInformation
 
       - name: Run LevelControl and OnOff YAML Integration Tests for dimmable_light
         run: |

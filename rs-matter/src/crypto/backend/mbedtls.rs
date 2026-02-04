@@ -31,8 +31,6 @@ use core::ffi::{c_int, c_uchar, c_void};
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use esp_mbedtls_sys::merr;
-
 use rand_core::{CryptoRng, CryptoRngCore, RngCore};
 
 use crate::crypto::{CanonPkcSecretKeyRef, CryptoSensitive, CryptoSensitiveRef, SharedRand};
@@ -149,11 +147,6 @@ where
     where
         Self: 'a;
 
-    type UInt320<'a>
-        = Mpi
-    where
-        Self: 'a;
-
     type EcScalar<'a>
         = ECScalar<
         'a,
@@ -238,17 +231,6 @@ where
         self.ec_scalar(self.singleton_secret_key)
     }
 
-    fn uint320(
-        &self,
-        uint: crate::crypto::CanonUint320Ref<'_>,
-    ) -> Result<Self::UInt320<'_>, Error> {
-        let mut result = Mpi::new();
-
-        result.set(uint.access());
-
-        Ok(result)
-    }
-
     fn ec_scalar(
         &self,
         scalar: crate::crypto::CanonEcScalarRef<'_>,
@@ -261,8 +243,39 @@ where
         Ok(result)
     }
 
+    fn ec_scalar_mod_p(
+        &self,
+        uint: crate::crypto::CanonUint320Ref<'_>,
+    ) -> Result<Self::EcScalar<'_>, Error> {
+        let mut result = ECScalar::new(&self.ec_group, &self.rng);
+
+        let mut mpi = Mpi::new();
+        mpi.set(uint.access());
+
+        self.ec_group.access(|group| {
+            merr_unwrap!(unsafe {
+                esp_mbedtls_sys::mbedtls_mpi_mod_mpi(&mut result.mpi.raw, &mpi.raw, &group.raw.N)
+            });
+        });
+
+        Ok(result)
+    }
+
     fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error> {
-        unimplemented!()
+        let mut result = ECScalar::new(&self.ec_group, &self.rng);
+
+        self.ec_group.access(|group| {
+            merr_unwrap!(unsafe {
+                esp_mbedtls_sys::mbedtls_ecp_gen_privkey(
+                    &group.raw,
+                    &mut result.mpi.raw,
+                    Some(mbedtls_platform_rng::<SharedRand<M, T>>),
+                    &self.rng as *const _ as *const _ as *mut _,
+                )
+            });
+        });
+
+        Ok(result)
     }
 
     fn ec_point(
@@ -283,18 +296,6 @@ where
         self.ec_group.access(|group| {
             merr_unwrap!(unsafe {
                 esp_mbedtls_sys::mbedtls_ecp_copy(&mut result.raw, &group.raw.G)
-            });
-        });
-
-        Ok(result)
-    }
-
-    fn ec_prime_modulus(&self) -> Result<Self::EcScalar<'_>, Error> {
-        let mut result = ECScalar::new(&self.ec_group, &self.rng);
-
-        self.ec_group.access(|group| {
-            merr_unwrap!(unsafe {
-                esp_mbedtls_sys::mbedtls_mpi_copy(&mut result.mpi.raw, &group.raw.P)
             });
         });
 
@@ -658,26 +659,6 @@ impl Drop for Mpi {
         unsafe {
             esp_mbedtls_sys::mbedtls_mpi_free(&mut self.raw);
         }
-    }
-}
-
-impl<const LEN: usize> crate::crypto::UInt<'_, LEN> for Mpi {
-    fn rem(&self, other: &Self) -> Option<Self> {
-        let mut result = Mpi::new();
-
-        let result_code = merr!(unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_mod_mpi(&mut result.raw, &self.raw, &other.raw)
-        });
-
-        if result_code.is_ok() {
-            Some(result)
-        } else {
-            None
-        }
-    }
-
-    fn write_canon(&self, buf: &mut CryptoSensitive<LEN>) {
-        self.write(buf.access_mut());
     }
 }
 
@@ -1066,24 +1047,28 @@ where
         });
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_ecp_point_init(&mut ec_ctx.private_Q);
+            esp_mbedtls_sys::mbedtls_ecp_keypair_init(ec_ctx);
         }
+
+        merr_unwrap!(unsafe {
+            esp_mbedtls_sys::mbedtls_mpi_copy(&mut ec_ctx.private_d, &self.mpi.raw)
+        });
 
         self.group.access(|group| {
             merr_unwrap!(unsafe {
-                esp_mbedtls_sys::mbedtls_ecp_mul(
-                    &mut group.raw,
-                    &mut ec_ctx.private_Q,
-                    &self.mpi.raw,
-                    &group.raw.G,
-                    Some(mbedtls_platform_rng::<R>),
-                    self.rng as *const _ as *const _ as *mut _,
-                )
-            });
-
-            merr_unwrap!(unsafe {
                 esp_mbedtls_sys::mbedtls_ecp_group_copy(&mut ec_ctx.private_grp, &group.raw)
             });
+        });
+
+        merr_unwrap!(unsafe {
+            esp_mbedtls_sys::mbedtls_ecp_mul(
+                &mut ec_ctx.private_grp,
+                &mut ec_ctx.private_Q,
+                &self.mpi.raw,
+                &ec_ctx.private_grp.G,
+                Some(mbedtls_platform_rng::<R>),
+                self.rng as *const _ as *const _ as *mut _,
+            )
         });
 
         unsafe {
@@ -1099,17 +1084,23 @@ where
                 &mut csr,
                 buf.as_mut_ptr(),
                 buf.len(),
-                None,
-                core::ptr::null_mut(),
+                Some(mbedtls_platform_rng::<R>),
+                self.rng as *const _ as *const _ as *mut _,
             )
-        });
+        }) as usize;
 
         unsafe {
             esp_mbedtls_sys::mbedtls_x509write_csr_free(&mut csr);
             esp_mbedtls_sys::mbedtls_pk_free(&mut pk);
         }
 
-        Ok(&buf[..len as usize])
+        // The DER is written at the end of the buffer - yet - callers might not expect that
+        // Shift everything to the front
+        unsafe {
+            core::ptr::copy(buf.as_ptr().add(buf.len() - len), buf.as_mut_ptr(), len);
+        }
+
+        Ok(&buf[..len])
     }
 
     fn pub_key(&self) -> Self::PublicKey<'a> {
