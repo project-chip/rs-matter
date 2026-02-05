@@ -72,9 +72,10 @@ jobs:
         run: |
           cargo xtask itest
 
-      - name: Run One YAML Integration Test with MbedTLS
-        run: |
-          cargo xtask itest --features mbedtls TestBasicInformation
+      # TODO: Enable once esp-mbedtls-sys built removes the installation step
+      # - name: Run One YAML Integration Test with MbedTLS
+      #   run: |
+      #     cargo xtask itest --features mbedtls TestBasicInformation
 
       - name: Run One YAML Integration Test with OpenSSL
         run: |
