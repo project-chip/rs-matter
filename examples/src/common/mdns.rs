@@ -17,20 +17,26 @@
 
 //! A module containing the mDNS code used in the examples
 
-use rs_matter::error::Error;
+use rs_matter::dm::ChangeNotify;
 use rs_matter::Matter;
+use rs_matter::{crypto::Crypto, error::Error};
 
 use socket2::{Domain, Protocol, Socket, Type};
 
-pub async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
+#[allow(unused)]
+pub async fn run_mdns<C: Crypto>(
+    matter: &Matter<'_>,
+    crypto: C,
+    notify: &dyn ChangeNotify,
+) -> Result<(), Error> {
     #[cfg(feature = "astro-dnssd")]
     rs_matter::transport::network::mdns::astro::AstroMdnsResponder::new(matter)
-        .run()
+        .run(crypto, notify)
         .await?;
 
     #[cfg(all(feature = "zeroconf", not(feature = "astro-dnssd")))]
     rs_matter::transport::network::mdns::zeroconf::ZeroconfMdnsResponder::new(matter)
-        .run()
+        .run(crypto, notify)
         .await?;
 
     #[cfg(all(
@@ -38,7 +44,11 @@ pub async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
         not(any(feature = "zeroconf", feature = "astro-dnssd"))
     ))]
     rs_matter::transport::network::mdns::resolve::ResolveMdnsResponder::new(matter)
-        .run(&rs_matter::utils::zbus::Connection::system().await.unwrap())
+        .run(
+            &rs_matter::utils::zbus::Connection::system().await.unwrap(),
+            crypto,
+            notify,
+        )
         .await?;
 
     #[cfg(all(
@@ -46,7 +56,11 @@ pub async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
         not(any(feature = "resolve", feature = "zeroconf", feature = "astro-dnssd"))
     ))]
     rs_matter::transport::network::mdns::avahi::AvahiMdnsResponder::new(matter)
-        .run(&rs_matter::utils::zbus::Connection::system().await.unwrap())
+        .run(
+            &rs_matter::utils::zbus::Connection::system().await.unwrap(),
+            crypto,
+            notify,
+        )
         .await?;
 
     #[cfg(not(any(
@@ -55,13 +69,17 @@ pub async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
         feature = "zeroconf",
         feature = "astro-dnssd"
     )))]
-    run_builtin_mdns(matter).await?;
+    run_builtin_mdns(matter, crypto, notify).await?;
 
     Ok(())
 }
 
 #[allow(unused)]
-async fn run_builtin_mdns(matter: &Matter<'_>) -> Result<(), Error> {
+async fn run_builtin_mdns<C: Crypto>(
+    matter: &Matter<'_>,
+    crypto: C,
+    notify: &dyn ChangeNotify,
+) -> Result<(), Error> {
     use std::net::UdpSocket;
 
     use log::info;
@@ -137,7 +155,7 @@ async fn run_builtin_mdns(matter: &Matter<'_>) -> Result<(), Error> {
         .get_ref()
         .join_multicast_v4(&MDNS_IPV4_BROADCAST_ADDR, &ipv4_addr)?;
 
-    BuiltinMdnsResponder::new(matter)
+    BuiltinMdnsResponder::new(matter, crypto, notify)
         .run(
             &socket,
             &socket,

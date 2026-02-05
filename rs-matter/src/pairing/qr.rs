@@ -76,7 +76,7 @@ pub fn no_optional_data() -> Empty<Result<u8, Error>> {
 }
 
 /// QR Code payload type
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct QrPayload<'a, T> {
     /// Payload version. Always 0
@@ -179,7 +179,8 @@ where
             return false;
         }
 
-        if self.comm_data.password >= 1 << SETUP_PINCODE_FIELD_LENGTH_IN_BITS {
+        let password = u32::from_le_bytes(*self.comm_data.password.access());
+        if password >= 1 << SETUP_PINCODE_FIELD_LENGTH_IN_BITS {
             return false;
         }
 
@@ -205,7 +206,7 @@ where
             return false;
         }
 
-        if !Self::is_valid_setup_pin(self.comm_data.password) {
+        if !Self::is_valid_setup_pin(u32::from_le_bytes(*self.comm_data.password.access())) {
             return false;
         }
 
@@ -351,7 +352,7 @@ where
                 PAYLOAD_DISCRIMINATOR_FIELD_LENGTH_IN_BITS,
             ))
             .chain(Self::emit_bits(
-                self.comm_data.password as _,
+                u32::from_le_bytes(*self.comm_data.password.access()),
                 SETUP_PINCODE_FIELD_LENGTH_IN_BITS,
             ))
             .chain(Self::emit_bits(0, PADDING_FIELD_LENGTH_IN_BITS))
@@ -903,7 +904,7 @@ mod tests {
         const QR_CODE: &str = "MT:YNJV7VSC00CMVH7SR00";
 
         let comm_data = BasicCommData {
-            password: 34567890,
+            password: 34567890_u32.to_le_bytes().into(),
             discriminator: 2976,
         };
         let dev_det = BasicInfoConfig {
@@ -930,7 +931,7 @@ mod tests {
         const QR_CODE: &str = "MT:-24J0AFN00KA064IJ3P0IXZB0DK5N1K8SQ1RYCU1-A40";
 
         let comm_data = BasicCommData {
-            password: 20202021,
+            password: 20202021_u32.to_le_bytes().into(),
             discriminator: 3840,
         };
         let dev_det = BasicInfoConfig {
@@ -964,7 +965,7 @@ mod tests {
         const OPTIONAL_DEFAULT_INT_VALUE: i32 = 65550;
 
         let comm_data = BasicCommData {
-            password: 20202021,
+            password: 20202021_u32.to_le_bytes().into(),
             discriminator: 3840,
         };
         let dev_det = BasicInfoConfig {

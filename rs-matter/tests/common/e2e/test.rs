@@ -20,6 +20,7 @@ use embassy_futures::select::select;
 
 use embassy_time::{Duration, Timer};
 
+use rs_matter::crypto::Crypto;
 use rs_matter::dm::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::Error;
 use rs_matter::transport::exchange::{Exchange, MessageMeta};
@@ -56,7 +57,7 @@ impl E2eTest for &dyn E2eTest {
     }
 }
 
-impl E2eRunner {
+impl<C: Crypto> E2eRunner<C> {
     /// Run the provided test with the given handler and wait with blocking
     /// until the test completes or fails.
     pub fn test_one<H, T>(&self, handler: H, test: T)

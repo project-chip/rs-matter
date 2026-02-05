@@ -27,9 +27,9 @@ use rs_matter::im::{StatusResp, SubscribeResp};
 use crate::common::e2e::im::attributes::TestAttrResp;
 use crate::common::e2e::im::{echo_cluster as echo, ReplyProcessor, TestSubscribeReq};
 use crate::common::e2e::im::{TestReadReq, TestReportDataMsg};
+use crate::common::e2e::new_default_runner;
 use crate::common::e2e::test::E2eTest;
 use crate::common::e2e::tlv::TLVTest;
-use crate::common::e2e::ImEngine;
 use crate::common::init_env_logger;
 use crate::{attr_data, attr_data_lel};
 
@@ -353,7 +353,7 @@ fn test_long_read_success() {
     // Read the entire attribute database, which requires multiple reads to complete
     init_env_logger();
 
-    let im = ImEngine::new_default();
+    let im = new_default_runner();
     let handler = im.handler();
 
     im.add_default_acl();
@@ -417,7 +417,7 @@ fn test_long_read_subscription_success() {
     // Subscribe to the entire attribute database, which requires multiple reads to complete
     init_env_logger();
 
-    let im = ImEngine::new_default();
+    let im = new_default_runner();
     let handler = im.handler();
 
     im.add_default_acl();

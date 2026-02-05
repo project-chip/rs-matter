@@ -22,8 +22,8 @@ use crate::attr_data_req;
 use crate::attr_data_req_lel;
 use crate::attr_status;
 use crate::attr_status_lel;
+use crate::common::e2e::im::attributes::write_reqs;
 use crate::common::e2e::im::echo_cluster::{self, TestChecker};
-use crate::common::e2e::ImEngine;
 use crate::common::init_env_logger;
 
 // Helper for handling Write Attribute sequences
@@ -48,7 +48,7 @@ fn attr_list_ops() {
     let input = &[attr_data_req!(&path, Some(&replace_all))];
     let expected = &[attr_status!(&path, IMStatusCode::Success)];
 
-    ImEngine::write_reqs(input, expected);
+    write_reqs(input, expected);
     {
         let tc = tc_handle.lock().unwrap();
         assert_eq!(replace_all, tc.write_list.as_slice());
@@ -68,7 +68,7 @@ fn attr_list_ops() {
         attr_status_lel!(&path, IMStatusCode::Success),
     ];
 
-    ImEngine::write_reqs(input, expected);
+    write_reqs(input, expected);
     {
         let tc = tc_handle.lock().unwrap();
         assert_eq!(&[3, 4, 5], tc.write_list.as_slice());
@@ -78,7 +78,7 @@ fn attr_list_ops() {
     let input = &[attr_data_req!(&path, Some(&delete_all))];
     let expected = &[attr_status!(&path, IMStatusCode::Success)];
 
-    ImEngine::write_reqs(input, expected);
+    write_reqs(input, expected);
     {
         let tc = tc_handle.lock().unwrap();
         assert!(tc.write_list.is_empty());

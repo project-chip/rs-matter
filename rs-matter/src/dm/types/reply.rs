@@ -17,6 +17,7 @@
 
 use core::future::Future;
 
+use crate::crypto::Crypto;
 use crate::dm::{AsyncHandler, IMBuffer};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
@@ -70,20 +71,23 @@ pub trait InvokeReply {
     fn with_command(self, cmd: u32) -> Result<impl Reply, Error>;
 }
 
-pub struct HandlerInvoker<'a, 'b, D, B> {
+pub struct HandlerInvoker<'a, 'b, C, D, B> {
     exchange: &'b mut Exchange<'a>,
+    crypto: C,
     handler: D,
     buffers: B,
 }
 
-impl<'a, 'b, D, B> HandlerInvoker<'a, 'b, D, B>
+impl<'a, 'b, C, D, B> HandlerInvoker<'a, 'b, C, D, B>
 where
+    C: Crypto,
     D: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
-    pub const fn new(exchange: &'b mut Exchange<'a>, handler: D, buffers: B) -> Self {
+    pub const fn new(exchange: &'b mut Exchange<'a>, crypto: C, handler: D, buffers: B) -> Self {
         Self {
             exchange,
+            crypto,
             handler,
             buffers,
         }
@@ -155,7 +159,14 @@ where
         notify: &'t dyn ChangeNotify,
     ) -> impl Future<Output = Result<(), Error>> + 't {
         self.handler.read(
-            ReadContextInstance::new(self.exchange, &self.handler, &self.buffers, attr, notify),
+            ReadContextInstance::new(
+                self.exchange,
+                &self.crypto,
+                &self.handler,
+                &self.buffers,
+                attr,
+                notify,
+            ),
             ReadReplyInstance::new(attr, tw),
         )
     }
@@ -223,6 +234,7 @@ where
     ) -> impl Future<Output = Result<(), Error>> + 't {
         self.handler.write(WriteContextInstance::new(
             self.exchange,
+            &self.crypto,
             &self.handler,
             &self.buffers,
             attr,
@@ -302,6 +314,7 @@ where
         self.handler.invoke(
             InvokeContextInstance::new(
                 self.exchange,
+                &self.crypto,
                 &self.handler,
                 &self.buffers,
                 cmd,

@@ -17,6 +17,8 @@
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
+use crate::crypto::backend::dummy::DummyCrypto;
+use crate::crypto::Crypto;
 use crate::dm::IMBuffer;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVElement;
@@ -54,6 +56,9 @@ pub trait BasicContext {
     /// Return the Matter object that is associated with this handler
     fn matter(&self) -> &Matter<'_>;
 
+    /// Return the crypto object that is associated with this operation.
+    fn crypto(&self) -> impl Crypto + '_;
+
     /// Notify that the state of an attribute has changed.
     ///
     /// # Arguments
@@ -79,6 +84,10 @@ where
 {
     fn matter(&self) -> &Matter<'_> {
         (**self).matter()
+    }
+
+    fn crypto(&self) -> impl Crypto + '_ {
+        (**self).crypto()
     }
 
     fn notify_attribute_changed(
@@ -141,14 +150,24 @@ pub trait Context: HandlerContext {
     /// Try to upcast the context to a read context.
     /// The operation will return `Some` only if the underlying context represents a read operation.
     fn as_read_ctx(&self) -> Option<impl ReadContext> {
-        Option::<&'static ReadContextInstance<EmptyHandler, PooledBuffers<0, NoopRawMutex, IMBuffer>>>::None
+        Option::<
+            &'static ReadContextInstance<
+                DummyCrypto,
+                EmptyHandler,
+                PooledBuffers<0, NoopRawMutex, IMBuffer>,
+            >,
+        >::None
     }
 
     /// Try to upcast the context to a write context.
     /// The operation will return `Some` only if the underlying context represents a write operation.
     fn as_write_ctx(&self) -> Option<impl WriteContext> {
         Option::<
-            &'static WriteContextInstance<EmptyHandler, PooledBuffers<0, NoopRawMutex, IMBuffer>>,
+            &'static WriteContextInstance<
+                DummyCrypto,
+                EmptyHandler,
+                PooledBuffers<0, NoopRawMutex, IMBuffer>,
+            >,
         >::None
     }
 
@@ -156,7 +175,11 @@ pub trait Context: HandlerContext {
     /// The operation will return `Some` only if the underlying context represents an invoke operation.
     fn as_invoke_ctx(&self) -> Option<impl InvokeContext> {
         Option::<
-            &'static InvokeContextInstance<EmptyHandler, PooledBuffers<0, NoopRawMutex, IMBuffer>>,
+            &'static InvokeContextInstance<
+                DummyCrypto,
+                EmptyHandler,
+                PooledBuffers<0, NoopRawMutex, IMBuffer>,
+            >,
         >::None
     }
 }
@@ -245,22 +268,41 @@ where
 }
 
 /// A concrete implementation of the `BasicContext` trait
-pub(crate) struct BasicContextInstance<'a> {
+pub(crate) struct BasicContextInstance<'a, C> {
     matter: &'a Matter<'a>,
+    crypto: C,
     pub(crate) notify: &'a dyn ChangeNotify,
 }
 
-impl<'a> BasicContextInstance<'a> {
+impl<'a, C> BasicContextInstance<'a, C>
+where
+    C: Crypto,
+{
     /// Construct a new instance.
     #[inline(always)]
-    pub(crate) const fn new(matter: &'a Matter<'a>, notify: &'a dyn ChangeNotify) -> Self {
-        Self { matter, notify }
+    pub(crate) const fn new(
+        matter: &'a Matter<'a>,
+        crypto: C,
+        notify: &'a dyn ChangeNotify,
+    ) -> Self {
+        Self {
+            matter,
+            crypto,
+            notify,
+        }
     }
 }
 
-impl BasicContext for BasicContextInstance<'_> {
+impl<C> BasicContext for BasicContextInstance<'_, C>
+where
+    C: Crypto,
+{
     fn matter(&self) -> &Matter<'_> {
         self.matter
+    }
+
+    fn crypto(&self) -> impl Crypto + '_ {
+        &self.crypto
     }
 
     fn notify_attribute_changed(
@@ -274,15 +316,17 @@ impl BasicContext for BasicContextInstance<'_> {
 }
 
 /// A concrete implementation of the `HandlerContext` trait
-pub(crate) struct HandlerContextInstance<'a, T, B> {
+pub(crate) struct HandlerContextInstance<'a, C, T, B> {
     matter: &'a Matter<'a>,
+    crypto: C,
     handler: T,
     buffers: B,
     pub(crate) notify: &'a dyn ChangeNotify,
 }
 
-impl<'a, T, B> HandlerContextInstance<'a, T, B>
+impl<'a, C, T, B> HandlerContextInstance<'a, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
@@ -290,12 +334,14 @@ where
     #[inline(always)]
     pub(crate) const fn new(
         matter: &'a Matter<'a>,
+        crypto: C,
         handler: T,
         buffers: B,
         notify: &'a dyn ChangeNotify,
     ) -> Self {
         Self {
             matter,
+            crypto,
             handler,
             buffers,
             notify,
@@ -303,13 +349,18 @@ where
     }
 }
 
-impl<T, B> BasicContext for HandlerContextInstance<'_, T, B>
+impl<C, T, B> BasicContext for HandlerContextInstance<'_, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
     fn matter(&self) -> &Matter<'_> {
         self.matter
+    }
+
+    fn crypto(&self) -> impl Crypto + '_ {
+        &self.crypto
     }
 
     fn notify_attribute_changed(
@@ -322,8 +373,9 @@ where
     }
 }
 
-impl<T, B> HandlerContext for HandlerContextInstance<'_, T, B>
+impl<C, T, B> HandlerContext for HandlerContextInstance<'_, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
@@ -337,16 +389,18 @@ where
 }
 
 /// A concrete implementation of the `ReadContext` trait
-pub(crate) struct ReadContextInstance<'a, T, B> {
+pub(crate) struct ReadContextInstance<'a, C, T, B> {
     exchange: &'a Exchange<'a>,
+    crypto: C,
     handler: T,
     buffers: B,
     attr: &'a AttrDetails<'a>,
     pub(crate) notify: &'a dyn ChangeNotify,
 }
 
-impl<'a, T, B> ReadContextInstance<'a, T, B>
+impl<'a, C, T, B> ReadContextInstance<'a, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
@@ -354,6 +408,7 @@ where
     #[inline(always)]
     pub(crate) const fn new(
         exchange: &'a Exchange<'a>,
+        crypto: C,
         handler: T,
         buffers: B,
         attr: &'a AttrDetails<'a>,
@@ -361,6 +416,7 @@ where
     ) -> Self {
         Self {
             exchange,
+            crypto,
             handler,
             buffers,
             attr,
@@ -369,13 +425,18 @@ where
     }
 }
 
-impl<T, B> BasicContext for ReadContextInstance<'_, T, B>
+impl<C, T, B> BasicContext for ReadContextInstance<'_, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
     fn matter(&self) -> &Matter<'_> {
         self.exchange().matter()
+    }
+
+    fn crypto(&self) -> impl Crypto + '_ {
+        &self.crypto
     }
 
     fn notify_attribute_changed(
@@ -388,8 +449,9 @@ where
     }
 }
 
-impl<T, B> HandlerContext for ReadContextInstance<'_, T, B>
+impl<C, T, B> HandlerContext for ReadContextInstance<'_, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
@@ -402,8 +464,9 @@ where
     }
 }
 
-impl<T, B> Context for ReadContextInstance<'_, T, B>
+impl<C, T, B> Context for ReadContextInstance<'_, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
@@ -416,8 +479,9 @@ where
     }
 }
 
-impl<T, B> ReadContext for ReadContextInstance<'_, T, B>
+impl<C, T, B> ReadContext for ReadContextInstance<'_, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
@@ -427,8 +491,9 @@ where
 }
 
 /// A context implementation of the `WriteContext` trait
-pub(crate) struct WriteContextInstance<'a, T, B> {
+pub(crate) struct WriteContextInstance<'a, C, T, B> {
     exchange: &'a Exchange<'a>,
+    crypto: C,
     handler: T,
     buffers: B,
     attr: &'a AttrDetails<'a>,
@@ -436,8 +501,9 @@ pub(crate) struct WriteContextInstance<'a, T, B> {
     pub(crate) notify: &'a dyn ChangeNotify,
 }
 
-impl<'a, T, B> WriteContextInstance<'a, T, B>
+impl<'a, C, T, B> WriteContextInstance<'a, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
@@ -445,6 +511,7 @@ where
     #[inline(always)]
     pub(crate) const fn new(
         exchange: &'a Exchange<'a>,
+        crypto: C,
         handler: T,
         buffers: B,
         attr: &'a AttrDetails<'a>,
@@ -455,6 +522,7 @@ where
             exchange,
             handler,
             buffers,
+            crypto,
             attr,
             data,
             notify,
@@ -462,13 +530,18 @@ where
     }
 }
 
-impl<T, B> BasicContext for WriteContextInstance<'_, T, B>
+impl<C, T, B> BasicContext for WriteContextInstance<'_, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
     fn matter(&self) -> &Matter<'_> {
         self.exchange().matter()
+    }
+
+    fn crypto(&self) -> impl Crypto + '_ {
+        &self.crypto
     }
 
     fn notify_attribute_changed(
@@ -481,8 +554,9 @@ where
     }
 }
 
-impl<T, B> HandlerContext for WriteContextInstance<'_, T, B>
+impl<C, T, B> HandlerContext for WriteContextInstance<'_, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
@@ -495,8 +569,9 @@ where
     }
 }
 
-impl<T, B> Context for WriteContextInstance<'_, T, B>
+impl<C, T, B> Context for WriteContextInstance<'_, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
@@ -509,8 +584,9 @@ where
     }
 }
 
-impl<T, B> WriteContext for WriteContextInstance<'_, T, B>
+impl<C, T, B> WriteContext for WriteContextInstance<'_, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
@@ -524,8 +600,9 @@ where
 }
 
 /// A concrete implementation of the `InvokeContext` trait
-pub(crate) struct InvokeContextInstance<'a, T, B> {
+pub(crate) struct InvokeContextInstance<'a, C, T, B> {
     exchange: &'a Exchange<'a>,
+    crypto: C,
     handler: T,
     buffers: B,
     cmd: &'a CmdDetails<'a>,
@@ -533,8 +610,9 @@ pub(crate) struct InvokeContextInstance<'a, T, B> {
     notify: &'a dyn ChangeNotify,
 }
 
-impl<'a, T, B> InvokeContextInstance<'a, T, B>
+impl<'a, C, T, B> InvokeContextInstance<'a, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
@@ -542,6 +620,7 @@ where
     #[inline(always)]
     pub(crate) const fn new(
         exchange: &'a Exchange<'a>,
+        crypto: C,
         handler: T,
         buffers: B,
         cmd: &'a CmdDetails<'a>,
@@ -552,6 +631,7 @@ where
             exchange,
             handler,
             buffers,
+            crypto,
             cmd,
             data,
             notify,
@@ -559,13 +639,18 @@ where
     }
 }
 
-impl<T, B> BasicContext for InvokeContextInstance<'_, T, B>
+impl<C, T, B> BasicContext for InvokeContextInstance<'_, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
     fn matter(&self) -> &Matter<'_> {
         self.exchange().matter()
+    }
+
+    fn crypto(&self) -> impl Crypto + '_ {
+        &self.crypto
     }
 
     fn notify_attribute_changed(
@@ -578,8 +663,9 @@ where
     }
 }
 
-impl<T, B> HandlerContext for InvokeContextInstance<'_, T, B>
+impl<C, T, B> HandlerContext for InvokeContextInstance<'_, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
@@ -592,8 +678,9 @@ where
     }
 }
 
-impl<T, B> Context for InvokeContextInstance<'_, T, B>
+impl<C, T, B> Context for InvokeContextInstance<'_, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
@@ -606,8 +693,9 @@ where
     }
 }
 
-impl<T, B> InvokeContext for InvokeContextInstance<'_, T, B>
+impl<C, T, B> InvokeContext for InvokeContextInstance<'_, C, T, B>
 where
+    C: Crypto,
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {

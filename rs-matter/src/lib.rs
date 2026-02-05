@@ -79,8 +79,10 @@ use core::future::Future;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
+use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::{BasicInfoConfig, BasicInfoSettings};
-use crate::dm::clusters::dev_att::DevAttDataFetcher;
+use crate::dm::clusters::dev_att::DeviceAttestation;
+use crate::dm::{BasicContextInstance, ChangeNotify};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
 use crate::failsafe::FailSafe;
@@ -88,18 +90,17 @@ use crate::pairing::qr::{
     no_optional_data, CommFlowType, NoOptionalData, Qr, QrPayload, QrTextType,
 };
 use crate::pairing::DiscoveryCapabilities;
-use crate::sc::pake::PaseMgr;
+use crate::sc::pase::spake2p::Spake2pVerifierPassword;
+use crate::sc::pase::PaseMgr;
 use crate::transport::network::{NetworkReceive, NetworkSend};
 use crate::transport::TransportMgr;
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
-use crate::utils::rand::Rand;
 use crate::utils::storage::pooled::BufferAccess;
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::Notification;
 
-use crate::dm::{AttrId, BasicContextInstance, ChangeNotify, ClusterId, EndptId};
 /// Re-export the `rs_matter_macros::import` proc-macro
 pub use rs_matter_macros::import;
 
@@ -235,12 +236,12 @@ impl MatterMdnsService {
 }
 
 /// Device basic commissioning data
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BasicCommData {
     /// The password which is necessary to authenticate the device in either
     /// initial commissioning, or when the basic commissioning window is opened
-    pub password: u32,
+    pub password: Spake2pVerifierPassword,
     /// The 12-bit discriminator used to differentiate between multiple devices
     pub discriminator: u16,
 }
@@ -255,10 +256,9 @@ pub struct Matter<'a> {
     persist_notification: Notification<NoopRawMutex>,
     mdns_notification: Notification<NoopRawMutex>,
     epoch: Epoch,
-    rand: Rand,
     dev_det: &'a BasicInfoConfig<'a>,
     dev_comm: BasicCommData,
-    dev_att: &'a dyn DevAttDataFetcher,
+    dev_att: &'a dyn DeviceAttestation,
     port: u16,
 }
 
@@ -278,13 +278,12 @@ impl<'a> Matter<'a> {
     pub const fn new_default(
         dev_det: &'a BasicInfoConfig<'a>,
         dev_comm: BasicCommData,
-        dev_att: &'a dyn DevAttDataFetcher,
+        dev_att: &'a dyn DeviceAttestation,
         port: u16,
     ) -> Self {
         use crate::utils::epoch::sys_epoch;
-        use crate::utils::rand::sys_rand;
 
-        Self::new(dev_det, dev_comm, dev_att, sys_epoch, sys_rand, port)
+        Self::new(dev_det, dev_comm, dev_att, sys_epoch, port)
     }
 
     /// Create a new Matter object
@@ -298,27 +297,24 @@ impl<'a> Matter<'a> {
     ///   this object to return the device attestation details when queried upon.
     /// * epoch: A function of type [Epoch]. This function is responsible for providing the current
     ///   "unix" time in milliseconds
-    /// * rand: A function of type [Rand]. This function is responsible for generating random data.
     /// * port: The port number on which the Matter stack will listen for incoming connections.
     #[inline(always)]
     pub const fn new(
         dev_det: &'a BasicInfoConfig<'a>,
         dev_comm: BasicCommData,
-        dev_att: &'a dyn DevAttDataFetcher,
+        dev_att: &'a dyn DeviceAttestation,
         epoch: Epoch,
-        rand: Rand,
         port: u16,
     ) -> Self {
         Self {
             fabric_mgr: RefCell::new(FabricMgr::new()),
-            pase_mgr: RefCell::new(PaseMgr::new(epoch, rand)),
-            failsafe: RefCell::new(FailSafe::new(epoch, rand)),
-            transport_mgr: TransportMgr::new(dev_det, epoch, rand),
+            pase_mgr: RefCell::new(PaseMgr::new(epoch)),
+            failsafe: RefCell::new(FailSafe::new(epoch)),
+            transport_mgr: TransportMgr::new(dev_det, epoch),
             basic_info_settings: RefCell::new(BasicInfoSettings::new()),
             persist_notification: Notification::new(),
             mdns_notification: Notification::new(),
             epoch,
-            rand,
             dev_det,
             dev_comm,
             dev_att,
@@ -341,13 +337,12 @@ impl<'a> Matter<'a> {
     pub fn init_default(
         dev_det: &'a BasicInfoConfig<'a>,
         dev_comm: BasicCommData,
-        dev_att: &'a dyn DevAttDataFetcher,
+        dev_att: &'a dyn DeviceAttestation,
         port: u16,
     ) -> impl Init<Self> {
         use crate::utils::epoch::sys_epoch;
-        use crate::utils::rand::sys_rand;
 
-        Self::init(dev_det, dev_comm, dev_att, sys_epoch, sys_rand, port)
+        Self::init(dev_det, dev_comm, dev_att, sys_epoch, port)
     }
 
     /// Create an in-place initializer for a Matter object
@@ -361,27 +356,24 @@ impl<'a> Matter<'a> {
     ///   this object to return the device attestation details when queried upon.
     /// * epoch: A function of type [Epoch]. This function is responsible for providing the current
     ///   "unix" time in milliseconds
-    /// * rand: A function of type [Rand]. This function is responsible for generating random data.
     /// * port: The port number on which the Matter stack will listen for incoming connections.
     pub fn init(
         dev_det: &'a BasicInfoConfig<'a>,
         dev_comm: BasicCommData,
-        dev_att: &'a dyn DevAttDataFetcher,
+        dev_att: &'a dyn DeviceAttestation,
         epoch: Epoch,
-        rand: Rand,
         port: u16,
     ) -> impl Init<Self> {
         init!(
             Self {
                 fabric_mgr <- RefCell::init(FabricMgr::init()),
-                pase_mgr <- RefCell::init(PaseMgr::init(epoch, rand)),
-                failsafe: RefCell::new(FailSafe::new(epoch, rand)),
-                transport_mgr <- TransportMgr::init(dev_det, epoch, rand),
+                pase_mgr <- RefCell::init(PaseMgr::init(epoch)),
+                failsafe: RefCell::new(FailSafe::new(epoch)),
+                transport_mgr <- TransportMgr::init(dev_det, epoch),
                 basic_info_settings <- RefCell::init(BasicInfoSettings::init()),
                 persist_notification: Notification::new(),
                 mdns_notification: Notification::new(),
                 epoch,
-                rand,
                 dev_det,
                 dev_comm,
                 dev_att,
@@ -398,7 +390,7 @@ impl<'a> Matter<'a> {
         self.dev_det
     }
 
-    pub fn dev_att(&self) -> &dyn DevAttDataFetcher {
+    pub fn dev_att(&self) -> &dyn DeviceAttestation {
         self.dev_att
     }
 
@@ -408,10 +400,6 @@ impl<'a> Matter<'a> {
 
     pub fn port(&self) -> u16 {
         self.port
-    }
-
-    pub fn rand(&self) -> Rand {
-        self.rand
     }
 
     pub fn epoch(&self) -> Epoch {
@@ -426,8 +414,8 @@ impl<'a> Matter<'a> {
         self.transport_mgr.tx_buffer()
     }
 
-    /// A utility method to replace the initial Device Attestation Data Fetcher with another one.
-    pub fn replace_dev_att(&mut self, dev_att: &'a dyn DevAttDataFetcher) {
+    /// A utility method to replace the initial Device Attestation with another one.
+    pub fn replace_dev_att(&mut self, dev_att: &'a dyn DeviceAttestation) {
         self.dev_att = dev_att;
     }
 
@@ -520,7 +508,7 @@ impl<'a> Matter<'a> {
         let payload = QrPayload::new_from_basic_info(
             disc_caps,
             CommFlowType::Standard,
-            self.dev_comm,
+            self.dev_comm.clone(),
             self.dev_det,
             no_optional_data as _,
         );
@@ -550,36 +538,49 @@ impl<'a> Matter<'a> {
     ///
     /// # Arguments
     /// - `timeout_secs`: The timeout in seconds for the basic commissioning window
-    pub fn open_basic_comm_window(&self, timeout_secs: u16) -> Result<(), Error> {
+    pub fn open_basic_comm_window<C: Crypto>(
+        &self,
+        timeout_secs: u16,
+        crypto: C,
+        notify: &dyn ChangeNotify,
+    ) -> Result<(), Error> {
+        let ctx = BasicContextInstance::new(self, crypto, notify);
+
         self.pase_mgr.borrow_mut().open_basic_comm_window(
-            self.dev_comm.password,
+            ctx,
+            self.dev_comm.password.reference(),
             self.dev_comm.discriminator,
             timeout_secs,
             None,
-            BasicContextInstance::new(self, self),
         )
     }
 
     /// Close the basic commissioning window
     ///
     /// The method will return Ok(false) if there is no active PASE commissioning window to close.
-    pub fn close_comm_window(&self) -> Result<bool, Error> {
-        self.pase_mgr
-            .borrow_mut()
-            .close_comm_window(BasicContextInstance::new(self, self))
+    pub fn close_comm_window<C: Crypto>(
+        &self,
+        crypto: C,
+        notify: &dyn ChangeNotify,
+    ) -> Result<bool, Error> {
+        let ctx = BasicContextInstance::new(self, crypto, notify);
+
+        self.pase_mgr.borrow_mut().close_comm_window(ctx)
     }
 
     /// Run the transport layer
     ///
     /// # Arguments
+    /// - `crypto`: The crypto backend
     /// - `send`: The network send interface
     /// - `recv`: The network receive interface
-    pub async fn run<S, R>(&self, send: S, recv: R) -> Result<(), Error>
+    pub async fn run<C, S, R>(&self, crypto: C, send: S, recv: R) -> Result<(), Error>
     where
         S: NetworkSend,
         R: NetworkReceive,
+        C: Crypto,
     {
-        self.run_transport(send, recv).await
+        self.run_transport(crypto, send, recv).await
     }
 
     /// Resets the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
@@ -589,16 +590,23 @@ impl<'a> Matter<'a> {
     }
 
     /// Run the transport layer
-    pub fn run_transport<'t, S, R>(
+    ///
+    /// # Arguments
+    /// - `crypto`: The crypto backend
+    /// - `send`: The network send interface
+    /// - `recv`: The network receive interface
+    pub fn run_transport<'t, C, S, R>(
         &'t self,
+        crypto: C,
         send: S,
         recv: R,
     ) -> impl Future<Output = Result<(), Error>> + 't
     where
         S: NetworkSend + 't,
         R: NetworkReceive + 't,
+        C: Crypto + 't,
     {
-        self.transport_mgr.run(send, recv)
+        self.transport_mgr.run(crypto, send, recv)
     }
 
     /// Reset the Matter state by removing all fabrics and resetting basic info settings
@@ -685,16 +693,24 @@ impl<'a> Matter<'a> {
     }
 
     /// Invoke the given closure for each currently published Matter mDNS service.
-    pub fn mdns_services<F>(&self, mut f: F) -> Result<(), Error>
+    pub fn mdns_services<C, F>(
+        &self,
+        crypto: C,
+        notify: &dyn ChangeNotify,
+        mut f: F,
+    ) -> Result<(), Error>
     where
+        C: Crypto,
         F: FnMut(MatterMdnsService) -> Result<(), Error>,
     {
+        let ctx = BasicContextInstance::new(self, crypto, notify);
+
         debug!("=== Currently published mDNS services");
 
         let mut pase_mgr = self.pase_mgr.borrow_mut();
         let fabric_mgr = self.fabric_mgr.borrow();
 
-        if let Some(comm_window) = pase_mgr.comm_window(BasicContextInstance::new(self, self))? {
+        if let Some(comm_window) = pase_mgr.comm_window(ctx)? {
             // Do not remove this logging line or change its formatting.
             // C++ E2E tests rely on this log line to determine when the mDNS service is published
             debug!("mDNS service published: {:?}", comm_window.mdns_service());
@@ -728,12 +744,5 @@ impl<'a> Matter<'a> {
     /// if there are changes, re-publish the changed mDNS services in an mDNS responder accordingly.
     pub fn wait_mdns(&self) -> impl Future<Output = ()> + '_ {
         self.mdns_notification.wait()
-    }
-}
-
-impl ChangeNotify for Matter<'_> {
-    fn notify(&self, _endpoint_id: EndptId, _cluster_id: ClusterId, _attr_id: AttrId) {
-        // TODO: We're going to need some centralized way to notify subscriptions of attribute changes
-        // Specifically, this is about internal changes - see for example usage in PaseMgr
     }
 }

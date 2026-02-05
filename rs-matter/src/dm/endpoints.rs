@@ -15,7 +15,8 @@
  *    limitations under the License.
  */
 
-use crate::utils::rand::Rand;
+use rand_core::RngCore;
+
 use crate::{devices, handler_chain_type};
 
 use super::clusters::acl::{self, AclHandler, ClusterHandler as _};
@@ -104,29 +105,29 @@ pub const ROOT_ENDPOINT_ID: EndptId = 0;
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `rand`: A random number generator.
 /// - `handler`: The handler to be decorated.
-pub fn with_eth<'a, H>(
+pub fn with_eth<'a, R: RngCore, H>(
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
-    rand: Rand,
+    mut rand: R,
     handler: H,
 ) -> EthHandler<'a, H> {
     const NETWORK: EthNetwork<'static> = EthNetwork::new("eth");
 
     ChainedHandler::new(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GenDiagHandler::CLUSTER.id)),
-        Async(GenDiagHandler::new(Dataver::new_rand(rand), gen_diag, netif_diag).adapt()),
+        Async(GenDiagHandler::new(Dataver::new_rand(&mut rand), gen_diag, netif_diag).adapt()),
         handler,
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(EthDiagHandler::CLUSTER.id)),
-        Async(EthDiagHandler::new(Dataver::new_rand(rand)).adapt()),
+        Async(EthDiagHandler::new(Dataver::new_rand(&mut rand)).adapt()),
     )
     .chain(
         EpClMatcher::new(
             Some(ROOT_ENDPOINT_ID),
             Some(NetCommHandler::<EthNetCtl>::CLUSTER.id),
         ),
-        NetCommHandler::new(Dataver::new_rand(rand), &NETWORK, EthNetCtl).adapt(),
+        NetCommHandler::new(Dataver::new_rand(&mut rand), &NETWORK, EthNetCtl).adapt(),
     )
 }
 
@@ -144,12 +145,12 @@ pub fn with_eth<'a, H>(
 /// - `networks`: The `Networks` implementation.
 /// - `rand`: A random number generator.
 /// - `handler`: The handler to be decorated.
-pub fn with_wifi<'a, T, H>(
+pub fn with_wifi<'a, R: RngCore, T, H>(
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
     net_ctl: &'a T,
     networks: &'a dyn Networks,
-    rand: Rand,
+    mut rand: R,
     handler: H,
 ) -> WifiHandler<'a, &'a T, H>
 where
@@ -157,19 +158,19 @@ where
 {
     ChainedHandler::new(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GenDiagHandler::CLUSTER.id)),
-        Async(GenDiagHandler::new(Dataver::new_rand(rand), gen_diag, netif_diag).adapt()),
+        Async(GenDiagHandler::new(Dataver::new_rand(&mut rand), gen_diag, netif_diag).adapt()),
         handler,
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(WifiDiagHandler::CLUSTER.id)),
-        Async(WifiDiagHandler::new(Dataver::new_rand(rand), net_ctl).adapt()),
+        Async(WifiDiagHandler::new(Dataver::new_rand(&mut rand), net_ctl).adapt()),
     )
     .chain(
         EpClMatcher::new(
             Some(ROOT_ENDPOINT_ID),
             Some(NetCommHandler::<T>::CLUSTER.id),
         ),
-        NetCommHandler::new(Dataver::new_rand(rand), networks, net_ctl).adapt(),
+        NetCommHandler::new(Dataver::new_rand(&mut rand), networks, net_ctl).adapt(),
     )
 }
 
@@ -186,12 +187,12 @@ where
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `networks`: The `Networks` implementation.
 /// - `rand`: A random number generator.
-pub fn with_thread<'a, T, H>(
+pub fn with_thread<'a, R: RngCore, T, H>(
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
     net_ctl: &'a T,
     networks: &'a dyn Networks,
-    rand: Rand,
+    mut rand: R,
     handler: H,
 ) -> ThreadHandler<'a, &'a T, H>
 where
@@ -199,19 +200,19 @@ where
 {
     ChainedHandler::new(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GenDiagHandler::CLUSTER.id)),
-        Async(GenDiagHandler::new(Dataver::new_rand(rand), gen_diag, netif_diag).adapt()),
+        Async(GenDiagHandler::new(Dataver::new_rand(&mut rand), gen_diag, netif_diag).adapt()),
         handler,
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(ThreadDiagHandler::CLUSTER.id)),
-        Async(ThreadDiagHandler::new(Dataver::new_rand(rand), net_ctl).adapt()),
+        Async(ThreadDiagHandler::new(Dataver::new_rand(&mut rand), net_ctl).adapt()),
     )
     .chain(
         EpClMatcher::new(
             Some(ROOT_ENDPOINT_ID),
             Some(NetCommHandler::<T>::CLUSTER.id),
         ),
-        NetCommHandler::new(Dataver::new_rand(rand), networks, net_ctl).adapt(),
+        NetCommHandler::new(Dataver::new_rand(&mut rand), networks, net_ctl).adapt(),
     )
 }
 
@@ -226,34 +227,38 @@ where
 /// - `comm_policy`: The commissioning policy to be used for the `GenCommHandler`.
 /// - `rand`: A random number generator.
 /// - `handler`: The handler to be decorated.
-pub fn with_sys<H>(comm_policy: &dyn CommPolicy, rand: Rand, handler: H) -> SysHandler<'_, H> {
+pub fn with_sys<'a, R: RngCore, H>(
+    comm_policy: &'a dyn CommPolicy,
+    mut rand: R,
+    handler: H,
+) -> SysHandler<'a, H> {
     ChainedHandler::new(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GrpKeyMgmtHandler::CLUSTER.id)),
-        Async(GrpKeyMgmtHandler::new(Dataver::new_rand(rand)).adapt()),
+        Async(GrpKeyMgmtHandler::new(Dataver::new_rand(&mut rand)).adapt()),
         handler,
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(AclHandler::CLUSTER.id)),
-        Async(AclHandler::new(Dataver::new_rand(rand)).adapt()),
+        Async(AclHandler::new(Dataver::new_rand(&mut rand)).adapt()),
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(NocHandler::CLUSTER.id)),
-        Async(NocHandler::new(Dataver::new_rand(rand)).adapt()),
+        Async(NocHandler::new(Dataver::new_rand(&mut rand)).adapt()),
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(AdminCommHandler::CLUSTER.id)),
-        Async(AdminCommHandler::new(Dataver::new_rand(rand)).adapt()),
+        Async(AdminCommHandler::new(Dataver::new_rand(&mut rand)).adapt()),
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GenCommHandler::CLUSTER.id)),
-        Async(GenCommHandler::new(Dataver::new_rand(rand), comm_policy).adapt()),
+        Async(GenCommHandler::new(Dataver::new_rand(&mut rand), comm_policy).adapt()),
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(BasicInfoHandler::CLUSTER.id)),
-        Async(BasicInfoHandler::new(Dataver::new_rand(rand)).adapt()),
+        Async(BasicInfoHandler::new(Dataver::new_rand(&mut rand)).adapt()),
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(DescHandler::CLUSTER.id)),
-        Async(DescHandler::new(Dataver::new_rand(rand)).adapt()),
+        Async(DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
     )
 }

@@ -24,6 +24,8 @@ use std::collections::{HashMap, HashSet};
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use zbus::Connection;
 
+use crate::crypto::Crypto;
+use crate::dm::ChangeNotify;
 use crate::error::Error;
 use crate::transport::network::mdns::Service;
 use crate::utils::zbus_proxies::resolve::manager::ManagerProxy;
@@ -69,12 +71,19 @@ impl<'a> ResolveMdnsResponder<'a> {
     ///
     /// # Arguments
     /// - `connection`: A reference to the DBus system connection to use for communication with Avahi.
-    pub async fn run(&mut self, connection: &Connection) -> Result<(), Error> {
+    /// - `crypto`: A crypto provider instance.
+    /// - `notify`: A change notification interface.
+    pub async fn run<C: Crypto>(
+        &mut self,
+        connection: &Connection,
+        crypto: C,
+        notify: &dyn ChangeNotify,
+    ) -> Result<(), Error> {
         loop {
             self.matter.wait_mdns().await;
 
             let mut services = HashSet::new();
-            self.matter.mdns_services(|service| {
+            self.matter.mdns_services(&crypto, notify, |service| {
                 services.insert(service);
 
                 Ok(())

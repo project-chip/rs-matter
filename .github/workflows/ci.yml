@@ -66,6 +66,7 @@ jobs:
         run: cd rs-matter; cargo build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log
 
       - name: Benchmark
+        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
         run: cd rs-matter; cargo bench --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log
 
       - name: Test

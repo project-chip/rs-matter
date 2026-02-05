@@ -17,10 +17,11 @@
 
 use core::fmt;
 
+use crate::crypto::{self, Aead, Crypto};
+use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
 use crate::transport::plain_hdr;
 use crate::utils::storage::{ParseBuf, WriteBuf};
-use crate::{crypto, error::*};
 
 use super::network::Address;
 
@@ -112,6 +113,21 @@ pub struct ProtoHdr {
 }
 
 impl ProtoHdr {
+    /// Maximum length of the protocol header
+    pub const MAX_LEN: usize =
+        // exchange flags
+        1
+        // protocol opcode
+        + 1
+        // exchange ID
+        + 2
+        // protocol ID
+        + 2
+        // [optional] protocol vendor ID
+        + 2
+        // [optional] acknowledged message counter
+        + 4;
+
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
@@ -234,16 +250,17 @@ impl ProtoHdr {
         }
     }
 
-    pub fn decrypt_and_decode(
+    pub fn decrypt_and_decode<C: Crypto>(
         &mut self,
-        plain_hdr: &plain_hdr::PlainHdr,
-        parsebuf: &mut ParseBuf,
+        crypto: C,
+        dec_key: Option<crypto::CanonAeadKeyRef<'_>>,
         peer_nodeid: u64,
-        dec_key: Option<&[u8]>,
+        plain_hdr: &plain_hdr::PlainHdr,
+        parsebuf: &mut ParseBuf<'_>,
     ) -> Result<(), Error> {
-        if let Some(d) = dec_key {
+        if let Some(key) = dec_key {
             // We decrypt only if the decryption key is valid
-            decrypt_in_place(plain_hdr.ctr, peer_nodeid, parsebuf, d)?;
+            decrypt_in_place(crypto, key, plain_hdr.ctr, peer_nodeid, parsebuf)?;
         }
 
         self.exch_flags = ExchFlags::from_bits(parsebuf.le_u8()?).ok_or(ErrorCode::Invalid)?;
@@ -262,7 +279,7 @@ impl ProtoHdr {
         Ok(())
     }
 
-    pub fn encode(&self, resp_buf: &mut WriteBuf) -> Result<(), Error> {
+    pub fn encode(&self, resp_buf: &mut WriteBuf<'_>) -> Result<(), Error> {
         trace!("[encode] {}", self);
         resp_buf.le_u8(self.exch_flags.bits())?;
         resp_buf.le_u8(self.proto_opcode)?;
@@ -343,9 +360,9 @@ impl defmt::Format for ProtoHdr {
     }
 }
 
-fn get_iv(recvd_ctr: u32, peer_nodeid: u64, iv: &mut [u8]) -> Result<(), Error> {
+fn get_iv(recvd_ctr: u32, peer_nodeid: u64, iv: &mut crypto::AeadNonce) -> Result<(), Error> {
     // The IV is the source address (64-bit) followed by the message counter (32-bit)
-    let mut write_buf = WriteBuf::new(iv);
+    let mut write_buf = WriteBuf::new(iv.access_mut());
     // For some reason, this is 0 in the 'bypass' mode
     write_buf.le_u8(0)?;
     write_buf.le_u32(recvd_ctr)?;
@@ -353,43 +370,51 @@ fn get_iv(recvd_ctr: u32, peer_nodeid: u64, iv: &mut [u8]) -> Result<(), Error> 
     Ok(())
 }
 
-pub fn encrypt_in_place(
+pub fn encrypt_in_place<C: Crypto>(
+    crypto: C,
+    key: crypto::CanonAeadKeyRef<'_>,
     send_ctr: u32,
     peer_nodeid: u64,
-    plain_hdr: &[u8],
-    writebuf: &mut WriteBuf,
-    key: &[u8],
+    aad: &[u8],
+    writebuf: &mut WriteBuf<'_>,
 ) -> Result<(), Error> {
+    // TODO: Get rid of the temporary buffers
+
     // IV
-    let mut iv = [0_u8; crypto::AEAD_NONCE_LEN_BYTES];
+    let mut iv = crypto::AEAD_NONCE_ZEROED;
     get_iv(send_ctr, peer_nodeid, &mut iv)?;
 
     // Cipher Text
-    let tag_space = [0u8; crypto::AEAD_MIC_LEN_BYTES];
-    writebuf.append(&tag_space)?;
+    let tag_space = crypto::AEAD_TAG_ZEROED;
+    writebuf.append(tag_space.access())?;
     let cipher_text = writebuf.as_mut_slice();
 
-    crypto::encrypt_in_place(
+    let mut cypher = crypto.aead()?;
+
+    cypher.encrypt_in_place(
         key,
-        &iv,
-        plain_hdr,
+        iv.reference(),
+        aad,
         cipher_text,
-        cipher_text.len() - crypto::AEAD_MIC_LEN_BYTES,
+        cipher_text.len() - crypto::AEAD_TAG_LEN,
     )?;
     //println!("Cipher Text: {:x?}", cipher_text);
 
     Ok(())
 }
 
-fn decrypt_in_place(
+fn decrypt_in_place<C: Crypto>(
+    crypto: C,
+    key: crypto::CanonAeadKeyRef<'_>,
     recvd_ctr: u32,
     peer_nodeid: u64,
-    parsebuf: &mut ParseBuf,
-    key: &[u8],
+    parsebuf: &mut ParseBuf<'_>,
 ) -> Result<(), Error> {
+    // TODO: Get rid of the temporary buffers
+
     // AAD:
     //    the unencrypted header of this packet
-    let mut aad = [0_u8; crypto::AEAD_AAD_LEN_BYTES];
+    let mut aad = [0; 8];
     let parsed_slice = parsebuf.parsed_as_slice();
     if parsed_slice.len() == aad.len() {
         // The plain_header is variable sized in length, I wonder if the AAD is fixed at 8, or the variable size.
@@ -401,7 +426,7 @@ fn decrypt_in_place(
 
     // IV:
     //   the specific way for creating IV is in get_iv
-    let mut iv = [0_u8; crypto::AEAD_NONCE_LEN_BYTES];
+    let mut iv = crypto::AEAD_NONCE_ZEROED;
     get_iv(recvd_ctr, peer_nodeid, &mut iv)?;
 
     let cipher_text = parsebuf.as_mut_slice();
@@ -410,29 +435,19 @@ fn decrypt_in_place(
     //println!("IV: {:x?}", iv);
     //println!("Key: {:x?}", key);
 
-    crypto::decrypt_in_place(key, &iv, &aad, cipher_text)?;
-    // println!("Plain Text: {:x?}", cipher_text);
-    parsebuf.tail(crypto::AEAD_MIC_LEN_BYTES)?;
-    Ok(())
-}
+    let mut cypher = crypto.aead()?;
 
-pub const fn max_proto_hdr_len() -> usize {
-    // exchange flags
-    1 +
-    // protocol opcode
-        1 +
-    // exchange ID
-        2 +
-    // protocol ID
-        2 +
-    // [optional] protocol vendor ID
-        2 +
-    // [optional] acknowledged message counter
-        4
+    cypher.decrypt_in_place(key, iv.reference(), &aad, cipher_text)?;
+    // println!("Plain Text: {:x?}", cipher_text);
+    parsebuf.tail(crypto::AEAD_TAG_LEN)?;
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::crypto::{test_only_crypto, CanonAeadKeyRef};
+
     use super::*;
 
     #[test]
@@ -447,19 +462,20 @@ mod tests {
             0x80, 0xef, 0xa8, 0x3a, 0xf0, 0xa6, 0xaf, 0x1b, 0x2, 0x35, 0xa7, 0xd1, 0xc6, 0x32,
         ];
         let mut parsebuf = ParseBuf::new(&mut input_buf);
-        let key = [
+
+        const KEY: CanonAeadKeyRef = CanonAeadKeyRef::new(&[
             0x66, 0x63, 0x31, 0x97, 0x43, 0x9c, 0x17, 0xb9, 0x7e, 0x10, 0xee, 0x47, 0xc8, 0x8,
             0x80, 0x4a,
-        ];
+        ]);
 
         // decrypt_in_place() requires that the plain_text buffer of 8 bytes must be already parsed as AAD, we'll just fake it here
         parsebuf.le_u32().unwrap();
         parsebuf.le_u32().unwrap();
 
-        decrypt_in_place(recvd_ctr, 0, &mut parsebuf, &key).unwrap();
+        decrypt_in_place(test_only_crypto(), KEY, recvd_ctr, 0, &mut parsebuf).unwrap();
         assert_eq!(
             parsebuf.as_slice(),
-            [
+            &[
                 0x5, 0x8, 0x70, 0x0, 0x1, 0x0, 0x15, 0x28, 0x0, 0x28, 0x1, 0x36, 0x2, 0x15, 0x37,
                 0x0, 0x24, 0x0, 0x0, 0x24, 0x1, 0x30, 0x24, 0x2, 0x2, 0x18, 0x35, 0x1, 0x24, 0x0,
                 0x0, 0x2c, 0x1, 0x2, 0x57, 0x57, 0x24, 0x2, 0x3, 0x25, 0x3, 0xb8, 0xb, 0x18, 0x18,
@@ -476,23 +492,31 @@ mod tests {
         let mut main_buf: [u8; 52] = [0; 52];
         let mut writebuf = WriteBuf::new(&mut main_buf);
 
-        let plain_hdr: [u8; 8] = [0x0, 0x11, 0x0, 0x0, 0x29, 0x0, 0x0, 0x0];
+        const PLAIN_HDR: &[u8] = &[0x0, 0x11, 0x0, 0x0, 0x29, 0x0, 0x0, 0x0];
 
-        let plain_text: [u8; 28] = [
+        const PLAIN_TEXT: &[u8] = &[
             5, 8, 0x58, 0x28, 0x01, 0x00, 0x15, 0x36, 0x00, 0x15, 0x37, 0x00, 0x24, 0x00, 0x01,
             0x24, 0x02, 0x06, 0x24, 0x03, 0x01, 0x18, 0x35, 0x01, 0x18, 0x18, 0x18, 0x18,
         ];
-        writebuf.append(&plain_text).unwrap();
+        writebuf.append(PLAIN_TEXT).unwrap();
 
-        let key = [
+        const KEY: CanonAeadKeyRef = CanonAeadKeyRef::new(&[
             0x44, 0xd4, 0x3c, 0x91, 0xd2, 0x27, 0xf3, 0xba, 0x08, 0x24, 0xc5, 0xd8, 0x7c, 0xb8,
             0x1b, 0x33,
-        ];
+        ]);
 
-        encrypt_in_place(send_ctr, 0, &plain_hdr, &mut writebuf, &key).unwrap();
+        encrypt_in_place(
+            test_only_crypto(),
+            KEY,
+            send_ctr,
+            0,
+            PLAIN_HDR,
+            &mut writebuf,
+        )
+        .unwrap();
         assert_eq!(
             writebuf.as_slice(),
-            [
+            &[
                 189, 83, 250, 121, 38, 87, 97, 17, 153, 78, 243, 20, 36, 11, 131, 142, 136, 165,
                 227, 107, 204, 129, 193, 153, 42, 131, 138, 254, 22, 190, 76, 244, 116, 45, 156,
                 215, 229, 130, 215, 147, 73, 21, 88, 216

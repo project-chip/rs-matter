@@ -209,7 +209,6 @@ mod tests {
     use core::num::NonZeroU8;
 
     use crate::acl::{AclEntry, AuthMode};
-    use crate::crypto::KeyPair;
     use crate::dm::clusters::acl::{
         AccessControlEntryStruct, AccessControlEntryStructArrayBuilder, Dataver,
     };
@@ -219,7 +218,6 @@ mod tests {
     };
     use crate::fabric::FabricMgr;
     use crate::tlv::{get_root_node_struct, TLVElement, TLVTag, TLVWriteParent, ToTLV};
-    use crate::utils::rand::dummy_rand;
     use crate::utils::storage::WriteBuf;
 
     use super::AclHandler;
@@ -235,7 +233,7 @@ mod tests {
         let mut fab_mgr = FabricMgr::new();
 
         // Add fabric with ID 1
-        unwrap!(fab_mgr.add_with_post_init(unwrap!(KeyPair::new(dummy_rand)), |_| Ok(())));
+        unwrap!(fab_mgr.add_with_post_init(|_| Ok(())));
 
         let acl = AclHandler::new(Dataver::new(0));
 
@@ -265,14 +263,10 @@ mod tests {
         let mut fab_mgr = FabricMgr::new();
 
         // Add fabric with ID 1
-        fab_mgr
-            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
-            .unwrap();
+        fab_mgr.add_with_post_init(|_| Ok(())).unwrap();
 
         // Add fabric with ID 2
-        fab_mgr
-            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
-            .unwrap();
+        fab_mgr.add_with_post_init(|_| Ok(())).unwrap();
 
         // Add 3 ACLs, belonging to fabric index 2, 1 and 2, in that order
         let mut verifier = [
@@ -317,14 +311,10 @@ mod tests {
         let mut fab_mgr = FabricMgr::new();
 
         // Add fabric with ID 1
-        fab_mgr
-            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
-            .unwrap();
+        fab_mgr.add_with_post_init(|_| Ok(())).unwrap();
 
         // Add fabric with ID 2
-        fab_mgr
-            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
-            .unwrap();
+        fab_mgr.add_with_post_init(|_| Ok(())).unwrap();
 
         // Add 3 ACLs, belonging to fabric index 2, 1 and 2, in that order
         let input = [
@@ -360,14 +350,10 @@ mod tests {
         let mut fab_mgr = FabricMgr::new();
 
         // Add fabric with ID 1
-        fab_mgr
-            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
-            .unwrap();
+        fab_mgr.add_with_post_init(|_| Ok(())).unwrap();
 
         // Add fabric with ID 2
-        fab_mgr
-            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
-            .unwrap();
+        fab_mgr.add_with_post_init(|_| Ok(())).unwrap();
 
         // Add 3 ACLs, belonging to fabric index 2, 1 and 2, in that order
         let input = [

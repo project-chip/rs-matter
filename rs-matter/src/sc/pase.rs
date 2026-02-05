@@ -19,21 +19,30 @@ use core::num::NonZeroU8;
 use core::ops::Add;
 use core::time::Duration;
 
-use spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES};
+use rand_core::RngCore;
 
+use spake2p::{Spake2P, Spake2pVerifierData};
+
+use crate::crypto::{
+    CanonEcPointRef, Crypto, HmacHashRef, Kdf, AEAD_CANON_KEY_LEN, EC_POINT_ZEROED,
+    HMAC_HASH_ZEROED,
+};
 use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
-use crate::dm::{BasicContext, BasicContextInstance};
+use crate::dm::{BasicContext, BasicContextInstance, ChangeNotify};
 use crate::error::{Error, ErrorCode};
+use crate::sc::pase::spake2p::{
+    Spake2pRandom, Spake2pRandomRef, Spake2pSessionKeys, Spake2pVerifierPasswordRef,
+    Spake2pVerifierSaltRef, Spake2pVerifierStrRef, SPAKE2P_VERIFIER_SALT_ZEROED,
+};
 use crate::sc::{check_opcode, complete_with_status, OpCode, SessionParameters};
 use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TagType, ToTLV};
 use crate::transport::exchange::{Exchange, ExchangeId};
 use crate::transport::session::{ReservedSession, SessionMode};
 use crate::utils::epoch::Epoch;
-use crate::utils::init::{init, try_init, Init};
+use crate::utils::init::{init, Init};
 use crate::utils::maybe::Maybe;
-use crate::utils::rand::Rand;
-use crate::{crypto, MatterMdnsService};
+use crate::MatterMdnsService;
 
 use super::SCStatusCodes;
 
@@ -71,7 +80,7 @@ pub struct CommWindow {
     /// The discriminator
     discriminator: u16,
     /// The verifier data
-    verifier: VerifierData,
+    verifier: Spake2pVerifierData,
     /// The opener info
     opener: Option<CommWindowOpener>,
     /// The window expiry instant
@@ -82,22 +91,24 @@ impl CommWindow {
     /// Initialize a commissioning window with a passcode
     ///
     /// # Arguments
+    /// - `mdns_id` - The mDNS identifier
     /// - `password` - The passcode
     /// - `discriminator` - The discriminator
     /// - `opener` - The opener info
     /// - `window_expiry` - The window expiry instant
     /// - `rand` - The random number generator
-    fn init_with_pw(
-        password: u32,
+    fn init_with_pw<'a>(
+        mdns_id: u64,
+        password: Spake2pVerifierPasswordRef<'a>,
+        salt: Spake2pVerifierSaltRef<'a>,
         discriminator: u16,
         opener: Option<CommWindowOpener>,
         window_expiry: Duration,
-        rand: Rand,
-    ) -> impl Init<Self> {
+    ) -> impl Init<Self> + 'a {
         init!(Self {
-            mdns_id: Self::mdns_id(rand),
+            mdns_id,
             discriminator,
-            verifier <- VerifierData::init_with_pw(password, rand),
+            verifier <- Spake2pVerifierData::init_with_pw(password, salt),
             opener,
             window_expiry,
         })
@@ -113,21 +124,21 @@ impl CommWindow {
     /// - `opener` - The opener info
     /// - `window_expiry` - The window expiry instant
     fn init<'a>(
-        verifier: &'a [u8],
-        salt: &'a [u8],
+        mdns_id: u64,
+        verifier: Spake2pVerifierStrRef<'a>,
+        salt: Spake2pVerifierSaltRef<'a>,
         count: u32,
         discriminator: u16,
         opener: Option<CommWindowOpener>,
         window_expiry: Duration,
-        rand: Rand,
-    ) -> impl Init<Self, Error> + 'a {
-        try_init!(Self {
-            mdns_id: Self::mdns_id(rand),
+    ) -> impl Init<Self> + 'a {
+        init!(Self {
+            mdns_id,
             discriminator,
-            verifier <- VerifierData::init(verifier, salt, count),
+            verifier <- Spake2pVerifierData::init(verifier, salt, count),
             opener,
             window_expiry,
-        }? Error)
+        })
     }
 
     /// Get the type of commissioning window
@@ -151,17 +162,6 @@ impl CommWindow {
             discriminator: self.discriminator,
         }
     }
-
-    /// Generate a random mDNS identifier
-    ///
-    /// # Arguments
-    /// - `rand` - The random number generator
-    /// - Returns - A random u64 identifier
-    fn mdns_id(rand: Rand) -> u64 {
-        let mut buf = [0; 8];
-        (rand)(&mut buf);
-        u64::from_ne_bytes(buf)
-    }
 }
 
 /// The PASE manager
@@ -173,8 +173,6 @@ pub struct PaseMgr {
     session_timeout: Option<SessionEstTimeout>,
     /// The epoch function
     epoch: Epoch,
-    /// The random number generator
-    rand: Rand,
 }
 
 impl PaseMgr {
@@ -182,14 +180,12 @@ impl PaseMgr {
     ///
     /// # Arguments
     /// - `epoch` - The epoch function
-    /// - `rand` - The random number generator
     #[inline(always)]
-    pub const fn new(epoch: Epoch, rand: Rand) -> Self {
+    pub const fn new(epoch: Epoch) -> Self {
         Self {
             comm_window: Maybe::none(),
             session_timeout: None,
             epoch,
-            rand,
         }
     }
 
@@ -198,16 +194,18 @@ impl PaseMgr {
     /// # Arguments
     /// - `epoch` - The epoch function
     /// - `rand` - The random number generator
-    pub fn init(epoch: Epoch, rand: Rand) -> impl Init<Self> {
+    pub fn init(epoch: Epoch) -> impl Init<Self> {
         init!(Self {
             comm_window <- Maybe::init_none(),
             session_timeout: None,
             epoch,
-            rand,
         })
     }
 
-    pub fn comm_window(&mut self, ctx: impl BasicContext) -> Result<Option<&CommWindow>, Error> {
+    pub fn comm_window<C>(&mut self, ctx: C) -> Result<Option<&CommWindow>, Error>
+    where
+        C: BasicContext,
+    {
         let expired = self
             .comm_window
             .as_opt_ref()
@@ -239,14 +237,17 @@ impl PaseMgr {
     /// - `Err(Error)` if an error occurred
     ///   (i.e. there is another non-expired commissioning window already opened
     ///   or the timeout is invalid)
-    pub fn open_basic_comm_window(
+    pub fn open_basic_comm_window<C>(
         &mut self,
-        password: u32,
+        ctx: C,
+        password: Spake2pVerifierPasswordRef<'_>,
         discriminator: u16,
         timeout_secs: u16,
         opener: Option<CommWindowOpener>,
-        ctx: impl BasicContext,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        C: BasicContext,
+    {
         if self.comm_window(&ctx)?.is_some() {
             Err(ErrorCode::Busy)?;
         }
@@ -257,13 +258,22 @@ impl PaseMgr {
 
         let window_expiry = (self.epoch)().add(Duration::from_secs(timeout_secs as _));
 
+        let crypto = ctx.crypto();
+        let mut rand = crypto.rand()?;
+
+        let mdns_id = rand.next_u64();
+
+        let mut salt = SPAKE2P_VERIFIER_SALT_ZEROED;
+        rand.fill_bytes(salt.access_mut());
+
         self.comm_window
             .reinit(Maybe::init_some(CommWindow::init_with_pw(
+                mdns_id,
                 password,
+                salt.reference(),
                 discriminator,
                 opener,
                 window_expiry,
-                self.rand,
             )));
 
         ctx.matter().notify_mdns();
@@ -296,16 +306,19 @@ impl PaseMgr {
     ///   (i.e. there is another non-expired commissioning window already opened
     ///   or the timeout is invalid)
     #[allow(clippy::too_many_arguments)]
-    pub fn open_comm_window(
+    pub fn open_comm_window<C>(
         &mut self,
-        verifier: &[u8],
-        salt: &[u8],
+        ctx: C,
+        verifier: Spake2pVerifierStrRef<'_>,
+        salt: Spake2pVerifierSaltRef<'_>,
         count: u32,
         discriminator: u16,
         timeout_secs: u16,
         opener: Option<CommWindowOpener>,
-        ctx: impl BasicContext,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error>
+    where
+        C: BasicContext,
+    {
         if self.comm_window(&ctx)?.is_some() {
             Err(ErrorCode::Busy)?;
         }
@@ -316,16 +329,20 @@ impl PaseMgr {
 
         let window_expiry = (self.epoch)().add(Duration::from_secs(timeout_secs as _));
 
-        self.comm_window
-            .try_reinit(Maybe::init_some(CommWindow::init(
-                verifier,
-                salt,
-                count,
-                discriminator,
-                opener,
-                window_expiry,
-                self.rand,
-            )))?;
+        let crypto = ctx.crypto();
+        let mut rand = crypto.rand()?;
+
+        let mdns_id = rand.next_u64();
+
+        self.comm_window.reinit(Maybe::init_some(CommWindow::init(
+            mdns_id,
+            verifier,
+            salt,
+            count,
+            discriminator,
+            opener,
+            window_expiry,
+        )));
 
         ctx.matter().notify_mdns();
 
@@ -348,7 +365,10 @@ impl PaseMgr {
     /// # Returns
     /// - `Ok(true)` if a commissioning window was closed
     /// - `Ok(false)` if there was no commissioning window to close
-    pub fn close_comm_window(&mut self, ctx: impl BasicContext) -> Result<bool, Error> {
+    pub fn close_comm_window<C>(&mut self, ctx: C) -> Result<bool, Error>
+    where
+        C: BasicContext,
+    {
         if self.comm_window.is_some() {
             self.comm_window.clear();
             ctx.matter().notify_mdns();
@@ -460,21 +480,27 @@ struct Pake1Resp<'a> {
 }
 
 /// The PASE PAKE handler
-pub struct Pake {
+pub struct Pase<'a, C: Crypto> {
+    crypto: C,
+    notify: &'a dyn ChangeNotify,
     spake2p: Spake2P,
 }
 
-impl Pake {
+impl<'a, C: Crypto> Pase<'a, C> {
     /// Create a new PASE PAKE handler
-    pub const fn new() -> Self {
+    pub const fn new(crypto: C, notify: &'a dyn ChangeNotify) -> Self {
         // TODO: Can any PBKDF2 calculation be pre-computed here
         Self {
+            crypto,
+            notify,
             spake2p: Spake2P::new(),
         }
     }
 
-    pub fn init() -> impl Init<Self> {
+    pub fn init(crypto: C, notify: &'a dyn ChangeNotify) -> impl Init<Self> {
         init!(Self {
+            crypto,
+            notify,
             spake2p <- Spake2P::init(),
         })
     }
@@ -484,7 +510,7 @@ impl Pake {
     /// # Arguments
     /// - `exchange` - The exchange
     pub async fn handle(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        let session = ReservedSession::reserve(exchange.matter()).await?;
+        let session = ReservedSession::reserve(exchange.matter(), &self.crypto).await?;
 
         if !self.update_session_timeout(exchange, true).await? {
             return Ok(());
@@ -525,16 +551,16 @@ impl Pake {
 
         let rx = exchange.rx()?;
 
-        let mut salt = [0; MAX_SALT_SIZE_BYTES];
+        let mut salt = SPAKE2P_VERIFIER_SALT_ZEROED;
         let mut count = 0;
 
-        let ctx = BasicContextInstance::new(exchange.matter(), exchange.matter());
         let has_comm_window = {
             let matter = exchange.matter();
             let mut pase = matter.pase_mgr.borrow_mut();
 
+            let ctx = BasicContextInstance::new(exchange.matter(), &self.crypto, self.notify);
             if let Some(comm_window) = pase.comm_window(&ctx)? {
-                salt.copy_from_slice(&comm_window.verifier.salt);
+                salt.load(comm_window.verifier.salt.reference());
                 count = comm_window.verifier.count;
 
                 true
@@ -544,17 +570,18 @@ impl Pake {
         };
 
         if has_comm_window {
-            let mut our_random = [0; 32];
-            let mut initiator_random = [0; 32];
+            let mut our_random = Spake2pRandom::new();
+            let mut initiator_random = Spake2pRandom::new();
 
-            let resp = {
-                let a = PBKDFParamReq::from_tlv(&TLVElement::new(rx.payload()))?;
-                if a.passcode_id != 0 {
+            let (local_sessid, peer_sessid, resp) = {
+                let req = PBKDFParamReq::from_tlv(&TLVElement::new(rx.payload()))?;
+                if req.passcode_id != 0 {
                     error!("Can't yet handle passcode_id != 0");
                     Err(ErrorCode::Invalid)?;
                 }
 
-                (exchange.matter().pase_mgr.borrow().rand)(&mut our_random);
+                let mut rand = self.crypto.rand()?;
+                rand.fill_bytes(our_random.access_mut());
 
                 let local_sessid = exchange
                     .matter()
@@ -562,47 +589,43 @@ impl Pake {
                     .session_mgr
                     .borrow_mut()
                     .get_next_sess_id();
-                let spake2p_data: u32 = ((local_sessid as u32) << 16) | a.initiator_ssid as u32;
-                self.spake2p.set_app_data(spake2p_data);
 
-                initiator_random[..a.initiator_random.0.len()]
-                    .copy_from_slice(a.initiator_random.0);
-                let initiator_random = &initiator_random[..a.initiator_random.0.len()];
+                initiator_random.load(Spake2pRandomRef::try_new(req.initiator_random.0)?);
 
                 // Generate response
-                let mut resp = PBKDFParamResp {
-                    init_random: OctetStr::new(initiator_random),
-                    our_random: OctetStr::new(&our_random),
+                let resp = PBKDFParamResp {
+                    init_random: OctetStr::new(initiator_random.access()),
+                    our_random: OctetStr::new(our_random.access()),
                     local_sessid,
-                    params: None,
-                };
-                if !a.has_params {
-                    let params_resp = PBKDFParamRespParams {
+                    params: (!req.has_params).then(|| PBKDFParamRespParams {
                         count,
-                        salt: OctetStr::new(&salt),
-                    };
-                    resp.params = Some(params_resp);
-                }
+                        salt: OctetStr::new(salt.access()),
+                    }),
+                };
 
-                resp
+                (local_sessid, req.initiator_ssid, resp)
             };
 
-            self.spake2p.set_context()?;
-            self.spake2p.update_context(rx.payload())?;
+            let mut context = Some(self.spake2p.start_context(
+                &self.crypto,
+                local_sessid,
+                peer_sessid,
+                rx.payload(),
+            )?);
 
-            let mut context_set = false;
             exchange
                 .send_with(|_, wb| {
                     resp.to_tlv(&TagType::Anonymous, &mut *wb)?;
 
-                    if !context_set {
-                        self.spake2p.update_context(wb.as_slice())?;
-                        context_set = true;
+                    if let Some(context) = context.take() {
+                        self.spake2p.finish_context::<&C>(context, wb.as_slice())?;
                     }
 
                     Ok(Some(OpCode::PBKDFParamResponse.into()))
                 })
-                .await
+                .await?;
+
+            Ok(())
         } else {
             complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await
         }
@@ -612,22 +635,29 @@ impl Pake {
     ///
     /// # Arguments
     /// - `exchange` - The exchange
-    #[allow(non_snake_case)]
     async fn handle_pasepake1(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
         check_opcode(exchange, OpCode::PASEPake1)?;
 
-        let pA = Self::extract_pasepake_1_or_3_params(exchange.rx()?.payload())?;
-        let mut pB: [u8; 65] = [0; 65];
-        let mut cB: [u8; 32] = [0; 32];
+        let req = get_root_node_struct(exchange.rx()?.payload())?;
+
+        let a_pt: CanonEcPointRef<'_> = req.structure()?.ctx(1)?.str()?.try_into()?;
+
+        let mut b_pt = EC_POINT_ZEROED;
+        let mut cb = HMAC_HASH_ZEROED;
 
         let has_comm_window = {
             let matter = exchange.matter();
             let mut pase = matter.pase_mgr.borrow_mut();
-            let ctx = BasicContextInstance::new(exchange.matter(), exchange.matter());
+            let ctx = BasicContextInstance::new(exchange.matter(), &self.crypto, self.notify);
 
             if let Some(comm_window) = pase.comm_window(&ctx)? {
-                self.spake2p.start_verifier(&comm_window.verifier)?;
-                self.spake2p.handle_pA(pA, &mut pB, &mut cB, pase.rand)?;
+                self.spake2p.setup_verifier(
+                    &self.crypto,
+                    &comm_window.verifier,
+                    a_pt,
+                    &mut b_pt,
+                    &mut cb,
+                )?;
 
                 true
             } else {
@@ -639,8 +669,8 @@ impl Pake {
             exchange
                 .send_with(|_, wb| {
                     let resp = Pake1Resp {
-                        pb: OctetStr::new(&pB),
-                        cb: OctetStr::new(&cB),
+                        pb: OctetStr::new(b_pt.access()),
+                        cb: OctetStr::new(cb.access()),
                     };
                     resp.to_tlv(&TagType::Anonymous, wb)?;
 
@@ -657,7 +687,6 @@ impl Pake {
     /// # Arguments
     /// - `exchange` - The exchange
     /// - `session` - The reserved session
-    #[allow(non_snake_case)]
     async fn handle_pasepake3(
         &mut self,
         exchange: &mut Exchange<'_>,
@@ -665,41 +694,40 @@ impl Pake {
     ) -> Result<(), Error> {
         check_opcode(exchange, OpCode::PASEPake3)?;
 
-        let cA = Self::extract_pasepake_1_or_3_params(exchange.rx()?.payload())?;
-        let (status, ke) = self.spake2p.handle_cA(cA);
+        let req = get_root_node_struct(exchange.rx()?.payload())?;
 
-        let result = if status == SCStatusCodes::SessionEstablishmentSuccess {
-            // Get the keys
-            let ke = ke.ok_or(ErrorCode::Invalid)?;
-            let mut session_keys: [u8; 48] = [0; 48];
-            crypto::hkdf_sha256(&[], ke, SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
-                .map_err(|_x| ErrorCode::InvalidData)?;
+        let ca: HmacHashRef<'_> = req.structure()?.ctx(1)?.str()?.try_into()?;
 
-            // Create a session
-            let data = self.spake2p.get_app_data();
-            let peer_sessid: u16 = (data & 0xffff) as u16;
-            let local_sessid: u16 = ((data >> 16) & 0xffff) as u16;
-            let peer_addr = exchange.with_session(|sess| Ok(sess.get_peer_addr()))?;
+        let status = match self.spake2p.verify(ca) {
+            Ok((local_sessid, peer_sessid, ke)) => {
+                // Get the keys
+                let mut session_keys = Spake2pSessionKeys::new(); // TODO: MEDIUM BUFFER
+                self.crypto
+                    .kdf()?
+                    .expand(&[], ke, SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
+                    .map_err(|_x| ErrorCode::InvalidData)?;
 
-            session.update(
-                0,
-                0,
-                peer_sessid,
-                local_sessid,
-                peer_addr,
-                SessionMode::Pase { fab_idx: 0 },
-                Some(&session_keys[0..16]),
-                Some(&session_keys[16..32]),
-                Some(&session_keys[32..48]),
-            )?;
+                // Create a session
+                let peer_addr = exchange.with_session(|sess| Ok(sess.get_peer_addr()))?;
 
-            Ok(())
-        } else {
-            Err(status)
-        };
+                let (dec_key, remaining) = session_keys
+                    .reference()
+                    .split::<AEAD_CANON_KEY_LEN, { AEAD_CANON_KEY_LEN * 2 }>();
+                let (enc_key, att_challenge) =
+                    remaining.split::<AEAD_CANON_KEY_LEN, AEAD_CANON_KEY_LEN>();
 
-        let status = match result {
-            Ok(()) => {
+                session.update(
+                    0,
+                    0,
+                    peer_sessid,
+                    local_sessid,
+                    peer_addr,
+                    SessionMode::Pase { fab_idx: 0 },
+                    Some(dec_key),
+                    Some(enc_key),
+                    Some(att_challenge),
+                )?;
+
                 // Complete the reserved session and thus make the `Session` instance
                 // immediately available for use by the system.
                 //
@@ -776,19 +804,5 @@ impl Pake {
         let mut pase = exchange.matter().pase_mgr.borrow_mut();
 
         pase.session_timeout = None;
-    }
-
-    /// Extract the PAKEPake1 or PAKEPake3 parameters from the given buffer
-    #[allow(non_snake_case)]
-    fn extract_pasepake_1_or_3_params(buf: &[u8]) -> Result<&[u8], Error> {
-        let root = get_root_node_struct(buf)?;
-        let pA = root.structure()?.ctx(1)?.str()?;
-        Ok(pA)
-    }
-}
-
-impl Default for Pake {
-    fn default() -> Self {
-        Self::new()
     }
 }

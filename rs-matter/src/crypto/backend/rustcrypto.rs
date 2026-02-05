@@ -1,0 +1,994 @@
+/*
+ *
+ *    Copyright (c) 2020-2022 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+//! A RustCrypto backend for the crypto traits
+//!
+//! Besides implementation of the main `Crypto` trait, this module obviously also provides
+//! implementations for various other crypto traits defined in the `crypto` module.
+//! These implementations are as generic as possible
+//! (i.e., not tied to a specific RustCrypto curve or algorithm)
+//! but rather - **coded against the generic RustCrypto traits**
+//! describing the notions of ciphers, digests, AEAD, elliptic-curves and so on.
+//!
+//! This is a deliberate decision which - while increasing a bit the implementation complexity -
+//! allows the user to more easily implement hardware acceleration for specific algorithms/curves
+//! **IF** the hardware-accelerated algorithm implementation already implements the corresponding
+//! RustCrypto traits, because in that case the HW-accelerated algorithm should be piossible to reuse
+//! as-is, without additional adaptation.
+//!
+//! For example, the ESP32 `esp-hal` crate does provide hardware accelerated implementations of AES and SHA-256,
+//! and those implementations do implement the corresponding RustCrypto traits, so in that case it should be possible
+//! to reuse those implementations with a variation of this backend with no or minimal adaptation.
+
+#![allow(deprecated)] // Remove this once `ccm` and `elliptic_curve` update to `generic-array` 1.x
+
+use core::convert::TryInto;
+use core::marker::PhantomData;
+use core::mem::MaybeUninit;
+use core::ops::{Add, Mul, Neg};
+
+use alloc::vec;
+
+use ccm::{Ccm, NonceSize, TagSize};
+
+use crypto_bigint::NonZero;
+
+use digest::Digest as _;
+
+use ecdsa::hazmat::{DigestPrimitive, SignPrimitive, VerifyPrimitive};
+use ecdsa::{der, PrimeCurve, Signature, SignatureSize, SigningKey, VerifyingKey};
+
+use elliptic_curve::generic_array::{ArrayLength, GenericArray};
+use elliptic_curve::group::Curve;
+use elliptic_curve::sec1::{EncodedPoint, FromEncodedPoint, ToEncodedPoint};
+use elliptic_curve::{
+    AffinePoint, CurveArithmetic, Field, FieldBytesSize, PrimeField, ProjectivePoint, PublicKey,
+    Scalar, SecretKey,
+};
+
+use embassy_sync::blocking_mutex::raw::RawMutex;
+
+use primeorder::PrimeCurveParams;
+
+use rand_core::CryptoRngCore;
+
+use sec1::point::ModulusSize;
+
+use x509_cert::attr::AttributeType;
+use x509_cert::der::{asn1::BitString, Any, Encode, Writer};
+use x509_cert::name::RdnSequence;
+use x509_cert::request::CertReq;
+use x509_cert::spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned};
+
+use crate::crypto::{
+    CanonEcPointRef, CanonEcScalarRef, CanonPkcPublicKeyRef, CanonPkcSecretKeyRef, CanonUint320Ref,
+    Crypto, CryptoSensitive, CryptoSensitiveRef, SharedRand, EC_CANON_SCALAR_LEN,
+    UINT320_CANON_LEN,
+};
+use crate::error::{Error, ErrorCode};
+use crate::utils::init::InitMaybeUninit;
+
+extern crate alloc;
+
+/// A RustCrypto backend for the crypto traits
+pub struct RustCrypto<'s, M: RawMutex, T> {
+    /// A shared cryptographic random number generator
+    rng: SharedRand<M, T>,
+    /// The singleton secret key to be returned by `Crypto::singleton_singing_secret_key`
+    singleton_secret_key: CanonPkcSecretKeyRef<'s>,
+}
+
+impl<'s, M: RawMutex, T> RustCrypto<'s, M, T> {
+    /// Create a new RustCrypto backend
+    ///
+    /// # Arguments
+    /// - `rng` - A cryptographic random number generator
+    /// - `singleton_secret_key` - A singleton secret key to be returned by `Crypto::singleton_singing_secret_key`
+    ///   The primary use-case for this secret key is to be used as the secret key for the Device Attestation credentials
+    pub const fn new(rng: T, singleton_secret_key: CanonPkcSecretKeyRef<'s>) -> Self {
+        Self {
+            rng: SharedRand::new(rng),
+            singleton_secret_key,
+        }
+    }
+}
+
+impl<M: RawMutex, T> Crypto for RustCrypto<'_, M, T>
+where
+    T: CryptoRngCore,
+{
+    type Rand<'a>
+        = &'a SharedRand<M, T>
+    where
+        Self: 'a;
+
+    type WeakRand<'a>
+        = &'a SharedRand<M, T>
+    where
+        Self: 'a;
+
+    type Hash<'a>
+        = Digest<{ crate::crypto::HASH_LEN }, sha2::Sha256>
+    where
+        Self: 'a;
+
+    type Hmac<'a>
+        = Digest<{ crate::crypto::HMAC_HASH_LEN }, hmac::Hmac<sha2::Sha256>>
+    where
+        Self: 'a;
+
+    type Kdf<'a>
+        = HkdfSha256
+    where
+        Self: 'a;
+
+    type PbKdf<'a>
+        = Pbkdf2<hmac::Hmac<sha2::Sha256>>
+    where
+        Self: 'a;
+
+    type Aead<'a>
+        = AeadCcm<
+        { crate::crypto::AEAD_CANON_KEY_LEN },
+        { crate::crypto::AEAD_NONCE_LEN },
+        { crate::crypto::AEAD_TAG_LEN },
+        aes::Aes128,
+        ccm::consts::U16,
+        ccm::consts::U13,
+    >
+    where
+        Self: 'a;
+
+    type PublicKey<'a>
+        = ECPublicKey<
+        { crate::crypto::PKC_CANON_PUBLIC_KEY_LEN },
+        { crate::crypto::PKC_SIGNATURE_LEN },
+        p256::NistP256,
+    >
+    where
+        Self: 'a;
+
+    type SigningSecretKey<'a>
+        = ECSecretKey<
+        { crate::crypto::PKC_CANON_SECRET_KEY_LEN },
+        { crate::crypto::PKC_CANON_PUBLIC_KEY_LEN },
+        { crate::crypto::PKC_SIGNATURE_LEN },
+        { crate::crypto::PKC_SHARED_SECRET_LEN },
+        p256::NistP256,
+    >
+    where
+        Self: 'a;
+
+    type SecretKey<'a>
+        = ECSecretKey<
+        { crate::crypto::PKC_CANON_SECRET_KEY_LEN },
+        { crate::crypto::PKC_CANON_PUBLIC_KEY_LEN },
+        { crate::crypto::PKC_SIGNATURE_LEN },
+        { crate::crypto::PKC_SHARED_SECRET_LEN },
+        p256::NistP256,
+    >
+    where
+        Self: 'a;
+
+    type EcScalar<'a>
+        = ECScalar<{ crate::crypto::EC_CANON_SCALAR_LEN }, p256::NistP256>
+    where
+        Self: 'a;
+
+    type EcPoint<'a>
+        = ECPoint<
+        { crate::crypto::EC_CANON_POINT_LEN },
+        { crate::crypto::EC_CANON_SCALAR_LEN },
+        p256::NistP256,
+    >
+    where
+        Self: 'a;
+
+    fn rand(&self) -> Result<Self::Rand<'_>, Error> {
+        Ok(&self.rng)
+    }
+
+    fn weak_rand(&self) -> Result<Self::WeakRand<'_>, Error> {
+        Ok(&self.rng)
+    }
+
+    fn hash(&self) -> Result<Self::Hash<'_>, Error> {
+        Ok(unsafe { Digest::new(sha2::Sha256::new()) })
+    }
+
+    fn hmac<const KEY_LEN: usize>(
+        &self,
+        key: CryptoSensitiveRef<'_, KEY_LEN>,
+    ) -> Result<Self::Hmac<'_>, Error> {
+        pub use hmac::Mac;
+
+        Ok(unsafe {
+            Digest::new(unwrap!(
+                hmac::Hmac::<sha2::Sha256>::new_from_slice(key.access()),
+                "Invalid HMAC key"
+            ))
+        })
+    }
+
+    fn kdf(&self) -> Result<Self::Kdf<'_>, Error> {
+        Ok(HkdfSha256(()))
+    }
+
+    fn pbkdf(&self) -> Result<Self::PbKdf<'_>, Error> {
+        Ok(Pbkdf2::new())
+    }
+
+    fn aead(&self) -> Result<Self::Aead<'_>, Error> {
+        Ok(unsafe { AeadCcm::new() })
+    }
+
+    fn pub_key(&self, pub_key: CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, Error> {
+        unsafe { ECPublicKey::new(pub_key) }
+    }
+
+    fn secret_key(
+        &self,
+        secret_key: CanonPkcSecretKeyRef<'_>,
+    ) -> Result<Self::SecretKey<'_>, Error> {
+        unsafe { ECSecretKey::new(secret_key) }
+    }
+
+    fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, Error> {
+        Ok(unsafe { ECSecretKey::new_random(&mut &self.rng) })
+    }
+
+    fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error> {
+        unsafe { ECSecretKey::new(self.singleton_secret_key) }
+    }
+
+    fn ec_scalar(&self, scalar: CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error> {
+        unsafe { ECScalar::new(scalar) }
+    }
+
+    fn ec_scalar_mod_p(&self, uint: CanonUint320Ref<'_>) -> Result<Self::EcScalar<'_>, Error> {
+        // TODO: Un-hardcode for other curves
+        const NISTP256R1_MODULUS: crypto_bigint::U320 = crypto_bigint::U320::from_be_slice(&[
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00,
+            0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xbc, 0xe6, 0xfa, 0xad,
+            0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x51,
+        ]);
+
+        let scalar = crypto_bigint::U320::from_be_slice(uint.access())
+            .rem(&unwrap!(NonZero::new(NISTP256R1_MODULUS).into_option()));
+
+        self.ec_scalar(CanonEcScalarRef::new_from_slice(
+            &scalar.to_be_bytes()[UINT320_CANON_LEN - EC_CANON_SCALAR_LEN..],
+        ))
+    }
+
+    fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error> {
+        Ok(unsafe { ECScalar::new_random(&mut &self.rng) })
+    }
+
+    fn ec_point(&self, point: CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, Error> {
+        unsafe { ECPoint::new(point) }
+    }
+
+    fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
+        Ok(unsafe { ECPoint::generator() })
+    }
+}
+
+/// A digest implementation using RustCrypto
+///
+/// The implementation is parameterized with the generic RustCrypto `digest` traits, so
+/// it can be used with any hasher implementing those traits (including hardware-accelerated ones).
+#[derive(Clone)]
+pub struct Digest<const HASH_LEN: usize, T>(T);
+
+impl<const HASH_LEN: usize, T> Digest<HASH_LEN, T> {
+    /// Create a new Digest
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that the hasher
+    /// produces a hash of length `HASH_LEN`.
+    unsafe fn new(hasher: T) -> Self {
+        Self(hasher)
+    }
+}
+
+impl<const HASH_LEN: usize, T> crate::crypto::Digest<HASH_LEN> for Digest<HASH_LEN, T>
+where
+    T: digest::Update + digest::FixedOutput + Clone,
+{
+    fn update(&mut self, data: &[u8]) -> Result<(), Error> {
+        digest::Update::update(&mut self.0, data);
+
+        Ok(())
+    }
+
+    fn finish_current(&mut self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), Error> {
+        let clone = self.clone();
+        clone.finish(hash)
+    }
+
+    fn finish(self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), Error> {
+        let output = digest::FixedOutput::finalize_fixed(self.0);
+        hash.access_mut().copy_from_slice(output.as_slice());
+
+        Ok(())
+    }
+}
+
+/// A HKDF implementation using SHA-256
+// TODO: Generalize for more than Sha256
+pub struct HkdfSha256(());
+
+impl crate::crypto::Kdf for HkdfSha256 {
+    fn expand<const IKM_LEN: usize, const KEY_LEN: usize>(
+        self,
+        salt: &[u8],
+        ikm: CryptoSensitiveRef<'_, IKM_LEN>,
+        info: &[u8],
+        key: &mut CryptoSensitive<KEY_LEN>,
+    ) -> Result<(), Error> {
+        let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), ikm.access());
+
+        hkdf.expand(info, key.access_mut()).map_err(|_| {
+            error!("HKDF expand failed - invalid input or output key length");
+
+            ErrorCode::InvalidData.into()
+        })
+    }
+}
+
+/// A PBKDF2 implementation using RustCrypto
+///
+/// The implementation is parameterized with the generic RustCrypto `digest` traits, so
+/// it can be used with any hasher implementing those traits (including hardware-accelerated ones).
+pub struct Pbkdf2<T>(PhantomData<T>);
+
+impl<T> Pbkdf2<T> {
+    /// Create a new PBKDF2 instance
+    fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<T> crate::crypto::PbKdf for Pbkdf2<T>
+where
+    T: digest::KeyInit + digest::Update + digest::FixedOutput + Clone + Sync,
+{
+    fn derive<const PASS_LEN: usize, const KEY_LEN: usize>(
+        self,
+        pass: CryptoSensitiveRef<'_, PASS_LEN>,
+        iter: usize,
+        salt: &[u8],
+        key: &mut CryptoSensitive<KEY_LEN>,
+    ) -> Result<(), Error> {
+        pbkdf2::pbkdf2::<T>(pass.access(), salt, iter as u32, key.access_mut()).map_err(|_| {
+            error!("PBKDF2 derive failed - invalid output key length");
+
+            ErrorCode::InvalidData.into()
+        })
+    }
+}
+
+/// An AEAD-CCM implementation using RustCrypto
+///
+/// The implementation is parameterized with the generic RustCrypto `cipher` traits, so
+/// it can be used with any cipher implementing those traits (including hardware-accelerated ones).
+pub struct AeadCcm<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize, C, M, N>(
+    PhantomData<(C, M, N)>,
+);
+
+impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize, C, M, N>
+    AeadCcm<KEY_LEN, NONCE_LEN, TAG_LEN, C, M, N>
+{
+    /// Create a new AEAD-CCM instance
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that the
+    /// generic parameters C, M, and N correspond to the KEY_LEN, NONCE_LEN,
+    /// and TAG_LEN const generics.
+    const unsafe fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize, C, M, N>
+    crate::crypto::Aead<KEY_LEN, NONCE_LEN> for AeadCcm<KEY_LEN, NONCE_LEN, TAG_LEN, C, M, N>
+where
+    C: cipher::BlockCipher
+        + cipher::BlockSizeUser<BlockSize = ccm::consts::U16 /* TODO */>
+        + cipher::BlockEncrypt
+        + cipher::KeyInit,
+    M: ArrayLength<u8> + TagSize,
+    N: ArrayLength<u8> + NonceSize,
+{
+    fn encrypt_in_place<'a>(
+        &mut self,
+        key: CryptoSensitiveRef<'_, KEY_LEN>,
+        nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
+        aad: &[u8],
+        data: &'a mut [u8],
+        data_len: usize,
+    ) -> Result<&'a [u8], Error> {
+        use ccm::{AeadInPlace, KeyInit};
+
+        let cipher = Ccm::<C, M, N>::new(GenericArray::from_slice(key.access()));
+
+        let mut buffer = SliceBuffer::new(data, data_len);
+        cipher
+            .encrypt_in_place(GenericArray::from_slice(nonce.access()), aad, &mut buffer)
+            .map_err(|_| ErrorCode::BufferTooSmall)?;
+
+        let len = buffer.len();
+
+        Ok(&data[..len])
+    }
+
+    fn decrypt_in_place<'a>(
+        &mut self,
+        key: CryptoSensitiveRef<'_, KEY_LEN>,
+        nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
+        aad: &[u8],
+        data: &'a mut [u8],
+    ) -> Result<&'a [u8], Error> {
+        use ccm::{AeadInPlace, KeyInit};
+
+        let cipher = Ccm::<C, M, N>::new(GenericArray::from_slice(key.access()));
+
+        let mut buffer = SliceBuffer::new(data, data.len());
+        cipher
+            .decrypt_in_place(GenericArray::from_slice(nonce.access()), aad, &mut buffer)
+            .map_err(|_| ErrorCode::BufferTooSmall)?;
+
+        let len = buffer.len();
+
+        Ok(&data[..len])
+    }
+}
+
+/// An elliptic-curve based public key implementation using RustCrypto
+///
+/// The implementation is parameterized with the generic RustCrypto `elliptic_curve` traits, so
+/// it can be used with any curve implementing those traits (including hardware-accelerated ones).
+pub struct ECPublicKey<const KEY_LEN: usize, const SIGNATURE_LEN: usize, C: CurveArithmetic>(
+    PublicKey<C>,
+);
+
+impl<const KEY_LEN: usize, const SIGNATURE_LEN: usize, C> ECPublicKey<KEY_LEN, SIGNATURE_LEN, C>
+where
+    C: CurveArithmetic + PrimeCurve + DigestPrimitive,
+    AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C> + VerifyPrimitive<C>,
+    FieldBytesSize<C>: ModulusSize,
+    <FieldBytesSize<C> as Add>::Output: ArrayLength<u8>,
+    SignatureSize<C>: ArrayLength<u8>,
+{
+    /// Create a new EC public key from its canonical representation
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that
+    /// the curve `C` corresponds to the `KEY_LEN` and `SIGNATURE_LEN` const generics.
+    unsafe fn new(pub_key: CryptoSensitiveRef<'_, KEY_LEN>) -> Result<Self, Error> {
+        let encoded_point = EncodedPoint::<C>::from_bytes(pub_key.access()).map_err(|_| {
+            error!("PublicKey creation failed - invalid key format");
+
+            ErrorCode::InvalidData
+        })?;
+
+        PublicKey::<C>::from_encoded_point(&encoded_point)
+            .into_option()
+            .map(Self)
+            .ok_or_else(|| {
+                error!("PublicKey creation failed - invalid key format");
+
+                ErrorCode::InvalidData.into()
+            })
+    }
+}
+
+impl<const KEY_LEN: usize, const SIGNATURE_LEN: usize, C>
+    crate::crypto::PublicKey<'_, KEY_LEN, SIGNATURE_LEN> for ECPublicKey<KEY_LEN, SIGNATURE_LEN, C>
+where
+    C: CurveArithmetic + PrimeCurve + DigestPrimitive,
+    AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C> + VerifyPrimitive<C>,
+    FieldBytesSize<C>: ModulusSize,
+    <FieldBytesSize<C> as Add>::Output: ArrayLength<u8>,
+    SignatureSize<C>: ArrayLength<u8>,
+{
+    fn verify(
+        &self,
+        data: &[u8],
+        signature: CryptoSensitiveRef<'_, SIGNATURE_LEN>,
+    ) -> Result<bool, Error> {
+        let verifying_key = VerifyingKey::<C>::from_affine(*self.0.as_affine()).map_err(|_| {
+            error!("VerifyingKey creation failed - invalid key format");
+
+            ErrorCode::InvalidData
+        })?;
+
+        let signature = Signature::<C>::from_slice(signature.access()).map_err(|_| {
+            error!("Signature creation failed - invalid format");
+
+            ErrorCode::InvalidData
+        })?;
+
+        Ok(ecdsa::signature::Verifier::verify(&verifying_key, data, &signature).is_ok())
+    }
+
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), Error> {
+        let point = self.0.as_affine().to_encoded_point(false);
+        let slice = point.as_bytes();
+
+        assert_eq!(slice.len(), KEY_LEN);
+        key.access_mut().copy_from_slice(slice);
+
+        Ok(())
+    }
+}
+
+/// An elliptic-curve based secret key implementation using RustCrypto
+///
+/// The implementation is parameterized with the generic RustCrypto `elliptic_curve` traits, so
+/// it can be used with any curve implementing those traits (including hardware-accelerated ones).
+pub struct ECSecretKey<
+    const KEY_LEN: usize,
+    const PUB_KEY_LEN: usize,
+    const SIGNATURE_LEN: usize,
+    const SHARED_SECRET_LEN: usize,
+    C: CurveArithmetic,
+>(SecretKey<C>);
+
+impl<
+        const KEY_LEN: usize,
+        const PUB_KEY_LEN: usize,
+        const SIGNATURE_LEN: usize,
+        const SHARED_SECRET_LEN: usize,
+        C,
+    > ECSecretKey<KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN, C>
+where
+    C: CurveArithmetic + PrimeCurve + DigestPrimitive,
+    AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C> + VerifyPrimitive<C>,
+    Scalar<C>: SignPrimitive<C>,
+    FieldBytesSize<C>: ModulusSize,
+    <FieldBytesSize<C> as Add>::Output: ArrayLength<u8>,
+    SignatureSize<C>: ArrayLength<u8>,
+    der::MaxSize<C>: ArrayLength<u8>,
+    <FieldBytesSize<C> as Add>::Output: Add<der::MaxOverhead> + ArrayLength<u8>,
+{
+    /// Create a new EC secret key from its canonical representation
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that
+    /// the curve `C` corresponds to the `KEY_LEN`, `PUB_KEY_LEN`,
+    /// `SIGNATURE_LEN`, and `SHARED_SECRET_LEN` const generics.
+    unsafe fn new(secret_key: CryptoSensitiveRef<'_, KEY_LEN>) -> Result<Self, Error> {
+        SecretKey::<C>::from_slice(secret_key.access())
+            .map(Self)
+            .map_err(|_| {
+                error!("SecretKey creation failed - invalid key format");
+
+                ErrorCode::InvalidData.into()
+            })
+    }
+
+    /// Create a new random EC secret key
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that
+    /// the curve `C` corresponds to the `KEY_LEN`, `PUB_KEY_LEN`,
+    /// `SIGNATURE_LEN`, and `SHARED_SECRET_LEN` const generics.
+    unsafe fn new_random<R: CryptoRngCore>(rng: &mut R) -> Self {
+        Self(SecretKey::<C>::random(rng))
+    }
+}
+
+impl<
+        'a,
+        const KEY_LEN: usize,
+        const PUB_KEY_LEN: usize,
+        const SIGNATURE_LEN: usize,
+        const SHARED_SECRET_LEN: usize,
+        C,
+    > crate::crypto::SigningSecretKey<'a, PUB_KEY_LEN, SIGNATURE_LEN>
+    for ECSecretKey<KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN, C>
+where
+    C: CurveArithmetic + PrimeCurve + DigestPrimitive,
+    AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C> + VerifyPrimitive<C>,
+    Scalar<C>: SignPrimitive<C>,
+    FieldBytesSize<C>: ModulusSize,
+    <FieldBytesSize<C> as Add>::Output: ArrayLength<u8>,
+    SignatureSize<C>: ArrayLength<u8>,
+    der::MaxSize<C>: ArrayLength<u8>,
+    <FieldBytesSize<C> as Add>::Output: Add<der::MaxOverhead> + ArrayLength<u8>,
+{
+    type PublicKey<'s>
+        = ECPublicKey<PUB_KEY_LEN, SIGNATURE_LEN, C>
+    where
+        Self: 's;
+
+    fn csr<'s>(&self, buf: &'s mut [u8]) -> Result<&'s [u8], Error> {
+        fn attr_type(value: &str) -> AttributeType {
+            unwrap!(
+                AttributeType::new(value),
+                "x509 AttributeType creation failed"
+            )
+        }
+
+        let subject = RdnSequence(vec![x509_cert::name::RelativeDistinguishedName(unwrap!(
+            vec![x509_cert::attr::AttributeTypeAndValue {
+                // Organization name: http://www.oid-info.com/get/2.5.4.10
+                oid: attr_type("2.5.4.10"),
+                value: unwrap!(
+                    x509_cert::attr::AttributeValue::new(
+                        x509_cert::der::Tag::Utf8String,
+                        "CSR".as_bytes(),
+                    ),
+                    "x509 AttrValue creation failed"
+                ),
+            }]
+            .try_into(),
+            "x509 AttrValue creation failed"
+        ))]);
+
+        let mut public_key = MaybeUninit::uninit();
+        let public_key = public_key.init_with(CryptoSensitive::<PUB_KEY_LEN>::init()); // TODO MEDIUM BUFFER
+        crate::crypto::PublicKey::write_canon(&self.pub_key()?, public_key)?;
+
+        let info = x509_cert::request::CertReqInfo {
+            version: x509_cert::request::Version::V1,
+            subject,
+            public_key: SubjectPublicKeyInfoOwned {
+                algorithm: AlgorithmIdentifier {
+                    // ecPublicKey(1) http://www.oid-info.com/get/1.2.840.10045.2.1
+                    oid: attr_type("1.2.840.10045.2.1"),
+                    parameters: Some(unwrap!(
+                        Any::new(
+                            x509_cert::der::Tag::ObjectIdentifier,
+                            // prime256v1 http://www.oid-info.com/get/1.2.840.10045.3.1.7
+                            attr_type("1.2.840.10045.3.1.7").as_bytes(),
+                        ),
+                        "x509 OID creation failed"
+                    )),
+                },
+                subject_public_key: unwrap!(
+                    BitString::from_bytes(public_key.access()),
+                    "x509 BitString creation failed"
+                ),
+            },
+            attributes: Default::default(),
+        };
+
+        let mut encoded_info = SliceBuffer::new(buf, 0);
+        info.encode(&mut encoded_info)
+            .map_err(|_| ErrorCode::BufferTooSmall)?;
+
+        // Can't use self.sign_msg as the signature has to be in DER format
+        let signing_key = SigningKey::<C>::from(&self.0);
+        let signature: Signature<C> =
+            ecdsa::signature::Signer::sign(&signing_key, encoded_info.as_ref());
+
+        let signature_der = signature.to_der();
+        let signature_der_bytes = signature_der.as_bytes();
+
+        let csr = CertReq {
+            info,
+            algorithm: AlgorithmIdentifier {
+                // ecdsa-with-SHA256(2) http://www.oid-info.com/get/1.2.840.10045.4.3.2
+                oid: attr_type("1.2.840.10045.4.3.2"),
+                parameters: None,
+            },
+            signature: unwrap!(
+                BitString::from_bytes(signature_der_bytes),
+                "x509 BitString creation failed"
+            ),
+        };
+
+        let csr_data = csr
+            .encode_to_slice(buf)
+            .map_err(|_| ErrorCode::BufferTooSmall)?;
+
+        Ok(csr_data)
+    }
+
+    fn pub_key(&self) -> Result<Self::PublicKey<'a>, Error> {
+        Ok(ECPublicKey(self.0.public_key()))
+    }
+
+    fn sign(
+        &self,
+        data: &[u8],
+        signature: &mut CryptoSensitive<SIGNATURE_LEN>,
+    ) -> Result<(), Error> {
+        use ecdsa::signature::Signer;
+
+        let signing_key = SigningKey::<C>::from(&self.0);
+        let sign: Signature<C> = signing_key.sign(data);
+        let sign_bytes = sign.to_bytes();
+
+        assert_eq!(sign_bytes.len(), SIGNATURE_LEN);
+        signature.access_mut().copy_from_slice(&sign_bytes);
+
+        Ok(())
+    }
+}
+
+impl<
+        'a,
+        const KEY_LEN: usize,
+        const PUB_KEY_LEN: usize,
+        const SIGNATURE_LEN: usize,
+        const SHARED_SECRET_LEN: usize,
+        C,
+    > crate::crypto::SecretKey<'a, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
+    for ECSecretKey<KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN, C>
+where
+    C: CurveArithmetic + PrimeCurve + DigestPrimitive,
+    Scalar<C>: SignPrimitive<C>,
+    SignatureSize<C>: ArrayLength<u8>,
+    AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C> + VerifyPrimitive<C>,
+    FieldBytesSize<C>: ModulusSize,
+    <FieldBytesSize<C> as Add>::Output: ArrayLength<u8>,
+    der::MaxSize<C>: ArrayLength<u8>,
+    <FieldBytesSize<C> as Add>::Output: Add<der::MaxOverhead> + ArrayLength<u8>,
+{
+    fn derive_shared_secret(
+        &self,
+        peer_pub_key: &Self::PublicKey<'_>,
+        shared_secret: &mut CryptoSensitive<SHARED_SECRET_LEN>,
+    ) -> Result<(), Error> {
+        let secret = elliptic_curve::ecdh::diffie_hellman(
+            self.0.to_nonzero_scalar(),
+            peer_pub_key.0.as_affine(),
+        );
+
+        let bytes = secret.raw_secret_bytes();
+        let slice = bytes.as_slice();
+
+        assert_eq!(slice.len(), crate::crypto::PKC_SHARED_SECRET_LEN);
+        shared_secret.access_mut().copy_from_slice(slice);
+
+        Ok(())
+    }
+
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), Error> {
+        let bytes = self.0.to_bytes();
+        let slice = bytes.as_slice();
+
+        assert_eq!(slice.len(), KEY_LEN);
+        key.access_mut().copy_from_slice(slice);
+
+        Ok(())
+    }
+}
+
+/// An elliptic-curve based scalar implementation using RustCrypto
+///
+/// The implementation is parameterized with the generic RustCrypto `elliptic_curve` traits, so
+/// it can be used with any curve implementing those traits (including hardware-accelerated ones).
+pub struct ECScalar<const LEN: usize, C: CurveArithmetic>(Scalar<C>);
+
+impl<const LEN: usize, C> ECScalar<LEN, C>
+where
+    C: CurveArithmetic,
+    Scalar<C>: PrimeField + Mul<Output = C::Scalar> + Clone,
+{
+    /// Create a new EC scalar from its canonical representation
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that
+    /// the curve `C` corresponds to the `LEN` const generic (i.e. its scalar length in SEC-1 representation is exactly `LEN` bytes).
+    unsafe fn new(scalar: CryptoSensitiveRef<'_, LEN>) -> Result<Self, Error> {
+        Scalar::<C>::from_repr(GenericArray::from_slice(scalar.access()).clone())
+            .into_option()
+            .map(Self)
+            .ok_or_else(|| {
+                error!("EC Scalar creation failed - invalid format");
+
+                ErrorCode::InvalidData.into()
+            })
+    }
+
+    /// Create a new random EC scalar
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that
+    /// the curve `C` corresponds to the `LEN` const generic (i.e. its scalar length in SEC-1 representation is exactly `LEN` bytes).
+    unsafe fn new_random<R: CryptoRngCore>(rng: &mut R) -> Self {
+        Self(Scalar::<C>::random(rng))
+    }
+}
+
+impl<'a, const LEN: usize, C> crate::crypto::EcScalar<'a, LEN> for ECScalar<LEN, C>
+where
+    C: CurveArithmetic,
+    Scalar<C>: Mul<Output = C::Scalar> + Clone,
+{
+    fn mul(&self, other: &Self) -> Result<Self, Error> {
+        Ok(Self(self.0.mul(other.0)))
+    }
+
+    fn write_canon(&self, scalar: &mut CryptoSensitive<LEN>) -> Result<(), Error> {
+        scalar
+            .access_mut()
+            .copy_from_slice(self.0.to_repr().as_slice());
+
+        Ok(())
+    }
+}
+
+/// An elliptic-curve based point implementation using RustCrypto
+///
+/// The implementation is parameterized with the generic RustCrypto `elliptic_curve` traits, so
+/// it can be used with any curve implementing those traits (including hardware-accelerated ones).
+pub struct ECPoint<const LEN: usize, const SCALAR_LEN: usize, C: CurveArithmetic>(
+    ProjectivePoint<C>,
+);
+
+impl<const LEN: usize, const SCALAR_LEN: usize, C> ECPoint<LEN, SCALAR_LEN, C>
+where
+    C: CurveArithmetic + PrimeCurveParams,
+    FieldBytesSize<C>: ModulusSize,
+    Scalar<C>: Mul<Output = C::Scalar> + Clone,
+    AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C>,
+    ProjectivePoint<C>: Neg<Output = C::ProjectivePoint>
+        + Mul<C::Scalar, Output = C::ProjectivePoint>
+        + Add<Output = C::ProjectivePoint>
+        + Clone,
+{
+    /// Create a new EC point from its canonical representation
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that
+    /// the curve `C` corresponds to the `LEN` and `SCALAR_LEN` const generics.
+    /// I.e. the point length in SEC-1 representation is exactly `LEN` bytes,
+    /// and the scalar length in SEC-1 representation is exactly `SCALAR_LEN` bytes.
+    unsafe fn new(point: CryptoSensitiveRef<'_, LEN>) -> Result<Self, Error> {
+        let affine_point = AffinePoint::<C>::from_encoded_point(
+            &EncodedPoint::<C>::from_bytes(point.access()).map_err(|_| {
+                error!("EC Point creation failed - invalid format");
+
+                ErrorCode::InvalidData
+            })?,
+        )
+        .into_option()
+        .ok_or_else(|| {
+            error!("EC Point creation failed - invalid format");
+
+            ErrorCode::InvalidData
+        })?;
+
+        Ok(Self(affine_point.into()))
+    }
+
+    /// Create the EC generator point
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that
+    /// the curve `C` corresponds to the `LEN` and `SCALAR_LEN` const generics.
+    /// I.e. the point length in SEC-1 representation is exactly `LEN` bytes,
+    /// and the scalar length in SEC-1 representation is exactly `SCALAR_LEN` bytes.
+    unsafe fn generator() -> Self {
+        Self(AffinePoint::<C>::GENERATOR.into())
+    }
+}
+
+impl<'a, const LEN: usize, const SCALAR_LEN: usize, C> crate::crypto::EcPoint<'a, LEN, SCALAR_LEN>
+    for ECPoint<LEN, SCALAR_LEN, C>
+where
+    C: CurveArithmetic,
+    FieldBytesSize<C>: ModulusSize,
+    Scalar<C>: Mul<Output = C::Scalar> + Clone,
+    AffinePoint<C>: FromEncodedPoint<C> + ToEncodedPoint<C>,
+    ProjectivePoint<C>: Neg<Output = C::ProjectivePoint>
+        + Mul<C::Scalar, Output = C::ProjectivePoint>
+        + Add<Output = C::ProjectivePoint>
+        + Clone,
+{
+    type Scalar<'s> = ECScalar<SCALAR_LEN, C>;
+
+    fn neg(&self) -> Result<Self, Error> {
+        Ok(Self(self.0.neg()))
+    }
+
+    fn mul(&self, scalar: &Self::Scalar<'a>) -> Result<Self, Error> {
+        Ok(Self(self.0.mul(scalar.0)))
+    }
+
+    fn add_mul(
+        &self,
+        s1: &Self::Scalar<'a>,
+        p2: &Self,
+        s2: &Self::Scalar<'a>,
+    ) -> Result<Self, Error> {
+        let a = self.0.mul(s1.0);
+        let b = p2.0.mul(s2.0);
+        Ok(Self(a.add(b)))
+    }
+
+    fn write_canon(&self, point: &mut CryptoSensitive<LEN>) -> Result<(), Error> {
+        let encoded_point = self.0.to_affine().to_encoded_point(false);
+        let slice = encoded_point.as_bytes();
+
+        assert_eq!(slice.len(), LEN);
+        point.access_mut().copy_from_slice(slice);
+
+        Ok(())
+    }
+}
+
+/// A helper buffer for the AEAD cipher implementing the `ccm::aead::Buffer` trait
+///
+/// The helper is also used in the X509 CSR generation to provide a buffer implementing
+/// the `x509_cert::der::Writer` trait.
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+struct SliceBuffer<'a> {
+    slice: &'a mut [u8],
+    len: usize,
+}
+
+impl<'a> SliceBuffer<'a> {
+    const fn new(slice: &'a mut [u8], len: usize) -> Self {
+        Self { slice, len }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+}
+
+impl AsMut<[u8]> for SliceBuffer<'_> {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.slice[..self.len]
+    }
+}
+
+impl AsRef<[u8]> for SliceBuffer<'_> {
+    fn as_ref(&self) -> &[u8] {
+        &self.slice[..self.len]
+    }
+}
+
+impl ccm::aead::Buffer for SliceBuffer<'_> {
+    fn extend_from_slice(&mut self, slice: &[u8]) -> ccm::aead::Result<()> {
+        if self.len + slice.len() > self.slice.len() {
+            error!("Buffer overflow");
+            return Err(ccm::aead::Error);
+        }
+
+        self.slice[self.len..][..slice.len()].copy_from_slice(slice);
+        self.len += slice.len();
+
+        Ok(())
+    }
+
+    fn truncate(&mut self, len: usize) {
+        self.len = len;
+    }
+}
+
+impl Writer for SliceBuffer<'_> {
+    fn write(&mut self, slice: &[u8]) -> x509_cert::der::Result<()> {
+        if self.len + slice.len() > self.slice.len() {
+            error!("Buffer overflow");
+            Err(x509_cert::der::ErrorKind::Failed)?;
+        }
+
+        self.slice[self.len..][..slice.len()].copy_from_slice(slice);
+        self.len += slice.len();
+
+        Ok(())
+    }
+}

@@ -21,7 +21,9 @@ use core::mem::MaybeUninit;
 
 use num_derive::FromPrimitive;
 
-use crate::error::*;
+use crate::crypto::Crypto;
+use crate::dm::ChangeNotify;
+use crate::error::{Error, ErrorCode};
 use crate::respond::ExchangeHandler;
 use crate::tlv::{FromTLV, ToTLV};
 use crate::transport::exchange::{Exchange, MessageMeta};
@@ -29,12 +31,11 @@ use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::{ReadBuf, WriteBuf};
 
 use case::Case;
-use pake::Pake;
+use pase::Pase;
 
 pub mod busy;
 pub mod case;
-pub mod crypto;
-pub mod pake;
+pub mod pase;
 
 /* Interaction Model ID as per the Matter Spec */
 pub const PROTO_ID_SECURE_CHANNEL: u16 = 0x00;
@@ -221,12 +222,15 @@ impl<'a> StatusReport<'a> {
 }
 
 /// Handle messages related to the Secure Channel
-pub struct SecureChannel(());
+pub struct SecureChannel<'a, C> {
+    crypto: C,
+    notify: &'a dyn ChangeNotify,
+}
 
-impl SecureChannel {
+impl<'a, C: Crypto> SecureChannel<'a, C> {
     #[inline(always)]
-    pub const fn new() -> Self {
-        Self(())
+    pub const fn new(crypto: C, notify: &'a dyn ChangeNotify) -> Self {
+        Self { crypto, notify }
     }
 
     pub async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
@@ -241,12 +245,16 @@ impl SecureChannel {
 
         match meta.opcode()? {
             OpCode::PBKDFParamRequest => {
-                let mut pake = MaybeUninit::uninit(); // TODO LARGE BUFFER
-                pake.init_with(Pake::init()).handle(exchange).await
+                let mut pase = MaybeUninit::uninit(); // TODO LARGE BUFFER
+                pase.init_with(Pase::init(&self.crypto, self.notify))
+                    .handle(exchange)
+                    .await
             }
             OpCode::CASESigma1 => {
                 let mut case = MaybeUninit::uninit(); // TODO LARGE BUFFER
-                case.init_with(Case::init()).handle(exchange).await
+                case.init_with(Case::init(&self.crypto))
+                    .handle(exchange)
+                    .await
             }
             opcode => {
                 error!("Invalid opcode: {:?}", opcode);
@@ -256,13 +264,7 @@ impl SecureChannel {
     }
 }
 
-impl Default for SecureChannel {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ExchangeHandler for SecureChannel {
+impl<C: Crypto> ExchangeHandler for SecureChannel<'_, C> {
     fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
         SecureChannel::handle(self, exchange)
     }

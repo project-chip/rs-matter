@@ -25,6 +25,7 @@ use crate::acl::Accessor;
 use crate::error::{Error, ErrorCode};
 use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
 use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
+use crate::transport::TxPayloadState;
 use crate::utils::epoch::Epoch;
 use crate::utils::storage::WriteBuf;
 use crate::Matter;
@@ -35,7 +36,7 @@ use super::packet::PacketHdr;
 use super::plain_hdr::PlainHdr;
 use super::proto_hdr::ProtoHdr;
 use super::session::Session;
-use super::{Packet, PacketAccess, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE};
+use super::{PacketAccess, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE};
 
 /// Minimum buffer which should be allocated by user code that wants to pull RX messages via `Exchange::recv_into`
 // TODO: Revisit with large packets
@@ -253,7 +254,8 @@ impl ExchangeId {
             let exchange = unwrap!(sess.exchanges[exch_index].as_mut());
 
             let mut jitter_rand = [0; 1];
-            matter.rand()(&mut jitter_rand);
+            // TODO XXX FIXME matter.rand()(&mut jitter_rand);
+            jitter_rand[0] = 100;
 
             Ok(exchange.retrans_delay_ms(jitter_rand[0]))
         })
@@ -638,7 +640,8 @@ impl TxMessage<'_> {
         M: Into<MessageMeta>,
     {
         if payload_start > payload_end
-            || payload_end > MAX_TX_BUF_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAIL_RESERVE
+            || payload_end - payload_start
+                > MAX_TX_BUF_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAIL_RESERVE
         {
             Err(ErrorCode::Invalid)?;
         }
@@ -669,51 +672,14 @@ impl TxMessage<'_> {
         )?;
 
         self.packet.peer = peer;
-
-        debug!(
-            "\n<<SND {}\n      => {}",
-            Packet::<0>::display(&self.packet.peer, &self.packet.header),
-            if retransmission {
-                "Re-sending"
-            } else {
-                "Sending"
-            },
-        );
-
-        #[cfg(feature = "debug-tlv-payload")]
-        debug!(
-            "{}",
-            Packet::<0>::display_payload(
-                &self.packet.header.proto,
-                &self.packet.buf
-                    [PacketHdr::HDR_RESERVE + payload_start..PacketHdr::HDR_RESERVE + payload_end]
-            )
-        );
-
-        #[cfg(not(feature = "debug-tlv-payload"))]
-        trace!(
-            "{}",
-            Packet::<0>::display_payload(
-                &self.packet.header.proto,
-                &self.packet.buf
-                    [PacketHdr::HDR_RESERVE + payload_start..PacketHdr::HDR_RESERVE + payload_end]
-            )
-        );
-
-        let packet = &mut *self.packet;
-
-        let mut writebuf = WriteBuf::new_with(
-            &mut packet.buf,
-            PacketHdr::HDR_RESERVE + payload_start,
-            PacketHdr::HDR_RESERVE + payload_end,
-        );
-        session.encode(&packet.header, &mut writebuf)?;
-
-        let encoded_payload_start = writebuf.get_start();
-        let encoded_payload_end = writebuf.get_tail();
-
-        self.packet.payload_start = encoded_payload_start;
-        self.packet.buf.truncate(encoded_payload_end);
+        self.packet.payload_start = PacketHdr::HDR_RESERVE + payload_start;
+        self.packet
+            .buf
+            .truncate(PacketHdr::HDR_RESERVE + payload_end);
+        self.packet.tx_info.payload_state = TxPayloadState::NotEncoded {
+            session_id: session.id,
+        };
+        self.packet.tx_info.retransmission = retransmission;
         self.packet.clear_on_drop(false);
 
         Ok(())

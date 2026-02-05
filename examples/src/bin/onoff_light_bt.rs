@@ -37,14 +37,17 @@ use std::net::UdpSocket;
 use embassy_futures::select::{select, select4};
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
 use log::{info, warn};
 
+use rand::RngCore;
+use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, NetworkType, Networks};
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::wifi_diag::WifiDiag;
-use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
@@ -59,7 +62,7 @@ use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
-use rs_matter::sc::pake::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::network::btp::bluez::BluezGattPeripheral;
 use rs_matter::transport::network::btp::{Btp, BtpContext};
 use rs_matter::transport::network::wifi::nm::NetMgrCtl;
@@ -132,9 +135,14 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     // Create the subscriptions
     let subscriptions = DefaultSubscriptions::new();
 
+    // Create the crypto instance
+    let crypto = default_crypto::<NoopRawMutex, _>(rand::thread_rng(), DAC_PRIVKEY);
+
+    let mut rand = crypto.rand()?;
+
     // Our on-off cluster
     let on_off_handler = on_off::OnOffHandler::new_standalone(
-        Dataver::new_rand(matter.rand()),
+        Dataver::new_rand(&mut rand),
         1,
         TestOnOffDeviceLogic::new(true),
     );
@@ -150,9 +158,10 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     // Create the Data Model instance
     let dm = DataModel::new(
         &matter,
+        &crypto,
         &buffers,
         &subscriptions,
-        dm_handler(&matter, &on_off_handler, &net_ctl, &networks),
+        dm_handler(rand, &on_off_handler, &net_ctl, &networks),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -175,7 +184,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     let mut persist = pin!(psm.run(&path, &matter, Some(&networks)));
 
     // Create and run the mDNS responder
-    let mut mdns = pin!(mdns::run_mdns(&matter));
+    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, &dm));
 
     if !matter.is_commissioned() {
         // Not commissioned yet, start commissioning first
@@ -186,13 +195,13 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
 
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS)?;
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
 
         // The BTP transport impl
         let btp = Btp::new(BluezGattPeripheral::new(None, connection), &BTP_CONTEXT);
         let mut bluetooth = pin!(btp.run("MT", &TEST_DEV_DET, TEST_DEV_COMM.discriminator));
 
-        let mut transport = pin!(matter.run(&btp, &btp));
+        let mut transport = pin!(matter.run(&crypto, &btp, &btp));
         let mut wifi_prov_task = pin!(async {
             NetCtlState::wait_prov_ready(&net_ctl_state, &btp).await;
             Ok(())
@@ -216,7 +225,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     let udp = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
     // Run the Matter transport
-    let mut transport = pin!(matter.run_transport(&udp, &udp));
+    let mut transport = pin!(matter.run_transport(&crypto, &udp, &udp));
 
     // Combine all async tasks in a single one
     let all = select4(
@@ -249,7 +258,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks, N>(
-    matter: &'a Matter<'a>,
+    mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     net_ctl: &'a N,
     networks: &'a dyn Networks,
@@ -264,14 +273,14 @@ where
             &UnixNetifs,
             net_ctl,
             networks,
-            matter.rand(),
+            rand,
             endpoints::with_sys(
                 &true,
-                matter.rand(),
+                rand,
                 EmptyHandler
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),

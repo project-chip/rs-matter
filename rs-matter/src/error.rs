@@ -47,8 +47,6 @@ pub enum ErrorCode {
     ResourceExhausted,
     Busy,
     DataVersionMismatch,
-    Crypto,
-    TLSStack,
     BtpError,
     MdnsError,
     NoCommand,
@@ -178,76 +176,6 @@ impl From<std::io::Error> for Error {
 impl<T> From<std::sync::PoisonError<T>> for Error {
     fn from(_e: std::sync::PoisonError<T>) -> Self {
         Self::new(ErrorCode::RwLock)
-    }
-}
-
-#[cfg(feature = "openssl")]
-impl From<openssl::error::ErrorStack> for Error {
-    fn from(e: openssl::error::ErrorStack) -> Self {
-        error!("Error in OpenSSL: {}", display2format!(e));
-        Self::new(ErrorCode::TLSStack)
-    }
-}
-
-#[cfg(all(feature = "mbedtls", not(target_os = "espidf")))]
-impl From<mbedtls::Error> for Error {
-    fn from(e: mbedtls::Error) -> Self {
-        error!("Error in MbedTLS: {}", debug2format!(e));
-        Self::new(ErrorCode::TLSStack)
-    }
-}
-
-#[cfg(feature = "rustcrypto")]
-impl From<ccm::aead::Error> for Error {
-    fn from(e: ccm::aead::Error) -> Self {
-        error!("Error in Crypto (AEAD): {}", display2format!(e));
-        Self::new(ErrorCode::Crypto)
-    }
-}
-
-#[cfg(feature = "rustcrypto")]
-impl From<elliptic_curve::Error> for Error {
-    fn from(e: elliptic_curve::Error) -> Self {
-        error!("Error in Crypto (EC): {}", display2format!(e));
-        Self::new(ErrorCode::Crypto)
-    }
-}
-
-#[cfg(feature = "rustcrypto")]
-impl From<x509_cert::der::Error> for Error {
-    fn from(e: x509_cert::der::Error) -> Self {
-        error!("Error in Crypto (x509_DER): {}", display2format!(e));
-        Self::new(ErrorCode::Crypto)
-    }
-}
-
-#[cfg(feature = "rustcrypto")]
-impl From<p256::ecdsa::Error> for Error {
-    fn from(e: p256::ecdsa::Error) -> Self {
-        error!("Error in Crypto (p256_ECDSA): {}", display2format!(e));
-        Self::new(ErrorCode::Crypto)
-    }
-}
-
-#[cfg(feature = "rustcrypto")]
-impl From<aes::cipher::InvalidLength> for Error {
-    fn from(e: aes::cipher::InvalidLength) -> Self {
-        error!(
-            "Error in Crypto (AES_Cpipher_InvalidLength): {}",
-            display2format!(e)
-        );
-        Self::new(ErrorCode::Crypto)
-    }
-}
-
-#[cfg(feature = "rustcrypto")]
-impl From<sec1::Error> for Error {
-    fn from(e: sec1::Error) -> Self {
-        error!(
-            "Error in Crypto (AES_Cpipher_InvalidLength): {}",
-            display2format!(e)
-        );
-        Self::new(ErrorCode::Crypto)
     }
 }
 

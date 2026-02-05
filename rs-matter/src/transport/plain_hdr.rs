@@ -98,6 +98,22 @@ pub struct PlainHdr {
 }
 
 impl PlainHdr {
+    pub const MAX_LEN: usize =
+        // [optional] msg len only for TCP
+        2
+        // flags
+        + 1
+        // security flags
+        + 1
+        // session ID
+        + 2
+        // message ctr
+        + 4
+        // [optional] source node ID
+        + 8
+        // [optional] destination node ID
+        + 8;
+
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
@@ -268,21 +284,4 @@ impl defmt::Format for PlainHdr {
             defmt::write!(f, ",GRP:{:x}", dst_group_nodeid);
         }
     }
-}
-
-pub const fn max_plain_hdr_len() -> usize {
-    // [optional] msg len only for TCP
-    2 +
-    // flags
-        1 +
-    // security flags
-        1 +
-    // session ID
-        2 +
-    // message ctr
-        4 +
-    // [optional] source node ID
-        8 +
-    // [optional] destination node ID
-        8
 }

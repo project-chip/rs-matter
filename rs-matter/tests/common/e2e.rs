@@ -25,7 +25,7 @@ use embassy_sync::{
 };
 
 use rs_matter::acl::{AclEntry, AuthMode};
-use rs_matter::crypto::KeyPair;
+use rs_matter::crypto::{test_only_crypto, Crypto};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{AsyncHandler, AsyncMetadata, Privilege};
@@ -45,11 +45,20 @@ pub mod im;
 pub mod test;
 pub mod tlv;
 
-// For backwards compatibility
-pub type ImEngine = E2eRunner;
+pub const TEST_PEER_ID: u64 = 445566;
 
-// For backwards compatibility
-pub const IM_ENGINE_PEER_ID: u64 = E2eRunner::PEER_ID;
+const TEST_PEER_ADDR: Address =
+    Address::Udp(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)));
+
+/// Create a new runner with default category IDs.
+pub fn new_default_runner() -> E2eRunner<impl Crypto> {
+    new_runner(NocCatIds::default())
+}
+
+/// Create a new runner with the given category IDs.
+pub fn new_runner(cat_ids: NocCatIds) -> E2eRunner<impl Crypto> {
+    E2eRunner::new(test_only_crypto(), cat_ids)
+}
 
 /// A test runner for end-to-end tests.
 ///
@@ -60,33 +69,30 @@ pub const IM_ENGINE_PEER_ID: u64 = E2eRunner::PEER_ID;
 /// of a single exchange per test run.
 ///
 /// All transport-related state is reset between test runs.
-pub struct E2eRunner {
+pub struct E2eRunner<C> {
     pub matter: Matter<'static>,
     matter_client: Matter<'static>,
+    crypto: C,
     buffers: PooledBuffers<10, NoopRawMutex, IMBuffer>,
     subscriptions: Subscriptions<1>,
     cat_ids: NocCatIds,
 }
 
-impl E2eRunner {
-    const ADDR: Address = Address::Udp(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)));
+impl<C: Crypto> E2eRunner<C> {
+    const ADDR: Address = TEST_PEER_ADDR;
 
     /// The ID of the local Matter instance
-    pub const PEER_ID: u64 = 445566;
+    pub const PEER_ID: u64 = TEST_PEER_ID;
 
     /// The ID of the remote (tested) Matter instance
     pub const REMOTE_PEER_ID: u64 = 123456;
 
-    /// Create a new runner with default category IDs.
-    pub fn new_default() -> Self {
-        Self::new(NocCatIds::default())
-    }
-
     /// Create a new runner with the given category IDs.
-    pub fn new(cat_ids: NocCatIds) -> Self {
-        Self {
+    pub fn new(crypto: C, cat_ids: NocCatIds) -> E2eRunner<C> {
+        E2eRunner {
             matter: Self::new_matter(),
             matter_client: Self::new_matter(),
+            crypto,
             buffers: PooledBuffers::new(0),
             subscriptions: Subscriptions::new(),
             cat_ids,
@@ -98,6 +104,7 @@ impl E2eRunner {
     pub fn init(&self) -> Result<(), Error> {
         Self::init_matter(
             &self.matter,
+            &self.crypto,
             Self::REMOTE_PEER_ID,
             Self::PEER_ID,
             &self.cat_ids,
@@ -105,6 +112,7 @@ impl E2eRunner {
 
         Self::init_matter(
             &self.matter_client,
+            &self.crypto,
             Self::PEER_ID,
             Self::REMOTE_PEER_ID,
             &self.cat_ids,
@@ -163,18 +171,29 @@ impl E2eRunner {
 
         let matter_client = &self.matter_client;
 
+        let crypto = test_only_crypto();
+
         let responder = Responder::new(
             "Default",
-            DataModel::new(&self.matter, &self.buffers, &self.subscriptions, handler),
+            DataModel::new(
+                &self.matter,
+                &crypto,
+                &self.buffers,
+                &self.subscriptions,
+                handler,
+            ),
             &self.matter,
             0,
         );
 
         select3(
-            matter_client
-                .transport_mgr
-                .run(NetworkSendImpl(send_local), NetworkReceiveImpl(recv_local)),
+            matter_client.transport_mgr.run(
+                &crypto,
+                NetworkSendImpl(send_local),
+                NetworkReceiveImpl(recv_local),
+            ),
             self.matter.transport_mgr.run(
+                &crypto,
                 NetworkSendImpl(send_remote),
                 NetworkReceiveImpl(recv_remote),
             ),
@@ -191,9 +210,6 @@ impl E2eRunner {
         #[cfg(not(feature = "std"))]
         use rs_matter::utils::epoch::dummy_epoch as epoch;
 
-        #[cfg(feature = "std")]
-        use rs_matter::utils::rand::sys_rand as rand;
-
         #[cfg(not(feature = "std"))]
         use rs_matter::utils::rand::dummy_rand as rand;
 
@@ -202,14 +218,13 @@ impl E2eRunner {
             TEST_DEV_COMM,
             &TEST_DEV_ATT,
             epoch,
-            rand,
             MATTER_PORT,
         );
 
         matter
             .fabric_mgr
             .borrow_mut()
-            .add_with_post_init(KeyPair::new(matter.rand()).unwrap(), |_| Ok(()))
+            .add_with_post_init(|_| Ok(()))
             .unwrap();
 
         matter.initialize_transport_buffers().unwrap();
@@ -219,13 +234,14 @@ impl E2eRunner {
 
     fn init_matter(
         matter: &Matter,
+        crypto: impl Crypto,
         local_nodeid: u64,
         remote_nodeid: u64,
         cat_ids: &NocCatIds,
     ) -> Result<(), Error> {
         matter.transport_mgr.reset()?;
 
-        let mut session = ReservedSession::reserve_now(matter)?;
+        let mut session = ReservedSession::reserve_now(matter, crypto)?;
 
         session.update(
             local_nodeid,
@@ -282,6 +298,6 @@ impl<const N: usize> NetworkReceive for NetworkReceiveImpl<'_, N> {
 
         self.0.receive_done();
 
-        Ok((len, E2eRunner::ADDR))
+        Ok((len, TEST_PEER_ADDR))
     }
 }

@@ -15,58 +15,63 @@
  *    limitations under the License.
  */
 
-use crate::{
-    crypto::{self, SYMM_KEY_LEN_BYTES},
-    error::{Error, ErrorCode},
-    tlv::{FromTLV, ToTLV},
-    utils::init::{init, zeroed, Init},
-};
-
-type KeySetKey = [u8; SYMM_KEY_LEN_BYTES];
+use crate::crypto::{self, CanonAeadKey, CanonAeadKeyRef, Crypto, Kdf};
+use crate::error::{Error, ErrorCode};
+use crate::tlv::{FromTLV, ToTLV};
+use crate::utils::init::{init, Init};
 
 #[derive(Debug, Default, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct KeySet {
-    pub epoch_key: KeySetKey,
-    pub op_key: KeySetKey,
+    pub epoch_key: CanonAeadKey,
+    pub op_key: CanonAeadKey,
 }
 
 impl KeySet {
-    pub const fn new0() -> Self {
+    pub const fn new() -> Self {
         Self {
-            epoch_key: [0; SYMM_KEY_LEN_BYTES],
-            op_key: [0; SYMM_KEY_LEN_BYTES],
+            epoch_key: crypto::AEAD_KEY_ZEROED,
+            op_key: crypto::AEAD_KEY_ZEROED,
         }
     }
 
     pub fn init() -> impl Init<Self> {
         init!(Self {
-            epoch_key <- zeroed(),
-            op_key <- zeroed(),
+            epoch_key <- CanonAeadKey::init(),
+            op_key <- CanonAeadKey::init(),
         })
     }
 
-    pub fn new(epoch_key: &[u8], compressed_id: &[u8]) -> Result<Self, Error> {
-        let mut ks = KeySet::default();
-        KeySet::op_key_from_ipk(epoch_key, compressed_id, &mut ks.op_key)?;
-        ks.epoch_key.copy_from_slice(epoch_key);
-        Ok(ks)
-    }
-
-    fn op_key_from_ipk(ipk: &[u8], compressed_id: &[u8], opkey: &mut [u8]) -> Result<(), Error> {
-        const GRP_KEY_INFO: [u8; 13] = [
+    pub fn update<C: Crypto>(
+        &mut self,
+        crypto: C,
+        epoch_key: CanonAeadKeyRef<'_>,
+        compressed_fabric_id: &u64,
+    ) -> Result<(), Error> {
+        const GRP_KEY_INFO: &[u8] = &[
             0x47, 0x72, 0x6f, 0x75, 0x70, 0x4b, 0x65, 0x79, 0x20, 0x76, 0x31, 0x2e, 0x30,
         ];
 
-        crypto::hkdf_sha256(compressed_id, ipk, &GRP_KEY_INFO, opkey)
-            .map_err(|_| ErrorCode::InvalidData.into())
+        crypto
+            .kdf()?
+            .expand(
+                &compressed_fabric_id.to_be_bytes(),
+                epoch_key,
+                GRP_KEY_INFO,
+                &mut self.op_key,
+            )
+            .map_err(|_| ErrorCode::InvalidData)?;
+
+        self.epoch_key.load(epoch_key);
+
+        Ok(())
     }
 
-    pub fn op_key(&self) -> &[u8] {
-        &self.op_key
+    pub fn op_key(&self) -> CanonAeadKeyRef<'_> {
+        self.op_key.reference()
     }
 
-    pub fn epoch_key(&self) -> &[u8] {
-        &self.epoch_key
+    pub fn epoch_key(&self) -> CanonAeadKeyRef<'_> {
+        self.epoch_key.reference()
     }
 }

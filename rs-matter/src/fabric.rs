@@ -23,7 +23,10 @@ use heapless::String;
 
 use crate::acl::{self, AccessReq, AclEntry, AuthMode};
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
-use crate::crypto::{self, hkdf_sha256, HmacSha256, KeyPair};
+use crate::crypto::{
+    CanonAeadKeyRef, CanonPkcPublicKeyRef, CanonPkcSecretKey, CanonPkcSecretKeyRef, Crypto,
+    CryptoSensitive, Digest, Hash, Kdf, PKC_CANON_PUBLIC_KEY_LEN,
+};
 use crate::dm::Privilege;
 use crate::error::{Error, ErrorCode};
 use crate::group_keys::KeySet;
@@ -48,8 +51,8 @@ pub struct Fabric {
     vendor_id: u16,
     /// Compressed ID
     compressed_fabric_id: u64,
-    /// Fabric key pair
-    key_pair: KeyPair,
+    /// Fabric secret key
+    secret_key: CanonPkcSecretKey,
     /// Root CA certificate to be used when verifying the node's certificate
     ///
     /// Note that we deviate from the Matter spec here, in that we store the
@@ -63,7 +66,7 @@ pub struct Fabric {
     icac: Vec<u8, { MAX_CERT_TLV_LEN }>,
     /// Node Operational Certificate
     noc: Vec<u8, { MAX_CERT_TLV_LEN }>,
-    /// Intermediate Public Key
+    /// Identity Protection Key
     ipk: KeySet,
     /// Fabric label; unique accross all fabrics on the device
     label: String<32>,
@@ -80,14 +83,14 @@ impl Fabric {
     ///
     /// The Fabric must be updated with the correct values before it can be
     /// used, via `Fabric::update`.
-    fn init(fab_idx: NonZeroU8, key_pair: KeyPair) -> impl Init<Self> {
+    fn init(fab_idx: NonZeroU8) -> impl Init<Self> {
         init!(Self {
             fab_idx,
             node_id: 0,
             fabric_id: 0,
             vendor_id: 0,
             compressed_fabric_id: 0,
-            key_pair,
+            secret_key <- CanonPkcSecretKey::init(),
             root_ca <- Vec::init(),
             icac <- Vec::init(),
             noc <- Vec::init(),
@@ -102,12 +105,14 @@ impl Fabric {
     /// This method is supposed to be called right after `Fabric::init` or
     /// when the NOC of the fabric needs to be updated.
     #[allow(clippy::too_many_arguments)]
-    fn update(
+    fn update<C: Crypto>(
         &mut self,
+        crypto: C,
         root_ca: &[u8],
         noc: &[u8],
         icac: &[u8],
-        ipk: Option<&[u8]>,
+        secret_key: CanonPkcSecretKeyRef<'_>,
+        epoch_key: Option<CanonAeadKeyRef<'_>>,
         vendor_id: Option<u16>,
         case_admin_subject: Option<u64>,
         mdns_notif: &mut dyn FnMut(),
@@ -122,22 +127,24 @@ impl Fabric {
             .extend_from_slice(noc)
             .map_err(|_| ErrorCode::BufferTooSmall)?;
 
-        let noc_p = CertRef::new(TLVElement::new(noc));
+        let root_cert = CertRef::new(TLVElement::new(root_ca));
+        let noc_cert = CertRef::new(TLVElement::new(noc));
 
-        self.node_id = noc_p.get_node_id()?;
-        self.fabric_id = noc_p.get_fabric_id()?;
+        self.node_id = noc_cert.get_node_id()?;
+        self.fabric_id = noc_cert.get_fabric_id()?;
+        self.compressed_fabric_id = Self::compute_compressed_fabric_id(
+            &crypto,
+            root_cert.pubkey()?.try_into()?,
+            self.fabric_id,
+        );
+
+        if let Some(epoch_key) = epoch_key {
+            self.ipk
+                .update(&crypto, epoch_key, &self.compressed_fabric_id)?;
+        }
 
         if let Some(vendor_id) = vendor_id {
             self.vendor_id = vendor_id;
-        }
-
-        let root_ca_p = CertRef::new(TLVElement::new(root_ca));
-
-        self.compressed_fabric_id =
-            Self::compute_compressed_fabric_id(root_ca_p.pubkey()?, self.fabric_id);
-
-        if let Some(ipk) = ipk {
-            self.ipk = KeySet::new(ipk, &self.compressed_fabric_id.to_be_bytes())?;
         }
 
         if let Some(case_admin_subject) = case_admin_subject {
@@ -152,6 +159,8 @@ impl Fabric {
                 || ErrorCode::ResourceExhausted.into(),
             )?;
         }
+
+        self.secret_key.load(secret_key);
 
         mdns_notif();
 
@@ -170,8 +179,13 @@ impl Fabric {
     }
 
     /// Is the fabric matching the privided destination ID
-    pub fn is_dest_id(&self, random: &[u8], target: &[u8]) -> Result<(), Error> {
-        let mut mac = HmacSha256::new(self.ipk.op_key())?;
+    pub fn is_dest_id<C: Crypto>(
+        &self,
+        crypto: C,
+        random: &[u8],
+        target: &[u8],
+    ) -> Result<(), Error> {
+        let mut mac = crypto.hmac(self.ipk.op_key())?;
 
         mac.update(random)?;
         mac.update(CertRef::new(TLVElement::new(self.root_ca())).pubkey()?)?;
@@ -179,24 +193,19 @@ impl Fabric {
         mac.update(&self.fabric_id.to_le_bytes())?;
         mac.update(&self.node_id.to_le_bytes())?;
 
-        let mut id = MaybeUninit::<[u8; crypto::SHA256_HASH_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
-        let id = id.init_zeroed();
+        let mut id = MaybeUninit::<Hash>::uninit(); // TODO MEDIUM BUFFER
+        let id = id.init_with(Hash::init());
         mac.finish(id)?;
-        if id.as_slice() == target {
+        if id.access() == target {
             Ok(())
         } else {
             Err(ErrorCode::NotFound.into())
         }
     }
 
-    /// Sign a message with the fabric's key pair
-    pub fn sign_msg(&self, msg: &[u8], signature: &mut [u8]) -> Result<usize, Error> {
-        self.key_pair.sign_msg(msg, signature)
-    }
-
-    /// Return the key pair of the fabric
-    pub fn key_pair(&self) -> &KeyPair {
-        &self.key_pair
+    /// Return the secret key of the fabric
+    pub fn secret_key(&self) -> CanonPkcSecretKeyRef<'_> {
+        self.secret_key.reference()
     }
 
     /// Return the fabric's node ID
@@ -376,22 +385,25 @@ impl Fabric {
     }
 
     /// Compute the compressed fabric ID
-    fn compute_compressed_fabric_id(root_pubkey: &[u8], fabric_id: u64) -> u64 {
-        let root_pubkey = &root_pubkey[1..];
-        const COMPRESSED_FABRIC_ID_INFO: [u8; 16] = [
+    pub(crate) fn compute_compressed_fabric_id<C: Crypto>(
+        crypto: C,
+        root_pubkey: CanonPkcPublicKeyRef<'_>,
+        fabric_id: u64,
+    ) -> u64 {
+        const COMPRESSED_FABRIC_ID_INFO: &[u8; 16] = &[
             0x43, 0x6f, 0x6d, 0x70, 0x72, 0x65, 0x73, 0x73, 0x65, 0x64, 0x46, 0x61, 0x62, 0x72,
             0x69, 0x63,
         ];
 
-        let mut compressed_fabric_id = [0; COMPRESSED_FABRIC_ID_LEN];
-        unwrap!(hkdf_sha256(
+        let mut compressed_fabric_id = CryptoSensitive::<{ COMPRESSED_FABRIC_ID_LEN }>::new();
+        unwrap!(unwrap!(crypto.kdf()).expand(
             &fabric_id.to_be_bytes(),
-            root_pubkey,
-            &COMPRESSED_FABRIC_ID_INFO,
+            root_pubkey.split::<1, { PKC_CANON_PUBLIC_KEY_LEN - 1 }>().1,
+            COMPRESSED_FABRIC_ID_INFO,
             &mut compressed_fabric_id,
         ));
 
-        u64::from_be_bytes(compressed_fabric_id)
+        u64::from_be_bytes(*compressed_fabric_id.access())
     }
 }
 
@@ -516,11 +528,7 @@ impl FabricMgr {
     /// This method is unlikely to be useful outside of tests.
     ///
     /// If this operation succeeds, the fabric immediately becomes operational.
-    pub fn add_with_post_init<F>(
-        &mut self,
-        key_pair: KeyPair,
-        post_init: F,
-    ) -> Result<&mut Fabric, Error>
+    pub fn add_with_post_init<F>(&mut self, post_init: F) -> Result<&mut Fabric, Error>
     where
         F: FnOnce(&mut Fabric) -> Result<(), Error>,
     {
@@ -544,7 +552,7 @@ impl FabricMgr {
         })); // We never use 0 as a fabric index, nor u8::MAX
 
         self.fabrics.push_init(
-            Fabric::init(fab_idx, key_pair)
+            Fabric::init(fab_idx)
                 .into_fallible::<Error>()
                 .chain(post_init),
             || ErrorCode::ResourceExhausted.into(),
@@ -560,23 +568,26 @@ impl FabricMgr {
     ///
     /// If this operation succeeds, the fabric immediately becomes operational.
     #[allow(clippy::too_many_arguments)]
-    pub fn add(
+    pub fn add<C: Crypto>(
         &mut self,
-        key_pair: KeyPair,
+        crypto: C,
+        secret_key: CanonPkcSecretKeyRef<'_>,
         root_ca: &[u8],
         noc: &[u8],
         icac: &[u8],
-        ipk: &[u8],
+        epoch_key: Option<CanonAeadKeyRef<'_>>,
         vendor_id: u16,
         case_admin_subject: u64,
         mdns_notif: &mut dyn FnMut(),
     ) -> Result<&mut Fabric, Error> {
-        self.add_with_post_init(key_pair, |fabric| {
+        self.add_with_post_init(|fabric| {
             fabric.update(
+                crypto,
                 root_ca,
                 noc,
                 icac,
-                Some(ipk),
+                secret_key,
+                epoch_key,
                 Some(vendor_id),
                 Some(case_admin_subject),
                 mdns_notif,
@@ -590,10 +601,11 @@ impl FabricMgr {
     /// Note however, that the caller is expected to remove all sessions associated with the fabric, as they would
     /// contain invalid keys after the NOC update.
     #[allow(clippy::too_many_arguments)]
-    pub fn update(
+    pub fn update<C: Crypto>(
         &mut self,
+        crypto: C,
         fab_idx: NonZeroU8,
-        key_pair: KeyPair,
+        secret_key: CanonPkcSecretKeyRef<'_>,
         root_ca: &[u8],
         noc: &[u8],
         icac: &[u8],
@@ -607,9 +619,9 @@ impl FabricMgr {
             return Err(ErrorCode::NotFound.into());
         };
 
-        fabric.key_pair = key_pair;
-
-        fabric.update(root_ca, noc, icac, None, None, None, mdns_notif)?;
+        fabric.update(
+            crypto, root_ca, noc, icac, secret_key, None, None, None, mdns_notif,
+        )?;
 
         self.changed = true;
 
@@ -654,9 +666,14 @@ impl FabricMgr {
     }
 
     /// Get a fabric that matches the provided destination ID
-    pub fn get_by_dest_id(&self, random: &[u8], target: &[u8]) -> Option<&Fabric> {
+    pub fn get_by_dest_id<C: Crypto>(
+        &self,
+        crypto: C,
+        random: &[u8],
+        target: &[u8],
+    ) -> Option<&Fabric> {
         self.iter()
-            .find(|fabric| fabric.is_dest_id(random, target).is_ok())
+            .find(|fabric| fabric.is_dest_id(&crypto, random, target).is_ok())
     }
 
     /// Get a fabric by its local index

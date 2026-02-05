@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+use rs_matter::crypto::Crypto;
 use rs_matter::dm::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::Error;
 use rs_matter::im::GenericPath;
@@ -23,7 +24,7 @@ use rs_matter::tlv::{TLVTag, TLVWrite};
 use rs_matter::utils::storage::WriteBuf;
 
 use crate::common::e2e::tlv::{TLVTest, TestToTLV};
-use crate::common::e2e::E2eRunner;
+use crate::common::e2e::{new_default_runner, E2eRunner};
 
 /// A macro for creating an `AttrStatus` instance for the provided generic path and `IMStatusCode``
 #[macro_export]
@@ -223,21 +224,21 @@ impl TestToTLV for TestAttrResp<'_> {
     }
 }
 
-impl E2eRunner {
-    /// For backwards compatibility.
-    pub fn read_reqs<'a>(input: &'a [AttrPath], expected: &'a [TestAttrResp<'a>]) {
-        let runner = Self::new_default();
-        runner.add_default_acl();
-        runner.handle_read_reqs(runner.handler(), input, expected)
-    }
+/// For backwards compatibility.
+pub fn read_reqs<'a>(input: &'a [AttrPath], expected: &'a [TestAttrResp<'a>]) {
+    let runner = new_default_runner();
+    runner.add_default_acl();
+    runner.handle_read_reqs(runner.handler(), input, expected)
+}
 
-    /// For backwards compatibility.
-    pub fn write_reqs<'a>(input: &'a [TestAttrData<'a>], expected: &'a [AttrStatus]) {
-        let runner = Self::new_default();
-        runner.add_default_acl();
-        runner.handle_write_reqs(runner.handler(), input, expected)
-    }
+/// For backwards compatibility.
+pub fn write_reqs<'a>(input: &'a [TestAttrData<'a>], expected: &'a [AttrStatus]) {
+    let runner = new_default_runner();
+    runner.add_default_acl();
+    runner.handle_write_reqs(runner.handler(), input, expected)
+}
 
+impl<C: Crypto> E2eRunner<C> {
     /// For backwards compatibility.
     pub fn handle_read_reqs<'a, H>(
         &self,

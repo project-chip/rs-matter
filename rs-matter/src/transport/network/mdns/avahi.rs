@@ -25,6 +25,8 @@ use std::io::Write as _;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use zbus::Connection;
 
+use crate::crypto::Crypto;
+use crate::dm::ChangeNotify;
 use crate::error::Error;
 use crate::transport::network::mdns::Service;
 use crate::utils::zbus_proxies::avahi::entry_group::EntryGroupProxy;
@@ -50,7 +52,14 @@ impl<'a> AvahiMdnsResponder<'a> {
     ///
     /// # Arguments
     /// - `connection`: A reference to the DBus system connection to use for communication with Avahi.
-    pub async fn run(&mut self, connection: &Connection) -> Result<(), Error> {
+    /// - `crypto`: A crypto provider instance.
+    /// - `notify`: A change notification interface.
+    pub async fn run<C: Crypto>(
+        &mut self,
+        connection: &Connection,
+        crypto: C,
+        notify: &dyn ChangeNotify,
+    ) -> Result<(), Error> {
         {
             let avahi = Server2Proxy::new(connection).await?;
             info!("Avahi API version: {}", avahi.get_apiversion().await?);
@@ -60,7 +69,7 @@ impl<'a> AvahiMdnsResponder<'a> {
             self.matter.wait_mdns().await;
 
             let mut services = HashSet::new();
-            self.matter.mdns_services(|service| {
+            self.matter.mdns_services(&crypto, notify, |service| {
                 services.insert(service);
 
                 Ok(())

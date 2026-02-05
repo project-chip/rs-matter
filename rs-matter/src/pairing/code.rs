@@ -33,13 +33,14 @@ impl BasicCommData {
             ..
         } = self;
 
+        let password = u32::from_le_bytes(*password.access());
         let mut digits = heapless::String::<10>::new();
         write_unwrap!(
             &mut digits,
             "{}{:0>5}{:0>4}",
             (VID_PID_PRESENT << 2) | (discriminator >> 10) as u8,
-            ((discriminator & 0x300) << 6) | (*password & 0x3FFF) as u16,
-            *password >> 14
+            ((discriminator & 0x300) << 6) | (password & 0x3FFF) as u16,
+            password >> 14
         );
 
         let mut final_digits = heapless::String::<11>::new();
@@ -76,14 +77,14 @@ mod tests {
     #[test]
     fn can_compute_pairing_code() {
         let comm_data = BasicCommData {
-            password: 123456,
+            password: 123456_u32.to_le_bytes().into(),
             discriminator: 250,
         };
         let pairing_code = comm_data.compute_pairing_code();
         assert_eq!(pairing_code, "00876800071");
 
         let comm_data = BasicCommData {
-            password: 34567890,
+            password: 34567890_u32.to_le_bytes().into(),
             discriminator: 2976,
         };
         let pairing_code = comm_data.compute_pairing_code();

@@ -6,14 +6,13 @@ authors = ["Kedar Sovani <kedars@gmail.com>", "Ivan Markov", "Project CHIP Autho
 description = "Native Rust implementation of the Matter (Smart-Home) ecosystem"
 repository = "https://github.com/project-chip/matter-rs"
 readme = "README.md"
-keywords = ["matter", "smart", "smart-home", "IoT", "ESP32"]
+keywords = ["matter", "smart", "smart-home", "IoT"]
 categories = ["embedded", "network-programming"]
 license = "Apache-2.0"
-rust-version = "1.83"
+rust-version = "1.87"
 
 [features]
 default = ["os", "rustcrypto", "log"]
-#default = ["os", "mbedtls", "log"] mbedtls is broken since several months - check the root cause
 
 # Sizing
 
@@ -100,9 +99,9 @@ std = ["alloc", "rand"]
 backtrace = []
 alloc = ["defmt?/alloc"]
 openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
-mbedtls = ["alloc", "dep:mbedtls"]
-rustcrypto = ["alloc", "sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "sec1", "elliptic-curve", "crypto-bigint", "x509-cert", "rand_core"]
-defmt = ["dep:defmt", "heapless/defmt-03", "embassy-time/defmt"]
+mbedtls = ["alloc", "dep:esp-mbedtls-sys"]
+rustcrypto = ["alloc", "digest", "cipher", "ccm", "elliptic-curve", "primeorder", "ecdsa", "sec1", "signature", "hmac", "hkdf", "pbkdf2", "crypto-bigint", "sha2", "aes", "p256", "x509-cert"]
+defmt = ["dep:defmt", "heapless/defmt-03", "embassy-time/defmt", "esp-mbedtls-sys?/defmt"]
 log = ["dep:log", "embassy-time/log"]
 debug-tlv-payload = []
 large-buffers = [] # TCP support
@@ -120,6 +119,7 @@ log = { version = "0.4", optional = true }
 defmt = { version = "0.3", optional = true, features = ["ip_in_core"] }
 subtle = { version = "2.5", default-features = false }
 time = { version = "0.3", default-features = false }
+rand_core = { version = "0.6", default-features = false }
 verhoeff = { version = "1", default-features = false }
 embassy-futures = "0.1.2"
 embassy-time = "0.5"
@@ -134,20 +134,26 @@ pinned-init = { version = "0.0.8", default-features = false }
 # crypto
 openssl = { version = "0.10", optional = true }
 foreign-types = { version = "0.3", optional = true }
-mbedtls = { version = "0.12", optional = true, features = ["x509"] }
+esp-mbedtls-sys = { git = "https://github.com/esp-rs/esp-mbedtls", optional = true }
 
 # rust-crypto
-sha2 = { version = "0.10", default-features = false, optional = true }
-hmac = { version = "0.12", optional = true }
-pbkdf2 = { version = "0.12", optional = true }
-hkdf = { version = "0.12", optional = true }
-aes = { version = "0.8", optional = true }
+# Generic traits and traitified structures
+digest = { version = "0.10", default-features = false, optional = true }
+cipher = { version = "0.4.4", default-features = false, optional = true }
 ccm = { version = "0.5", default-features = false, features = ["alloc"], optional = true }
-p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh", "ecdsa"], optional = true }
+elliptic-curve = { version = "0.13", default-features = false, optional = true }
+primeorder = { version = "0.13", default-features = false, optional = true }
+ecdsa = { version = "0.16", default-features = false, features = ["der"], optional = true }
 sec1 = { version = "0.7", default-features = false, optional = true }
-elliptic-curve = { version = "0.13", optional = true }
+signature = { version = "2.2", default-features = false, optional = true }
+hmac = { version = "0.12", optional = true }
+# Concrete algorithms
+hkdf = { version = "0.12", optional = true }
+pbkdf2 = { version = "0.12", optional = true }
 crypto-bigint = { version = "0.6", default-features = false, optional = true }
-rand_core = { version = "0.6", default-features = false, optional = true }
+sha2 = { version = "0.10", default-features = false, optional = true }
+aes = { version = "0.8", optional = true }
+p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh", "ecdsa"], optional = true }
 x509-cert = { version = "0.2", default-features = false, features = ["pem"], optional = true } # TODO: requires `alloc`
 
 # STD

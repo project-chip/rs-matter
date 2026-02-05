@@ -21,6 +21,7 @@ use core::pin::pin;
 
 use embassy_futures::select::{select3, select_slice};
 
+use crate::crypto::Crypto;
 use crate::dm::DataModelHandler;
 use crate::dm::{DataModel, IMBuffer};
 use crate::error::Error;
@@ -236,17 +237,18 @@ where
 }
 
 /// A type alias for the "default" responder handler, which is a chained handler of the `DataModel` and `SecureChannel` handlers.
-pub type DefaultExchangeHandler<'d, 'a, const N: usize, B, T> =
-    ChainedExchangeHandler<&'d DataModel<'a, N, B, T>, SecureChannel>;
+pub type DefaultExchangeHandler<'d, 'a, const N: usize, C, B, T> =
+    ChainedExchangeHandler<&'d DataModel<'a, N, C, B, T>, SecureChannel<'d, &'d C>>;
 
-impl<'d, 'a, const N: usize, B, T> Responder<'a, DefaultExchangeHandler<'d, 'a, N, B, T>>
+impl<'d, 'a, const N: usize, C, B, T> Responder<'a, DefaultExchangeHandler<'d, 'a, N, C, B, T>>
 where
+    C: Crypto,
     B: BufferAccess<IMBuffer>,
 {
     /// Creates a "default" responder. This is a responder that composes and uses the `rs-matter`-provided `ExchangeHandler` implementations
     /// (`SecureChannel` and `DataModel`) for handling the Secure Channel protocol and the Interaction Model protocol.
     #[inline(always)]
-    pub const fn new_default(data_model: &'d DataModel<'a, N, B, T>) -> Self
+    pub const fn new_default(data_model: &'d DataModel<'a, N, C, B, T>) -> Self
     where
         T: DataModelHandler,
     {
@@ -255,7 +257,7 @@ where
             ChainedExchangeHandler::new(
                 PROTO_ID_INTERACTION_MODEL,
                 data_model,
-                SecureChannel::new(),
+                SecureChannel::new(data_model.crypto(), data_model),
             ),
             data_model.matter(),
             0,
@@ -289,22 +291,23 @@ impl<'a> Responder<'a, BusyExchangeHandler> {
 }
 
 /// A composition of the `Responder::new_default` and `Responder::new_busy` responders.
-pub struct DefaultResponder<'d, 'a, const N: usize, B, T>
+pub struct DefaultResponder<'d, 'a, const N: usize, C, B, T>
 where
     B: BufferAccess<IMBuffer>,
 {
-    responder: Responder<'a, DefaultExchangeHandler<'d, 'a, N, B, T>>,
+    responder: Responder<'a, DefaultExchangeHandler<'d, 'a, N, C, B, T>>,
     busy_responder: Responder<'a, BusyExchangeHandler>,
 }
 
-impl<'d, 'a, const N: usize, B, T> DefaultResponder<'d, 'a, N, B, T>
+impl<'d, 'a, const N: usize, B, T, C> DefaultResponder<'d, 'a, N, C, B, T>
 where
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
+    C: Crypto,
 {
     /// Creates the responder composition.
     #[inline(always)]
-    pub const fn new(data_model: &'d DataModel<'a, N, B, T>) -> Self {
+    pub const fn new(data_model: &'d DataModel<'a, N, C, B, T>) -> Self {
         Self {
             responder: Responder::new_default(data_model),
             busy_responder: Responder::new_busy(data_model.matter(), RESPOND_BUSY_MS),
@@ -323,9 +326,13 @@ where
     /// Get a reference to the main responder.
     ///
     /// Useful when the user would like to organize its own herd of responders rather than using the `run` method.
+    #[allow(clippy::type_complexity)]
     pub const fn responder(
         &self,
-    ) -> &Responder<'a, ChainedExchangeHandler<&'d DataModel<'a, N, B, T>, SecureChannel>> {
+    ) -> &Responder<
+        'a,
+        ChainedExchangeHandler<&'d DataModel<'a, N, C, B, T>, SecureChannel<'d, &'d C>>,
+    > {
         &self.responder
     }
 

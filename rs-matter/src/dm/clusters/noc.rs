@@ -22,8 +22,8 @@ use core::mem::MaybeUninit;
 use core::num::NonZeroU8;
 
 use crate::cert::CertRef;
-use crate::crypto::{self, KeyPair};
-use crate::dm::clusters::dev_att;
+use crate::crypto::{CanonPkcSignature, Crypto, SigningSecretKey};
+use crate::dm::clusters::dev_att::DeviceAttestation;
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, MAX_FABRICS};
@@ -31,11 +31,9 @@ use crate::tlv::{
     Nullable, Octets, OctetsArrayBuilder, OctetsBuilder, TLVBuilder, TLVBuilderParent, TLVElement,
     TLVTag, TLVWrite,
 };
-use crate::transport::session::SessionMode;
+use crate::transport::session::{AttChallengeRef, SessionMode};
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::WriteBuf;
-
-use super::dev_att::{DataType, DevAttDataFetcher};
 
 pub use crate::dm::clusters::decl::operational_credentials::*;
 
@@ -71,31 +69,20 @@ impl NocHandler {
         HandlerAdaptor(self)
     }
 
-    /// Computes the attestation signature using the provided `DevAttDataFetcher`
-    fn compute_attestation_signature<'a>(
-        dev_att: &dyn DevAttDataFetcher,
+    /// Computes the attestation signature using the provided `DeviceAttestation`
+    fn compute_attestation_signature<C: Crypto, D: DeviceAttestation>(
+        crypto: C,
+        dev_att: D,
         attest_element: &mut WriteBuf,
-        attest_challenge: &[u8],
-        signature_buf: &'a mut [u8],
-    ) -> Result<&'a [u8], Error> {
-        let dac_key = {
-            let mut pubkey_buf = MaybeUninit::<[u8; crypto::EC_POINT_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
-            let pubkey_buf = pubkey_buf.init_zeroed();
+        attest_challenge: AttChallengeRef<'_>,
+        signature: &mut CanonPkcSignature,
+    ) -> Result<(), Error> {
+        let dac_key = crypto.secret_key(dev_att.dac_priv_key())?;
 
-            let mut privkey_buf = MaybeUninit::<[u8; crypto::BIGNUM_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
-            let privkey_buf = privkey_buf.init_zeroed();
+        attest_element.copy_from_slice(attest_challenge.access())?;
+        dac_key.sign(attest_element.as_slice(), signature)?;
 
-            let pubkey_len = dev_att.get_devatt_data(dev_att::DataType::DACPubKey, pubkey_buf)?;
-            let privkey_len =
-                dev_att.get_devatt_data(dev_att::DataType::DACPrivKey, privkey_buf)?;
-
-            KeyPair::new_from_components(&pubkey_buf[..pubkey_len], &privkey_buf[..privkey_len])
-        }?;
-
-        attest_element.copy_from_slice(attest_challenge)?;
-        let len = dac_key.sign_msg(attest_element.as_slice(), signature_buf)?;
-
-        Ok(&signature_buf[..len])
+        Ok(())
     }
 }
 
@@ -285,36 +272,33 @@ impl ClusterHandler for NocHandler {
 
             let epoch = (ctx.exchange().matter().epoch())().as_secs() as u32;
 
-            let mut signature_buf = MaybeUninit::<[u8; crypto::EC_SIGNATURE_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
-            let signature_buf = signature_buf.init_zeroed();
-            let mut signature_len = 0;
+            let mut signature = MaybeUninit::uninit();
+            let signature = signature.init_with(CanonPkcSignature::init()); // TODO MEDIUM BUFFER
 
             writer.str_cb(&TLVTag::Context(0), |buf| {
                 let dev_att = ctx.exchange().matter().dev_att();
 
                 let mut wb = WriteBuf::new(buf);
                 wb.start_struct(&TLVTag::Anonymous)?;
-                wb.str_cb(&TLVTag::Context(1), |buf| {
-                    dev_att.get_devatt_data(dev_att::DataType::CertDeclaration, buf)
-                })?;
+                wb.str(&TLVTag::Context(1), dev_att.cert_declaration())?;
                 wb.str(&TLVTag::Context(2), request.attestation_nonce()?.0)?;
                 wb.u32(&TLVTag::Context(3), epoch)?;
                 wb.end_container()?;
 
                 let len = wb.get_tail();
 
-                signature_len = Self::compute_attestation_signature(
+                Self::compute_attestation_signature(
+                    ctx.crypto(),
                     dev_att,
                     &mut wb,
-                    sess.get_att_challenge(),
-                    signature_buf,
-                )?
-                .len();
+                    sess.get_att_challenge().ok_or(ErrorCode::InvalidState)?,
+                    signature,
+                )?;
 
                 Ok(len)
             })?;
 
-            writer.str(&TLVTag::Context(1), &signature_buf[..signature_len])?;
+            writer.str(&TLVTag::Context(1), signature.access())?;
 
             writer.end_container()?;
 
@@ -339,15 +323,15 @@ impl ClusterHandler for NocHandler {
         // Struct is already started
         // writer.start_struct(&CmdDataWriter::TAG)?;
 
-        writer.str_cb(&TLVTag::Context(0), |buf| {
-            ctx.exchange().matter().dev_att().get_devatt_data(
-                match request.certificate_type()? {
-                    CertificateChainTypeEnum::DACCertificate => DataType::DAC,
-                    CertificateChainTypeEnum::PAICertificate => DataType::PAI,
-                },
-                buf,
-            )
-        })?;
+        let dev_att = ctx.exchange().matter().dev_att();
+
+        writer.str(
+            &TLVTag::Context(0),
+            match request.certificate_type()? {
+                CertificateChainTypeEnum::DACCertificate => dev_att.dac(),
+                CertificateChainTypeEnum::PAICertificate => dev_att.pai(),
+            },
+        )?;
 
         writer.end_container()?;
 
@@ -365,10 +349,10 @@ impl ClusterHandler for NocHandler {
         ctx.exchange().with_session(|sess| {
             let mut failsafe = ctx.exchange().matter().failsafe.borrow_mut();
 
-            let key_pair = if request.is_for_update_noc()?.unwrap_or(false) {
-                failsafe.update_csr_req(sess.get_session_mode())
+            let secret_key = if request.is_for_update_noc()?.unwrap_or(false) {
+                failsafe.update_csr_req(ctx.crypto(), sess.get_session_mode())
             } else {
-                failsafe.add_csr_req(sess.get_session_mode())
+                failsafe.add_csr_req(ctx.crypto(), sess.get_session_mode())
             }?;
 
             // Switch to raw writer for the response
@@ -380,32 +364,36 @@ impl ClusterHandler for NocHandler {
             // Struct is already started
             // writer.start_struct(&CmdDataWriter::TAG)?;
 
-            let mut signature_buf = MaybeUninit::<[u8; crypto::EC_SIGNATURE_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
-            let signature_buf = signature_buf.init_zeroed();
-            let mut signature_len = 0;
+            let mut signature = MaybeUninit::uninit();
+            let signature = signature.init_with(CanonPkcSignature::init()); // TODO MEDIUM BUFFER
 
             writer.str_cb(&TLVTag::Context(0), |buf| {
                 let mut wb = WriteBuf::new(buf);
 
                 wb.start_struct(&TLVTag::Anonymous)?;
-                wb.str_cb(&TLVTag::Context(1), |buf| Ok(key_pair.get_csr(buf)?.len()))?;
+                wb.str_cb(&TLVTag::Context(1), |buf| {
+                    ctx.crypto()
+                        .secret_key(secret_key)?
+                        .csr(buf)
+                        .map(|slice| slice.len())
+                })?;
                 wb.str(&TLVTag::Context(2), request.csr_nonce()?.0)?;
                 wb.end_container()?;
 
                 let len = wb.get_tail();
 
-                signature_len = Self::compute_attestation_signature(
+                Self::compute_attestation_signature(
+                    ctx.crypto(),
                     ctx.exchange().matter().dev_att(),
                     &mut wb,
-                    sess.get_att_challenge(),
-                    signature_buf,
-                )?
-                .len();
+                    sess.get_att_challenge().ok_or(ErrorCode::InvalidState)?,
+                    signature,
+                )?;
 
                 Ok(len)
             })?;
 
-            writer.str(&TLVTag::Context(1), &signature_buf[..signature_len])?;
+            writer.str(&TLVTag::Context(1), signature.access())?;
 
             writer.end_container()?;
 
@@ -434,6 +422,7 @@ impl ClusterHandler for NocHandler {
         let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_session(|sess| {
             let matter = ctx.exchange().matter();
             let fab_idx = ctx.exchange().matter().failsafe.borrow_mut().add_noc(
+                ctx.crypto(),
                 &ctx.exchange().matter().fabric_mgr,
                 sess.get_session_mode(),
                 request.admin_vendor_id()?,
@@ -495,6 +484,7 @@ impl ClusterHandler for NocHandler {
 
         let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_session(|sess| {
             ctx.exchange().matter().failsafe.borrow_mut().update_noc(
+                ctx.crypto(),
                 &ctx.exchange().matter().fabric_mgr,
                 sess.get_session_mode(),
                 icac,

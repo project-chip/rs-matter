@@ -15,31 +15,12 @@
  *    limitations under the License.
  */
 
-use core::cell::Cell;
-use core::num::Wrapping;
+//! Cryptographic backends.
 
-use rand_core::RngCore;
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Dataver(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] Cell<Wrapping<u32>>);
-
-impl Dataver {
-    pub fn new_rand<R: RngCore>(rand: &mut R) -> Self {
-        Self::new(rand.next_u32())
-    }
-
-    pub const fn new(initial: u32) -> Self {
-        Self(Cell::new(Wrapping(initial)))
-    }
-
-    pub fn get(&self) -> u32 {
-        self.0.get().0
-    }
-
-    pub fn changed(&self) -> u32 {
-        self.0.set(self.0.get() + Wrapping(1));
-
-        self.get()
-    }
-}
+pub mod dummy;
+#[cfg(feature = "mbedtls")]
+pub mod mbedtls;
+#[cfg(feature = "openssl")]
+pub mod openssl;
+#[cfg(feature = "rustcrypto")]
+pub mod rustcrypto;

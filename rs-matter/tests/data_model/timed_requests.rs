@@ -25,9 +25,9 @@ use crate::common::e2e::im::attributes::TestAttrData;
 use crate::common::e2e::im::{
     echo_cluster, ReplyProcessor, TestInvReq, TestInvResp, TestWriteReq, TestWriteResp,
 };
+use crate::common::e2e::new_default_runner;
 use crate::common::e2e::test::E2eTest;
 use crate::common::e2e::tlv::TLVTest;
-use crate::common::e2e::ImEngine;
 use crate::common::init_env_logger;
 use crate::{echo_req, echo_resp};
 
@@ -66,7 +66,7 @@ fn test_timed_write_fail_and_success() {
         AttrStatus::from_gp(&ep1_att, IMStatusCode::Success, None),
     ];
 
-    let im = ImEngine::new_default();
+    let im = new_default_runner();
     let handler = im.handler();
     im.add_default_acl();
 
@@ -205,7 +205,7 @@ fn test_timed_cmd_success() {
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
     let expected = &[echo_resp!(0, 10), echo_resp!(1, 30)];
 
-    let im = ImEngine::new_default();
+    let im = new_default_runner();
     let handler = im.handler();
     im.add_default_acl();
 
@@ -242,7 +242,7 @@ fn test_timed_cmd_timeout() {
 
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
 
-    let im = ImEngine::new_default();
+    let im = new_default_runner();
     let handler = im.handler();
     im.add_default_acl();
 
@@ -291,7 +291,7 @@ fn test_timed_cmd_timeout_mismatch() {
 
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
 
-    let im = ImEngine::new_default();
+    let im = new_default_runner();
     let handler = im.handler();
     im.add_default_acl();
 

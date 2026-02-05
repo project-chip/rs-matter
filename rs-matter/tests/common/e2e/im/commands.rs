@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+use rs_matter::crypto::Crypto;
 use rs_matter::dm::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::Error;
 use rs_matter::im::{CmdPath, CmdStatus};
@@ -22,7 +23,7 @@ use rs_matter::tlv::{TLVTag, TLVWrite};
 use rs_matter::utils::storage::WriteBuf;
 
 use crate::common::e2e::tlv::{TLVTest, TestToTLV};
-use crate::common::e2e::E2eRunner;
+use crate::common::e2e::{new_default_runner, E2eRunner};
 
 /// A macro for creating a `TestCmdData` instance by using literal values for data.
 #[macro_export]
@@ -116,14 +117,14 @@ impl TestToTLV for TestCmdResp<'_> {
     }
 }
 
-impl E2eRunner {
-    /// For backwards compatibility.
-    pub fn commands<'a>(input: &'a [TestCmdData<'a>], expected: &'a [TestCmdResp<'a>]) {
-        let runner = Self::new_default();
-        runner.add_default_acl();
-        runner.handle_commands(runner.handler(), input, expected)
-    }
+/// For backwards compatibility.
+pub fn commands<'a>(input: &'a [TestCmdData<'a>], expected: &'a [TestCmdResp<'a>]) {
+    let runner = new_default_runner();
+    runner.add_default_acl();
+    runner.handle_commands(runner.handler(), input, expected)
+}
 
+impl<C: Crypto> E2eRunner<C> {
     /// For backwards compatibility.
     pub fn handle_commands<'a, H>(
         &self,

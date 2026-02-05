@@ -787,12 +787,10 @@ pub(crate) mod tests {
     use core::num::NonZeroU8;
 
     use crate::acl::{gen_noc_cat, AccessorSubjects};
-    use crate::crypto::KeyPair;
     use crate::dm::{Access, Privilege};
     use crate::fabric::FabricMgr;
     use crate::im::GenericPath;
     use crate::utils::cell::RefCell;
-    use crate::utils::rand::dummy_rand;
 
     use super::{AccessReq, Accessor, AclEntry, AuthMode, Target};
 
@@ -827,9 +825,7 @@ pub(crate) mod tests {
         assert_eq!(req.allow(), false);
 
         // Add fabric with ID 1
-        fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
-            .unwrap();
+        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
 
         // Deny adding invalid auth mode (PASE is reserved for future)
         let new = AclEntry::new(None, Privilege::VIEW, AuthMode::Pase);
@@ -844,9 +840,7 @@ pub(crate) mod tests {
         assert!(req_pase.allow());
 
         // Add fabric with ID 2
-        fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
-            .unwrap();
+        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
 
         // Allow
         let new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
@@ -859,9 +853,7 @@ pub(crate) mod tests {
         let fm = RefCell::new(FabricMgr::new());
 
         // Add fabric with ID 1
-        fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
-            .unwrap();
+        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
 
         let accessor = Accessor::new(1, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
         let path = GenericPath::new(Some(1), Some(1234), None);
@@ -886,9 +878,7 @@ pub(crate) mod tests {
         let fm = RefCell::new(FabricMgr::new());
 
         // Add fabric with ID 1
-        fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
-            .unwrap();
+        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
 
         let allow_cat = 0xABCD;
         let disallow_cat = 0xCAFE;
@@ -928,9 +918,7 @@ pub(crate) mod tests {
         let fm = RefCell::new(FabricMgr::new());
 
         // Add fabric with ID 1
-        fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
-            .unwrap();
+        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
 
         let allow_cat = 0xABCD;
         let disallow_cat = 0xCAFE;
@@ -964,9 +952,7 @@ pub(crate) mod tests {
         let fm = RefCell::new(FabricMgr::new());
 
         // Add fabric with ID 1
-        fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
-            .unwrap();
+        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
 
         let accessor = Accessor::new(1, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
         let path = GenericPath::new(Some(1), Some(1234), None);
@@ -1030,9 +1016,7 @@ pub(crate) mod tests {
         let fm = RefCell::new(FabricMgr::new());
 
         // Add fabric with ID 1
-        fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
-            .unwrap();
+        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
 
         let accessor = Accessor::new(1, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
         let path = GenericPath::new(Some(1), Some(1234), None);
@@ -1075,14 +1059,10 @@ pub(crate) mod tests {
         let fm = RefCell::new(FabricMgr::new());
 
         // Add fabric with ID 1
-        fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
-            .unwrap();
+        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
 
         // Add fabric with ID 2
-        fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
-            .unwrap();
+        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
 
         let path = GenericPath::new(Some(1), Some(1234), None);
         let accessor2 = Accessor::new(1, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);

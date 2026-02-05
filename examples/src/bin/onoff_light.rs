@@ -26,11 +26,13 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::info;
 
+use rand::RngCore;
+use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
-use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
@@ -45,7 +47,7 @@ use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
-use rs_matter::sc::pake::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
@@ -98,7 +100,6 @@ fn run() -> Result<(), Error> {
         TEST_DEV_COMM,
         &TEST_DEV_ATT,
         rs_matter::utils::epoch::sys_epoch,
-        rs_matter::utils::rand::sys_rand,
         MATTER_PORT,
     ));
 
@@ -113,9 +114,14 @@ fn run() -> Result<(), Error> {
         .uninit()
         .init_with(DefaultSubscriptions::init());
 
+    // Create the crypto instance
+    let crypto = default_crypto::<NoopRawMutex, _>(rand::thread_rng(), DAC_PRIVKEY);
+
+    let mut rand = crypto.rand()?;
+
     // Our on-off cluster
     let on_off_handler = on_off::OnOffHandler::new_standalone(
-        Dataver::new_rand(matter.rand()),
+        Dataver::new_rand(&mut rand),
         1,
         TestOnOffDeviceLogic::new(true),
     );
@@ -123,9 +129,10 @@ fn run() -> Result<(), Error> {
     // Create the Data Model instance
     let dm = DataModel::new(
         matter,
+        &crypto,
         buffers,
         subscriptions,
-        dm_handler(matter, &on_off_handler),
+        dm_handler(rand, &on_off_handler),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -149,13 +156,13 @@ fn run() -> Result<(), Error> {
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(&socket, &socket)),
-        core::mem::size_of_val(&mdns::run_mdns(matter))
+        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket)),
+        core::mem::size_of_val(&mdns::run_mdns(matter, &crypto, &dm))
     );
 
     // Run the Matter and mDNS transports
-    let mut mdns = pin!(mdns::run_mdns(matter));
-    let mut transport = pin!(matter.run(&socket, &socket));
+    let mut mdns = pin!(mdns::run_mdns(matter, &crypto, &dm));
+    let mut transport = pin!(matter.run(&crypto, &socket, &socket));
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
@@ -176,7 +183,7 @@ fn run() -> Result<(), Error> {
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
 
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS)?;
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
     }
 
     let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS));
@@ -209,7 +216,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
-    matter: &'a Matter<'a>,
+    mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
@@ -217,14 +224,14 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
         endpoints::with_eth(
             &(),
             &UnixNetifs,
-            matter.rand(),
+            rand,
             endpoints::with_sys(
                 &false,
-                matter.rand(),
+                rand,
                 EmptyHandler
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
