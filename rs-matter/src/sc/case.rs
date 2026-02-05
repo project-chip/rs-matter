@@ -21,7 +21,7 @@ use crate::alloc;
 use crate::cert::CertRef;
 use crate::crypto::{CanonPkcSignature, CanonPkcSignatureRef, Crypto, Hash, AEAD_CANON_KEY_LEN};
 use crate::error::{Error, ErrorCode};
-use crate::sc::case::nego::{CaseP, CaseRandom, CaseResumptionId, CaseSessionKeys};
+use crate::sc::case::casep::{CaseP, CaseRandom, CaseResumptionId, CaseSessionKeys};
 use crate::sc::{
     check_opcode, complete_with_status, sc_write, OpCode, SCStatusCodes, SessionParameters,
 };
@@ -30,7 +30,7 @@ use crate::transport::exchange::Exchange;
 use crate::transport::session::{NocCatIds, ReservedSession, SessionMode};
 use crate::utils::init::{init, Init, InitMaybeUninit};
 
-mod nego;
+mod casep;
 
 /// Sigma1 Request structure
 #[derive(FromTLV, Debug)]

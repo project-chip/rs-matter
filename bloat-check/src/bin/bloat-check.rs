@@ -368,21 +368,29 @@ fn main() -> ! {
         BuiltinMdnsResponder::new(&stack.matter, crypto, dm)
     );
 
+    report_size("mDNS responder", size_of_val(&*mdns), &mut aux_total);
+
     let transport_send = mk_static!(
         AppTransport<'static>,
         ChainedNetwork::new(Address::is_udp, FakeUdp, &*btp)
     );
 
-    report_size("Transport send", size_of_val(&*mdns), &mut aux_total);
+    report_size(
+        "Transport send",
+        size_of_val(&*transport_send),
+        &mut aux_total,
+    );
 
     let transport_recv = mk_static!(
         AppTransport<'static>,
         ChainedNetwork::new(Address::is_udp, FakeUdp, &*btp)
     );
 
-    report_size("Transport receive", size_of_val(&*mdns), &mut aux_total);
-
-    report_size("mDNS responder", size_of_val(&*mdns), &mut aux_total);
+    report_size(
+        "Transport receive",
+        size_of_val(&*transport_recv),
+        &mut aux_total,
+    );
 
     // A default responder
     let responder = mk_static!(AppResponder, DefaultResponder::new(dm));
