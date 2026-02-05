@@ -618,7 +618,7 @@ impl<'a, C: Crypto> Pase<'a, C> {
                     resp.to_tlv(&TagType::Anonymous, &mut *wb)?;
 
                     if let Some(context) = context.take() {
-                        self.spake2p.finish_context::<&C>(context, wb.as_slice());
+                        self.spake2p.finish_context::<&C>(context, wb.as_slice())?;
                     }
 
                     Ok(Some(OpCode::PBKDFParamResponse.into()))

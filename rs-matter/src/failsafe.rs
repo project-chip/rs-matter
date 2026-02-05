@@ -230,7 +230,7 @@ impl FailSafe {
         )?;
 
         let crypto_secret_key = crypto.generate_secret_key()?;
-        crypto_secret_key.write_canon(&mut self.secret_key);
+        crypto_secret_key.write_canon(&mut self.secret_key)?;
 
         self.add_flags(NocFlags::ADD_CSR_REQ_RECVD);
 
@@ -256,7 +256,7 @@ impl FailSafe {
 
         crypto
             .generate_secret_key()?
-            .write_canon(&mut self.secret_key);
+            .write_canon(&mut self.secret_key)?;
 
         self.add_flags(NocFlags::UPDATE_CSR_REQ_RECVD);
 

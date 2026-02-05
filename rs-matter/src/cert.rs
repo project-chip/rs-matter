@@ -780,7 +780,7 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
             let result = self
                 .crypto
                 .pub_key(parent.pubkey()?.try_into()?)?
-                .verify(asn1, self.cert.signature()?.try_into()?);
+                .verify(asn1, self.cert.signature()?.try_into()?)?;
 
             if !result {
                 error!(

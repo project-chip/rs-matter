@@ -205,7 +205,7 @@ impl<'a, C: Crypto> Case<'a, C> {
                 tw.end_container()?;
 
                 if !tt_updated {
-                    self.casep.update_tt(tw.as_slice());
+                    self.casep.update_tt(tw.as_slice())?;
                     tt_updated = true;
                 }
 
@@ -281,7 +281,7 @@ impl<'a, C: Crypto> Case<'a, C> {
                     // Only now do we add this message to the TT Hash
                     let mut peer_catids: NocCatIds = Default::default();
                     initiator_noc.get_cat_ids(&mut peer_catids)?;
-                    self.casep.update_tt(exchange.rx()?.payload());
+                    self.casep.update_tt(exchange.rx()?.payload())?;
 
                     let mut session_keys = MaybeUninit::<CaseSessionKeys>::uninit(); // TODO MEDIM BUFFER
                     let session_keys = session_keys.init_with(CaseSessionKeys::init());

@@ -353,12 +353,16 @@ where
 /// The digest algorithm should support incremental updates and finalization.
 ///
 /// Used for both hashing and HMAC.
-pub trait Digest<const HASH_LEN: usize>: Clone {
+pub trait Digest<const HASH_LEN: usize> {
     /// Update the digest with the given data.
-    fn update(&mut self, data: &[u8]);
+    fn update(&mut self, data: &[u8]) -> Result<(), Error>;
+
+    /// Finish the digest and write the result into the given buffer,
+    /// without consuming the hasher instance, allowing for further updates and finalizations.
+    fn finish_current(&mut self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), Error>;
 
     /// Finish the digest and write the result into the given buffer.
-    fn finish(self, hash: &mut CryptoSensitive<HASH_LEN>);
+    fn finish(self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), Error>;
 }
 
 /// Trait representing a Key Derivation Function (KDF).
@@ -384,7 +388,7 @@ pub trait PbKdf {
         iter: usize,
         salt: &[u8],
         key: &mut CryptoSensitive<KEY_LEN>,
-    );
+    ) -> Result<(), Error>;
 }
 
 /// Trait representing an Authenticated Encryption with Associated Data (AEAD) algorithm.
@@ -473,7 +477,7 @@ pub trait SigningSecretKey<'a, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: us
         Self: 's;
 
     /// Get the public key corresponding to this secret key.
-    fn pub_key(&self) -> Self::PublicKey<'a>;
+    fn pub_key(&self) -> Result<Self::PublicKey<'a>, Error>;
 
     /// Generate a Certificate Signing Request (CSR) using this secret key,
     ///
@@ -490,7 +494,11 @@ pub trait SigningSecretKey<'a, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: us
     /// # Arguments
     /// - `data`: Data to sign.
     /// - `signature`: Buffer to write the signature into.
-    fn sign(&self, data: &[u8], signature: &mut CryptoSensitive<SIGNATURE_LEN>);
+    fn sign(
+        &self,
+        data: &[u8],
+        signature: &mut CryptoSensitive<SIGNATURE_LEN>,
+    ) -> Result<(), Error>;
 }
 
 /// Trait representing a secret key.
@@ -514,10 +522,10 @@ pub trait SecretKey<
         &self,
         peer_pub_key: &Self::PublicKey<'a>,
         shared_secret: &mut CryptoSensitive<SHARED_SECRET_LEN>,
-    );
+    ) -> Result<(), Error>;
 
     /// Write the canonical representation of this secret key into the given buffer.
-    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>);
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), Error>;
 }
 
 /// Trait representing a public key.
@@ -530,10 +538,14 @@ pub trait PublicKey<'a, const KEY_LEN: usize, const SIGNATURE_LEN: usize> {
     ///
     /// # Returns
     /// - `true` if the signature is valid.
-    fn verify(&self, data: &[u8], signature: CryptoSensitiveRef<SIGNATURE_LEN>) -> bool;
+    fn verify(
+        &self,
+        data: &[u8],
+        signature: CryptoSensitiveRef<SIGNATURE_LEN>,
+    ) -> Result<bool, Error>;
 
     /// Write the canonical representation of this public key into the given buffer.
-    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>);
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), Error>;
 }
 
 impl<'a, const KEY_LEN: usize, const SIGNATURE_LEN: usize, T> PublicKey<'a, KEY_LEN, SIGNATURE_LEN>
@@ -541,11 +553,15 @@ impl<'a, const KEY_LEN: usize, const SIGNATURE_LEN: usize, T> PublicKey<'a, KEY_
 where
     T: PublicKey<'a, KEY_LEN, SIGNATURE_LEN>,
 {
-    fn verify(&self, data: &[u8], signature: CryptoSensitiveRef<SIGNATURE_LEN>) -> bool {
+    fn verify(
+        &self,
+        data: &[u8],
+        signature: CryptoSensitiveRef<SIGNATURE_LEN>,
+    ) -> Result<bool, Error> {
         (*self).verify(data, signature)
     }
 
-    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) {
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) -> Result<(), Error> {
         (*self).write_canon(key)
     }
 }
@@ -559,10 +575,12 @@ pub trait EcScalar<'a, const LEN: usize> {
     ///
     /// # Returns
     /// - The result of the multiplication.
-    fn mul(&self, other: &Self) -> Self;
+    fn mul(&self, other: &Self) -> Result<Self, Error>
+    where
+        Self: Sized;
 
     /// Write the canonical representation of this scalar into the given buffer.
-    fn write_canon(&self, scalar: &mut CryptoSensitive<LEN>);
+    fn write_canon(&self, scalar: &mut CryptoSensitive<LEN>) -> Result<(), Error>;
 }
 
 /// Trait representing an Elliptic Curve (EC) point.
@@ -573,10 +591,14 @@ pub trait EcPoint<'a, const LEN: usize, const SCALAR_LEN: usize> {
         Self: 'a + 's;
 
     /// Negate this EC point.
-    fn neg(&self) -> Self;
+    fn neg(&self) -> Result<Self, Error>
+    where
+        Self: Sized;
 
     /// Multiply this EC point by the given scalar.
-    fn mul(&self, scalar: &Self::Scalar<'a>) -> Self;
+    fn mul(&self, scalar: &Self::Scalar<'a>) -> Result<Self, Error>
+    where
+        Self: Sized;
 
     /// Perform an addition-multiplication operation,
     /// i.e. compute P1 * s1 + P2 * s2, where P1 is `self`.
@@ -588,10 +610,17 @@ pub trait EcPoint<'a, const LEN: usize, const SCALAR_LEN: usize> {
     ///
     /// # Returns
     /// - The result of the addition-multiplication.
-    fn add_mul(&self, s1: &Self::Scalar<'a>, p2: &Self, s2: &Self::Scalar<'a>) -> Self;
+    fn add_mul(
+        &self,
+        s1: &Self::Scalar<'a>,
+        p2: &Self,
+        s2: &Self::Scalar<'a>,
+    ) -> Result<Self, Error>
+    where
+        Self: Sized;
 
     /// Write the canonical representation of this EC point into the given buffer.
-    fn write_canon(&self, point: &mut CryptoSensitive<LEN>);
+    fn write_canon(&self, point: &mut CryptoSensitive<LEN>) -> Result<(), Error>;
 }
 
 #[allow(unused)]
@@ -639,7 +668,7 @@ mod tests {
         let crypto = test_only_crypto();
 
         let key = unwrap!(crypto.pub_key(PUB_KEY1));
-        assert_eq!(key.verify(MSG1_SUCCESS, SIGNATURE1), true);
+        assert_eq!(unwrap!(key.verify(MSG1_SUCCESS, SIGNATURE1)), true);
     }
 
     #[test]
@@ -647,7 +676,7 @@ mod tests {
         let crypto = test_only_crypto();
 
         let key = unwrap!(crypto.pub_key(PUB_KEY1));
-        assert_eq!(key.verify(MSG1_FAIL, SIGNATURE1), false);
+        assert_eq!(unwrap!(key.verify(MSG1_FAIL, SIGNATURE1)), false);
     }
 
     const PUB_KEY1: CanonPkcPublicKeyRef = CanonPkcPublicKeyRef::new(&[

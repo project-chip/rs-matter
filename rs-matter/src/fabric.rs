@@ -187,15 +187,15 @@ impl Fabric {
     ) -> Result<(), Error> {
         let mut mac = crypto.hmac(self.ipk.op_key())?;
 
-        mac.update(random);
-        mac.update(CertRef::new(TLVElement::new(self.root_ca())).pubkey()?);
+        mac.update(random)?;
+        mac.update(CertRef::new(TLVElement::new(self.root_ca())).pubkey()?)?;
 
-        mac.update(&self.fabric_id.to_le_bytes());
-        mac.update(&self.node_id.to_le_bytes());
+        mac.update(&self.fabric_id.to_le_bytes())?;
+        mac.update(&self.node_id.to_le_bytes())?;
 
         let mut id = MaybeUninit::<Hash>::uninit(); // TODO MEDIUM BUFFER
         let id = id.init_with(Hash::init());
-        mac.finish(id);
+        mac.finish(id)?;
         if id.access() == target {
             Ok(())
         } else {

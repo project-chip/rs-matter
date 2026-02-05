@@ -80,7 +80,7 @@ impl NocHandler {
         let dac_key = crypto.secret_key(dev_att.dac_priv_key())?;
 
         attest_element.copy_from_slice(attest_challenge.access())?;
-        dac_key.sign(attest_element.as_slice(), signature);
+        dac_key.sign(attest_element.as_slice(), signature)?;
 
         Ok(())
     }

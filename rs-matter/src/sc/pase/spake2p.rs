@@ -31,7 +31,7 @@ use crate::crypto::{
     EC_CANON_SCALAR_LEN, EC_POINT_ZEROED, EC_SCALAR_ZEROED, HASH_LEN, HASH_ZEROED, HMAC_HASH_LEN,
     HMAC_HASH_ZEROED, UINT320_CANON_LEN,
 };
-use crate::error::{Error, ErrorCode};
+use crate::error::Error;
 use crate::sc::SCStatusCodes;
 use crate::utils::init::{init, Init};
 
@@ -213,15 +213,19 @@ impl Spake2P {
         self.peer_sessid = peer_sessid;
 
         let mut context = crypto.hash()?;
-        context.update(Self::SPAKE2P_CONTEXT_PREFIX);
-        context.update(request);
+        context.update(Self::SPAKE2P_CONTEXT_PREFIX)?;
+        context.update(request)?;
 
         Ok(context)
     }
 
-    pub fn finish_context<'a, C: Crypto>(&mut self, mut context: C::Hash<'a>, response: &[u8]) {
-        context.update(response);
-        context.finish(&mut self.context_hash);
+    pub fn finish_context<'a, C: Crypto>(
+        &mut self,
+        mut context: C::Hash<'a>,
+        response: &[u8],
+    ) -> Result<(), Error> {
+        context.update(response)?;
+        context.finish(&mut self.context_hash)
     }
 
     pub fn setup_verifier<C: Crypto>(
@@ -241,7 +245,7 @@ impl Spake2P {
                 verifier.count,
                 verifier.salt.access(),
                 &mut w0s_w1s,
-            );
+            )?;
 
             let (w0s, w1s) = w0s_w1s
                 .reference()
@@ -249,7 +253,7 @@ impl Spake2P {
 
             let w0 = crypto.ec_scalar_mod_p(w0s)?;
             let w1 = crypto.ec_scalar_mod_p(w1s)?;
-            let l_pt = crypto.ec_generator_point()?.mul(&w1);
+            let l_pt = crypto.ec_generator_point()?.mul(&w1)?;
 
             (w0, l_pt)
         } else {
@@ -265,7 +269,7 @@ impl Spake2P {
         let n_pt = crypto.ec_point(Self::MATTER_N_BIN)?;
         let (b_pt, xy) = Self::compute_b_pt_xy(&crypto, &n_pt, &w0)?;
 
-        b_pt.write_canon(b_pt_out);
+        b_pt.write_canon(b_pt_out)?;
 
         let mut tt_hash = HASH_ZEROED;
         Self::compute_verifier_tt_hash(
@@ -315,7 +319,7 @@ impl Spake2P {
         //   - Y = y*P + w0*N
         //   - pB = Y
         let xy = crypto.generate_ec_scalar()?;
-        let b_pt = crypto.ec_generator_point()?.add_mul(&xy, n_pt, w0);
+        let b_pt = crypto.ec_generator_point()?.add_mul(&xy, n_pt, w0)?;
 
         Ok((b_pt, xy))
     }
@@ -335,50 +339,52 @@ impl Spake2P {
         let mut tt = crypto.hash()?;
 
         let mut add_to_tt = |data: &[u8]| {
-            tt.update(&(data.len() as u64).to_le_bytes());
+            tt.update(&(data.len() as u64).to_le_bytes())?;
             if !data.is_empty() {
-                tt.update(data);
+                tt.update(data)?;
             }
+
+            Ok::<_, Error>(())
         };
 
         let mut pt_out = EC_POINT_ZEROED;
         let mut sc_out = EC_SCALAR_ZEROED;
 
         // Context
-        add_to_tt(context.access());
+        add_to_tt(context.access())?;
 
         // 2 empty identifiers
-        add_to_tt(&[]);
-        add_to_tt(&[]);
+        add_to_tt(&[])?;
+        add_to_tt(&[])?;
 
         // M
-        add_to_tt(Self::MATTER_M_BIN.access());
+        add_to_tt(Self::MATTER_M_BIN.access())?;
 
         // N
-        add_to_tt(Self::MATTER_N_BIN.access());
+        add_to_tt(Self::MATTER_N_BIN.access())?;
 
         // X = pA
-        add_to_tt(a_pt_canon.access());
+        add_to_tt(a_pt_canon.access())?;
 
         // Y = pB
-        add_to_tt(b_pt_canon.access());
+        add_to_tt(b_pt_canon.access())?;
 
         let a_pt = crypto.ec_point(a_pt_canon)?;
-        let (z_pt, v_pt) = Self::compute_zv_verifier(crypto, w0, l_pt, m_pt, &a_pt, xy);
+        let (z_pt, v_pt) = Self::compute_zv_verifier(crypto, w0, l_pt, m_pt, &a_pt, xy)?;
 
         // Z
-        z_pt.write_canon(&mut pt_out);
-        add_to_tt(pt_out.access());
+        z_pt.write_canon(&mut pt_out)?;
+        add_to_tt(pt_out.access())?;
 
         // V
-        v_pt.write_canon(&mut pt_out);
-        add_to_tt(pt_out.access());
+        v_pt.write_canon(&mut pt_out)?;
+        add_to_tt(pt_out.access())?;
 
         // w0
-        w0.write_canon(&mut sc_out);
-        add_to_tt(sc_out.access());
+        w0.write_canon(&mut sc_out)?;
+        add_to_tt(sc_out.access())?;
 
-        tt.finish(tt_hash_out);
+        tt.finish(tt_hash_out)?;
 
         Ok(())
     }
@@ -402,8 +408,7 @@ impl Spake2P {
         crypto
             .kdf()
             .unwrap()
-            .expand(&[], ka, Self::SPAKE2P_KEY_CONFIRM_INFO, &mut kca_kcb)
-            .map_err(|_x| ErrorCode::InvalidData)?;
+            .expand(&[], ka, Self::SPAKE2P_KEY_CONFIRM_INFO, &mut kca_kcb)?;
 
         let (kca, kcb) = kca_kcb.reference().split::<16, 16>();
 
@@ -411,13 +416,13 @@ impl Spake2P {
 
         // Step 3: cA = HMAC(KcA, pB), cB = HMAC(KcB, pA)
         let mut mac = crypto.hmac(kca)?;
-        b_pt.write_canon(&mut pt_out);
-        mac.update(pt_out.access());
-        mac.finish(ca_out);
+        b_pt.write_canon(&mut pt_out)?;
+        mac.update(pt_out.access())?;
+        mac.finish(ca_out)?;
 
         let mut mac = crypto.hmac(kcb)?;
-        mac.update(a_pt_canon.access());
-        mac.finish(cb_out);
+        mac.update(a_pt_canon.access())?;
+        mac.finish(cb_out)?;
 
         Ok(())
     }
@@ -429,7 +434,7 @@ impl Spake2P {
         m_pt: &C::EcPoint<'a>,
         x_pt: &C::EcPoint<'a>,
         y: &C::EcScalar<'a>,
-    ) -> (C::EcPoint<'a>, C::EcPoint<'a>) {
+    ) -> Result<(C::EcPoint<'a>, C::EcPoint<'a>), Error> {
         // As per the RFC, the operation here is:
         //   Z = h*y*(X - w0*M) = h*y*X - h*y*w0*M
         //   V = h*y*L
@@ -441,14 +446,14 @@ impl Spake2P {
         //    Z = y*X + tmp*M (M is inverted to get the 'negative' effect)
         //    Z = h*Z (cofactor Mul)
 
-        let z_pt = x_pt.add_mul(y, &m_pt.neg(), &y.mul(w0));
+        let z_pt = x_pt.add_mul(y, &m_pt.neg()?, &y.mul(w0)?)?;
 
         // Cofactor for P256 is 1, so that is a No-Op
         // TODO: We don't want to be SEcp256r1 specific though
 
-        let v_pt = l_pt.mul(y);
+        let v_pt = l_pt.mul(y)?;
 
-        (z_pt, v_pt)
+        Ok((z_pt, v_pt))
     }
 
     #[allow(unused)]
@@ -459,7 +464,7 @@ impl Spake2P {
         n_pt: &C::EcPoint<'a>,
         y_pt: &C::EcPoint<'a>,
         x: &C::EcScalar<'a>,
-    ) -> (C::EcPoint<'a>, C::EcPoint<'a>) {
+    ) -> Result<(C::EcPoint<'a>, C::EcPoint<'a>), Error> {
         // As per the RFC, the operation here is:
         //   Z = h*x*(Y - w0*N) = h*x*Y - h*x*w0*N
         //   V = h*w1*(Y - w0*N) = h*w1*Y - h*w1*w0*N
@@ -471,16 +476,16 @@ impl Spake2P {
         //    Z = x*Y + tmp*N (N is inverted to get the 'negative' effect)
         //    Z = h*Z (cofactor Mul)
 
-        let n_pt_neg = n_pt.neg();
+        let n_pt_neg = n_pt.neg()?;
 
-        let z_pt = y_pt.add_mul(x, &n_pt_neg, &x.mul(w0));
+        let z_pt = y_pt.add_mul(x, &n_pt_neg, &x.mul(w0)?)?;
 
         // Cofactor for P256 is 1, so that is a No-Op
         // TODO: We don't want to be SEcp256r1 specific though
 
-        let v_pt = y_pt.add_mul(w1, &n_pt_neg, &w1.mul(w0));
+        let v_pt = y_pt.add_mul(w1, &n_pt_neg, &w1.mul(w0)?)?;
 
-        (z_pt, v_pt)
+        Ok((z_pt, v_pt))
     }
 
     fn compute_w0s_w1s<C: Crypto>(
@@ -489,8 +494,8 @@ impl Spake2P {
         iter: u32,
         salt: &[u8],
         w0w1s: &mut Spake2pW,
-    ) {
-        unwrap!(crypto.pbkdf()).derive(pw, iter as usize, salt, w0w1s);
+    ) -> Result<(), Error> {
+        crypto.pbkdf()?.derive(pw, iter as usize, salt, w0w1s)
     }
 }
 
@@ -512,10 +517,10 @@ mod tests {
             let w0 = unwrap!(crypto.ec_scalar(t.w0));
             let gen_pt = unwrap!(crypto.ec_generator_point());
 
-            let result_pt = gen_pt.add_mul(&x, &m_pt, &w0);
+            let result_pt = unwrap!(gen_pt.add_mul(&x, &m_pt, &w0));
 
             let mut point = EC_POINT_ZEROED;
-            result_pt.write_canon(&mut point);
+            unwrap!(result_pt.write_canon(&mut point));
 
             assert_eq!(t.x_pt.access(), point.access());
         }
@@ -531,10 +536,10 @@ mod tests {
             let w0 = unwrap!(crypto.ec_scalar(t.w0));
             let gen_pt = unwrap!(crypto.ec_generator_point());
 
-            let result_pt = gen_pt.add_mul(&y, &n_pt, &w0);
+            let result_pt = unwrap!(gen_pt.add_mul(&y, &n_pt, &w0));
 
             let mut point = EC_POINT_ZEROED;
-            result_pt.write_canon(&mut point);
+            unwrap!(result_pt.write_canon(&mut point));
 
             assert_eq!(t.y_pt.access(), point.access());
         }
@@ -551,14 +556,16 @@ mod tests {
             let w0 = unwrap!(crypto.ec_scalar(t.w0));
             let w1 = unwrap!(crypto.ec_scalar(t.w1));
 
-            let (z_pt, v_pt) = Spake2P::compute_zv_prover(&crypto, &w0, &w1, &n_pt, &y_pt, &x);
+            let (z_pt, v_pt) = unwrap!(Spake2P::compute_zv_prover(
+                &crypto, &w0, &w1, &n_pt, &y_pt, &x
+            ));
 
             let mut point = EC_POINT_ZEROED;
 
-            z_pt.write_canon(&mut point);
+            unwrap!(z_pt.write_canon(&mut point));
             assert_eq!(t.z_pt.access(), point.access());
 
-            v_pt.write_canon(&mut point);
+            unwrap!(v_pt.write_canon(&mut point));
             assert_eq!(t.v_pt.access(), point.access());
         }
     }
@@ -574,14 +581,16 @@ mod tests {
             let w0 = unwrap!(crypto.ec_scalar(t.w0));
             let l_pt = unwrap!(crypto.ec_point(t.l_pt));
 
-            let (z_pt, v_pt) = Spake2P::compute_zv_verifier(&crypto, &w0, &l_pt, &m_pt, &x, &y);
+            let (z_pt, v_pt) = unwrap!(Spake2P::compute_zv_verifier(
+                &crypto, &w0, &l_pt, &m_pt, &x, &y
+            ));
 
             let mut point = EC_POINT_ZEROED;
 
-            z_pt.write_canon(&mut point);
+            unwrap!(z_pt.write_canon(&mut point));
             assert_eq!(t.z_pt.access(), point.access());
 
-            v_pt.write_canon(&mut point);
+            unwrap!(v_pt.write_canon(&mut point));
             assert_eq!(t.v_pt.access(), point.access());
         }
     }
@@ -595,13 +604,13 @@ mod tests {
         ];
 
         let mut w0s_w1s = Spake2pW::new();
-        Spake2P::compute_w0s_w1s(
+        unwrap!(Spake2P::compute_w0s_w1s(
             test_only_crypto(),
             (&123456_u32.to_le_bytes()).into(),
             2000,
             SALT,
             &mut w0s_w1s,
-        );
+        ));
 
         assert_eq!(
             w0s_w1s.access(),
@@ -627,8 +636,8 @@ mod tests {
             let mut tt_hash = HASH_ZEROED;
 
             let mut hasher = unwrap!(crypto.hash());
-            hasher.update(&t.tt[..t.tt_len]);
-            hasher.finish(&mut tt_hash);
+            unwrap!(hasher.update(&t.tt[..t.tt_len]));
+            unwrap!(hasher.finish(&mut tt_hash));
 
             unwrap!(Spake2P::compute_ke_ca_cb(
                 &crypto,

@@ -126,10 +126,10 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
         // Create an ephemeral EC secret key
         let secret_key = crypto.generate_secret_key()?;
 
-        secret_key.pub_key().write_canon(&mut self.our_pub_key);
+        secret_key.pub_key()?.write_canon(&mut self.our_pub_key)?;
 
         // Derive the Shared Secret
-        secret_key.derive_shared_secret(&peer_pub_key, &mut self.shared_secret);
+        secret_key.derive_shared_secret(&peer_pub_key, &mut self.shared_secret)?;
         //        println!("Derived secret: {:x?} len: {}", secret, len);
 
         let mut rand = crypto.rand()?;
@@ -138,9 +138,9 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
         rand.fill_bytes(resumption_id_out.access_mut());
 
         self.tt = Optional::some(crypto.hash()?);
-        self.update_tt(request);
+        self.update_tt(request)?;
 
-        self.current_tt_hash(tt_hash_out);
+        self.current_tt_hash(tt_hash_out)?;
 
         Ok(())
     }
@@ -161,14 +161,12 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
         self.our_pub_key.reference()
     }
 
-    pub fn update_tt(&mut self, data: &[u8]) {
-        unwrap!(self.tt.as_opt_mut()).update(data);
+    pub fn update_tt(&mut self, data: &[u8]) -> Result<(), Error> {
+        unwrap!(self.tt.as_opt_mut()).update(data)
     }
 
-    pub fn current_tt_hash(&self, out: &mut Hash) {
-        let tt = unwrap!(self.tt.as_opt_ref()).clone();
-
-        tt.finish(out);
+    pub fn current_tt_hash(&mut self, out: &mut Hash) -> Result<(), Error> {
+        unwrap!(self.tt.as_opt_mut()).finish_current(out)
     }
 
     /// Get the Sigma2 encrypted data
@@ -269,7 +267,7 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
         //println!("TBS is {:x?}", write_buf.as_borrow_slice());
 
         let fabric_secret = crypto.secret_key(fabric.secret_key())?;
-        fabric_secret.sign(tw.as_slice(), signature);
+        fabric_secret.sign(tw.as_slice(), signature)?;
 
         Ok(())
     }
@@ -399,7 +397,7 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
 
         let pub_key =
             crypto.pub_key(CanonPkcPublicKeyRef::try_new(initiator_noc_cert.pubkey()?)?)?;
-        if !pub_key.verify(tw.as_slice(), signature) {
+        if !pub_key.verify(tw.as_slice(), signature)? {
             Err(ErrorCode::Invalid)?;
         }
 
@@ -416,7 +414,7 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
     /// - `Ok(())` - If the session keys were successfully derived
     /// - `Err(Error)` - If an error occurred during the process
     pub fn compute_session_keys(
-        &self,
+        &mut self,
         crypto: &C,
         ipk: CanonAeadKeyRef<'_>,
         keys: &mut CaseSessionKeys,
@@ -426,7 +424,7 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
         ];
 
         let mut tt_hash = HASH_ZEROED;
-        self.current_tt_hash(&mut tt_hash);
+        self.current_tt_hash(&mut tt_hash)?;
 
         let mut salt = CryptoSensitive::<{ AEAD_CANON_KEY_LEN + HASH_LEN }>::new();
 
@@ -460,7 +458,7 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
     /// - `Ok(usize)` - The length of the decrypted data
     /// - `Err(Error)` - If an error occurred during the process
     pub fn sigma3_decrypt(
-        &self,
+        &mut self,
         crypto: &C,
         ipk: CanonAeadKeyRef<'_>,
         encrypted: &mut [u8],
@@ -491,7 +489,7 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
     /// - `Ok(())` - If the Sigma3 key was successfully derived
     /// - `Err(Error)` - If an error occurred during the process
     fn compute_sigma3_key(
-        &self,
+        &mut self,
         crypto: &C,
         ipk: CanonAeadKeyRef<'_>,
         key: &mut CanonAeadKey,
@@ -499,7 +497,7 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
         const S3K_INFO: [u8; 6] = [0x53, 0x69, 0x67, 0x6d, 0x61, 0x33];
 
         let mut tt_hash = HASH_ZEROED;
-        self.current_tt_hash(&mut tt_hash);
+        self.current_tt_hash(&mut tt_hash)?;
 
         let mut salt = CryptoSensitive::<{ AEAD_CANON_KEY_LEN + HASH_LEN }>::new();
 
