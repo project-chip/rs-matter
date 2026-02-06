@@ -15,18 +15,23 @@
  *    limitations under the License.
  */
 
-//! An mDNS implementation (responder only!) based on the `asto-dnssd` crate.
+//! An mDNS implementation based on the `astro-dnssd` crate.
+//! Supports both service advertisement (responder) and service discovery (querier).
 //! (On Linux requires the Avahi daemon to be installed and running; does not work with `systemd-resolved`.)
 
-use std::collections::{HashMap, HashSet};
+use astro_dnssd::{DNSServiceBuilder, RegisteredDnsService, ServiceBrowserBuilder};
 
-use astro_dnssd::{DNSServiceBuilder, RegisteredDnsService};
+use std::collections::{HashMap, HashSet};
+use std::net::ToSocketAddrs;
+use std::time::Duration;
 
 use crate::crypto::Crypto;
 use crate::dm::ChangeNotify;
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::mdns::Service;
 use crate::{Matter, MatterMdnsService};
+
+use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
 
 /// An mDNS responder for Matter utilizing the `astro-dnssd` crate.
 /// In theory, it should work on all of Linux, MacOS and Windows, however only known to work on MacOSX.
@@ -135,4 +140,106 @@ impl<'a> AstroMdnsResponder<'a> {
             },
         )
     }
+}
+
+/// Discover commissionable Matter devices using the system's DNS-SD service.
+///
+/// This function uses the `astro-dnssd` crate which wraps the system's native
+/// DNS-SD implementation (Bonjour on macOS, Avahi on Linux).
+///
+/// # Arguments
+/// * `filter` - Filter criteria for discovered devices
+/// * `timeout_ms` - Discovery timeout in milliseconds
+///
+/// # Returns
+/// A vector of discovered devices matching the filter criteria
+pub fn discover_commissionable(
+    filter: &CommissionableFilter,
+    timeout_ms: u32,
+) -> Result<Vec<DiscoveredDevice>, Error> {
+    let mut results = Vec::new();
+
+    // Build the service type
+    let mut service_type_buf: heapless::String<64> = heapless::String::new();
+    filter.service_type(&mut service_type_buf, false);
+    let service_type = service_type_buf.as_str();
+
+    info!("Browsing for mDNS services: {}", service_type);
+
+    let browser = ServiceBrowserBuilder::new(&service_type)
+        .browse()
+        .map_err(|e| {
+            error!("Failed to create service browser: {:?}", e);
+            ErrorCode::MdnsError
+        })?;
+
+    let timeout = Duration::from_millis(timeout_ms as u64);
+    let start = std::time::Instant::now();
+
+    // Poll for services until timeout
+    while start.elapsed() < timeout {
+        let remaining = timeout.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
+            break;
+        }
+
+        match browser.recv_timeout(remaining.min(Duration::from_millis(100))) {
+            Ok(service) => {
+                info!(
+                    "Discovered service: {} on {}:{} (domain: {})",
+                    service.name, service.hostname, service.port, service.domain
+                );
+
+                let mut device = DiscoveredDevice::default();
+                device.set_instance_name(&service.name);
+                device.port = service.port;
+
+                let host_with_port = format!("{}:{}", service.hostname, service.port);
+                let resolved = if let Ok(addrs) = host_with_port.to_socket_addrs() {
+                    // Add all resolved addresses (they will be sorted by priority)
+                    for addr in addrs {
+                        device.add_address(addr.ip());
+                    }
+                    true
+                } else {
+                    // Try resolving just the hostname
+                    let host: &str = &service.hostname;
+                    if let Ok(addrs) = (host, service.port).to_socket_addrs() {
+                        for addr in addrs {
+                            device.add_address(addr.ip());
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                };
+
+                if !resolved || device.addresses().is_empty() {
+                    warn!("Could not resolve hostname: {}", service.hostname);
+                    continue;
+                }
+
+                if let Some(ref txt_record) = service.txt_record {
+                    for (key, value) in txt_record {
+                        device.set_txt_value(key, value);
+                    }
+                }
+
+                if filter.matches(&device) {
+                    results.push_if_unique(device);
+                }
+            }
+            Err(astro_dnssd::BrowseError::Timeout) => {
+                // Continue polling
+            }
+            Err(e) => {
+                debug!("Browse error: {:?}", e);
+                // Continue trying until timeout
+            }
+        }
+    }
+
+    info!("mDNS discovery found {} devices", results.len());
+
+    Ok(results)
 }

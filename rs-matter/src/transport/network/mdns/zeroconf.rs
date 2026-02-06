@@ -19,15 +19,24 @@
 //! (On Linux requires the Avahi daemon to be installed and running; does not work with `systemd-resolved`.)
 
 use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use zeroconf::{prelude::TEventLoop, service::TMdnsService, txt_record::TTxtRecord, ServiceType};
+use zeroconf::browser::TMdnsBrowser;
+use zeroconf::prelude::TEventLoop;
+use zeroconf::service::TMdnsService;
+use zeroconf::txt_record::TTxtRecord;
+use zeroconf::{MdnsBrowser, ServiceDiscovery, ServiceType};
 
 use crate::crypto::Crypto;
 use crate::dm::ChangeNotify;
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::mdns::Service;
 use crate::{Matter, MatterMdnsService};
+
+use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
 
 /// An mDNS responder for Matter utilizing the `zeroconf` crate.
 /// In theory, it should work on all of Linux, MacOS and Windows, however seems to have issues on MacOSX and Windows.
@@ -201,4 +210,115 @@ impl From<zeroconf::error::Error> for Error {
     fn from(e: zeroconf::error::Error) -> Self {
         Self::new_with_details(ErrorCode::MdnsError, Box::new(e))
     }
+}
+
+/// Discover commissionable Matter devices using the zeroconf crate.
+///
+/// # Arguments
+/// * `filter` - Filter criteria for discovered devices
+/// * `timeout_ms` - Discovery timeout in milliseconds
+///
+/// # Returns
+/// A vector of discovered devices matching the filter criteria
+///
+/// # Note
+/// This function is blocking and spawns a background thread for the mDNS browser event loop.
+pub fn discover_commissionable(
+    filter: &CommissionableFilter,
+    timeout_ms: u32,
+) -> Result<Vec<DiscoveredDevice>, Error> {
+    // Build the service type - zeroconf doesn't support subtype filtering in browse,
+    // so we browse for all _matterc._udp and filter results afterward
+    let service_type = ServiceType::new("matterc", "udp")?;
+
+    info!("Browsing for mDNS services via zeroconf: _matterc._udp");
+
+    // Shared state for collecting discovered devices
+    let discovered: Arc<Mutex<Vec<ServiceDiscovery>>> = Arc::new(Mutex::new(Vec::new()));
+    let discovered_clone = discovered.clone();
+
+    // Channel to signal the browser thread to stop
+    let (stop_tx, stop_rx) = sync_channel::<()>(1);
+
+    let browser_handle = std::thread::spawn(move || -> Result<(), Error> {
+        let mut browser = MdnsBrowser::new(service_type);
+
+        let discovered_callback = discovered_clone.clone();
+        browser.set_service_discovered_callback(Box::new(
+            move |result: zeroconf::Result<ServiceDiscovery>, _context| {
+                if let Ok(service) = result {
+                    debug!(
+                        "Discovered service: {} at {}:{}",
+                        service.name(),
+                        service.address(),
+                        service.port()
+                    );
+                    if let Ok(mut guard) = discovered_callback.lock() {
+                        guard.push(service);
+                    }
+                }
+            },
+        ));
+
+        let event_loop = browser.browse_services()?;
+
+        // Poll until stop signal or timeout
+        while stop_rx.try_recv().is_err() {
+            if let Err(e) = event_loop.poll(Duration::from_millis(100)) {
+                warn!("Browser poll error: {:?}", e);
+                break;
+            }
+        }
+
+        Ok(())
+    });
+
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    // Signal browser thread to stop
+    let _ = stop_tx.send(());
+
+    // Wait for browser thread to finish (with a reasonable timeout)
+    let _ = browser_handle.join();
+
+    // Process discovered services
+    let mut results = Vec::new();
+
+    let services = discovered
+        .lock()
+        .map_err(|_| Error::new(ErrorCode::MdnsError))?;
+
+    for service in services.iter() {
+        let mut device = DiscoveredDevice::default();
+
+        device.set_instance_name(service.name());
+        device.port = *service.port();
+
+        // Parse and add IP address
+        if let Ok(ip) = service.address().parse::<IpAddr>() {
+            device.add_address(ip);
+        } else {
+            warn!("Could not parse IP address: {}", service.address());
+            continue;
+        }
+
+        // Parse TXT records
+        if let Some(txt) = service.txt() {
+            for (key, value) in txt.iter() {
+                device.set_txt_value(key.as_str(), value.as_str());
+            }
+        }
+
+        // Apply filters and add to results if unique
+        if filter.matches(&device) {
+            results.push_if_unique(device);
+        }
+    }
+
+    info!("Zeroconf mDNS discovery found {} devices", results.len());
+
+    Ok(results)
 }
