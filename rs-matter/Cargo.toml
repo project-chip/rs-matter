@@ -99,9 +99,9 @@ std = ["alloc", "rand"]
 backtrace = []
 alloc = ["defmt?/alloc"]
 openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
-mbedtls = ["alloc", "dep:esp-mbedtls-sys"]
+mbedtls = ["alloc", "dep:mbedtls-rs-sys"]
 rustcrypto = ["alloc", "digest", "cipher", "ccm", "elliptic-curve", "primeorder", "ecdsa", "sec1", "signature", "hmac", "hkdf", "pbkdf2", "crypto-bigint", "sha2", "aes", "p256", "x509-cert"]
-defmt = ["dep:defmt", "heapless/defmt-03", "embassy-time/defmt", "esp-mbedtls-sys?/defmt"]
+defmt = ["dep:defmt", "heapless/defmt-03", "embassy-time/defmt", "mbedtls-rs-sys?/defmt"]
 log = ["dep:log", "embassy-time/log"]
 debug-tlv-payload = []
 large-buffers = [] # TCP support
@@ -134,7 +134,7 @@ pinned-init = { version = "0.0.8", default-features = false }
 # crypto
 openssl = { version = "0.10", optional = true }
 foreign-types = { version = "0.3", optional = true }
-esp-mbedtls-sys = { git = "https://github.com/esp-rs/esp-mbedtls", optional = true }
+mbedtls-rs-sys = { git = "https://github.com/esp-rs/mbedtls-rs", optional = true }
 
 # rust-crypto
 # Generic traits and traitified structures

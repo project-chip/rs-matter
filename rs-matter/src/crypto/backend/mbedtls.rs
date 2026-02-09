@@ -33,7 +33,7 @@
 macro_rules! merr_check {
     ($expr:expr) => {{
         let result = $expr;
-        match esp_mbedtls_sys::merr!(result) {
+        match mbedtls_rs_sys::merr!(result) {
             Ok(val) => Ok::<_, $crate::error::Error>(val),
             Err(err) => panic!("{}", err),
         }
@@ -44,7 +44,7 @@ use core::ffi::{c_int, c_uchar, c_void};
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use esp_mbedtls_sys::merr;
+use mbedtls_rs_sys::merr;
 
 use rand_core::{CryptoRng, CryptoRngCore, RngCore};
 
@@ -77,7 +77,7 @@ impl<'s, M: RawMutex, T> MbedtlsCrypto<'s, M, T> {
     pub fn new(rng: T, singleton_secret_key: CanonPkcSecretKeyRef<'s>) -> Self {
         let mut ec_group = ECGroup::new();
         unwrap!(unsafe {
-            ec_group.set(esp_mbedtls_sys::mbedtls_ecp_group_id_MBEDTLS_ECP_DP_SECP256R1)
+            ec_group.set(mbedtls_rs_sys::mbedtls_ecp_group_id_MBEDTLS_ECP_DP_SECP256R1)
         });
 
         Self {
@@ -204,7 +204,7 @@ where
     ) -> Result<Self::Hmac<'_>, Error> {
         unsafe {
             Hmac::new(
-                esp_mbedtls_sys::mbedtls_md_type_t_MBEDTLS_MD_SHA256,
+                mbedtls_rs_sys::mbedtls_md_type_t_MBEDTLS_MD_SHA256,
                 key.access(),
             )
         }
@@ -212,18 +212,18 @@ where
 
     fn kdf(&self) -> Result<Self::Kdf<'_>, Error> {
         Ok(Hkdf::new(
-            esp_mbedtls_sys::mbedtls_md_type_t_MBEDTLS_MD_SHA256,
+            mbedtls_rs_sys::mbedtls_md_type_t_MBEDTLS_MD_SHA256,
         ))
     }
 
     fn pbkdf(&self) -> Result<Self::PbKdf<'_>, Error> {
         Ok(Pbkdf2Hmac::new(
-            esp_mbedtls_sys::mbedtls_md_type_t_MBEDTLS_MD_SHA256,
+            mbedtls_rs_sys::mbedtls_md_type_t_MBEDTLS_MD_SHA256,
         ))
     }
 
     fn aead(&self) -> Result<Self::Aead<'_>, Error> {
-        Ok(unsafe { AeadCcm::new(esp_mbedtls_sys::mbedtls_cipher_id_t_MBEDTLS_CIPHER_ID_AES) })
+        Ok(unsafe { AeadCcm::new(mbedtls_rs_sys::mbedtls_cipher_id_t_MBEDTLS_CIPHER_ID_AES) })
     }
 
     fn pub_key(
@@ -271,7 +271,7 @@ where
 
         self.ec_group.access(|group| {
             merr_check!(unsafe {
-                esp_mbedtls_sys::mbedtls_mpi_mod_mpi(&mut result.mpi.raw, &mpi.raw, &group.raw.N)
+                mbedtls_rs_sys::mbedtls_mpi_mod_mpi(&mut result.mpi.raw, &mpi.raw, &group.raw.N)
             })
         })?;
 
@@ -283,7 +283,7 @@ where
 
         self.ec_group.access(|group| {
             merr_check!(unsafe {
-                esp_mbedtls_sys::mbedtls_ecp_gen_privkey(
+                mbedtls_rs_sys::mbedtls_ecp_gen_privkey(
                     &group.raw,
                     &mut result.mpi.raw,
                     Some(mbedtls_platform_rng::<SharedRand<M, T>>),
@@ -311,7 +311,7 @@ where
         let mut result = ECPoint::new(&self.ec_group, &self.rng);
 
         self.ec_group.access(|group| {
-            merr_check!(unsafe { esp_mbedtls_sys::mbedtls_ecp_copy(&mut result.raw, &group.raw.G) })
+            merr_check!(unsafe { mbedtls_rs_sys::mbedtls_ecp_copy(&mut result.raw, &group.raw.G) })
         })?;
 
         Ok(result)
@@ -321,7 +321,7 @@ where
 /// SHA-256 hash implementation using MbedTLS.
 pub struct Sha256 {
     /// Raw MbedTLS SHA-256 context
-    raw: esp_mbedtls_sys::mbedtls_sha256_context,
+    raw: mbedtls_rs_sys::mbedtls_sha256_context,
 }
 
 impl Sha256 {
@@ -330,8 +330,8 @@ impl Sha256 {
         let mut raw = Default::default();
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_sha256_init(&mut raw);
-            esp_mbedtls_sys::mbedtls_sha256_starts(&mut raw, 0);
+            mbedtls_rs_sys::mbedtls_sha256_init(&mut raw);
+            mbedtls_rs_sys::mbedtls_sha256_starts(&mut raw, 0);
         }
 
         Self { raw }
@@ -341,7 +341,7 @@ impl Sha256 {
 impl Drop for Sha256 {
     fn drop(&mut self) {
         unsafe {
-            esp_mbedtls_sys::mbedtls_sha256_free(&mut self.raw);
+            mbedtls_rs_sys::mbedtls_sha256_free(&mut self.raw);
         }
     }
 }
@@ -351,8 +351,8 @@ impl Clone for Sha256 {
         let mut raw = Default::default();
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_sha256_init(&mut raw);
-            esp_mbedtls_sys::mbedtls_sha256_clone(&mut raw, &self.raw);
+            mbedtls_rs_sys::mbedtls_sha256_init(&mut raw);
+            mbedtls_rs_sys::mbedtls_sha256_clone(&mut raw, &self.raw);
         }
 
         Self { raw }
@@ -362,7 +362,7 @@ impl Clone for Sha256 {
 impl crate::crypto::Digest<{ crate::crypto::HASH_LEN }> for Sha256 {
     fn update(&mut self, data: &[u8]) -> Result<(), Error> {
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_sha256_update(&mut self.raw, data.as_ptr(), data.len())
+            mbedtls_rs_sys::mbedtls_sha256_update(&mut self.raw, data.as_ptr(), data.len())
         })?;
 
         Ok(())
@@ -382,7 +382,7 @@ impl crate::crypto::Digest<{ crate::crypto::HASH_LEN }> for Sha256 {
         out: &mut CryptoSensitive<{ crate::crypto::HASH_LEN }>,
     ) -> Result<(), Error> {
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_sha256_finish(&mut self.raw, out.access_mut().as_mut_ptr())
+            mbedtls_rs_sys::mbedtls_sha256_finish(&mut self.raw, out.access_mut().as_mut_ptr())
         })?;
 
         Ok(())
@@ -392,7 +392,7 @@ impl crate::crypto::Digest<{ crate::crypto::HASH_LEN }> for Sha256 {
 /// HMAC implementation using MbedTLS.
 pub struct Hmac<const HASH_LEN: usize> {
     /// Raw MbedTLS MD context
-    raw: esp_mbedtls_sys::mbedtls_md_context_t,
+    raw: mbedtls_rs_sys::mbedtls_md_context_t,
 }
 
 impl<const HASH_LEN: usize> Hmac<HASH_LEN> {
@@ -401,29 +401,27 @@ impl<const HASH_LEN: usize> Hmac<HASH_LEN> {
     /// # Safety
     /// The caller must ensure that the provided `md_type` corresponds to the `HASH_LEN`
     /// generic parameter.
-    unsafe fn new(md_type: esp_mbedtls_sys::mbedtls_md_type_t, key: &[u8]) -> Result<Self, Error> {
+    unsafe fn new(md_type: mbedtls_rs_sys::mbedtls_md_type_t, key: &[u8]) -> Result<Self, Error> {
         let mut raw = Default::default();
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_md_init(&mut raw);
+            mbedtls_rs_sys::mbedtls_md_init(&mut raw);
         }
 
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_md_setup(
+            mbedtls_rs_sys::mbedtls_md_setup(
                 &mut raw,
-                esp_mbedtls_sys::mbedtls_md_info_from_type(md_type),
+                mbedtls_rs_sys::mbedtls_md_info_from_type(md_type),
                 1,
             )
         })?;
 
-        merr!(unsafe {
-            esp_mbedtls_sys::mbedtls_md_hmac_starts(&mut raw, key.as_ptr(), key.len())
-        })
-        .map_err(|e| {
-            error!("Failed to start HMAC: {}", e);
+        merr!(unsafe { mbedtls_rs_sys::mbedtls_md_hmac_starts(&mut raw, key.as_ptr(), key.len()) })
+            .map_err(|e| {
+                error!("Failed to start HMAC: {}", e);
 
-            ErrorCode::InvalidData
-        })?;
+                ErrorCode::InvalidData
+            })?;
 
         Ok(Self { raw })
     }
@@ -432,7 +430,7 @@ impl<const HASH_LEN: usize> Hmac<HASH_LEN> {
 impl<const HASH_LEN: usize> Drop for Hmac<HASH_LEN> {
     fn drop(&mut self) {
         unsafe {
-            esp_mbedtls_sys::mbedtls_md_free(&mut self.raw);
+            mbedtls_rs_sys::mbedtls_md_free(&mut self.raw);
         }
     }
 }
@@ -442,8 +440,8 @@ impl<const HASH_LEN: usize> Clone for Hmac<HASH_LEN> {
         let mut raw = Default::default();
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_md_init(&mut raw);
-            esp_mbedtls_sys::mbedtls_md_clone(&mut raw, &self.raw);
+            mbedtls_rs_sys::mbedtls_md_init(&mut raw);
+            mbedtls_rs_sys::mbedtls_md_clone(&mut raw, &self.raw);
         }
 
         Self { raw }
@@ -453,7 +451,7 @@ impl<const HASH_LEN: usize> Clone for Hmac<HASH_LEN> {
 impl<const HASH_LEN: usize> crate::crypto::Digest<HASH_LEN> for Hmac<HASH_LEN> {
     fn update(&mut self, data: &[u8]) -> Result<(), Error> {
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_md_hmac_update(&mut self.raw, data.as_ptr(), data.len())
+            mbedtls_rs_sys::mbedtls_md_hmac_update(&mut self.raw, data.as_ptr(), data.len())
         })?;
 
         Ok(())
@@ -467,7 +465,7 @@ impl<const HASH_LEN: usize> crate::crypto::Digest<HASH_LEN> for Hmac<HASH_LEN> {
 
     fn finish(mut self, out: &mut CryptoSensitive<HASH_LEN>) -> Result<(), Error> {
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_md_hmac_finish(&mut self.raw, out.access_mut().as_mut_ptr())
+            mbedtls_rs_sys::mbedtls_md_hmac_finish(&mut self.raw, out.access_mut().as_mut_ptr())
         })?;
 
         Ok(())
@@ -477,12 +475,12 @@ impl<const HASH_LEN: usize> crate::crypto::Digest<HASH_LEN> for Hmac<HASH_LEN> {
 /// HKDF implementation using MbedTLS.
 pub struct Hkdf {
     /// Message digest type
-    md_type: esp_mbedtls_sys::mbedtls_md_type_t,
+    md_type: mbedtls_rs_sys::mbedtls_md_type_t,
 }
 
 impl Hkdf {
     /// Create a new HKDF instance.
-    fn new(md_type: esp_mbedtls_sys::mbedtls_md_type_t) -> Self {
+    fn new(md_type: mbedtls_rs_sys::mbedtls_md_type_t) -> Self {
         Self { md_type }
     }
 }
@@ -496,8 +494,8 @@ impl crate::crypto::Kdf for Hkdf {
         key: &mut CryptoSensitive<KEY_LEN>,
     ) -> Result<(), Error> {
         merr!(unsafe {
-            esp_mbedtls_sys::mbedtls_hkdf(
-                esp_mbedtls_sys::mbedtls_md_info_from_type(self.md_type),
+            mbedtls_rs_sys::mbedtls_hkdf(
+                mbedtls_rs_sys::mbedtls_md_info_from_type(self.md_type),
                 salt.as_ptr(),
                 salt.len(),
                 ikm.access().as_ptr(),
@@ -521,12 +519,12 @@ impl crate::crypto::Kdf for Hkdf {
 /// PBKDF2-HMAC implementation using MbedTLS.
 pub struct Pbkdf2Hmac {
     /// Message digest type
-    md_type: esp_mbedtls_sys::mbedtls_md_type_t,
+    md_type: mbedtls_rs_sys::mbedtls_md_type_t,
 }
 
 impl Pbkdf2Hmac {
     /// Create a new PBKDF2-HMAC instance.
-    fn new(md_type: esp_mbedtls_sys::mbedtls_md_type_t) -> Self {
+    fn new(md_type: mbedtls_rs_sys::mbedtls_md_type_t) -> Self {
         Self { md_type }
     }
 }
@@ -540,7 +538,7 @@ impl crate::crypto::PbKdf for Pbkdf2Hmac {
         out: &mut CryptoSensitive<KEY_LEN>,
     ) -> Result<(), Error> {
         merr!(unsafe {
-            esp_mbedtls_sys::mbedtls_pkcs5_pbkdf2_hmac_ext(
+            mbedtls_rs_sys::mbedtls_pkcs5_pbkdf2_hmac_ext(
                 self.md_type,
                 password.access().as_ptr(),
                 PASS_LEN,
@@ -564,7 +562,7 @@ impl crate::crypto::PbKdf for Pbkdf2Hmac {
 /// AEAD-CCM implementation using MbedTLS.
 pub struct AeadCcm<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize> {
     /// Cipher type
-    cipher_id: esp_mbedtls_sys::mbedtls_cipher_id_t,
+    cipher_id: mbedtls_rs_sys::mbedtls_cipher_id_t,
 }
 
 impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
@@ -575,7 +573,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
     /// # Safety
     /// The caller must ensure that the provided `cipher_type` corresponds to the
     /// `KEY_LEN`, `NONCE_LEN`, and `TAG_LEN` generic parameters.
-    unsafe fn new(cipher_id: esp_mbedtls_sys::mbedtls_cipher_id_t) -> Self {
+    unsafe fn new(cipher_id: mbedtls_rs_sys::mbedtls_cipher_id_t) -> Self {
         Self { cipher_id }
     }
 }
@@ -596,11 +594,11 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
         let mut ctx = Default::default();
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_ccm_init(&mut ctx);
+            mbedtls_rs_sys::mbedtls_ccm_init(&mut ctx);
         }
 
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_ccm_setkey(
+            mbedtls_rs_sys::mbedtls_ccm_setkey(
                 &mut ctx,
                 self.cipher_id,
                 key.access().as_ptr(),
@@ -609,7 +607,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
         })?;
 
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_ccm_encrypt_and_tag(
+            mbedtls_rs_sys::mbedtls_ccm_encrypt_and_tag(
                 &mut ctx,
                 data_len,
                 nonce.access().as_ptr(),
@@ -624,7 +622,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
         })?;
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_ccm_free(&mut ctx);
+            mbedtls_rs_sys::mbedtls_ccm_free(&mut ctx);
         }
 
         Ok(&data[..data_len + TAG_LEN])
@@ -642,11 +640,11 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
         let mut ctx = Default::default();
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_ccm_init(&mut ctx);
+            mbedtls_rs_sys::mbedtls_ccm_init(&mut ctx);
         }
 
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_ccm_setkey(
+            mbedtls_rs_sys::mbedtls_ccm_setkey(
                 &mut ctx,
                 self.cipher_id,
                 key.access().as_ptr(),
@@ -655,7 +653,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
         })?;
 
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_ccm_auth_decrypt(
+            mbedtls_rs_sys::mbedtls_ccm_auth_decrypt(
                 &mut ctx,
                 data.len() - TAG_LEN,
                 nonce.access().as_ptr(),
@@ -670,7 +668,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
         })?;
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_ccm_free(&mut ctx);
+            mbedtls_rs_sys::mbedtls_ccm_free(&mut ctx);
         }
 
         Ok(&data[..data.len() - TAG_LEN])
@@ -680,7 +678,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
 /// Multi-precision integer (MPI) implementation using MbedTLS.
 pub struct Mpi {
     /// Raw MbedTLS MPI
-    raw: esp_mbedtls_sys::mbedtls_mpi,
+    raw: mbedtls_rs_sys::mbedtls_mpi,
 }
 
 impl Mpi {
@@ -689,7 +687,7 @@ impl Mpi {
         let mut raw = Default::default();
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_init(&mut raw);
+            mbedtls_rs_sys::mbedtls_mpi_init(&mut raw);
         }
 
         Self { raw }
@@ -698,7 +696,7 @@ impl Mpi {
     /// Set the MPI from the given BE byte representation.
     fn set(&mut self, uint: &[u8]) -> Result<(), Error> {
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_read_binary(&mut self.raw, uint.as_ptr(), uint.len())
+            mbedtls_rs_sys::mbedtls_mpi_read_binary(&mut self.raw, uint.as_ptr(), uint.len())
         })?;
 
         Ok(())
@@ -709,7 +707,7 @@ impl Mpi {
     /// The method will panic if the provided buffer is not large enough.
     fn write(&self, uint: &mut [u8]) -> Result<(), Error> {
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_write_binary(&self.raw, uint.as_mut_ptr(), uint.len())
+            mbedtls_rs_sys::mbedtls_mpi_write_binary(&self.raw, uint.as_mut_ptr(), uint.len())
         })?;
 
         Ok(())
@@ -719,7 +717,7 @@ impl Mpi {
 impl Drop for Mpi {
     fn drop(&mut self) {
         unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_free(&mut self.raw);
+            mbedtls_rs_sys::mbedtls_mpi_free(&mut self.raw);
         }
     }
 }
@@ -754,7 +752,7 @@ impl<const LEN: usize, const SCALAR_LEN: usize, M: RawMutex> SharedECGroup<LEN, 
 /// Elliptic curve group implementation using MbedTLS.
 pub struct ECGroup<const LEN: usize, const SCALAR_LEN: usize> {
     /// Raw MbedTLS EC group
-    raw: esp_mbedtls_sys::mbedtls_ecp_group,
+    raw: mbedtls_rs_sys::mbedtls_ecp_group,
 }
 
 impl<const LEN: usize, const SCALAR_LEN: usize> ECGroup<LEN, SCALAR_LEN> {
@@ -763,7 +761,7 @@ impl<const LEN: usize, const SCALAR_LEN: usize> ECGroup<LEN, SCALAR_LEN> {
         let mut raw = Default::default();
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_ecp_group_init(&mut raw);
+            mbedtls_rs_sys::mbedtls_ecp_group_init(&mut raw);
         }
 
         Self { raw }
@@ -774,8 +772,8 @@ impl<const LEN: usize, const SCALAR_LEN: usize> ECGroup<LEN, SCALAR_LEN> {
     /// # Safety
     /// The caller must ensure that the provided `group_id` matches the
     /// `LEN` and `SCALAR_LEN` generic parameters.
-    unsafe fn set(&mut self, group_id: esp_mbedtls_sys::mbedtls_ecp_group_id) -> Result<(), Error> {
-        merr_check!(unsafe { esp_mbedtls_sys::mbedtls_ecp_group_load(&mut self.raw, group_id) })?;
+    unsafe fn set(&mut self, group_id: mbedtls_rs_sys::mbedtls_ecp_group_id) -> Result<(), Error> {
+        merr_check!(unsafe { mbedtls_rs_sys::mbedtls_ecp_group_load(&mut self.raw, group_id) })?;
 
         Ok(())
     }
@@ -784,7 +782,7 @@ impl<const LEN: usize, const SCALAR_LEN: usize> ECGroup<LEN, SCALAR_LEN> {
 impl<const LEN: usize, const SCALAR_LEN: usize> Drop for ECGroup<LEN, SCALAR_LEN> {
     fn drop(&mut self) {
         unsafe {
-            esp_mbedtls_sys::mbedtls_ecp_group_free(&mut self.raw);
+            mbedtls_rs_sys::mbedtls_ecp_group_free(&mut self.raw);
         }
     }
 }
@@ -796,7 +794,7 @@ pub struct ECPoint<'a, const LEN: usize, const SCALAR_LEN: usize, M: RawMutex, R
     /// The random number generator
     rng: &'a R,
     /// Raw MbedTLS EC point
-    raw: esp_mbedtls_sys::mbedtls_ecp_point,
+    raw: mbedtls_rs_sys::mbedtls_ecp_point,
 }
 
 impl<'a, const LEN: usize, const SCALAR_LEN: usize, M: RawMutex, R>
@@ -815,7 +813,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize, M: RawMutex, R>
         let mut raw = Default::default();
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_ecp_point_init(&mut raw);
+            mbedtls_rs_sys::mbedtls_ecp_point_init(&mut raw);
         }
 
         Self { group, rng, raw }
@@ -826,7 +824,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize, M: RawMutex, R>
         self.group
             .access(|group| {
                 merr!(unsafe {
-                    esp_mbedtls_sys::mbedtls_ecp_point_read_binary(
+                    mbedtls_rs_sys::mbedtls_ecp_point_read_binary(
                         &group.raw,
                         &mut self.raw,
                         point.access().as_ptr(),
@@ -849,10 +847,10 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize, M: RawMutex, R>
 
         self.group.access(|group| {
             merr_check!(unsafe {
-                esp_mbedtls_sys::mbedtls_ecp_point_write_binary(
+                mbedtls_rs_sys::mbedtls_ecp_point_write_binary(
                     &group.raw,
                     &self.raw,
-                    esp_mbedtls_sys::MBEDTLS_ECP_PF_UNCOMPRESSED as _,
+                    mbedtls_rs_sys::MBEDTLS_ECP_PF_UNCOMPRESSED as _,
                     &mut olen,
                     point.access_mut().as_mut_ptr(),
                     LEN,
@@ -871,7 +869,7 @@ impl<const LEN: usize, const SCALAR_LEN: usize, M: RawMutex, R> Drop
 {
     fn drop(&mut self) {
         unsafe {
-            esp_mbedtls_sys::mbedtls_ecp_point_free(&mut self.raw);
+            mbedtls_rs_sys::mbedtls_ecp_point_free(&mut self.raw);
         }
     }
 }
@@ -887,23 +885,23 @@ where
         Self: 'a + 's;
 
     fn neg(&self) -> Result<Self, Error> {
-        assert!(unsafe { esp_mbedtls_sys::mbedtls_mpi_cmp_int(&self.raw.private_Z, 1) } == 0);
+        assert!(unsafe { mbedtls_rs_sys::mbedtls_mpi_cmp_int(&self.raw.private_Z, 1) } == 0);
 
         let mut result = ECPoint::new(self.group, self.rng);
 
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_copy(&mut result.raw.private_X, &self.raw.private_X)
+            mbedtls_rs_sys::mbedtls_mpi_copy(&mut result.raw.private_X, &self.raw.private_X)
         })?;
 
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_lset(&mut result.raw.private_Z, 1)
-            //esp_mbedtls_sys::mbedtls_mpi_copy(&mut result.raw.private_Z, &self.raw.private_Z)
+            mbedtls_rs_sys::mbedtls_mpi_lset(&mut result.raw.private_Z, 1)
+            //mbedtls_rs_sys::mbedtls_mpi_copy(&mut result.raw.private_Z, &self.raw.private_Z)
         })?;
 
-        if unsafe { esp_mbedtls_sys::mbedtls_mpi_cmp_int(&self.raw.private_Y, 0) } != 0 {
+        if unsafe { mbedtls_rs_sys::mbedtls_mpi_cmp_int(&self.raw.private_Y, 0) } != 0 {
             self.group.access(|group| {
                 merr_check!(unsafe {
-                    esp_mbedtls_sys::mbedtls_mpi_sub_mpi(
+                    mbedtls_rs_sys::mbedtls_mpi_sub_mpi(
                         &mut result.raw.private_Y,
                         &group.raw.P,
                         &self.raw.private_Y,
@@ -912,7 +910,7 @@ where
             })?;
         } else {
             merr_check!(unsafe {
-                esp_mbedtls_sys::mbedtls_mpi_copy(&mut result.raw.private_Y, &self.raw.private_Y)
+                mbedtls_rs_sys::mbedtls_mpi_copy(&mut result.raw.private_Y, &self.raw.private_Y)
             })?;
         }
 
@@ -924,7 +922,7 @@ where
 
         self.group.access(|group| {
             merr_check!(unsafe {
-                esp_mbedtls_sys::mbedtls_ecp_mul(
+                mbedtls_rs_sys::mbedtls_ecp_mul(
                     &mut group.raw,
                     &mut result.raw,
                     &scalar.mpi.raw,
@@ -948,7 +946,7 @@ where
 
         self.group.access(|group| {
             merr_check!(unsafe {
-                esp_mbedtls_sys::mbedtls_ecp_muladd(
+                mbedtls_rs_sys::mbedtls_ecp_muladd(
                     &mut group.raw,
                     &mut result.raw,
                     &s1.mpi.raw,
@@ -999,7 +997,7 @@ impl<
         sha256.finish(&mut hash)?;
 
         let result = self.group.access(|group| unsafe {
-            esp_mbedtls_sys::mbedtls_ecdsa_verify(
+            mbedtls_rs_sys::mbedtls_ecdsa_verify(
                 &mut group.raw,
                 hash.access_mut().as_ptr(),
                 crate::crypto::HASH_LEN,
@@ -1064,14 +1062,14 @@ where
         let mut mpi = Mpi::new();
 
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_mul_mpi(&mut mpi.raw, &self.mpi.raw, &other.mpi.raw)
+            mbedtls_rs_sys::mbedtls_mpi_mul_mpi(&mut mpi.raw, &self.mpi.raw, &other.mpi.raw)
         })?;
 
         // TODO: Can this be done faster?
         // See the `ecp_modp` function which is unfortunately not a public API in `ecp.h`
         self.group.access(|group| {
             merr_check!(unsafe {
-                esp_mbedtls_sys::mbedtls_mpi_mod_mpi(&mut result.mpi.raw, &mpi.raw, &group.raw.N)
+                mbedtls_rs_sys::mbedtls_mpi_mod_mpi(&mut result.mpi.raw, &mpi.raw, &group.raw.N)
             })
         })?;
 
@@ -1105,46 +1103,46 @@ where
         let mut pk = Default::default();
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_x509write_csr_init(&mut csr);
-            esp_mbedtls_sys::mbedtls_pk_init(&mut pk);
+            mbedtls_rs_sys::mbedtls_x509write_csr_init(&mut csr);
+            mbedtls_rs_sys::mbedtls_pk_init(&mut pk);
         }
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_x509write_csr_set_md_alg(
+            mbedtls_rs_sys::mbedtls_x509write_csr_set_md_alg(
                 &mut csr,
-                esp_mbedtls_sys::mbedtls_md_type_t_MBEDTLS_MD_SHA256,
+                mbedtls_rs_sys::mbedtls_md_type_t_MBEDTLS_MD_SHA256,
             );
         }
 
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_pk_setup(
+            mbedtls_rs_sys::mbedtls_pk_setup(
                 &mut pk,
-                esp_mbedtls_sys::mbedtls_pk_info_from_type(
-                    esp_mbedtls_sys::mbedtls_pk_type_t_MBEDTLS_PK_ECKEY,
+                mbedtls_rs_sys::mbedtls_pk_info_from_type(
+                    mbedtls_rs_sys::mbedtls_pk_type_t_MBEDTLS_PK_ECKEY,
                 ),
             )
         })?;
 
         let ec_ctx = unwrap!(unsafe {
-            (pk.private_pk_ctx as *mut esp_mbedtls_sys::mbedtls_ecp_keypair).as_mut()
+            (pk.private_pk_ctx as *mut mbedtls_rs_sys::mbedtls_ecp_keypair).as_mut()
         });
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_ecp_keypair_init(ec_ctx);
+            mbedtls_rs_sys::mbedtls_ecp_keypair_init(ec_ctx);
         }
 
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_copy(&mut ec_ctx.private_d, &self.mpi.raw)
+            mbedtls_rs_sys::mbedtls_mpi_copy(&mut ec_ctx.private_d, &self.mpi.raw)
         })?;
 
         self.group.access(|group| {
             merr_check!(unsafe {
-                esp_mbedtls_sys::mbedtls_ecp_group_copy(&mut ec_ctx.private_grp, &group.raw)
+                mbedtls_rs_sys::mbedtls_ecp_group_copy(&mut ec_ctx.private_grp, &group.raw)
             })
         })?;
 
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_ecp_mul(
+            mbedtls_rs_sys::mbedtls_ecp_mul(
                 &mut ec_ctx.private_grp,
                 &mut ec_ctx.private_Q,
                 &self.mpi.raw,
@@ -1155,15 +1153,15 @@ where
         })?;
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_x509write_csr_set_key(&mut csr, &mut pk);
+            mbedtls_rs_sys::mbedtls_x509write_csr_set_key(&mut csr, &mut pk);
         }
 
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_x509write_csr_set_subject_name(&mut csr, c"O=CSR".as_ptr())
+            mbedtls_rs_sys::mbedtls_x509write_csr_set_subject_name(&mut csr, c"O=CSR".as_ptr())
         })?;
 
         let len = merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_x509write_csr_der(
+            mbedtls_rs_sys::mbedtls_x509write_csr_der(
                 &mut csr,
                 buf.as_mut_ptr(),
                 buf.len(),
@@ -1173,8 +1171,8 @@ where
         })? as usize;
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_x509write_csr_free(&mut csr);
-            esp_mbedtls_sys::mbedtls_pk_free(&mut pk);
+            mbedtls_rs_sys::mbedtls_x509write_csr_free(&mut csr);
+            mbedtls_rs_sys::mbedtls_pk_free(&mut pk);
         }
 
         // The DER is written at the end of the buffer - yet - callers might not expect that
@@ -1191,7 +1189,7 @@ where
 
         self.group.access(|group| {
             merr_check!(unsafe {
-                esp_mbedtls_sys::mbedtls_ecp_mul(
+                mbedtls_rs_sys::mbedtls_ecp_mul(
                     &mut group.raw,
                     &mut pub_key.raw,
                     &self.mpi.raw,
@@ -1223,7 +1221,7 @@ where
 
         self.group.access(|group| {
             merr_check!(unsafe {
-                esp_mbedtls_sys::mbedtls_ecdsa_sign(
+                mbedtls_rs_sys::mbedtls_ecdsa_sign(
                     &mut group.raw,
                     &mut r.raw,
                     &mut s.raw,
@@ -1269,7 +1267,7 @@ where
 
         self.group.access(|group| {
             merr_check!(unsafe {
-                esp_mbedtls_sys::mbedtls_ecdh_compute_shared(
+                mbedtls_rs_sys::mbedtls_ecdh_compute_shared(
                     &mut group.raw,
                     &mut z.raw,
                     &peer_pub_key.raw,
@@ -1311,7 +1309,7 @@ pub struct MbedtlsDrbg<'a, T> {
     /// Reference to the entropy source
     _entropy: &'a mut T,
     /// Raw MbedTLS CTR-DRBG context
-    raw: esp_mbedtls_sys::mbedtls_ctr_drbg_context,
+    raw: mbedtls_rs_sys::mbedtls_ctr_drbg_context,
 }
 
 impl<'a, T: CryptoRngCore> MbedtlsDrbg<'a, T> {
@@ -1324,13 +1322,13 @@ impl<'a, T: CryptoRngCore> MbedtlsDrbg<'a, T> {
         let mut raw = Default::default();
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_ctr_drbg_init(&mut raw);
+            mbedtls_rs_sys::mbedtls_ctr_drbg_init(&mut raw);
         }
 
         let pers_ptr = personality.map(|p| p.as_ptr()).unwrap_or(core::ptr::null());
 
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_ctr_drbg_seed(
+            mbedtls_rs_sys::mbedtls_ctr_drbg_seed(
                 &mut raw,
                 Some(mbedtls_platform_entropy::<T>),
                 entropy as *mut _ as *mut _,
@@ -1349,7 +1347,7 @@ impl<'a, T: CryptoRngCore> MbedtlsDrbg<'a, T> {
 impl<T> Drop for MbedtlsDrbg<'_, T> {
     fn drop(&mut self) {
         unsafe {
-            esp_mbedtls_sys::mbedtls_ctr_drbg_free(&mut self.raw);
+            mbedtls_rs_sys::mbedtls_ctr_drbg_free(&mut self.raw);
         }
     }
 }
@@ -1357,7 +1355,7 @@ impl<T> Drop for MbedtlsDrbg<'_, T> {
 impl<T: CryptoRngCore> RngCore for MbedtlsDrbg<'_, T> {
     fn fill_bytes(&mut self, buf: &mut [u8]) {
         unwrap!(merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_ctr_drbg_random(
+            mbedtls_rs_sys::mbedtls_ctr_drbg_random(
                 &mut self.raw as *mut _ as *mut _,
                 buf.as_mut_ptr(),
                 buf.len(),
@@ -1388,7 +1386,7 @@ impl<T: CryptoRngCore> CryptoRng for MbedtlsDrbg<'_, T> {}
 /// or any other CSPRNG needing entropy.
 pub struct MbedtlsEntropy<T> {
     /// Raw MbedTLS entropy context
-    raw: Option<esp_mbedtls_sys::mbedtls_entropy_context>,
+    raw: Option<mbedtls_rs_sys::mbedtls_entropy_context>,
     /// Registered entropy sources
     entropy_sources: Option<T>,
 }
@@ -1402,7 +1400,7 @@ impl MbedtlsEntropy<()> {
         let mut raw = Default::default();
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_entropy_init(&mut raw);
+            mbedtls_rs_sys::mbedtls_entropy_init(&mut raw);
         }
 
         Self {
@@ -1458,15 +1456,15 @@ impl<T> MbedtlsEntropy<T> {
         threshold: usize,
     ) -> Result<MbedtlsEntropy<(T, &mut E)>, Error> {
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_entropy_add_source(
+            mbedtls_rs_sys::mbedtls_entropy_add_source(
                 &mut unwrap!(self.raw),
                 Some(mbedtls_platform_entropy_source::<E>),
                 entropy_source as *mut _ as *mut _,
                 threshold,
                 if strong {
-                    esp_mbedtls_sys::MBEDTLS_ENTROPY_SOURCE_STRONG
+                    mbedtls_rs_sys::MBEDTLS_ENTROPY_SOURCE_STRONG
                 } else {
-                    esp_mbedtls_sys::MBEDTLS_ENTROPY_SOURCE_WEAK
+                    mbedtls_rs_sys::MBEDTLS_ENTROPY_SOURCE_WEAK
                 } as _,
             )
         })?;
@@ -1483,7 +1481,7 @@ impl<T> MbedtlsEntropy<T> {
     /// - `data`: The seed data.
     pub fn seed(&mut self, data: &[u8]) -> Result<(), Error> {
         merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_entropy_update_manual(
+            mbedtls_rs_sys::mbedtls_entropy_update_manual(
                 unwrap!(self.raw.as_mut()),
                 data.as_ptr(),
                 data.len(),
@@ -1498,7 +1496,7 @@ impl<T> Drop for MbedtlsEntropy<T> {
     fn drop(&mut self) {
         if let Some(mut raw) = self.raw.take() {
             unsafe {
-                esp_mbedtls_sys::mbedtls_entropy_free(&mut raw);
+                mbedtls_rs_sys::mbedtls_entropy_free(&mut raw);
             }
         }
     }
@@ -1513,7 +1511,7 @@ impl Default for MbedtlsEntropy<()> {
 impl<T> RngCore for MbedtlsEntropy<T> {
     fn fill_bytes(&mut self, buf: &mut [u8]) {
         unwrap!(merr_check!(unsafe {
-            esp_mbedtls_sys::mbedtls_entropy_func(
+            mbedtls_rs_sys::mbedtls_entropy_func(
                 unwrap!(self.raw.as_mut()) as *mut _ as *mut _,
                 buf.as_mut_ptr(),
                 buf.len(),
