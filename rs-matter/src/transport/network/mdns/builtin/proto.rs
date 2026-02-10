@@ -403,9 +403,8 @@ impl Host<'_> {
                             if name.name_eq(&service.service_subtype_fqdn(subtype, true)?) {
                                 service.add_service_subtype(answer, subtype, ttl_sec)?;
                                 replied = true;
-                                *ad |= AdditionalData::IPS;
-                                *ad |= AdditionalData::SRV;
-                                *ad |= AdditionalData::TXT;
+                                *ad |=
+                                    AdditionalData::IPS | AdditionalData::SRV | AdditionalData::TXT;
                                 break;
                             }
                         }
