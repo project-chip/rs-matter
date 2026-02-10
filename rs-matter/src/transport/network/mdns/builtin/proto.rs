@@ -225,6 +225,11 @@ impl Host<'_> {
 
         let message = Message::from_octets(data)?;
 
+        // Only respond to queries (QR bit = 0), not to responses from other mDNS responders
+        if message.header().flags().qr {
+            return Ok(false);
+        }
+
         let mut replied = false;
 
         for question in message.question() {
@@ -386,22 +391,20 @@ impl Host<'_> {
                     if name.name_eq(&Service::dns_sd_fqdn(true)?) {
                         service.add_dns_sd_service_type(answer, ttl_sec)?;
                         service.add_dns_sd_service_subtypes(answer, ttl_sec)?;
-                        *ad |= AdditionalData::SRV;
-                        *ad |= AdditionalData::TXT;
+                        *ad |= AdditionalData::IPS | AdditionalData::SRV | AdditionalData::TXT;
                         *delay = true; // As we reply to a shared resource question, hence we need to avoid collissions
                         replied = true;
                     } else if name.name_eq(&service.service_type_fqdn(true)?) {
-                        service.add_service(answer, self.hostname, ttl_sec)?;
-                        *ad |= AdditionalData::SRV;
-                        *ad |= AdditionalData::TXT;
+                        service.add_service_type(answer, ttl_sec)?;
+                        *ad |= AdditionalData::IPS | AdditionalData::SRV | AdditionalData::TXT;
                         replied = true;
                     } else {
                         for subtype in service.service_subtypes {
                             if name.name_eq(&service.service_subtype_fqdn(subtype, true)?) {
                                 service.add_service_subtype(answer, subtype, ttl_sec)?;
                                 replied = true;
-                                *ad |= AdditionalData::SRV;
-                                *ad |= AdditionalData::TXT;
+                                *ad |=
+                                    AdditionalData::IPS | AdditionalData::SRV | AdditionalData::TXT;
                                 break;
                             }
                         }
@@ -532,9 +535,12 @@ impl Service<'_> {
         R: RecordSectionBuilder<T>,
         T: Composer,
     {
+        // Don't set the flush-bit when sending this PTR record, as we're not the
+        // authority of dns_sd_fqdn: there may be answers from other devices on
+        // the network as well.
         answer.push((
             unwrap!(Self::dns_sd_fqdn(false), "FQDN creation failed"),
-            dns_class_with_flush(Class::IN),
+            Class::IN,
             ttl_sec,
             Ptr::new(unwrap!(
                 self.service_type_fqdn(false),
@@ -913,6 +919,14 @@ mod tests {
                 ],
                 &[
                     Answer {
+                        owner: "foo.local",
+                        details: AnswerDetails::A(Ipv4Addr::new(192, 168, 0, 1)),
+                    },
+                    Answer {
+                        owner: "foo.local",
+                        details: AnswerDetails::Aaaa(Ipv6Addr::new(0xfb, 0, 0, 0, 0, 0, 0, 1)),
+                    },
+                    Answer {
                         owner: "bar._matterc._udp.local",
                         details: AnswerDetails::Srv {
                             port: 1234,
@@ -947,6 +961,124 @@ mod tests {
     #[test]
     fn test_services() {
         TEST_SERVICES.run();
+    }
+
+    #[test]
+    fn test_ptr_service_type_query() {
+        // Test that a PTR query for a service type FQDN (e.g., _matterc._udp.local)
+        // returns PTR records pointing to service instances (not SRV records)
+        let host = Host {
+            id: 2,
+            hostname: "foo",
+            ip: Ipv4Addr::new(192, 168, 0, 1),
+            ipv6: Ipv6Addr::new(0xfb, 0, 0, 0, 0, 0, 0, 1),
+        };
+
+        let services: &[Service] = &[Service {
+            name: "bar",
+            service: "_matterc",
+            protocol: "_udp",
+            service_protocol: "_matterc._udp",
+            port: 1234,
+            service_subtypes: &["_L1234", "_S3"],
+            txt_kvs: &[("D", "1234"), ("CM", "1")],
+        }];
+
+        let run = TestRun {
+            host,
+            services,
+            tests: &[(
+                &[Question {
+                    name: "_matterc._udp.local",
+                    qtype: Rtype::PTR,
+                }],
+                // Answer should be PTR records, not SRV
+                &[Answer {
+                    owner: "_matterc._udp.local",
+                    details: AnswerDetails::Ptr("bar._matterc._udp.local"),
+                }],
+                // Additional should include IPS, SRV and TXT
+                &[
+                    Answer {
+                        owner: "foo.local",
+                        details: AnswerDetails::A(Ipv4Addr::new(192, 168, 0, 1)),
+                    },
+                    Answer {
+                        owner: "foo.local",
+                        details: AnswerDetails::Aaaa(Ipv6Addr::new(0xfb, 0, 0, 0, 0, 0, 0, 1)),
+                    },
+                    Answer {
+                        owner: "bar._matterc._udp.local",
+                        details: AnswerDetails::Srv {
+                            port: 1234,
+                            target: "foo.local",
+                        },
+                    },
+                    Answer {
+                        owner: "bar._matterc._udp.local",
+                        details: AnswerDetails::Txt(&[("D", "1234"), ("CM", "1")]),
+                    },
+                ],
+            )],
+        };
+
+        run.run();
+    }
+
+    #[test]
+    fn test_response_ignored() {
+        // Test that mDNS responses (QR=1) are not replied to
+        let host = Host {
+            id: 3,
+            hostname: "foo",
+            ip: Ipv4Addr::new(192, 168, 0, 1),
+            ipv6: Ipv6Addr::UNSPECIFIED,
+        };
+
+        let services: &[Service] = &[Service {
+            name: "bar",
+            service: "_matterc",
+            protocol: "_udp",
+            service_protocol: "_matterc._udp",
+            port: 1234,
+            service_subtypes: &[],
+            txt_kvs: &[],
+        }];
+
+        // Build a response message (QR=1) with a question that would normally match
+        let mut buf1 = [0; 1500];
+        let message = unwrap!(
+            MessageBuilder::from_target(Buf(&mut buf1, 0)),
+            "Failed to create message builder"
+        );
+        let mut qb = message.question();
+        let header = qb.header_mut();
+        header.set_id(3);
+        header.set_opcode(Opcode::QUERY);
+        header.set_rcode(Rcode::NOERROR);
+
+        let mut flags = Flags::new();
+        flags.qr = true; // This is a RESPONSE, not a query
+        flags.aa = true;
+        header.set_flags(flags);
+
+        let dname = unwrap!(
+            Name::<heapless::Vec<u8, 64>>::from_chars("foo.local".chars()),
+            "Failed to convert question name"
+        );
+        unwrap!(
+            qb.push((dname, Rtype::A, Class::IN)),
+            "Failed to push question"
+        );
+
+        let len = qb.finish().as_ref().len();
+        let data = &buf1[..len];
+
+        let mut buf2 = [0; 1500];
+        let (response_len, _) = unwrap!(host.respond(services, data, &mut buf2, 0));
+
+        // Should produce no response since QR=1
+        assert_eq!(response_len, 0, "mDNS response should be ignored (QR=1)");
     }
 
     struct TestRun<'a> {
