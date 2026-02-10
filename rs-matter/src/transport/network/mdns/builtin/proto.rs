@@ -391,9 +391,7 @@ impl Host<'_> {
                     if name.name_eq(&Service::dns_sd_fqdn(true)?) {
                         service.add_dns_sd_service_type(answer, ttl_sec)?;
                         service.add_dns_sd_service_subtypes(answer, ttl_sec)?;
-                        *ad |= AdditionalData::IPS;
-                        *ad |= AdditionalData::SRV;
-                        *ad |= AdditionalData::TXT;
+                        *ad |= AdditionalData::IPS | AdditionalData::SRV | AdditionalData::TXT;
                         *delay = true; // As we reply to a shared resource question, hence we need to avoid collissions
                         replied = true;
                     } else if name.name_eq(&service.service_type_fqdn(true)?) {
