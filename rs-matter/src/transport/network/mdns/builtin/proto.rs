@@ -396,9 +396,7 @@ impl Host<'_> {
                         replied = true;
                     } else if name.name_eq(&service.service_type_fqdn(true)?) {
                         service.add_service_type(answer, ttl_sec)?;
-                        *ad |= AdditionalData::IPS;
-                        *ad |= AdditionalData::SRV;
-                        *ad |= AdditionalData::TXT;
+                        *ad |= AdditionalData::IPS | AdditionalData::SRV | AdditionalData::TXT;
                         replied = true;
                     } else {
                         for subtype in service.service_subtypes {
