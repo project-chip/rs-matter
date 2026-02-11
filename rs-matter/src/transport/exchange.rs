@@ -22,6 +22,7 @@ use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_time::{Duration, Instant, Timer};
 
 use crate::acl::Accessor;
+use crate::crypto::Crypto;
 use crate::error::{Error, ErrorCode};
 use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
 use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
@@ -872,6 +873,38 @@ impl<'a> Exchange<'a> {
             .initiate_for_session(matter, session_id)
     }
 
+    /// Create a new initiator exchange on a new unsecured (plain-text) session to the given peer address.
+    ///
+    /// This is used by controllers to start a PASE or CASE handshake with a device.
+    /// The returned exchange can be used to send the first handshake message
+    /// (e.g. `PBKDFParamRequest` for PASE, or `Sigma1` for CASE).
+    ///
+    /// If there is no space for a new session, the method will attempt to evict
+    /// a session and retry, following the same pattern as `ReservedSession::reserve()`.
+    ///
+    /// For flows that need direct access to the session ID (e.g. to upgrade the session
+    /// with derived keys after a successful handshake), use
+    /// `TransportMgr::create_unsecured_session()` + `Exchange::initiate_for_session()` separately.
+    pub async fn initiate_unsecured<C: Crypto>(
+        matter: &'a Matter<'a>,
+        crypto: C,
+        peer_addr: network::Address,
+    ) -> Result<Self, Error> {
+        let result = matter
+            .transport_mgr
+            .initiate_unsecured_now(matter, &crypto, peer_addr);
+
+        if let Ok(exchange) = result {
+            Ok(exchange)
+        } else {
+            matter.transport_mgr.evict_some_session(&crypto).await?;
+
+            matter
+                .transport_mgr
+                .initiate_unsecured_now(matter, &crypto, peer_addr)
+        }
+    }
+
     /// Accepts a new responder exchange pending on the provided Matter stack.
     ///
     /// If there is no new pending responder exchange, the method will wait indefinitely until one appears.
@@ -1179,5 +1212,99 @@ impl Drop for Exchange<'_> {
 impl Display for Exchange<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::test_only_crypto;
+    use crate::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+    use crate::error::ErrorCode;
+    use crate::transport::session::SessionMode;
+    use crate::utils::epoch::Epoch;
+    use crate::Matter;
+    use core::time::Duration;
+    use futures_lite::future::block_on;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn monotonic_test_epoch() -> Duration {
+        static TICKS: AtomicU64 = AtomicU64::new(0);
+        Duration::from_millis(TICKS.fetch_add(1, Ordering::Relaxed))
+    }
+
+    fn test_matter(epoch: Epoch) -> Matter<'static> {
+        Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, epoch, 0)
+    }
+
+    fn fill_sessions(matter: &Matter<'_>, reserved: bool) {
+        let mut session_mgr = matter.transport_mgr.session_mgr.borrow_mut();
+
+        loop {
+            if session_mgr
+                .add(0, reserved, network::Address::new(), None)
+                .is_err()
+            {
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn test_initiate_unsecured_creates_initiator_exchange() {
+        let matter = test_matter(monotonic_test_epoch);
+        let crypto = test_only_crypto();
+        let peer = network::Address::new();
+
+        let exchange = block_on(Exchange::initiate_unsecured(&matter, &crypto, peer)).unwrap();
+
+        exchange
+            .with_ctx(|sess, exch_index| {
+                let exch = sess.exchanges[exch_index].as_ref().unwrap();
+                assert!(matches!(exch.role, Role::Initiator(_)));
+                assert_eq!(sess.id, exchange.id().session_id());
+                assert!(!sess.is_encrypted());
+                assert_eq!(*sess.get_session_mode(), SessionMode::PlainText);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_initiate_unsecured_retries_after_eviction() {
+        let matter = test_matter(monotonic_test_epoch);
+        let crypto = test_only_crypto();
+        let peer = network::Address::new();
+
+        fill_sessions(&matter, false);
+
+        let exchange = block_on(Exchange::initiate_unsecured(&matter, &crypto, peer)).unwrap();
+
+        exchange
+            .with_ctx(|sess, exch_index| {
+                let exch = sess.exchanges[exch_index].as_ref().unwrap();
+                assert!(matches!(exch.role, Role::Initiator(_)));
+                assert_eq!(sess.id, exchange.id().session_id());
+                assert!(!sess.is_encrypted());
+                assert_eq!(*sess.get_session_mode(), SessionMode::PlainText);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_initiate_unsecured_fails_when_no_session_can_be_evicted() {
+        let matter = test_matter(monotonic_test_epoch);
+        let crypto = test_only_crypto();
+        let peer = network::Address::new();
+
+        fill_sessions(&matter, true);
+
+        let result = block_on(Exchange::initiate_unsecured(&matter, &crypto, peer));
+
+        match result {
+            Err(err) => assert!(matches!(err.code(), ErrorCode::NoSpaceSessions)),
+            Ok(_) => panic!("expected NoSpaceSessions error"),
+        }
     }
 }

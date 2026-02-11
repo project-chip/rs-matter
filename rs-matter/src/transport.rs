@@ -209,6 +209,51 @@ impl TransportMgr {
         Ok(Exchange::new(id, matter))
     }
 
+    /// Create a new unsecured (plain-text) session to a given peer address.
+    ///
+    /// Returns the internal session ID that can be used with `initiate_for_session()`.
+    ///
+    /// This is the low-level building block for controller-initiated communication
+    /// (e.g. PASE/CASE initiator flows), analogous to the SDK's
+    /// `SessionManager::CreateUnauthenticatedSession()`.
+    pub(crate) fn create_unsecured_session<C: Crypto>(
+        &self,
+        crypto: C,
+        peer_addr: Address,
+    ) -> Result<u32, Error> {
+        let mut session_mgr = self.session_mgr.borrow_mut();
+        let mut rand = crypto.weak_rand()?;
+
+        let session = session_mgr.add(rand.next_u32(), false, peer_addr, None)?;
+
+        let session_id = session.id;
+
+        debug!(
+            "Unsecured session {} created for peer {}",
+            session_id, peer_addr
+        );
+
+        Ok(session_id)
+    }
+
+    /// Create a new unsecured session and initiate an exchange on it in one step.
+    ///
+    /// This is a convenience method that combines `create_unsecured_session()` and
+    /// `initiate_for_session()`. Fails immediately if there is no space for a new session.
+    ///
+    /// For flows that need the session ID (e.g. to upgrade the session after PASE/CASE),
+    /// use `create_unsecured_session()` + `initiate_for_session()` separately.
+    pub(crate) fn initiate_unsecured_now<'a, C: Crypto>(
+        &'a self,
+        matter: &'a Matter<'a>,
+        crypto: C,
+        peer_addr: Address,
+    ) -> Result<Exchange<'a>, Error> {
+        let session_id = self.create_unsecured_session(crypto, peer_addr)?;
+
+        self.initiate_for_session(matter, session_id)
+    }
+
     pub(crate) async fn accept_if<'a, F>(
         &'a self,
         matter: &'a Matter<'a>,
@@ -1500,5 +1545,58 @@ impl<const N: usize> DerefMut for ExternalPacketBuffer<'_, N> {
 impl<const N: usize> Drop for ExternalPacketBuffer<'_, N> {
     fn drop(&mut self) {
         self.0.buf.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::test_only_crypto;
+    use crate::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+    use crate::utils::epoch::dummy_epoch;
+
+    fn test_matter() -> Matter<'static> {
+        Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, dummy_epoch, 0)
+    }
+
+    #[test]
+    fn test_create_unsecured_session_creates_plaintext_session() {
+        let matter = test_matter();
+        let crypto = test_only_crypto();
+        let peer = Address::new();
+
+        let session_id = matter
+            .transport_mgr
+            .create_unsecured_session(&crypto, peer)
+            .unwrap();
+
+        let mut session_mgr = matter.transport_mgr.session_mgr.borrow_mut();
+        let session = session_mgr.get(session_id).unwrap();
+
+        assert_eq!(session.id, session_id);
+        assert!(!session.is_encrypted());
+        assert_eq!(session.get_peer_node_id(), None);
+        assert_eq!(*session.get_session_mode(), session::SessionMode::PlainText);
+    }
+
+    #[test]
+    fn test_initiate_unsecured_now_creates_initiator_exchange() {
+        let matter = test_matter();
+        let crypto = test_only_crypto();
+        let peer = Address::new();
+
+        let exchange = matter
+            .transport_mgr
+            .initiate_unsecured_now(&matter, &crypto, peer)
+            .unwrap();
+
+        exchange
+            .with_ctx(|sess, exch_index| {
+                let exch = sess.exchanges[exch_index].as_ref().unwrap();
+                assert!(matches!(exch.role, Role::Initiator(_)));
+                assert_eq!(sess.id, exchange.id().session_id());
+                Ok(())
+            })
+            .unwrap();
     }
 }
