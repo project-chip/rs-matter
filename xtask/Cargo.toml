@@ -13,8 +13,12 @@ clap = { version = "4.0", features = ["derive"] }
 which = "4.4"
 tempfile = "3.8"
 async-io = "2"
+embassy-sync = "0.7"
+embassy-futures = "0.1"
 embassy-time = { version = "0.5", features = ["std"] }
 embassy-time-queue-utils = { version = "0.3", features = ["generic-queue-64"] }
 futures-lite = "2"
 socket2 = "0.5"
 nix = { version = "0.30", features = ["net"] }
+rand = { version = "0.8", features = ["std", "std_rng"] }
+static_cell = "1"
