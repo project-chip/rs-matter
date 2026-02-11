@@ -21,9 +21,8 @@ use crate::im::{EventDataTag, EventDataTimestamp, EventPath, EventRespTag};
 use crate::tlv::{
     FromTLV, TLVElement, TLVSequence, TLVSequenceIter, TLVTag, TLVWrite, TagType, ToTLV,
 };
-use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
-use crate::utils::sync::{IfMutex};
+use crate::utils::sync::{IfMutex, IfMutexGuard};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
@@ -38,7 +37,7 @@ pub struct Events<const N: usize = DEFAULT_BYTES_PER_BUF, M = NoopRawMutex>
 where
     M: RawMutex,
 {
-    state: IfMutex<M, RefCell<EventsInner<N>>>,
+    state: IfMutex<M, EventsInner<N>>,
 }
 
 impl<const N: usize, M> Events<N, M>
@@ -48,13 +47,13 @@ where
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
-            state: IfMutex::new(RefCell::new(EventsInner::new())),
+            state: IfMutex::new(EventsInner::new()),
         }
     }
 
     pub fn init() -> impl Init<Self> {
         init!(Self {
-            state <- IfMutex::init(RefCell::init(EventsInner::init())),
+            state <- IfMutex::init(EventsInner::init()),
         })
     }
 
@@ -64,40 +63,57 @@ where
         priority: u8,
         data: impl FnOnce(&mut EventQueueWriter<N>) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        let internal = self.state.lock().await;
+        let mut internal = self.state.lock().await;
 
-        let mut q = internal.borrow_mut();
-        let event_no = q.next_event_no;
-        q.next_event_no += 1;
+        let event_no = internal.next_event_no;
+        internal.next_event_no += 1;
         // TODO(events): actual timestamps
         let timestamp = EventDataTimestamp::SystemTimestamp(0);
-        let mut tw = q.push(path, event_no, priority, timestamp)?;
+        let mut tw = internal.push(path, event_no, priority, timestamp)?;
         data(&mut tw)?;
         tw.end()
     }
 
-    // Iterate over each entry in the queue, aborts if f returns Err
-    pub async fn for_each<'a, F>(&'a self, mut f: F) -> Result<(), Error>
-    where
-        F: AsyncFnMut(&EventData<'_>) -> Result<(), Error>,
-    {
+    pub async fn lock(&'_ self) -> EventsGuard<'_, M, N>  {
         let internal = self.state.lock().await;
-    
-        let q = internal.borrow();
-        for entry in q.iter() {
-            let entry = entry?;
-            f(&entry).await?;
-        }
-        Ok(())
+        EventsGuard::new(internal)
     }
 
     // TODO(events) we can't do it like this, this will miss events when pushing happens after for_each but before we call this
     //              we need to return the last processed one from for_each or something like that
     pub async fn peek_next_event_no(&self) -> u64 {
         let internal = self.state.lock().await;
-        let q = internal.borrow();
-        q.next_event_no
+        internal.next_event_no
     }
+}
+
+/// A thin guard that acts both to keep the event queue stable while we iterate over it, but also
+/// as back-pressure to writers. If writers are faster than we're able to publish events on the network,
+/// events will get dropped, leading to errors. Hence, while we write to the network we force writers to stall.
+/// 
+/// Most of the time the stalling of writers is very short, just enough to move the events into outbound
+/// network buffers. However if there are a lot of events, such that we need to chunk publishing into multiple packets,
+/// then we will hold this across network calls, forcing writers to slow down until readers have caught up.
+pub struct EventsGuard<'a, M, const N: usize> 
+where
+    M: RawMutex,
+ {
+    guard: IfMutexGuard<'a, M, EventsInner<N>>,
+}
+
+impl<'a, M, const N: usize> EventsGuard<'a, M, N> 
+where M: RawMutex {
+
+    fn new(guard: IfMutexGuard<'a, M, EventsInner<N>>) -> Self {
+        Self {
+            guard,
+        }
+    }
+    
+    pub fn iter(&'_ self) -> EventQueueIter<'_, N> {
+        self.guard.iter()
+    }
+
 }
 
 /// This is the central event queue storage system. It's modeled after the tiered ring buffer design
@@ -188,7 +204,7 @@ impl<const N: usize> EventsInner<N> {
     }
 }
 
-struct EventQueueIter<'a, const N: usize> {
+pub struct EventQueueIter<'a, const N: usize> {
     queue: &'a EventsInner<N>,
     buf_ref: Level<N>,
     buf_iter: TLVSequenceIter<'a>,
@@ -260,8 +276,6 @@ fn parse_event<'a>(tr: TLVElement<'a>) -> Result<EventData<'a>, Error> {
 pub struct EventQueueWriter<'a, const N: usize> {
     queue: &'a mut EventsInner<N>,
     buf_ref: Level<N>,
-    // Used in Drop to ensure clients call end(), otherwise data corruption happens
-    ended: bool,
 }
 
 impl<'a, const N: usize> EventQueueWriter<'a, N> {
@@ -269,16 +283,11 @@ impl<'a, const N: usize> EventQueueWriter<'a, N> {
         Self {
             queue,
             buf_ref,
-            ended: false,
         }
     }
 
-    pub fn end(&mut self) -> Result<(), Error> {
-        if self.ended {
-            return Ok(());
-        }
+    fn end(&mut self) -> Result<(), Error> {
         self.end_container()?;
-        self.ended = true;
         Ok(())
     }
 
@@ -331,23 +340,10 @@ impl<'a, const N: usize> EventQueueWriter<'a, N> {
     }
 }
 
-impl<'a, const N: usize> Drop for EventQueueWriter<'a, N> {
-    fn drop(&mut self) {
-        if !self.ended {
-            // TODO(events) what do we do, error log?
-//            todo!()
-        }
-    }
-}
-
 impl<'a, const N: usize> TLVWrite for EventQueueWriter<'a, N> {
     type Position = usize;
 
     fn write(&mut self, byte: u8) -> Result<(), Error> {
-        if self.ended {
-            // TODO(events) context and/or logging?
-            return Err(Error::new(ErrorCode::Failure));
-        }
         while let Err(OverflowError {}) = self.buf_ref.get_mut(self.queue).write(byte) {
             // Overflow, need to evict an entry
             self.evict(Level::Debug)?;

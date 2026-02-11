@@ -17,11 +17,13 @@
 
 use core::future::Future;
 
+use embassy_sync::blocking_mutex::raw::RawMutex;
+
+use crate::dm::events::EventsGuard;
 use crate::dm::{AsyncHandler, Events, IMBuffer};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
-    AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
-    CmdRespTag, CmdStatus, EventFilter, EventPath, EventRespTag, IMStatusCode,
+    AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp, CmdRespTag, CmdStatus, EventData, EventFilter, EventPath, EventRespTag, IMStatusCode
 };
 use crate::tlv::{TLVArray, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
@@ -313,16 +315,16 @@ where
     }
 }
 
-pub struct EventReader<'a, const NE: usize> {
-    events: &'a Events<NE>,
+pub struct EventReader<'a, M, const NE: usize> where M: RawMutex {
+    pub events: EventsGuard<'a, M, NE>,
     // This is applied in combination with any event number filters that are
     // inside the request itself; it's the "what's the min event number this subscription should see next"
     // that's tracked with each active Subscription and updated each time we emit events to the subscriber
     min_event_number: u64,
 }
 
-impl<'a, const NE: usize> EventReader<'a, NE> {
-    pub fn new(events: &'a Events<NE>, min_event_number: u64) -> Self {
+impl<'a, M, const NE: usize> EventReader<'a, M, NE> where M: RawMutex {
+    pub fn new(events: EventsGuard<'a, M, NE>, min_event_number: u64) -> Self {
         Self {
             events,
             min_event_number,
@@ -330,14 +332,15 @@ impl<'a, const NE: usize> EventReader<'a, NE> {
     }
 
     pub async fn process_read<T: TLVWrite>(
-        &mut self,
-        paths: TLVArray<'_, EventPath>,
+        &self,
+        event: EventData<'_>,
+        paths: &TLVArray<'_, EventPath>,
         event_filters: Option<TLVArray<'_, EventFilter>>,
         mut tw: T,
     ) -> Result<(), Error> {
         let tail = tw.get_tail();
 
-        let result = self.do_process_read(paths, event_filters, &mut tw).await;
+        let result = self.do_process_read(event, paths, event_filters, &mut tw).await;
 
         if result.is_err() {
             // If there was an error, rewind to the tail so we don't write any data.
@@ -348,33 +351,32 @@ impl<'a, const NE: usize> EventReader<'a, NE> {
     }
 
     async fn do_process_read<T: TLVWrite>(
-        &mut self,
+        &self,
         // TODO(events): Each event we go over in the for_each here should be checked to match at least one of these paths
-        _paths: TLVArray<'_, EventPath>,
+        event: EventData<'_>,
+        _paths: &TLVArray<'_, EventPath>,
         event_filters: Option<TLVArray<'_, EventFilter>>,
         mut tw: T,
     ) -> Result<(), Error> {
-        self.events.for_each(async |event| {
-            if event.event_number < self.min_event_number {
-                // This event has already been seen by this subscription, skip
-                return Ok(());
-            }
+        if event.event_number < self.min_event_number {
+            // This event has already been seen by this subscription, skip
+            return Ok(());
+        }
 
-            // We assume the 99% case is that there is a single filter, on event-no, so just brute force filtering
-            if let Some(filters) = &event_filters {
-                for filter in filters {
-                    if let Some(event_min) = filter?.event_min {
-                        if event.event_number < event_min {
-                            return Ok(());
-                        }
+        // We assume the 99% case is that there is a single filter, on event-no, so just brute force filtering
+        if let Some(filters) = &event_filters {
+            for filter in filters {
+                if let Some(event_min) = filter?.event_min {
+                    if event.event_number < event_min {
+                        return Ok(());
                     }
                 }
             }
+        }
 
-            tw.start_struct(&TLVTag::Anonymous)?;
-            event.to_tlv(&TLVTag::Context(EventRespTag::Data as _), &mut tw)?;
-            tw.end_container()
-        }).await
+        tw.start_struct(&TLVTag::Anonymous)?;
+        event.to_tlv(&TLVTag::Context(EventRespTag::Data as _), &mut tw)?;
+        tw.end_container()
     }
 }
 

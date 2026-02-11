@@ -22,6 +22,7 @@ use core::pin::pin;
 use core::time::Duration;
 
 use embassy_futures::select::select3;
+use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::{Instant, Timer};
 
 use crate::error::{Error, ErrorCode};
@@ -201,7 +202,7 @@ where
             &node,
             None,
             HandlerInvoker::new(exchange, &self.handler, &self.buffers),
-            EventReader::new(self.events, 0),
+            EventReader::new(self.events.lock().await, 0),
         );
 
         resp.respond(self, &mut wb, true).await?;
@@ -688,7 +689,7 @@ where
             &node,
             Some(id),
             HandlerInvoker::new(exchange, &self.handler, &self.buffers),
-            EventReader::new(self.events, min_event_number),
+            EventReader::new(self.events.lock().await, min_event_number),
         );
 
         let sub_valid = resp.respond(self, &mut wb, false).await?;
@@ -838,18 +839,19 @@ where
 /// The responder handles chunking as needed. I.e. if reported data is too large to fit into a single
 /// Matter message, it will send the data in multiple chunks (i.e. with multiple Matter messages), waiting for
 /// a `Success` response from the peer after each chunk, and then continuing to send the next chunk until all data is sent.
-struct ReportDataResponder<'a, 'b, 'c, D, B, const NE: usize> {
+struct ReportDataResponder<'a, 'b, 'c, D, B, const NE: usize, M> where M: RawMutex {
     req: &'a ReportDataReq<'a>,
     node: &'a Node<'a>,
     subscription_id: Option<u32>,
     invoker: HandlerInvoker<'b, 'c, D, B>,
-    event_reader: EventReader<'c, NE>,
+    event_reader: EventReader<'c, M, NE>,
 }
 
-impl<'a, 'b, 'c, D, B, const NE: usize> ReportDataResponder<'a, 'b, 'c, D, B, NE>
+impl<'a, 'b, 'c, D, B, const NE: usize, M> ReportDataResponder<'a, 'b, 'c, D, B, NE, M>
 where
     D: AsyncHandler,
     B: BufferAccess<IMBuffer>,
+    M: RawMutex,
 {
     // This is the amount of space we reserve for the structure/array closing TLVs
     // to be attached towards the end of long reads
@@ -861,7 +863,7 @@ where
         node: &'a Node<'a>,
         subscription_id: Option<u32>,
         invoker: HandlerInvoker<'b, 'c, D, B>,
-        event_reader: EventReader<'c, NE>,
+        event_reader: EventReader<'c, M, NE>,
     ) -> Self {
         Self {
             req,
@@ -943,9 +945,11 @@ where
 
         if let Some(event_reqs) = self.req.event_requests()? {
             wb.start_array(&TLVTag::Context(ReportDataRespTag::EventReports as _))?;
-            self.event_reader
-                .process_read(event_reqs, self.req.event_filters()?, &mut *wb)
-                .await?;
+            for event in self.event_reader.events.iter() {
+                self.event_reader
+                    .process_read(event?, &event_reqs, self.req.event_filters()?, &mut *wb)
+                    .await?;
+            }
             wb.end_container()?;
         }
 
