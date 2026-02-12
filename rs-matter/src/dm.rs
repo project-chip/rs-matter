@@ -202,7 +202,8 @@ where
             &node,
             None,
             HandlerInvoker::new(exchange, &self.handler, &self.buffers),
-            EventReader::new(self.events.lock().await, 0),
+            EventReader::new(0),
+            &self.events,
         );
 
         resp.respond(self, &mut wb, true).await?;
@@ -689,7 +690,8 @@ where
             &node,
             Some(id),
             HandlerInvoker::new(exchange, &self.handler, &self.buffers),
-            EventReader::new(self.events.lock().await, min_event_number),
+            EventReader::new(min_event_number),
+            &self.events,
         );
 
         let sub_valid = resp.respond(self, &mut wb, false).await?;
@@ -844,7 +846,8 @@ struct ReportDataResponder<'a, 'b, 'c, D, B, const NE: usize, M> where M: RawMut
     node: &'a Node<'a>,
     subscription_id: Option<u32>,
     invoker: HandlerInvoker<'b, 'c, D, B>,
-    event_reader: EventReader<'c, M, NE>,
+    event_reader: EventReader,
+    events: &'a Events<NE, M>,
 }
 
 impl<'a, 'b, 'c, D, B, const NE: usize, M> ReportDataResponder<'a, 'b, 'c, D, B, NE, M>
@@ -863,7 +866,8 @@ where
         node: &'a Node<'a>,
         subscription_id: Option<u32>,
         invoker: HandlerInvoker<'b, 'c, D, B>,
-        event_reader: EventReader<'c, M, NE>,
+        event_reader: EventReader,
+        events: &'a Events<NE, M>,
     ) -> Self {
         Self {
             req,
@@ -871,6 +875,7 @@ where
             subscription_id,
             invoker,
             event_reader,
+            events,
         }
     }
 
@@ -929,7 +934,7 @@ where
                             }
                         } else {
                             debug!("<<< No TX space, chunking >>>");
-                            if !self.send(true, true, false, wb).await? {
+                            if !self.send(ReportDataChunkState::ChunkingAttributes, false, wb).await? {
                                 return Ok(false);
                             }
                         }
@@ -945,15 +950,30 @@ where
 
         if let Some(event_reqs) = self.req.event_requests()? {
             wb.start_array(&TLVTag::Context(ReportDataRespTag::EventReports as _))?;
-            for event in self.event_reader.events.iter() {
-                self.event_reader
-                    .process_read(event?, &event_reqs, self.req.event_filters()?, &mut *wb)
-                    .await?;
+            let events = self.events.lock().await;
+            for event in events.iter() {
+                let event = event?;
+                loop {
+                    let result = self.event_reader
+                        .process_read(&event, &event_reqs, self.req.event_filters()?, &mut *wb)
+                        .await;
+
+                    match result {
+                        Ok(()) => break,
+                        Err(err) if err.code() == ErrorCode::NoSpace => {
+                            debug!("<<< No TX space, chunking >>>");
+                            if !self.send(ReportDataChunkState::ChunkingEvents, false, wb).await? {
+                                return Ok(false);
+                            }
+                        },
+                        Err(err) => Err(err)?,
+                    }
+                }
             }
             wb.end_container()?;
         }
 
-        self.send(false, false, suppress_last_resp, wb).await
+        self.send(ReportDataChunkState::Done, suppress_last_resp, wb).await
     }
 
     /// Send the items of an array attribute one by one, until the end of the array is reached.
@@ -1004,7 +1024,7 @@ where
                 }
                 Err(err) if err.code() == ErrorCode::NoSpace => {
                     debug!("<<< No TX space, chunking >>>");
-                    if !self.send(true, true, false, wb).await? {
+                    if !self.send(ReportDataChunkState::ChunkingAttributes, false, wb).await? {
                         return Ok(false);
                     }
                 }
@@ -1019,34 +1039,43 @@ where
     /// Send the reply to the peer, potentially opening another reply.
     ///
     /// Arguments:
-    /// - `more_chunks`: whether there are more chunks to send. If `true`, this will initiate another reply in `wb`
-    /// - `suppress_last_resp`: whether to suppress the response from the peer. Note that if `more_chunks` is `true`,
-    ///   `suppress_last_resp` MUST be true and therefore it is set unconditionally
+    /// - `state`: tracks chunking state - are we just sending a chunk packet or are we done and wrapping up?
+    /// - `suppress_last_resp`: whether to suppress the response from the peer, this is ignored if state is != Done
     /// - `wb`: the buffer containing the reply. Once the reply is sent, the buffer is re-initialized for a new reply if `more_chunks` is `true`
     async fn send(
         &mut self,
-        has_open_container: bool,
-        more_chunks: bool,
+        state: ReportDataChunkState,
         suppress_last_resp: bool,
         wb: &mut WriteBuf<'_>,
     ) -> Result<bool, Error> {
-        self.end_reply(has_open_container, more_chunks, suppress_last_resp, wb)?;
+        self.end_reply(state, suppress_last_resp, wb)?;
 
         self.invoker
             .exchange()
             .send(OpCode::ReportData, wb.as_slice())
             .await?;
 
-        let cont: bool = if more_chunks || !suppress_last_resp {
-            self.recv_status_success().await?
-        } else {
-            false
+        let cont = match state {
+            ReportDataChunkState::ChunkingAttributes => {
+                let cont = self.recv_status_success().await?;
+                self.start_reply(wb)?;
+                wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))?;
+                cont
+            },
+            ReportDataChunkState::ChunkingEvents => {
+                let cont = self.recv_status_success().await?;
+                self.start_reply(wb)?;
+                wb.start_array(&TLVTag::Context(ReportDataRespTag::EventReports as u8))?;
+                cont
+            },
+            ReportDataChunkState::Done => {
+                if !suppress_last_resp {
+                    self.recv_status_success().await?
+                } else {
+                    false
+                }
+            },
         };
-
-        if more_chunks {
-            self.start_reply(wb)?;
-            wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))?;
-        }
 
         Ok(cont)
     }
@@ -1114,35 +1143,44 @@ where
     /// End a reply by writing the closing TLVs and potentially indicating that there are more chunks to send.
     fn end_reply(
         &self,
-        has_open_container: bool,
-        more_chunks: bool,
+        state: ReportDataChunkState,
         suppress_resp: bool,
         wb: &mut WriteBuf<'_>,
     ) -> Result<(), Error> {
         wb.expand(Self::LONG_READS_TLV_RESERVE_SIZE)?;
 
-        if has_open_container {
-            wb.end_container()?;
-        }
-
-        if more_chunks {
-            wb.bool(
+        match state {
+            ReportDataChunkState::ChunkingAttributes | ReportDataChunkState::ChunkingEvents => {
+                wb.end_container()?;
+                wb.bool(
                 &TLVTag::Context(ReportDataRespTag::MoreChunkedMsgs as u8),
                 true,
             )?;
-        }
-
-        if !more_chunks && suppress_resp {
-            wb.bool(
-                &TLVTag::Context(ReportDataRespTag::SupressResponse as u8),
-                true,
-            )?;
-        }
+            },
+            ReportDataChunkState::Done => {
+                if suppress_resp {
+                    wb.bool(
+                        &TLVTag::Context(ReportDataRespTag::SupressResponse as u8),
+                        true,
+                    )?;
+                }
+            },
+        };
 
         wb.end_container()?;
 
         Ok(())
     }
+}
+
+/// Used to avoid duplicating the chunking logic for events and attributes; they both
+/// share the same write path when the current packet fills up, and use this to determine
+/// which field they should be setting up an array in for more output in the next packet
+#[derive(Clone, Copy)]
+enum ReportDataChunkState {
+    ChunkingAttributes,
+    ChunkingEvents,
+    Done,
 }
 
 /// This type responds to a `WriteReq` by invoking the

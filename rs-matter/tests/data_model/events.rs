@@ -196,12 +196,16 @@ fn test_long_read_events() {
     im.test_all(
         &handler,
         [
-            // When 
             &TLVTest::read(
                 TestReadReq::event_reqs(&[WILDCARD_PATH.clone()]),
-                TestReportDataMsg::event_reports(&[
-                    event_data_path!(ep0_event1, 0, 2, Some(&[1u8;128])),
-                ]),
+                TestReportDataMsg {
+                    event_reports: Some(&[
+                    event_data_path!(ep0_event1, 0, 2, Some(&[1u8;256])),
+                    event_data_path!(ep0_event1, 1, 2, Some(&[2u8;256])),
+                    ]),
+                    more_chunks: Some(true),
+                    ..Default::default()
+                },
                 ReplyProcessor::none,
             ) as &dyn E2eTest,
             &TLVTest::continue_report(
@@ -210,22 +214,9 @@ fn test_long_read_events() {
                 },
                 TestReportDataMsg {
                     event_reports: Some(&[
-                        event_data_path!(ep0_event1, 0, 2, Some(&[2u8;128])),
+                        event_data_path!(ep0_event1, 2, 2, Some(&[3u8;256])),
                     ]),
-                    more_chunks: Some(true),
-                    ..Default::default()
-                },
-                ReplyProcessor::none,
-            ),
-            &TLVTest::continue_report(
-                StatusResp {
-                    status: IMStatusCode::Success,
-                },
-                TestReportDataMsg {
-                    event_reports: Some(&[
-                        event_data_path!(ep0_event1, 0, 2, Some(&[3u8;128])),
-                    ]),
-                    more_chunks: Some(false),
+                    suppress_response: Some(true),
                     ..Default::default()
                 },
                 ReplyProcessor::none,

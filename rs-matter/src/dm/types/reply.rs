@@ -17,10 +17,7 @@
 
 use core::future::Future;
 
-use embassy_sync::blocking_mutex::raw::RawMutex;
-
-use crate::dm::events::EventsGuard;
-use crate::dm::{AsyncHandler, Events, IMBuffer};
+use crate::dm::{AsyncHandler, IMBuffer};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
     AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp, CmdRespTag, CmdStatus, EventData, EventFilter, EventPath, EventRespTag, IMStatusCode
@@ -315,25 +312,23 @@ where
     }
 }
 
-pub struct EventReader<'a, M, const NE: usize> where M: RawMutex {
-    pub events: EventsGuard<'a, M, NE>,
+pub struct EventReader {
     // This is applied in combination with any event number filters that are
     // inside the request itself; it's the "what's the min event number this subscription should see next"
     // that's tracked with each active Subscription and updated each time we emit events to the subscriber
     min_event_number: u64,
 }
 
-impl<'a, M, const NE: usize> EventReader<'a, M, NE> where M: RawMutex {
-    pub fn new(events: EventsGuard<'a, M, NE>, min_event_number: u64) -> Self {
+impl EventReader {
+    pub fn new(min_event_number: u64) -> Self {
         Self {
-            events,
             min_event_number,
         }
     }
 
     pub async fn process_read<T: TLVWrite>(
         &self,
-        event: EventData<'_>,
+        event: &EventData<'_>,
         paths: &TLVArray<'_, EventPath>,
         event_filters: Option<TLVArray<'_, EventFilter>>,
         mut tw: T,
@@ -353,7 +348,7 @@ impl<'a, M, const NE: usize> EventReader<'a, M, NE> where M: RawMutex {
     async fn do_process_read<T: TLVWrite>(
         &self,
         // TODO(events): Each event we go over in the for_each here should be checked to match at least one of these paths
-        event: EventData<'_>,
+        event: &EventData<'_>,
         _paths: &TLVArray<'_, EventPath>,
         event_filters: Option<TLVArray<'_, EventFilter>>,
         mut tw: T,
