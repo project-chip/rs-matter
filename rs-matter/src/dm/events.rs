@@ -74,7 +74,7 @@ where
         tw.end()
     }
 
-    pub async fn lock(&'_ self) -> EventsGuard<'_, M, N>  {
+    pub async fn lock(&'_ self) -> EventsGuard<'_, M, N> {
         let internal = self.state.lock().await;
         EventsGuard::new(internal)
     }
@@ -90,30 +90,28 @@ where
 /// A thin guard that acts both to keep the event queue stable while we iterate over it, but also
 /// as back-pressure to writers. If writers are faster than we're able to publish events on the network,
 /// events will get dropped, leading to errors. Hence, while we write to the network we force writers to stall.
-/// 
+///
 /// Most of the time the stalling of writers is very short, just enough to move the events into outbound
 /// network buffers. However if there are a lot of events, such that we need to chunk publishing into multiple packets,
 /// then we will hold this across network calls, forcing writers to slow down until readers have caught up.
-pub struct EventsGuard<'a, M, const N: usize> 
+pub struct EventsGuard<'a, M, const N: usize>
 where
     M: RawMutex,
- {
+{
     guard: IfMutexGuard<'a, M, EventsInner<N>>,
 }
 
-impl<'a, M, const N: usize> EventsGuard<'a, M, N> 
-where M: RawMutex {
-
+impl<'a, M, const N: usize> EventsGuard<'a, M, N>
+where
+    M: RawMutex,
+{
     fn new(guard: IfMutexGuard<'a, M, EventsInner<N>>) -> Self {
-        Self {
-            guard,
-        }
+        Self { guard }
     }
-    
+
     pub fn iter(&'_ self) -> EventQueueIter<'_, N> {
         self.guard.iter()
     }
-
 }
 
 /// This is the central event queue storage system. It's modeled after the tiered ring buffer design
@@ -280,10 +278,7 @@ pub struct EventQueueWriter<'a, const N: usize> {
 
 impl<'a, const N: usize> EventQueueWriter<'a, N> {
     fn new(queue: &'a mut EventsInner<N>, buf_ref: Level<N>) -> Self {
-        Self {
-            queue,
-            buf_ref,
-        }
+        Self { queue, buf_ref }
     }
 
     fn end(&mut self) -> Result<(), Error> {

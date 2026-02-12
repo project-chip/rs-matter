@@ -841,7 +841,10 @@ where
 /// The responder handles chunking as needed. I.e. if reported data is too large to fit into a single
 /// Matter message, it will send the data in multiple chunks (i.e. with multiple Matter messages), waiting for
 /// a `Success` response from the peer after each chunk, and then continuing to send the next chunk until all data is sent.
-struct ReportDataResponder<'a, 'b, 'c, D, B, const NE: usize, M> where M: RawMutex {
+struct ReportDataResponder<'a, 'b, 'c, D, B, const NE: usize, M>
+where
+    M: RawMutex,
+{
     req: &'a ReportDataReq<'a>,
     node: &'a Node<'a>,
     subscription_id: Option<u32>,
@@ -934,7 +937,10 @@ where
                             }
                         } else {
                             debug!("<<< No TX space, chunking >>>");
-                            if !self.send(ReportDataChunkState::ChunkingAttributes, false, wb).await? {
+                            if !self
+                                .send(ReportDataChunkState::ChunkingAttributes, false, wb)
+                                .await?
+                            {
                                 return Ok(false);
                             }
                         }
@@ -954,7 +960,8 @@ where
             for event in events.iter() {
                 let event = event?;
                 loop {
-                    let result = self.event_reader
+                    let result = self
+                        .event_reader
                         .process_read(&event, &event_reqs, self.req.event_filters()?, &mut *wb)
                         .await;
 
@@ -962,10 +969,13 @@ where
                         Ok(()) => break,
                         Err(err) if err.code() == ErrorCode::NoSpace => {
                             debug!("<<< No TX space, chunking >>>");
-                            if !self.send(ReportDataChunkState::ChunkingEvents, false, wb).await? {
+                            if !self
+                                .send(ReportDataChunkState::ChunkingEvents, false, wb)
+                                .await?
+                            {
                                 return Ok(false);
                             }
-                        },
+                        }
                         Err(err) => Err(err)?,
                     }
                 }
@@ -973,7 +983,8 @@ where
             wb.end_container()?;
         }
 
-        self.send(ReportDataChunkState::Done, suppress_last_resp, wb).await
+        self.send(ReportDataChunkState::Done, suppress_last_resp, wb)
+            .await
     }
 
     /// Send the items of an array attribute one by one, until the end of the array is reached.
@@ -1024,7 +1035,10 @@ where
                 }
                 Err(err) if err.code() == ErrorCode::NoSpace => {
                     debug!("<<< No TX space, chunking >>>");
-                    if !self.send(ReportDataChunkState::ChunkingAttributes, false, wb).await? {
+                    if !self
+                        .send(ReportDataChunkState::ChunkingAttributes, false, wb)
+                        .await?
+                    {
                         return Ok(false);
                     }
                 }
@@ -1061,20 +1075,20 @@ where
                 self.start_reply(wb)?;
                 wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))?;
                 cont
-            },
+            }
             ReportDataChunkState::ChunkingEvents => {
                 let cont = self.recv_status_success().await?;
                 self.start_reply(wb)?;
                 wb.start_array(&TLVTag::Context(ReportDataRespTag::EventReports as u8))?;
                 cont
-            },
+            }
             ReportDataChunkState::Done => {
                 if !suppress_last_resp {
                     self.recv_status_success().await?
                 } else {
                     false
                 }
-            },
+            }
         };
 
         Ok(cont)
@@ -1153,10 +1167,10 @@ where
             ReportDataChunkState::ChunkingAttributes | ReportDataChunkState::ChunkingEvents => {
                 wb.end_container()?;
                 wb.bool(
-                &TLVTag::Context(ReportDataRespTag::MoreChunkedMsgs as u8),
-                true,
-            )?;
-            },
+                    &TLVTag::Context(ReportDataRespTag::MoreChunkedMsgs as u8),
+                    true,
+                )?;
+            }
             ReportDataChunkState::Done => {
                 if suppress_resp {
                     wb.bool(
@@ -1164,7 +1178,7 @@ where
                         true,
                     )?;
                 }
-            },
+            }
         };
 
         wb.end_container()?;

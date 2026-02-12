@@ -20,7 +20,8 @@ use core::future::Future;
 use crate::dm::{AsyncHandler, IMBuffer};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
-    AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp, CmdRespTag, CmdStatus, EventData, EventFilter, EventPath, EventRespTag, IMStatusCode
+    AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
+    CmdRespTag, CmdStatus, EventData, EventFilter, EventPath, EventRespTag, IMStatusCode,
 };
 use crate::tlv::{TLVArray, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
@@ -321,9 +322,7 @@ pub struct EventReader {
 
 impl EventReader {
     pub fn new(min_event_number: u64) -> Self {
-        Self {
-            min_event_number,
-        }
+        Self { min_event_number }
     }
 
     pub async fn process_read<T: TLVWrite>(
@@ -335,7 +334,9 @@ impl EventReader {
     ) -> Result<(), Error> {
         let tail = tw.get_tail();
 
-        let result = self.do_process_read(event, paths, event_filters, &mut tw).await;
+        let result = self
+            .do_process_read(event, paths, event_filters, &mut tw)
+            .await;
 
         if result.is_err() {
             // If there was an error, rewind to the tail so we don't write any data.
