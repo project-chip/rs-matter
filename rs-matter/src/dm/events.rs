@@ -29,11 +29,23 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use crate::im::EventData;
 
-pub const DEFAULT_BYTES_PER_BUF: usize = 16; // TODO(events) what to set this to?
+pub const DEFAULT_BYTES_PER_BUF: usize = 64;
 
 /// A type alias for `Events` with the default maximum number of subscriptions.
 pub type DefaultEvents = Events<DEFAULT_BYTES_PER_BUF>;
 
+/// This is the event queue system, it lets you publish Matter Events into a priority queue,
+/// and allows subscribers and remote clients to read the data you've published.
+///
+/// NOTE: The API of this is provisional and subject to change
+///
+/// If you are in a concurrent environment you need to select an appropriate mutex implementation for M
+/// The queue is implemented as three equally sized ring buffers, the size of the buffers is set by N.
+/// Hence the memory use of the buffers will be 3 * N. If you pick a very small N clients that poll may
+/// miss events as they fall out of the queue, but a large N of course uses more memory. You may need
+/// to experiment to pick an appropriate size for your event write load.
+///
+/// If your application emits no events you can set N to 0.
 pub struct Events<const N: usize = DEFAULT_BYTES_PER_BUF, M = NoopRawMutex>
 where
     M: RawMutex,
@@ -68,6 +80,10 @@ where
         })
     }
 
+    /// Push a new event into the event queue, making it visible to any subscribers.
+    /// NOTE: This API is unstable and may change, for instance it currently requires knowing the tag number for writing data
+    ///
+    /// To write event data you use the provided EventQueueWriter and write the tag EventDataTag::Data.
     pub async fn push(
         &self,
         path: EventPath,
@@ -250,24 +266,23 @@ fn parse_event<'a>(tr: TLVElement<'a>) -> Result<EventData<'a>, Error> {
             return Ok(Some(elem));
         }
 
-        match EventDataTag::try_from(elem.ctx()?) {
-            Ok(EventDataTag::Path) => path = Some(EventPath::from_tlv(&elem)?),
-            Ok(EventDataTag::EventNumber) => event_number = Some(elem.u64()?),
-            Ok(EventDataTag::Priority) => priority = Some(elem.u8()?),
-            Ok(EventDataTag::SystemTimestamp) => {
+        match EventDataTag::try_from(elem.ctx()?)? {
+            EventDataTag::Path => path = Some(EventPath::from_tlv(&elem)?),
+            EventDataTag::EventNumber => event_number = Some(elem.u64()?),
+            EventDataTag::Priority => priority = Some(elem.u8()?),
+            EventDataTag::SystemTimestamp => {
                 timestamp = Some(EventDataTimestamp::SystemTimestamp(elem.u64()?))
             }
-            Ok(EventDataTag::EpochTimestamp) => {
+            EventDataTag::EpochTimestamp => {
                 timestamp = Some(EventDataTimestamp::EpochTimestamp(elem.u64()?))
             }
-            Ok(EventDataTag::DeltaSystemTimestamp) => {
+            EventDataTag::DeltaSystemTimestamp => {
                 timestamp = Some(EventDataTimestamp::DeltaSystemTimestamp(elem.u64()?))
             }
-            Ok(EventDataTag::DeltaEpochTimestamp) => {
+            EventDataTag::DeltaEpochTimestamp => {
                 timestamp = Some(EventDataTimestamp::DeltaEpochTimestamp(elem.u64()?))
             }
-            Ok(EventDataTag::Data) => data = Some(elem.clone()),
-            Err(_) => todo!(),
+            EventDataTag::Data => data = Some(elem.clone()),
         }
         Ok(None)
     })?;
@@ -284,11 +299,16 @@ fn parse_event<'a>(tr: TLVElement<'a>) -> Result<EventData<'a>, Error> {
 pub struct EventQueueWriter<'a, const N: usize> {
     queue: &'a mut EventsInner<N>,
     buf_ref: Level<N>,
+    bytes_written: usize,
 }
 
 impl<'a, const N: usize> EventQueueWriter<'a, N> {
     fn new(queue: &'a mut EventsInner<N>, buf_ref: Level<N>) -> Self {
-        Self { queue, buf_ref }
+        Self {
+            queue,
+            buf_ref,
+            bytes_written: 0,
+        }
     }
 
     fn end(&mut self) -> Result<(), Error> {
@@ -332,15 +352,15 @@ impl<'a, const N: usize> EventQueueWriter<'a, N> {
         dst_buf: Level<N>,
         victim_ref: VictimRef,
     ) -> Result<(), Error> {
-        // Make space
+        // Make space (n.b. this assumes the next level is always at least as large as the current level, which is currently always true)
         while dst_buf.get(self.queue).capacity() < victim_ref.len() {
             self.evict(dst_buf)?;
         }
 
         let (src, dst) = src_buf.get_mut_and_next(self.queue);
-        // TODO(events): dst being None here is a programming error, what's the right way to signal that?
-        let dst = dst.expect("there should always be a dst buffer at this point");
-        dst.write_slice(victim_ref.raw(src)).expect("TODO Again this is a programming error, the while further up should have guaranteed space");
+        let dst = dst.expect("dst buffer should always exist as this is checked in evict()");
+        dst.write_slice(victim_ref.raw(src))
+            .expect("should not overflow as eviction should have cleared space");
         Ok(())
     }
 }
@@ -349,16 +369,25 @@ impl<'a, const N: usize> TLVWrite for EventQueueWriter<'a, N> {
     type Position = usize;
 
     fn write(&mut self, byte: u8) -> Result<(), Error> {
+        if self.bytes_written == N {
+            // This event is larger than the buffer, the client needs to change the buffer size for this to work
+            return Err(Error::new(ErrorCode::NoSpace));
+        }
         while let Err(OverflowError {}) = self.buf_ref.get_mut(self.queue).write(byte) {
             // Overflow, need to evict an entry
             self.evict(Level::Debug)?;
         }
+        self.bytes_written += 1;
         Ok(())
     }
 
     fn get_tail(&self) -> Self::Position {
         // n.b. TLVWrite calls the next position to be written "tail", but our level buffer calls that position "head"
         self.queue.buf_debug.head
+    }
+
+    fn rewind_to(&mut self, pos: Self::Position) {
+        self.queue.buf_debug.head = pos;
     }
 }
 
@@ -424,7 +453,6 @@ impl<const N: usize> LevelBuf<N> {
     }
 
     fn prepare_eviction(&self) -> Result<VictimRef, Error> {
-        // TODO(events): Handle empty / wrap-around
         Ok(VictimRef {
             victim_len: self.record_len(0)?,
         })
@@ -547,7 +575,7 @@ mod tests {
     #[test]
     fn one_entry() {
         let crit1 = TestEvent::new(1, 2);
-        let mut q = EventsInner::new();
+        let mut q: EventsInner<64> = EventsInner::new();
 
         crit1.push_into(&mut q).unwrap();
 
@@ -559,21 +587,47 @@ mod tests {
         let crit1 = TestEvent::new(1, 2);
         let crit2 = TestEvent::new(2, 2);
         let crit3 = TestEvent::new(3, 2);
-        let mut q = EventsInner::new();
+        let mut q: EventsInner<64> = EventsInner::new();
 
         crit1.push_into(&mut q).unwrap();
         crit2.push_into(&mut q).unwrap();
         crit3.push_into(&mut q).unwrap();
 
         assert_eq!(TestEvent::vec_from(&q.buf_debug).unwrap(), &[crit3]);
-
         assert_eq!(TestEvent::vec_from(&q.buf_info).unwrap(), &[crit2]);
         assert_eq!(TestEvent::vec_from(&q.buf_critical).unwrap(), &[crit1]);
     }
 
-    // TODO(events): Need test cases for:
-    // - writing an entry that's bigger than an individual ring buffer
-    // - dropping events that don't meet next prio level
+    #[test]
+    fn debug_is_dropped() {
+        let crit1 = TestEvent::new(1, 2);
+        let dbg2 = TestEvent::new(2, 0);
+        let crit3: TestEvent = TestEvent::new(3, 2);
+        let mut q: EventsInner<64> = EventsInner::new();
+
+        crit1.push_into(&mut q).unwrap();
+        dbg2.push_into(&mut q).unwrap();
+        crit3.push_into(&mut q).unwrap();
+
+        // Then the dbg level has the last event - crit3
+        assert_eq!(TestEvent::vec_from(&q.buf_debug).unwrap(), &[crit3]);
+        // The info level has the first critical event, the dbg event evicted it to there
+        // but when crit3 was pushed the debug event didn't get promoted, so crit1 stays put
+        assert_eq!(TestEvent::vec_from(&q.buf_info).unwrap(), &[crit1]);
+        // And finally there's then nothing here
+        assert_eq!(TestEvent::vec_from(&q.buf_critical).unwrap(), &[]);
+    }
+
+    #[test]
+    fn event_larger_than_buffer() {
+        let crit1 = TestEvent::new(1, 2);
+        let mut q: EventsInner<8> = EventsInner::new();
+
+        assert_eq!(
+            crit1.push_into(&mut q).expect_err("").code(),
+            ErrorCode::NoSpace
+        );
+    }
 
     // Test utilities for this suite
 
@@ -583,7 +637,7 @@ mod tests {
         event_number: u64,
         priority: u8,
         timestamp: EventDataTimestamp,
-        data: u64, // TODO(events): Need to test mixed-sized, incl zero-sized, payloads
+        data: u64,
     }
 
     impl TestEvent {
@@ -597,7 +651,9 @@ mod tests {
             }
         }
 
-        fn vec_from(buf: &LevelBuf<64>) -> Result<heapless::Vec<TestEvent, 16>, Error> {
+        fn vec_from<const N: usize>(
+            buf: &LevelBuf<N>,
+        ) -> Result<heapless::Vec<TestEvent, 16>, Error> {
             let mut out = heapless::Vec::new();
             for tr in buf.iter() {
                 let e = parse_event(tr?)?;
@@ -613,7 +669,7 @@ mod tests {
             Ok(out)
         }
 
-        fn push_into(&self, q: &mut EventsInner<64>) -> Result<(), Error> {
+        fn push_into<const N: usize>(&self, q: &mut EventsInner<N>) -> Result<(), Error> {
             let mut tw = q.push(
                 self.path.clone(),
                 self.event_number,

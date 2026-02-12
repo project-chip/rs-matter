@@ -64,9 +64,7 @@ struct SubscriptionBuffer<B> {
     fabric_idx: NonZeroU8,
     peer_node_id: u64,
     subscription_id: u32,
-    // TODO(events): We need some mechanism to keep track of how far along the event stream subscriptions have seen;
-    //               this would be one way. Another I considered was to update the actual TLV value in the buffer,
-    //               but that got into some messiness since there may be multiple filter entries (or none).. this costs 8 bytes per sub tho.
+    // Tracks how far along into the event stream this subscription has seen, updated as we emit events
     min_event_number: u64,
     buffer: B,
 }

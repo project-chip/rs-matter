@@ -245,8 +245,7 @@ fn test_subscribe_events() {
                     ReplyProcessor::none,
                 )
             },
-            // TODO(events): Without this unrelated back-n-forth the test hangs, I think
-            //               something-something acks?
+            // Without this unrelated back-n-forth the test hangs, should investigate and fix at some point
             &TLVTest::read(
                 TestReadReq {
                     ..TestReadReq::event_reqs(&[WILDCARD_PATH.clone()])
@@ -339,7 +338,6 @@ fn push_events(im: &ImEngine, events: &[TestEventData]) {
             im.events
                 .push(ev.path.clone(), ev.priority, |tw| -> Result<(), Error> {
                     if let Some(data) = ev.data {
-                        // TODO(events) the public API shouldn't require knowing about the tag index here
                         let mut b = [0u8; 2048];
                         let mut wb = WriteBuf::new(&mut b[0..]);
                         data.test_to_tlv(&TLVTag::Context(EventDataTag::Data as _), &mut wb)?;

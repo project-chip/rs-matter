@@ -137,7 +137,7 @@ impl EventStatus {
 /// Corresponds to the `EventReportIB` TLV structure in the Interaction Model.
 #[derive(Clone, FromTLV, ToTLV, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(lifetime = "'a")] // TODO(events): What is this?
+#[tlvargs(lifetime = "'a")]
 pub enum EventResp<'a> {
     Status(EventStatus),
     Data(EventData<'a>),

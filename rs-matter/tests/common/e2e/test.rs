@@ -108,7 +108,6 @@ impl E2eRunner {
 
                 for test in tests {
                     self.execute_test(&mut exchange, test).await?;
-                    // TODO(events) without this the subscribe test hangs, need something smarter
                     exchange.acknowledge().await?;
                 }
 
@@ -133,7 +132,6 @@ impl E2eRunner {
                 self.execute_server_part_of_test(exchange, &test).await?;
             }
             E2eTestDirection::ServerInitiated => {
-                // TODO(events): this is not a good solution, it doesn't allow multi-step messaging in the peer-initiated exchange.. but it gives me a failing test to drive the car with for now
                 let mut peer_exchange = Exchange::accept(self.matter_client()).await?;
                 self.execute_server_part_of_test(&mut peer_exchange, &test)
                     .await?;
