@@ -135,7 +135,9 @@ fn main() -> Result<(), Error> {
         .init_with(DefaultSubscriptions::init());
 
     // Create the event queue
-    let events = EVENTS.uninit().init_with(DefaultEvents::init());
+    let events = EVENTS
+        .uninit()
+        .init_with(DefaultEvents::init(rs_matter::utils::epoch::sys_epoch));
 
     // Our on-off cluster
     let on_off_handler = OnOffHandler::new_standalone(

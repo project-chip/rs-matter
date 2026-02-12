@@ -49,7 +49,8 @@ macro_rules! event_data_req {
             path: rs_matter::im::EventPath::from_gp(&$path),
             event_number: $event_no,
             priority: $prio,
-            timestamp: rs_matter::im::EventDataTimestamp::SystemTimestamp(0),
+            // Test harness is hardcoded, for events, for the clock to stay at 1337ms past the epoch
+            timestamp: rs_matter::im::EventDataTimestamp::EpochTimestamp(1337),
             data: $data,
         }
     };

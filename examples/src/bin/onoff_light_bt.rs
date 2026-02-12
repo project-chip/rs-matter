@@ -134,7 +134,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     let subscriptions = DefaultSubscriptions::new();
 
     // Create the event queue
-    let events = DefaultEvents::new();
+    let events = DefaultEvents::new_default();
 
     // Our on-off cluster
     let on_off_handler = on_off::OnOffHandler::new_standalone(

@@ -38,6 +38,7 @@ use rs_matter::transport::network::{
     Address, NetworkReceive, NetworkSend, MAX_RX_PACKET_SIZE, MAX_TX_PACKET_SIZE,
 };
 use rs_matter::transport::session::{NocCatIds, ReservedSession, SessionMode};
+use rs_matter::utils::epoch::Epoch;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{Matter, MATTER_PORT};
@@ -89,12 +90,13 @@ impl E2eRunner {
 
     /// Create a new runner with the given category IDs.
     pub fn new(cat_ids: NocCatIds) -> Self {
+        let epoch: Epoch = || core::time::Duration::from_millis(1337);
         Self {
             matter: Self::new_matter(),
             matter_client: Self::new_matter(),
             buffers: PooledBuffers::new(0),
             subscriptions: Subscriptions::new(),
-            events: Events::new(),
+            events: Events::new(epoch),
             cat_ids,
         }
     }

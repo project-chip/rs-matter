@@ -297,9 +297,14 @@ impl<'a> FromTLV<'a> for EventData<'a> {
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EventDataTimestamp {
-    // TODO(events) docstrings, see section 10.6.9.1->10.6.9.3
+    // Posix milliseconds since the epoch, 1970-01-01 00:00:00 UTC
     EpochTimestamp(u64),
+    // Milliseconds since booting
     SystemTimestamp(u64),
+    // Delta-encoded version of EpochTimestamp. Same clock and unit, but value
+    // is relative to most recently emitted event.
     DeltaEpochTimestamp(u64),
+    // Delta-encoded version of SystemTimestamp. Same clock and unit, but value
+    // is relative to most recently emitted event.
     DeltaSystemTimestamp(u64),
 }

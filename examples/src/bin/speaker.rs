@@ -75,7 +75,7 @@ fn main() -> Result<(), Error> {
     let subscriptions = DefaultSubscriptions::new();
 
     // Create the event queue
-    let events = DefaultEvents::new();
+    let events = DefaultEvents::new_default();
 
     // OnOff cluster setup
     let on_off_handler = on_off::OnOffHandler::new(

@@ -21,6 +21,7 @@ use crate::im::{EventDataTag, EventDataTimestamp, EventPath, EventRespTag};
 use crate::tlv::{
     FromTLV, TLVElement, TLVSequence, TLVSequenceIter, TLVTag, TLVWrite, TagType, ToTLV,
 };
+use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
 use crate::utils::sync::{IfMutex, IfMutexGuard};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -38,6 +39,7 @@ where
     M: RawMutex,
 {
     state: IfMutex<M, EventsInner<N>>,
+    epoch: Epoch,
 }
 
 impl<const N: usize, M> Events<N, M>
@@ -45,15 +47,24 @@ where
     M: RawMutex,
 {
     #[inline(always)]
-    pub const fn new() -> Self {
+    pub const fn new(epoch: Epoch) -> Self {
         Self {
             state: IfMutex::new(EventsInner::new()),
+            epoch,
         }
     }
 
-    pub fn init() -> impl Init<Self> {
+    #[cfg(feature = "std")]
+    #[inline(always)]
+    pub const fn new_default() -> Self {
+        use crate::utils::epoch::sys_epoch;
+        Self::new(sys_epoch)
+    }
+
+    pub fn init(epoch: Epoch) -> impl Init<Self> {
         init!(Self {
             state <- IfMutex::init(EventsInner::init()),
+            epoch,
         })
     }
 
@@ -67,8 +78,7 @@ where
 
         let event_no = internal.next_event_no;
         internal.next_event_no += 1;
-        // TODO(events): actual timestamps
-        let timestamp = EventDataTimestamp::SystemTimestamp(0);
+        let timestamp = EventDataTimestamp::EpochTimestamp((self.epoch)().as_millis() as u64);
         let mut tw = internal.push(path, event_no, priority, timestamp)?;
         data(&mut tw)?;
         tw.end()

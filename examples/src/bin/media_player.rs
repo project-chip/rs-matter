@@ -98,7 +98,7 @@ fn main() -> Result<(), Error> {
     let subscriptions = DefaultSubscriptions::new();
 
     // Create the event queue
-    let events = DefaultEvents::new();
+    let events = DefaultEvents::new_default();
 
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with our custom Speaker handler
     let on_off_handler = on_off::OnOffHandler::new_standalone(
