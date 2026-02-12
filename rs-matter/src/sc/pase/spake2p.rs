@@ -329,7 +329,6 @@ impl Spake2P {
 
     /// Get the session key after successful prover completion
     /// Only valid after `complete_prover()` returns `Ok(())`
-    #[expect(unused)]
     pub fn ke(&self) -> Spake2pKeRef<'_> {
         self.ke.reference()
     }
@@ -350,7 +349,6 @@ impl Spake2P {
     /// 1. Send X (a_pt_out) in Pake1
     /// 2. Receive Y and cB in Pake2
     /// 3. Call `complete_prover()` with Y and cB
-    #[expect(unused)]
     pub fn setup_prover<C: Crypto>(
         &mut self,
         crypto: C,
@@ -404,7 +402,6 @@ impl Spake2P {
     /// # Returns
     /// - `Ok(())` if cB verification succeeded
     /// - `Err(SCStatusCodes::InvalidParameter)` if cB verification failed
-    #[expect(unused)]
     pub fn complete_prover<C: Crypto>(
         &mut self,
         crypto: C,
