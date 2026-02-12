@@ -26,10 +26,10 @@
 use subtle::ConstantTimeEq;
 
 use crate::crypto::{
-    canon, CanonEcPoint, CanonEcPointRef, Crypto, CryptoSensitive, Digest, EcPoint, EcScalar, Hash,
-    HashRef, HmacHash, HmacHashRef, Kdf, PbKdf, AEAD_CANON_KEY_LEN, EC_CANON_POINT_LEN,
-    EC_CANON_SCALAR_LEN, EC_POINT_ZEROED, EC_SCALAR_ZEROED, HASH_LEN, HASH_ZEROED, HMAC_HASH_LEN,
-    HMAC_HASH_ZEROED, UINT320_CANON_LEN,
+    canon, CanonEcPoint, CanonEcPointRef, CanonEcScalar, Crypto, CryptoSensitive, Digest, EcPoint,
+    EcScalar, Hash, HashRef, HmacHash, HmacHashRef, Kdf, PbKdf, AEAD_CANON_KEY_LEN,
+    EC_CANON_POINT_LEN, EC_CANON_SCALAR_LEN, EC_POINT_ZEROED, EC_SCALAR_ZEROED, HASH_LEN,
+    HASH_ZEROED, HMAC_HASH_LEN, HMAC_HASH_ZEROED, UINT320_CANON_LEN,
 };
 use crate::error::Error;
 use crate::sc::SCStatusCodes;
@@ -153,12 +153,24 @@ impl Spake2pVerifierData {
     }
 }
 
+/// Context for the prover side of SPAKE2+, returned by `setup_prover()`.
+/// Contains the intermediate values needed to complete the protocol after receiving Pake2.
+pub struct ProverContext {
+    /// The w0 scalar derived from password
+    w0: CanonEcScalar,
+    /// The w1 scalar derived from password
+    w1: CanonEcScalar,
+    /// The random scalar x used to compute X
+    xy: CanonEcScalar,
+}
+
 pub struct Spake2P {
     local_sessid: u16,
     peer_sessid: u16,
     context_hash: Hash,
     ke: Spake2pKe,
     ca: HmacHash,
+    cb: HmacHash,
 }
 
 impl Spake2P {
@@ -189,6 +201,7 @@ impl Spake2P {
             context_hash: HASH_ZEROED,
             ke: Spake2pKe::new(),
             ca: HMAC_HASH_ZEROED,
+            cb: HMAC_HASH_ZEROED,
         }
     }
 
@@ -199,6 +212,7 @@ impl Spake2P {
             context_hash <- Hash::init(),
             ke <- Spake2pKe::init(),
             ca <- HmacHash::init(),
+            cb <- HmacHash::init(),
         })
     }
 
@@ -291,12 +305,17 @@ impl Spake2P {
             b_pt,
             &mut self.ke,
             &mut self.ca,
-            cb_out,
+            &mut self.cb,
         )?;
+
+        // Copy cB to output parameter for backward compatibility
+        cb_out.load(self.cb.reference());
 
         Ok(())
     }
 
+    /// Verify the prover's confirmation code (cA) received in Pake3
+    /// Used by the verifier to confirm the prover knows the password
     pub fn verify(
         &mut self,
         ca: HmacHashRef<'_>,
@@ -306,6 +325,148 @@ impl Spake2P {
         } else {
             Err(SCStatusCodes::InvalidParameter)
         }
+    }
+
+    /// Get the session key after successful prover completion
+    /// Only valid after `complete_prover()` returns `Ok(())`
+    #[expect(unused)]
+    pub fn ke(&self) -> Spake2pKeRef<'_> {
+        self.ke.reference()
+    }
+
+    /// Setup the prover (initiator/commissioner) side of SPAKE2+
+    ///
+    /// This is called by the prover after receiving PBKDFParamResponse (which contains
+    /// the salt and iteration count) but before receiving Pake2 (which contains Y and cB).
+    ///
+    /// # Arguments
+    /// - `crypto` - The crypto implementation
+    /// - `password` - The setup passcode (as 4-byte little-endian u32)
+    /// - `salt` - The salt from PBKDFParamResponse
+    /// - `iterations` - The iteration count from PBKDFParamResponse
+    /// - `a_pt_out` - Output: the X point to send in Pake1
+    ///
+    /// After calling this, the prover should:
+    /// 1. Send X (a_pt_out) in Pake1
+    /// 2. Receive Y and cB in Pake2
+    /// 3. Call `complete_prover()` with Y and cB
+    #[expect(unused)]
+    pub fn setup_prover<C: Crypto>(
+        &mut self,
+        crypto: C,
+        password: Spake2pVerifierPasswordRef<'_>,
+        salt: &[u8],
+        iterations: u32,
+        a_pt_out: &mut CanonEcPoint,
+    ) -> Result<ProverContext, Error> {
+        // Derive w0s and w1s from password
+        let mut w0s_w1s = Spake2pW::new();
+        Self::compute_w0s_w1s(&crypto, password, iterations, salt, &mut w0s_w1s)?;
+
+        let (w0s, w1s) = w0s_w1s
+            .reference()
+            .split::<UINT320_CANON_LEN, UINT320_CANON_LEN>();
+
+        let w0 = crypto.ec_scalar_mod_p(w0s)?;
+        let w1 = crypto.ec_scalar_mod_p(w1s)?;
+
+        // Compute X = x*P + w0*M
+        let m_pt = crypto.ec_point(Self::MATTER_M_BIN)?;
+        let (a_pt, xy) = Self::compute_a_pt_xy(&crypto, &m_pt, &w0)?;
+
+        a_pt.write_canon(a_pt_out)?;
+
+        // Store w0, w1, and x for later use in complete_prover
+        let mut w0_out = EC_SCALAR_ZEROED;
+        let mut w1_out = EC_SCALAR_ZEROED;
+        let mut xy_out = EC_SCALAR_ZEROED;
+        w0.write_canon(&mut w0_out)?;
+        w1.write_canon(&mut w1_out)?;
+        xy.write_canon(&mut xy_out)?;
+
+        Ok(ProverContext {
+            w0: w0_out,
+            w1: w1_out,
+            xy: xy_out,
+        })
+    }
+
+    /// Complete the prover side after receiving Pake2
+    ///
+    /// # Arguments
+    /// - `crypto` - The crypto implementation
+    /// - `ctx` - The prover context from `setup_prover()`
+    /// - `a_pt` - Our X point (sent in Pake1)
+    /// - `b_pt` - The Y point received in Pake2
+    /// - `cb` - The cB received in Pake2
+    /// - `ca_out` - Output: the cA to send in Pake3
+    ///
+    /// # Returns
+    /// - `Ok(())` if cB verification succeeded
+    /// - `Err(SCStatusCodes::InvalidParameter)` if cB verification failed
+    #[expect(unused)]
+    pub fn complete_prover<C: Crypto>(
+        &mut self,
+        crypto: C,
+        ctx: &ProverContext,
+        a_pt: CanonEcPointRef<'_>,
+        b_pt: CanonEcPointRef<'_>,
+        cb: HmacHashRef<'_>,
+        ca_out: &mut HmacHash,
+    ) -> Result<(), SCStatusCodes> {
+        let w0 = crypto
+            .ec_scalar(ctx.w0.reference())
+            .map_err(|_| SCStatusCodes::InvalidParameter)?;
+        let w1 = crypto
+            .ec_scalar(ctx.w1.reference())
+            .map_err(|_| SCStatusCodes::InvalidParameter)?;
+        let xy = crypto
+            .ec_scalar(ctx.xy.reference())
+            .map_err(|_| SCStatusCodes::InvalidParameter)?;
+
+        let n_pt = crypto
+            .ec_point(Self::MATTER_N_BIN)
+            .map_err(|_| SCStatusCodes::InvalidParameter)?;
+
+        // Compute transcript hash
+        let mut tt_hash = HASH_ZEROED;
+        Self::compute_prover_tt_hash(
+            &crypto,
+            self.context_hash.reference(),
+            &w0,
+            &w1,
+            &n_pt,
+            a_pt,
+            b_pt,
+            &xy,
+            &mut tt_hash,
+        )
+        .map_err(|_| SCStatusCodes::InvalidParameter)?;
+
+        // Compute Ke, cA, cB
+        let b_pt_ec = crypto
+            .ec_point(b_pt)
+            .map_err(|_| SCStatusCodes::InvalidParameter)?;
+        Self::compute_ke_ca_cb(
+            &crypto,
+            tt_hash.reference(),
+            a_pt,
+            b_pt_ec,
+            &mut self.ke,
+            &mut self.ca,
+            &mut self.cb,
+        )
+        .map_err(|_| SCStatusCodes::InvalidParameter)?;
+
+        // Verify cB matches what we computed
+        if cb.access().ct_eq(self.cb.access()).unwrap_u8() != 1 {
+            return Err(SCStatusCodes::InvalidParameter);
+        }
+
+        // Copy cA to output
+        ca_out.load(self.ca.reference());
+
+        Ok(())
     }
 
     fn compute_b_pt_xy<'a, C: Crypto>(
@@ -322,6 +483,22 @@ impl Spake2P {
         let b_pt = crypto.ec_generator_point()?.add_mul(&xy, n_pt, w0)?;
 
         Ok((b_pt, xy))
+    }
+
+    fn compute_a_pt_xy<'a, C: Crypto>(
+        crypto: &'a C,
+        m_pt: &C::EcPoint<'a>,
+        w0: &C::EcScalar<'a>,
+    ) -> Result<(C::EcPoint<'a>, C::EcScalar<'a>), Error> {
+        // From the SPAKE2+ spec (https://datatracker.ietf.org/doc/draft-bar-cfrg-spake2plus/)
+        //   for x (prover side)
+        //   - select random x between 0 to p
+        //   - X = x*P + w0*M
+        //   - pA = X
+        let xy = crypto.generate_ec_scalar()?;
+        let a_pt = crypto.ec_generator_point()?.add_mul(&xy, m_pt, w0)?;
+
+        Ok((a_pt, xy))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -371,6 +548,71 @@ impl Spake2P {
 
         let a_pt = crypto.ec_point(a_pt_canon)?;
         let (z_pt, v_pt) = Self::compute_zv_verifier(crypto, w0, l_pt, m_pt, &a_pt, xy)?;
+
+        // Z
+        z_pt.write_canon(&mut pt_out)?;
+        add_to_tt(pt_out.access())?;
+
+        // V
+        v_pt.write_canon(&mut pt_out)?;
+        add_to_tt(pt_out.access())?;
+
+        // w0
+        w0.write_canon(&mut sc_out)?;
+        add_to_tt(sc_out.access())?;
+
+        tt.finish(tt_hash_out)?;
+
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compute_prover_tt_hash<'a, C: Crypto>(
+        crypto: &'a C,
+        context: HashRef<'_>,
+        w0: &C::EcScalar<'a>,
+        w1: &C::EcScalar<'a>,
+        n_pt: &C::EcPoint<'a>,
+        a_pt_canon: CanonEcPointRef<'_>,
+        b_pt_canon: CanonEcPointRef<'_>,
+        xy: &C::EcScalar<'a>,
+        tt_hash_out: &mut Hash,
+    ) -> Result<(), Error> {
+        let mut tt = crypto.hash()?;
+
+        let mut add_to_tt = |data: &[u8]| {
+            tt.update(&(data.len() as u64).to_le_bytes())?;
+            if !data.is_empty() {
+                tt.update(data)?;
+            }
+
+            Ok::<_, Error>(())
+        };
+
+        let mut pt_out = EC_POINT_ZEROED;
+        let mut sc_out = EC_SCALAR_ZEROED;
+
+        // Context
+        add_to_tt(context.access())?;
+
+        // 2 empty identifiers
+        add_to_tt(&[])?;
+        add_to_tt(&[])?;
+
+        // M
+        add_to_tt(Self::MATTER_M_BIN.access())?;
+
+        // N
+        add_to_tt(Self::MATTER_N_BIN.access())?;
+
+        // X = pA
+        add_to_tt(a_pt_canon.access())?;
+
+        // Y = pB
+        add_to_tt(b_pt_canon.access())?;
+
+        let b_pt = crypto.ec_point(b_pt_canon)?;
+        let (z_pt, v_pt) = Self::compute_zv_prover(crypto, w0, w1, n_pt, &b_pt, xy)?;
 
         // Z
         z_pt.write_canon(&mut pt_out)?;
@@ -456,7 +698,6 @@ impl Spake2P {
         Ok((z_pt, v_pt))
     }
 
-    #[allow(unused)]
     fn compute_zv_prover<'a, C: Crypto>(
         _crypto: &'a C,
         w0: &C::EcScalar<'a>,
@@ -653,6 +894,171 @@ mod tests {
             assert_eq!(ca.access(), t.ca.access());
             assert_eq!(cb.access(), t.cb.access());
         }
+    }
+
+    #[test]
+    fn test_prover_verifier_roundtrip() {
+        // Test that prover and verifier derive the same session key
+
+        // Test parameters
+        let password: u32 = 123456;
+        let password_bytes = password.to_le_bytes();
+        let password_ref = Spake2pVerifierPasswordRef::new(&password_bytes);
+
+        // 32-byte salt (SPAKE2P_VERIFIER_SALT_LEN)
+        let salt: [u8; 32] = [
+            0x4, 0xa1, 0xd2, 0xc6, 0x11, 0xf0, 0xbd, 0x36, 0x78, 0x67, 0x79, 0x7b, 0xfe, 0x82,
+            0x36, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc,
+            0xdd, 0xee, 0xff, 0x00,
+        ];
+        let iterations = 2000u32;
+
+        // === PROVER SIDE ===
+        let mut prover = Spake2P::new();
+        prover.local_sessid = 1;
+        prover.peer_sessid = 2;
+        // context_hash stays zeroed (normally derived from PBKDFParamRequest/Response)
+
+        // Step 1: Prover generates X
+        let mut a_pt = CanonEcPoint::new();
+        let prover_ctx = unwrap!(prover.setup_prover(
+            test_only_crypto(),
+            password_ref,
+            &salt,
+            iterations,
+            &mut a_pt
+        ));
+
+        // === VERIFIER SIDE ===
+        let mut verifier = Spake2P::new();
+        verifier.local_sessid = 2;
+        verifier.peer_sessid = 1;
+        // context_hash stays zeroed (must match prover's)
+
+        // Step 2: Verifier receives X, generates Y and cB
+        // Create verifier data directly with password
+        let mut verifier_data = Spake2pVerifierData {
+            password: Some(password_ref.into()),
+            verifier: Spake2pVerifierStr::new(),
+            salt: Spake2pVerifierSalt::new(),
+            count: iterations,
+        };
+        verifier_data.salt.load(Spake2pVerifierSaltRef::new(&salt));
+
+        let mut b_pt = CanonEcPoint::new();
+        let mut cb_from_verifier = HmacHash::new();
+        unwrap!(verifier.setup_verifier(
+            test_only_crypto(),
+            &verifier_data,
+            a_pt.reference(),
+            &mut b_pt,
+            &mut cb_from_verifier
+        ));
+
+        // === PROVER SIDE (continued) ===
+        // Step 3: Prover receives Y and cB, computes cA
+        let mut ca_from_prover = HmacHash::new();
+        unwrap!(prover.complete_prover(
+            test_only_crypto(),
+            &prover_ctx,
+            a_pt.reference(),
+            b_pt.reference(),
+            cb_from_verifier.reference(),
+            &mut ca_from_prover
+        ));
+
+        // === VERIFIER SIDE (continued) ===
+        // Step 4: Verifier receives cA and verifies it
+        let (_, _, v_ke) = unwrap!(verifier.verify(ca_from_prover.reference()));
+
+        // === VERIFY RESULTS ===
+        // The prover already verified cB in complete_prover(), so if we got here
+        // both sides have authenticated successfully.
+
+        // CRITICAL: Both sides should derive the same session key
+        assert_eq!(
+            prover.ke().access(),
+            v_ke.access(),
+            "Prover and verifier should derive the same Ke"
+        );
+    }
+
+    #[test]
+    fn test_complete_prover_wrong_password() {
+        // Test that complete_prover fails when passwords don't match
+
+        let password: u32 = 123456;
+        let password_bytes = password.to_le_bytes();
+        let password_ref = Spake2pVerifierPasswordRef::new(&password_bytes);
+
+        // 32-byte salt (SPAKE2P_VERIFIER_SALT_LEN)
+        let salt: [u8; 32] = [
+            0x4, 0xa1, 0xd2, 0xc6, 0x11, 0xf0, 0xbd, 0x36, 0x78, 0x67, 0x79, 0x7b, 0xfe, 0x82,
+            0x36, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc,
+            0xdd, 0xee, 0xff, 0x00,
+        ];
+        let iterations = 2000u32;
+
+        // Setup prover
+        let mut prover = Spake2P::new();
+        prover.local_sessid = 1;
+        prover.peer_sessid = 2;
+        // context_hash stays zeroed
+
+        let mut a_pt = CanonEcPoint::new();
+        let prover_ctx = unwrap!(prover.setup_prover(
+            test_only_crypto(),
+            password_ref,
+            &salt,
+            iterations,
+            &mut a_pt
+        ));
+
+        // Setup verifier with WRONG password
+        let wrong_password: u32 = 999999;
+        let wrong_password_bytes = wrong_password.to_le_bytes();
+        let wrong_password_ref = Spake2pVerifierPasswordRef::new(&wrong_password_bytes);
+
+        let mut verifier = Spake2P::new();
+        verifier.local_sessid = 2;
+        verifier.peer_sessid = 1;
+        // context_hash stays zeroed
+
+        // Create verifier data with WRONG password
+        let mut verifier_data = Spake2pVerifierData {
+            password: Some(wrong_password_ref.into()),
+            verifier: Spake2pVerifierStr::new(),
+            salt: Spake2pVerifierSalt::new(),
+            count: iterations,
+        };
+        verifier_data.salt.load(Spake2pVerifierSaltRef::new(&salt));
+
+        let mut b_pt = CanonEcPoint::new();
+        let mut cb_from_verifier = HmacHash::new();
+        unwrap!(verifier.setup_verifier(
+            test_only_crypto(),
+            &verifier_data,
+            a_pt.reference(),
+            &mut b_pt,
+            &mut cb_from_verifier
+        ));
+
+        // Prover should fail to verify cB (wrong password means different cB)
+        let mut ca_from_prover = HmacHash::new();
+        let result = prover.complete_prover(
+            test_only_crypto(),
+            &prover_ctx,
+            a_pt.reference(),
+            b_pt.reference(),
+            cb_from_verifier.reference(),
+            &mut ca_from_prover,
+        );
+
+        assert!(
+            result.is_err(),
+            "complete_prover should fail with mismatched password"
+        );
+        assert_eq!(result.unwrap_err(), SCStatusCodes::InvalidParameter);
     }
 
     // Based on vectors used in the RFC
