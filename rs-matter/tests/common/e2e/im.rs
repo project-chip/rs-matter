@@ -727,7 +727,7 @@ impl<'a>
         )
     }
 
-    /// TODO(events): Docs
+    /// Same utility as read_attrs, except it does event reads and expects events back instead of attrs
     pub const fn read_events(input: &'a [EventPath], expected: &'a [TestEventResp<'a>]) -> Self {
         Self::read(
             TestReadReq::event_reqs(input),

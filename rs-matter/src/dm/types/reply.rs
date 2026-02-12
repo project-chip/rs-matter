@@ -348,9 +348,8 @@ impl EventReader {
 
     async fn do_process_read<T: TLVWrite>(
         &self,
-        // TODO(events): Each event we go over in the for_each here should be checked to match at least one of these paths
         event: &EventData<'_>,
-        _paths: &TLVArray<'_, EventPath>,
+        paths: &TLVArray<'_, EventPath>,
         event_filters: Option<TLVArray<'_, EventFilter>>,
         mut tw: T,
     ) -> Result<(), Error> {
@@ -368,6 +367,43 @@ impl EventReader {
                     }
                 }
             }
+        }
+
+        let mut event_matches_path = false;
+        for expected in paths {
+            let expected = expected?;
+            // n.b. suspect this is wrong; *node* level filtering surely should happen earlier, consider restructuring
+            match (expected.node, event.path.node) {
+                (None, _) => (), // match any
+                (Some(expected_node), Some(node)) if expected_node == node => (),
+                // any other combination fails the pattern match
+                _ => continue,
+            }
+            match (expected.cluster, event.path.cluster) {
+                (None, _) => (), // match any
+                (Some(expected_cl), Some(cl)) if expected_cl == cl => (),
+                // any other combination fails the pattern match
+                _ => continue,
+            }
+            match (expected.endpoint, event.path.endpoint) {
+                (None, _) => (), // match any
+                (Some(expected_ep), Some(ep)) if expected_ep == ep => (),
+                // any other combination fails the pattern match
+                _ => continue,
+            }
+            match (expected.event, event.path.event) {
+                (None, _) => (), // match any
+                (Some(expected_ev), Some(ev)) if expected_ev == ev => (),
+                // any other combination fails the pattern match
+                _ => continue,
+            }
+
+            event_matches_path = true;
+            break;
+        }
+
+        if !event_matches_path {
+            return Ok(());
         }
 
         tw.start_struct(&TLVTag::Anonymous)?;

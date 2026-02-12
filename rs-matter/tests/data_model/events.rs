@@ -42,7 +42,6 @@ use crate::{event_data_path, event_data_req};
 const WILDCARD_PATH: EventPath = EventPath::from_gp(&GenericPath::new(None, None, None));
 
 #[test]
-/// Event number filtering should.. filter events by number
 fn test_read_event_filtered() {
     init_env_logger();
 
@@ -52,46 +51,150 @@ fn test_read_event_filtered() {
     im.add_default_acl();
 
     let ep0_event1 = GenericPath::new(Some(0), Some(echo_cluster::ID), Some(1));
+    let ep1_event1 = GenericPath::new(Some(1), Some(echo_cluster::ID), Some(1));
+    let ep1_event2 = GenericPath::new(Some(1), Some(echo_cluster::ID), Some(2));
+    let cl2_ep0_event1 = GenericPath::new(Some(0), Some(2), Some(1));
 
     // Given events
     push_events(
         &im,
         &[
-            // Both set to 0 event-no, because Events will assign new event-nos
+            // Event no set to 0 on all, because Events will assign these, starting at zero
             event_data_req!(ep0_event1, 0, 2, Some(&0x41u8)),
             event_data_req!(ep0_event1, 0, 2, Some(&0x42u8)),
             event_data_req!(ep0_event1, 0, 2, Some(&0x43u8)),
+            event_data_req!(ep1_event1, 0, 2, Some(&0x44u8)),
+            event_data_req!(ep1_event2, 0, 2, Some(&0x45u8)),
+            event_data_req!(cl2_ep0_event1, 0, 2, Some(&0x46u8)),
         ],
     );
 
-    // Test 1: Simple read without any event number filters
-    let input = &[WILDCARD_PATH.clone()];
-    let expected = &[
-        event_data_path!(ep0_event1, 0, 2, Some(&0x41u8)),
-        event_data_path!(ep0_event1, 1, 2, Some(&0x42u8)),
-        event_data_path!(ep0_event1, 2, 2, Some(&0x43u8)),
-    ];
-    im.test_one(&handler, TLVTest::read_events(input, expected));
+    // Test 1: Simple read without any filters returns all events
+    im.test_one(
+        &handler,
+        TLVTest::read_events(
+            &[WILDCARD_PATH.clone()],
+            &[
+                event_data_path!(ep0_event1, 0, 2, Some(&0x41u8)),
+                event_data_path!(ep0_event1, 1, 2, Some(&0x42u8)),
+                event_data_path!(ep0_event1, 2, 2, Some(&0x43u8)),
+                event_data_path!(ep1_event1, 3, 2, Some(&0x44u8)),
+                event_data_path!(ep1_event2, 4, 2, Some(&0x45u8)),
+                event_data_path!(cl2_ep0_event1, 5, 2, Some(&0x46u8)),
+            ],
+        ),
+    );
 
-    // Test 2: Add event filter, only single entry should be retrieved
-    let event_filter = &[EventFilter {
-        node: None,
-        event_min: Some(1),
-    }];
-    let expected_only_one = &[
-        // n.b. first event is no longer included
-        event_data_path!(ep0_event1, 1, 2, Some(&0x42u8)),
-        event_data_path!(ep0_event1, 2, 2, Some(&0x43u8)),
-    ];
-
+    // Test 2: Event number filtering excludes all events below the filter
     im.test_one(
         &handler,
         TLVTest::read(
             TestReadReq {
-                event_filters: Some(event_filter),
-                ..TestReadReq::event_reqs(input)
+                event_filters: Some(&[EventFilter {
+                    node: None,
+                    event_min: Some(2),
+                }]),
+                ..TestReadReq::event_reqs(&[WILDCARD_PATH.clone()])
             },
-            TestReportDataMsg::event_reports(expected_only_one),
+            TestReportDataMsg::event_reports(&[
+                // n.b. first two events excluded
+                event_data_path!(ep0_event1, 2, 2, Some(&0x43u8)),
+                event_data_path!(ep1_event1, 3, 2, Some(&0x44u8)),
+                event_data_path!(ep1_event2, 4, 2, Some(&0x45u8)),
+                event_data_path!(cl2_ep0_event1, 5, 2, Some(&0x46u8)),
+            ]),
+            ReplyProcessor::none,
+        ),
+    );
+
+    // Test 3: Path filtering by endpoint
+    im.test_one(
+        &handler,
+        TLVTest::read(
+            TestReadReq {
+                ..TestReadReq::event_reqs(&[EventPath {
+                    node: None,
+                    endpoint: Some(0),
+                    cluster: None,
+                    event: None,
+                    is_urgent: None,
+                }])
+            },
+            TestReportDataMsg::event_reports(&[
+                // n.b. events that aren't from endpoint 0 are excluded
+                event_data_path!(ep0_event1, 0, 2, Some(&0x41u8)),
+                event_data_path!(ep0_event1, 1, 2, Some(&0x42u8)),
+                event_data_path!(ep0_event1, 2, 2, Some(&0x43u8)),
+                event_data_path!(cl2_ep0_event1, 5, 2, Some(&0x46u8)),
+            ]),
+            ReplyProcessor::none,
+        ),
+    );
+
+    // Test 4: Path filtering by event id
+    im.test_one(
+        &handler,
+        TLVTest::read(
+            TestReadReq {
+                ..TestReadReq::event_reqs(&[EventPath {
+                    node: None,
+                    endpoint: None,
+                    cluster: None,
+                    event: Some(1),
+                    is_urgent: None,
+                }])
+            },
+            TestReportDataMsg::event_reports(&[
+                // n.b. only events with id 1
+                event_data_path!(ep0_event1, 0, 2, Some(&0x41u8)),
+                event_data_path!(ep0_event1, 1, 2, Some(&0x42u8)),
+                event_data_path!(ep0_event1, 2, 2, Some(&0x43u8)),
+                event_data_path!(ep1_event1, 3, 2, Some(&0x44u8)),
+                event_data_path!(cl2_ep0_event1, 5, 2, Some(&0x46u8)),
+            ]),
+            ReplyProcessor::none,
+        ),
+    );
+
+    // Test 5: Path filtering by node id
+    im.test_one(
+        &handler,
+        TLVTest::read(
+            TestReadReq {
+                ..TestReadReq::event_reqs(&[EventPath {
+                    node: Some(1337),
+                    endpoint: None,
+                    cluster: None,
+                    event: None,
+                    is_urgent: None,
+                }])
+            },
+            TestReportDataMsg::event_reports(&[
+                // no events on node 1337
+            ]),
+            ReplyProcessor::none,
+        ),
+    );
+
+    // Test 6: Path filtering by cluster
+    im.test_one(
+        &handler,
+        TLVTest::read(
+            TestReadReq {
+                ..TestReadReq::event_reqs(&[EventPath {
+                    node: None,
+                    endpoint: None,
+                    cluster: Some(2),
+                    event: None,
+                    is_urgent: None,
+                }])
+            },
+            TestReportDataMsg::event_reports(&[event_data_path!(
+                cl2_ep0_event1,
+                5,
+                2,
+                Some(&0x46u8)
+            )]),
             ReplyProcessor::none,
         ),
     );
