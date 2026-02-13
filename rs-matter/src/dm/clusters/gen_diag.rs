@@ -240,9 +240,9 @@ impl ClusterHandler for GenDiagHandler<'_> {
                     Ok(())
                 })?;
 
-                parent_builder.take().ok_or_else(|| {
-                    ErrorCode::InvalidAction.into() // TODO
-                })
+                parent_builder
+                    .take()
+                    .ok_or_else(|| ErrorCode::ConstraintError.into())
             }
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
