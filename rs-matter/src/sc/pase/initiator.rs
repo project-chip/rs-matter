@@ -31,7 +31,7 @@ use crate::sc::pase::spake2p::{
     ProverContext, Spake2P, Spake2pRandom, Spake2pSessionKeys, Spake2pVerifierPasswordRef,
     SPAKE2P_VERIFIER_SALT_LEN,
 };
-use crate::sc::{GeneralCode, OpCode, SCStatusCodes, StatusReport};
+use crate::sc::{complete_with_status, GeneralCode, OpCode, SCStatusCodes, StatusReport};
 use crate::tlv::{FromTLV, OctetStr, TLVElement, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::{ReservedSession, SessionMode};
@@ -103,14 +103,27 @@ impl<C: Crypto> PaseInitiator<C> {
         let mut initiator = Self::new(crypto)?;
 
         // Step 1: Send PBKDFParamRequest, receive PBKDFParamResponse
-        let (salt, iterations) = initiator.exchange_pbkdf_params(exchange).await?;
+        let (salt, iterations) = match initiator.exchange_pbkdf_params(exchange).await {
+            Ok(result) => result,
+            Err(e) => {
+                // Send status report to notify responder of failure
+                let _ = complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await;
+                return Err(e);
+            }
+        };
 
         // Step 2: Send Pake1, receive Pake2
-        initiator
+        if let Err(e) = initiator
             .exchange_pake1_pake2(exchange, password, &salt, iterations)
-            .await?;
+            .await
+        {
+            // Send status report to notify responder of failure (e.g., wrong password)
+            let _ = complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await;
+            return Err(e);
+        }
 
         // Step 3: Send Pake3, receive StatusReport
+        // Note: No need to send status report here since we're just receiving one
         initiator.exchange_pake3_status(exchange).await?;
 
         // Step 4: Complete session establishment
