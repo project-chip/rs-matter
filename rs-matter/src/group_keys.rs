@@ -17,8 +17,24 @@
 
 use crate::crypto::{self, CanonAeadKey, CanonAeadKeyRef, Crypto, Kdf};
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{FromTLV, ToTLV};
+use crate::tlv::{FromTLV, OctetsOwned, ToTLV};
 use crate::utils::init::{init, Init};
+
+/// A stored group key set entry.
+#[derive(Debug, Clone, Default, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GrpKeySetEntry {
+    pub group_key_set_id: u16,
+    pub group_key_security_policy: u8,
+    pub epoch_key0: OctetsOwned<16>,
+    pub epoch_start_time0: u64,
+    pub has_epoch_key1: bool,
+    pub epoch_key1: OctetsOwned<16>,
+    pub epoch_start_time1: u64,
+    pub has_epoch_key2: bool,
+    pub epoch_key2: OctetsOwned<16>,
+    pub epoch_start_time2: u64,
+}
 
 #[derive(Debug, Default, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

@@ -57,7 +57,7 @@ mod types;
 ///
 /// The write requests are first wildcard-expanded, and these many number of
 /// write requests per-transaction will be supported.
-const MAX_WRITE_ATTRS_IN_ONE_TRANS: usize = 7;
+const MAX_WRITE_ATTRS_IN_ONE_TRANS: usize = 16;
 
 pub type IMBuffer = heapless::Vec<u8, MAX_EXCHANGE_RX_BUF_SIZE>;
 
