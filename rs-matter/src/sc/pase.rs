@@ -15,41 +15,41 @@
  *    limitations under the License.
  */
 
+//! PASE (Passcode-Authenticated Session Establishment) protocol implementation.
+//!
+//! This module provides both the initiator (commissioner) and responder (device) sides
+//! of the PASE protocol for establishing secure sessions using a shared passcode.
+
 use core::num::NonZeroU8;
 use core::ops::Add;
 use core::time::Duration;
 
 use rand_core::RngCore;
+use spake2p::Spake2pVerifierData;
 
-use spake2p::{Spake2P, Spake2pVerifierData};
-
-use crate::crypto::{
-    CanonEcPointRef, Crypto, HmacHashRef, Kdf, AEAD_CANON_KEY_LEN, EC_POINT_ZEROED,
-    HMAC_HASH_ZEROED,
-};
+use crate::crypto::Crypto;
 use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
-use crate::dm::{BasicContext, BasicContextInstance, ChangeNotify};
+use crate::dm::BasicContext;
 use crate::error::{Error, ErrorCode};
 use crate::sc::pase::spake2p::{
-    Spake2pRandom, Spake2pRandomRef, Spake2pSessionKeys, Spake2pVerifierPasswordRef,
-    Spake2pVerifierSaltRef, Spake2pVerifierStrRef, SPAKE2P_VERIFIER_SALT_ZEROED,
+    Spake2pVerifierPasswordRef, Spake2pVerifierSaltRef, Spake2pVerifierStrRef,
+    SPAKE2P_VERIFIER_SALT_ZEROED,
 };
-use crate::sc::{check_opcode, complete_with_status, OpCode, SessionParameters};
-use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TagType, ToTLV};
+use crate::sc::SessionParameters;
+use crate::tlv::{FromTLV, OctetStr, ToTLV};
 use crate::transport::exchange::{Exchange, ExchangeId};
-use crate::transport::session::{ReservedSession, SessionMode};
 use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
 use crate::utils::maybe::Maybe;
 use crate::MatterMdnsService;
 
-use super::SCStatusCodes;
-
 mod initiator;
+mod responder;
 pub(crate) mod spake2p;
 
 pub use initiator::PaseInitiator;
+pub use responder::PaseResponder;
 
 /// Minimal commissioning window timeout in seconds, as per the Matter Core Spec
 pub const MIN_COMM_WINDOW_TIMEOUT_SECS: u16 = 3 * 60;
@@ -83,7 +83,7 @@ pub struct CommWindow {
     /// The discriminator
     discriminator: u16,
     /// The verifier data
-    verifier: Spake2pVerifierData,
+    pub(crate) verifier: Spake2pVerifierData,
     /// The opener info
     opener: Option<CommWindowOpener>,
     /// The window expiry instant
@@ -173,9 +173,9 @@ pub struct PaseMgr {
     comm_window: Maybe<CommWindow>,
     /// The (one and only) PASE session timeout tracker
     /// If there is no active PASE session, this is `None`
-    session_timeout: Option<SessionEstTimeout>,
+    pub(crate) session_timeout: Option<SessionEstTimeout>,
     /// The epoch function
-    epoch: Epoch,
+    pub(crate) epoch: Epoch,
 }
 
 impl PaseMgr {
@@ -395,15 +395,16 @@ impl PaseMgr {
 
 /// The timeout tracker for a PASE session establishment
 const PASE_SESSION_EST_TIMEOUT_SECS: Duration = Duration::from_secs(60);
+
 /// The info string for SPAKE2 session key derivation
-const SPAKE2_SESSION_KEYS_INFO: &[u8] = b"SessionKeys";
+pub(crate) const SPAKE2_SESSION_KEYS_INFO: &[u8] = b"SessionKeys";
 
 /// The PASE session establishment timeout tracker
-struct SessionEstTimeout {
+pub(crate) struct SessionEstTimeout {
     /// The session expiry instant
     session_est_expiry: Duration,
     /// The exchange identifier
-    exch_id: ExchangeId,
+    pub(crate) exch_id: ExchangeId,
 }
 
 impl SessionEstTimeout {
@@ -412,7 +413,7 @@ impl SessionEstTimeout {
     /// # Arguments
     /// - `exchange` - The exchange
     /// - `epoch` - The epoch function
-    fn new(exchange: &Exchange, epoch: Epoch) -> Self {
+    pub(crate) fn new(exchange: &Exchange, epoch: Epoch) -> Self {
         Self {
             session_est_expiry: epoch().add(PASE_SESSION_EST_TIMEOUT_SECS),
             exch_id: exchange.id(),
@@ -423,389 +424,84 @@ impl SessionEstTimeout {
     ///
     /// # Arguments
     /// - `epoch` - The current epoch
-    fn is_sess_expired(&self, epoch: Epoch) -> bool {
+    pub(crate) fn is_sess_expired(&self, epoch: Epoch) -> bool {
         epoch() > self.session_est_expiry
     }
 }
 
 /// The PBKDFParamRequest structure
-#[derive(FromTLV, Debug)]
+#[derive(FromTLV, ToTLV, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a", start = 1)]
-struct PBKDFParamReq<'a> {
+pub(crate) struct PBKDFParamReq<'a> {
     /// The initiator random bytes
-    initiator_random: OctetStr<'a>,
+    pub initiator_random: OctetStr<'a>,
     /// The initiator session identifier
-    initiator_ssid: u16,
+    pub initiator_ssid: u16,
     /// The passcode identifier
-    passcode_id: u16,
+    pub passcode_id: u16,
     /// Whether parameters are included
-    has_params: bool,
+    pub has_params: bool,
     /// The session parameters, if any
-    session_parameters: Option<SessionParameters>,
+    pub session_parameters: Option<SessionParameters>,
 }
 
 /// The PBKDFParamResponse structure
-#[derive(ToTLV, Debug)]
+#[derive(FromTLV, ToTLV, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(start = 1)]
-struct PBKDFParamResp<'a> {
-    /// The initiator random bytes
-    init_random: OctetStr<'a>,
-    /// Our random bytes
-    our_random: OctetStr<'a>,
-    /// Our local session identifier
-    local_sessid: u16,
+#[tlvargs(lifetime = "'a", start = 1)]
+pub(crate) struct PBKDFParamResp<'a> {
+    /// The initiator random bytes (echoed back)
+    pub initiator_random: OctetStr<'a>,
+    /// The responder random bytes
+    pub responder_random: OctetStr<'a>,
+    /// The responder session identifier
+    pub responder_ssid: u16,
     /// The PBKDF2 parameters, if any
-    params: Option<PBKDFParamRespParams<'a>>,
+    pub params: Option<PBKDFParamRespParams<'a>>,
 }
 
 /// The PBKDFParamResponse parameters structure
-#[derive(ToTLV, Debug)]
+#[derive(FromTLV, ToTLV, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(start = 1)]
-struct PBKDFParamRespParams<'a> {
+#[tlvargs(lifetime = "'a", start = 1)]
+pub(crate) struct PBKDFParamRespParams<'a> {
     /// The iteration count
-    count: u32,
+    pub iterations: u32,
     /// The salt bytes
-    salt: OctetStr<'a>,
+    pub salt: OctetStr<'a>,
 }
 
-/// The Pake1Resp structure
-#[derive(ToTLV, Debug)]
+/// TLV structure for Pake1 (sent by initiator)
+#[derive(FromTLV, ToTLV, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(start = 1)]
-struct Pake1Resp<'a> {
+#[tlvargs(lifetime = "'a", start = 1)]
+pub(crate) struct Pake1<'a> {
+    /// The pA point (65 bytes, uncompressed P-256)
+    pub pa: OctetStr<'a>,
+}
+
+/// The Pake1Resp structure (Pake2 message from responder)
+#[derive(FromTLV, ToTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[tlvargs(lifetime = "'a", start = 1)]
+pub(crate) struct Pake2<'a> {
     /// The pB bytes
-    pb: OctetStr<'a>,
+    pub pb: OctetStr<'a>,
     /// The cB bytes
-    cb: OctetStr<'a>,
+    pub cb: OctetStr<'a>,
 }
 
-/// The PASE PAKE handler
-pub struct Pase<'a, C: Crypto> {
-    crypto: C,
-    notify: &'a dyn ChangeNotify,
-    spake2p: Spake2P,
+/// TLV structure for Pake3 (sent by initiator)
+#[derive(FromTLV, ToTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[tlvargs(lifetime = "'a", start = 1)]
+pub(crate) struct Pake3<'a> {
+    /// The cA confirmation (32 bytes HMAC)
+    pub ca: OctetStr<'a>,
 }
 
-impl<'a, C: Crypto> Pase<'a, C> {
-    /// Create a new PASE PAKE handler
-    pub const fn new(crypto: C, notify: &'a dyn ChangeNotify) -> Self {
-        // TODO: Can any PBKDF2 calculation be pre-computed here
-        Self {
-            crypto,
-            notify,
-            spake2p: Spake2P::new(),
-        }
-    }
-
-    pub fn init(crypto: C, notify: &'a dyn ChangeNotify) -> impl Init<Self> {
-        init!(Self {
-            crypto,
-            notify,
-            spake2p <- Spake2P::init(),
-        })
-    }
-
-    /// Handle a PASE PAKE exchange, where the other peer is the exchange initiator
-    ///
-    /// # Arguments
-    /// - `exchange` - The exchange
-    pub async fn handle(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        let session = ReservedSession::reserve(exchange.matter(), &self.crypto).await?;
-
-        if !self.update_session_timeout(exchange, true).await? {
-            return Ok(());
-        }
-
-        self.handle_pbkdfparamrequest(exchange).await?;
-
-        exchange.recv_fetch().await?;
-
-        if !self.update_session_timeout(exchange, false).await? {
-            return Ok(());
-        }
-
-        self.handle_pasepake1(exchange).await?;
-
-        exchange.recv_fetch().await?;
-
-        if !self.update_session_timeout(exchange, false).await? {
-            return Ok(());
-        }
-
-        self.handle_pasepake3(exchange, session).await?;
-
-        exchange.acknowledge().await?;
-        exchange.matter().notify_persist();
-
-        self.clear_session_timeout(exchange);
-
-        Ok(())
-    }
-
-    /// Handle a PBKDFParamRequest message
-    ///
-    /// # Arguments
-    /// - `exchange` - The exchange
-    async fn handle_pbkdfparamrequest(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        check_opcode(exchange, OpCode::PBKDFParamRequest)?;
-
-        let rx = exchange.rx()?;
-
-        let mut salt = SPAKE2P_VERIFIER_SALT_ZEROED;
-        let mut count = 0;
-
-        let has_comm_window = {
-            let matter = exchange.matter();
-            let mut pase = matter.pase_mgr.borrow_mut();
-
-            let ctx = BasicContextInstance::new(exchange.matter(), &self.crypto, self.notify);
-            if let Some(comm_window) = pase.comm_window(&ctx)? {
-                salt.load(comm_window.verifier.salt.reference());
-                count = comm_window.verifier.count;
-
-                true
-            } else {
-                false
-            }
-        };
-
-        if has_comm_window {
-            let mut our_random = Spake2pRandom::new();
-            let mut initiator_random = Spake2pRandom::new();
-
-            let (local_sessid, peer_sessid, resp) = {
-                let req = PBKDFParamReq::from_tlv(&TLVElement::new(rx.payload()))?;
-                if req.passcode_id != 0 {
-                    error!("Can't yet handle passcode_id != 0");
-                    Err(ErrorCode::Invalid)?;
-                }
-
-                let mut rand = self.crypto.rand()?;
-                rand.fill_bytes(our_random.access_mut());
-
-                let local_sessid = exchange
-                    .matter()
-                    .transport_mgr
-                    .session_mgr
-                    .borrow_mut()
-                    .get_next_sess_id();
-
-                initiator_random.load(Spake2pRandomRef::try_new(req.initiator_random.0)?);
-
-                // Generate response
-                let resp = PBKDFParamResp {
-                    init_random: OctetStr::new(initiator_random.access()),
-                    our_random: OctetStr::new(our_random.access()),
-                    local_sessid,
-                    params: (!req.has_params).then(|| PBKDFParamRespParams {
-                        count,
-                        salt: OctetStr::new(salt.access()),
-                    }),
-                };
-
-                (local_sessid, req.initiator_ssid, resp)
-            };
-
-            let mut context = Some(self.spake2p.start_context(
-                &self.crypto,
-                local_sessid,
-                peer_sessid,
-                rx.payload(),
-            )?);
-
-            exchange
-                .send_with(|_, wb| {
-                    resp.to_tlv(&TagType::Anonymous, &mut *wb)?;
-
-                    if let Some(context) = context.take() {
-                        self.spake2p.finish_context::<&C>(context, wb.as_slice())?;
-                    }
-
-                    Ok(Some(OpCode::PBKDFParamResponse.into()))
-                })
-                .await?;
-
-            Ok(())
-        } else {
-            complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await
-        }
-    }
-
-    /// Handle a PASEPake1 message
-    ///
-    /// # Arguments
-    /// - `exchange` - The exchange
-    async fn handle_pasepake1(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        check_opcode(exchange, OpCode::PASEPake1)?;
-
-        let req = get_root_node_struct(exchange.rx()?.payload())?;
-
-        let a_pt: CanonEcPointRef<'_> = req.structure()?.ctx(1)?.str()?.try_into()?;
-
-        let mut b_pt = EC_POINT_ZEROED;
-        let mut cb = HMAC_HASH_ZEROED;
-
-        let has_comm_window = {
-            let matter = exchange.matter();
-            let mut pase = matter.pase_mgr.borrow_mut();
-            let ctx = BasicContextInstance::new(exchange.matter(), &self.crypto, self.notify);
-
-            if let Some(comm_window) = pase.comm_window(&ctx)? {
-                self.spake2p.setup_verifier(
-                    &self.crypto,
-                    &comm_window.verifier,
-                    a_pt,
-                    &mut b_pt,
-                    &mut cb,
-                )?;
-
-                true
-            } else {
-                false
-            }
-        };
-
-        if has_comm_window {
-            exchange
-                .send_with(|_, wb| {
-                    let resp = Pake1Resp {
-                        pb: OctetStr::new(b_pt.access()),
-                        cb: OctetStr::new(cb.access()),
-                    };
-                    resp.to_tlv(&TagType::Anonymous, wb)?;
-
-                    Ok(Some(OpCode::PASEPake2.into()))
-                })
-                .await
-        } else {
-            complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await
-        }
-    }
-
-    /// Handle a PASEPake3 message
-    ///
-    /// # Arguments
-    /// - `exchange` - The exchange
-    /// - `session` - The reserved session
-    async fn handle_pasepake3(
-        &mut self,
-        exchange: &mut Exchange<'_>,
-        mut session: ReservedSession<'_>,
-    ) -> Result<(), Error> {
-        check_opcode(exchange, OpCode::PASEPake3)?;
-
-        let req = get_root_node_struct(exchange.rx()?.payload())?;
-
-        let ca: HmacHashRef<'_> = req.structure()?.ctx(1)?.str()?.try_into()?;
-
-        let status = match self.spake2p.verify(ca) {
-            Ok((local_sessid, peer_sessid, ke)) => {
-                // Get the keys
-                let mut session_keys = Spake2pSessionKeys::new(); // TODO: MEDIUM BUFFER
-                self.crypto
-                    .kdf()?
-                    .expand(&[], ke, SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
-                    .map_err(|_x| ErrorCode::InvalidData)?;
-
-                // Create a session
-                let peer_addr = exchange.with_session(|sess| Ok(sess.get_peer_addr()))?;
-
-                let (dec_key, remaining) = session_keys
-                    .reference()
-                    .split::<AEAD_CANON_KEY_LEN, { AEAD_CANON_KEY_LEN * 2 }>();
-                let (enc_key, att_challenge) =
-                    remaining.split::<AEAD_CANON_KEY_LEN, AEAD_CANON_KEY_LEN>();
-
-                session.update(
-                    0,
-                    0,
-                    peer_sessid,
-                    local_sessid,
-                    peer_addr,
-                    SessionMode::Pase { fab_idx: 0 },
-                    Some(dec_key),
-                    Some(enc_key),
-                    Some(att_challenge),
-                )?;
-
-                // Complete the reserved session and thus make the `Session` instance
-                // immediately available for use by the system.
-                //
-                // We need to do this _before_ we send the response to the peer, or else we risk missing
-                // (dropping) the first messages the peer would send us on the newly-established session,
-                // as it might start using it right after it receives the response, while it is still marked
-                // as reserved.
-                session.complete();
-
-                SCStatusCodes::SessionEstablishmentSuccess
-            }
-            Err(status) => status,
-        };
-
-        complete_with_status(exchange, status, &[]).await
-    }
-
-    /// Update the PASE session timeout tracker
-    ///
-    /// # Arguments
-    /// - `exchange` - The exchange
-    /// - `new` - Whether this is for a new session
-    ///
-    /// # Returns
-    /// - `Ok(true)` if the session timeout was updated successfully
-    /// - `Ok(false)` if the session timeout could not be updated
-    ///   (e.g. another session is in progress, there is no active PASE session establishment, or the session has expired)
-    async fn update_session_timeout(
-        &mut self,
-        exchange: &mut Exchange<'_>,
-        new: bool,
-    ) -> Result<bool, Error> {
-        let status = {
-            let mut pase = exchange.matter().pase_mgr.borrow_mut();
-
-            if pase
-                .session_timeout
-                .as_ref()
-                .map(|sd| sd.is_sess_expired(pase.epoch))
-                .unwrap_or(false)
-            {
-                pase.session_timeout = None;
-            }
-
-            if let Some(sd) = pase.session_timeout.as_mut() {
-                if sd.exch_id != exchange.id() {
-                    debug!("Another PAKE session in progress");
-                    Some(SCStatusCodes::Busy)
-                } else {
-                    None
-                }
-            } else if new {
-                None
-            } else {
-                error!("PAKE session not found or expired");
-                Some(SCStatusCodes::SessionNotFound)
-            }
-        };
-
-        if let Some(status) = status {
-            complete_with_status(exchange, status, &[]).await?;
-
-            Ok(false)
-        } else {
-            let mut pase = exchange.matter().pase_mgr.borrow_mut();
-            pase.session_timeout = Some(SessionEstTimeout::new(exchange, pase.epoch));
-
-            Ok(true)
-        }
-    }
-
-    /// Clear the PASE session timeout tracker
-    fn clear_session_timeout(&mut self, exchange: &Exchange) {
-        let mut pase = exchange.matter().pase_mgr.borrow_mut();
-
-        pase.session_timeout = None;
-    }
-}
+// Re-export Pase as an alias for PaseResponder for backwards compatibility
+#[doc(hidden)]
+#[deprecated(since = "0.2.0", note = "Use PaseResponder instead")]
+pub type Pase<'a, C> = PaseResponder<'a, C>;

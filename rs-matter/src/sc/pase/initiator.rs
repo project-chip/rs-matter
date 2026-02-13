@@ -37,78 +37,7 @@ use crate::transport::exchange::Exchange;
 use crate::transport::session::{ReservedSession, SessionMode};
 use crate::utils::storage::ReadBuf;
 
-/// The info string for SPAKE2 session key derivation
-const SPAKE2_SESSION_KEYS_INFO: &[u8] = b"SessionKeys";
-
-/// TLV structure for PBKDFParamRequest (sent by initiator)
-#[derive(ToTLV, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(start = 1)]
-struct PBKDFParamReq<'a> {
-    /// The initiator random bytes (32 bytes)
-    initiator_random: OctetStr<'a>,
-    /// The initiator session identifier
-    initiator_ssid: u16,
-    /// The passcode identifier (always 0 for default)
-    passcode_id: u16,
-    /// Whether parameters are already known (false = request params)
-    has_params: bool,
-}
-
-/// TLV structure for PBKDFParamResponse (received by initiator)
-#[derive(FromTLV, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(lifetime = "'a", start = 1)]
-struct PBKDFParamResp<'a> {
-    /// The initiator random bytes (echoed back)
-    initiator_random: OctetStr<'a>,
-    /// The responder random bytes (32 bytes)
-    responder_random: OctetStr<'a>,
-    /// The responder session identifier
-    responder_ssid: u16,
-    /// The PBKDF2 parameters (present if has_params was false)
-    params: Option<PBKDFParamRespParams<'a>>,
-}
-
-/// TLV structure for PBKDF parameters in the response
-#[derive(FromTLV, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(lifetime = "'a", start = 1)]
-struct PBKDFParamRespParams<'a> {
-    /// The iteration count
-    iterations: u32,
-    /// The salt bytes (32 bytes)
-    salt: OctetStr<'a>,
-}
-
-/// TLV structure for Pake1 (sent by initiator)
-#[derive(ToTLV, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(start = 1)]
-struct Pake1<'a> {
-    /// The pA point (65 bytes, uncompressed P-256)
-    pa: OctetStr<'a>,
-}
-
-/// TLV structure for Pake2 (received by initiator)
-#[derive(FromTLV, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(lifetime = "'a", start = 1)]
-struct Pake2<'a> {
-    /// The pB point (65 bytes, uncompressed P-256)
-    pb: OctetStr<'a>,
-    /// The cB confirmation (32 bytes HMAC)
-    cb: OctetStr<'a>,
-}
-
-/// TLV structure for Pake3 (sent by initiator)
-#[derive(ToTLV, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(start = 1)]
-struct Pake3<'a> {
-    /// The cA confirmation (32 bytes HMAC)
-    ca: OctetStr<'a>,
-}
+use super::{PBKDFParamReq, PBKDFParamResp, Pake1, Pake2, Pake3, SPAKE2_SESSION_KEYS_INFO};
 
 /// PASE Initiator for establishing secure sessions with Matter devices.
 ///
@@ -212,6 +141,7 @@ impl<C: Crypto> PaseInitiator<C> {
             initiator_ssid: self.local_sessid,
             passcode_id: 0,
             has_params: false,
+            session_parameters: None,
         };
 
         // Start context hash with request payload
@@ -486,6 +416,7 @@ mod tests {
             initiator_ssid: 1234,
             passcode_id: 0,
             has_params: false,
+            session_parameters: None,
         };
 
         let mut buf = [0u8; 128];
