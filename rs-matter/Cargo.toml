@@ -28,6 +28,16 @@ max-fabrics-3 = [] # default
 max-fabrics-2 = []
 max-fabrics-1 = []
 
+# Number of fabrics
+max-groups-per-fabric-32 = []
+max-groups-per-fabric-16 = []
+max-groups-per-fabric-12 = []
+max-groups-per-fabric-8 = []
+max-groups-per-fabric-7 = []
+max-groups-per-fabric-6 = []
+max-groups-per-fabric-5 = []
+max-groups-per-fabric-4 = [] # default
+
 # Number of ACL entries per fabric
 max-acls-per-fabric-32 = []
 max-acls-per-fabric-16 = []

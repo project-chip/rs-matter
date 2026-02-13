@@ -29,6 +29,7 @@ pub mod dev_att;
 pub mod eth_diag;
 pub mod gen_comm;
 pub mod gen_diag;
+pub mod groups;
 pub mod grp_key_mgmt;
 pub mod level_control;
 pub mod net_comm;
@@ -40,6 +41,7 @@ pub mod wifi_diag;
 
 /// This module imports all system clusters that are used by the `rs-matter` itself.
 pub mod decl {
+
     crate::import!(
         AdministratorCommissioning,
         AccessControl,
@@ -51,6 +53,7 @@ pub mod decl {
         GeneralDiagnostics,
         GeneralCommissioning,
         GroupKeyManagement,
+        Groups,
         KeypadInput,   // TODO: Fix with #342
         LevelControl,  // TODO: Fix with #342
         MediaPlayback, // TODO: Fix with #342
