@@ -29,6 +29,7 @@ use log::info;
 use rand::RngCore;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
@@ -210,7 +211,11 @@ const NODE: Node<'static> = Node {
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
-            clusters: clusters!(desc::DescHandler::CLUSTER, TestOnOffDeviceLogic::CLUSTER),
+            clusters: clusters!(
+                desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
+                TestOnOffDeviceLogic::CLUSTER
+            ),
         },
     ],
 };
@@ -234,6 +239,10 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
                         Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                    )
+                    .chain(
+                        EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                        Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
