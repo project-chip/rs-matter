@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-rs-matter = { path = "../rs-matter", default-features = false, features = ["rustcrypto", "os", "async-io"] }
+rs-matter = { path = "../rs-matter", default-features = false, features = ["rustcrypto", "os", "async-io", "log"] }
 anyhow = "1.0"
 log = "0.4"
 env_logger = "0.11"
