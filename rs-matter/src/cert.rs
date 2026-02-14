@@ -33,6 +33,7 @@ pub use self::asn1_writer::ASN1Writer;
 
 mod asn1_writer;
 mod printer;
+pub mod x509;
 
 // As per section 6.1.3 "Certificate Sizes" of the Matter 1.1 spec
 pub const MAX_CERT_TLV_LEN: usize = 400;
