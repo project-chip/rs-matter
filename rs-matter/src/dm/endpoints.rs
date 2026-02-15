@@ -26,6 +26,7 @@ use super::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use super::clusters::eth_diag::{self, ClusterHandler as _, EthDiagHandler};
 use super::clusters::gen_comm::{self, ClusterHandler as _, CommPolicy, GenCommHandler};
 use super::clusters::gen_diag::{self, ClusterHandler as _, GenDiag, GenDiagHandler, NetifDiag};
+use super::clusters::groups::{self, ClusterHandler as _, GroupsHandler};
 use super::clusters::grp_key_mgmt::{self, ClusterHandler as _, GrpKeyMgmtHandler};
 use super::clusters::net_comm::{
     self, ClusterAsyncHandler as _, NetCommHandler, NetCtl, NetCtlStatus, NetworkType, Networks,
@@ -84,7 +85,8 @@ pub type SysHandler<'a, H> = handler_chain_type!(
     EpClMatcher => Async<adm_comm::HandlerAdaptor<AdminCommHandler>>,
     EpClMatcher => Async<noc::HandlerAdaptor<NocHandler>>,
     EpClMatcher => Async<acl::HandlerAdaptor<acl::AclHandler>>,
-    EpClMatcher => Async<grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>
+    EpClMatcher => Async<grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>,
+    EpClMatcher => Async<groups::HandlerAdaptor<GroupsHandler>>
     | H
 );
 
@@ -233,9 +235,13 @@ pub fn with_sys<'a, R: RngCore, H>(
     handler: H,
 ) -> SysHandler<'a, H> {
     ChainedHandler::new(
+        EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GroupsHandler::CLUSTER.id)),
+        Async(GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+        handler,
+    )
+    .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GrpKeyMgmtHandler::CLUSTER.id)),
         Async(GrpKeyMgmtHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-        handler,
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(AclHandler::CLUSTER.id)),
