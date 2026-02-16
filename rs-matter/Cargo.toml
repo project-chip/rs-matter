@@ -138,7 +138,8 @@ sync-mutex = []
 rustcrypto = ["alloc", "digest", "cipher", "ccm", "elliptic-curve", "primeorder", "ecdsa", "sec1", "signature", "hmac", "hkdf", "pbkdf2", "crypto-bigint", "sha1", "sha2", "aes", "p256", "x509-cert"]
 defmt = ["dep:defmt", "heapless/defmt", "embassy-time/defmt", "mbedtls-rs-sys?/defmt"]
 log = ["dep:log", "embassy-time/log"]
-debug-tlv-payload = []
+log-tlv-payload = [] # Enable `debug`-level logging of TLV payloads. This is very verbose and should only be used for debugging.
+log-mrp = [] # Promote MRP-diagnostic logs from `debug` to `warn` so they are visible under a typical `info`-level filter.
 large-buffers = [] # TCP support
 
 [dependencies]
