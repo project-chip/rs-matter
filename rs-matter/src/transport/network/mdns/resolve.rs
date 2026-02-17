@@ -22,6 +22,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 
+use domain::base::Name;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use zbus::Connection;
 
@@ -307,34 +308,22 @@ pub async fn discover_commissionable(
     Ok(results)
 }
 
-/// Parse a DNS wire format domain name into a string
+/// Parse a DNS wire format domain name into a string.
+///
+/// Note that compressed names (with 0xC0 pointers) will return an error.
+/// In the context of systemd-resolved's D-Bus API, PTR record RDATA
+/// is typically returned uncompressed.
 fn parse_dns_name(data: &[u8]) -> Option<String> {
-    let mut result = String::new();
-    let mut pos = 0;
-
-    while pos < data.len() {
-        let len = data[pos] as usize;
-        if len == 0 {
-            break;
-        }
-        if pos + 1 + len > data.len() {
-            return None;
-        }
-
-        if !result.is_empty() {
-            result.push('.');
-        }
-
-        let label = core::str::from_utf8(&data[pos + 1..pos + 1 + len]).ok()?;
-        result.push_str(label);
-        pos += 1 + len;
-    }
-
-    if result.is_empty() {
-        None
-    } else {
-        Some(result)
-    }
+    Name::from_slice(data)
+        .map(|name| name.to_string())
+        .ok()
+        .and_then(|result| {
+            if result.is_empty() || result == "." {
+                None
+            } else {
+                Some(result)
+            }
+        })
 }
 
 /// Parse a service instance name into (name, type, domain) components
