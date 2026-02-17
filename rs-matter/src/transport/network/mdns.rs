@@ -75,9 +75,11 @@ impl PushUnique for heapless::Vec<DiscoveredDevice, MAX_DISCOVERED_DEVICES> {
 #[cfg(feature = "std")]
 impl PushUnique for std::vec::Vec<DiscoveredDevice> {
     fn push_if_unique(&mut self, device: DiscoveredDevice) -> bool {
-        let is_duplicate = self
-            .iter()
-            .any(|d| d.instance_name.as_str() == device.instance_name.as_str());
+        let is_duplicate = self.iter().any(|d| {
+            d.instance_name
+                .as_str()
+                .eq_ignore_ascii_case(device.instance_name.as_str())
+        });
 
         if !is_duplicate {
             self.push(device);
