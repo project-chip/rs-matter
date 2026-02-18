@@ -26,3 +26,7 @@
 
 pub mod cd;
 pub mod cd_keys;
+pub mod trust_store;
+
+#[cfg(test)]
+pub mod test_paa;
