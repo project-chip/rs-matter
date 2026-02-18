@@ -1493,6 +1493,21 @@ mod tests {
     }
 
     #[test]
+    fn push_if_unique_rejects_case_insensitive_duplicate() {
+        let mut devices = heapless::Vec::<DiscoveredDevice, MAX_DISCOVERED_DEVICES>::new();
+
+        let mut device1 = DiscoveredDevice::default();
+        device1.set_instance_name("device1");
+        devices.push_if_unique(device1);
+
+        let mut device2 = DiscoveredDevice::default();
+        device2.set_instance_name("Device1");
+
+        assert!(!devices.push_if_unique(device2));
+        assert_eq!(devices.len(), 1);
+    }
+
+    #[test]
     fn push_if_unique_allows_different_names() {
         let mut devices = heapless::Vec::<DiscoveredDevice, MAX_DISCOVERED_DEVICES>::new();
 
@@ -1547,6 +1562,22 @@ mod tests {
 
         let mut device2 = DiscoveredDevice::default();
         device2.set_instance_name("device1");
+
+        assert!(!devices.push_if_unique(device2));
+        assert_eq!(devices.len(), 1);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn push_if_unique_std_vec_rejects_case_insensitive_duplicate() {
+        let mut devices: Vec<DiscoveredDevice> = Vec::new();
+
+        let mut device1 = DiscoveredDevice::default();
+        device1.set_instance_name("device1");
+        devices.push_if_unique(device1);
+
+        let mut device2 = DiscoveredDevice::default();
+        device2.set_instance_name("Device1");
 
         assert!(!devices.push_if_unique(device2));
         assert_eq!(devices.len(), 1);
