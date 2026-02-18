@@ -482,7 +482,9 @@ impl MdnsTests {
         socket
             .set_reuse_address(true)
             .context("Failed to set SO_REUSEADDR")?;
-        socket.set_only_v6(false).context("Failed to set IPV6_V6ONLY")?;
+        socket
+            .set_only_v6(false)
+            .context("Failed to set IPV6_V6ONLY")?;
 
         // Bind to ephemeral port
         let bind_addr = std::net::SocketAddrV6::new(std::net::Ipv6Addr::UNSPECIFIED, 0, 0, 0);
@@ -524,7 +526,11 @@ impl MdnsTests {
             ..Default::default()
         };
 
-        let ipv6_interface = if ipv6_available { Some(interface) } else { None };
+        let ipv6_interface = if ipv6_available {
+            Some(interface)
+        } else {
+            None
+        };
 
         // Run discovery using the builtin mDNS querier
         let devices = discover_commissionable(
