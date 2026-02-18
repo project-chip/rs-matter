@@ -421,16 +421,14 @@ impl MdnsTests {
             if let Some(stderr) = child.stderr.take() {
                 let reader = BufReader::new(stderr);
                 let handle = thread::spawn(move || {
-                    for line in reader.lines() {
-                        if let Ok(line) = line {
-                            // Look for indication that mDNS is advertising
-                            if line.contains("CHIP:DIS: Advertise operational node")
-                                || line.contains("CHIP:DIS: Advertise commission")
-                                || line.contains("mDNS service published")
-                            {
-                                debug!("Detected app ready: {}", line);
-                                return true;
-                            }
+                    for line in reader.lines().map_while(Result::ok) {
+                        // Look for indication that mDNS is advertising
+                        if line.contains("CHIP:DIS: Advertise operational node")
+                            || line.contains("CHIP:DIS: Advertise commission")
+                            || line.contains("mDNS service published")
+                        {
+                            debug!("Detected app ready: {}", line);
+                            return true;
                         }
                     }
                     false
@@ -582,7 +580,7 @@ impl MdnsTests {
                     .filter(|ia2| ia2.interface_name == iname)
                     .find_map(|ia2| {
                         ia2.address
-                            .and_then(|addr| addr.as_sockaddr_in().map(|addr| addr.ip().into()))
+                            .and_then(|addr| addr.as_sockaddr_in().map(|addr| addr.ip()))
                             .map(|ip: std::net::Ipv4Addr| (iname.clone(), ip, true))
                     })
             })
@@ -594,7 +592,7 @@ impl MdnsTests {
                 interfaces()
                     .filter_map(|ia| {
                         ia.address
-                            .and_then(|addr| addr.as_sockaddr_in().map(|addr| addr.ip().into()))
+                            .and_then(|addr| addr.as_sockaddr_in().map(|addr| addr.ip()))
                             .map(|ip: std::net::Ipv4Addr| (ia.interface_name, ip, false))
                     })
                     .next()
