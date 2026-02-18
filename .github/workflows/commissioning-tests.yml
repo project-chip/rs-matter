@@ -1,5 +1,5 @@
 ---
-name: IM Client Integration Test
+name: Commissioning Integration Test
 
 on:
   push:
@@ -16,7 +16,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  im_client_test:
+  commissioning_test:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
 
@@ -33,18 +33,16 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build xtask
-        run: |
-          cargo build --manifest-path xtask/Cargo.toml
+        run: cargo build --manifest-path xtask/Cargo.toml
 
-      - name: Run IM client integration test
-        run: |
-          cargo xtask imtest
+      - name: Run commissioning integration test
+        run: cargo xtask commissioningtest
 
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: im-test-logs-${{ github.run_id }}
+          name: commissioning-test-logs-${{ github.run_id }}
           path: |
             /tmp/rs-matter*
           if-no-files-found: ignore

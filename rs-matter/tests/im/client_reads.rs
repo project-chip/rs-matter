@@ -15,7 +15,8 @@
  *    limitations under the License.
  */
 
-//! Client-side read tests exercising `ImClient::read` and `ImClient::read_single`.
+//! Client-side read tests exercising `ImClient::read`, `ImClient::read_single`,
+//! and `ImClient::read_single_attr`.
 //!
 //! These tests use the `E2eRunner` infrastructure to run a real server (with
 //! the default E2eTestHandler) and then call `ImClient` methods directly on the
@@ -79,8 +80,6 @@ fn test_client_read_non_chunked() {
                 "Should have received exactly 1 attribute report"
             );
 
-            exchange.acknowledge().await?;
-
             Ok(())
         })
         .coalesce(),
@@ -134,8 +133,6 @@ fn test_client_read_chunked_wildcard() {
                 total_attr_count
             );
 
-            exchange.acknowledge().await?;
-
             Ok(())
         })
         .coalesce(),
@@ -175,7 +172,45 @@ fn test_client_read_single() {
             // EchoHandler returns 0x1234 for Att1 reads (see echo_cluster.rs)
             assert_eq!(value, 0x1234, "Att1 should return 0x1234");
 
-            exchange.acknowledge().await?;
+            Ok(())
+        })
+        .coalesce(),
+    )
+    .unwrap()
+}
+
+/// Test that `ImClient::read_single_attr` returns zero-copy response data.
+#[test]
+fn test_client_read_single_attr() {
+    init_env_logger();
+
+    let im = new_default_runner();
+    im.add_default_acl();
+    let handler = im.handler();
+
+    block_on(
+        select(im.run(handler), async {
+            let mut exchange = im.initiate_exchange().await?;
+
+            // Read echo cluster Att1 on endpoint 0
+            let resp = ImClient::read_single_attr(
+                &mut exchange,
+                0,
+                echo_cluster::ID,
+                echo_cluster::AttributesDiscriminants::Att1 as u32,
+                false,
+            )
+            .await?;
+
+            match resp {
+                AttrResp::Data(data) => {
+                    let value = data.data.u16()?;
+                    assert_eq!(value, 0x1234, "Att1 should return 0x1234");
+                }
+                AttrResp::Status(status) => {
+                    panic!("Unexpected status response: {:?}", status.status);
+                }
+            }
 
             Ok(())
         })

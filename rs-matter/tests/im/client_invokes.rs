@@ -15,7 +15,8 @@
  *    limitations under the License.
  */
 
-//! Client-side invoke tests exercising `ImClient::invoke` and `ImClient::invoke_single`.
+//! Client-side invoke tests exercising `ImClient::invoke`, `ImClient::invoke_single`,
+//! and `ImClient::invoke_single_cmd`.
 
 use embassy_futures::block_on;
 use embassy_futures::select::select;
@@ -79,8 +80,6 @@ fn test_client_invoke_non_chunked() {
             );
             assert!(got_response, "Should have received an invoke response");
 
-            exchange.acknowledge().await?;
-
             Ok(())
         })
         .coalesce(),
@@ -123,7 +122,48 @@ fn test_client_invoke_single() {
             // EchoHandler on endpoint 0 has multiplier 2, so 5 * 2 = 10
             assert_eq!(value, 10, "EchoResp should return 5 * 2 = 10");
 
-            exchange.acknowledge().await?;
+            Ok(())
+        })
+        .coalesce(),
+    )
+    .unwrap()
+}
+
+/// Test that `ImClient::invoke_single_cmd` returns zero-copy response data.
+#[test]
+fn test_client_invoke_single_cmd() {
+    init_env_logger();
+
+    let im = new_default_runner();
+    im.add_default_acl();
+    let handler = im.handler();
+
+    block_on(
+        select(im.run(handler), async {
+            let mut exchange = im.initiate_exchange().await?;
+
+            // EchoReq on endpoint 0 with value 7; multiplier is 2, so expect 14
+            let echo_data = [0x04, 7u8]; // TLV unsigned int tag=anonymous, value=7
+
+            let resp = ImClient::invoke_single_cmd(
+                &mut exchange,
+                0,
+                echo_cluster::ID,
+                echo_cluster::Commands::EchoReq as u32,
+                TLVElement::new(&echo_data),
+                None,
+            )
+            .await?;
+
+            match resp {
+                CmdResp::Cmd(data) => {
+                    let value = data.data.u8()?;
+                    assert_eq!(value, 14, "EchoResp should return 7 * 2 = 14");
+                }
+                CmdResp::Status(status) => {
+                    panic!("Unexpected status response: {:?}", status.status);
+                }
+            }
 
             Ok(())
         })

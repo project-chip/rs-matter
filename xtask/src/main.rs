@@ -24,12 +24,12 @@ use clap::{Parser, Subcommand, ValueEnum};
 use env_logger::fmt::style;
 use log::{Level, LevelFilter};
 
-use crate::imtest::ImTests;
+use crate::commissioningtest::CommissioningTests;
 use crate::itest::ITests;
 use crate::mdnstest::MdnsTests;
 
+mod commissioningtest;
 mod common;
-mod imtest;
 mod itest;
 mod mdnstest;
 mod tlv;
@@ -106,18 +106,13 @@ enum Command {
     MdnstestTools,
     /// Print mDNS test packages information
     MdnstestPackages,
-    /// Run IM client integration test (PASE + read/invoke) against a device
-    Imtest {
-        /// Target device IP address
-        #[arg(long, default_value = "127.0.0.1")]
-        device_ip: String,
-        /// Target device port
-        #[arg(long, default_value_t = rs_matter::MATTER_PORT)]
-        device_port: u16,
-        /// Do not start a local device example (assume one is already running)
-        #[arg(long)]
-        no_start_device: bool,
-        /// Device example binary to run when starting a device locally
+    /// Run combined commissioning test (mDNS discovery + PASE + IM operations)
+    ///
+    /// This test exercises the complete flow: discovers a device via mDNS,
+    /// establishes a PASE session, and performs IM operations (read/invoke)
+    /// on the OnOff cluster.
+    Commissioningtest {
+        /// Device example binary to run
         #[arg(long, default_value = "onoff_light")]
         device_bin: String,
         /// Cargo features to build examples with
@@ -126,38 +121,19 @@ enum Command {
         /// Build profile (debug or release)
         #[arg(long, default_value = "debug")]
         profile: String,
-        /// Wait time (ms) for the device to start when starting a device locally
-        #[arg(long, default_value_t = 2000)]
+        /// Wait time (ms) for the device to start (needs time for mDNS to initialize)
+        #[arg(long, default_value_t = 5000)]
         device_wait_ms: u64,
-        /// Device passcode for PASE authentication
-        #[arg(long, default_value_t = imtest::DEFAULT_PASSCODE)]
+        /// Passcode for PASE authentication
+        #[arg(long, default_value_t = commissioningtest::DEFAULT_PASSCODE)]
         passcode: u32,
+        /// Discriminator for mDNS discovery
+        #[arg(long, default_value_t = commissioningtest::DEFAULT_DISCRIMINATOR)]
+        discriminator: u16,
+        /// Discovery timeout in milliseconds
+        #[arg(long, default_value_t = 30000)]
+        discovery_timeout_ms: u32,
     },
-}
-
-/// Arguments for the `mdnstest-setup` command
-#[derive(Parser, Debug, Clone)]
-struct MdnstestSetupArgs {
-    /// connectedhomeip repository reference (branch/tag/commit)
-    #[arg(long, default_value = common::CHIP_DEFAULT_GITREF)]
-    chip_gitref: String,
-    /// Force setup even if cached
-    #[arg(long)]
-    force_setup: bool,
-}
-
-/// Arguments for the `mdnstest` run command
-#[derive(Parser, Debug, Clone)]
-struct MdnstestRunArgs {
-    /// Discriminator for the device (12-bit value)
-    #[arg(long, default_value_t = mdnstest::DEFAULT_DISCRIMINATOR)]
-    discriminator: u16,
-    /// Passcode for the device
-    #[arg(long, default_value_t = mdnstest::DEFAULT_PASSCODE)]
-    passcode: u32,
-    /// Discovery timeout in milliseconds
-    #[arg(long, default_value_t = mdnstest::DEFAULT_DISCOVERY_TIMEOUT_MS)]
-    timeout_ms: u32,
 }
 
 impl Command {
@@ -227,24 +203,22 @@ impl Command {
                     run_args.timeout_ms,
                 )
             }
-            Command::Imtest {
-                device_ip,
-                device_port,
-                no_start_device,
+            Command::Commissioningtest {
                 device_bin,
                 features,
                 profile,
                 device_wait_ms,
                 passcode,
-            } => ImTests::new(workspace_dir(), print_cmd_output).run(
-                device_ip,
-                *device_port,
-                !*no_start_device,
+                discriminator,
+                discovery_timeout_ms,
+            } => CommissioningTests::new(workspace_dir(), print_cmd_output).run(
                 device_bin,
                 features,
                 profile,
                 *device_wait_ms,
                 *passcode,
+                *discriminator,
+                *discovery_timeout_ms,
             ),
         }
     }
