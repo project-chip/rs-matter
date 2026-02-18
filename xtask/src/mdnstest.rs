@@ -555,28 +555,33 @@ impl MdnsTests {
         use nix::net::if_::InterfaceFlags;
         use nix::sys::socket::SockaddrIn6;
 
-        let interfaces = || {
-            nix::ifaddrs::getifaddrs().unwrap().filter(|ia| {
-                // Interface must be up and support either broadcast or multicast (for mDNS)
-                ia.flags.contains(InterfaceFlags::IFF_UP)
-                    && ia
-                        .flags
-                        .intersects(InterfaceFlags::IFF_BROADCAST | InterfaceFlags::IFF_MULTICAST)
-                    && !ia
-                        .flags
-                        .intersects(InterfaceFlags::IFF_LOOPBACK | InterfaceFlags::IFF_POINTOPOINT)
-            })
+        let filter_interface = |ia: &nix::ifaddrs::InterfaceAddress| {
+            // Interface must be up and support either broadcast or multicast (for mDNS)
+            ia.flags.contains(InterfaceFlags::IFF_UP)
+                && ia
+                    .flags
+                    .intersects(InterfaceFlags::IFF_BROADCAST | InterfaceFlags::IFF_MULTICAST)
+                && !ia
+                    .flags
+                    .intersects(InterfaceFlags::IFF_LOOPBACK | InterfaceFlags::IFF_POINTOPOINT)
         };
 
+        let all_interfaces: Vec<_> = nix::ifaddrs::getifaddrs()
+            .context("Failed to get network interfaces")?
+            .filter(filter_interface)
+            .collect();
+
         // Find a suitable network interface - first try to find one with both IPv4 and IPv6
-        let result = interfaces()
+        let result = all_interfaces
+            .iter()
             .filter_map(|ia| {
                 ia.address
                     .and_then(|addr| addr.as_sockaddr_in6().map(SockaddrIn6::ip))
-                    .map(|ipv6| (ia.interface_name, ipv6))
+                    .map(|ipv6| (ia.interface_name.clone(), ipv6))
             })
             .filter_map(|(iname, _ipv6)| {
-                interfaces()
+                all_interfaces
+                    .iter()
                     .filter(|ia2| ia2.interface_name == iname)
                     .find_map(|ia2| {
                         ia2.address
@@ -589,18 +594,20 @@ impl MdnsTests {
         // If no interface with both IPv4 and IPv6, try to find one with just IPv4
         let (iname, ip, ipv6_available) = result
             .or_else(|| {
-                interfaces()
+                all_interfaces
+                    .iter()
                     .filter_map(|ia| {
                         ia.address
                             .and_then(|addr| addr.as_sockaddr_in().map(|addr| addr.ip()))
-                            .map(|ip: std::net::Ipv4Addr| (ia.interface_name, ip, false))
+                            .map(|ip: std::net::Ipv4Addr| (ia.interface_name.clone(), ip, false))
                     })
                     .next()
             })
             .ok_or_else(|| anyhow::anyhow!("Cannot find network interface suitable for mDNS"))?;
 
         // Get the interface index for multicast operations
-        let if_index = nix::net::if_::if_nametoindex(iname.as_str()).unwrap_or(0);
+        let if_index = nix::net::if_::if_nametoindex(iname.as_str())
+            .with_context(|| format!("Failed to get interface index for {iname}"))?;
 
         info!(
             "Using network interface {} (index {}) with {} (IPv6: {})",
