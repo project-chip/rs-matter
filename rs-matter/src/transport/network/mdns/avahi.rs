@@ -414,7 +414,9 @@ pub async fn discover_commissionable(
     }
 
     // Clean up browser
-    browser.free().await;
+    if let Err(e) = browser.free().await {
+        warn!("Failed to free Avahi browser: {:?}", e);
+    }
 
     info!("Avahi mDNS discovery found {} devices", results.len());
 
