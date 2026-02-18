@@ -281,8 +281,24 @@ pub fn discover_commissionable(
     // Signal browser thread to stop
     let _ = stop_tx.send(());
 
-    // Wait for browser thread to finish (with a reasonable timeout)
-    let _ = browser_handle.join();
+    // Wait for browser thread to finish and handle any errors
+    match browser_handle.join() {
+        Ok(bg_thread_res) => bg_thread_res?,
+        Err(panic_payload) => {
+            let panic_msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_payload.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+
+            return Err(Error::new_with_details(
+                ErrorCode::MdnsError,
+                format!("Browser thread panicked: {panic_msg}").into(),
+            ));
+        }
+    }
 
     // Process discovered services
     let mut results = Vec::new();
