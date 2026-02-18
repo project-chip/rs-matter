@@ -207,12 +207,10 @@ fn parse_response(
             }
 
             if let Ok(Some(srv)) = record.to_record::<Srv<_>>() {
-                process_srv(
-                    &owner,
-                    srv.data().port(),
-                    &srv.data().target().to_string(),
-                    states,
-                );
+                // SRV target is a hostname (e.g., "mydevice.local"), max ~69 chars
+                let mut target = heapless::String::<72>::new();
+                let _ = write!(&mut target, "{}", srv.data().target());
+                process_srv(&owner, srv.data().port(), &target, states);
                 continue;
             }
 
@@ -239,15 +237,14 @@ fn parse_response(
     // Also check additional section for SRV, TXT, A, and AAAA records
     if let Ok(additional) = message.additional() {
         for record in additional.flatten() {
-            let owner = record.owner().to_string();
+            let mut owner = heapless::String::<128>::new();
+            let _ = write!(&mut owner, "{}", record.owner());
 
             if let Ok(Some(srv)) = record.to_record::<Srv<_>>() {
-                process_srv(
-                    &owner,
-                    srv.data().port(),
-                    &srv.data().target().to_string(),
-                    states,
-                );
+                // SRV target is a hostname (e.g., "mydevice.local"), max ~69 chars
+                let mut target = heapless::String::<72>::new();
+                let _ = write!(&mut target, "{}", srv.data().target());
+                process_srv(&owner, srv.data().port(), &target, states);
                 continue;
             }
 
