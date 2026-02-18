@@ -159,10 +159,9 @@ pub fn discover_commissionable(
 ) -> Result<Vec<DiscoveredDevice>, Error> {
     let mut results = Vec::new();
 
-    // Build the service type
-    let mut service_type_buf: heapless::String<64> = heapless::String::new();
-    filter.service_type(&mut service_type_buf, false);
-    let service_type = service_type_buf.as_str();
+    // Note: astro-dnssd doesn't support subtype filtering in browse,
+    // so we browse for all _matterc._udp services and filter results afterward
+    let service_type = "_matterc._udp";
 
     info!("Browsing for mDNS services: {}", service_type);
 
