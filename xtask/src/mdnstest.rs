@@ -17,8 +17,9 @@
 
 //! A module for testing mDNS discovery against chip-all-clusters-app.
 
-use std::env;
-use std::fs::{self, File};
+use crate::common::ChipBuilder;
+
+use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -35,60 +36,21 @@ use rs_matter::transport::network::mdns::{
 };
 
 /// Default discriminator for chip-all-clusters-app
-const DEFAULT_DISCRIMINATOR: u16 = 3840;
+pub const DEFAULT_DISCRIMINATOR: u16 = 3840;
 /// Default passcode for chip-all-clusters-app
-const DEFAULT_PASSCODE: u32 = 20202021;
+pub const DEFAULT_PASSCODE: u32 = 20202021;
 /// Default discovery timeout in milliseconds
-const DEFAULT_DISCOVERY_TIMEOUT_MS: u32 = 10000;
+pub const DEFAULT_DISCOVERY_TIMEOUT_MS: u32 = 10000;
 
-/// The default Git reference to use for the Chip repository
-pub const CHIP_DEFAULT_GITREF: &str = "v1.4.2-branch";
 /// The directory where the Chip repository will be cloned
 const CHIP_DIR: &str = ".build/mdnstest/connectedhomeip";
-
-/// The tooling that is checked for presence in the command line
-const REQUIRED_TOOLING: &[&str] = &[
-    "bash",
-    "git",
-    "gcc",
-    "g++",
-    "pkg-config",
-    "ninja",
-    "cmake",
-    "unzip",
-    "gn",
-    "python3",
-    "pip3",
-];
-
-/// The Debian/Ubuntu-specific packages that need to be installed
-const REQUIRED_PACKAGES: &[&str] = &[
-    "git",
-    "gcc",
-    "g++",
-    "pkg-config",
-    "ninja-build",
-    "cmake",
-    "unzip",
-    "gn",
-    "python3",
-    "python3-pip",
-    "python3-venv",
-    "python3-dev",
-    "libgirepository1.0-dev",
-    "libcairo2-dev",
-    "libreadline-dev",
-    "libssl-dev",
-    "libdbus-1-dev",
-    "libglib2.0-dev",
-    "libavahi-client-dev",
-];
 
 /// A utility for testing mDNS discovery.
 pub struct MdnsTests {
     /// The `rs-matter` workspace directory
     workspace_dir: PathBuf,
     print_cmd_output: bool,
+    chip_builder: ChipBuilder,
 }
 
 impl MdnsTests {
@@ -98,54 +60,29 @@ impl MdnsTests {
     /// - `workspace_dir`: The path to the `rs-matter` workspace directory.
     /// - `print_cmd_output`: Whether to print command output to the console.
     pub fn new(workspace_dir: PathBuf, print_cmd_output: bool) -> Self {
+        let chip_dir = workspace_dir.join(CHIP_DIR);
+
         MdnsTests {
             workspace_dir,
             print_cmd_output,
+            chip_builder: ChipBuilder::new(chip_dir, print_cmd_output),
         }
     }
 
     /// Print the required system tools for mDNS tests.
     pub fn print_tooling(&self) -> anyhow::Result<()> {
-        let tooling = REQUIRED_TOOLING.to_vec().join(" ");
-
-        warn!("Printing required system tools for mDNS tests");
-        info!("{tooling}");
-
-        println!("{tooling}");
-
-        Ok(())
+        self.chip_builder.print_tooling()
     }
 
     /// Print the required Debian/Ubuntu system packages for mDNS tests.
     pub fn print_packages(&self) -> anyhow::Result<()> {
-        let packages = REQUIRED_PACKAGES.to_vec().join(" ");
-
-        warn!("Printing required Debian/Ubuntu system packages for mDNS tests");
-        info!("{packages}");
-
-        println!("{packages}");
-
-        Ok(())
+        self.chip_builder.print_packages()
     }
 
     /// Setup the environment for mDNS testing.
-    ///
-    /// This will:
-    /// - Check system dependencies
-    /// - Clone the connectedhomeip repository
-    /// - Build chip-all-clusters-app
     pub fn setup(&self, chip_gitref: Option<&str>, force_rebuild: bool) -> anyhow::Result<()> {
-        warn!("Setting up mDNS test environment...");
-
-        // Check system dependencies
-        self.check_tooling()?;
-
-        // Setup connectedhomeip and build chip-all-clusters-app
-        self.setup_chip_all_clusters_app(chip_gitref, force_rebuild)?;
-
-        info!("mDNS test environment setup completed successfully.");
-
-        Ok(())
+        self.chip_builder
+            .build_chip_all_clusters_app(chip_gitref, force_rebuild)
     }
 
     /// Run the mDNS discovery test.
@@ -159,7 +96,10 @@ impl MdnsTests {
     pub fn run(&self, discriminator: u16, passcode: u32, timeout_ms: u32) -> anyhow::Result<()> {
         warn!("Running mDNS discovery test...");
 
-        let chip_all_clusters_app_path = self.chip_all_clusters_app_path();
+        let chip_all_clusters_app_path = self
+            .chip_builder
+            .chip_dir()
+            .join("out/host/chip-all-clusters-app");
 
         if !chip_all_clusters_app_path.exists() {
             anyhow::bail!(
@@ -190,187 +130,6 @@ impl MdnsTests {
         let _ = app_process.wait();
 
         result
-    }
-
-    fn setup_chip_all_clusters_app(
-        &self,
-        chip_gitref: Option<&str>,
-        force_rebuild: bool,
-    ) -> anyhow::Result<()> {
-        warn!("Setting up chip-all-clusters-app...");
-
-        let chip_dir = self.chip_dir();
-        let chip_gitref = chip_gitref.unwrap_or(CHIP_DEFAULT_GITREF);
-
-        // Clone or update Chip repository
-        if !chip_dir.exists() {
-            info!("Cloning connectedhomeip repository...");
-
-            // Ensure parent directories exist
-            if let Some(parent) = chip_dir.parent() {
-                fs::create_dir_all(parent)
-                    .context("Failed to create parent directories for connectedhomeip")?;
-            }
-
-            let mut cmd = Command::new("git");
-
-            cmd.arg("clone")
-                .arg("https://github.com/project-chip/connectedhomeip.git")
-                .arg(&chip_dir);
-
-            if !self.print_cmd_output {
-                cmd.arg("--quiet");
-            }
-
-            self.run_command(&mut cmd)?;
-
-            File::create(chip_dir.join(chip_gitref))?;
-        } else {
-            info!("connectedhomeip repository already exists");
-
-            if force_rebuild || !chip_dir.join(chip_gitref).exists() {
-                info!("Force rebuild requested, cleaning build artifacts...");
-
-                let out_dir = chip_dir.join("out");
-                if out_dir.exists() {
-                    fs::remove_dir_all(&out_dir)
-                        .context("Failed to remove existing out directory")?;
-                }
-            }
-        }
-
-        // Checkout the specified reference
-        info!("Checking out connectedhomeip GIT reference: {chip_gitref}...");
-
-        let mut cmd = Command::new("git");
-
-        cmd.current_dir(&chip_dir).arg("switch").arg(chip_gitref);
-
-        if !self.print_cmd_output {
-            cmd.arg("--quiet");
-        }
-
-        // Add `--` to disambiguate checkout between branch and file
-        cmd.arg("--");
-
-        self.run_command(&mut cmd)?;
-
-        // Detect host platform for selective submodule initialization
-        let platform = self.host_platform()?;
-        info!("Detected platform: {platform}");
-
-        // Initialize submodules selectively for host platform only
-        info!("Initializing submodules for platform: {platform}...");
-
-        let mut cmd = Command::new("python3");
-
-        cmd.current_dir(&chip_dir)
-            .arg("scripts/checkout_submodules.py")
-            .arg("--shallow")
-            .arg("--platform")
-            .arg(platform);
-
-        self.run_command_with(&mut cmd, !self.print_cmd_output)?;
-
-        // Setup Python environment
-        self.setup_py_env(&chip_dir)?;
-
-        // Build chip-all-clusters-app if not cached or force rebuild
-        let app_path = self.chip_all_clusters_app_path();
-        if !app_path.exists() || force_rebuild {
-            self.build_chip_all_clusters_app(&chip_dir)?;
-        } else {
-            info!("Using existing chip-all-clusters-app build");
-        }
-
-        info!("chip-all-clusters-app setup completed.");
-
-        Ok(())
-    }
-
-    fn build_chip_all_clusters_app(&self, chip_dir: &Path) -> anyhow::Result<()> {
-        warn!("Building chip-all-clusters-app...");
-
-        // Build using gn_build_example.sh
-        let build_script = chip_dir.join("scripts/examples/gn_build_example.sh");
-
-        let build_script = format!(
-            r#"
-            {} examples/all-clusters-app/linux out/host
-            "#,
-            build_script.display(),
-        );
-
-        self.run_command_with(
-            Command::new("bash")
-                .current_dir(chip_dir)
-                .arg("-c")
-                .arg(&build_script),
-            !self.print_cmd_output,
-        )?;
-
-        info!("chip-all-clusters-app built successfully");
-
-        Ok(())
-    }
-
-    fn setup_py_env(&self, chip_dir: &Path) -> anyhow::Result<()> {
-        info!("Setting up Python environment...");
-
-        let venv_dir = chip_dir.join("venv");
-
-        // Create virtual environment if it doesn't exist
-        if !venv_dir.exists() {
-            self.run_command(
-                Command::new("python3")
-                    .arg("-m")
-                    .arg("venv")
-                    .arg("venv")
-                    .current_dir(chip_dir),
-            )?;
-        }
-
-        // Install requirements
-        let requirements_path = chip_dir.join("scripts/tests/requirements.txt");
-        if requirements_path.exists() {
-            let pip_path = venv_dir.join("bin/pip");
-
-            self.run_command(
-                Command::new(&pip_path)
-                    .current_dir(chip_dir)
-                    .arg("install")
-                    .arg("--upgrade")
-                    .arg("pip")
-                    .arg("wheel"),
-            )?;
-
-            self.run_command(
-                Command::new(&pip_path)
-                    .env("PW_PROJECT_ROOT", chip_dir)
-                    .current_dir(chip_dir)
-                    .arg("install")
-                    .arg("-r")
-                    .arg("scripts/tests/requirements.txt"),
-            )?;
-        }
-
-        let bootstrap_script = chip_dir.join("scripts/bootstrap.sh");
-        let run_bootstrap = format!(
-            r#"
-            source "{}"
-            "#,
-            bootstrap_script.display(),
-        );
-
-        self.run_command_with(
-            Command::new("bash")
-                .current_dir(chip_dir)
-                .arg("-c")
-                .arg(&run_bootstrap),
-            !self.print_cmd_output,
-        )?;
-
-        Ok(())
     }
 
     fn start_chip_all_clusters_app(
@@ -675,78 +434,4 @@ impl MdnsTests {
 
         Ok(())
     }
-
-    fn check_tooling(&self) -> anyhow::Result<()> {
-        for tool in REQUIRED_TOOLING {
-            if which::which(tool).is_err() {
-                anyhow::bail!("Required tool '{tool}' not found in $PATH");
-            }
-        }
-
-        info!("System tools check passed");
-
-        Ok(())
-    }
-
-    fn run_command(&self, cmd: &mut Command) -> anyhow::Result<()> {
-        self.run_command_with(cmd, false)
-    }
-
-    fn run_command_with(&self, cmd: &mut Command, suppress_err: bool) -> anyhow::Result<()> {
-        debug!("Running: {cmd:?}");
-
-        let cmd = cmd.stdin(Stdio::null());
-
-        if !self.print_cmd_output {
-            cmd.stdout(Stdio::null());
-        }
-
-        if suppress_err {
-            cmd.stderr(Stdio::null());
-        }
-
-        let status = cmd
-            .status()
-            .with_context(|| format!("Failed to execute command: {cmd:?}"))?;
-
-        if !status.success() {
-            anyhow::bail!("Command failed with status: {status}");
-        }
-
-        Ok(())
-    }
-
-    fn chip_dir(&self) -> PathBuf {
-        self.workspace_dir.join(CHIP_DIR)
-    }
-
-    fn chip_all_clusters_app_path(&self) -> PathBuf {
-        self.chip_dir().join("out/host/chip-all-clusters-app")
-    }
-
-    fn host_platform(&self) -> anyhow::Result<&str> {
-        let os = env::consts::OS;
-        let chip_platform = match os {
-            "linux" => "linux",
-            "macos" => "darwin",
-            _ => anyhow::bail!("Unsupported host OS: {os}"),
-        };
-
-        Ok(chip_platform)
-    }
-}
-
-/// Get the default discriminator value.
-pub fn default_discriminator() -> u16 {
-    DEFAULT_DISCRIMINATOR
-}
-
-/// Get the default passcode value.
-pub fn default_passcode() -> u32 {
-    DEFAULT_PASSCODE
-}
-
-/// Get the default discovery timeout in milliseconds.
-pub fn default_timeout_ms() -> u32 {
-    DEFAULT_DISCOVERY_TIMEOUT_MS
 }

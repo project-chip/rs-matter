@@ -27,6 +27,7 @@ use log::{Level, LevelFilter};
 use crate::itest::ITests;
 use crate::mdnstest::MdnsTests;
 
+mod common;
 mod itest;
 mod mdnstest;
 mod tlv;
@@ -109,7 +110,7 @@ enum Command {
 #[derive(Parser, Debug, Clone)]
 struct MdnstestSetupArgs {
     /// connectedhomeip repository reference (branch/tag/commit)
-    #[arg(long, default_value = mdnstest::CHIP_DEFAULT_GITREF)]
+    #[arg(long, default_value = common::CHIP_DEFAULT_GITREF)]
     chip_gitref: String,
     /// Force setup even if cached
     #[arg(long)]
@@ -120,13 +121,13 @@ struct MdnstestSetupArgs {
 #[derive(Parser, Debug, Clone)]
 struct MdnstestRunArgs {
     /// Discriminator for the device (12-bit value)
-    #[arg(long, default_value_t = mdnstest::default_discriminator())]
+    #[arg(long, default_value_t = mdnstest::DEFAULT_DISCRIMINATOR)]
     discriminator: u16,
     /// Passcode for the device
-    #[arg(long, default_value_t = mdnstest::default_passcode())]
+    #[arg(long, default_value_t = mdnstest::DEFAULT_PASSCODE)]
     passcode: u32,
     /// Discovery timeout in milliseconds
-    #[arg(long, default_value_t = mdnstest::default_timeout_ms())]
+    #[arg(long, default_value_t = mdnstest::DEFAULT_DISCOVERY_TIMEOUT_MS)]
     timeout_ms: u32,
 }
 
@@ -238,7 +239,7 @@ impl Verbosity {
 #[derive(Parser, Debug, Clone)]
 struct ItestSetupArgs {
     /// Chip repository reference (branch/tag/commit)
-    #[arg(long, default_value = itest::CHIP_DEFAULT_GITREF)]
+    #[arg(long, default_value = common::CHIP_DEFAULT_GITREF)]
     gitref: String,
     /// Force setup even if cached
     #[arg(long)]
