@@ -36,8 +36,8 @@ use super::proto::Buf;
 
 use crate::error::Error;
 use crate::transport::network::mdns::{
-    CommissionableFilter, DiscoveredDevice, MAX_DISCOVERED_DEVICES, MDNS_IPV4_BROADCAST_ADDR,
-    MDNS_IPV6_BROADCAST_ADDR, MDNS_PORT,
+    CommissionableFilter, DiscoveredDevice, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR,
+    MDNS_PORT,
 };
 use crate::transport::network::{
     Address, IpAddr, Ipv4Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV4, SocketAddrV6,
@@ -115,11 +115,11 @@ fn parse_txt_record(txt: &Txt<&[u8]>, device: &mut DiscoveredDevice) {
 }
 
 /// Process SRV record and update matching states
-fn process_srv(
+fn process_srv<const D: usize>(
     owner: &str,
     port: u16,
     target: &str,
-    states: &mut heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES>,
+    states: &mut heapless::Vec<DiscoveryState, D>,
 ) {
     for state in states.iter_mut() {
         if names_match(owner, state.device.instance_name.as_str()) {
@@ -132,10 +132,10 @@ fn process_srv(
 }
 
 /// Process TXT record and update matching states
-fn process_txt(
+fn process_txt<const D: usize>(
     owner: &str,
     txt: &Txt<&[u8]>,
-    states: &mut heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES>,
+    states: &mut heapless::Vec<DiscoveryState, D>,
 ) {
     for state in states.iter_mut() {
         if names_match(owner, state.device.instance_name.as_str()) {
@@ -146,10 +146,10 @@ fn process_txt(
 }
 
 /// Process A record (IPv4) and update matching states
-fn process_a(
+fn process_a<const D: usize>(
     owner: &str,
     ip: Ipv4Addr,
-    states: &mut heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES>,
+    states: &mut heapless::Vec<DiscoveryState, D>,
 ) {
     for state in states.iter_mut() {
         if !state.hostname.is_empty() && names_match(owner, state.hostname.as_str()) {
@@ -159,10 +159,10 @@ fn process_a(
 }
 
 /// Process AAAA record (IPv6) and update matching states
-fn process_aaaa(
+fn process_aaaa<const D: usize>(
     owner: &str,
     ip: core::net::Ipv6Addr,
-    states: &mut heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES>,
+    states: &mut heapless::Vec<DiscoveryState, D>,
 ) {
     for state in states.iter_mut() {
         if !state.hostname.is_empty() && names_match(owner, state.hostname.as_str()) {
@@ -172,9 +172,9 @@ fn process_aaaa(
 }
 
 /// Parse an mDNS response and update discovery state
-fn parse_response(
+fn parse_response<const D: usize>(
     data: &[u8],
-    states: &mut heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES>,
+    states: &mut heapless::Vec<DiscoveryState, D>,
 ) -> Result<(), Error> {
     let message = Message::from_octets(data)?;
 
@@ -198,7 +198,7 @@ fn parse_response(
                     .iter()
                     .any(|s| names_match(s.device.instance_name.as_str(), instance_name.as_str()));
 
-                if !exists && states.len() < MAX_DISCOVERED_DEVICES {
+                if !exists && states.len() < D {
                     let mut state = DiscoveryState::default();
                     state.device.set_instance_name(&instance_name);
                     let _ = states.push(state);
@@ -283,19 +283,19 @@ fn parse_response(
 ///
 /// # Returns
 /// A vector of discovered devices matching the filter criteria
-pub async fn discover_commissionable<S, R>(
+pub async fn discover_commissionable<S, R, const D: usize>(
     send: &mut S,
     recv: &mut R,
     filter: &CommissionableFilter,
     timeout_ms: u32,
     ipv4_interface: Option<Ipv4Addr>,
     ipv6_interface: Option<u32>,
-) -> Result<heapless::Vec<DiscoveredDevice, MAX_DISCOVERED_DEVICES>, Error>
+) -> Result<heapless::Vec<DiscoveredDevice, D>, Error>
 where
     S: NetworkSend,
     R: NetworkReceive,
 {
-    let mut states: heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES> = heapless::Vec::new();
+    let mut states: heapless::Vec<DiscoveryState, D> = heapless::Vec::new();
     let mut query_buf = [0u8; 512];
     let mut recv_buf = [0u8; 1500];
 
@@ -373,7 +373,7 @@ where
     }
 
     // Filter and collect complete results
-    let mut results: heapless::Vec<DiscoveredDevice, MAX_DISCOVERED_DEVICES> = heapless::Vec::new();
+    let mut results: heapless::Vec<DiscoveredDevice, D> = heapless::Vec::new();
 
     for state in states {
         if !state.is_complete() {
@@ -405,6 +405,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const MAX_DISCOVERED_DEVICES: usize = 8;
 
     // Helper to create a DiscoveryState with a given instance name
     fn make_state(instance_name: &str) -> DiscoveryState {

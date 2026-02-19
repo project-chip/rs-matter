@@ -42,9 +42,6 @@ pub const MDNS_IPV4_BROADCAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
 /// The standard mDNS port
 pub const MDNS_PORT: u16 = 5353;
 
-/// Maximum number of devices that can be discovered in a single query
-pub const MAX_DISCOVERED_DEVICES: usize = 8;
-
 /// Maximum number of IP addresses stored per discovered device
 pub const MAX_ADDRESSES_PER_DEVICE: usize = 4;
 
@@ -54,22 +51,6 @@ pub trait PushUnique {
     ///
     /// Returns `true` if the device was added, `false` if it was a duplicate or the collection is full.
     fn push_if_unique(&mut self, device: DiscoveredDevice) -> bool;
-}
-
-impl PushUnique for heapless::Vec<DiscoveredDevice, MAX_DISCOVERED_DEVICES> {
-    fn push_if_unique(&mut self, device: DiscoveredDevice) -> bool {
-        let is_duplicate = self.iter().any(|d| {
-            d.instance_name
-                .as_str()
-                .eq_ignore_ascii_case(device.instance_name.as_str())
-        });
-
-        if !is_duplicate {
-            self.push(device).is_ok()
-        } else {
-            false
-        }
-    }
 }
 
 #[cfg(feature = "std")]
@@ -1467,9 +1448,10 @@ mod tests {
         assert!(device.pairing_instruction.len() <= 128);
     }
 
+    #[cfg(feature = "std")]
     #[test]
-    fn push_if_unique_adds_new_device() {
-        let mut devices = heapless::Vec::<DiscoveredDevice, MAX_DISCOVERED_DEVICES>::new();
+    fn push_if_unique_vec_adds_new_device() {
+        let mut devices: Vec<DiscoveredDevice> = Vec::new();
         let mut device = DiscoveredDevice::default();
         device.set_instance_name("device1");
 
@@ -1477,9 +1459,10 @@ mod tests {
         assert_eq!(devices.len(), 1);
     }
 
+    #[cfg(feature = "std")]
     #[test]
-    fn push_if_unique_rejects_duplicate() {
-        let mut devices = heapless::Vec::<DiscoveredDevice, MAX_DISCOVERED_DEVICES>::new();
+    fn push_if_unique_vec_rejects_duplicate() {
+        let mut devices = Vec::new();
 
         let mut device1 = DiscoveredDevice::default();
         device1.set_instance_name("device1");
@@ -1492,9 +1475,10 @@ mod tests {
         assert_eq!(devices.len(), 1);
     }
 
+    #[cfg(feature = "std")]
     #[test]
-    fn push_if_unique_rejects_case_insensitive_duplicate() {
-        let mut devices = heapless::Vec::<DiscoveredDevice, MAX_DISCOVERED_DEVICES>::new();
+    fn push_if_unique_vec_rejects_case_insensitive_duplicate() {
+        let mut devices = Vec::new();
 
         let mut device1 = DiscoveredDevice::default();
         device1.set_instance_name("device1");
@@ -1507,9 +1491,10 @@ mod tests {
         assert_eq!(devices.len(), 1);
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn push_if_unique_allows_different_names() {
-        let mut devices = heapless::Vec::<DiscoveredDevice, MAX_DISCOVERED_DEVICES>::new();
+        let mut devices = Vec::new();
 
         let mut device1 = DiscoveredDevice::default();
         device1.set_instance_name("device1");
@@ -1520,67 +1505,6 @@ mod tests {
 
         assert!(devices.push_if_unique(device2));
         assert_eq!(devices.len(), 2);
-    }
-
-    #[test]
-    fn push_if_unique_returns_false_when_full() {
-        let mut devices = heapless::Vec::<DiscoveredDevice, MAX_DISCOVERED_DEVICES>::new();
-
-        // Fill up the vector
-        for i in 0..MAX_DISCOVERED_DEVICES {
-            let mut device = DiscoveredDevice::default();
-            device.set_instance_name(&format!("device{i}"));
-            assert!(devices.push_if_unique(device));
-        }
-
-        // Try to add one more
-        let mut extra = DiscoveredDevice::default();
-        extra.set_instance_name("extra");
-        assert!(!devices.push_if_unique(extra));
-        assert_eq!(devices.len(), MAX_DISCOVERED_DEVICES);
-    }
-
-    #[cfg(feature = "std")]
-    #[test]
-    fn push_if_unique_std_vec_adds_new_device() {
-        let mut devices: Vec<DiscoveredDevice> = Vec::new();
-        let mut device = DiscoveredDevice::default();
-        device.set_instance_name("device1");
-
-        assert!(devices.push_if_unique(device));
-        assert_eq!(devices.len(), 1);
-    }
-
-    #[cfg(feature = "std")]
-    #[test]
-    fn push_if_unique_std_vec_rejects_duplicate() {
-        let mut devices: Vec<DiscoveredDevice> = Vec::new();
-
-        let mut device1 = DiscoveredDevice::default();
-        device1.set_instance_name("device1");
-        devices.push_if_unique(device1);
-
-        let mut device2 = DiscoveredDevice::default();
-        device2.set_instance_name("device1");
-
-        assert!(!devices.push_if_unique(device2));
-        assert_eq!(devices.len(), 1);
-    }
-
-    #[cfg(feature = "std")]
-    #[test]
-    fn push_if_unique_std_vec_rejects_case_insensitive_duplicate() {
-        let mut devices: Vec<DiscoveredDevice> = Vec::new();
-
-        let mut device1 = DiscoveredDevice::default();
-        device1.set_instance_name("device1");
-        devices.push_if_unique(device1);
-
-        let mut device2 = DiscoveredDevice::default();
-        device2.set_instance_name("Device1");
-
-        assert!(!devices.push_if_unique(device2));
-        assert_eq!(devices.len(), 1);
     }
 
     #[test]
