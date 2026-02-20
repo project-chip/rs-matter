@@ -1124,13 +1124,12 @@ mod tests {
     }
 
     #[test]
-    fn set_txt_value_device_name_truncated() {
+    #[should_panic]
+    fn set_txt_value_device_name_too_long() {
         let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         // Device name buffer is 32 chars, this string is longer
         let long_name = "This is a very long device name that exceeds the buffer";
         device.set_txt_value("DN", long_name);
-        // Should be truncated to fit in the buffer
-        assert!(device.device_name.len() <= 32);
     }
 
     #[test]
@@ -1435,15 +1434,13 @@ mod tests {
     }
 
     #[test]
-    fn set_txt_value_pairing_instruction_truncated() {
+    #[should_panic]
+    fn set_txt_value_pairing_instruction_too_large() {
         let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
 
         // Pairing instruction buffer is 128 chars, this string is longer
         let long_instruction = "This is a very long pairing instruction that exceeds the buffer size limit and should be truncated to fit within the maximum allowed length for pairing instructions in Matter devices";
         device.set_txt_value("PI", long_instruction);
-
-        // Should be truncated to fit in the buffer
-        assert!(device.pairing_instruction.len() <= 128);
     }
 
     #[cfg(feature = "std")]
