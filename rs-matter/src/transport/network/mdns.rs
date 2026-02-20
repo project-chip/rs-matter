@@ -117,17 +117,17 @@ impl CommissionableFilter {
         let suffix = if include_local { ".local" } else { "" };
 
         if let Some(disc) = self.discriminator {
-            let _ = write!(buf, "_L{}._sub._matterc._udp{}", disc, suffix);
+            write_unwrap!(buf, "_L{}._sub._matterc._udp{}", disc, suffix);
         } else if let Some(short_disc) = self.short_discriminator {
-            let _ = write!(buf, "_S{}._sub._matterc._udp{}", short_disc, suffix);
+            write_unwrap!(buf, "_S{}._sub._matterc._udp{}", short_disc, suffix);
         } else if let Some(vid) = self.vendor_id {
-            let _ = write!(buf, "_V{}._sub._matterc._udp{}", vid, suffix);
+            write_unwrap!(buf, "_V{}._sub._matterc._udp{}", vid, suffix);
         } else if let Some(dt) = self.device_type {
-            let _ = write!(buf, "_T{}._sub._matterc._udp{}", dt, suffix);
+            write_unwrap!(buf, "_T{}._sub._matterc._udp{}", dt, suffix);
         } else if self.commissioning_mode_only {
-            let _ = write!(buf, "_CM._sub._matterc._udp{}", suffix);
+            write_unwrap!(buf, "_CM._sub._matterc._udp{}", suffix);
         } else {
-            let _ = write!(buf, "_matterc._udp{}", suffix);
+            write_unwrap!(buf, "_matterc._udp{}", suffix);
         }
     }
 
@@ -386,7 +386,7 @@ impl<const A: usize> DiscoveredDevice<A> {
                 self.addresses.pop();
             }
             // Insert at the correct position
-            let _ = self.addresses.insert(pos, addr);
+            unwrap!(self.addresses.insert(pos, addr));
         }
     }
 
@@ -395,7 +395,7 @@ impl<const A: usize> DiscoveredDevice<A> {
     /// This clears any existing addresses and sets both the IP and port.
     pub fn set_addr(&mut self, addr: SocketAddr) {
         self.addresses.clear();
-        let _ = self.addresses.push(addr.ip());
+        unwrap!(self.addresses.push(addr.ip()));
         self.port = addr.port();
     }
 
@@ -458,18 +458,18 @@ impl<const A: usize> DiscoveredDevice<A> {
             }
             "pi" => {
                 self.pairing_instruction.clear();
-                let _ = write!(&mut self.pairing_instruction, "{}", value);
+                write_unwrap!(&mut self.pairing_instruction, "{}", value);
             }
             "dn" => {
                 self.device_name.clear();
-                let _ = write!(&mut self.device_name, "{}", value);
+                write_unwrap!(&mut self.device_name, "{}", value);
             }
             _ => {}
         }
     }
 
     pub fn set_instance_name(&mut self, name: &str) {
-        let _ = write!(&mut self.instance_name, "{}", name);
+        write_unwrap!(&mut self.instance_name, "{}", name);
     }
 }
 

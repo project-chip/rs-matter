@@ -230,9 +230,6 @@ impl<'a> AvahiMdnsResponder<'a> {
     }
 }
 
-/// Maximum number of pending services to track during discovery
-const MAX_PENDING_SERVICES: usize = 16;
-
 /// A pending service discovered via browse that needs resolution
 struct PendingService {
     interface: i32,
@@ -247,9 +244,9 @@ impl PendingService {
         let mut pending_name = heapless::String::new();
         let mut pending_type_ = heapless::String::new();
         let mut pending_domain = heapless::String::new();
-        let _ = write!(&mut pending_name, "{}", name);
-        let _ = write!(&mut pending_type_, "{}", type_);
-        let _ = write!(&mut pending_domain, "{}", domain);
+        write_unwrap!(&mut pending_name, "{}", name);
+        write_unwrap!(&mut pending_type_, "{}", type_);
+        write_unwrap!(&mut pending_domain, "{}", domain);
 
         Self {
             interface,

@@ -141,7 +141,7 @@ fn process_srv<const D: usize, const AD: usize>(
             state.device.port = port;
             state.has_port = true;
             state.hostname.clear();
-            let _ = write!(&mut state.hostname, "{}", target.trim_end_matches('.'));
+            write_unwrap!(&mut state.hostname, "{}", target.trim_end_matches('.'));
         }
     }
 }
@@ -203,11 +203,11 @@ fn parse_response<const D: usize, const AD: usize>(
         for record in answer.flatten() {
             // 128 characters in case of extra long names
             let mut owner = heapless::String::<128>::new();
-            let _ = write!(&mut owner, "{}", record.owner());
+            write_unwrap!(&mut owner, "{}", record.owner());
 
             if let Ok(Some(ptr)) = record.to_record::<Ptr<_>>() {
                 let mut instance_name = heapless::String::<64>::new();
-                let _ = write!(&mut instance_name, "{}", ptr.data().ptrdname());
+                write_unwrap!(&mut instance_name, "{}", ptr.data().ptrdname());
 
                 let exists = states
                     .iter()
@@ -224,7 +224,7 @@ fn parse_response<const D: usize, const AD: usize>(
             if let Ok(Some(srv)) = record.to_record::<Srv<_>>() {
                 // SRV target is a hostname (e.g., "mydevice.local"), max ~69 chars
                 let mut target = heapless::String::<72>::new();
-                let _ = write!(&mut target, "{}", srv.data().target());
+                write_unwrap!(&mut target, "{}", srv.data().target());
                 process_srv(&owner, srv.data().port(), &target, states);
                 continue;
             }
@@ -253,12 +253,12 @@ fn parse_response<const D: usize, const AD: usize>(
     if let Ok(additional) = message.additional() {
         for record in additional.flatten() {
             let mut owner = heapless::String::<128>::new();
-            let _ = write!(&mut owner, "{}", record.owner());
+            write_unwrap!(&mut owner, "{}", record.owner());
 
             if let Ok(Some(srv)) = record.to_record::<Srv<_>>() {
                 // SRV target is a hostname (e.g., "mydevice.local"), max ~69 chars
                 let mut target = heapless::String::<72>::new();
-                let _ = write!(&mut target, "{}", srv.data().target());
+                write_unwrap!(&mut target, "{}", srv.data().target());
                 process_srv(&owner, srv.data().port(), &target, states);
                 continue;
             }
@@ -437,7 +437,7 @@ mod tests {
         hostname: &str,
     ) -> DiscoveryState<MAX_ADDRESSES_PER_DEVICE> {
         let mut state = make_state(instance_name);
-        let _ = write!(&mut state.hostname, "{}", hostname);
+        write_unwrap!(&mut state.hostname, "{}", hostname);
         state
     }
 
