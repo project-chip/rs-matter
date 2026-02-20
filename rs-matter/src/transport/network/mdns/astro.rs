@@ -153,10 +153,10 @@ impl<'a> AstroMdnsResponder<'a> {
 ///
 /// # Returns
 /// A vector of discovered devices matching the filter criteria
-pub fn discover_commissionable(
+pub fn discover_commissionable<const A: usize>(
     filter: &CommissionableFilter,
     timeout_ms: u32,
-) -> Result<Vec<DiscoveredDevice>, Error> {
+) -> Result<Vec<DiscoveredDevice<A>>, Error> {
     let mut results = Vec::new();
 
     // Note: astro-dnssd doesn't support subtype filtering in browse,

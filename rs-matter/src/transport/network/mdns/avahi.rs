@@ -267,11 +267,11 @@ impl PendingService {
 ///
 /// # Returns
 /// A vector of discovered devices matching the filter criteria
-pub async fn discover_commissionable(
+pub async fn discover_commissionable<const A: usize>(
     connection: &Connection,
     filter: &CommissionableFilter,
     timeout_ms: u32,
-) -> Result<Vec<DiscoveredDevice>, Error> {
+) -> Result<Vec<DiscoveredDevice<A>>, Error> {
     let mut results = Vec::new();
 
     // Build the service type query

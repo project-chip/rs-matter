@@ -223,10 +223,10 @@ impl From<zeroconf::error::Error> for Error {
 ///
 /// # Note
 /// This function is blocking and spawns a background thread for the mDNS browser event loop.
-pub fn discover_commissionable(
+pub fn discover_commissionable<const A: usize>(
     filter: &CommissionableFilter,
     timeout_ms: u32,
-) -> Result<Vec<DiscoveredDevice>, Error> {
+) -> Result<Vec<DiscoveredDevice<A>>, Error> {
     // Build the service type - zeroconf doesn't support subtype filtering in browse,
     // so we browse for all _matterc._udp and filter results afterward
     let service_type = ServiceType::new("matterc", "udp")?;

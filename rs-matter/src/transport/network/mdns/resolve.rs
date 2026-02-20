@@ -207,10 +207,10 @@ impl<'a> ResolveMdnsResponder<'a> {
 /// # Note
 /// systemd-resolved doesn't support service browsing with subtypes, so we browse for all
 /// `_matterc._udp.local` services and filter the results afterward.
-pub async fn discover_commissionable(
+pub async fn discover_commissionable<const A: usize>(
     connection: &Connection,
     filter: &CommissionableFilter,
-) -> Result<Vec<DiscoveredDevice>, Error> {
+) -> Result<Vec<DiscoveredDevice<A>>, Error> {
     let mut results = Vec::new();
 
     info!("Browsing for mDNS services via systemd-resolved: _matterc._udp.local");
