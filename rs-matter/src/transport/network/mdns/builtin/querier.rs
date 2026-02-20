@@ -279,6 +279,9 @@ fn parse_response<const D: usize, const AD: usize>(
     Ok(())
 }
 
+// TODO: Migrate this method signature to a caller supplied
+// buffer instead of returning a `heapless::Vec` in the result
+// see: https://github.com/project-chip/rs-matter/pull/380#discussion_r2828659531
 /// Discover commissionable Matter devices on the network.
 ///
 /// # Arguments
@@ -286,6 +289,7 @@ fn parse_response<const D: usize, const AD: usize>(
 /// * `recv` - Network receive interface for receiving mDNS responses
 /// * `filter` - Optional filter criteria for discovered devices
 /// * `timeout_ms` - Discovery timeout in milliseconds
+/// * `buf` - Buffer for mDNS query and response data
 /// * `ipv4_interface` - Optional IPv4 interface address for sending queries
 /// * `ipv6_interface` - Optional IPv6 interface index for sending queries
 ///
@@ -296,6 +300,7 @@ pub async fn discover_commissionable<S, R, const D: usize, const AD: usize>(
     mut recv: R,
     filter: &CommissionableFilter,
     timeout_ms: u32,
+    buf: &mut [u8],
     ipv4_interface: Option<Ipv4Addr>,
     ipv6_interface: Option<u32>,
 ) -> Result<heapless::Vec<DiscoveredDevice<AD>, D>, Error>
@@ -304,15 +309,13 @@ where
     R: NetworkReceive,
 {
     let mut states: heapless::Vec<DiscoveryState<AD>, D> = heapless::Vec::new();
-    let mut query_buf = [0u8; 512];
-    let mut recv_buf = [0u8; 1500];
 
     // Build the service type query
     let mut service_type = heapless::String::<64>::new();
     filter.service_type(&mut service_type, true);
 
     // Build the query
-    let query_len = build_ptr_query(&service_type, &mut query_buf)?;
+    let query_len = build_ptr_query(&service_type, buf)?;
 
     debug!("Built mDNS query: {} bytes for {}", query_len, service_type);
 
@@ -333,13 +336,13 @@ where
             .into_iter(),
     ) {
         info!("Sending mDNS query for {} to {}", service_type, addr);
-        if let Err(e) = send
-            .send_to(&query_buf[..query_len], Address::Udp(addr))
-            .await
-        {
+        if let Err(e) = send.send_to(&buf[..query_len], Address::Udp(addr)).await {
             warn!("Failed to send mDNS query to {}: {:?}", addr, e);
         }
     }
+
+    // Zero out query data to prepare for recv data
+    buf.fill(0);
 
     // Collect responses until timeout
     let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
@@ -355,7 +358,7 @@ where
             let mut timer = pin!(Timer::after(remaining));
             let mut recv_op = pin!(async {
                 recv.wait_available().await?;
-                recv.recv_from(&mut recv_buf).await
+                recv.recv_from(buf).await
             });
 
             select(&mut recv_op, &mut timer).await
@@ -365,7 +368,7 @@ where
             Either::First(Ok((len, addr))) => {
                 debug!("Received mDNS packet from {}, {} bytes", addr, len);
 
-                if let Err(e) = parse_response(&recv_buf[..len], &mut states) {
+                if let Err(e) = parse_response(&buf[..len], &mut states) {
                     debug!("Failed to parse mDNS response: {:?}", e);
                 }
             }

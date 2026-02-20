@@ -293,12 +293,14 @@ impl MdnsTests {
         };
 
         // Run discovery using the builtin mDNS querier
+        let mut mdns_buf = [0u8; 1500];
         let devices =
             discover_commissionable::<_, _, MAX_DISCOVERED_DEVICES, MAX_DEVICE_ADDRESSES>(
                 &mut &socket,
                 &mut &socket,
                 &filter,
                 timeout_ms,
+                &mut mdns_buf,
                 Some(ipv4_addr),
                 ipv6_interface,
             )
