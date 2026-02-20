@@ -77,6 +77,7 @@ impl<const A: usize> PushUnique<A> for std::vec::Vec<DiscoveredDevice<A>> {
 /// vendor ID, device type, and commissioning mode. Product ID filtering
 /// is done post-discovery by checking TXT records.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CommissionableFilter {
     /// Filter by long discriminator (12-bit)
     pub discriminator: Option<u16>,
@@ -181,6 +182,7 @@ impl CommissionableFilter {
 /// This indicates whether a device is in commissioning mode and what type
 /// of commissioning window is open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum CommissioningMode {
     /// Device is not in commissioning mode
@@ -259,6 +261,7 @@ fn is_ipv6_global_unicast(addr: &Ipv6Addr) -> bool {
 /// to get the best (highest priority) address, or [`addresses()`](Self::addresses)
 /// to iterate over all addresses.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DiscoveredDevice<const A: usize> {
     /// IP addresses for this device, sorted by priority (best first)
     addresses: heapless::Vec<IpAddr, A>,

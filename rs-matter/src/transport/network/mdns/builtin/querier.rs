@@ -45,6 +45,7 @@ use crate::transport::network::{
 
 /// Internal state for tracking a device being discovered
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct DiscoveryState<const AD: usize> {
     /// The device info we're building up
     device: DiscoveredDevice<AD>,
