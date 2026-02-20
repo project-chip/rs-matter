@@ -42,20 +42,17 @@ pub const MDNS_IPV4_BROADCAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
 /// The standard mDNS port
 pub const MDNS_PORT: u16 = 5353;
 
-/// Maximum number of IP addresses stored per discovered device
-pub const MAX_ADDRESSES_PER_DEVICE: usize = 4;
-
 /// Extension trait for pushing unique devices to a collection.
-pub trait PushUnique {
+pub trait PushUnique<const A: usize> {
     /// Push a device to the collection if no device with the same instance name exists.
     ///
     /// Returns `true` if the device was added, `false` if it was a duplicate or the collection is full.
-    fn push_if_unique(&mut self, device: DiscoveredDevice) -> bool;
+    fn push_if_unique(&mut self, device: DiscoveredDevice<A>) -> bool;
 }
 
 #[cfg(feature = "std")]
-impl PushUnique for std::vec::Vec<DiscoveredDevice> {
-    fn push_if_unique(&mut self, device: DiscoveredDevice) -> bool {
+impl<const A: usize> PushUnique<A> for std::vec::Vec<DiscoveredDevice<A>> {
+    fn push_if_unique(&mut self, device: DiscoveredDevice<A>) -> bool {
         let is_duplicate = self.iter().any(|d| {
             d.instance_name
                 .as_str()
@@ -138,7 +135,7 @@ impl CommissionableFilter {
     ///
     /// Returns `true` if the device matches all specified filter fields,
     /// or if no filter fields are set (empty filter matches all devices).
-    pub fn matches(&self, device: &DiscoveredDevice) -> bool {
+    pub fn matches<const A: usize>(&self, device: &DiscoveredDevice<A>) -> bool {
         if let Some(disc) = self.discriminator {
             if device.discriminator != disc {
                 return false;
@@ -274,9 +271,9 @@ fn is_ipv6_global_unicast(addr: &Ipv6Addr) -> bool {
 /// to get the best (highest priority) address, or [`addresses()`](Self::addresses)
 /// to iterate over all addresses.
 #[derive(Debug, Clone)]
-pub struct DiscoveredDevice {
+pub struct DiscoveredDevice<const A: usize> {
     /// IP addresses for this device, sorted by priority (best first)
-    addresses: heapless::Vec<IpAddr, MAX_ADDRESSES_PER_DEVICE>,
+    addresses: heapless::Vec<IpAddr, A>,
     /// The device's port from SRV record
     pub port: u16,
     /// The device's discriminator from TXT record
@@ -314,15 +311,21 @@ pub struct DiscoveredDevice {
     pub instance_name: heapless::String<64>,
 }
 
-impl Default for DiscoveredDevice {
+impl<const A: usize> Default for DiscoveredDevice<A> {
     fn default() -> Self {
+        DiscoveredDevice::new()
+    }
+}
+
+impl<const A: usize> DiscoveredDevice<A> {
+    pub const fn new() -> Self {
         Self {
-            addresses: heapless::Vec::new(),
+            addresses: heapless::Vec::<IpAddr, A>::new(),
             port: 0,
             discriminator: 0,
             vendor_id: 0,
             product_id: 0,
-            commissioning_mode: CommissioningMode::default(),
+            commissioning_mode: CommissioningMode::Disabled,
             device_type: 0,
             mrp_retry_interval_idle: None,
             mrp_retry_interval_active: None,
@@ -332,9 +335,7 @@ impl Default for DiscoveredDevice {
             instance_name: heapless::String::new(),
         }
     }
-}
 
-impl DiscoveredDevice {
     /// Get the best (highest priority) socket address for this device.
     ///
     /// Returns the address with the highest score according to [`score_ip_address`],
@@ -379,8 +380,8 @@ impl DiscoveredDevice {
             .position(|a| score_ip_address(a) < score)
             .unwrap_or(self.addresses.len());
 
-        if pos < MAX_ADDRESSES_PER_DEVICE {
-            if self.addresses.len() >= MAX_ADDRESSES_PER_DEVICE {
+        if pos < A {
+            if self.addresses.len() >= A {
                 // Remove lowest priority address to make room
                 self.addresses.pop();
             }
@@ -671,6 +672,8 @@ impl Service<'_> {
 mod tests {
     use super::*;
 
+    const MAX_ADDRESSES_PER_DEVICE: usize = 4;
+
     #[test]
     fn can_compute_short_discriminator() {
         let discriminator: u16 = 0b0000_1111_0000_0000;
@@ -682,8 +685,12 @@ mod tests {
         assert_eq!(short, 3);
     }
 
-    fn make_device(discriminator: u16, vendor_id: u16, product_id: u16) -> DiscoveredDevice {
-        let mut device = DiscoveredDevice::default();
+    fn make_device(
+        discriminator: u16,
+        vendor_id: u16,
+        product_id: u16,
+    ) -> DiscoveredDevice<MAX_ADDRESSES_PER_DEVICE> {
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.discriminator = discriminator;
         device.vendor_id = vendor_id;
         device.product_id = product_id;
@@ -1052,21 +1059,21 @@ mod tests {
 
     #[test]
     fn set_txt_value_discriminator() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("D", "1234");
         assert_eq!(device.discriminator, 1234);
     }
 
     #[test]
     fn set_txt_value_discriminator_invalid() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("D", "not_a_number");
         assert_eq!(device.discriminator, 0); // Should remain default
     }
 
     #[test]
     fn set_txt_value_discriminator_range_valid() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
 
         // Maximum valid discriminator (12-bit = 4095)
         device.set_txt_value("D", "4095");
@@ -1079,7 +1086,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_discriminator_range_invalid() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
 
         // Set a valid value first
         device.set_txt_value("D", "1234");
@@ -1096,7 +1103,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_vendor_product() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("VP", "65521+32768");
         assert_eq!(device.vendor_id, 65521);
         assert_eq!(device.product_id, 32768);
@@ -1104,7 +1111,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_vendor_product_invalid_format() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("VP", "65521"); // Missing +PID
         assert_eq!(device.vendor_id, 0);
         assert_eq!(device.product_id, 0);
@@ -1112,7 +1119,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_vendor_product_invalid_numbers() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("VP", "abc+def");
         assert_eq!(device.vendor_id, 0);
         assert_eq!(device.product_id, 0);
@@ -1120,14 +1127,14 @@ mod tests {
 
     #[test]
     fn set_txt_value_device_name() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("DN", "Test Device");
         assert_eq!(device.device_name.as_str(), "Test Device");
     }
 
     #[test]
     fn set_txt_value_device_name_truncated() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         // Device name buffer is 32 chars, this string is longer
         let long_name = "This is a very long device name that exceeds the buffer";
         device.set_txt_value("DN", long_name);
@@ -1137,7 +1144,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_unknown_key_ignored() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("UNKNOWN", "value");
         device.set_txt_value("XYZ", "123");
         // Device should remain at defaults
@@ -1151,7 +1158,7 @@ mod tests {
     #[test]
     fn set_txt_value_keys_are_case_insensitive() {
         // Test D (discriminator) - lowercase, uppercase, mixed
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("d", "1000");
         assert_eq!(device.discriminator, 1000);
 
@@ -1159,23 +1166,23 @@ mod tests {
         assert_eq!(device.discriminator, 2000);
 
         // Test VP (vendor+product) - lowercase, uppercase, mixed
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("vp", "100+200");
         assert_eq!(device.vendor_id, 100);
         assert_eq!(device.product_id, 200);
 
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("VP", "101+201");
         assert_eq!(device.vendor_id, 101);
         assert_eq!(device.product_id, 201);
 
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("Vp", "102+202");
         assert_eq!(device.vendor_id, 102);
         assert_eq!(device.product_id, 202);
 
         // Test CM (commissioning mode) - lowercase, uppercase, mixed
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("cm", "1");
         assert_eq!(device.commissioning_mode, CommissioningMode::Basic);
 
@@ -1186,7 +1193,7 @@ mod tests {
         assert_eq!(device.commissioning_mode, CommissioningMode::Disabled);
 
         // Test DT (device type) - lowercase, uppercase, mixed
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("dt", "256");
         assert_eq!(device.device_type, 256);
 
@@ -1197,7 +1204,7 @@ mod tests {
         assert_eq!(device.device_type, 258);
 
         // Test DN (device name) - lowercase, uppercase, mixed
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("dn", "name1");
         assert_eq!(device.device_name.as_str(), "name1");
 
@@ -1208,7 +1215,7 @@ mod tests {
         assert_eq!(device.device_name.as_str(), "name3");
 
         // Test SII (MRP idle interval) - lowercase, uppercase, mixed
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("sii", "1000");
         assert_eq!(device.mrp_retry_interval_idle, Some(1000));
 
@@ -1219,7 +1226,7 @@ mod tests {
         assert_eq!(device.mrp_retry_interval_idle, Some(3000));
 
         // Test SAI (MRP active interval) - lowercase, uppercase, mixed
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("sai", "100");
         assert_eq!(device.mrp_retry_interval_active, Some(100));
 
@@ -1230,7 +1237,7 @@ mod tests {
         assert_eq!(device.mrp_retry_interval_active, Some(300));
 
         // Test PH (pairing hint) - lowercase, uppercase, mixed
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("ph", "10");
         assert_eq!(device.pairing_hint, Some(10));
 
@@ -1241,7 +1248,7 @@ mod tests {
         assert_eq!(device.pairing_hint, Some(30));
 
         // Test PI (pairing instruction) - lowercase, uppercase, mixed
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_txt_value("pi", "instruction1");
         assert_eq!(device.pairing_instruction.as_str(), "instruction1");
 
@@ -1304,7 +1311,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_commissioning_mode() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         assert_eq!(device.commissioning_mode, CommissioningMode::Disabled);
 
         device.set_txt_value("CM", "1");
@@ -1319,7 +1326,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_device_type() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         assert_eq!(device.device_type, 0);
 
         // Device type 257 (0x101) = On/Off Light
@@ -1329,7 +1336,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_device_type_large_value() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
 
         // Device type can be up to 32 bits
         device.set_txt_value("DT", "4294967295");
@@ -1338,7 +1345,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_device_type_invalid() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
 
         // Invalid value should leave device_type unchanged
         device.set_txt_value("DT", "not_a_number");
@@ -1351,7 +1358,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_mrp_idle_interval() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         assert_eq!(device.mrp_retry_interval_idle, None);
 
         // SII = 5000 ms (typical idle interval)
@@ -1361,7 +1368,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_mrp_active_interval() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         assert_eq!(device.mrp_retry_interval_active, None);
 
         // SAI = 300 ms (typical active interval)
@@ -1371,7 +1378,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_mrp_both_intervals() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
 
         device.set_txt_value("SII", "5000");
         device.set_txt_value("SAI", "300");
@@ -1382,7 +1389,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_mrp_invalid_values() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
 
         // Invalid values should leave the fields as None
         device.set_txt_value("SII", "not_a_number");
@@ -1394,7 +1401,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_mrp_large_values() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
 
         // Large values should work (C++ SDK allows up to 1 hour = 3,600,000 ms)
         device.set_txt_value("SII", "3600000");
@@ -1408,7 +1415,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_pairing_hint() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         assert_eq!(device.pairing_hint, None);
 
         // PH=33 means bits 0 and 5 set (Power Cycle + Administrator's Guide)
@@ -1418,7 +1425,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_pairing_hint_invalid() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
 
         device.set_txt_value("PH", "not_a_number");
         assert_eq!(device.pairing_hint, None);
@@ -1426,7 +1433,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_pairing_instruction() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         assert!(device.pairing_instruction.is_empty());
 
         device.set_txt_value("PI", "Press the button on the device");
@@ -1438,7 +1445,7 @@ mod tests {
 
     #[test]
     fn set_txt_value_pairing_instruction_truncated() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
 
         // Pairing instruction buffer is 128 chars, this string is longer
         let long_instruction = "This is a very long pairing instruction that exceeds the buffer size limit and should be truncated to fit within the maximum allowed length for pairing instructions in Matter devices";
@@ -1451,8 +1458,8 @@ mod tests {
     #[cfg(feature = "std")]
     #[test]
     fn push_if_unique_vec_adds_new_device() {
-        let mut devices: Vec<DiscoveredDevice> = Vec::new();
-        let mut device = DiscoveredDevice::default();
+        let mut devices = Vec::new();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_instance_name("device1");
 
         assert!(devices.push_if_unique(device));
@@ -1464,11 +1471,11 @@ mod tests {
     fn push_if_unique_vec_rejects_duplicate() {
         let mut devices = Vec::new();
 
-        let mut device1 = DiscoveredDevice::default();
+        let mut device1 = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device1.set_instance_name("device1");
         devices.push_if_unique(device1);
 
-        let mut device2 = DiscoveredDevice::default();
+        let mut device2 = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device2.set_instance_name("device1");
 
         assert!(!devices.push_if_unique(device2));
@@ -1480,11 +1487,11 @@ mod tests {
     fn push_if_unique_vec_rejects_case_insensitive_duplicate() {
         let mut devices = Vec::new();
 
-        let mut device1 = DiscoveredDevice::default();
+        let mut device1 = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device1.set_instance_name("device1");
         devices.push_if_unique(device1);
 
-        let mut device2 = DiscoveredDevice::default();
+        let mut device2 = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device2.set_instance_name("Device1");
 
         assert!(!devices.push_if_unique(device2));
@@ -1496,11 +1503,11 @@ mod tests {
     fn push_if_unique_allows_different_names() {
         let mut devices = Vec::new();
 
-        let mut device1 = DiscoveredDevice::default();
+        let mut device1 = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device1.set_instance_name("device1");
         devices.push_if_unique(device1);
 
-        let mut device2 = DiscoveredDevice::default();
+        let mut device2 = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device2.set_instance_name("device2");
 
         assert!(devices.push_if_unique(device2));
@@ -1559,14 +1566,14 @@ mod tests {
 
     #[test]
     fn device_addr_returns_none_when_empty() {
-        let device = DiscoveredDevice::default();
+        let device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         assert!(device.addr().is_none());
         assert!(device.addresses().is_empty());
     }
 
     #[test]
     fn device_add_address_single() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.port = 5540;
         device.add_address(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
 
@@ -1582,7 +1589,7 @@ mod tests {
 
     #[test]
     fn device_add_address_maintains_priority_order() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.port = 5540;
 
         // Add in wrong order - IPv4 first, then link-local IPv6
@@ -1603,7 +1610,7 @@ mod tests {
 
     #[test]
     fn device_add_address_rejects_duplicates() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         let addr = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
 
         device.add_address(addr);
@@ -1614,7 +1621,7 @@ mod tests {
 
     #[test]
     fn device_add_address_limits_to_max() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
 
         // Add more than MAX_ADDRESSES_PER_DEVICE addresses
         for i in 0..10u8 {
@@ -1626,7 +1633,7 @@ mod tests {
 
     #[test]
     fn device_add_address_evicts_lower_priority() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
 
         // Fill with IPv4 addresses (lowest priority)
         for i in 0..MAX_ADDRESSES_PER_DEVICE as u8 {
@@ -1645,7 +1652,7 @@ mod tests {
 
     #[test]
     fn device_set_addr_clears_and_sets() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
 
         // Add multiple addresses
         device.add_address(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
@@ -1668,7 +1675,7 @@ mod tests {
 
     #[test]
     fn device_socket_addresses_iterator() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.port = 5540;
         device.add_address(IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)));
         device.add_address(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));

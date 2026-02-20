@@ -44,10 +44,10 @@ use crate::transport::network::{
 };
 
 /// Internal state for tracking a device being discovered
-#[derive(Debug, Clone, Default)]
-struct DiscoveryState {
+#[derive(Debug, Clone)]
+struct DiscoveryState<const AD: usize> {
     /// The device info we're building up
-    device: DiscoveredDevice,
+    device: DiscoveredDevice<AD>,
     /// Have we received a port?
     has_port: bool,
     /// Have we received TXT records?
@@ -56,7 +56,22 @@ struct DiscoveryState {
     hostname: heapless::String<64>,
 }
 
-impl DiscoveryState {
+impl<const AD: usize> Default for DiscoveryState<AD> {
+    fn default() -> Self {
+        DiscoveryState::new()
+    }
+}
+
+impl<const AD: usize> DiscoveryState<AD> {
+    const fn new() -> Self {
+        Self {
+            device: DiscoveredDevice::new(),
+            has_port: false,
+            has_txt: false,
+            hostname: heapless::String::new(),
+        }
+    }
+
     fn is_complete(&self) -> bool {
         !self.device.addresses().is_empty() && self.has_port && self.has_txt
     }
@@ -98,7 +113,7 @@ fn names_match(name1: &str, name2: &str) -> bool {
 }
 
 /// Parse TXT record key-value pairs directly from the Txt record
-fn parse_txt_record(txt: &Txt<&[u8]>, device: &mut DiscoveredDevice) {
+fn parse_txt_record<const AD: usize>(txt: &Txt<&[u8]>, device: &mut DiscoveredDevice<AD>) {
     for item in txt.iter() {
         // Each item is a raw string like b"D=3840"
         if let Some(eq_pos) = item.iter().position(|&b| b == b'=') {
@@ -115,11 +130,11 @@ fn parse_txt_record(txt: &Txt<&[u8]>, device: &mut DiscoveredDevice) {
 }
 
 /// Process SRV record and update matching states
-fn process_srv<const D: usize>(
+fn process_srv<const D: usize, const AD: usize>(
     owner: &str,
     port: u16,
     target: &str,
-    states: &mut heapless::Vec<DiscoveryState, D>,
+    states: &mut heapless::Vec<DiscoveryState<AD>, D>,
 ) {
     for state in states.iter_mut() {
         if names_match(owner, state.device.instance_name.as_str()) {
@@ -132,10 +147,10 @@ fn process_srv<const D: usize>(
 }
 
 /// Process TXT record and update matching states
-fn process_txt<const D: usize>(
+fn process_txt<const D: usize, const AD: usize>(
     owner: &str,
     txt: &Txt<&[u8]>,
-    states: &mut heapless::Vec<DiscoveryState, D>,
+    states: &mut heapless::Vec<DiscoveryState<AD>, D>,
 ) {
     for state in states.iter_mut() {
         if names_match(owner, state.device.instance_name.as_str()) {
@@ -146,10 +161,10 @@ fn process_txt<const D: usize>(
 }
 
 /// Process A record (IPv4) and update matching states
-fn process_a<const D: usize>(
+fn process_a<const D: usize, const AD: usize>(
     owner: &str,
     ip: Ipv4Addr,
-    states: &mut heapless::Vec<DiscoveryState, D>,
+    states: &mut heapless::Vec<DiscoveryState<AD>, D>,
 ) {
     for state in states.iter_mut() {
         if !state.hostname.is_empty() && names_match(owner, state.hostname.as_str()) {
@@ -159,10 +174,10 @@ fn process_a<const D: usize>(
 }
 
 /// Process AAAA record (IPv6) and update matching states
-fn process_aaaa<const D: usize>(
+fn process_aaaa<const D: usize, const AD: usize>(
     owner: &str,
     ip: core::net::Ipv6Addr,
-    states: &mut heapless::Vec<DiscoveryState, D>,
+    states: &mut heapless::Vec<DiscoveryState<AD>, D>,
 ) {
     for state in states.iter_mut() {
         if !state.hostname.is_empty() && names_match(owner, state.hostname.as_str()) {
@@ -172,9 +187,9 @@ fn process_aaaa<const D: usize>(
 }
 
 /// Parse an mDNS response and update discovery state
-fn parse_response<const D: usize>(
+fn parse_response<const D: usize, const AD: usize>(
     data: &[u8],
-    states: &mut heapless::Vec<DiscoveryState, D>,
+    states: &mut heapless::Vec<DiscoveryState<AD>, D>,
 ) -> Result<(), Error> {
     let message = Message::from_octets(data)?;
 
@@ -283,19 +298,19 @@ fn parse_response<const D: usize>(
 ///
 /// # Returns
 /// A vector of discovered devices matching the filter criteria
-pub async fn discover_commissionable<S, R, const D: usize>(
+pub async fn discover_commissionable<S, R, const D: usize, const AD: usize>(
     send: &mut S,
     recv: &mut R,
     filter: &CommissionableFilter,
     timeout_ms: u32,
     ipv4_interface: Option<Ipv4Addr>,
     ipv6_interface: Option<u32>,
-) -> Result<heapless::Vec<DiscoveredDevice, D>, Error>
+) -> Result<heapless::Vec<DiscoveredDevice<AD>, D>, Error>
 where
     S: NetworkSend,
     R: NetworkReceive,
 {
-    let mut states: heapless::Vec<DiscoveryState, D> = heapless::Vec::new();
+    let mut states: heapless::Vec<DiscoveryState<AD>, D> = heapless::Vec::new();
     let mut query_buf = [0u8; 512];
     let mut recv_buf = [0u8; 1500];
 
@@ -373,7 +388,7 @@ where
     }
 
     // Filter and collect complete results
-    let mut results: heapless::Vec<DiscoveredDevice, D> = heapless::Vec::new();
+    let mut results: heapless::Vec<DiscoveredDevice<AD>, D> = heapless::Vec::new();
 
     for state in states {
         if !state.is_complete() {
@@ -407,16 +422,20 @@ mod tests {
     use super::*;
 
     const MAX_DISCOVERED_DEVICES: usize = 8;
+    const MAX_ADDRESSES_PER_DEVICE: usize = 4;
 
     // Helper to create a DiscoveryState with a given instance name
-    fn make_state(instance_name: &str) -> DiscoveryState {
-        let mut state = DiscoveryState::default();
+    fn make_state(instance_name: &str) -> DiscoveryState<MAX_ADDRESSES_PER_DEVICE> {
+        let mut state = DiscoveryState::<MAX_ADDRESSES_PER_DEVICE>::default();
         state.device.set_instance_name(instance_name);
         state
     }
 
     // Helper to create a DiscoveryState with instance name and hostname
-    fn make_state_with_hostname(instance_name: &str, hostname: &str) -> DiscoveryState {
+    fn make_state_with_hostname(
+        instance_name: &str,
+        hostname: &str,
+    ) -> DiscoveryState<MAX_ADDRESSES_PER_DEVICE> {
         let mut state = make_state(instance_name);
         let _ = write!(&mut state.hostname, "{}", hostname);
         state
@@ -486,7 +505,7 @@ mod tests {
         // Create a Txt record with a single item
         let txt_data = [6, b'D', b'=', b'1', b'2', b'3', b'4'];
         let txt = Txt::from_octets(&txt_data[..]).unwrap();
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         parse_txt_record(&txt, &mut device);
         assert_eq!(device.discriminator, 1234);
     }
@@ -496,7 +515,7 @@ mod tests {
         // Empty TXT record (just a zero-length string per RFC)
         let txt_data = [0u8];
         let txt = Txt::from_octets(&txt_data[..]).unwrap();
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         parse_txt_record(&txt, &mut device);
         // Device should remain at defaults
         assert_eq!(device.discriminator, 0);
@@ -517,7 +536,7 @@ mod tests {
 
     #[test]
     fn test_parse_txt_record() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
 
         // TXT record format: length-prefixed strings
         // D=3840, VP=65521+32769, DN=Test Device
@@ -540,7 +559,7 @@ mod tests {
 
     #[test]
     fn parse_txt_record_with_all_fields() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
 
         // D=1234, VP=100+200, CM=1, DT=257, DN=Light, SII=5000, SAI=300, PH=33, PI=Press
         #[rustfmt::skip]
@@ -576,7 +595,7 @@ mod tests {
 
     #[test]
     fn parse_txt_record_malformed_no_equals() {
-        let mut device = DiscoveredDevice::default();
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
 
         // Item without equals sign should be skipped
         let txt_data = [4, b'T', b'E', b'S', b'T'];
@@ -590,8 +609,10 @@ mod tests {
 
     #[test]
     fn process_srv_updates_matching_state() {
-        let mut states: heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES> =
-            heapless::Vec::new();
+        let mut states: heapless::Vec<
+            DiscoveryState<MAX_ADDRESSES_PER_DEVICE>,
+            MAX_DISCOVERED_DEVICES,
+        > = heapless::Vec::new();
         states
             .push(make_state("device1._matterc._udp.local"))
             .unwrap();
@@ -610,8 +631,10 @@ mod tests {
 
     #[test]
     fn process_srv_case_insensitive_match() {
-        let mut states: heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES> =
-            heapless::Vec::new();
+        let mut states: heapless::Vec<
+            DiscoveryState<MAX_ADDRESSES_PER_DEVICE>,
+            MAX_DISCOVERED_DEVICES,
+        > = heapless::Vec::new();
         states
             .push(make_state("DEVICE1._matterc._udp.local"))
             .unwrap();
@@ -629,8 +652,10 @@ mod tests {
 
     #[test]
     fn process_srv_no_match() {
-        let mut states: heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES> =
-            heapless::Vec::new();
+        let mut states: heapless::Vec<
+            DiscoveryState<MAX_ADDRESSES_PER_DEVICE>,
+            MAX_DISCOVERED_DEVICES,
+        > = heapless::Vec::new();
         states
             .push(make_state("device1._matterc._udp.local"))
             .unwrap();
@@ -648,8 +673,10 @@ mod tests {
 
     #[test]
     fn process_srv_multiple_states() {
-        let mut states: heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES> =
-            heapless::Vec::new();
+        let mut states: heapless::Vec<
+            DiscoveryState<MAX_ADDRESSES_PER_DEVICE>,
+            MAX_DISCOVERED_DEVICES,
+        > = heapless::Vec::new();
         states
             .push(make_state("device1._matterc._udp.local"))
             .unwrap();
@@ -676,8 +703,10 @@ mod tests {
 
     #[test]
     fn process_srv_strips_trailing_dot_from_target() {
-        let mut states: heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES> =
-            heapless::Vec::new();
+        let mut states: heapless::Vec<
+            DiscoveryState<MAX_ADDRESSES_PER_DEVICE>,
+            MAX_DISCOVERED_DEVICES,
+        > = heapless::Vec::new();
         states
             .push(make_state("device1._matterc._udp.local"))
             .unwrap();
@@ -695,8 +724,10 @@ mod tests {
 
     #[test]
     fn process_a_updates_matching_state() {
-        let mut states: heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES> =
-            heapless::Vec::new();
+        let mut states: heapless::Vec<
+            DiscoveryState<MAX_ADDRESSES_PER_DEVICE>,
+            MAX_DISCOVERED_DEVICES,
+        > = heapless::Vec::new();
         states
             .push(make_state_with_hostname(
                 "device1._matterc._udp.local",
@@ -713,8 +744,10 @@ mod tests {
 
     #[test]
     fn process_a_case_insensitive_match() {
-        let mut states: heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES> =
-            heapless::Vec::new();
+        let mut states: heapless::Vec<
+            DiscoveryState<MAX_ADDRESSES_PER_DEVICE>,
+            MAX_DISCOVERED_DEVICES,
+        > = heapless::Vec::new();
         states
             .push(make_state_with_hostname(
                 "device1._matterc._udp.local",
@@ -730,8 +763,10 @@ mod tests {
 
     #[test]
     fn process_a_no_match_wrong_hostname() {
-        let mut states: heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES> =
-            heapless::Vec::new();
+        let mut states: heapless::Vec<
+            DiscoveryState<MAX_ADDRESSES_PER_DEVICE>,
+            MAX_DISCOVERED_DEVICES,
+        > = heapless::Vec::new();
         states
             .push(make_state_with_hostname(
                 "device1._matterc._udp.local",
@@ -747,8 +782,10 @@ mod tests {
 
     #[test]
     fn process_a_no_match_empty_hostname() {
-        let mut states: heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES> =
-            heapless::Vec::new();
+        let mut states: heapless::Vec<
+            DiscoveryState<MAX_ADDRESSES_PER_DEVICE>,
+            MAX_DISCOVERED_DEVICES,
+        > = heapless::Vec::new();
         // State without hostname set (no SRV record received yet)
         states
             .push(make_state("device1._matterc._udp.local"))
@@ -763,8 +800,10 @@ mod tests {
 
     #[test]
     fn process_a_multiple_addresses() {
-        let mut states: heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES> =
-            heapless::Vec::new();
+        let mut states: heapless::Vec<
+            DiscoveryState<MAX_ADDRESSES_PER_DEVICE>,
+            MAX_DISCOVERED_DEVICES,
+        > = heapless::Vec::new();
         states
             .push(make_state_with_hostname(
                 "device1._matterc._udp.local",
@@ -780,8 +819,10 @@ mod tests {
 
     #[test]
     fn process_aaaa_updates_matching_state() {
-        let mut states: heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES> =
-            heapless::Vec::new();
+        let mut states: heapless::Vec<
+            DiscoveryState<MAX_ADDRESSES_PER_DEVICE>,
+            MAX_DISCOVERED_DEVICES,
+        > = heapless::Vec::new();
         states
             .push(make_state_with_hostname(
                 "device1._matterc._udp.local",
@@ -798,8 +839,10 @@ mod tests {
 
     #[test]
     fn process_aaaa_case_insensitive_match() {
-        let mut states: heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES> =
-            heapless::Vec::new();
+        let mut states: heapless::Vec<
+            DiscoveryState<MAX_ADDRESSES_PER_DEVICE>,
+            MAX_DISCOVERED_DEVICES,
+        > = heapless::Vec::new();
         states
             .push(make_state_with_hostname(
                 "device1._matterc._udp.local",
@@ -815,8 +858,10 @@ mod tests {
 
     #[test]
     fn process_aaaa_no_match_empty_hostname() {
-        let mut states: heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES> =
-            heapless::Vec::new();
+        let mut states: heapless::Vec<
+            DiscoveryState<MAX_ADDRESSES_PER_DEVICE>,
+            MAX_DISCOVERED_DEVICES,
+        > = heapless::Vec::new();
         states
             .push(make_state("device1._matterc._udp.local"))
             .unwrap();
@@ -829,8 +874,10 @@ mod tests {
 
     #[test]
     fn process_aaaa_multiple_addresses() {
-        let mut states: heapless::Vec<DiscoveryState, MAX_DISCOVERED_DEVICES> =
-            heapless::Vec::new();
+        let mut states: heapless::Vec<
+            DiscoveryState<MAX_ADDRESSES_PER_DEVICE>,
+            MAX_DISCOVERED_DEVICES,
+        > = heapless::Vec::new();
         states
             .push(make_state_with_hostname(
                 "device1._matterc._udp.local",
