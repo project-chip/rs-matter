@@ -223,10 +223,10 @@ impl CommissioningMode {
 pub fn score_ip_address(addr: &IpAddr) -> u8 {
     match addr {
         IpAddr::V6(ipv6) => {
-            if is_ipv6_link_local(ipv6) {
+            if ipv6.is_unicast_link_local() {
                 // Link-local IPv6 (fe80::/10) - highest priority
                 100
-            } else if is_ipv6_unique_local(ipv6) {
+            } else if ipv6.is_unique_local() {
                 // Unique local address (fc00::/7) - second priority
                 80
             } else if is_ipv6_global_unicast(ipv6) {
@@ -242,18 +242,6 @@ pub fn score_ip_address(addr: &IpAddr) -> u8 {
             20
         }
     }
-}
-
-/// Check if an IPv6 address is link-local (fe80::/10)
-fn is_ipv6_link_local(addr: &Ipv6Addr) -> bool {
-    let segments = addr.segments();
-    (segments[0] & 0xffc0) == 0xfe80
-}
-
-/// Check if an IPv6 address is unique local (fc00::/7)
-fn is_ipv6_unique_local(addr: &Ipv6Addr) -> bool {
-    let segments = addr.segments();
-    (segments[0] & 0xfe00) == 0xfc00
 }
 
 /// Check if an IPv6 address is global unicast (2000::/3)
@@ -1690,47 +1678,6 @@ mod tests {
             addrs[1],
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 5540)
         );
-    }
-
-    #[test]
-    fn is_ipv6_link_local_correct() {
-        // fe80::/10 range
-        assert!(is_ipv6_link_local(&Ipv6Addr::new(
-            0xfe80, 0, 0, 0, 0, 0, 0, 1
-        )));
-        assert!(is_ipv6_link_local(&Ipv6Addr::new(
-            0xfebf, 0xffff, 0, 0, 0, 0, 0, 1
-        )));
-
-        // Not link-local
-        assert!(!is_ipv6_link_local(&Ipv6Addr::new(
-            0xfec0, 0, 0, 0, 0, 0, 0, 1
-        )));
-        assert!(!is_ipv6_link_local(&Ipv6Addr::new(
-            0x2001, 0, 0, 0, 0, 0, 0, 1
-        )));
-    }
-
-    #[test]
-    fn is_ipv6_unique_local_correct() {
-        // fc00::/7 range
-        assert!(is_ipv6_unique_local(&Ipv6Addr::new(
-            0xfc00, 0, 0, 0, 0, 0, 0, 1
-        )));
-        assert!(is_ipv6_unique_local(&Ipv6Addr::new(
-            0xfd00, 0, 0, 0, 0, 0, 0, 1
-        )));
-        assert!(is_ipv6_unique_local(&Ipv6Addr::new(
-            0xfdff, 0xffff, 0, 0, 0, 0, 0, 1
-        )));
-
-        // Not ULA
-        assert!(!is_ipv6_unique_local(&Ipv6Addr::new(
-            0xfe80, 0, 0, 0, 0, 0, 0, 1
-        )));
-        assert!(!is_ipv6_unique_local(&Ipv6Addr::new(
-            0x2001, 0, 0, 0, 0, 0, 0, 1
-        )));
     }
 
     #[test]
