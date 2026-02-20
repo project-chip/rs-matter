@@ -449,7 +449,9 @@ where
         while (self.endpoint_index as usize) < self.node.endpoints.len() {
             let endpoint = &self.node.endpoints[self.endpoint_index as usize];
 
-            if path.endpoint.is_none() || path.endpoint == Some(endpoint.id) {
+            if (path.endpoint.is_none() || path.endpoint == Some(endpoint.id))
+                && self.accessor.is_endpoint_accessible(endpoint.id)
+            {
                 while (self.cluster_index as usize) < endpoint.clusters.len() {
                     let cluster = &endpoint.clusters[self.cluster_index as usize];
 

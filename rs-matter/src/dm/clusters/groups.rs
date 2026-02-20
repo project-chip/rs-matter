@@ -127,7 +127,10 @@ impl ClusterHandler for GroupsHandler {
             endpoint_id,
             group_name,
         ) {
-            Ok(_) => response.status(STATUS_SUCCESS)?.group_id(group_id)?.end(),
+            Ok(_) => {
+                ctx.exchange().matter().notify_groups_changed();
+                response.status(STATUS_SUCCESS)?.group_id(group_id)?.end()
+            }
             Err(e) if e.code() == ErrorCode::ResourceExhausted => response
                 .status(STATUS_RESOURCE_EXHAUSTED)?
                 .group_id(group_id)?
@@ -245,6 +248,7 @@ impl ClusterHandler for GroupsHandler {
             .group_remove(fab_idx, group_id, endpoint_id)?;
 
         if removed {
+            ctx.exchange().matter().notify_groups_changed();
             response.status(STATUS_SUCCESS)?.group_id(group_id)?.end()
         } else {
             response.status(STATUS_NOT_FOUND)?.group_id(group_id)?.end()
@@ -261,6 +265,8 @@ impl ClusterHandler for GroupsHandler {
             .fabric_mgr
             .borrow_mut()
             .group_remove_all_for_endpoint(fab_idx, endpoint_id)?;
+
+        ctx.exchange().matter().notify_groups_changed();
 
         Ok(())
     }
