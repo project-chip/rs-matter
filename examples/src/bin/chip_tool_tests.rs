@@ -145,9 +145,16 @@ fn main() -> Result<(), Error> {
         .init_with(DefaultEvents::init(rs_matter::utils::epoch::sys_epoch));
 
     // Our on-off cluster
-    let on_off_handler = OnOffHandler::new_standalone(
+    let on_off_handler_1 = OnOffHandler::new_standalone(
         Dataver::new_rand(&mut rand),
         1,
+        TestOnOffDeviceLogic::new(false),
+    );
+
+    // On-off cluster for 2nd endpoint
+    let on_off_handler_2 = OnOffHandler::new_standalone(
+        Dataver::new_rand(&mut rand),
+        2,
         TestOnOffDeviceLogic::new(false),
     );
 
@@ -163,7 +170,12 @@ fn main() -> Result<(), Error> {
         buffers,
         subscriptions,
         Some(events),
-        dm_handler(rand, unit_testing_data, &on_off_handler),
+        dm_handler(
+            rand,
+            unit_testing_data,
+            &on_off_handler_1,
+            &on_off_handler_2,
+        ),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -269,6 +281,16 @@ const NODE: Node<'static> = Node {
                 UnitTestingHandler::CLUSTER
             ),
         },
+        Endpoint {
+            id: 2,
+            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters: clusters!(
+                desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
+                TestOnOffDeviceLogic::CLUSTER,
+                UnitTestingHandler::CLUSTER
+            ),
+        },
     ],
 };
 
@@ -277,7 +299,8 @@ const NODE: Node<'static> = Node {
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     mut rand: impl RngCore + Copy,
     unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
-    on_off: &'a OnOffHandler<'a, OH, LH>,
+    on_off_1: &'a OnOffHandler<'a, OH, LH>,
+    on_off_2: &'a OnOffHandler<'a, OH, LH>,
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
@@ -289,6 +312,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 &false,
                 rand,
                 EmptyHandler
+                    // Clusters for Endpoint 1
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
                         Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
@@ -299,7 +323,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                        on_off::HandlerAsyncAdaptor(on_off),
+                        on_off::HandlerAsyncAdaptor(on_off_1),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(UnitTestingHandler::CLUSTER.id)),
@@ -310,6 +334,19 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                             )
                             .adapt(),
                         ),
+                    )
+                    // (mostly) Similar Clusters for Endpoint 2
+                    .chain(
+                        EpClMatcher::new(Some(2), Some(desc::DescHandler::CLUSTER.id)),
+                        Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                    )
+                    .chain(
+                        EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
+                        Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                    )
+                    .chain(
+                        EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                        on_off::HandlerAsyncAdaptor(on_off_2),
                     ),
             ),
         ),

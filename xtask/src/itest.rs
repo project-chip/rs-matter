@@ -53,7 +53,7 @@ const DEFAULT_TESTS: &[&str] = &[
     // "TestEventsById", // TODO: specific cluster, to be implemented with all others
     "TestFabricRemovalWhileSubscribed",
     "TestGeneralCommissioning",
-    // "TestGroupMessaging", // TODO: specific cluster, to be implemented with all others
+    "TestGroupMessaging",
     "TestGroupsCluster",
     "TestGroupKeyManagementCluster",
     // "TestIdentifyCluster", // TODO: specific cluster, to be implemented with all others
