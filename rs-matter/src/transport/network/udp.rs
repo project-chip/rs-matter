@@ -27,7 +27,7 @@ use async_io::Async;
 
 use crate::transport::network::Address;
 
-use super::{NetworkReceive, NetworkSend};
+use super::{NetworkIPv6Multicast, NetworkReceive, NetworkSend};
 
 impl NetworkSend for &Async<UdpSocket> {
     async fn send_to(&mut self, data: &[u8], addr: Address) -> Result<(), Error> {
@@ -49,5 +49,19 @@ impl NetworkReceive for &Async<UdpSocket> {
         let (len, addr) = Async::<UdpSocket>::recv_from(self, buffer).await?;
 
         Ok((len, Address::Udp(addr)))
+    }
+}
+
+impl NetworkIPv6Multicast for &Async<UdpSocket> {
+    async fn register_ipv6_multicast(&mut self, addr: std::net::Ipv6Addr) -> Result<(), Error> {
+        self.get_ref().join_multicast_v6(&addr, 0)?;
+
+        Ok(())
+    }
+
+    async fn unregister_ipv6_multicast(&mut self, addr: std::net::Ipv6Addr) -> Result<(), Error> {
+        self.get_ref().leave_multicast_v6(&addr, 0)?;
+
+        Ok(())
     }
 }

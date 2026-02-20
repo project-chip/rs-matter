@@ -220,6 +220,36 @@ where
     }
 }
 
+/// A trait to listen for IPv6 multicast on supported network types
+///
+/// This is used for listening to groupcast messages
+pub trait NetworkIPv6Multicast {
+    /// Register to listen for data on specific multicast address
+    async fn register_ipv6_multicast(&mut self, addr: Ipv6Addr) -> Result<(), Error>;
+
+    /// Register to listen for data on specific multicast address
+    async fn unregister_ipv6_multicast(&mut self, addr: Ipv6Addr) -> Result<(), Error>;
+}
+
+impl<T> NetworkIPv6Multicast for &mut T
+where
+    T: NetworkIPv6Multicast,
+{
+    fn register_ipv6_multicast(
+        &mut self,
+        addr: Ipv6Addr,
+    ) -> impl Future<Output = Result<(), Error>> {
+        (*self).register_ipv6_multicast(addr)
+    }
+
+    fn unregister_ipv6_multicast(
+        &mut self,
+        addr: Ipv6Addr,
+    ) -> impl Future<Output = Result<(), Error>> {
+        (*self).unregister_ipv6_multicast(addr)
+    }
+}
+
 /// A network implementation that does not support any network communication:
 /// - Trying to send a packet always results in a `ErrorCode::NoNetworkInterface` error.
 /// - Trying to wait/receive a packet pends forever.
@@ -240,6 +270,16 @@ impl NetworkReceive for NoNetwork {
 
     async fn recv_from(&mut self, _buffer: &mut [u8]) -> Result<(usize, Address), Error> {
         core::future::pending().await
+    }
+}
+
+impl NetworkIPv6Multicast for NoNetwork {
+    async fn register_ipv6_multicast(&mut self, _addr: Ipv6Addr) -> Result<(), Error> {
+        Ok(())
+    }
+
+    async fn unregister_ipv6_multicast(&mut self, _addr: Ipv6Addr) -> Result<(), Error> {
+        Ok(())
     }
 }
 
@@ -329,5 +369,21 @@ where
         } else {
             self.next.send_to(data, addr).await
         }
+    }
+}
+
+impl<H, T, F> NetworkIPv6Multicast for ChainedNetwork<H, T, F>
+where
+    H: NetworkIPv6Multicast,
+    T: NetworkIPv6Multicast,
+{
+    async fn register_ipv6_multicast(&mut self, addr: Ipv6Addr) -> Result<(), Error> {
+        self.handler.register_ipv6_multicast(addr).await?;
+        self.next.register_ipv6_multicast(addr).await
+    }
+
+    async fn unregister_ipv6_multicast(&mut self, addr: Ipv6Addr) -> Result<(), Error> {
+        self.handler.unregister_ipv6_multicast(addr).await?;
+        self.next.unregister_ipv6_multicast(addr).await
     }
 }
