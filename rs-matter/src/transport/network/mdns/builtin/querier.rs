@@ -292,8 +292,8 @@ fn parse_response<const D: usize, const AD: usize>(
 /// # Returns
 /// A vector of discovered devices matching the filter criteria
 pub async fn discover_commissionable<S, R, const D: usize, const AD: usize>(
-    send: &mut S,
-    recv: &mut R,
+    mut send: S,
+    mut recv: R,
     filter: &CommissionableFilter,
     timeout_ms: u32,
     ipv4_interface: Option<Ipv4Addr>,
