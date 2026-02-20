@@ -354,6 +354,12 @@ impl<'a> Accessor<'a> {
                 Some(AuthMode::Pase),
                 fabric_mgr,
             ),
+            SessionMode::Group { fab_idx, group_id } => Accessor::new(
+                fab_idx.get(),
+                AccessorSubjects::new(*group_id as u64),
+                Some(AuthMode::Group),
+                fabric_mgr,
+            ),
             SessionMode::PlainText => Accessor::new(0, AccessorSubjects::new(1), None, fabric_mgr),
         }
     }
@@ -387,6 +393,28 @@ impl<'a> Accessor<'a> {
     /// Return the auth mode of the accessor
     pub fn auth_mode(&self) -> Option<AuthMode> {
         self.auth_mode
+    }
+
+    /// Return whether the given endpoint is accessible for this accessor.
+    ///
+    /// For group sessions, only endpoints that are members of the group are accessible.
+    /// For all other session types, all endpoints are accessible.
+    pub fn is_endpoint_accessible(&self, endpoint_id: EndptId) -> bool {
+        if self.auth_mode != Some(AuthMode::Group) {
+            return true;
+        }
+
+        let group_id = self.subjects.0[0] as u16;
+
+        let fm = self.fabric_mgr.borrow();
+        let Some(fab_idx) = core::num::NonZeroU8::new(self.fab_idx) else {
+            return false;
+        };
+        let Some(fabric) = fm.get(fab_idx) else {
+            return false;
+        };
+
+        fabric.has_group(group_id, endpoint_id)
     }
 }
 
