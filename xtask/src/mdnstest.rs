@@ -42,6 +42,9 @@ pub const DEFAULT_PASSCODE: u32 = 20202021;
 /// Default discovery timeout in milliseconds
 pub const DEFAULT_DISCOVERY_TIMEOUT_MS: u32 = 10000;
 
+const MAX_DISCOVERED_DEVICES: usize = 8;
+const MAX_DEVICE_ADDRESSES: usize = 4;
+
 /// The directory where the Chip repository will be cloned
 const CHIP_DIR: &str = ".build/mdnstest/connectedhomeip";
 
@@ -290,16 +293,17 @@ impl MdnsTests {
         };
 
         // Run discovery using the builtin mDNS querier
-        let devices = discover_commissionable(
-            &mut &socket,
-            &mut &socket,
-            &filter,
-            timeout_ms,
-            Some(ipv4_addr),
-            ipv6_interface,
-        )
-        .await
-        .context("mDNS discovery failed")?;
+        let devices =
+            discover_commissionable::<_, _, MAX_DISCOVERED_DEVICES, MAX_DEVICE_ADDRESSES>(
+                &mut &socket,
+                &mut &socket,
+                &filter,
+                timeout_ms,
+                Some(ipv4_addr),
+                ipv6_interface,
+            )
+            .await
+            .context("mDNS discovery failed")?;
 
         info!("Discovery complete. Found {} device(s)", devices.len());
 
@@ -376,9 +380,9 @@ impl MdnsTests {
         Ok((ip, ipv6_available, if_index))
     }
 
-    fn verify_discovery_results(
+    fn verify_discovery_results<const A: usize>(
         &self,
-        devices: &[DiscoveredDevice],
+        devices: &[DiscoveredDevice<A>],
         expected_discriminator: u16,
     ) -> anyhow::Result<()> {
         // Check that we found exactly one device

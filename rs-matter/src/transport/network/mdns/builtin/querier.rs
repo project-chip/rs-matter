@@ -131,11 +131,11 @@ fn parse_txt_record<const AD: usize>(txt: &Txt<&[u8]>, device: &mut DiscoveredDe
 }
 
 /// Process SRV record and update matching states
-fn process_srv<const D: usize, const AD: usize>(
+fn process_srv<const AD: usize>(
     owner: &str,
     port: u16,
     target: &str,
-    states: &mut heapless::Vec<DiscoveryState<AD>, D>,
+    states: &mut [DiscoveryState<AD>],
 ) {
     for state in states.iter_mut() {
         if names_match(owner, state.device.instance_name.as_str()) {
@@ -148,11 +148,7 @@ fn process_srv<const D: usize, const AD: usize>(
 }
 
 /// Process TXT record and update matching states
-fn process_txt<const D: usize, const AD: usize>(
-    owner: &str,
-    txt: &Txt<&[u8]>,
-    states: &mut heapless::Vec<DiscoveryState<AD>, D>,
-) {
+fn process_txt<const AD: usize>(owner: &str, txt: &Txt<&[u8]>, states: &mut [DiscoveryState<AD>]) {
     for state in states.iter_mut() {
         if names_match(owner, state.device.instance_name.as_str()) {
             parse_txt_record(txt, &mut state.device);
@@ -162,11 +158,7 @@ fn process_txt<const D: usize, const AD: usize>(
 }
 
 /// Process A record (IPv4) and update matching states
-fn process_a<const D: usize, const AD: usize>(
-    owner: &str,
-    ip: Ipv4Addr,
-    states: &mut heapless::Vec<DiscoveryState<AD>, D>,
-) {
+fn process_a<const AD: usize>(owner: &str, ip: Ipv4Addr, states: &mut [DiscoveryState<AD>]) {
     for state in states.iter_mut() {
         if !state.hostname.is_empty() && names_match(owner, state.hostname.as_str()) {
             state.device.add_address(IpAddr::V4(ip));
@@ -175,10 +167,10 @@ fn process_a<const D: usize, const AD: usize>(
 }
 
 /// Process AAAA record (IPv6) and update matching states
-fn process_aaaa<const D: usize, const AD: usize>(
+fn process_aaaa<const AD: usize>(
     owner: &str,
     ip: core::net::Ipv6Addr,
-    states: &mut heapless::Vec<DiscoveryState<AD>, D>,
+    states: &mut [DiscoveryState<AD>],
 ) {
     for state in states.iter_mut() {
         if !state.hostname.is_empty() && names_match(owner, state.hostname.as_str()) {
