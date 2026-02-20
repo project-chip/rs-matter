@@ -465,7 +465,13 @@ impl TransportMgr {
         let result = self.decode_packet(&crypto, packet);
         match result {
             Err(e) if matches!(e.code(), ErrorCode::Duplicate) => {
-                if !packet.peer.is_reliable()
+                if packet.header.plain.is_group_session() {
+                    // Group messages are multicast and don't use MRP; silently discard duplicates
+                    debug!(
+                        "\n>>RCV {}\n      => Duplicate group message, discarding",
+                        packet
+                    );
+                } else if !packet.peer.is_reliable()
                     && !MessageMeta::from(&packet.header.proto).is_standalone_ack()
                 {
                     debug!("\n>>RCV {}\n      => Duplicate, sending ACK", packet);
@@ -853,8 +859,15 @@ impl TransportMgr {
                 // Session created successfully: decode, indicate packet payload slice and process further
                 return session.post_recv(&packet.header, epoch);
             }
+        } else if packet.header.plain.is_group_session() {
+            // Group (multicast) message — decrypt using pre-cached group operational keys
+            let (session, payload_range) =
+                session_mgr.get_or_create_for_group_rx(&crypto, packet)?;
+            set_payload(packet, payload_range);
+
+            return session.post_recv(&packet.header, epoch);
         } else {
-            // Packet cannot be decoded, set packet payload to empty
+            // Encrypted unicast packet with no matching session — cannot be decoded
             set_payload(packet, (0, 0));
         }
 

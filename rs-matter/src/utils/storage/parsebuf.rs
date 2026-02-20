@@ -67,6 +67,10 @@ where
         self.left = left;
     }
 
+    pub fn read_off(&self) -> usize {
+        self.read_off
+    }
+
     pub fn slice_range(&self) -> (usize, usize) {
         (self.read_off, self.read_off + self.left)
     }

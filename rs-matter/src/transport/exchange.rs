@@ -35,7 +35,7 @@ use super::network;
 use super::packet::PacketHdr;
 use super::plain_hdr::PlainHdr;
 use super::proto_hdr::ProtoHdr;
-use super::session::Session;
+use super::session::{Session, SessionMode};
 use super::{PacketAccess, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE};
 
 /// Minimum buffer which should be allocated by user code that wants to pull RX messages via `Exchange::recv_into`
@@ -1151,6 +1151,10 @@ impl<'a> Exchange<'a> {
         self.id.accessor(self.matter)
     }
 
+    pub fn is_groupcast(&self) -> Result<bool, Error> {
+        self.with_session(|sess| Ok(matches!(sess.get_session_mode(), SessionMode::Group { .. })))
+    }
+
     pub(crate) fn with_session<F, T>(&self, f: F) -> Result<T, Error>
     where
         F: FnOnce(&mut Session) -> Result<T, Error>,
@@ -1168,10 +1172,30 @@ impl<'a> Exchange<'a> {
 
 impl Drop for Exchange<'_> {
     fn drop(&mut self) {
-        let closed = self.with_ctx(|sess, exch_index| Ok(sess.remove_exch(exch_index)));
+        let result = self.with_ctx(|sess, exch_index| {
+            let closed = sess.remove_exch(exch_index);
+            let remove_session = matches!(sess.get_session_mode(), SessionMode::Group { .. })
+                && sess.exchanges.iter().all(Option::is_none);
+            Ok((closed, remove_session))
+        });
 
-        if !matches!(closed, Ok(true)) {
-            self.matter.transport_mgr.dropped.notify();
+        match result {
+            Ok((true, true)) => {
+                // Group session with no remaining exchanges — remove the ephemeral session
+                let session_id = self.id.session_id();
+                self.matter
+                    .transport_mgr
+                    .session_mgr
+                    .borrow_mut()
+                    .remove(session_id);
+                self.matter.transport_mgr.session_removed.notify();
+            }
+            Ok((true, false)) => {
+                // Exchange closed cleanly, session still has other exchanges or is not a group session
+            }
+            _ => {
+                self.matter.transport_mgr.dropped.notify();
+            }
         }
     }
 }

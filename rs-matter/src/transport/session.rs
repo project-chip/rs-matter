@@ -23,8 +23,13 @@ use cfg_if::cfg_if;
 
 use rand_core::RngCore;
 
-use crate::crypto::{canon, CanonAeadKey, CanonAeadKeyRef, Crypto};
+use crate::crypto::{
+    canon, CanonAeadKey, CanonAeadKeyRef, Crypto, CryptoSensitive, Kdf, AEAD_KEY_ZEROED,
+};
 use crate::error::*;
+use crate::fabric::{FabricMgr, MAX_FABRICS, MAX_GROUPS_PER_FABRIC};
+use crate::group_keys::KeySet;
+
 use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::ReliableMessage;
 use crate::utils::cell::RefCell;
@@ -33,16 +38,21 @@ use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::storage::{ParseBuf, WriteBuf};
 use crate::Matter;
 
-use super::dedup::RxCtrState;
+use super::dedup::{GroupCtrStore, RxCtrState};
 use super::exchange::{ExchangeState, MessageMeta, Role};
 use super::mrp::RetransEntry;
 use super::network::Address;
 use super::packet::PacketHdr;
 use super::plain_hdr::PlainHdr;
 use super::proto_hdr::ProtoHdr;
+use super::Packet;
 
 pub const MAX_CAT_IDS_PER_NOC: usize = 3;
 pub type NocCatIds = [u32; MAX_CAT_IDS_PER_NOC];
+
+/// Max number of pre-cached group operational keys.
+/// Each fabric can have up to [`MAX_GROUP_KEY_MAP_ENTRIES_PER_FABRIC`] key map entries × 3 epoch keys.
+pub const MAX_GROUP_OP_KEYS: usize = MAX_FABRICS * MAX_GROUPS_PER_FABRIC * 3;
 
 pub const ATT_CHALLENGE_LEN: usize = 16;
 
@@ -52,6 +62,17 @@ canon!(
     AttChallenge,
     AttChallengeRef
 );
+
+/// A pre-derived group operational key entry for the session layer cache.
+pub struct GroupOpKeyEntry {
+    pub fab_idx: NonZeroU8,
+    pub key_set_id: u16,
+    pub group_id: u16,
+    /// The derived Group Session ID for fast filtering.
+    pub session_id: u16,
+    /// The pre-derived operational key.
+    pub op_key: CanonAeadKey,
+}
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -68,6 +89,11 @@ pub enum SessionMode {
     Pase {
         fab_idx: u8,
     },
+    // A group session used for group (multicast) messaging.
+    Group {
+        fab_idx: NonZeroU8,
+        group_id: u16,
+    },
     #[default]
     PlainText,
 }
@@ -77,6 +103,7 @@ impl SessionMode {
         match self {
             SessionMode::Case { fab_idx, .. } => fab_idx.get(),
             SessionMode::Pase { fab_idx, .. } => *fab_idx,
+            SessionMode::Group { fab_idx, .. } => fab_idx.get(),
             SessionMode::PlainText => 0,
         }
     }
@@ -191,7 +218,7 @@ impl Session {
 
     pub fn is_encrypted(&self) -> bool {
         match self.mode {
-            SessionMode::Case { .. } | SessionMode::Pase { .. } => true,
+            SessionMode::Case { .. } | SessionMode::Pase { .. } | SessionMode::Group { .. } => true,
             SessionMode::PlainText => false,
         }
     }
@@ -208,6 +235,10 @@ impl Session {
         &self.mode
     }
 
+    pub(crate) fn set_session_mode(&mut self, mode: SessionMode) {
+        self.mode = mode;
+    }
+
     fn get_msg_ctr(&mut self) -> u32 {
         let ctr = self.msg_ctr;
         self.msg_ctr += 1;
@@ -216,14 +247,18 @@ impl Session {
 
     pub fn get_dec_key(&self) -> Option<CanonAeadKeyRef<'_>> {
         match self.mode {
-            SessionMode::Case { .. } | SessionMode::Pase { .. } => Some(self.dec_key.reference()),
+            SessionMode::Case { .. } | SessionMode::Pase { .. } | SessionMode::Group { .. } => {
+                Some(self.dec_key.reference())
+            }
             SessionMode::PlainText => None,
         }
     }
 
     pub fn get_enc_key(&self) -> Option<CanonAeadKeyRef<'_>> {
         match self.mode {
-            SessionMode::Case { .. } | SessionMode::Pase { .. } => Some(self.enc_key.reference()),
+            SessionMode::Case { .. } | SessionMode::Pase { .. } | SessionMode::Group { .. } => {
+                Some(self.enc_key.reference())
+            }
             SessionMode::PlainText => None,
         }
     }
@@ -233,7 +268,7 @@ impl Session {
             SessionMode::Case { .. } | SessionMode::Pase { .. } => {
                 Some(self.att_challenge.reference())
             }
-            SessionMode::PlainText => None,
+            SessionMode::PlainText | SessionMode::Group { .. } => None,
         }
     }
 
@@ -654,6 +689,8 @@ pub struct SessionMgr {
     next_sess_id: u16,
     next_exch_id: u16,
     sessions: crate::utils::storage::Vec<Session, MAX_SESSIONS>,
+    group_op_keys: crate::utils::storage::Vec<GroupOpKeyEntry, MAX_GROUP_OP_KEYS>,
+    group_ctr_store: GroupCtrStore,
     pub(crate) epoch: Epoch,
 }
 
@@ -663,6 +700,8 @@ impl SessionMgr {
     pub const fn new(epoch: Epoch) -> Self {
         Self {
             sessions: crate::utils::storage::Vec::new(),
+            group_op_keys: crate::utils::storage::Vec::new(),
+            group_ctr_store: GroupCtrStore::new(),
             next_sess_unique_id: 0,
             next_sess_id: 1,
             next_exch_id: 1,
@@ -674,6 +713,8 @@ impl SessionMgr {
     pub fn init(epoch: Epoch) -> impl Init<Self> {
         init!(Self {
             sessions <- crate::utils::storage::Vec::init(),
+            group_op_keys: crate::utils::storage::Vec::new(),
+            group_ctr_store: GroupCtrStore::new(),
             next_sess_unique_id: 0,
             next_sess_id: 1,
             next_exch_id: 1,
@@ -683,8 +724,235 @@ impl SessionMgr {
 
     pub fn reset(&mut self) {
         self.sessions.clear();
+        self.group_op_keys.clear();
+        self.group_ctr_store = GroupCtrStore::new();
         self.next_sess_id = 1;
         self.next_exch_id = 1;
+    }
+
+    /// Rebuild the group operational key cache from the current fabric state.
+    ///
+    /// Pre-derives all group operational keys so that the transport layer
+    /// can decrypt group messages without needing access to `FabricMgr`.
+    pub fn rebuild_group_op_keys<C: Crypto>(&mut self, crypto: &C, fabric_mgr: &FabricMgr) {
+        self.group_op_keys.clear();
+
+        for fabric in fabric_mgr.iter() {
+            let fab_idx = fabric.fab_idx();
+            let compressed_fabric_id = fabric.compressed_fabric_id();
+
+            // For each group key map entry, derive op keys from the referenced key set
+            for map_entry in fabric.group_key_map_iter() {
+                let Some(key_set_entry) = fabric.group_key_set_get(map_entry.group_key_set_id)
+                else {
+                    continue;
+                };
+
+                let epoch_keys: [Option<&[u8]>; 3] = [
+                    Some(key_set_entry.epoch_key0.vec.as_slice()),
+                    if key_set_entry.has_epoch_key1 {
+                        Some(key_set_entry.epoch_key1.vec.as_slice())
+                    } else {
+                        None
+                    },
+                    if key_set_entry.has_epoch_key2 {
+                        Some(key_set_entry.epoch_key2.vec.as_slice())
+                    } else {
+                        None
+                    },
+                ];
+
+                for epoch_key_bytes in epoch_keys.into_iter().flatten() {
+                    let mut temp_key_set = KeySet::new();
+                    let mut epoch_key_canon = AEAD_KEY_ZEROED;
+                    if epoch_key_canon
+                        .try_load_from_slice(epoch_key_bytes)
+                        .is_err()
+                    {
+                        continue;
+                    }
+                    if temp_key_set
+                        .update(crypto, epoch_key_canon.reference(), &compressed_fabric_id)
+                        .is_err()
+                    {
+                        continue;
+                    }
+
+                    let op_key_ref = temp_key_set.op_key();
+                    if let Ok(session_id) = derive_group_session_id(crypto, op_key_ref) {
+                        let mut op_key = AEAD_KEY_ZEROED;
+                        op_key.load(op_key_ref);
+                        if let Err(_err) = self.group_op_keys.push(GroupOpKeyEntry {
+                            fab_idx,
+                            key_set_id: map_entry.group_key_set_id,
+                            group_id: map_entry.group_id,
+                            session_id,
+                            op_key,
+                        }) {
+                            warn!("Failed to save the operational keys for fabric index: {} group: {}", fab_idx, map_entry.group_id);
+                        };
+                    }
+                }
+            }
+        }
+
+        debug!(
+            "Group: Rebuilt op key cache with {} entries",
+            self.group_op_keys.len()
+        );
+    }
+
+    /// Attempt to decrypt and accept a group (multicast) message.
+    ///
+    /// Iterates over pre-cached group operational keys matching the packet's
+    /// `(session_id, group_id)`, tries to decrypt with each, validates the
+    /// group message counter, and creates an ephemeral group session on success.
+    ///
+    /// Returns the created session and payload range, mirroring how unicast
+    /// uses `get_for_rx()` + `decode_remaining()`.
+    pub(crate) fn get_or_create_for_group_rx<const N: usize, C: Crypto>(
+        &mut self,
+        crypto: &C,
+        packet: &mut Packet<N>,
+    ) -> Result<(&mut Session, (usize, usize)), Error> {
+        let src_nodeid = packet
+            .header
+            .plain
+            .get_src_nodeid()
+            .ok_or(ErrorCode::InvalidData)?;
+        let group_id = packet
+            .header
+            .plain
+            .get_dst_groupcast_nodeid()
+            .ok_or(ErrorCode::InvalidData)?;
+        let expected_sess_id = packet.header.plain.sess_id;
+        let msg_ctr = packet.header.plain.ctr;
+
+        debug!(
+            "Group: Attempting decrypt for PEER={:?} SID=0x{:04x}, GRP=0x{:04x}, SRC=0x{:016x}, CTR={}",
+            packet.peer, expected_sess_id, group_id, src_nodeid, msg_ctr
+        );
+
+        // Parse the plain header to determine encrypted portion offset
+        let mut pb = ParseBuf::new(&mut packet.buf[packet.payload_start..]);
+        packet.header.plain.decode(&mut pb)?;
+
+        // Save the current
+        let encrypted_offset = pb.read_off();
+        let encrypted_len = pb.as_slice().len();
+        let mut saved_encrypted = [0u8; 1280];
+        if encrypted_len > saved_encrypted.len() {
+            return Err(ErrorCode::BufferTooSmall.into());
+        }
+        saved_encrypted[..encrypted_len].copy_from_slice(pb.as_slice());
+
+        // Try cached keys matching session_id AND group_id
+        let mut group_key_found: Option<(NonZeroU8, (usize, usize))> = None;
+
+        for entry in &self.group_op_keys {
+            if entry.session_id != expected_sess_id || entry.group_id != group_id {
+                continue;
+            }
+
+            if let Some(payload_range) = Self::try_group_decrypt(
+                crypto,
+                packet,
+                &saved_encrypted[..encrypted_len],
+                encrypted_offset,
+                entry.op_key.reference(),
+                src_nodeid,
+            ) {
+                group_key_found = Some((entry.fab_idx, payload_range));
+                break;
+            }
+        }
+
+        if group_key_found.is_none() {
+            debug!(
+                "Group: No key could decrypt the message (SID=0x{:04x}, GRP=0x{:04x})",
+                expected_sess_id, group_id
+            );
+        }
+
+        let (fab_idx, payload_range) = group_key_found.ok_or(ErrorCode::NoSession)?;
+
+        // Validate group message counter before creating the session
+        if !self
+            .group_ctr_store
+            .post_recv(fab_idx.get(), src_nodeid, msg_ctr)
+        {
+            debug!(
+                "Group: Duplicate message counter {} from node 0x{:016x} fab_idx={}",
+                msg_ctr, src_nodeid, fab_idx
+            );
+            return Err(ErrorCode::Duplicate.into());
+        }
+
+        // Create ephemeral group session
+        let epoch = self.epoch;
+        let peer = packet.peer;
+        let mut rand = crypto.weak_rand()?;
+        let session = match self.add(rand.next_u32(), false, peer, Some(src_nodeid)) {
+            Ok(session) => session,
+            Err(_) => {
+                // Session table is full; evict the least-recently-used session
+                if let Some(lru_id) = self.get_session_for_eviction().map(|sess| sess.id) {
+                    debug!("Group: Evicting session {} to make room", lru_id);
+                    self.remove(lru_id);
+                    self.add(rand.next_u32(), false, peer, Some(src_nodeid))?
+                } else {
+                    return Err(ErrorCode::NoSpaceSessions.into());
+                }
+            }
+        };
+        session.set_session_mode(SessionMode::Group { fab_idx, group_id });
+        session.local_sess_id = expected_sess_id;
+
+        debug!(
+            "Group: Created group session for fab_idx={}, group_id=0x{:04x}, src_nodeid=0x{:016x}",
+            fab_idx, group_id, src_nodeid
+        );
+
+        // Re-borrow the current created session for returning
+        let session = unwrap!(self.sessions.last_mut());
+        session.update_last_used(epoch);
+
+        Ok((session, payload_range))
+    }
+
+    /// Try to decrypt a group message with a candidate key.
+    /// Restores the ciphertext before attempting.
+    /// On success, returns the payload range; the packet buffer contains decrypted data.
+    fn try_group_decrypt<const N: usize, C: Crypto>(
+        crypto: &C,
+        packet: &mut Packet<N>,
+        saved_encrypted: &[u8],
+        encrypted_offset: usize,
+        op_key: CanonAeadKeyRef<'_>,
+        src_nodeid: u64,
+    ) -> Option<(usize, usize)> {
+        // Restore ciphertext
+        let start = packet.payload_start + encrypted_offset;
+        let encrypted_len = saved_encrypted.len();
+        packet.buf[start..start + encrypted_len].copy_from_slice(saved_encrypted);
+
+        // Re-create ParseBuf and re-parse plain header
+        let mut pb = ParseBuf::new(&mut packet.buf[packet.payload_start..]);
+        if packet.header.plain.decode(&mut pb).is_err() {
+            error!("Plain header parse error");
+            return None;
+        }
+
+        if packet
+            .header
+            .decode_remaining(crypto, Some(op_key), src_nodeid, &mut pb)
+            .is_ok()
+        {
+            packet.header.proto.adjust_reliability(true, &packet.peer);
+            Some(pb.slice_range())
+        } else {
+            None
+        }
     }
 
     pub fn get_next_sess_id(&mut self) -> u16 {
@@ -942,12 +1210,42 @@ impl fmt::Display for SessionMgr {
     }
 }
 
+/// Derive the Group Session ID from an operational group key.
+///
+/// Per Matter Spec Section 4.17.3.6:
+/// ```text
+/// GroupKeyHash = Crypto_KDF(
+///     InputKey = OperationalGroupKey,
+///     Salt     = [],
+///     Info     = "GroupKeyHash",
+///     Length   = 16 bits
+/// )
+/// GroupSessionId = (GroupKeyHash[0] << 8) | GroupKeyHash[1]
+/// ```
+pub fn derive_group_session_id<C: Crypto>(
+    crypto: C,
+    op_key: CanonAeadKeyRef<'_>,
+) -> Result<u16, Error> {
+    const GRP_KEY_HASH_INFO: &[u8] = b"GroupKeyHash";
+
+    let mut hash = CryptoSensitive::<2>::new();
+
+    crypto
+        .kdf()?
+        .expand(&[], op_key, GRP_KEY_HASH_INFO, &mut hash)
+        .map_err(|_| ErrorCode::InvalidData)?;
+
+    let bytes = hash.access();
+    Ok(((bytes[0] as u16) << 8) | (bytes[1] as u16))
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::crypto::test_only_crypto;
     use crate::transport::network::Address;
     use crate::utils::epoch::dummy_epoch;
 
-    use super::SessionMgr;
+    use super::*;
 
     #[test]
     fn test_next_sess_id_doesnt_reuse() {
@@ -971,5 +1269,28 @@ mod tests {
         assert_eq!(sm.get_next_sess_id(), 65534);
         assert_eq!(sm.get_next_sess_id(), 65535);
         assert_eq!(sm.get_next_sess_id(), 2);
+    }
+
+    #[test]
+    fn test_derive_group_session_id() {
+        // Spec test vector:
+        // Operational Group Key: a6:f5:30:6b:af:6d:05:0a:f2:3b:a4:bd:6b:9d:d9:60
+        // Expected GroupSessionId: 0xB9F7 (47607)
+        let op_key_bytes: [u8; 16] = [
+            0xa6, 0xf5, 0x30, 0x6b, 0xaf, 0x6d, 0x05, 0x0a, 0xf2, 0x3b, 0xa4, 0xbd, 0x6b, 0x9d,
+            0xd9, 0x60,
+        ];
+
+        let mut op_key = AEAD_KEY_ZEROED;
+        op_key.try_load_from_slice(&op_key_bytes).unwrap();
+
+        let crypto = test_only_crypto();
+        let session_id = derive_group_session_id(&crypto, op_key.reference()).unwrap();
+
+        assert_eq!(
+            session_id, 0xB9F7,
+            "Group Session ID mismatch: got 0x{:04X}, expected 0xB9F7",
+            session_id
+        );
     }
 }

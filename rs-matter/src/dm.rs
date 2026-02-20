@@ -158,9 +158,11 @@ where
             exchange.recv_fetch().await?;
         }
 
+        let is_groupcast = exchange.is_groupcast()?;
+
         let mut meta = fetch_meta(exchange)?;
 
-        let timeout_instant = if meta.opcode::<OpCode>()? == OpCode::TimedRequest {
+        let timeout_instant = if !is_groupcast && meta.opcode::<OpCode>()? == OpCode::TimedRequest {
             let timeout = self.timed(exchange).await?;
 
             exchange.recv_fetch().await?;
@@ -175,12 +177,21 @@ where
         // before read and subscribe. This is probably not allowed.
 
         match meta.opcode::<OpCode>()? {
-            OpCode::ReadRequest => self.read(exchange).await?,
-            OpCode::WriteRequest => self.write(exchange, timeout_instant).await?,
-            OpCode::InvokeRequest => self.invoke(exchange, timeout_instant).await?,
-            OpCode::SubscribeRequest => self.subscribe(exchange).await?,
-            OpCode::TimedRequest => {
+            OpCode::ReadRequest if is_groupcast => {
+                error!("Received a groupcast message for opcode: ReadRequest")
+            }
+            OpCode::ReadRequest if !is_groupcast => self.read(exchange).await?,
+            OpCode::WriteRequest => self.write(exchange, timeout_instant, is_groupcast).await?,
+            OpCode::InvokeRequest => self.invoke(exchange, timeout_instant, is_groupcast).await?,
+            OpCode::SubscribeRequest if is_groupcast => {
+                error!("Received a groupcast message for opcode: SubscribeRequest")
+            }
+            OpCode::SubscribeRequest if !is_groupcast => self.subscribe(exchange).await?,
+            OpCode::TimedRequest if !is_groupcast => {
                 Self::send_status(exchange, IMStatusCode::InvalidAction).await?
+            }
+            _ if is_groupcast => {
+                // Silently drop unsupported opcodes for group messages
             }
             opcode => {
                 error!("Invalid opcode: {:?}", opcode);
@@ -188,7 +199,9 @@ where
             }
         }
 
-        exchange.acknowledge().await?;
+        if !is_groupcast {
+            exchange.acknowledge().await?;
+        }
         exchange.matter().notify_persist();
 
         Ok(())
@@ -233,6 +246,7 @@ where
         &self,
         exchange: &mut Exchange<'_>,
         timeout_instant: Option<Duration>,
+        is_groupcast: bool,
     ) -> Result<(), Error> {
         while exchange.rx().is_ok() {
             // Loop while there are more write request chunks to process
@@ -261,7 +275,7 @@ where
                 HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
             );
 
-            resp.respond(self, &mut wb).await?;
+            resp.respond(self, &mut wb, is_groupcast).await?;
 
             if req.more_chunks()? {
                 // This write request is just one of the chunks, so we need to wait and process
@@ -282,6 +296,7 @@ where
         &self,
         exchange: &mut Exchange<'_>,
         timeout_instant: Option<Duration>,
+        is_groupcast: bool,
     ) -> Result<(), Error> {
         let Some((mut tx, rx)) = self.buffers(exchange).await? else {
             return Ok(());
@@ -307,7 +322,7 @@ where
             HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
         );
 
-        resp.respond(self, &mut wb, false).await
+        resp.respond(self, &mut wb, is_groupcast).await
     }
 
     /// Respond to a `SubscribeReq` request by priming the subscription (i.e. doing an initial data report)
@@ -1241,6 +1256,7 @@ where
         &mut self,
         notify: &dyn ChangeNotify,
         wb: &mut WriteBuf<'_>,
+        suppress_resp: bool,
     ) -> Result<(), Error> {
         let accessor = self.invoker.exchange().accessor()?;
 
@@ -1264,6 +1280,10 @@ where
 
         for item in write_attrs {
             self.invoker.process_write(&item?, &mut *wb, notify).await?;
+        }
+
+        if suppress_resp {
+            return Ok(());
         }
 
         wb.end_container()?;
@@ -1337,6 +1357,10 @@ where
             self.invoker
                 .process_invoke(&item?, &mut *wb, notify)
                 .await?;
+        }
+
+        if suppress_resp {
+            return Ok(());
         }
 
         if has_requests {

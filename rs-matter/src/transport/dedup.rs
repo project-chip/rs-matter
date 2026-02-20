@@ -86,6 +86,82 @@ impl RxCtrState {
     }
 }
 
+/// Max number of unique group message senders tracked for replay protection.
+pub const MAX_GROUP_CTR_ENTRIES: usize = 16;
+
+/// A per-(fabric_idx, source_node_id) message counter entry for group messages.
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+struct GroupCtrEntry {
+    fab_idx: u8,
+    src_nodeid: u64,
+    rx_ctr: RxCtrState,
+    /// Monotonic "clock" for LRU eviction (higher = more recently used).
+    last_used: u32,
+}
+
+/// Fixed-size store for group message counters that persists across ephemeral
+/// group session lifetimes, preventing replay attacks.
+///
+/// When the store is full, the least-recently-used entry is evicted.
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GroupCtrStore {
+    entries: heapless::Vec<GroupCtrEntry, MAX_GROUP_CTR_ENTRIES>,
+    clock: u32,
+}
+
+impl GroupCtrStore {
+    pub const fn new() -> Self {
+        Self {
+            entries: heapless::Vec::new(),
+            clock: 0,
+        }
+    }
+
+    /// Validate and record a group message counter.
+    ///
+    /// Returns `true` if the message is new (not a duplicate), `false` if duplicate.
+    /// On first message from a new (fab_idx, src_nodeid), trust-first: accept and create entry.
+    pub fn post_recv(&mut self, fab_idx: u8, src_nodeid: u64, msg_ctr: u32) -> bool {
+        self.clock = self.clock.wrapping_add(1);
+
+        // Look for existing entry
+        for entry in &mut self.entries {
+            if entry.fab_idx == fab_idx && entry.src_nodeid == src_nodeid {
+                entry.last_used = self.clock;
+                // Group messages are always encrypted
+                return entry.rx_ctr.post_recv(msg_ctr, true);
+            }
+        }
+
+        // New sender — trust-first: accept and create entry
+        let new_entry = GroupCtrEntry {
+            fab_idx,
+            src_nodeid,
+            rx_ctr: RxCtrState::new(msg_ctr),
+            last_used: self.clock,
+        };
+
+        if self.entries.len() < MAX_GROUP_CTR_ENTRIES {
+            // Safe: we checked len < capacity
+            unwrap!(self.entries.push(new_entry));
+        } else {
+            // Evict LRU entry
+            let lru_idx = self
+                .entries
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, e)| e.last_used)
+                .map(|(i, _)| i)
+                .unwrap(); // entries is non-empty since len == MAX
+            self.entries[lru_idx] = new_entry;
+        }
+
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::RxCtrState;
@@ -204,5 +280,51 @@ mod tests {
 
         assert_ndup(s.post_recv(20011, NOT_ENCRYPTED));
         assert_ndup(s.post_recv(0, NOT_ENCRYPTED));
+    }
+
+    mod group_ctr {
+        use super::super::GroupCtrStore;
+
+        #[test]
+        fn trust_first_accepts_new_sender() {
+            let mut store = GroupCtrStore::new();
+            assert!(store.post_recv(1, 0x1111, 100));
+        }
+
+        #[test]
+        fn rejects_duplicate_counter() {
+            let mut store = GroupCtrStore::new();
+            assert!(store.post_recv(1, 0x1111, 100));
+            assert!(!store.post_recv(1, 0x1111, 100));
+        }
+
+        #[test]
+        fn accepts_incrementing_counters() {
+            let mut store = GroupCtrStore::new();
+            assert!(store.post_recv(1, 0x1111, 100));
+            assert!(store.post_recv(1, 0x1111, 101));
+            assert!(store.post_recv(1, 0x1111, 102));
+        }
+
+        #[test]
+        fn separate_tracking_per_sender() {
+            let mut store = GroupCtrStore::new();
+            assert!(store.post_recv(1, 0x1111, 100));
+            assert!(store.post_recv(1, 0x2222, 100)); // different src_nodeid
+            assert!(store.post_recv(2, 0x1111, 100)); // different fab_idx
+        }
+
+        #[test]
+        fn evicts_lru_when_full() {
+            let mut store = GroupCtrStore::new();
+            // Fill up all slots
+            for i in 0..super::super::MAX_GROUP_CTR_ENTRIES {
+                assert!(store.post_recv(1, i as u64, 100));
+            }
+            // One more should evict the LRU (slot 0 = src_nodeid 0)
+            assert!(store.post_recv(1, 0xFFFF, 200));
+            // The evicted sender is now unknown — trust-first accepts it again
+            assert!(store.post_recv(1, 0, 100));
+        }
     }
 }

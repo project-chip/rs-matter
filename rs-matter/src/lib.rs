@@ -76,7 +76,9 @@
 #![recursion_limit = "1024"]
 
 use core::future::Future;
-
+use core::net::Ipv6Addr;
+use core::pin::pin;
+use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use crate::crypto::Crypto;
@@ -84,7 +86,8 @@ use crate::dm::clusters::basic_info::{BasicInfoConfig, BasicInfoSettings};
 use crate::dm::clusters::dev_att::DeviceAttestation;
 use crate::dm::{BasicContextInstance, ChangeNotify};
 use crate::error::{Error, ErrorCode};
-use crate::fabric::FabricMgr;
+use crate::fabric::MAX_GROUPS_PER_FABRIC;
+use crate::fabric::{FabricMgr, MAX_FABRICS};
 use crate::failsafe::FailSafe;
 use crate::pairing::qr::{
     no_optional_data, CommFlowType, NoOptionalData, Qr, QrPayload, QrTextType,
@@ -92,7 +95,7 @@ use crate::pairing::qr::{
 use crate::pairing::DiscoveryCapabilities;
 use crate::sc::pase::spake2p::Spake2pVerifierPassword;
 use crate::sc::pase::PaseMgr;
-use crate::transport::network::{NetworkReceive, NetworkSend};
+use crate::transport::network::{NetworkIPv6Multicast, NetworkReceive, NetworkSend};
 use crate::transport::TransportMgr;
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
@@ -255,6 +258,7 @@ pub struct Matter<'a> {
     pub transport_mgr: TransportMgr, // Public for tests
     persist_notification: Notification<NoopRawMutex>,
     mdns_notification: Notification<NoopRawMutex>,
+    groups_notification: Notification<NoopRawMutex>,
     epoch: Epoch,
     dev_det: &'a BasicInfoConfig<'a>,
     dev_comm: BasicCommData,
@@ -314,6 +318,7 @@ impl<'a> Matter<'a> {
             basic_info_settings: RefCell::new(BasicInfoSettings::new()),
             persist_notification: Notification::new(),
             mdns_notification: Notification::new(),
+            groups_notification: Notification::new(),
             epoch,
             dev_det,
             dev_comm,
@@ -373,6 +378,7 @@ impl<'a> Matter<'a> {
                 basic_info_settings <- RefCell::init(BasicInfoSettings::init()),
                 persist_notification: Notification::new(),
                 mdns_notification: Notification::new(),
+                groups_notification: Notification::new(),
                 epoch,
                 dev_det,
                 dev_comm,
@@ -568,19 +574,82 @@ impl<'a> Matter<'a> {
         self.pase_mgr.borrow_mut().close_comm_window(ctx)
     }
 
-    /// Run the transport layer
+    /// Rebuild the group operational key cache from the current fabric state.
+    fn rebuild_group_op_keys<C: Crypto>(&self, crypto: &C) {
+        let fm = self.fabric_mgr.borrow();
+        self.transport_mgr
+            .session_mgr
+            .borrow_mut()
+            .rebuild_group_op_keys(crypto, &fm);
+    }
+
+    /// Watch for fabric/group key changes, rebuild the op-key cache, and join new IPv6
+    /// multicast groups as group key maps change.
+    /// Runs forever (never returns).
+    async fn watch_group_keys<C: Crypto, N: NetworkIPv6Multicast>(
+        &self,
+        crypto: &C,
+        mut network: N,
+    ) -> ! {
+        const MAX_ADDRS: usize = MAX_FABRICS * MAX_GROUPS_PER_FABRIC;
+        let mut joined: heapless::Vec<Ipv6Addr, MAX_ADDRS> = heapless::Vec::new();
+
+        loop {
+            self.rebuild_group_op_keys(crypto);
+
+            for fabric in self.fabric_mgr.borrow().iter() {
+                for group_entry in fabric.group_iter() {
+                    let addr = crate::utils::ipv6::compute_group_multicast_addr(
+                        fabric.fabric_id(),
+                        group_entry.group_id,
+                    );
+
+                    if !joined.contains(&addr) {
+                        // TODO: unregister when group is removed.
+                        match network.register_ipv6_multicast(addr).await {
+                            Ok(_) => {
+                                debug!("Registered multicast address: {}", addr);
+                                // `joined` should be able to contain theoretical maximum number of multicast address
+                                // So this unwrap should be safe
+                                unwrap!(joined.push(addr));
+                            },
+                            Err(_) => error!("Failed to register multicast address: {}.\n\t Group communication may not work as expected", addr),
+                        }
+                    }
+                }
+            }
+
+            self.groups_notification.wait().await;
+        }
+    }
+
+    /// Run the Matter transport layer along with the background group key cache watcher.
+    ///
+    /// This is the main entry point for running the transport. It:
+    /// 1. Builds the initial group operational key cache from persisted fabrics
+    /// 2. Joins IPv6 multicast groups for any already-configured group key maps
+    /// 3. Runs the transport and a background task that listens on multicast address for
+    ///    groupcast messages
     ///
     /// # Arguments
     /// - `crypto`: The crypto backend
     /// - `send`: The network send interface
     /// - `recv`: The network receive interface
+    ///
+    /// Note: `recv` should be copy and implement both `NetworkRecv` and `NetworkIPv6` traits
     pub async fn run<C, S, R>(&self, crypto: C, send: S, recv: R) -> Result<(), Error>
     where
         S: NetworkSend,
-        R: NetworkReceive,
+        R: NetworkReceive + NetworkIPv6Multicast + Copy,
         C: Crypto,
     {
-        self.run_transport(crypto, send, recv).await
+        let mut transport = pin!(self.run_transport(&crypto, send, recv));
+        let mut group_key_watcher = pin!(self.watch_group_keys(&crypto, recv));
+
+        match select(&mut transport, &mut group_key_watcher).await {
+            embassy_futures::select::Either::First(result) => result,
+            embassy_futures::select::Either::Second(_) => unreachable!(),
+        }
     }
 
     /// Resets the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
@@ -589,12 +658,13 @@ impl<'a> Matter<'a> {
         self.transport_mgr.reset()
     }
 
-    /// Run the transport layer
-    ///
-    /// # Arguments
-    /// - `crypto`: The crypto backend
-    /// - `send`: The network send interface
-    /// - `recv`: The network receive interface
+    /// Notify that groups have changed (keys, key maps, or membership) and the
+    /// group operational key cache and multicast registrations need updating.
+    pub fn notify_groups_changed(&self) {
+        self.groups_notification.notify();
+    }
+
+    /// Run only the transport layer (packet send/receive and session management).
     pub fn run_transport<'t, C, S, R>(
         &'t self,
         crypto: C,
@@ -606,9 +676,8 @@ impl<'a> Matter<'a> {
         R: NetworkReceive + 't,
         C: Crypto + 't,
     {
-        self.transport_mgr.run(crypto, send, recv)
+        async move { self.transport_mgr.run(&crypto, send, recv).await }
     }
-
     /// Reset the Matter state by removing all fabrics and resetting basic info settings
     ///
     /// # Arguments

@@ -259,6 +259,8 @@ impl ClusterHandler for GrpKeyMgmtHandler {
             }
         }
 
+        ctx.exchange().matter().notify_groups_changed();
+
         Ok(())
     }
 
@@ -398,6 +400,8 @@ impl ClusterHandler for GrpKeyMgmtHandler {
             .borrow_mut()
             .group_key_set_add(fab_idx, entry)?;
 
+        ctx.exchange().matter().notify_groups_changed();
+
         Ok(())
     }
 
@@ -469,6 +473,8 @@ impl ClusterHandler for GrpKeyMgmtHandler {
             .fabric_mgr
             .borrow_mut()
             .group_key_set_remove(fab_idx, group_key_set_id)?;
+
+        ctx.exchange().matter().notify_groups_changed();
 
         Ok(())
     }
