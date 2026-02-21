@@ -19,8 +19,16 @@
 //!
 //! Requires the Avahi daemon to be installed and running.
 
+use core::fmt::Write as _;
+use core::pin::pin;
+
 use std::collections::{HashMap, HashSet};
 use std::io::Write as _;
+use std::net::IpAddr;
+
+use embassy_futures::select::{select3, Either3};
+use embassy_time::{Duration, Instant, Timer};
+use futures_lite::StreamExt;
 
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use zbus::Connection;
@@ -31,7 +39,15 @@ use crate::error::Error;
 use crate::transport::network::mdns::Service;
 use crate::utils::zbus_proxies::avahi::entry_group::EntryGroupProxy;
 use crate::utils::zbus_proxies::avahi::server2::Server2Proxy;
+use crate::utils::zbus_proxies::avahi::service_browser::ServiceBrowserProxy;
+
+use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
 use crate::{Matter, MatterMdnsService};
+
+/// Avahi constant for "any interface"
+const AVAHI_IF_UNSPEC: i32 = -1;
+/// Avahi constant for "any protocol" (IPv4 or IPv6)
+const AVAHI_PROTO_UNSPEC: i32 = -1;
 
 /// An mDNS responder for Matter utilizing the Avahi daemon over DBus.
 pub struct AvahiMdnsResponder<'a> {
@@ -164,8 +180,8 @@ impl<'a> AvahiMdnsResponder<'a> {
 
                 group
                     .add_service(
-                        -1,
-                        -1,
+                        AVAHI_IF_UNSPEC,
+                        AVAHI_PROTO_UNSPEC,
                         0,
                         service.name,
                         service.service_protocol,
@@ -183,8 +199,8 @@ impl<'a> AvahiMdnsResponder<'a> {
 
                     group
                         .add_service_subtype(
-                            -1,
-                            -1,
+                            AVAHI_IF_UNSPEC,
+                            AVAHI_PROTO_UNSPEC,
                             0,
                             service.name,
                             service.service_protocol,
@@ -212,4 +228,194 @@ impl<'a> AvahiMdnsResponder<'a> {
 
         Ok(())
     }
+}
+
+/// A pending service discovered via browse that needs resolution
+struct PendingService {
+    interface: i32,
+    protocol: i32,
+    name: heapless::String<64>,
+    type_: heapless::String<64>,
+    domain: heapless::String<64>,
+}
+
+impl PendingService {
+    fn new(interface: i32, protocol: i32, name: &str, type_: &str, domain: &str) -> Self {
+        let mut pending_name = heapless::String::new();
+        let mut pending_type_ = heapless::String::new();
+        let mut pending_domain = heapless::String::new();
+        write_unwrap!(&mut pending_name, "{}", name);
+        write_unwrap!(&mut pending_type_, "{}", type_);
+        write_unwrap!(&mut pending_domain, "{}", domain);
+
+        Self {
+            interface,
+            protocol,
+            name: pending_name,
+            type_: pending_type_,
+            domain: pending_domain,
+        }
+    }
+}
+
+/// Discover commissionable Matter devices using Avahi over DBus.
+///
+/// # Arguments
+/// * `connection` - A reference to the DBus system connection
+/// * `filter` - Filter criteria for discovered devices
+/// * `timeout_ms` - Discovery timeout in milliseconds
+///
+/// # Returns
+/// A vector of discovered devices matching the filter criteria
+pub async fn discover_commissionable<const A: usize>(
+    connection: &Connection,
+    filter: &CommissionableFilter,
+    timeout_ms: u32,
+) -> Result<Vec<DiscoveredDevice<A>>, Error> {
+    let mut results = Vec::new();
+
+    // Build the service type query
+    let mut service_type: heapless::String<64> = heapless::String::new();
+    filter.service_type(&mut service_type, false);
+
+    info!("Browsing for mDNS services via Avahi: {}", service_type);
+
+    let avahi = Server2Proxy::new(connection).await?;
+
+    // Create service browser
+    let browser_path = avahi
+        .service_browser_prepare(AVAHI_IF_UNSPEC, AVAHI_PROTO_UNSPEC, &service_type, "", 0)
+        .await?;
+
+    let browser = ServiceBrowserProxy::builder(connection)
+        .path(browser_path)?
+        .build()
+        .await?;
+
+    // Set up signal stream for ItemNew events
+    let mut item_new_stream = browser.receive_item_new().await?;
+    let mut all_for_now_stream = browser.receive_all_for_now().await?;
+
+    // Start the browser
+    browser.start().await?;
+
+    let timeout = Duration::from_millis(timeout_ms as u64);
+    let deadline = Instant::now() + timeout;
+
+    // Track discovered services to resolve
+    let mut pending_services = Vec::new();
+
+    // Collect discovered services until timeout or AllForNow signal
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.as_millis() == 0 {
+            break;
+        }
+
+        let item_new_fut = pin!(item_new_stream.next());
+        let all_for_now_fut = pin!(all_for_now_stream.next());
+        let timeout_fut = pin!(Timer::after(remaining));
+
+        match select3(item_new_fut, all_for_now_fut, timeout_fut).await {
+            Either3::First(Some(signal)) => {
+                if let Ok(args) = signal.args() {
+                    debug!(
+                        "Discovered service: {} (type: {}, domain: {})",
+                        args.name, args.type_, args.domain
+                    );
+
+                    pending_services.push(PendingService::new(
+                        args.interface,
+                        args.protocol,
+                        &args.name,
+                        &args.type_,
+                        &args.domain,
+                    ));
+                }
+            }
+            Either3::First(None) => {
+                break;
+            }
+            Either3::Second(_) => {
+                debug!("Received AllForNow signal");
+                break;
+            }
+            Either3::Third(_) => {
+                debug!("Browse timeout reached");
+                break;
+            }
+        }
+    }
+
+    // Resolve each discovered service
+    for pending in pending_services {
+        match avahi
+            .resolve_service(
+                pending.interface,
+                pending.protocol,
+                &pending.name,
+                &pending.type_,
+                &pending.domain,
+                AVAHI_PROTO_UNSPEC,
+                0,
+            )
+            .await
+        {
+            Ok((
+                _interface,
+                _protocol,
+                resolved_name,
+                _type,
+                _domain,
+                _host,
+                _aprotocol,
+                address,
+                port,
+                txt,
+                _flags,
+            )) => {
+                debug!(
+                    "Resolved service: {} -> {}:{}",
+                    resolved_name, address, port
+                );
+
+                let mut device = DiscoveredDevice::default();
+                device.set_instance_name(&resolved_name);
+                device.port = port;
+
+                if let Ok(ip) = address.parse::<IpAddr>() {
+                    device.add_address(ip);
+                } else {
+                    warn!("Could not parse IP address: {}", address);
+                    continue;
+                }
+
+                for entry in txt {
+                    if let Ok(s) = core::str::from_utf8(&entry) {
+                        if let Some(eq_pos) = s.find('=') {
+                            let key = &s[..eq_pos];
+                            let value = &s[eq_pos + 1..];
+                            device.set_txt_value(key, value);
+                        }
+                    }
+                }
+
+                if filter.matches(&device) {
+                    results.push_if_unique(device);
+                }
+            }
+            Err(e) => {
+                warn!("Failed to resolve service {}: {:?}", pending.name, e);
+            }
+        }
+    }
+
+    // Clean up browser
+    if let Err(e) = browser.free().await {
+        warn!("Failed to free Avahi browser: {:?}", e);
+    }
+
+    info!("Avahi mDNS discovery found {} devices", results.len());
+
+    Ok(results)
 }

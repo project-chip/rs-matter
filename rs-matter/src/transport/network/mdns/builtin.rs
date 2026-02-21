@@ -47,8 +47,10 @@ use self::proto::Services;
 use super::Service;
 
 pub use proto::Host;
+pub use querier::discover_commissionable;
 
 mod proto;
+pub mod querier;
 
 /// A built-in mDNS responder for Matter, utilizing a custom mDNS protocol implementation.
 ///

@@ -1,0 +1,74 @@
+---
+name: mDNS Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run every night at 3:00 AM UTC (offset from chiptool-tests at 2:00 AM)
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      chip_ref:
+        description: "Chip repository reference (branch/tag/commit)"
+        required: false
+        default: "v1.4.2-branch"
+        type: string
+
+env:
+  RUST_TOOLCHAIN: stable
+  CARGO_TERM_COLOR: always
+
+jobs:
+  mdns_discovery_tests:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Checkout rs-matter
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev
+
+      - name: Build xtask
+        run: |
+          cd xtask; cargo build
+
+      - name: Install Chip build dependencies
+        run: |
+          sudo apt-get install -y `./xtask/target/debug/xtask -v s mdnstest-packages`
+
+      - name: Cache Chip build
+        uses: actions/cache@v4
+        with:
+          path: .build/mdnstest/connectedhomeip
+          key: chip-mdns-${{ runner.os }}-${{ inputs.chip_ref || 'v1.4.2-branch' }}
+          restore-keys: |
+            chip-mdns-${{ runner.os }}-
+
+      - name: Setup Chip environment
+        run: |
+          cargo xtask mdnstest-setup --chip-gitref "${{ inputs.chip_ref || 'v1.4.2-branch' }}"
+
+      - name: Run mDNS discovery tests
+        run: |
+          cargo xtask mdnstest --skip-setup
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mdns-test-logs-${{ github.run_id }}
+          path: |
+            .build/mdnstest/
+          retention-days: 7

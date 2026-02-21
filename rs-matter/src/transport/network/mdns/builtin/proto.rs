@@ -723,7 +723,7 @@ impl Service<'_> {
     }
 }
 
-struct Buf<'a>(pub &'a mut [u8], pub usize);
+pub(super) struct Buf<'a>(pub &'a mut [u8], pub usize);
 
 impl Composer for Buf<'_> {}
 
