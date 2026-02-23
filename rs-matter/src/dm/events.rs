@@ -166,6 +166,8 @@ where
         tw.end()
     }
 
+    /// Lock the events queue so you can read it; the returned guard gives you the ability to iterate over stored events.
+    /// TODO: Note that this guard is held across long reads, which will cause writers to be stalled over network waits; we should fix this, see https://github.com/project-chip/rs-matter/pull/361#issuecomment-3906929345
     pub async fn lock(&'_ self) -> EventsGuard<'_, M, N> {
         let internal = self.state.lock().await;
         EventsGuard::new(internal)
@@ -266,7 +268,7 @@ where
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct EventsInner<const N: usize> {
-    // TODO(events): Allow per-ring const generics
+    // TODO(events): Allow per-ring const generics, so the rings can be sized independently
     buf_debug: LevelBuf<N>,
     buf_info: LevelBuf<N>,
     buf_critical: LevelBuf<N>,
