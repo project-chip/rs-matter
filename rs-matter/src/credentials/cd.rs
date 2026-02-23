@@ -35,7 +35,7 @@ use crate::cert::x509::DerReader;
 use crate::credentials::cd_keys::{self, KEY_IDENTIFIER_LEN};
 use crate::crypto::{CanonPkcPublicKeyRef, CanonPkcSignatureRef, Crypto, PublicKey};
 use crate::error::{Error, ErrorCode};
-use crate::tlv::TLVElement;
+use crate::tlv::{TLVElement, TLVSequence};
 
 /// ASN.1 DER tag constants
 const TAG_INTEGER: u8 = 0x02;
@@ -444,77 +444,108 @@ impl CertificationElements {
     /// - Product IDs array must have 1..=100 entries.
     /// - Certificate ID must be exactly 19 bytes.
     /// - Authorized PAA entries must each be exactly 20 bytes.
-    #[allow(clippy::field_reassign_with_default)]
     pub fn decode(cd_content: &[u8]) -> Result<Self, Error> {
         let elem = TLVElement::new(cd_content);
         let structure = elem.structure()?;
 
-        let mut cd = CertificationElements::default();
+        let (product_ids, product_ids_count) = Self::parse_product_ids(&structure)?;
+        let certificate_id = Self::parse_certificate_id(&structure)?;
+        let (dac_origin_vendor_id, dac_origin_product_id, dac_origin_vid_pid_present) =
+            Self::parse_dac_origin(&structure)?;
+        let (authorized_paa_list, authorized_paa_list_count) =
+            Self::parse_authorized_paa_list(&structure)?;
 
-        // Tag 0: format_version (mandatory)
-        cd.format_version = structure.find_ctx(CD_TAG_FORMAT_VERSION)?.u16()?;
+        Ok(Self {
+            format_version: structure.find_ctx(CD_TAG_FORMAT_VERSION)?.u16()?,
+            vendor_id: structure.find_ctx(CD_TAG_VENDOR_ID)?.u16()?,
+            product_ids,
+            product_ids_count,
+            device_type_id: structure.find_ctx(CD_TAG_DEVICE_TYPE_ID)?.u32()?,
+            certificate_id,
+            security_level: structure.find_ctx(CD_TAG_SECURITY_LEVEL)?.u8()?,
+            security_information: structure.find_ctx(CD_TAG_SECURITY_INFORMATION)?.u16()?,
+            version_number: structure.find_ctx(CD_TAG_VERSION_NUMBER)?.u16()?,
+            certification_type: CertificationType::from_u8(
+                structure.find_ctx(CD_TAG_CERTIFICATION_TYPE)?.u8()?,
+            )?,
+            dac_origin_vendor_id,
+            dac_origin_product_id,
+            dac_origin_vid_pid_present,
+            authorized_paa_list,
+            authorized_paa_list_count,
+        })
+    }
 
-        // Tag 1: vendor_id (mandatory)
-        cd.vendor_id = structure.find_ctx(CD_TAG_VENDOR_ID)?.u16()?;
-
-        // Tag 2: product_id_array (mandatory, 1..=100 entries)
+    /// Parse the product ID array from TLV structure.
+    /// Returns (product_ids array, count of valid entries).
+    fn parse_product_ids(
+        structure: &TLVSequence,
+    ) -> Result<([u16; MAX_PRODUCT_IDS], usize), Error> {
         let pid_array = structure.find_ctx(CD_TAG_PRODUCT_ID_ARRAY)?;
         let pid_seq = pid_array.array()?;
+
+        let mut product_ids = [0u16; MAX_PRODUCT_IDS];
         let mut count = 0usize;
+
         for pid_elem in pid_seq.iter() {
             let pid_elem: TLVElement<'_> = pid_elem?;
             if count >= MAX_PRODUCT_IDS {
                 return Err(ErrorCode::CdInvalidFormat.into());
             }
-            cd.product_ids[count] = pid_elem.u16()?;
+            product_ids[count] = pid_elem.u16()?;
             count += 1;
         }
+
         if count == 0 {
             return Err(ErrorCode::CdInvalidFormat.into());
         }
-        cd.product_ids_count = count;
 
-        // Tag 3: device_type_id (mandatory)
-        cd.device_type_id = structure.find_ctx(CD_TAG_DEVICE_TYPE_ID)?.u32()?;
+        Ok((product_ids, count))
+    }
 
-        // Tag 4: certificate_id (mandatory, exactly 19 bytes UTF-8 string)
+    /// Parse the certificate ID from TLV structure.
+    /// Returns a fixed-length array of exactly CERTIFICATE_ID_LEN bytes.
+    fn parse_certificate_id(structure: &TLVSequence) -> Result<[u8; CERTIFICATE_ID_LEN], Error> {
         let cert_id_str = structure.find_ctx(CD_TAG_CERTIFICATE_ID)?.utf8()?;
         if cert_id_str.len() != CERTIFICATE_ID_LEN {
             return Err(ErrorCode::CdInvalidFormat.into());
         }
-        cd.certificate_id.copy_from_slice(cert_id_str.as_bytes());
 
-        // Tag 5: security_level (mandatory)
-        cd.security_level = structure.find_ctx(CD_TAG_SECURITY_LEVEL)?.u8()?;
+        let mut certificate_id = [0u8; CERTIFICATE_ID_LEN];
+        certificate_id.copy_from_slice(cert_id_str.as_bytes());
+        Ok(certificate_id)
+    }
 
-        // Tag 6: security_information (mandatory)
-        cd.security_information = structure.find_ctx(CD_TAG_SECURITY_INFORMATION)?.u16()?;
-
-        // Tag 7: version_number (mandatory)
-        cd.version_number = structure.find_ctx(CD_TAG_VERSION_NUMBER)?.u16()?;
-
-        // Tag 8: certification_type (mandatory)
-        let cert_type_raw = structure.find_ctx(CD_TAG_CERTIFICATION_TYPE)?.u8()?;
-        cd.certification_type = CertificationType::from_u8(cert_type_raw)?;
-
-        // Tag 9 & 10: dac_origin_vendor_id and dac_origin_product_id (optional, must appear together)
+    /// Parse optional DAC origin vendor/product IDs from TLV structure.
+    /// Returns (dac_origin_vendor_id, dac_origin_product_id, is_present).
+    fn parse_dac_origin(structure: &TLVSequence) -> Result<(u16, u16, bool), Error> {
         let vid_elem = structure.find_ctx(CD_TAG_DAC_ORIGIN_VENDOR_ID)?;
         let pid_elem = structure.find_ctx(CD_TAG_DAC_ORIGIN_PRODUCT_ID)?;
+
         // Both must be present or both must be absent
         if vid_elem.is_empty() != pid_elem.is_empty() {
             return Err(ErrorCode::CdInvalidFormat.into());
         }
-        if !vid_elem.is_empty() {
-            cd.dac_origin_vendor_id = vid_elem.u16()?;
-            cd.dac_origin_product_id = pid_elem.u16()?;
-            cd.dac_origin_vid_pid_present = true;
-        }
 
-        // Tag 11: authorized_paa_list (optional)
+        if !vid_elem.is_empty() {
+            Ok((vid_elem.u16()?, pid_elem.u16()?, true))
+        } else {
+            Ok((0, 0, false))
+        }
+    }
+
+    /// Parse optional authorized PAA list from TLV structure.
+    /// Returns (authorized_paa_list array, count of valid entries).
+    fn parse_authorized_paa_list(
+        structure: &TLVSequence,
+    ) -> Result<([[u8; KEY_IDENTIFIER_LEN]; MAX_AUTHORIZED_PAA_LIST], usize), Error> {
         let paa_elem = structure.find_ctx(CD_TAG_AUTHORIZED_PAA_LIST)?;
+
+        let mut authorized_paa_list = [[0u8; KEY_IDENTIFIER_LEN]; MAX_AUTHORIZED_PAA_LIST];
+        let mut paa_count = 0usize;
+
         if !paa_elem.is_empty() {
             let paa_seq = paa_elem.array()?;
-            let mut paa_count = 0usize;
             for paa_entry in paa_seq.iter() {
                 let paa_entry: TLVElement<'_> = paa_entry?;
                 if paa_count >= MAX_AUTHORIZED_PAA_LIST {
@@ -524,13 +555,12 @@ impl CertificationElements {
                 if paa_bytes.len() != KEY_IDENTIFIER_LEN {
                     return Err(ErrorCode::CdInvalidFormat.into());
                 }
-                cd.authorized_paa_list[paa_count].copy_from_slice(paa_bytes);
+                authorized_paa_list[paa_count].copy_from_slice(paa_bytes);
                 paa_count += 1;
             }
-            cd.authorized_paa_list_count = paa_count;
         }
 
-        Ok(cd)
+        Ok((authorized_paa_list, paa_count))
     }
 
     /// Verify a CMS-signed Certification Declaration.
