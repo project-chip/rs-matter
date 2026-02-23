@@ -28,18 +28,24 @@ pub mod fileio {
     use std::io::{Read, Write};
     use std::path::Path;
 
-    use embassy_futures::select::select;
+    use embassy_futures::select::{select, select3};
     use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 
+    use crate::dm::events::Events;
     use crate::dm::networks::wireless::{Wifi, WirelessNetwork, WirelessNetworks};
     use crate::error::{Error, ErrorCode};
-    use crate::tlv::{Octets, TLVArray, TLVContainerIter, TLVElement, TLVTag, TLVWrite};
+    use crate::tlv::{
+        Octets, TLVArray, TLVContainerIter, TLVElement, TLVTag, TLVValueType, TLVWrite,
+    };
     use crate::utils::init::{init, Init};
     use crate::utils::storage::WriteBuf;
     use crate::Matter;
 
     /// A constant representing the absence of wireless networks.
     pub const NO_NETWORKS: Option<&'static WirelessNetworks<0, NoopRawMutex, Wifi>> = None;
+
+    /// A constant representing the absence of events.
+    pub const NO_EVENTS: Option<&'static Events<0, NoopRawMutex>> = None;
 
     /// A simple persistent storage manager (PSM) for `rs-matter`.
     ///
@@ -84,11 +90,13 @@ pub mod fileio {
         /// - `path`: The file path from where to load the persistent state.
         /// - `matter`: The `Matter` instance to load the state into (for fabrics and basic info settings).
         /// - `networks`: An optional reference to `WirelessNetworks` to load the wireless networks state into (if provided).
-        pub fn load<P, const W: usize, M, T>(
+        /// - `events`: An optional reference to `Events` to load the events state into (if provided).
+        pub fn load<P, const W: usize, M, T, const NE: usize>(
             &mut self,
             path: P,
             matter: &Matter,
             networks: Option<&WirelessNetworks<W, M, T>>,
+            events: Option<&Events<NE, M>>,
         ) -> Result<(), Error>
         where
             P: AsRef<Path>,
@@ -101,14 +109,32 @@ pub mod fileio {
                 return Ok(());
             };
 
-            let mut items: TLVContainerIter<'_, Octets<'_>> =
-                TLVArray::new(TLVElement::new(data))?.iter();
+            let root = TLVElement::new(data);
 
-            matter.load_fabrics(items.next().ok_or(ErrorCode::Invalid)??.0)?;
-            matter.load_basic_info(items.next().ok_or(ErrorCode::Invalid)??.0)?;
+            if root.control()?.value_type == TLVValueType::Array {
+                // Legacy format: anonymous array with positional octet-strings
+                let mut items: TLVContainerIter<'_, Octets<'_>> = TLVArray::new(root)?.iter();
 
-            if let Some(networks) = networks {
-                networks.load(items.next().ok_or(ErrorCode::Invalid)??.0)?;
+                matter.load_fabrics(items.next().ok_or(ErrorCode::Invalid)??.0)?;
+                matter.load_basic_info(items.next().ok_or(ErrorCode::Invalid)??.0)?;
+
+                if let Some(networks) = networks {
+                    networks.load(items.next().ok_or(ErrorCode::Invalid)??.0)?;
+                }
+            } else {
+                // New format: struct with context-tagged octet-strings
+                let container = root.container()?;
+
+                matter.load_fabrics(container.find_ctx(0)?.octets()?)?;
+                matter.load_basic_info(container.find_ctx(1)?.octets()?)?;
+
+                if let Some(networks) = networks {
+                    networks.load(container.find_ctx(2)?.octets()?)?;
+                }
+
+                if let Some(events) = events {
+                    events.load(container.find_ctx(3)?.octets()?)?;
+                }
             }
 
             Ok(())
@@ -123,11 +149,13 @@ pub mod fileio {
         /// - `path`: The file path where to store the persistent state.
         /// - `matter`: The `Matter` instance whose state to store (for fabrics and basic info settings).
         /// - `networks`: An optional reference to `WirelessNetworks` whose state to store.
-        pub fn store<P, const W: usize, M, T>(
+        /// - `events`: An optional reference to `Events` whose state to store.
+        pub fn store<P, const W: usize, M, T, const NE: usize>(
             &mut self,
             path: P,
             matter: &Matter,
             networks: Option<&WirelessNetworks<W, M, T>>,
+            events: Option<&Events<NE, M>>,
         ) -> Result<(), Error>
         where
             P: AsRef<Path>,
@@ -137,6 +165,7 @@ pub mod fileio {
             if !matter.fabrics_changed()
                 && !matter.basic_info_changed()
                 && !networks.map(|networks| networks.changed()).unwrap_or(false)
+                && !events.map(|events| events.changed()).unwrap_or(false)
             {
                 return Ok(());
             }
@@ -145,14 +174,18 @@ pub mod fileio {
 
             let mut wb = WriteBuf::new(buf);
 
-            wb.start_array(&TLVTag::Anonymous)?;
+            wb.start_struct(&TLVTag::Anonymous)?;
 
-            wb.str_cb(&TLVTag::Anonymous, |buf| matter.store_fabrics(buf))?;
+            wb.str_cb(&TLVTag::Context(0), |buf| matter.store_fabrics(buf))?;
 
-            wb.str_cb(&TLVTag::Anonymous, |buf| matter.store_basic_info(buf))?;
+            wb.str_cb(&TLVTag::Context(1), |buf| matter.store_basic_info(buf))?;
 
             if let Some(networks) = networks {
-                wb.str_cb(&TLVTag::Anonymous, |buf| networks.store(buf))?;
+                wb.str_cb(&TLVTag::Context(2), |buf| networks.store(buf))?;
+            }
+
+            if let Some(events) = events {
+                wb.str_cb(&TLVTag::Context(3), |buf| events.store(buf))?;
             }
 
             wb.end_container()?;
@@ -170,11 +203,13 @@ pub mod fileio {
         /// - `path`: The file path where to store the persistent state.
         /// - `matter`: The `Matter` instance to monitor for changes and for state to store (for fabrics and basic info settings).
         /// - `networks`: An optional reference to `WirelessNetworks` to monitor for changes and for state to store (if provided).
-        pub async fn run<P, const W: usize, M, T>(
+        /// - `events`: An optional reference to `Events` to monitor for changes and for state to store (if provided).
+        pub async fn run<P, const W: usize, M, T, const NE: usize>(
             &mut self,
             path: P,
             matter: &Matter<'_>,
             networks: Option<&WirelessNetworks<W, M, T>>,
+            events: Option<&Events<NE, M>>,
         ) -> Result<(), Error>
         where
             P: AsRef<Path>,
@@ -190,13 +225,27 @@ pub mod fileio {
             // self.load_networks(dir, networks)?;
 
             loop {
-                if let Some(networks) = networks {
-                    select(matter.wait_persist(), networks.wait_persist()).await;
-                } else {
-                    matter.wait_persist().await;
+                match (networks, events) {
+                    (Some(networks), Some(events)) => {
+                        select3(
+                            matter.wait_persist(),
+                            networks.wait_persist(),
+                            events.wait_persist(),
+                        )
+                        .await;
+                    }
+                    (Some(networks), None) => {
+                        select(matter.wait_persist(), networks.wait_persist()).await;
+                    }
+                    (None, Some(events)) => {
+                        select(matter.wait_persist(), events.wait_persist()).await;
+                    }
+                    (None, None) => {
+                        matter.wait_persist().await;
+                    }
                 }
 
-                self.store(path.as_ref(), matter, networks)?;
+                self.store(path.as_ref(), matter, networks, events)?;
             }
         }
 
@@ -242,6 +291,141 @@ pub mod fileio {
             trace!("Stored {} bytes {:?}", data.len(), data);
 
             Ok(())
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+        use crate::dm::events::{Events, PersistedState};
+        use crate::utils::epoch::sys_epoch;
+        use crate::MATTER_PORT;
+
+        use super::*;
+
+        fn new_test_matter() -> Matter<'static> {
+            let matter = Matter::new(
+                &TEST_DEV_DET,
+                TEST_DEV_COMM,
+                &TEST_DEV_ATT,
+                sys_epoch,
+                MATTER_PORT,
+            );
+
+            matter
+                .fabric_mgr
+                .borrow_mut()
+                .add_with_post_init(|_| Ok(()))
+                .unwrap();
+
+            matter
+        }
+
+        #[test]
+        fn test_store_load_roundtrip() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("persist.bin");
+
+            // Set up a matter instance with some non-default config
+            let initial_matter = new_test_matter();
+            {
+                let mut basic = initial_matter.basic_info_settings.borrow_mut();
+                basic.node_label = heapless::String::try_from("my-test-node").unwrap();
+                basic.location = Some(heapless::String::try_from("ab").unwrap());
+                basic.changed = true;
+            }
+
+            // Set up events with a recognizable epoch value
+            let events = Events::<64>::new(sys_epoch);
+            events.persisted_state.lock(|cell| {
+                cell.set(PersistedState {
+                    next_event_no: 0,
+                    event_epoch_end: 0xDEADBEEF,
+                    changed: true,
+                });
+            });
+
+            let mut psm = Psm::<32768>::new();
+            psm.store(&path, &initial_matter, NO_NETWORKS, Some(&events))
+                .unwrap();
+
+            assert!(path.exists());
+            assert!(std::fs::metadata(&path).unwrap().len() > 0);
+
+            // Load into fresh instances
+            let roundtripped = Matter::new(
+                &TEST_DEV_DET,
+                TEST_DEV_COMM,
+                &TEST_DEV_ATT,
+                sys_epoch,
+                MATTER_PORT,
+            );
+            let roundtripped_events = Events::<64>::new(sys_epoch);
+
+            let mut psm2 = Psm::<32768>::new();
+            psm2.load(
+                &path,
+                &roundtripped,
+                NO_NETWORKS,
+                Some(&roundtripped_events),
+            )
+            .unwrap();
+
+            // Basic info fields should've been restored
+            let basic = roundtripped.basic_info_settings.borrow();
+            assert_eq!(basic.node_label, "my-test-node");
+            assert_eq!(basic.location.as_deref(), Some("ab"));
+
+            // Events epoch should've been restored and bumped by one epoch
+            let events = roundtripped_events.persisted_state.lock(|cell| cell.get());
+            assert_eq!(events.next_event_no, 0xDEADBEEF);
+            assert_eq!(events.event_epoch_end, 0xDEADBEEF + 0x10000);
+        }
+
+        #[test]
+        fn test_load_legacy_format() {
+            // Generate a "legacy" blob using the old array-based format
+            // (anonymous array with positional anonymous octet-strings)
+            let source_matter = new_test_matter();
+            {
+                let mut basic = source_matter.basic_info_settings.borrow_mut();
+                basic.node_label = heapless::String::try_from("my-test-node").unwrap();
+                basic.location = Some(heapless::String::try_from("ab").unwrap());
+            }
+
+            let mut buf = [0u8; 4096];
+            let mut wb = crate::utils::storage::WriteBuf::new(&mut buf);
+            wb.start_array(&crate::tlv::TLVTag::Anonymous).unwrap();
+            wb.str_cb(&crate::tlv::TLVTag::Anonymous, |buf| {
+                source_matter.store_fabrics(buf)
+            })
+            .unwrap();
+            wb.str_cb(&crate::tlv::TLVTag::Anonymous, |buf| {
+                source_matter.store_basic_info(buf)
+            })
+            .unwrap();
+            wb.end_container().unwrap();
+            let tail = wb.get_tail();
+            let legacy_blob = &buf[..tail];
+
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("legacy.bin");
+            std::fs::write(&path, legacy_blob).unwrap();
+
+            let matter = Matter::new(
+                &TEST_DEV_DET,
+                TEST_DEV_COMM,
+                &TEST_DEV_ATT,
+                sys_epoch,
+                MATTER_PORT,
+            );
+
+            let mut psm = Psm::<32768>::new();
+            psm.load(&path, &matter, NO_NETWORKS, NO_EVENTS).unwrap();
+
+            let basic = matter.basic_info_settings.borrow();
+            assert_eq!(basic.node_label, "my-test-node");
+            assert_eq!(basic.location.as_deref(), Some("ab"));
         }
     }
 }

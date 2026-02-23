@@ -16,9 +16,10 @@
  */
 
 use crate::error::Error;
+use crate::im::EventFilter;
 use crate::tlv::{FromTLV, Nullable, TLVArray, TLVElement, ToTLV};
 
-use super::{AttrId, ClusterId, EndptId, GenericPath, IMStatusCode, Status};
+use super::{AttrId, ClusterId, EndptId, EventPath, EventResp, GenericPath, IMStatusCode, Status};
 
 pub use read::*;
 pub use subscribe::*;
@@ -185,16 +186,6 @@ pub struct ClusterPath {
     pub cluster: ClusterId,
 }
 
-/// Event Filter
-///
-/// Corresponds to the `EventFilterIB` TLV structure in the Interaction Model.
-#[derive(Default, Debug, Clone, PartialEq, Eq, Hash, FromTLV, ToTLV)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct EventFilter {
-    pub node: Option<u64>,
-    pub event_min: Option<u64>,
-}
-
 /// Data Version Filter
 ///
 /// Corresponds to the `DataVersionFilterIB` TLV structure in the Interaction Model.
@@ -203,39 +194,6 @@ pub struct EventFilter {
 pub struct DataVersionFilter {
     pub path: ClusterPath,
     pub data_ver: u32,
-}
-
-/// Event Path
-///
-/// Corresponds to the `EventPathIB` TLV structure in the Interaction Model.
-#[derive(Default, Debug, Clone, PartialEq, Eq, Hash, FromTLV, ToTLV)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(datatype = "list")]
-pub struct EventPath {
-    pub node: Option<u64>,
-    pub endpoint: Option<EndptId>,
-    pub cluster: Option<ClusterId>,
-    pub event: Option<u32>,
-    pub is_urgent: Option<bool>,
-}
-
-impl EventPath {
-    /// Create a new `EventPath` from the provided `GenericPath`,
-    /// filling all fields which are not provided with their default values.
-    pub const fn from_gp(path: &GenericPath) -> Self {
-        Self {
-            node: None,
-            endpoint: path.endpoint,
-            cluster: path.cluster,
-            event: path.leaf,
-            is_urgent: None,
-        }
-    }
-
-    /// Convert this `EventPath` to a `GenericPath`.
-    pub const fn to_gp(&self) -> GenericPath {
-        GenericPath::new(self.endpoint, self.cluster, self.event)
-    }
 }
 
 /// A wrapper enum for `ReadReq` and `SubscribeReq` that allows downstream code to
@@ -256,11 +214,25 @@ impl<'a> ReportDataReq<'a> {
         }
     }
 
+    pub fn event_requests(&self) -> Result<Option<TLVArray<'a, EventPath>>, Error> {
+        match self {
+            Self::Read(req) => req.event_requests(),
+            Self::Subscribe(req) | Self::SubscribeReport(req) => req.event_requests(),
+        }
+    }
+
     pub fn dataver_filters(&self) -> Result<Option<TLVArray<'_, DataVersionFilter>>, Error> {
         match self {
             Self::Read(req) => req.dataver_filters(),
             Self::Subscribe(req) => req.dataver_filters(),
             Self::SubscribeReport(_) => Ok(None),
+        }
+    }
+
+    pub fn event_filters(&self) -> Result<Option<TLVArray<'_, EventFilter>>, Error> {
+        match self {
+            Self::Read(req) => req.event_filters(),
+            Self::Subscribe(req) | Self::SubscribeReport(req) => req.event_filters(),
         }
     }
 
@@ -284,7 +256,7 @@ impl<'a> ReportDataReq<'a> {
 pub struct ReportDataResp<'a> {
     pub subscription_id: Option<u32>,
     pub attr_reports: Option<TLVArray<'a, AttrResp<'a>>>,
-    pub event_reports: Option<bool>,
+    pub event_reports: Option<TLVArray<'a, EventResp<'a>>>,
     pub more_chunks: Option<bool>,
     pub suppress_response: Option<bool>,
 }
@@ -299,7 +271,7 @@ pub struct ReportDataResp<'a> {
 pub enum ReportDataRespTag {
     SubscriptionId = 0,
     AttributeReports = 1,
-    _EventReport = 2,
+    EventReports = 2,
     MoreChunkedMsgs = 3,
     SupressResponse = 4,
 }

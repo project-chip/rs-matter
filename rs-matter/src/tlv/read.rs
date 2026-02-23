@@ -1090,6 +1090,16 @@ impl<'a> TLVSequence<'a> {
         })
     }
 
+    /// Return the length of the first TLV element in the sequence, regardless of the element type.
+    #[inline(always)]
+    pub(crate) fn container_len(&self) -> Result<usize, Error> {
+        let control = self.control()?;
+
+        self.container_value_len(control).map(|value_len| {
+            1 + control.tag_type.size() + control.value_type.variable_size_len() + value_len
+        })
+    }
+
     /// Returns a sub-slice representing the start of the next TLV element in the sequence.
     /// If the sequence contains just one element, the method will return an empty slice.
     /// If the sequence contains no elements, the method will return an error with code `ErrorCode::TLVTypeMismatch`.
@@ -1251,7 +1261,10 @@ mod tests {
     use core::{f32, f64};
 
     use super::TLVElement;
-    use crate::tlv::{TLVArray, TLVList, TLVSequence, TLVStruct, TLVTag, TLVValue, TLV};
+    use crate::{
+        tlv::{TLVArray, TLVList, TLVSequence, TLVStruct, TLVTag, TLVValue, TLVWrite, TLV},
+        utils::storage::WriteBuf,
+    };
 
     #[test]
     fn test_no_container_for_int() {
@@ -1320,6 +1333,24 @@ mod tests {
         assert_eq!(
             root.find_ctx(3).unwrap().str().unwrap(),
             &[0x73, 0x6d, 0x61, 0x72]
+        );
+    }
+
+    #[test]
+    fn test_container_len() {
+        let mut buf = [0; 200];
+        let mut tw = WriteBuf::new(&mut buf);
+
+        tw.start_struct(&TLVTag::Context(0)).unwrap();
+        tw.u64(&TLVTag::Context(0), 1234).unwrap();
+        tw.u64(&TLVTag::Context(1), 1234).unwrap();
+        tw.end_container().unwrap();
+
+        // container_len should exactly match the underlying slice holding the complete structure
+        assert_eq!(tw.as_slice().len(), 11);
+        assert_eq!(
+            TLVSequence(tw.as_slice()).container_len().unwrap(),
+            tw.as_slice().len()
         );
     }
 

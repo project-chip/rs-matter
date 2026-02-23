@@ -21,6 +21,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::Instant;
 
+use crate::dm::EventId;
 use crate::dm::{AttrId, ClusterId, EndptId};
 use crate::fabric::MAX_FABRICS;
 use crate::utils::cell::RefCell;
@@ -143,6 +144,25 @@ where
         _attr_id: AttrId,
     ) {
         // TODO: Make use of the endpoint_id, cluster_id, and attr_id parameters
+        // to implement more intelligent reporting on subscriptions
+
+        self.state.lock(|internal| {
+            let subscriptions = &mut internal.borrow_mut().subscriptions;
+            for sub in subscriptions.iter_mut() {
+                sub.changed = true;
+            }
+        });
+
+        self.notification.notify();
+    }
+
+    pub fn notify_event_emitted(
+        &self,
+        _endpoint_id: EndptId,
+        _cluster_id: ClusterId,
+        _event_id: EventId,
+    ) {
+        // TODO: Make use of the endpoint_id, cluster_id, and event_id parameters
         // to implement more intelligent reporting on subscriptions
 
         self.state.lock(|internal| {

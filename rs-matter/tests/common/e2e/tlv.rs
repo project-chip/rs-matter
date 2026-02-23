@@ -22,6 +22,8 @@ use rs_matter::tlv::{TLVElement, TLVTag, ToTLV};
 use rs_matter::transport::exchange::MessageMeta;
 use rs_matter::utils::storage::WriteBuf;
 
+use crate::common::e2e::test::E2eTestDirection;
+
 use super::test::E2eTest;
 
 /// A `ToTLV` trait variant useful for testing.
@@ -46,20 +48,23 @@ where
 ///
 /// It validates the differences between the output and the expected payload using a Diff
 /// algorithm, which provides a human readable output.
-pub struct TLVTest<I, E, F> {
+pub struct TLVTest<I, E, F, S = fn() -> Result<(), Error>> {
     pub input_meta: MessageMeta,
     pub input_payload: I,
     pub expected_meta: MessageMeta,
     pub expected_payload: E,
     pub process_reply: F,
+    pub setup: S,
     pub delay_ms: Option<u64>,
+    pub direction: E2eTestDirection,
 }
 
-impl<I, E, F> E2eTest for TLVTest<I, E, F>
+impl<I, E, F, S> E2eTest for TLVTest<I, E, F, S>
 where
     I: TestToTLV,
     E: TestToTLV,
     F: Fn(&TLVElement, &mut [u8]) -> Result<usize, Error>,
+    S: Fn() -> Result<(), Error>,
 {
     fn fill_input(&self, message_buf: &mut WriteBuf) -> Result<MessageMeta, Error> {
         self.input_payload
@@ -106,8 +111,8 @@ where
                 write!(diff_str, "{sign}{change}").unwrap();
             }
 
-            panic!("Expected does not match actual:\n== Diff:\n{diff_str}");
-            //panic!("Expected does not match actual:\n== Diff:\n{diff_str}\n== Expected:\n{expected_str}\n== Actual:\n{actual_str}");
+            // panic!("Expected does not match actual:\n== Diff:\n{diff_str}");
+            panic!("Expected does not match actual:\n== Diff:\n{diff_str}\n== Expected:\n{expected_str}\n== Actual:\n{actual_str}");
         }
 
         Ok(())
@@ -115,5 +120,13 @@ where
 
     fn delay(&self) -> Option<u64> {
         self.delay_ms
+    }
+
+    fn setup(&self) -> Result<(), Error> {
+        (self.setup)()
+    }
+
+    fn direction(&self) -> E2eTestDirection {
+        self.direction
     }
 }

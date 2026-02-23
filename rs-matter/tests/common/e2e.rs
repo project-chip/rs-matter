@@ -18,7 +18,7 @@
 use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use core::num::NonZeroU8;
 
-use embassy_futures::select::select3;
+use embassy_futures::select::select4;
 use embassy_sync::{
     blocking_mutex::raw::NoopRawMutex,
     zerocopy_channel::{Channel, Receiver, Sender},
@@ -27,6 +27,7 @@ use embassy_sync::{
 use rs_matter::acl::{AclEntry, AuthMode};
 use rs_matter::crypto::{test_only_crypto, Crypto};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::events::Events;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{AsyncHandler, AsyncMetadata, Privilege};
 use rs_matter::dm::{DataModel, IMBuffer};
@@ -37,6 +38,7 @@ use rs_matter::transport::network::{
     Address, NetworkReceive, NetworkSend, MAX_RX_PACKET_SIZE, MAX_TX_PACKET_SIZE,
 };
 use rs_matter::transport::session::{NocCatIds, ReservedSession, SessionMode};
+use rs_matter::utils::epoch::Epoch;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{Matter, MATTER_PORT};
@@ -60,6 +62,9 @@ pub fn new_runner(cat_ids: NocCatIds) -> E2eRunner<impl Crypto> {
     E2eRunner::new(test_only_crypto(), cat_ids)
 }
 
+// Set large enough that we can store more events than fit in an ethernet frame, so we can test "long reads"
+pub const E2E_EVENTS_BUF_SIZE: usize = 1024 * 4;
+
 /// A test runner for end-to-end tests.
 ///
 /// The runner works by instantiating two `Matter` instances, one for the local node and one for the
@@ -74,7 +79,8 @@ pub struct E2eRunner<C> {
     matter_client: Matter<'static>,
     crypto: C,
     buffers: PooledBuffers<10, NoopRawMutex, IMBuffer>,
-    subscriptions: Subscriptions<1>,
+    pub subscriptions: Subscriptions<3>,
+    pub events: Events<E2E_EVENTS_BUF_SIZE>,
     cat_ids: NocCatIds,
 }
 
@@ -89,12 +95,14 @@ impl<C: Crypto> E2eRunner<C> {
 
     /// Create a new runner with the given category IDs.
     pub fn new(crypto: C, cat_ids: NocCatIds) -> E2eRunner<C> {
+        let epoch: Epoch = || core::time::Duration::from_millis(1337);
         E2eRunner {
             matter: Self::new_matter(),
             matter_client: Self::new_matter(),
             crypto,
             buffers: PooledBuffers::new(0),
             subscriptions: Subscriptions::new(),
+            events: Events::new(epoch),
             cat_ids,
         }
     }
@@ -171,33 +179,30 @@ impl<C: Crypto> E2eRunner<C> {
 
         let matter_client = &self.matter_client;
 
-        let crypto = test_only_crypto();
-
-        let responder = Responder::new(
-            "Default",
-            DataModel::new(
-                &self.matter,
-                &crypto,
-                &self.buffers,
-                &self.subscriptions,
-                handler,
-            ),
+        let dm = DataModel::new(
             &self.matter,
-            0,
+            &self.crypto,
+            &self.buffers,
+            &self.subscriptions,
+            &self.events,
+            handler,
         );
 
-        select3(
+        let responder = Responder::new_default(&dm);
+
+        select4(
             matter_client.transport_mgr.run(
-                &crypto,
+                &self.crypto,
                 NetworkSendImpl(send_local),
                 NetworkReceiveImpl(recv_local),
             ),
             self.matter.transport_mgr.run(
-                &crypto,
+                &self.crypto,
                 NetworkSendImpl(send_remote),
                 NetworkReceiveImpl(recv_remote),
             ),
             responder.run::<4>(),
+            dm.process_subscriptions(&self.matter),
         )
         .coalesce()
         .await

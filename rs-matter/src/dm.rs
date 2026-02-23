@@ -22,6 +22,7 @@ use core::pin::pin;
 use core::time::Duration;
 
 use embassy_futures::select::select3;
+use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::{Instant, Timer};
 
 use crate::crypto::Crypto;
@@ -38,6 +39,7 @@ use crate::utils::storage::pooled::BufferAccess;
 use crate::utils::storage::WriteBuf;
 use crate::Matter;
 
+use events::Events;
 use subscriptions::Subscriptions;
 
 pub use types::*;
@@ -45,6 +47,7 @@ pub use types::*;
 pub mod clusters;
 pub mod devices;
 pub mod endpoints;
+pub mod events;
 pub mod networks;
 pub mod subscriptions;
 
@@ -62,24 +65,27 @@ struct SubscriptionBuffer<B> {
     fabric_idx: NonZeroU8,
     peer_node_id: u64,
     subscription_id: u32,
+    // Tracks how far along into the event stream this subscription has seen, updated as we emit events
+    min_event_number: u64,
     buffer: B,
 }
 
 /// An `ExchangeHandler` implementation capable of handling responder exchanges for the Interaction Model protocol.
 /// The implementation needs a `DataModelHandler` instance to interact with the underlying clusters of the data model.
-pub struct DataModel<'a, const N: usize, C, B, T>
+pub struct DataModel<'a, const NS: usize, const NE: usize, C, B, T>
 where
     B: BufferAccess<IMBuffer>,
 {
     matter: &'a Matter<'a>,
     crypto: C,
     buffers: &'a B,
-    subscriptions: &'a Subscriptions<N>,
-    subscriptions_buffers: RefCell<heapless::Vec<SubscriptionBuffer<B::Buffer<'a>>, N>>,
+    subscriptions: &'a Subscriptions<NS>,
+    subscriptions_buffers: RefCell<heapless::Vec<SubscriptionBuffer<B::Buffer<'a>>, NS>>,
+    events: &'a Events<NE>,
     handler: T,
 }
 
-impl<'a, const N: usize, C, B, T> DataModel<'a, N, C, B, T>
+impl<'a, const NS: usize, const NE: usize, C, B, T> DataModel<'a, NS, NE, C, B, T>
 where
     C: Crypto,
     B: BufferAccess<IMBuffer>,
@@ -100,7 +106,8 @@ where
         matter: &'a Matter<'a>,
         crypto: C,
         buffers: &'a B,
-        subscriptions: &'a Subscriptions<N>,
+        subscriptions: &'a Subscriptions<NS>,
+        events: &'a Events<NE>,
         handler: T,
     ) -> Self {
         Self {
@@ -109,6 +116,7 @@ where
             buffers,
             subscriptions,
             subscriptions_buffers: RefCell::new(heapless::Vec::new()),
+            events,
             handler,
         }
     }
@@ -207,6 +215,8 @@ where
             &node,
             None,
             HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
+            EventReader::new(0),
+            &self.events,
         );
 
         resp.respond(self, &mut wb, true).await?;
@@ -363,12 +373,15 @@ where
                 id,
                 fabric_idx.get(),
                 peer_node_id,
+                0, // min-event-number is zero initially, though the subscription req itself may have separate filters
                 &rx,
                 &mut tx,
                 exchange,
                 true,
             )
             .await?;
+
+        let min_event_number = self.events.peek_next_event_no();
 
         if primed {
             exchange
@@ -391,6 +404,7 @@ where
                         fabric_idx,
                         peer_node_id,
                         subscription_id: id,
+                        min_event_number,
                         buffer: rx,
                     });
 
@@ -428,6 +442,8 @@ where
                 }
             }
         }
+
+        // TODO(events) validate event_reqs
 
         Ok(())
     }
@@ -486,11 +502,6 @@ where
                 let sub = self.subscriptions.find_report_due(now);
 
                 if let Some((fabric_idx, peer_node_id, session_id, id)) = sub {
-                    debug!(
-                        "About to report data for subscription [F:{:x},P:{:x}]::{}",
-                        fabric_idx, peer_node_id, id
-                    );
-
                     let subscribed = Cell::new(false);
 
                     let _guard = scopeguard::guard((), |_| {
@@ -506,11 +517,22 @@ where
                         .borrow()
                         .iter()
                         .position(|sb| sb.subscription_id == id));
-                    let rx = self.subscriptions_buffers.borrow_mut().remove(index).buffer;
+                    let sub = self.subscriptions_buffers.borrow_mut().remove(index);
+                    let rx = sub.buffer;
 
                     let result = self
-                        .process_subscription(matter, fabric_idx, peer_node_id, session_id, id, &rx)
+                        .process_subscription(
+                            matter,
+                            fabric_idx,
+                            peer_node_id,
+                            session_id,
+                            id,
+                            sub.min_event_number,
+                            &rx,
+                        )
                         .await;
+
+                    let min_event_number = self.events.peek_next_event_no();
 
                     match result {
                         Ok(primed) => {
@@ -520,6 +542,7 @@ where
                                         fabric_idx,
                                         peer_node_id,
                                         subscription_id: id,
+                                        min_event_number,
                                         buffer: rx,
                                     },
                                 );
@@ -545,6 +568,7 @@ where
     /// - `peer_node_id` - the node ID of the peer
     /// - `session_id` - the session ID of the peer, if any
     /// - `id` - the subscription ID
+    /// - `min_event_number` TODO
     /// - `rx` - the received and saved data for the subscription, when the subscription was primed
     async fn process_subscription(
         &self,
@@ -553,6 +577,7 @@ where
         peer_node_id: u64,
         session_id: Option<u32>,
         id: u32,
+        min_event_number: u64,
         rx: &[u8],
     ) -> Result<bool, Error> {
         let mut exchange = if let Some(session_id) = session_id {
@@ -573,6 +598,7 @@ where
                     id,
                     fabric_idx.get(),
                     peer_node_id,
+                    min_event_number,
                     rx,
                     &mut tx,
                     &mut exchange,
@@ -640,6 +666,7 @@ where
     /// - `id` - the subscription ID
     /// - `fabric_idx` - the fabric index of the peer
     /// - `peer_node_id` - the node ID of the peer
+    /// - `min_event_number` TODO
     /// - `rx` - the received data for the subscription, when the subscription was primed
     /// - `tx` - the TX buffer to write the response to
     /// - `exchange` - the exchange to respond to
@@ -650,6 +677,7 @@ where
         id: u32,
         fabric_idx: u8,
         peer_node_id: u64,
+        min_event_number: u64,
         rx: &[u8],
         tx: &mut [u8],
         exchange: &mut Exchange<'_>,
@@ -675,10 +703,11 @@ where
             &node,
             Some(id),
             HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
+            EventReader::new(min_event_number),
+            &self.events,
         );
 
         let sub_valid = resp.respond(self, &mut wb, false).await?;
-
         if !sub_valid {
             debug!(
                 "Subscription [F:{:x},P:{:x}]::{} removed during reporting",
@@ -796,7 +825,7 @@ where
     }
 }
 
-impl<const N: usize, C, B, T> ExchangeHandler for DataModel<'_, N, C, B, T>
+impl<const NS: usize, const NE: usize, C, B, T> ExchangeHandler for DataModel<'_, NS, NE, C, B, T>
 where
     C: Crypto,
     T: DataModelHandler,
@@ -807,7 +836,7 @@ where
     }
 }
 
-impl<const N: usize, C, B, T> ChangeNotify for DataModel<'_, N, C, B, T>
+impl<const NS: usize, const NE: usize, C, B, T> ChangeNotify for DataModel<'_, NS, NE, C, B, T>
 where
     C: Crypto,
     T: DataModelHandler,
@@ -827,18 +856,24 @@ where
 /// The responder handles chunking as needed. I.e. if reported data is too large to fit into a single
 /// Matter message, it will send the data in multiple chunks (i.e. with multiple Matter messages), waiting for
 /// a `Success` response from the peer after each chunk, and then continuing to send the next chunk until all data is sent.
-struct ReportDataResponder<'a, 'b, 'c, C, D, B> {
+struct ReportDataResponder<'a, 'b, 'c, C, D, B, const NE: usize, M>
+where
+    M: RawMutex,
+{
     req: &'a ReportDataReq<'a>,
     node: &'a Node<'a>,
     subscription_id: Option<u32>,
     invoker: HandlerInvoker<'b, 'c, C, D, B>,
+    event_reader: EventReader,
+    events: &'a Events<NE, M>,
 }
 
-impl<'a, 'b, 'c, C, D, B> ReportDataResponder<'a, 'b, 'c, C, D, B>
+impl<'a, 'b, 'c, C, D, B, const NE: usize, M> ReportDataResponder<'a, 'b, 'c, C, D, B, NE, M>
 where
     C: Crypto,
     D: AsyncHandler,
     B: BufferAccess<IMBuffer>,
+    M: RawMutex,
 {
     // This is the amount of space we reserve for the structure/array closing TLVs
     // to be attached towards the end of long reads
@@ -850,12 +885,16 @@ where
         node: &'a Node<'a>,
         subscription_id: Option<u32>,
         invoker: HandlerInvoker<'b, 'c, C, D, B>,
+        event_reader: EventReader,
+        events: &'a Events<NE, M>,
     ) -> Self {
         Self {
             req,
             node,
             subscription_id,
             invoker,
+            event_reader,
+            events,
         }
     }
 
@@ -877,6 +916,12 @@ where
         let accessor = self.invoker.exchange().accessor()?;
 
         self.start_reply(wb)?;
+
+        let has_attr_reqs = self.req.attr_requests()?.is_some();
+
+        if has_attr_reqs {
+            wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))?;
+        }
 
         for item in self.node.read(self.req, &accessor)? {
             let item = item?;
@@ -908,7 +953,10 @@ where
                             }
                         } else {
                             debug!("<<< No TX space, chunking >>>");
-                            if !self.send(true, false, wb).await? {
+                            if !self
+                                .send(ReportDataChunkState::ChunkingAttributes, false, wb)
+                                .await?
+                            {
                                 return Ok(false);
                             }
                         }
@@ -918,7 +966,41 @@ where
             }
         }
 
-        self.send(false, suppress_last_resp, wb).await
+        if has_attr_reqs {
+            wb.end_container()?;
+        }
+
+        if let Some(event_reqs) = self.req.event_requests()? {
+            wb.start_array(&TLVTag::Context(ReportDataRespTag::EventReports as _))?;
+            let events = self.events.lock().await;
+            for event in events.iter() {
+                let event = event?;
+                loop {
+                    let result = self
+                        .event_reader
+                        .process_read(&event, &event_reqs, self.req.event_filters()?, &mut *wb)
+                        .await;
+
+                    match result {
+                        Ok(()) => break,
+                        Err(err) if err.code() == ErrorCode::NoSpace => {
+                            debug!("<<< No TX space, chunking >>>");
+                            if !self
+                                .send(ReportDataChunkState::ChunkingEvents, false, wb)
+                                .await?
+                            {
+                                return Ok(false);
+                            }
+                        }
+                        Err(err) => Err(err)?,
+                    }
+                }
+            }
+            wb.end_container()?;
+        }
+
+        self.send(ReportDataChunkState::Done, suppress_last_resp, wb)
+            .await
     }
 
     /// Send the items of an array attribute one by one, until the end of the array is reached.
@@ -969,7 +1051,10 @@ where
                 }
                 Err(err) if err.code() == ErrorCode::NoSpace => {
                     debug!("<<< No TX space, chunking >>>");
-                    if !self.send(true, false, wb).await? {
+                    if !self
+                        .send(ReportDataChunkState::ChunkingAttributes, false, wb)
+                        .await?
+                    {
                         return Ok(false);
                     }
                 }
@@ -984,32 +1069,43 @@ where
     /// Send the reply to the peer, potentially opening another reply.
     ///
     /// Arguments:
-    /// - `more_chunks`: whether there are more chunks to send. If `true`, this will initiate another reply in `wb`
-    /// - `suppress_last_resp`: whether to suppress the response from the peer. Note that if `more_chunks` is `true`,
-    ///   `suppress_last_resp` MUST be true and therefore it is set unconditionally
+    /// - `state`: tracks chunking state - are we just sending a chunk packet or are we done and wrapping up?
+    /// - `suppress_last_resp`: whether to suppress the response from the peer, this is ignored if state is != Done
     /// - `wb`: the buffer containing the reply. Once the reply is sent, the buffer is re-initialized for a new reply if `more_chunks` is `true`
     async fn send(
         &mut self,
-        more_chunks: bool,
+        state: ReportDataChunkState,
         suppress_last_resp: bool,
         wb: &mut WriteBuf<'_>,
     ) -> Result<bool, Error> {
-        self.end_reply(more_chunks, suppress_last_resp, wb)?;
+        self.end_reply(state, suppress_last_resp, wb)?;
 
         self.invoker
             .exchange()
             .send(OpCode::ReportData, wb.as_slice())
             .await?;
 
-        let cont: bool = if more_chunks || !suppress_last_resp {
-            self.recv_status_success().await?
-        } else {
-            false
+        let cont = match state {
+            ReportDataChunkState::ChunkingAttributes => {
+                let cont = self.recv_status_success().await?;
+                self.start_reply(wb)?;
+                wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))?;
+                cont
+            }
+            ReportDataChunkState::ChunkingEvents => {
+                let cont = self.recv_status_success().await?;
+                self.start_reply(wb)?;
+                wb.start_array(&TLVTag::Context(ReportDataRespTag::EventReports as u8))?;
+                cont
+            }
+            ReportDataChunkState::Done => {
+                if !suppress_last_resp {
+                    self.recv_status_success().await?
+                } else {
+                    false
+                }
+            }
         };
-
-        if more_chunks {
-            self.start_reply(wb)?;
-        }
 
         Ok(cont)
     }
@@ -1071,48 +1167,50 @@ where
             assert!(matches!(self.req, ReportDataReq::Read(_)));
         }
 
-        let has_requests = self.req.attr_requests()?.is_some();
-
-        if has_requests {
-            wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))?;
-        }
-
         Ok(())
     }
 
     /// End a reply by writing the closing TLVs and potentially indicating that there are more chunks to send.
     fn end_reply(
         &self,
-        more_chunks: bool,
+        state: ReportDataChunkState,
         suppress_resp: bool,
         wb: &mut WriteBuf<'_>,
     ) -> Result<(), Error> {
         wb.expand(Self::LONG_READS_TLV_RESERVE_SIZE)?;
 
-        let has_requests = self.req.attr_requests()?.is_some();
-
-        if has_requests {
-            wb.end_container()?;
-        }
-
-        if more_chunks {
-            wb.bool(
-                &TLVTag::Context(ReportDataRespTag::MoreChunkedMsgs as u8),
-                true,
-            )?;
-        }
-
-        if !more_chunks && suppress_resp {
-            wb.bool(
-                &TLVTag::Context(ReportDataRespTag::SupressResponse as u8),
-                true,
-            )?;
-        }
+        match state {
+            ReportDataChunkState::ChunkingAttributes | ReportDataChunkState::ChunkingEvents => {
+                wb.end_container()?;
+                wb.bool(
+                    &TLVTag::Context(ReportDataRespTag::MoreChunkedMsgs as u8),
+                    true,
+                )?;
+            }
+            ReportDataChunkState::Done => {
+                if suppress_resp {
+                    wb.bool(
+                        &TLVTag::Context(ReportDataRespTag::SupressResponse as u8),
+                        true,
+                    )?;
+                }
+            }
+        };
 
         wb.end_container()?;
 
         Ok(())
     }
+}
+
+/// Used to avoid duplicating the chunking logic for events and attributes; they both
+/// share the same write path when the current packet fills up, and use this to determine
+/// which field they should be setting up an array in for more output in the next packet
+#[derive(Clone, Copy)]
+enum ReportDataChunkState {
+    ChunkingAttributes,
+    ChunkingEvents,
+    Done,
 }
 
 /// This type responds to a `WriteReq` by invoking the

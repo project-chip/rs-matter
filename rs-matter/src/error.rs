@@ -215,6 +215,12 @@ impl From<Utf8Error> for Error {
     }
 }
 
+impl<T: num_enum::TryFromPrimitive> From<num_enum::TryFromPrimitiveError<T>> for Error {
+    fn from(_e: num_enum::TryFromPrimitiveError<T>) -> Self {
+        Self::new(ErrorCode::Invalid)
+    }
+}
+
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         #[cfg(not(all(feature = "std", feature = "backtrace")))]

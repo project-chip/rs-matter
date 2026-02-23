@@ -47,6 +47,7 @@ use rs_matter::dm::clusters::on_off::{self, OnOffHooks, StartUpOnOffEnum};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::endpoints;
+use rs_matter::dm::events::DefaultEvents;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::IMBuffer;
@@ -78,6 +79,7 @@ mod mdns;
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, IMBuffer>> = StaticCell::new();
 static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
+static EVENTS: StaticCell<DefaultEvents> = StaticCell::new();
 static PSM: StaticCell<Psm<4096>> = StaticCell::new();
 
 #[cfg(feature = "chip-test")]
@@ -146,6 +148,11 @@ fn run() -> Result<(), Error> {
 
     let mut rand = crypto.rand()?;
 
+    // Create the event queue
+    let events = EVENTS
+        .uninit()
+        .init_with(DefaultEvents::init(rs_matter::utils::epoch::sys_epoch));
+
     // OnOff cluster setup
     let on_off_handler =
         on_off::OnOffHandler::new(Dataver::new_rand(&mut rand), 1, OnOffDeviceLogic::new());
@@ -172,6 +179,7 @@ fn run() -> Result<(), Error> {
         &crypto,
         buffers,
         subscriptions,
+        events,
         dm_handler(rand, &on_off_handler, &level_control_handler),
     );
 
@@ -213,11 +221,11 @@ fn run() -> Result<(), Error> {
     info!(
         "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B, Persist path={}",
         core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS)),
+        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS, Some(events))),
         path.as_path().to_str().unwrap_or("none")
     );
 
-    psm.load(&path, matter, NO_NETWORKS)?;
+    psm.load(&path, matter, NO_NETWORKS, Some(events))?;
 
     // We need to always print the QR text, because the test runner expects it to be printed
     // even if the device is already commissioned
@@ -232,7 +240,7 @@ fn run() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
     }
 
-    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS));
+    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, Some(events)));
 
     // Listen to SIGTERM because at the end of the test we'll receive it
     let mut term_signal = Signals::new([Signal::Term])?;

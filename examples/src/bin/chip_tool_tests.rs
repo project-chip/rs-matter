@@ -48,6 +48,7 @@ use rs_matter::dm::clusters::unit_testing::{
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
+use rs_matter::dm::events::DefaultEvents;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
@@ -89,6 +90,7 @@ static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, rs_matter::dm::IMBuffer>> =
     StaticCell::new();
 static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
+static EVENTS: StaticCell<DefaultEvents> = StaticCell::new();
 static PSM: StaticCell<Psm<32768>> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 
@@ -138,6 +140,11 @@ fn main() -> Result<(), Error> {
 
     let mut rand = crypto.rand()?;
 
+    // Create the event queue
+    let events = EVENTS
+        .uninit()
+        .init_with(DefaultEvents::init(rs_matter::utils::epoch::sys_epoch));
+
     // Our on-off cluster
     let on_off_handler = OnOffHandler::new_standalone(
         Dataver::new_rand(&mut rand),
@@ -156,6 +163,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         buffers,
         subscriptions,
+        events,
         dm_handler(rand, unit_testing_data, &on_off_handler),
     );
 
@@ -195,10 +203,10 @@ fn main() -> Result<(), Error> {
     info!(
         "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B",
         core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS,))
+        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS, Some(events)))
     );
 
-    psm.load(&path, matter, NO_NETWORKS)?;
+    psm.load(&path, matter, NO_NETWORKS, Some(events))?;
 
     // We need to always print the QR text, because the test runner expects it to be printed
     // even if the device is already commissioned
@@ -213,7 +221,7 @@ fn main() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
     }
 
-    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS));
+    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, Some(events)));
 
     // Listen to SIGTERM because at the end of the test we'll receive it
     let mut term_signal = Signals::new([Signal::Term])?;
