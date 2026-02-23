@@ -373,6 +373,7 @@ pub const MAX_AUTHORIZED_PAA_LIST: usize = 10;
 
 /// Certification type (Matter Spec 6.3.1.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum CertificationType {
     /// Development and test devices
@@ -397,6 +398,7 @@ impl CertificationType {
 
 /// Decoded Certification Declaration payload (Matter Spec 6.3.1.)
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CertificationElements {
     pub format_version: u16,
     pub vendor_id: u16,
@@ -442,161 +444,257 @@ impl Default for CertificationElements {
     }
 }
 
-/// Decode a TLV-encoded CD payload into [`CertificationElements`].
-///
-/// Validates the TLV structure, field types, and constraints per the Matter spec:
-/// - Tags 0-8 are mandatory and must appear in order.
-/// - Tags 9-10 (DAC origin) are optional but must appear together.
-/// - Tag 11 (authorized PAA list) is optional.
-/// - Product IDs array must have 1..=100 entries.
-/// - Certificate ID must be exactly 19 bytes.
-/// - Authorized PAA entries must each be exactly 20 bytes.
-#[allow(clippy::field_reassign_with_default)]
-pub fn decode_certification_elements(cd_content: &[u8]) -> Result<CertificationElements, Error> {
-    let elem = TLVElement::new(cd_content);
-    let structure = elem.structure()?;
+impl CertificationElements {
+    /// Decode a TLV-encoded CD payload into [`CertificationElements`].
+    ///
+    /// Validates the TLV structure, field types, and constraints per the Matter spec:
+    /// - Tags 0-8 are mandatory and must appear in order.
+    /// - Tags 9-10 (DAC origin) are optional but must appear together.
+    /// - Tag 11 (authorized PAA list) is optional.
+    /// - Product IDs array must have 1..=100 entries.
+    /// - Certificate ID must be exactly 19 bytes.
+    /// - Authorized PAA entries must each be exactly 20 bytes.
+    #[allow(clippy::field_reassign_with_default)]
+    pub fn decode(cd_content: &[u8]) -> Result<Self, Error> {
+        let elem = TLVElement::new(cd_content);
+        let structure = elem.structure()?;
 
-    let mut cd = CertificationElements::default();
+        let mut cd = CertificationElements::default();
 
-    // Tag 0: format_version (mandatory)
-    cd.format_version = structure.find_ctx(CD_TAG_FORMAT_VERSION)?.u16()?;
+        // Tag 0: format_version (mandatory)
+        cd.format_version = structure.find_ctx(CD_TAG_FORMAT_VERSION)?.u16()?;
 
-    // Tag 1: vendor_id (mandatory)
-    cd.vendor_id = structure.find_ctx(CD_TAG_VENDOR_ID)?.u16()?;
+        // Tag 1: vendor_id (mandatory)
+        cd.vendor_id = structure.find_ctx(CD_TAG_VENDOR_ID)?.u16()?;
 
-    // Tag 2: product_id_array (mandatory, 1..=100 entries)
-    let pid_array = structure.find_ctx(CD_TAG_PRODUCT_ID_ARRAY)?;
-    let pid_seq = pid_array.array()?;
-    let mut count = 0usize;
-    for pid_elem in pid_seq.iter() {
-        let pid_elem: TLVElement<'_> = pid_elem?;
-        if count >= MAX_PRODUCT_IDS {
+        // Tag 2: product_id_array (mandatory, 1..=100 entries)
+        let pid_array = structure.find_ctx(CD_TAG_PRODUCT_ID_ARRAY)?;
+        let pid_seq = pid_array.array()?;
+        let mut count = 0usize;
+        for pid_elem in pid_seq.iter() {
+            let pid_elem: TLVElement<'_> = pid_elem?;
+            if count >= MAX_PRODUCT_IDS {
+                return Err(ErrorCode::CdInvalidFormat.into());
+            }
+            cd.product_ids[count] = pid_elem.u16()?;
+            count += 1;
+        }
+        if count == 0 {
             return Err(ErrorCode::CdInvalidFormat.into());
         }
-        cd.product_ids[count] = pid_elem.u16()?;
-        count += 1;
-    }
-    if count == 0 {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-    cd.product_ids_count = count;
+        cd.product_ids_count = count;
 
-    // Tag 3: device_type_id (mandatory)
-    cd.device_type_id = structure.find_ctx(CD_TAG_DEVICE_TYPE_ID)?.u32()?;
+        // Tag 3: device_type_id (mandatory)
+        cd.device_type_id = structure.find_ctx(CD_TAG_DEVICE_TYPE_ID)?.u32()?;
 
-    // Tag 4: certificate_id (mandatory, exactly 19 bytes UTF-8 string)
-    let cert_id_str = structure.find_ctx(CD_TAG_CERTIFICATE_ID)?.utf8()?;
-    if cert_id_str.len() != CERTIFICATE_ID_LEN {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-    cd.certificate_id.copy_from_slice(cert_id_str.as_bytes());
-
-    // Tag 5: security_level (mandatory)
-    cd.security_level = structure.find_ctx(CD_TAG_SECURITY_LEVEL)?.u8()?;
-
-    // Tag 6: security_information (mandatory)
-    cd.security_information = structure.find_ctx(CD_TAG_SECURITY_INFORMATION)?.u16()?;
-
-    // Tag 7: version_number (mandatory)
-    cd.version_number = structure.find_ctx(CD_TAG_VERSION_NUMBER)?.u16()?;
-
-    // Tag 8: certification_type (mandatory)
-    let cert_type_raw = structure.find_ctx(CD_TAG_CERTIFICATION_TYPE)?.u8()?;
-    cd.certification_type = CertificationType::from_u8(cert_type_raw)?;
-
-    // Tag 9 & 10: dac_origin_vendor_id and dac_origin_product_id (optional, must appear together)
-    let vid_elem = structure.find_ctx(CD_TAG_DAC_ORIGIN_VENDOR_ID)?;
-    let pid_elem = structure.find_ctx(CD_TAG_DAC_ORIGIN_PRODUCT_ID)?;
-    // Both must be present or both must be absent
-    if vid_elem.is_empty() != pid_elem.is_empty() {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-    if !vid_elem.is_empty() {
-        cd.dac_origin_vendor_id = vid_elem.u16()?;
-        cd.dac_origin_product_id = pid_elem.u16()?;
-        cd.dac_origin_vid_pid_present = true;
-    }
-
-    // Tag 11: authorized_paa_list (optional)
-    let paa_elem = structure.find_ctx(CD_TAG_AUTHORIZED_PAA_LIST)?;
-    if !paa_elem.is_empty() {
-        let paa_seq = paa_elem.array()?;
-        let mut paa_count = 0usize;
-        for paa_entry in paa_seq.iter() {
-            let paa_entry: TLVElement<'_> = paa_entry?;
-            if paa_count >= MAX_AUTHORIZED_PAA_LIST {
-                return Err(ErrorCode::CdInvalidFormat.into());
-            }
-            let paa_bytes = paa_entry.str()?;
-            if paa_bytes.len() != KEY_IDENTIFIER_LEN {
-                return Err(ErrorCode::CdInvalidFormat.into());
-            }
-            cd.authorized_paa_list[paa_count].copy_from_slice(paa_bytes);
-            paa_count += 1;
+        // Tag 4: certificate_id (mandatory, exactly 19 bytes UTF-8 string)
+        let cert_id_str = structure.find_ctx(CD_TAG_CERTIFICATE_ID)?.utf8()?;
+        if cert_id_str.len() != CERTIFICATE_ID_LEN {
+            return Err(ErrorCode::CdInvalidFormat.into());
         }
-        cd.authorized_paa_list_count = paa_count;
+        cd.certificate_id.copy_from_slice(cert_id_str.as_bytes());
+
+        // Tag 5: security_level (mandatory)
+        cd.security_level = structure.find_ctx(CD_TAG_SECURITY_LEVEL)?.u8()?;
+
+        // Tag 6: security_information (mandatory)
+        cd.security_information = structure.find_ctx(CD_TAG_SECURITY_INFORMATION)?.u16()?;
+
+        // Tag 7: version_number (mandatory)
+        cd.version_number = structure.find_ctx(CD_TAG_VERSION_NUMBER)?.u16()?;
+
+        // Tag 8: certification_type (mandatory)
+        let cert_type_raw = structure.find_ctx(CD_TAG_CERTIFICATION_TYPE)?.u8()?;
+        cd.certification_type = CertificationType::from_u8(cert_type_raw)?;
+
+        // Tag 9 & 10: dac_origin_vendor_id and dac_origin_product_id (optional, must appear together)
+        let vid_elem = structure.find_ctx(CD_TAG_DAC_ORIGIN_VENDOR_ID)?;
+        let pid_elem = structure.find_ctx(CD_TAG_DAC_ORIGIN_PRODUCT_ID)?;
+        // Both must be present or both must be absent
+        if vid_elem.is_empty() != pid_elem.is_empty() {
+            return Err(ErrorCode::CdInvalidFormat.into());
+        }
+        if !vid_elem.is_empty() {
+            cd.dac_origin_vendor_id = vid_elem.u16()?;
+            cd.dac_origin_product_id = pid_elem.u16()?;
+            cd.dac_origin_vid_pid_present = true;
+        }
+
+        // Tag 11: authorized_paa_list (optional)
+        let paa_elem = structure.find_ctx(CD_TAG_AUTHORIZED_PAA_LIST)?;
+        if !paa_elem.is_empty() {
+            let paa_seq = paa_elem.array()?;
+            let mut paa_count = 0usize;
+            for paa_entry in paa_seq.iter() {
+                let paa_entry: TLVElement<'_> = paa_entry?;
+                if paa_count >= MAX_AUTHORIZED_PAA_LIST {
+                    return Err(ErrorCode::CdInvalidFormat.into());
+                }
+                let paa_bytes = paa_entry.str()?;
+                if paa_bytes.len() != KEY_IDENTIFIER_LEN {
+                    return Err(ErrorCode::CdInvalidFormat.into());
+                }
+                cd.authorized_paa_list[paa_count].copy_from_slice(paa_bytes);
+                paa_count += 1;
+            }
+            cd.authorized_paa_list_count = paa_count;
+        }
+
+        Ok(cd)
     }
 
-    Ok(cd)
-}
+    /// Verify a CMS-signed Certification Declaration.
+    ///
+    /// 1. Parses the CMS envelope
+    /// 2. Looks up the signing key by Key ID in the well-known trust store
+    /// 3. Enforces test key policy (test keys only for DevelopmentAndTest/Provisional)
+    /// 4. Verifies the ECDSA-SHA256 signature over the CD content
+    /// 5. Decodes the CD TLV payload
+    ///
+    /// # Arguments
+    /// - `crypto`: Cryptographic backend for ECDSA verification.
+    /// - `cms_message`: The complete CMS-signed CD message bytes.
+    /// - `allow_test_cd_signing_key`: If `false`, CDs signed with the test key are rejected.
+    ///
+    /// # Returns
+    /// The decoded [`CertificationElements`] on success.
+    pub fn verify<C: Crypto>(
+        crypto: &C,
+        cms_message: &[u8],
+        allow_test_cd_signing_key: bool,
+    ) -> Result<Self, Error> {
+        // Parse CMS envelope
+        let cms = parse_cms_signed_data(cms_message)?;
 
-/// Verify a CMS-signed Certification Declaration.
-///
-/// 1. Parses the CMS envelope
-/// 2. Looks up the signing key by Key ID in the well-known trust store
-/// 3. Enforces test key policy (test keys only for DevelopmentAndTest/Provisional)
-/// 4. Verifies the ECDSA-SHA256 signature over the CD content
-/// 5. Decodes the CD TLV payload
-///
-/// # Arguments
-/// - `crypto`: Cryptographic backend for ECDSA verification.
-/// - `cms_message`: The complete CMS-signed CD message bytes.
-/// - `allow_test_cd_signing_key`: If `false`, CDs signed with the test key are rejected.
-///
-/// # Returns
-/// The decoded [`CertificationElements`] on success.
-pub fn verify_certification_declaration<C: Crypto>(
-    crypto: &C,
-    cms_message: &[u8],
-    allow_test_cd_signing_key: bool,
-) -> Result<CertificationElements, Error> {
-    // Parse CMS envelope
-    let cms = parse_cms_signed_data(cms_message)?;
+        // Look up signing key
+        let pubkey_bytes = cd_keys::lookup_cd_signing_key(cms.signer_key_id)
+            .ok_or(Error::new(ErrorCode::CdSigningKeyNotFound))?;
 
-    // Look up signing key
-    let pubkey_bytes = cd_keys::lookup_cd_signing_key(cms.signer_key_id)
-        .ok_or(Error::new(ErrorCode::CdSigningKeyNotFound))?;
+        // Test key policy
+        let is_test_key = cd_keys::is_test_cd_key(cms.signer_key_id);
+        if is_test_key && !allow_test_cd_signing_key {
+            return Err(ErrorCode::CdSigningKeyNotFound.into());
+        }
 
-    // Test key policy
-    let is_test_key = cd_keys::is_test_cd_key(cms.signer_key_id);
-    if is_test_key && !allow_test_cd_signing_key {
-        return Err(ErrorCode::CdSigningKeyNotFound.into());
+        // Verify ECDSA-SHA256 signature over the raw CD content
+        let pubkey_ref = CanonPkcPublicKeyRef::try_new(pubkey_bytes)?;
+        let pubkey = crypto.pub_key(pubkey_ref)?;
+
+        let sig_ref = CanonPkcSignatureRef::new(
+            <&[u8; RAW_SIGNATURE_LEN]>::try_from(&cms.signature_raw[..])
+                .map_err(|_| Error::new(ErrorCode::CdInvalidSignature))?,
+        );
+
+        let valid = pubkey.verify(cms.cd_content, sig_ref)?;
+        if !valid {
+            return Err(ErrorCode::CdInvalidSignature.into());
+        }
+
+        // Decode CD TLV payload
+        let cd = CertificationElements::decode(cms.cd_content)?;
+
+        // Post-signature test key policy enforcement
+        // Test key may only sign DevelopmentAndTest (and optionally Provisional) CDs
+        if is_test_key && cd.certification_type == CertificationType::Official {
+            return Err(ErrorCode::CdSigningKeyNotFound.into());
+        }
+
+        Ok(cd)
     }
 
-    // Verify ECDSA-SHA256 signature over the raw CD content
-    let pubkey_ref = CanonPkcPublicKeyRef::try_new(pubkey_bytes)?;
-    let pubkey = crypto.pub_key(pubkey_ref)?;
+    /// Validate CD content against device identity.
+    ///
+    /// Implements the CD validation rules (Matter Spec Section 6.3.1).
+    ///
+    /// # Validation rules
+    ///
+    /// 1. `format_version` must be 1.
+    /// 2. `certification_type` must be valid (0, 1, or 2) -- already enforced by decoding.
+    /// 3. CD `vendor_id` must match device's BasicInformation VendorID.
+    /// 4. Device's BasicInformation ProductID must be in CD's `product_id_array`.
+    /// 5. If `dac_origin_vid_pid_present`:
+    ///    - DAC VID must match `dac_origin_vendor_id`
+    ///    - PAI VID must match `dac_origin_vendor_id`
+    ///    - DAC PID must match `dac_origin_product_id`
+    ///    - If PAI has PID, it must match `dac_origin_product_id`
+    /// 6. If NOT `dac_origin_vid_pid_present`:
+    ///    - DAC VID must match CD `vendor_id`
+    ///    - PAI VID must match CD `vendor_id`
+    ///    - DAC PID must be in CD `product_id_array`
+    ///    - If PAI has PID, it must be in CD `product_id_array`
+    /// 7. If `authorized_paa_list` is present, PAA's SKID must be in the list.
+    ///
+    /// Note: `security_level`, `security_information`, and `version_number` are
+    /// explicitly ignored per the specification.
+    pub fn validate(&self, device_info: &DeviceInfoForAttestation) -> Result<(), Error> {
+        // Rule 1: format_version must be 1
+        if self.format_version != 1 {
+            return Err(ErrorCode::CdInvalidFormat.into());
+        }
 
-    let sig_ref = CanonPkcSignatureRef::new(
-        <&[u8; RAW_SIGNATURE_LEN]>::try_from(&cms.signature_raw[..])
-            .map_err(|_| Error::new(ErrorCode::CdInvalidSignature))?,
-    );
+        // Rule 2: certification_type is already validated by decode
 
-    let valid = pubkey.verify(cms.cd_content, sig_ref)?;
-    if !valid {
-        return Err(ErrorCode::CdInvalidSignature.into());
+        // Rule 3: CD vendor_id must match device's BasicInformation VendorID
+        if self.vendor_id != device_info.vendor_id {
+            return Err(ErrorCode::CdInvalidVendorId.into());
+        }
+
+        // Rule 4: Device's ProductID must be in the CD's product_id_array
+        if !product_id_in_list(device_info.product_id, self) {
+            return Err(ErrorCode::CdInvalidProductId.into());
+        }
+
+        // Rules 5-6: VID/PID matching depends on dac_origin_vid_pid_present
+        if self.dac_origin_vid_pid_present {
+            // Rule 5: dacOriginVIDandPID present
+            if device_info.dac_vendor_id != self.dac_origin_vendor_id {
+                return Err(ErrorCode::CdInvalidVendorId.into());
+            }
+            if device_info.pai_vendor_id != self.dac_origin_vendor_id {
+                return Err(ErrorCode::CdInvalidVendorId.into());
+            }
+            if device_info.dac_product_id != self.dac_origin_product_id {
+                return Err(ErrorCode::CdInvalidProductId.into());
+            }
+            if device_info.pai_product_id != 0
+                && device_info.pai_product_id != self.dac_origin_product_id
+            {
+                return Err(ErrorCode::CdInvalidProductId.into());
+            }
+        } else {
+            // Rule 6: dacOriginVIDandPID NOT present
+            if device_info.dac_vendor_id != self.vendor_id {
+                return Err(ErrorCode::CdInvalidVendorId.into());
+            }
+            if device_info.pai_vendor_id != self.vendor_id {
+                return Err(ErrorCode::CdInvalidVendorId.into());
+            }
+            if !product_id_in_list(device_info.dac_product_id, self) {
+                return Err(ErrorCode::CdInvalidProductId.into());
+            }
+            if device_info.pai_product_id != 0
+                && !product_id_in_list(device_info.pai_product_id, self)
+            {
+                return Err(ErrorCode::CdInvalidProductId.into());
+            }
+        }
+
+        // Rule 7: Authorized PAA list check
+        if self.authorized_paa_list_count > 0 {
+            let mut found = false;
+            for i in 0..self.authorized_paa_list_count {
+                if self.authorized_paa_list[i] == device_info.paa_skid {
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return Err(ErrorCode::CdInvalidPaa.into());
+            }
+        }
+
+        Ok(())
     }
-
-    // Decode CD TLV payload
-    let cd = decode_certification_elements(cms.cd_content)?;
-
-    // Post-signature test key policy enforcement
-    // Test key may only sign DevelopmentAndTest (and optionally Provisional) CDs
-    if is_test_key && cd.certification_type == CertificationType::Official {
-        return Err(ErrorCode::CdSigningKeyNotFound.into());
-    }
-
-    Ok(cd)
 }
 
 /// Device identity information for CD validation.
@@ -618,100 +716,6 @@ pub struct DeviceInfoForAttestation {
     pub pai_product_id: u16,
     /// Subject Key Identifier of the PAA certificate.
     pub paa_skid: [u8; KEY_IDENTIFIER_LEN],
-}
-
-/// Validate CD content against device identity.
-///
-/// Implements the CD validation rules (Matter Spec Section 6.3.1).
-///
-/// # Validation rules
-///
-/// 1. `format_version` must be 1.
-/// 2. `certification_type` must be valid (0, 1, or 2) -- already enforced by decoding.
-/// 3. CD `vendor_id` must match device's BasicInformation VendorID.
-/// 4. Device's BasicInformation ProductID must be in CD's `product_id_array`.
-/// 5. If `dac_origin_vid_pid_present`:
-///    - DAC VID must match `dac_origin_vendor_id`
-///    - PAI VID must match `dac_origin_vendor_id`
-///    - DAC PID must match `dac_origin_product_id`
-///    - If PAI has PID, it must match `dac_origin_product_id`
-/// 6. If NOT `dac_origin_vid_pid_present`:
-///    - DAC VID must match CD `vendor_id`
-///    - PAI VID must match CD `vendor_id`
-///    - DAC PID must be in CD `product_id_array`
-///    - If PAI has PID, it must be in CD `product_id_array`
-/// 7. If `authorized_paa_list` is present, PAA's SKID must be in the list.
-///
-/// Note: `security_level`, `security_information`, and `version_number` are
-/// explicitly ignored per the specification.
-pub fn validate_cd(
-    cd: &CertificationElements,
-    device_info: &DeviceInfoForAttestation,
-) -> Result<(), Error> {
-    // Rule 1: format_version must be 1
-    if cd.format_version != 1 {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-
-    // Rule 2: certification_type is already validated by decode
-
-    // Rule 3: CD vendor_id must match device's BasicInformation VendorID
-    if cd.vendor_id != device_info.vendor_id {
-        return Err(ErrorCode::CdInvalidVendorId.into());
-    }
-
-    // Rule 4: Device's ProductID must be in the CD's product_id_array
-    if !product_id_in_list(device_info.product_id, cd) {
-        return Err(ErrorCode::CdInvalidProductId.into());
-    }
-
-    // Rules 5-6: VID/PID matching depends on dac_origin_vid_pid_present
-    if cd.dac_origin_vid_pid_present {
-        // Rule 5: dacOriginVIDandPID present
-        if device_info.dac_vendor_id != cd.dac_origin_vendor_id {
-            return Err(ErrorCode::CdInvalidVendorId.into());
-        }
-        if device_info.pai_vendor_id != cd.dac_origin_vendor_id {
-            return Err(ErrorCode::CdInvalidVendorId.into());
-        }
-        if device_info.dac_product_id != cd.dac_origin_product_id {
-            return Err(ErrorCode::CdInvalidProductId.into());
-        }
-        if device_info.pai_product_id != 0 && device_info.pai_product_id != cd.dac_origin_product_id
-        {
-            return Err(ErrorCode::CdInvalidProductId.into());
-        }
-    } else {
-        // Rule 6: dacOriginVIDandPID NOT present
-        if device_info.dac_vendor_id != cd.vendor_id {
-            return Err(ErrorCode::CdInvalidVendorId.into());
-        }
-        if device_info.pai_vendor_id != cd.vendor_id {
-            return Err(ErrorCode::CdInvalidVendorId.into());
-        }
-        if !product_id_in_list(device_info.dac_product_id, cd) {
-            return Err(ErrorCode::CdInvalidProductId.into());
-        }
-        if device_info.pai_product_id != 0 && !product_id_in_list(device_info.pai_product_id, cd) {
-            return Err(ErrorCode::CdInvalidProductId.into());
-        }
-    }
-
-    // Rule 7: Authorized PAA list check
-    if cd.authorized_paa_list_count > 0 {
-        let mut found = false;
-        for i in 0..cd.authorized_paa_list_count {
-            if cd.authorized_paa_list[i] == device_info.paa_skid {
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            return Err(ErrorCode::CdInvalidPaa.into());
-        }
-    }
-
-    Ok(())
 }
 
 /// Check if a product ID is present in the CD's product_id_array.
@@ -890,13 +894,13 @@ mod tests {
 
     #[test]
     fn test_decode_cd_content_01() {
-        let cd = unwrap!(decode_certification_elements(TEST_CMS_CD_CONTENT_01));
+        let cd = unwrap!(CertificationElements::decode(TEST_CMS_CD_CONTENT_01));
         assert_eq!(cd, expected_cd_01());
     }
 
     #[test]
     fn test_decode_cd_content_02() {
-        let cd = unwrap!(decode_certification_elements(TEST_CMS_CD_CONTENT_02));
+        let cd = unwrap!(CertificationElements::decode(TEST_CMS_CD_CONTENT_02));
         assert_eq!(cd, expected_cd_02());
     }
 
@@ -905,7 +909,7 @@ mod tests {
     #[test]
     fn test_verify_cd_01_with_test_key_allowed() {
         let crypto = test_only_crypto();
-        let cd = unwrap!(verify_certification_declaration(
+        let cd = unwrap!(CertificationElements::verify(
             &crypto,
             TEST_CMS_SIGNED_MESSAGE_01,
             true,
@@ -917,7 +921,7 @@ mod tests {
     #[test]
     fn test_verify_cd_02_with_test_key_allowed() {
         let crypto = test_only_crypto();
-        let cd = unwrap!(verify_certification_declaration(
+        let cd = unwrap!(CertificationElements::verify(
             &crypto,
             TEST_CMS_SIGNED_MESSAGE_02,
             true,
@@ -929,7 +933,7 @@ mod tests {
     #[test]
     fn test_verify_cd_test_key_not_allowed() {
         let crypto = test_only_crypto();
-        let result = verify_certification_declaration(
+        let result = CertificationElements::verify(
             &crypto,
             TEST_CMS_SIGNED_MESSAGE_01,
             false, // test key NOT allowed
@@ -945,7 +949,7 @@ mod tests {
 
     #[test]
     fn test_validate_cd_success_basic() {
-        let cd = unwrap!(decode_certification_elements(TEST_CMS_CD_CONTENT_01));
+        let cd = unwrap!(CertificationElements::decode(TEST_CMS_CD_CONTENT_01));
         let device_info = DeviceInfoForAttestation {
             vendor_id: 0xFFF1,
             product_id: 0x8000,
@@ -956,12 +960,12 @@ mod tests {
             paa_skid: [0u8; KEY_IDENTIFIER_LEN],
         };
 
-        unwrap!(validate_cd(&cd, &device_info));
+        unwrap!(cd.validate(&device_info));
     }
 
     #[test]
     fn test_validate_cd_wrong_vendor_id() {
-        let cd = unwrap!(decode_certification_elements(TEST_CMS_CD_CONTENT_01));
+        let cd = unwrap!(CertificationElements::decode(TEST_CMS_CD_CONTENT_01));
         let device_info = DeviceInfoForAttestation {
             vendor_id: 0xFFF2, // Wrong: CD has 0xFFF1
             product_id: 0x8000,
@@ -973,14 +977,14 @@ mod tests {
         };
 
         assert_eq!(
-            validate_cd(&cd, &device_info).map_err(|e| e.code()),
+            cd.validate(&device_info).map_err(|e| e.code()),
             Err(ErrorCode::CdInvalidVendorId)
         );
     }
 
     #[test]
     fn test_validate_cd_wrong_product_id() {
-        let cd = unwrap!(decode_certification_elements(TEST_CMS_CD_CONTENT_01));
+        let cd = unwrap!(CertificationElements::decode(TEST_CMS_CD_CONTENT_01));
         let device_info = DeviceInfoForAttestation {
             vendor_id: 0xFFF1,
             product_id: 0x9999, // Wrong: not in [0x8000]
@@ -992,7 +996,7 @@ mod tests {
         };
 
         assert_eq!(
-            validate_cd(&cd, &device_info).map_err(|e| e.code()),
+            cd.validate(&device_info).map_err(|e| e.code()),
             Err(ErrorCode::CdInvalidProductId)
         );
     }
@@ -1000,7 +1004,7 @@ mod tests {
     #[test]
     fn test_validate_cd_wrong_dac_vendor_id() {
         // CD01 has no dac_origin, so DAC VID must match CD vendor_id
-        let cd = unwrap!(decode_certification_elements(TEST_CMS_CD_CONTENT_01));
+        let cd = unwrap!(CertificationElements::decode(TEST_CMS_CD_CONTENT_01));
         let device_info = DeviceInfoForAttestation {
             vendor_id: 0xFFF1,
             product_id: 0x8000,
@@ -1012,7 +1016,7 @@ mod tests {
         };
 
         assert_eq!(
-            validate_cd(&cd, &device_info).map_err(|e| e.code()),
+            cd.validate(&device_info).map_err(|e| e.code()),
             Err(ErrorCode::CdInvalidVendorId)
         );
     }
@@ -1020,7 +1024,7 @@ mod tests {
     #[test]
     fn test_validate_cd_with_dac_origin() {
         // CD02 has dac_origin_vid=0xFFF1, dac_origin_pid=0x8000
-        let cd = unwrap!(decode_certification_elements(TEST_CMS_CD_CONTENT_02));
+        let cd = unwrap!(CertificationElements::decode(TEST_CMS_CD_CONTENT_02));
         let device_info = DeviceInfoForAttestation {
             vendor_id: 0xFFF2,
             product_id: 0x8001,     // Must be in [0x8001, 0x8002]
@@ -1031,12 +1035,12 @@ mod tests {
             paa_skid: [0u8; KEY_IDENTIFIER_LEN],
         };
 
-        unwrap!(validate_cd(&cd, &device_info));
+        unwrap!(cd.validate(&device_info));
     }
 
     #[test]
     fn test_validate_cd_dac_origin_wrong_dac_vid() {
-        let cd = unwrap!(decode_certification_elements(TEST_CMS_CD_CONTENT_02));
+        let cd = unwrap!(CertificationElements::decode(TEST_CMS_CD_CONTENT_02));
         let device_info = DeviceInfoForAttestation {
             vendor_id: 0xFFF2,
             product_id: 0x8001,
@@ -1048,7 +1052,7 @@ mod tests {
         };
 
         assert_eq!(
-            validate_cd(&cd, &device_info).map_err(|e| e.code()),
+            cd.validate(&device_info).map_err(|e| e.code()),
             Err(ErrorCode::CdInvalidVendorId)
         );
     }
@@ -1056,7 +1060,7 @@ mod tests {
     #[test]
     fn test_validate_cd_wrong_format_version() {
         // Manually construct a CD with format_version = 2
-        let mut cd = unwrap!(decode_certification_elements(TEST_CMS_CD_CONTENT_01));
+        let mut cd = unwrap!(CertificationElements::decode(TEST_CMS_CD_CONTENT_01));
         cd.format_version = 2;
         let device_info = DeviceInfoForAttestation {
             vendor_id: 0xFFF1,
@@ -1069,7 +1073,7 @@ mod tests {
         };
 
         assert_eq!(
-            validate_cd(&cd, &device_info).map_err(|e| e.code()),
+            cd.validate(&device_info).map_err(|e| e.code()),
             Err(ErrorCode::CdInvalidFormat)
         );
     }
