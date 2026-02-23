@@ -76,112 +76,102 @@ pub struct CmsSignedData<'a> {
     pub signature_raw: [u8; RAW_SIGNATURE_LEN],
 }
 
-/// Parse a CMS SignedData message, extracting the signer key ID,
-/// encapsulated CD content, and ECDSA signature (converted from DER to raw).
-///
-/// Expects the profiled CMS structure used by Matter CDs (Matter Spec 6.3.1):
-/// https://www.rfc-editor.org/rfc/rfc5652#section-5.2
-/// ```text
-/// ContentInfo ::= SEQUENCE {
-///   contentType OBJECT IDENTIFIER id-signedData (1.2.840.113549.1.7.2),
-///   content [0] EXPLICIT SignedData
-/// }
-///
-/// SignedData ::= SEQUENCE {
-///   version INTEGER (v3(3)),
-///   digestAlgorithms SET { OBJECT IDENTIFIER sha256 (2.16.840.1.101.3.4.2.1) },
-///   encapContentInfo EncapsulatedContentInfo,
-///   signerInfos SET { SignerInfo }
-/// }
-///
-/// EncapsulatedContentInfo ::= SEQUENCE {
-///   eContentType OBJECT IDENTIFIER pkcs7-data (1.2.840.113549.1.7.1),
-///   eContent [0] EXPLICIT OCTET STRING cd_content
-/// }
-///
-/// SignerInfo ::= SEQUENCE {
-///   version INTEGER (v3(3)),
-///   subjectKeyIdentifier [0] IMPLICIT OCTET STRING,
-///   digestAlgorithm OBJECT IDENTIFIER sha256 (2.16.840.1.101.3.4.2.1),
-///   signatureAlgorithm OBJECT IDENTIFIER ecdsa-with-SHA256 (1.2.840.10045.4.3.2),
-///   signature OCTET STRING
-/// }
-/// ```
-pub fn parse_cms_signed_data(cms_message: &[u8]) -> Result<CmsSignedData<'_>, Error> {
-    let reader = DerReader::new(cms_message);
+impl<'a> CmsSignedData<'a> {
+    /// Parse a CMS SignedData message, extracting the signer key ID,
+    /// encapsulated CD content, and ECDSA signature (converted from DER to raw).
+    ///
+    /// Expects the profiled CMS structure used by Matter CDs (Matter Spec 6.3.1):
+    /// https://www.rfc-editor.org/rfc/rfc5652#section-5.2
+    /// ```text
+    /// ContentInfo ::= SEQUENCE {
+    ///   contentType OBJECT IDENTIFIER id-signedData (1.2.840.113549.1.7.2),
+    ///   content [0] EXPLICIT SignedData
+    /// }
+    ///
+    /// SignedData ::= SEQUENCE {
+    ///   version INTEGER (v3(3)),
+    ///   digestAlgorithms SET { OBJECT IDENTIFIER sha256 (2.16.840.1.101.3.4.2.1) },
+    ///   encapContentInfo EncapsulatedContentInfo,
+    ///   signerInfos SET { SignerInfo }
+    /// }
+    ///
+    /// EncapsulatedContentInfo ::= SEQUENCE {
+    ///   eContentType OBJECT IDENTIFIER pkcs7-data (1.2.840.113549.1.7.1),
+    ///   eContent [0] EXPLICIT OCTET STRING cd_content
+    /// }
+    ///
+    /// SignerInfo ::= SEQUENCE {
+    ///   version INTEGER (v3(3)),
+    ///   subjectKeyIdentifier [0] IMPLICIT OCTET STRING,
+    ///   digestAlgorithm OBJECT IDENTIFIER sha256 (2.16.840.1.101.3.4.2.1),
+    ///   signatureAlgorithm OBJECT IDENTIFIER ecdsa-with-SHA256 (1.2.840.10045.4.3.2),
+    ///   signature OCTET STRING
+    /// }
+    /// ```
+    pub fn parse(cms_message: &'a [u8]) -> Result<Self, Error> {
+        let reader = DerReader::new(cms_message);
 
-    // ContentInfo: SEQUENCE
-    let (tag, content_info, _rest) = reader.enter()?;
-    if tag != TAG_SEQUENCE {
-        return Err(ErrorCode::CdInvalidFormat.into());
+        // ContentInfo: SEQUENCE
+        let (tag, content_info, _rest) = reader.enter()?;
+        if tag != TAG_SEQUENCE {
+            return Err(ErrorCode::CdInvalidFormat.into());
+        }
+
+        // ContentInfo.contentType: OID id-signedData (1.2.840.113549.1.7.2)
+        let (tag, oid_value, after_oid) = content_info.read_tlv()?;
+        if tag != TAG_OID || oid_value != OID_PKCS7_SIGNED_DATA {
+            return Err(ErrorCode::CdInvalidFormat.into());
+        }
+
+        // ContentInfo.content: [0] EXPLICIT SignedData
+        let context0 = DerReader::new(after_oid);
+        let (tag, signed_data_inner, _rest) = context0.enter()?;
+        if tag != TAG_CONTEXT_0 {
+            return Err(ErrorCode::CdInvalidFormat.into());
+        }
+
+        // SignedData: SEQUENCE
+        let (tag, signed_data, _rest) = signed_data_inner.enter()?;
+        if tag != TAG_SEQUENCE {
+            return Err(ErrorCode::CdInvalidFormat.into());
+        }
+
+        // SignedData.version: INTEGER v3(3)
+        let (tag, version_bytes, after_version) = signed_data.read_tlv()?;
+        if tag != TAG_INTEGER || version_bytes.len() != 1 || version_bytes[0] != 3 {
+            return Err(ErrorCode::CdInvalidFormat.into());
+        }
+
+        // SignedData.digestAlgorithms: SET { OBJECT IDENTIFIER sha256 }
+        let digest_algos = DerReader::new(after_version);
+        let (tag, _digest_algos_value, after_digest_algos) = digest_algos.read_tlv()?;
+        if tag != TAG_SET {
+            return Err(ErrorCode::CdInvalidFormat.into());
+        }
+
+        // SignedData.encapContentInfo: EncapsulatedContentInfo
+        let encap = DerReader::new(after_digest_algos);
+        let (tag, encap_inner, after_encap) = encap.enter()?;
+        if tag != TAG_SEQUENCE {
+            return Err(ErrorCode::CdInvalidFormat.into());
+        }
+        let cd_content = decode_encapsulated_content(encap_inner)?;
+
+        // SignedData.signerInfos: SET { SignerInfo }
+        let signer_infos = DerReader::new(after_encap);
+        let (tag, signer_infos_inner, _rest) = signer_infos.enter()?;
+        if tag != TAG_SET {
+            return Err(ErrorCode::CdInvalidFormat.into());
+        }
+
+        let (signer_key_id, signature_raw) = decode_signer_info(signer_infos_inner)?;
+
+        Ok(Self {
+            signer_key_id,
+            cd_content,
+            signature_raw,
+        })
     }
-
-    // ContentInfo.contentType: OID id-signedData (1.2.840.113549.1.7.2)
-    let (tag, oid_value, after_oid) = content_info.read_tlv()?;
-    if tag != TAG_OID || oid_value != OID_PKCS7_SIGNED_DATA {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-
-    // ContentInfo.content: [0] EXPLICIT SignedData
-    let context0 = DerReader::new(after_oid);
-    let (tag, signed_data_inner, _rest) = context0.enter()?;
-    if tag != TAG_CONTEXT_0 {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-
-    // SignedData: SEQUENCE
-    let (tag, signed_data, _rest) = signed_data_inner.enter()?;
-    if tag != TAG_SEQUENCE {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-
-    // SignedData.version: INTEGER v3(3)
-    let (tag, version_bytes, after_version) = signed_data.read_tlv()?;
-    if tag != TAG_INTEGER || version_bytes.len() != 1 || version_bytes[0] != 3 {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-
-    // SignedData.digestAlgorithms: SET { OBJECT IDENTIFIER sha256 }
-    let digest_algos = DerReader::new(after_version);
-    let (tag, _digest_algos_value, after_digest_algos) = digest_algos.read_tlv()?;
-    if tag != TAG_SET {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-
-    // SignedData.encapContentInfo: EncapsulatedContentInfo
-    let encap = DerReader::new(after_digest_algos);
-    let (tag, encap_inner, after_encap) = encap.enter()?;
-    if tag != TAG_SEQUENCE {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-    let cd_content = decode_encapsulated_content(encap_inner)?;
-
-    // SignedData.signerInfos: SET { SignerInfo }
-    let signer_infos = DerReader::new(after_encap);
-    let (tag, signer_infos_inner, _rest) = signer_infos.enter()?;
-    if tag != TAG_SET {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-
-    let (signer_key_id, signature_raw) = decode_signer_info(signer_infos_inner)?;
-
-    Ok(CmsSignedData {
-        signer_key_id,
-        cd_content,
-        signature_raw,
-    })
-}
-
-/// Extract just the CD content from a CMS message without signature verification.
-pub fn cms_extract_cd_content(cms_message: &[u8]) -> Result<&[u8], Error> {
-    let parsed = parse_cms_signed_data(cms_message)?;
-    Ok(parsed.cd_content)
-}
-
-/// Extract just the signer Key ID from a CMS message.
-pub fn cms_extract_key_id(cms_message: &[u8]) -> Result<&[u8], Error> {
-    let parsed = parse_cms_signed_data(cms_message)?;
-    Ok(parsed.signer_key_id)
 }
 
 /// Decode the EncapsulatedContentInfo to extract the OCTET STRING payload.
@@ -564,7 +554,7 @@ impl CertificationElements {
         allow_test_cd_signing_key: bool,
     ) -> Result<Self, Error> {
         // Parse CMS envelope
-        let cms = parse_cms_signed_data(cms_message)?;
+        let cms = CmsSignedData::parse(cms_message)?;
 
         // Look up signing key
         let pubkey_bytes = cd_keys::lookup_cd_signing_key(cms.signer_key_id)
@@ -846,7 +836,7 @@ mod tests {
 
     #[test]
     fn test_parse_cms_signed_data_01() {
-        let cms = unwrap!(parse_cms_signed_data(TEST_CMS_SIGNED_MESSAGE_01));
+        let cms = unwrap!(CmsSignedData::parse(TEST_CMS_SIGNED_MESSAGE_01));
 
         // Verify signer KID is the test key
         assert_eq!(cms.signer_key_id, &cd_keys::TEST_CD_KID);
@@ -860,7 +850,7 @@ mod tests {
 
     #[test]
     fn test_parse_cms_signed_data_02() {
-        let cms = unwrap!(parse_cms_signed_data(TEST_CMS_SIGNED_MESSAGE_02));
+        let cms = unwrap!(CmsSignedData::parse(TEST_CMS_SIGNED_MESSAGE_02));
 
         assert_eq!(cms.signer_key_id, &cd_keys::TEST_CD_KID);
         assert_eq!(cms.cd_content, TEST_CMS_CD_CONTENT_02);
@@ -868,26 +858,26 @@ mod tests {
 
     #[test]
     fn test_cms_extract_cd_content() {
-        let content = unwrap!(cms_extract_cd_content(TEST_CMS_SIGNED_MESSAGE_01));
-        assert_eq!(content, TEST_CMS_CD_CONTENT_01);
+        let cms = unwrap!(CmsSignedData::parse(TEST_CMS_SIGNED_MESSAGE_01));
+        assert_eq!(cms.cd_content, TEST_CMS_CD_CONTENT_01);
     }
 
     #[test]
     fn test_cms_extract_key_id() {
-        let kid = unwrap!(cms_extract_key_id(TEST_CMS_SIGNED_MESSAGE_01));
-        assert_eq!(kid, &cd_keys::TEST_CD_KID);
+        let cms = unwrap!(CmsSignedData::parse(TEST_CMS_SIGNED_MESSAGE_01));
+        assert_eq!(cms.signer_key_id, &cd_keys::TEST_CD_KID);
     }
 
     #[test]
     fn test_parse_cms_invalid_data() {
         // Empty
-        assert!(parse_cms_signed_data(&[]).is_err());
+        assert!(CmsSignedData::parse(&[]).is_err());
 
         // Random garbage
-        assert!(parse_cms_signed_data(&[0x01, 0x02, 0x03]).is_err());
+        assert!(CmsSignedData::parse(&[0x01, 0x02, 0x03]).is_err());
 
         // Valid SEQUENCE but wrong OID
-        assert!(parse_cms_signed_data(&[0x30, 0x06, 0x06, 0x02, 0x55, 0x04, 0x00, 0x00]).is_err());
+        assert!(CmsSignedData::parse(&[0x30, 0x06, 0x06, 0x02, 0x55, 0x04, 0x00, 0x00]).is_err());
     }
 
     // ---- TLV decoding tests ----
