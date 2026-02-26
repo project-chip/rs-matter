@@ -223,30 +223,24 @@ where
 /// A trait to listen for IPv6 multicast on supported network types
 ///
 /// This is used for listening to groupcast messages
-pub trait NetworkIPv6Multicast {
+pub trait NetworkMulticast {
     /// Register to listen for data on specific multicast address
-    async fn register_ipv6_multicast(&mut self, addr: Ipv6Addr) -> Result<(), Error>;
+    async fn register_multicast(&mut self, addr: IpAddr) -> Result<(), Error>;
 
     /// Register to listen for data on specific multicast address
-    async fn unregister_ipv6_multicast(&mut self, addr: Ipv6Addr) -> Result<(), Error>;
+    async fn unregister_multicast(&mut self, addr: IpAddr) -> Result<(), Error>;
 }
 
-impl<T> NetworkIPv6Multicast for &mut T
+impl<T> NetworkMulticast for &mut T
 where
-    T: NetworkIPv6Multicast,
+    T: NetworkMulticast,
 {
-    fn register_ipv6_multicast(
-        &mut self,
-        addr: Ipv6Addr,
-    ) -> impl Future<Output = Result<(), Error>> {
-        (*self).register_ipv6_multicast(addr)
+    fn register_multicast(&mut self, addr: IpAddr) -> impl Future<Output = Result<(), Error>> {
+        (*self).register_multicast(addr)
     }
 
-    fn unregister_ipv6_multicast(
-        &mut self,
-        addr: Ipv6Addr,
-    ) -> impl Future<Output = Result<(), Error>> {
-        (*self).unregister_ipv6_multicast(addr)
+    fn unregister_multicast(&mut self, addr: IpAddr) -> impl Future<Output = Result<(), Error>> {
+        (*self).unregister_multicast(addr)
     }
 }
 
@@ -273,12 +267,12 @@ impl NetworkReceive for NoNetwork {
     }
 }
 
-impl NetworkIPv6Multicast for NoNetwork {
-    async fn register_ipv6_multicast(&mut self, _addr: Ipv6Addr) -> Result<(), Error> {
+impl NetworkMulticast for NoNetwork {
+    async fn register_multicast(&mut self, _addr: IpAddr) -> Result<(), Error> {
         Ok(())
     }
 
-    async fn unregister_ipv6_multicast(&mut self, _addr: Ipv6Addr) -> Result<(), Error> {
+    async fn unregister_multicast(&mut self, _addr: IpAddr) -> Result<(), Error> {
         Ok(())
     }
 }
@@ -372,18 +366,18 @@ where
     }
 }
 
-impl<H, T, F> NetworkIPv6Multicast for ChainedNetwork<H, T, F>
+impl<H, T, F> NetworkMulticast for ChainedNetwork<H, T, F>
 where
-    H: NetworkIPv6Multicast,
-    T: NetworkIPv6Multicast,
+    H: NetworkMulticast,
+    T: NetworkMulticast,
 {
-    async fn register_ipv6_multicast(&mut self, addr: Ipv6Addr) -> Result<(), Error> {
-        self.handler.register_ipv6_multicast(addr).await?;
-        self.next.register_ipv6_multicast(addr).await
+    async fn register_multicast(&mut self, addr: IpAddr) -> Result<(), Error> {
+        self.handler.register_multicast(addr).await?;
+        self.next.register_multicast(addr).await
     }
 
-    async fn unregister_ipv6_multicast(&mut self, addr: Ipv6Addr) -> Result<(), Error> {
-        self.handler.unregister_ipv6_multicast(addr).await?;
-        self.next.unregister_ipv6_multicast(addr).await
+    async fn unregister_multicast(&mut self, addr: IpAddr) -> Result<(), Error> {
+        self.handler.unregister_multicast(addr).await?;
+        self.next.unregister_multicast(addr).await
     }
 }

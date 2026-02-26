@@ -21,13 +21,13 @@
 
 use crate::error::*;
 
-use std::net::UdpSocket;
+use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 
 use async_io::Async;
 
 use crate::transport::network::Address;
 
-use super::{NetworkIPv6Multicast, NetworkReceive, NetworkSend};
+use super::{NetworkMulticast, NetworkReceive, NetworkSend};
 
 impl NetworkSend for &Async<UdpSocket> {
     async fn send_to(&mut self, data: &[u8], addr: Address) -> Result<(), Error> {
@@ -52,15 +52,25 @@ impl NetworkReceive for &Async<UdpSocket> {
     }
 }
 
-impl NetworkIPv6Multicast for &Async<UdpSocket> {
-    async fn register_ipv6_multicast(&mut self, addr: std::net::Ipv6Addr) -> Result<(), Error> {
-        self.get_ref().join_multicast_v6(&addr, 0)?;
+impl NetworkMulticast for &Async<UdpSocket> {
+    async fn register_multicast(&mut self, addr: IpAddr) -> Result<(), Error> {
+        match addr {
+            IpAddr::V6(addr) => self.get_ref().join_multicast_v6(&addr, 0)?,
+            IpAddr::V4(addr) => self
+                .get_ref()
+                .join_multicast_v4(&addr, &Ipv4Addr::UNSPECIFIED)?, // Listen on all interfaces
+        }
 
         Ok(())
     }
 
-    async fn unregister_ipv6_multicast(&mut self, addr: std::net::Ipv6Addr) -> Result<(), Error> {
-        self.get_ref().leave_multicast_v6(&addr, 0)?;
+    async fn unregister_multicast(&mut self, addr: IpAddr) -> Result<(), Error> {
+        match addr {
+            IpAddr::V6(addr) => self.get_ref().leave_multicast_v6(&addr, 0)?,
+            IpAddr::V4(addr) => self
+                .get_ref()
+                .leave_multicast_v4(&addr, &Ipv4Addr::UNSPECIFIED)?, // Listen on all interfaces
+        }
 
         Ok(())
     }
