@@ -17,38 +17,350 @@
 
 //! X.509 DER certificate parsing utilities for extracting Matter-specific data.
 //!
-//! This module provides a parser for DER-encoded X.509 certificates. It extracts
-//! fields needed for Matter device attestation verification: Subject Key
-//! Identifier (SKID), Authority Key Identifier (AKID), public key, Matter Vendor
-//! ID, Matter Product ID, and validity periods.
+//! This module parses DER-encoded X.509 certificates with Matter specific constraints
+//! as defined in the Matter specification 6.2.2.3.
+//!
+//! It extracts fields needed for Matter device attestation verification: Subject Key
+//! Identifier (SKID), Authority Key Identifier (AKID), public key, Matter Vendor ID,
+//! Matter Product ID, and validity periods.
 
 use crate::error::{Error, ErrorCode};
 
-use time::{Date, Month, PrimitiveDateTime, Time};
+use der::asn1::{
+    AnyRef, BitStringRef, GeneralizedTime, ObjectIdentifier, OctetStringRef, UintRef, UtcTime,
+};
+use der::{Choice, Decode, DecodeValue, Header, Reader, Sequence, SliceReader, Tag};
 
-// ASN.1 DER tag constants
-const TAG_BOOLEAN: u8 = 0x01;
-const TAG_BIT_STRING: u8 = 0x03;
-const TAG_OCTET_STRING: u8 = 0x04;
-const TAG_OID: u8 = 0x06;
-const TAG_SEQUENCE: u8 = 0x30;
-const TAG_SET: u8 = 0x31;
-const TAG_UTC_TIME: u8 = 0x17;
-const TAG_GENERALIZED_TIME: u8 = 0x18;
+/// OID 2.5.29.14 — Subject Key Identifier
+const OID_SUBJECT_KEY_ID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.14");
+/// OID 2.5.29.35 — Authority Key Identifier
+const OID_AUTHORITY_KEY_ID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.35");
+/// OID 2.5.29.19 — Basic Constraints
+const OID_BASIC_CONSTRAINTS: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.19");
+/// OID 2.5.29.15 — Key Usage
+const OID_KEY_USAGE: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.15");
 
-// ASN.1 DER length encoding constants
-const LEN_SHORT_FORM_MAX: u8 = 0x7F;
-const LEN_LONG_FORM_1BYTE: u8 = 0x81;
-const LEN_LONG_FORM_2BYTE: u8 = 0x82;
+/// OID 1.3.6.1.4.1.37244.2.1 — Matter Vendor ID
+const OID_MATTER_VENDOR_ID: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.3.6.1.4.1.37244.2.1");
+/// OID 1.3.6.1.4.1.37244.2.2 — Matter Product ID
+const OID_MATTER_PRODUCT_ID: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.3.6.1.4.1.37244.2.2");
 
-// Context specific tags for tbsCertificate
-const TAG_CONTEXT_0: u8 = 0xA0;
-const TAG_CONTEXT_3: u8 = 0xA3;
+/// Matter uses the P-256 uncompressed public key length
+/// (0x04 || X || Y = 65 bytes)
+const P256_PUBLIC_KEY_LEN: usize = 65;
 
-// Context specific tag for AuthorityKeyIdentifier
-const TAG_CONTEXT_0_PRIM: u8 = 0x80;
+/// AlgorithmIdentifier ::= SEQUENCE {
+///   algorithm  OBJECT IDENTIFIER,
+///   parameters ANY DEFINED BY algorithm OPTIONAL
+/// }
+///
+/// https://www.rfc-editor.org/rfc/rfc5280#appendix-A.1
+#[derive(Sequence)]
+struct AlgorithmIdentifier<'a> {
+    pub algorithm: ObjectIdentifier,
+    pub parameters: Option<AnyRef<'a>>,
+}
 
-// TBS certificate fields
+/// SubjectPublicKeyInfo ::= SEQUENCE {
+///   algorithm        AlgorithmIdentifier,
+///   subjectPublicKey BIT STRING
+/// }
+/// https://www.rfc-editor.org/rfc/rfc5280#appendix-A.1
+#[derive(Sequence)]
+struct SubjectPublicKeyInfo<'a> {
+    algorithm: AlgorithmIdentifier<'a>,
+    subject_public_key: BitStringRef<'a>,
+}
+
+/// AttributeTypeAndValue ::= SEQUENCE {
+///   type   OBJECT IDENTIFIER,
+///   value  ANY
+/// }
+///
+/// https://www.rfc-editor.org/rfc/rfc5280#section-4.1.2.4
+#[derive(Sequence)]
+struct AttributeTypeAndValue<'a> {
+    oid: ObjectIdentifier,
+    value: AnyRef<'a>,
+}
+
+/// BasicConstraints ::= SEQUENCE {
+///   cA                 BOOLEAN DEFAULT TRUE,
+///   pathLenConstraint  INTEGER (0..MAX) OPTIONAL
+/// }
+///
+/// https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.9
+#[derive(Sequence)]
+struct BasicConstraints {
+    #[asn1(default = "default_false")]
+    ca: bool,
+    path_len_constraint: Option<u8>,
+}
+
+fn default_false() -> bool {
+    false
+}
+
+///   KeyUsage ::= BIT STRING {
+///     digitalSignature   (0),
+///     nonRepudiation     (1),
+///     keyEncipherment    (2),
+///     dataEncipherment   (3),
+///     keyAgreement       (4),
+///     keyCertSign        (5),
+///     cRLSign            (6),
+///     encipherOnly       (7),
+///     decipherOnly       (8)
+///   }
+/// https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.3
+///
+/// For Matter DAC: only digitalSignature (MSB) should be set.
+struct KeyUsage {
+    bits: u16,
+}
+
+impl KeyUsage {
+    // MSB must be 1
+    const DIGITAL_SIGNATURE: u16 = 0x80;
+
+    fn digital_signature(&self) -> bool {
+        self.bits & Self::DIGITAL_SIGNATURE != 0
+    }
+}
+
+impl<'a> From<BitStringRef<'a>> for KeyUsage {
+    fn from(bs: BitStringRef<'a>) -> Self {
+        let bytes = bs.raw_bytes();
+        // KeyUsage is at most 2 bytes (9 bits defined)
+        let bits = match bytes.len() {
+            0 => 0u16,
+            1 => bytes[0] as u16,
+            _ => ((bytes[0] as u16) << 8) | (bytes[1] as u16),
+        };
+        Self { bits }
+    }
+}
+
+/// AuthorityKeyIdentifier ::= SEQUENCE {
+///   keyIdentifier             [0] KeyIdentifier OPTIONAL,
+///   authorityCertIssuer       [1] GeneralNames OPTIONAL,
+///   authorityCertSerialNumber [2] CertificateSerialNumber OPTIONAL
+/// }
+///
+/// KeyIdentifier ::= OCTET STRING
+///
+/// We only need the keyIdentifier field. The `[0]` is IMPLICIT (default for
+/// context specific in X.509).
+#[derive(Sequence)]
+struct AuthorityKeyIdentifier<'a> {
+    #[asn1(context_specific = "0", tag_mode = "IMPLICIT", optional = "true")]
+    key_identifier: Option<OctetStringRef<'a>>,
+}
+
+/// A parsed extension with its critical flag and typed value.
+struct ParsedExtension<T> {
+    critical: bool,
+    value: T,
+}
+
+/// Extensions ::= SEQUENCE SIZE (1..MAX) OF Extension
+///
+/// For Matter DAC certificates, the required extensions are (Matter Spec 6.2.2.3):
+/// - Basic Constraints (critical=TRUE, cA=FALSE)
+/// - Key Usage (critical=TRUE, digitalSignature only)
+/// - Authority Key Identifier
+/// - Subject Key Identifier
+struct Extensions<'a> {
+    basic_constraints: Option<ParsedExtension<BasicConstraints>>,
+    key_usage: Option<ParsedExtension<KeyUsage>>,
+    subject_key_id: Option<ParsedExtension<OctetStringRef<'a>>>,
+    authority_key_id: Option<ParsedExtension<AuthorityKeyIdentifier<'a>>>,
+}
+
+// We need to write DecodeValue in order to parse arbitrary Extensions which are only defined by
+// their extnID
+impl<'a> DecodeValue<'a> for Extensions<'a> {
+    fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
+        reader.read_nested(header.length, |reader| {
+            let mut basic_constraints = None;
+            let mut key_usage = None;
+            let mut subject_key_id = None;
+            let mut authority_key_id = None;
+
+            // Iterate through SEQUENCE OF Extension
+            while !reader.is_finished() {
+                // Each Extension is a SEQUENCE, so we decode it to get its contents
+                let ext_any = AnyRef::decode(reader)?;
+                let mut ext_reader = SliceReader::new(ext_any.value())?;
+
+                // extnID OBJECT IDENTIFIER
+                let extn_id = ObjectIdentifier::decode(&mut ext_reader)?;
+
+                // critical BOOLEAN DEFAULT FALSE
+                let critical =
+                    if !ext_reader.is_finished() && ext_reader.peek_tag()? == Tag::Boolean {
+                        bool::decode(&mut ext_reader)?
+                    } else {
+                        false
+                    };
+
+                // extnValue OCTET STRING
+                let extn_value = OctetStringRef::decode(&mut ext_reader)?;
+                let value_bytes = extn_value.as_bytes();
+
+                if extn_id == OID_BASIC_CONSTRAINTS {
+                    let bc = BasicConstraints::from_der(value_bytes)?;
+                    basic_constraints = Some(ParsedExtension {
+                        critical,
+                        value: bc,
+                    });
+                } else if extn_id == OID_KEY_USAGE {
+                    let bs = BitStringRef::from_der(value_bytes)?;
+                    key_usage = Some(ParsedExtension {
+                        critical,
+                        value: bs.into(),
+                    });
+                } else if extn_id == OID_SUBJECT_KEY_ID {
+                    let skid = OctetStringRef::from_der(value_bytes)?;
+                    subject_key_id = Some(ParsedExtension {
+                        critical,
+                        value: skid,
+                    });
+                } else if extn_id == OID_AUTHORITY_KEY_ID {
+                    let akid = AuthorityKeyIdentifier::from_der(value_bytes)?;
+                    authority_key_id = Some(ParsedExtension {
+                        critical,
+                        value: akid,
+                    });
+                }
+                // Ignore other optional extensions
+            }
+
+            Ok(Self {
+                basic_constraints,
+                key_usage,
+                subject_key_id,
+                authority_key_id,
+            })
+        })
+    }
+}
+
+impl<'a> der::FixedTag for Extensions<'a> {
+    const TAG: Tag = Tag::Sequence;
+}
+
+// Dummy EncodeValue implementation
+// Required by der verision 0.7 for use with #[derive(Sequence)] on structs that contain Extensions.
+// TODO Remove when upgrading to der 0.8+ which separates Encode/Decode traits.
+impl<'a> der::EncodeValue for Extensions<'a> {
+    fn value_len(&self) -> der::Result<der::Length> {
+        // This should never be called since we only parse certificates, never create them
+        unimplemented!("Extensions encoding is not supported")
+    }
+
+    fn encode_value(&self, _writer: &mut impl der::Writer) -> der::Result<()> {
+        // This should never be called since we only parse certificates, never create them
+        unimplemented!("Extensions encoding is not supported")
+    }
+}
+
+/// Time ::= CHOICE { utcTime UTCTime, generalTime GeneralizedTime }
+#[derive(Choice)]
+enum Time {
+    #[asn1(type = "UTCTime")]
+    Utc(UtcTime),
+    #[asn1(type = "GeneralizedTime")]
+    General(GeneralizedTime),
+}
+
+/// Validity ::= SEQUENCE {
+///   notBefore Time,
+///   notAfter  Time
+/// }
+#[derive(Sequence)]
+struct Validity {
+    not_before: Time,
+    not_after: Time,
+}
+
+/// tbsCertificate    DACTBSCertificate
+///
+/// DACTBSCertificate ::= SEQUENCE {
+///     version INTEGER ( v3(2) ),
+///     serialNumber INTEGER,
+///     signature MatterSignatureIdentifier,
+///     issuer MatterPAName,
+///     validity Validity,
+///     subject MatterDACName,
+///     subjectPublicKeyInfo SEQUENCE {
+///         algorithm OBJECT IDENTIFIER(id-x962-prime256v1),
+///         subjectPublicKey BIT STRING
+///     },
+///     extensions DACExtensions
+/// }
+#[derive(Sequence)]
+struct TbsCertificate<'a> {
+    /// Version number (0=v1, 1=v2, 2=v3). If absent from DER, defaults to v1 (0).
+    #[asn1(context_specific = "0", tag_mode = "EXPLICIT")]
+    version: UintRef<'a>,
+    /// Raw bytes of the serial number INTEGER value.
+    serial_number: AnyRef<'a>,
+    /// Signature algorithm.
+    signature: AlgorithmIdentifier<'a>,
+    /// Issuer RDNSequence (kept as raw AnyRef for walking).
+    issuer: AnyRef<'a>,
+    /// Validity period.
+    validity: Validity,
+    /// Subject RDNSequence (kept as raw AnyRef for walking).
+    subject: AnyRef<'a>,
+    /// Subject public key info.
+    subject_public_key_info: SubjectPublicKeyInfo<'a>,
+    /// Extensions [3] EXPLICIT Extensions OPTIONAL
+    /// Per RFC 5280, if present, version MUST be v3.
+    #[asn1(context_specific = "3", tag_mode = "EXPLICIT", optional = "true")]
+    extensions: Option<Extensions<'a>>,
+}
+
+/// Top-level Certificate structure.
+///
+/// Certificate ::= SEQUENCE {
+///   tbsCertificate     TBSCertificate,
+///   signatureAlgorithm AlgorithmIdentifier,
+///   signatureValue     BIT STRING
+/// }
+#[allow(unused)]
+struct Certificate<'a> {
+    tbs_certificate: TbsCertificate<'a>,
+    signature_algorithm: AlgorithmIdentifier<'a>,
+    signature_value: BitStringRef<'a>,
+}
+
+impl<'a> DecodeValue<'a> for Certificate<'a> {
+    fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
+        reader.read_nested(header.length, |reader| {
+            let tbs_certificate = TbsCertificate::decode(reader)?;
+            let signature_algorithm = AlgorithmIdentifier::decode(reader)?;
+            let signature_value = BitStringRef::decode(reader)?;
+            Ok(Self {
+                tbs_certificate,
+                signature_algorithm,
+                signature_value,
+            })
+        })
+    }
+}
+
+impl<'a> der::FixedTag for Certificate<'a> {
+    const TAG: Tag = Tag::Sequence;
+}
+
+/// Identifies a field within the TBSCertificate structure.
+///
+/// Used by `X509CertRef::tbs_field()` to provide access to individual
+/// TBS fields for testing and validation.
 #[allow(unused)]
 #[repr(usize)]
 enum TbsField {
@@ -60,113 +372,6 @@ enum TbsField {
     Subject,
     SubjectPubKeyInfo,
     Extensions,
-}
-
-// X.509 extension OIDs
-const OID_SUBJECT_KEY_ID: [u8; 3] = [0x55, 0x1D, 0x0E]; // OID 2.5.29.14
-const OID_AUTHORITY_KEY_ID: [u8; 3] = [0x55, 0x1D, 0x23]; // OID 2.5.29.35
-
-// Matter-specific OIDs for Subject DN attributes
-// 1.3.6.1.4.1.37244.2.1 (Vendor ID)
-const OID_MATTER_VENDOR_ID: [u8; 10] = [0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xA2, 0x7C, 0x02, 0x01];
-// 1.3.6.1.4.1.37244.2.2 (Product ID)
-const OID_MATTER_PRODUCT_ID: [u8; 10] =
-    [0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xA2, 0x7C, 0x02, 0x02];
-
-/// Matter uses the P-256 uncompressed public key length
-/// (0x04 || X || Y = 65 bytes)
-const P256_PUBLIC_KEY_LEN: usize = 65;
-
-/// DER reader that operates on a borrowed byte slice.
-///
-/// Navigates the hierarchical structure of DER-encoded ASN.1 data.
-/// Used for parsing X.509 certificates and CMS/PKCS#7 structures.
-#[derive(Clone, Copy)]
-pub(crate) struct DerReader<'a> {
-    data: &'a [u8],
-}
-
-impl<'a> DerReader<'a> {
-    /// Create a new DerReader from a byte slice.
-    pub(crate) fn new(data: &'a [u8]) -> Self {
-        Self { data }
-    }
-
-    /// Read a DER length from the given byte slice.
-    ///
-    /// Returns `(length_value, rest_after_length)`.
-    ///
-    /// Supports:
-    /// - Short form: single byte < 128
-    /// - Long form 0x81: next 1 byte is the length
-    /// - Long form 0x82: next 2 bytes are the length (big-endian)
-    pub(crate) fn read_length(data: &'a [u8]) -> Result<(usize, &'a [u8]), Error> {
-        if data.is_empty() {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        let first = data[0];
-        if first <= LEN_SHORT_FORM_MAX {
-            // Short form: length is directly encoded
-            Ok((first as usize, &data[1..]))
-        } else if first == LEN_LONG_FORM_1BYTE {
-            // Long form: 1 byte of length follows
-            if data.len() < 2 {
-                return Err(ErrorCode::InvalidData.into());
-            }
-            Ok((data[1] as usize, &data[2..]))
-        } else if first == LEN_LONG_FORM_2BYTE {
-            // Long form: 2 bytes of length follow (big-endian)
-            if data.len() < 3 {
-                return Err(ErrorCode::InvalidData.into());
-            }
-            let len = ((data[1] as usize) << 8) | (data[2] as usize);
-            Ok((len, &data[3..]))
-        } else {
-            // Lengths requiring 3+ bytes are not expected in certificates
-            // Matter Spec (6.1.3) states certificates SHALL NOT be longer than 600 bytes
-            Err(ErrorCode::InvalidData.into())
-        }
-    }
-
-    /// Read a complete TLV (tag, length, value) from the current position.
-    ///
-    /// Returns `(tag, value_bytes, rest_after_this_tlv)`.
-    pub(crate) fn read_tlv(&self) -> Result<(u8, &'a [u8], &'a [u8]), Error> {
-        if self.data.is_empty() {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        let tag = self.data[0];
-        let (len, after_len) = Self::read_length(&self.data[1..])?;
-
-        if after_len.len() < len {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        let value = &after_len[..len];
-        let rest = &after_len[len..];
-        Ok((tag, value, rest))
-    }
-
-    /// Enter a constructed type (SEQUENCE, SET, etc.).
-    ///
-    /// Returns `(tag, inner_reader_over_value_bytes, rest_after_this_tlv)`.
-    pub(crate) fn enter(&self) -> Result<(u8, DerReader<'a>, &'a [u8]), Error> {
-        let (tag, value, rest) = self.read_tlv()?;
-        Ok((tag, DerReader::new(value), rest))
-    }
-
-    /// Skip the current TLV and return a reader positioned at the next element.
-    pub(crate) fn skip(&self) -> Result<DerReader<'a>, Error> {
-        let (_, _, rest) = self.read_tlv()?;
-        Ok(DerReader::new(rest))
-    }
-
-    /// Check if all bytes have been consumed.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.data.is_empty()
-    }
 }
 
 /// Parse a hex character (0-9, A-F, a-f) into its numeric value.
@@ -196,404 +401,106 @@ fn parse_hex_u16(s: &[u8]) -> Result<u16, Error> {
     Ok(val)
 }
 
-/// Parse two ASCII decimal digits from a byte slice into a u8.
-fn parse_2digits(s: &[u8]) -> Result<u8, Error> {
-    if s.len() < 2 {
-        return Err(ErrorCode::InvalidData.into());
-    }
-    let d1 = s[0].wrapping_sub(b'0');
-    let d2 = s[1].wrapping_sub(b'0');
-    if d1 > 9 || d2 > 9 {
-        return Err(ErrorCode::InvalidData.into());
-    }
-    Ok(d1 * 10 + d2)
-}
-
-/// Parse four ASCII decimal digits from a byte slice into a u16.
-fn parse_4digits(s: &[u8]) -> Result<u16, Error> {
-    if s.len() < 4 {
-        return Err(ErrorCode::InvalidData.into());
-    }
-    let hi = parse_2digits(&s[0..2])? as u16;
-    let lo = parse_2digits(&s[2..4])? as u16;
-    Ok(hi * 100 + lo)
-}
-
-/// Parse a DER time value (UTCTime or GeneralizedTime) into Unix epoch seconds.
+/// Convert a `Time` value (UTCTime or GeneralizedTime) to Unix epoch seconds (u64).
 ///
-/// UTCTime format: "YYMMDDHHMMSSZ" (13 bytes).
-/// Two digit year is ambiguous. Deciding:
-///   - Year 00-49 maps to 2000-2049
-///   - Year 50-99 maps to 1950-1999
-///
-/// GeneralizedTime format: "YYYYMMDDHHMMSSZ" (15 bytes)
-///   - "99991231235959Z" is treated as no-expiry (returns `u64::MAX`)
-fn parse_asn1_time(tag: u8, value: &[u8]) -> Result<u64, Error> {
-    let (year, rest) = if tag == TAG_UTC_TIME {
-        // UTCTime: "YYMMDDHHMMSSZ"
-        if value.len() != 13 || value[12] != b'Z' {
-            return Err(ErrorCode::InvalidData.into());
-        }
-        let yy = parse_2digits(&value[0..2])? as i32;
-        let year = if yy >= 50 { 1900 + yy } else { 2000 + yy };
-        (year, &value[2..])
-    } else if tag == TAG_GENERALIZED_TIME {
-        // GeneralizedTime: "YYYYMMDDHHMMSSZ"
-        if value.len() != 15 || value[14] != b'Z' {
-            return Err(ErrorCode::InvalidData.into());
-        }
-        let year = parse_4digits(&value[0..4])? as i32;
-        // "99991231235959Z" => no expiry
-        if year == 9999 {
-            return Ok(u64::MAX);
-        }
-        (year, &value[4..])
-    } else {
-        return Err(ErrorCode::InvalidData.into());
+/// For GeneralizedTime with year 9999 (DateTime::INFINITY), returns `u64::MAX`
+/// to indicate no expiry.
+fn time_to_unix_secs(time: &Time) -> Result<u64, Error> {
+    let dt = match time {
+        Time::Utc(utc) => utc.to_date_time(),
+        Time::General(gt) => gt.to_date_time(),
     };
 
-    let month = parse_2digits(&rest[0..2])?;
-    let day = parse_2digits(&rest[2..4])?;
-    let hour = parse_2digits(&rest[4..6])?;
-    let minute = parse_2digits(&rest[6..8])?;
-    let second = parse_2digits(&rest[8..10])?;
+    // Check for the "no expiry" sentinel: 9999-12-31T23:59:59Z
+    if dt == der::DateTime::INFINITY {
+        return Ok(u64::MAX);
+    }
 
-    let month = Month::try_from(month).map_err(|_| Error::from(ErrorCode::InvalidData))?;
-    let date = Date::from_calendar_date(year, month, day)
-        .map_err(|_| Error::from(ErrorCode::InvalidData))?;
-    let time =
-        Time::from_hms(hour, minute, second).map_err(|_| Error::from(ErrorCode::InvalidData))?;
-    let dt = PrimitiveDateTime::new(date, time).assume_utc();
-
-    Ok(dt.unix_timestamp() as u64)
+    Ok(dt.unix_duration().as_secs())
 }
 
-/// A reference to a DER-encoded X.509 certificate.
+/// A parsed DER-encoded X.509 certificate.
 ///
-/// Provides methods to extract specific fields needed for Matter device
-/// attestation verification. Each method lazily walks the DER structure
-/// to find the requested field, with no upfront allocation.
+/// Validates the incoming bytes are correctly DER-encoded x509 certificates.
 ///
 /// # Example
 ///
 /// ```ignore
-/// let cert = X509CertRef::new(der_bytes)?;
+/// let cert = X509Cert::new(der_bytes)?;
 /// let skid = cert.subject_key_id()?;
 /// let pubkey = cert.public_key()?;
 /// let vid = cert.vendor_id()?;
 /// ```
-pub struct X509CertRef<'a> {
-    data: &'a [u8],
+pub struct X509Cert<'a> {
+    cert: Certificate<'a>,
 }
 
-impl<'a> X509CertRef<'a> {
-    /// Create a new X509CertRef from a DER-encoded certificate byte slice.
-    ///
-    /// Validates that the outer structure is a SEQUENCE tag but does not
-    /// parse the full certificate.
-    pub fn new(der: &'a [u8]) -> Result<Self, Error> {
-        if der.len() < 2 {
-            return Err(ErrorCode::InvalidData.into());
-        }
-        // Outer structure must be a SEQUENCE
-        if der[0] != TAG_SEQUENCE {
-            return Err(ErrorCode::InvalidData.into());
-        }
-        // Validate that the length is consistent
-        let reader = DerReader::new(der);
-        let (_, value, _) = reader.read_tlv()?;
-        if value.is_empty() {
-            return Err(ErrorCode::InvalidData.into());
-        }
-        Ok(Self { data: der })
+impl<'a> X509Cert<'a> {
+    /// Create a new `X509Cert` from DER-encoded certificate bytes.
+    pub fn new(data: &'a [u8]) -> Result<Self, Error> {
+        // Validate that this parses as a Certificate at the top level.
+        let cert = Certificate::from_der(data).map_err(|_| Error::from(ErrorCode::InvalidData))?;
+
+        Ok(Self { cert })
     }
 
-    /// Get a DerReader over the tbsCertificate SEQUENCE contents.
+    /// Extract the Subject Key Identifier extension value.
     ///
-    /// The tbsCertificate is the first child SEQUENCE inside the outer
-    /// Certificate SEQUENCE.
-    fn tbs_certificate(&self) -> Result<DerReader<'a>, Error> {
-        let outer = DerReader::new(self.data);
-        let (_, outer_content, _) = outer.enter()?;
-        // First child of outer Certificate SEQUENCE is tbsCertificate SEQUENCE
-        let (tag, tbs_reader, _) = outer_content.enter()?;
-        if tag != TAG_SEQUENCE {
-            return Err(ErrorCode::InvalidData.into());
-        }
-        Ok(tbs_reader)
-    }
-
-    /// Navigate to a specific field of tbsCertificate by semantic index.
-    ///
-    /// If version field is requested, but not present, an error is returned.
-    ///
-    /// https://www.rfc-editor.org/rfc/rfc5280#section-4.1
-    fn tbs_field(&self, field: TbsField) -> Result<DerReader<'a>, Error> {
-        let mut reader = self.tbs_certificate()?;
-
-        // Check if the first element is the [0] EXPLICIT version tag
-        let (first_tag, _, _) = reader.read_tlv()?;
-        let has_version = first_tag == TAG_CONTEXT_0;
-
-        // If index 0 is requested and version is present, return it directly
-        // or return error because requested field is not present
-        if matches!(field, TbsField::Version) {
-            if has_version {
-                return Ok(reader);
-            } else {
-                return Err(ErrorCode::InvalidData.into());
-            }
-        }
-
-        // Skip elements to reach the desired index
-        // If version is present, we start counting from 0 (version)
-        // If version is absent, field index 1 (serialNumber) is at position 0
-        let index = field as usize;
-        let skip_count = if has_version { index } else { index - 1 };
-
-        for _ in 0..skip_count {
-            reader = reader.skip()?;
-        }
-
-        Ok(reader)
-    }
-
-    /// Get a DerReader positioned at the extensions [3] EXPLICIT wrapper.
-    ///
-    /// Walks to the end of tbsCertificate looking for a extensions (tag of 0xA3).
-    fn extensions(&self) -> Result<DerReader<'a>, Error> {
-        let mut reader = self.tbs_certificate()?;
-
-        // Walk all children of tbsCertificate looking for [3] EXPLICIT
-        while !reader.is_empty() {
-            let (tag, value, rest) = reader.read_tlv()?;
-            if tag == TAG_CONTEXT_3 {
-                // Enter the [3] wrapper to get the SEQUENCE OF Extension
-                let inner = DerReader::new(value);
-                let (seq_tag, seq_value, _) = inner.read_tlv()?;
-                if seq_tag != TAG_SEQUENCE {
-                    return Err(ErrorCode::InvalidData.into());
-                }
-                return Ok(DerReader::new(seq_value));
-            }
-            reader = DerReader::new(rest);
-        }
-
-        Err(ErrorCode::NotFound.into())
-    }
-
-    /// Search extensions for a specific OID.
-    ///
-    /// Returns the extnValue OCTET STRING contents (the inner DER-encoded
-    /// extension value), or `None` if the extension is not found.
-    ///
-    /// Extension structure:
-    /// ```text
-    /// SEQUENCE {
-    ///   OID,
-    ///   BOOLEAN (critical, optional, DEFAULT FALSE),
-    ///   OCTET STRING (extnValue)
-    /// }
-    /// https://www.rfc-editor.org/rfc/rfc5280#section-4.2
-    /// ```
-    fn find_extension(&self, oid: &[u8]) -> Result<Option<&'a [u8]>, Error> {
-        let mut reader = self.extensions()?;
-
-        while !reader.is_empty() {
-            let (tag, ext_value, rest) = reader.read_tlv()?;
-            if tag != TAG_SEQUENCE {
-                reader = DerReader::new(rest);
-                continue;
-            }
-
-            // Parse the extension SEQUENCE
-            let mut ext_reader = DerReader::new(ext_value);
-
-            // First element: OID
-            let (oid_tag, oid_value, _) = ext_reader.read_tlv()?;
-            if oid_tag != TAG_OID {
-                reader = DerReader::new(rest);
-                continue;
-            }
-
-            if oid_value == oid {
-                // Skip optional BOOLEAN (critical flag)
-                ext_reader = ext_reader.skip()?;
-                let (next_tag, next_value, after_next) = ext_reader.read_tlv()?;
-
-                if next_tag == TAG_BOOLEAN {
-                    // The BOOLEAN was critical flag; the OCTET STRING follows
-                    let ext_reader2 = DerReader::new(after_next);
-                    let (ostr_tag, ostr_value, _) = ext_reader2.read_tlv()?;
-                    if ostr_tag != TAG_OCTET_STRING {
-                        return Err(ErrorCode::InvalidData.into());
-                    }
-                    return Ok(Some(ostr_value));
-                } else if next_tag == TAG_OCTET_STRING {
-                    // No critical flag; this is already the extnValue
-                    return Ok(Some(next_value));
-                } else {
-                    return Err(ErrorCode::InvalidData.into());
-                }
-            }
-
-            reader = DerReader::new(rest);
-        }
-
-        Ok(None)
-    }
-
-    /// Search Subject DN SET OF entries for a specific attribute OID.
-    ///
-    /// Returns the attribute value bytes (from a UTF8String or PrintableString).
-    ///
-    /// Subject DN structure:
-    /// ```text
-    /// SEQUENCE OF SET {
-    ///   SEQUENCE {
-    ///     OID (attribute type),
-    ///     UTF8String | PrintableString (attribute value)
-    ///   }
-    /// }
-    /// ```
-    fn find_subject_attr(&self, oid: &[u8]) -> Result<Option<&'a [u8]>, Error> {
-        // Navigate to Subject DN (field index 5 in tbsCertificate)
-        // https://www.rfc-editor.org/rfc/rfc5280#section-4.1
-        let field_reader = self.tbs_field(TbsField::Subject)?;
-        let (tag, subject_value, _) = field_reader.read_tlv()?;
-        if tag != TAG_SEQUENCE {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        let mut set_reader = DerReader::new(subject_value);
-
-        while !set_reader.is_empty() {
-            let (set_tag, set_value, rest) = set_reader.read_tlv()?;
-            if set_tag != TAG_SET {
-                set_reader = DerReader::new(rest);
-                continue;
-            }
-
-            // Each SET contains one SEQUENCE { OID, value }
-            let seq_reader = DerReader::new(set_value);
-            let (seq_tag, seq_value, _) = seq_reader.read_tlv()?;
-            if seq_tag != TAG_SEQUENCE {
-                set_reader = DerReader::new(rest);
-                continue;
-            }
-
-            let mut attr_reader = DerReader::new(seq_value);
-
-            // OID
-            let (oid_tag, oid_value, _) = attr_reader.read_tlv()?;
-            if oid_tag == TAG_OID && oid_value == oid {
-                // Value (UTF8String or PrintableString)
-                attr_reader = attr_reader.skip()?;
-                let (_, attr_value, _) = attr_reader.read_tlv()?;
-                return Ok(Some(attr_value));
-            }
-
-            set_reader = DerReader::new(rest);
-        }
-
-        Ok(None)
-    }
-
-    /// Extract the Subject Key Identifier (SKID) from the SKID extension.
-    ///
-    /// The SKID extension contains an OCTET STRING with a 20 byte key
-    /// identifier.
-    ///
-    /// https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.2
-    ///
-    /// Returns `ErrorCode::NotFound` if the extension is not present.
+    /// The extnValue of the SubjectKeyIdentifier extension is an
+    /// OCTET STRING containing the 20-byte key identifier.
     pub fn subject_key_id(&self) -> Result<&'a [u8], Error> {
-        let ext_value = self
-            .find_extension(&OID_SUBJECT_KEY_ID)?
+        let extensions = self
+            .cert
+            .tbs_certificate
+            .extensions
+            .as_ref()
             .ok_or(Error::from(ErrorCode::NotFound))?;
 
-        // extnValue contains: OCTET STRING (the raw 20-byte SKID)
-        let reader = DerReader::new(ext_value);
-        let (tag, value, _) = reader.read_tlv()?;
-        if tag != TAG_OCTET_STRING {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        Ok(value)
+        extensions
+            .subject_key_id
+            .as_ref()
+            .map(|ext| ext.value.as_bytes())
+            .ok_or(Error::from(ErrorCode::NotFound))
     }
 
-    /// Extract the Authority Key Identifier (AKID) from the AKID extension.
+    /// Extract the Authority Key Identifier extension value.
     ///
-    /// The AKID extension contains:
-    /// ```text
-    /// SEQUENCE {
-    ///   [0] IMPLICIT keyIdentifier (20 bytes)
-    /// }
-    /// ```
-    /// https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.1
-    ///
-    /// Returns `ErrorCode::NotFound` if the extension is not present.
+    /// The extnValue contains a SEQUENCE with a context-specific `[0]`
+    /// field holding the 20-byte key identifier.
     pub fn authority_key_id(&self) -> Result<&'a [u8], Error> {
-        let ext_value = self
-            .find_extension(&OID_AUTHORITY_KEY_ID)?
+        let extensions = self
+            .cert
+            .tbs_certificate
+            .extensions
+            .as_ref()
             .ok_or(Error::from(ErrorCode::NotFound))?;
 
-        // extnValue contains: SEQUENCE { [0] IMPLICIT keyIdentifier }
-        let reader = DerReader::new(ext_value);
-        let (tag, seq_value, _) = reader.read_tlv()?;
-        if tag != TAG_SEQUENCE {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        // First element should be [0] IMPLICIT (tag 0x80)
-        // Implicit Context specific tag for AuthorityKeyIdentifier
-        let inner = DerReader::new(seq_value);
-        let (tag, value, _) = inner.read_tlv()?;
-        if tag != TAG_CONTEXT_0_PRIM {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        Ok(value)
+        extensions
+            .authority_key_id
+            .as_ref()
+            .and_then(|ext| ext.value.key_identifier.as_ref())
+            .map(|oct| oct.as_bytes())
+            .ok_or(Error::from(ErrorCode::NotFound))
     }
 
-    /// Extract the uncompressed P-256 public key.
+    /// Extract the subject public key bytes.
     ///
-    /// Navigates to subjectPublicKeyInfo (tbsCertificate field 6), then
-    /// extracts the public key from the BIT STRING.
-    ///
-    /// Returns `ErrorCode::InvalidData` if the key is not 65 bytes or the
-    /// BIT STRING unused-bits byte is not 0x00.
+    /// Returns the raw bytes of the BIT STRING value from SubjectPublicKeyInfo,
+    /// excluding the unused-bits prefix byte. For P-256 this is the 65-byte
+    /// uncompressed point (0x04 || X || Y).
     pub fn public_key(&self) -> Result<&'a [u8], Error> {
-        // Navigate to subjectPublicKeyInfo (field 6)
-        let field_reader = self.tbs_field(TbsField::SubjectPubKeyInfo)?;
-        let (tag, spki_value, _) = field_reader.read_tlv()?;
-        if tag != TAG_SEQUENCE {
+        let spli_bytes = &self
+            .cert
+            .tbs_certificate
+            .subject_public_key_info
+            .subject_public_key
+            .raw_bytes();
+
+        if spli_bytes.len() != P256_PUBLIC_KEY_LEN {
             return Err(ErrorCode::InvalidData.into());
         }
 
-        // SubjectPublicKeyInfo = SEQUENCE { algorithm, subjectPublicKey }
-        let mut spki_reader = DerReader::new(spki_value);
-
-        // Skip algorithm SEQUENCE
-        spki_reader = spki_reader.skip()?;
-
-        // subjectPublicKey is a BIT STRING
-        let (tag, bs_value, _) = spki_reader.read_tlv()?;
-        if tag != TAG_BIT_STRING {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        // BIT STRING: first byte is unused bits count (must be 0)
-        if bs_value.is_empty() || bs_value[0] != 0x00 {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        let key = &bs_value[1..];
-        if key.len() != P256_PUBLIC_KEY_LEN {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        Ok(key)
+        Ok(spli_bytes)
     }
 
     /// Extract the Matter Vendor ID from the Subject DN.
@@ -604,9 +511,11 @@ impl<'a> X509CertRef<'a> {
     ///
     /// Returns `ErrorCode::NotFound` if not present in the Subject DN.
     pub fn vendor_id(&self) -> Result<u16, Error> {
-        let attr = self
-            .find_subject_attr(&OID_MATTER_VENDOR_ID)?
-            .ok_or(Error::from(ErrorCode::NotFound))?;
+        let attr = Self::find_rdn_attr(
+            self.cert.tbs_certificate.subject.value(),
+            &OID_MATTER_VENDOR_ID,
+        )?
+        .ok_or(Error::from(ErrorCode::NotFound))?;
 
         parse_hex_u16(attr)
     }
@@ -619,11 +528,42 @@ impl<'a> X509CertRef<'a> {
     ///
     /// Returns `ErrorCode::NotFound` if not present in the Subject DN.
     pub fn product_id(&self) -> Result<u16, Error> {
-        let attr = self
-            .find_subject_attr(&OID_MATTER_PRODUCT_ID)?
-            .ok_or(Error::from(ErrorCode::NotFound))?;
+        let attr = Self::find_rdn_attr(
+            self.cert.tbs_certificate.subject.value(),
+            &OID_MATTER_PRODUCT_ID,
+        )?
+        .ok_or(Error::from(ErrorCode::NotFound))?;
 
         parse_hex_u16(attr)
+    }
+
+    fn find_rdn_attr(
+        rdn_bytes: &'a [u8],
+        target_oid: &ObjectIdentifier,
+    ) -> Result<Option<&'a [u8]>, Error> {
+        // RDNSequence ::= SEQUENCE OF RelativeDistinguishedName
+        // RelativeDistinguishedName ::= SET OF AttributeTypeAndValue
+        let mut outer =
+            SliceReader::new(rdn_bytes).map_err(|_| Error::from(ErrorCode::InvalidData))?;
+
+        while !outer.is_finished() {
+            // Each RDN is a SET
+            let rdn_set =
+                AnyRef::decode(&mut outer).map_err(|_| Error::from(ErrorCode::InvalidData))?;
+            let mut set_reader = SliceReader::new(rdn_set.value())
+                .map_err(|_| Error::from(ErrorCode::InvalidData))?;
+
+            while !set_reader.is_finished() {
+                let atv = AttributeTypeAndValue::decode(&mut set_reader)
+                    .map_err(|_| Error::from(ErrorCode::InvalidData))?;
+
+                if atv.oid == *target_oid {
+                    return Ok(Some(atv.value.value()));
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     /// Extract the NotBefore time as Unix epoch seconds.
@@ -631,15 +571,7 @@ impl<'a> X509CertRef<'a> {
     /// Parses UTCTime ("YYMMDDHHMMSSZ") or GeneralizedTime ("YYYYMMDDHHMMSSZ")
     /// from the validity field of the tbsCertificate.
     pub fn not_before_unix(&self) -> Result<u64, Error> {
-        let field_reader = self.tbs_field(TbsField::Validity)?;
-        let (tag, validity_value, _) = field_reader.read_tlv()?;
-        if tag != TAG_SEQUENCE {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        let reader = DerReader::new(validity_value);
-        let (tag, value, _) = reader.read_tlv()?;
-        parse_asn1_time(tag, value)
+        time_to_unix_secs(&self.cert.tbs_certificate.validity.not_before)
     }
 
     /// Extract the NotAfter time as Unix epoch seconds.
@@ -647,17 +579,7 @@ impl<'a> X509CertRef<'a> {
     /// Parses UTCTime or GeneralizedTime. For GeneralizedTime
     /// "99991231235959Z", returns `u64::MAX` to indicate no expiry.
     pub fn not_after_unix(&self) -> Result<u64, Error> {
-        let field_reader = self.tbs_field(TbsField::Validity)?;
-        let (tag, validity_value, _) = field_reader.read_tlv()?;
-        if tag != TAG_SEQUENCE {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        // Skip NotBefore, read NotAfter
-        let reader = DerReader::new(validity_value);
-        let reader = reader.skip()?;
-        let (tag, value, _) = reader.read_tlv()?;
-        parse_asn1_time(tag, value)
+        time_to_unix_secs(&self.cert.tbs_certificate.validity.not_after)
     }
 
     /// Check if the certificate is valid at the given Unix epoch time (seconds).
@@ -670,6 +592,80 @@ impl<'a> X509CertRef<'a> {
         let not_after = self.not_after_unix()?;
 
         Ok(now_unix_secs >= not_before && now_unix_secs <= not_after)
+    }
+
+    /// Validate that this certificate meets Matter DAC (Device Attestation Certificate)
+    /// extension requirements per the Matter specification.
+    ///
+    /// Per Matter spec section 6.3.2, a DAC SHALL have:
+    /// - Basic Constraints: critical=TRUE, cA=FALSE
+    /// - Key Usage: critical=TRUE, only digitalSignature bit set
+    /// - Subject Key Identifier: present
+    /// - Authority Key Identifier: present
+    ///
+    /// Returns `Ok(())` if all requirements are met, or an error.
+    pub fn validate_dac_extensions(&self) -> Result<(), Error> {
+        let extensions = self
+            .cert
+            .tbs_certificate
+            .extensions
+            .as_ref()
+            .ok_or_else(|| Error::from(ErrorCode::NotFound))?;
+
+        // Basic Constraints: SHALL be critical, cA SHALL be FALSE
+        let bc = extensions
+            .basic_constraints
+            .as_ref()
+            .ok_or_else(|| Error::from(ErrorCode::NotFound))?;
+        eprintln!("DEBUG: BC critical={}, cA={}", bc.critical, bc.value.ca);
+        if !bc.critical {
+            return Err(ErrorCode::InvalidData.into());
+        }
+        if bc.value.ca {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        // Key Usage: SHALL be critical, SHALL only have digitalSignature set
+        let ku = extensions
+            .key_usage
+            .as_ref()
+            .ok_or_else(|| Error::from(ErrorCode::NotFound))?;
+        if !ku.critical {
+            return Err(ErrorCode::InvalidData.into());
+        }
+        // Only digitalSignature bit should be set
+        if !ku.value.digital_signature() {
+            return Err(ErrorCode::InvalidData.into());
+        }
+        if ku.value.bits != KeyUsage::DIGITAL_SIGNATURE {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        // Subject Key Identifier: SHALL be present
+        if extensions.subject_key_id.is_none() {
+            return Err(ErrorCode::NotFound.into());
+        }
+
+        // Authority Key Identifier: SHALL be present
+        if extensions.authority_key_id.is_none() {
+            return Err(ErrorCode::NotFound.into());
+        }
+
+        // check VendorID in issuer & subject fields are the same
+        let issuer_vendor_id = parse_hex_u16(
+            Self::find_rdn_attr(
+                self.cert.tbs_certificate.issuer.value(),
+                &OID_MATTER_VENDOR_ID,
+            )?
+            .ok_or(Error::from(ErrorCode::NotFound))?,
+        )?;
+
+        let vendor_id = self.vendor_id().unwrap();
+        if vendor_id != issuer_vendor_id {
+            return Err(ErrorCode::NotFound.into());
+        }
+
+        Ok(())
     }
 }
 
@@ -786,7 +782,7 @@ mod tests {
 
     #[test]
     fn test_paa_skid() {
-        let cert = X509CertRef::new(PAA_DER).unwrap();
+        let cert = X509Cert::new(PAA_DER).unwrap();
         let skid = cert.subject_key_id().unwrap();
         assert_eq!(
             skid,
@@ -799,7 +795,7 @@ mod tests {
 
     #[test]
     fn test_paa_self_signed_akid_equals_skid() {
-        let cert = X509CertRef::new(PAA_DER).unwrap();
+        let cert = X509Cert::new(PAA_DER).unwrap();
         let skid = cert.subject_key_id().unwrap();
         let akid = cert.authority_key_id().unwrap();
         assert_eq!(skid, akid);
@@ -807,7 +803,7 @@ mod tests {
 
     #[test]
     fn test_pai_skid() {
-        let cert = X509CertRef::new(PAI_DER).unwrap();
+        let cert = X509Cert::new(PAI_DER).unwrap();
         let skid = cert.subject_key_id().unwrap();
         assert_eq!(
             skid,
@@ -820,7 +816,7 @@ mod tests {
 
     #[test]
     fn test_dac_skid() {
-        let cert = X509CertRef::new(DAC_DER).unwrap();
+        let cert = X509Cert::new(DAC_DER).unwrap();
         let skid = cert.subject_key_id().unwrap();
         assert_eq!(
             skid,
@@ -833,8 +829,8 @@ mod tests {
 
     #[test]
     fn test_dac_akid_matches_pai_skid() {
-        let dac = X509CertRef::new(DAC_DER).unwrap();
-        let pai = X509CertRef::new(PAI_DER).unwrap();
+        let dac = X509Cert::new(DAC_DER).unwrap();
+        let pai = X509Cert::new(PAI_DER).unwrap();
         assert_eq!(
             dac.authority_key_id().unwrap(),
             pai.subject_key_id().unwrap()
@@ -843,7 +839,7 @@ mod tests {
 
     #[test]
     fn test_paa_public_key() {
-        let cert = X509CertRef::new(PAA_DER).unwrap();
+        let cert = X509Cert::new(PAA_DER).unwrap();
         let pk = cert.public_key().unwrap();
         assert_eq!(pk.len(), 65);
         assert_eq!(pk[0], 0x04); // uncompressed point marker
@@ -861,7 +857,7 @@ mod tests {
 
     #[test]
     fn test_dac_public_key() {
-        let cert = X509CertRef::new(DAC_DER).unwrap();
+        let cert = X509Cert::new(DAC_DER).unwrap();
         let pk = cert.public_key().unwrap();
         assert_eq!(pk.len(), 65);
         assert_eq!(pk[0], 0x04);
@@ -879,25 +875,25 @@ mod tests {
 
     #[test]
     fn test_dac_vendor_id() {
-        let cert = X509CertRef::new(DAC_DER).unwrap();
+        let cert = X509Cert::new(DAC_DER).unwrap();
         assert_eq!(cert.vendor_id().unwrap(), 0xFFF1);
     }
 
     #[test]
     fn test_dac_product_id() {
-        let cert = X509CertRef::new(DAC_DER).unwrap();
+        let cert = X509Cert::new(DAC_DER).unwrap();
         assert_eq!(cert.product_id().unwrap(), 0x8000);
     }
 
     #[test]
     fn test_pai_vendor_id() {
-        let cert = X509CertRef::new(PAI_DER).unwrap();
+        let cert = X509Cert::new(PAI_DER).unwrap();
         assert_eq!(cert.vendor_id().unwrap(), 0xFFF1);
     }
 
     #[test]
     fn test_pai_no_product_id() {
-        let cert = X509CertRef::new(PAI_DER).unwrap();
+        let cert = X509Cert::new(PAI_DER).unwrap();
         assert_eq!(
             cert.product_id().map_err(|e| e.code()),
             Err(ErrorCode::NotFound)
@@ -906,7 +902,7 @@ mod tests {
 
     #[test]
     fn test_paa_no_vendor_id() {
-        let cert = X509CertRef::new(PAA_DER).unwrap();
+        let cert = X509Cert::new(PAA_DER).unwrap();
         assert_eq!(
             cert.vendor_id().map_err(|e| e.code()),
             Err(ErrorCode::NotFound)
@@ -915,7 +911,7 @@ mod tests {
 
     #[test]
     fn test_paa_no_product_id() {
-        let cert = X509CertRef::new(PAA_DER).unwrap();
+        let cert = X509Cert::new(PAA_DER).unwrap();
         assert_eq!(
             cert.product_id().map_err(|e| e.code()),
             Err(ErrorCode::NotFound)
@@ -924,7 +920,7 @@ mod tests {
 
     #[test]
     fn test_dac_not_before() {
-        let cert = X509CertRef::new(DAC_DER).unwrap();
+        let cert = X509Cert::new(DAC_DER).unwrap();
         let nb = cert.not_before_unix().unwrap();
         // 2022-02-05 00:00:00 UTC = 1644019200
         assert_eq!(nb, 1644019200);
@@ -932,7 +928,7 @@ mod tests {
 
     #[test]
     fn test_dac_not_after_no_expiry() {
-        let cert = X509CertRef::new(DAC_DER).unwrap();
+        let cert = X509Cert::new(DAC_DER).unwrap();
         let na = cert.not_after_unix().unwrap();
         // 99991231235959Z => u64::MAX (no expiry)
         assert_eq!(na, u64::MAX);
@@ -940,7 +936,7 @@ mod tests {
 
     #[test]
     fn test_paa_not_before() {
-        let cert = X509CertRef::new(PAA_DER).unwrap();
+        let cert = X509Cert::new(PAA_DER).unwrap();
         let nb = cert.not_before_unix().unwrap();
         // 2021-06-28 14:23:43 UTC = 1624890223
         assert_eq!(nb, 1624890223);
@@ -948,7 +944,7 @@ mod tests {
 
     #[test]
     fn test_dac_is_valid_at() {
-        let cert = X509CertRef::new(DAC_DER).unwrap();
+        let cert = X509Cert::new(DAC_DER).unwrap();
         // A time well after NotBefore (2023-11-14)
         assert!(cert.is_valid_at(1700000000).unwrap());
         // A time before NotBefore (2021-09-13)
@@ -957,17 +953,17 @@ mod tests {
 
     #[test]
     fn test_invalid_empty_input() {
-        assert!(X509CertRef::new(&[]).is_err());
+        assert!(X509Cert::new(&[]).is_err());
     }
 
     #[test]
     fn test_invalid_not_sequence() {
-        assert!(X509CertRef::new(&[0x01, 0x02, 0x03]).is_err());
+        assert!(X509Cert::new(&[0x01, 0x02, 0x03]).is_err());
     }
 
     #[test]
     fn test_invalid_empty_sequence() {
-        assert!(X509CertRef::new(&[0x30, 0x00]).is_err());
+        assert!(X509Cert::new(&[0x30, 0x00]).is_err());
     }
 
     #[test]
@@ -983,9 +979,7 @@ mod tests {
         // remove version field from the certificate
         der.drain(version_start..version_start + version_field_len);
 
-        let cert = X509CertRef::new(&der).unwrap();
-        assert!(cert.tbs_field(TbsField::Version).is_err());
-        assert!(cert.tbs_field(TbsField::SerialNum).is_ok());
+        assert!(X509Cert::new(&der).is_err());
     }
 
     #[test]
@@ -998,5 +992,19 @@ mod tests {
         assert!(parse_hex_u16(b"FFF").is_err()); // too short
         assert!(parse_hex_u16(b"FFFFF").is_err()); // too long
         assert!(parse_hex_u16(b"GHIJ").is_err()); // invalid chars
+    }
+
+    #[test]
+    fn test_dac_extensions_valid() {
+        // DAC should pass DAC validation
+        let cert = X509Cert::new(DAC_DER).unwrap();
+        assert!(cert.validate_dac_extensions().is_ok());
+    }
+
+    #[test]
+    fn test_dac_extensions_fail_on_pai() {
+        // PAI should fail DAC validation (cA=TRUE, wrong key usage)
+        let cert = X509Cert::new(PAI_DER).unwrap();
+        assert!(cert.validate_dac_extensions().is_err());
     }
 }
