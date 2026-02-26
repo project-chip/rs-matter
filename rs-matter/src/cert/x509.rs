@@ -103,17 +103,17 @@ fn default_false() -> bool {
     false
 }
 
-///   KeyUsage ::= BIT STRING {
-///     digitalSignature   (0),
-///     nonRepudiation     (1),
-///     keyEncipherment    (2),
-///     dataEncipherment   (3),
-///     keyAgreement       (4),
-///     keyCertSign        (5),
-///     cRLSign            (6),
-///     encipherOnly       (7),
-///     decipherOnly       (8)
-///   }
+/// KeyUsage ::= BIT STRING {
+///   digitalSignature   (0),
+///   nonRepudiation     (1),
+///   keyEncipherment    (2),
+///   dataEncipherment   (3),
+///   keyAgreement       (4),
+///   keyCertSign        (5),
+///   cRLSign            (6),
+///   encipherOnly       (7),
+///   decipherOnly       (8)
+/// }
 /// https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.3
 ///
 /// For Matter DAC: only digitalSignature (MSB) should be set.
@@ -289,17 +289,17 @@ struct Validity {
 /// tbsCertificate    DACTBSCertificate
 ///
 /// DACTBSCertificate ::= SEQUENCE {
-///     version INTEGER ( v3(2) ),
-///     serialNumber INTEGER,
-///     signature MatterSignatureIdentifier,
-///     issuer MatterPAName,
-///     validity Validity,
-///     subject MatterDACName,
-///     subjectPublicKeyInfo SEQUENCE {
-///         algorithm OBJECT IDENTIFIER(id-x962-prime256v1),
-///         subjectPublicKey BIT STRING
-///     },
-///     extensions DACExtensions
+///   version INTEGER ( v3(2) ),
+///   serialNumber INTEGER,
+///   signature MatterSignatureIdentifier,
+///   issuer MatterPAName,
+///   validity Validity,
+///   subject MatterDACName,
+///   subjectPublicKeyInfo SEQUENCE {
+///     algorithm OBJECT IDENTIFIER(id-x962-prime256v1),
+///     subjectPublicKey BIT STRING
+///   },
+///   extensions DACExtensions
 /// }
 #[derive(Sequence)]
 struct TbsCertificate<'a> {
