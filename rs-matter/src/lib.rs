@@ -95,7 +95,7 @@ use crate::pairing::qr::{
 use crate::pairing::DiscoveryCapabilities;
 use crate::sc::pase::spake2p::Spake2pVerifierPassword;
 use crate::sc::pase::PaseMgr;
-use crate::transport::network::{NetworkIPv6Multicast, NetworkReceive, NetworkSend};
+use crate::transport::network::{NetworkMulticast, NetworkReceive, NetworkSend};
 use crate::transport::TransportMgr;
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
@@ -586,40 +586,46 @@ impl<'a> Matter<'a> {
     /// Watch for fabric/group key changes, rebuild the op-key cache, and join new IPv6
     /// multicast groups as group key maps change.
     /// Runs forever (never returns).
-    async fn watch_group_keys<C: Crypto, N: NetworkIPv6Multicast>(
-        &self,
-        crypto: &C,
-        mut network: N,
-    ) -> ! {
-        const MAX_ADDRS: usize = MAX_FABRICS * MAX_GROUPS_PER_FABRIC;
-        let mut joined: heapless::Vec<Ipv6Addr, MAX_ADDRS> = heapless::Vec::new();
+    fn watch_group_membership<'t, C, M>(
+        &'t self,
+        crypto: C,
+        mut multicast_network: M,
+    ) -> impl Future<Output = ()> + 't
+    where
+        C: Crypto + 't,
+        M: NetworkMulticast + 't,
+    {
+        async move {
+            const MAX_ADDRS: usize = MAX_FABRICS * MAX_GROUPS_PER_FABRIC;
+            let mut joined: heapless::Vec<Ipv6Addr, MAX_ADDRS> = heapless::Vec::new();
 
-        loop {
-            self.rebuild_group_op_keys(crypto);
+            loop {
+                self.rebuild_group_op_keys(&crypto);
 
-            for fabric in self.fabric_mgr.borrow().iter() {
-                for group_entry in fabric.group_iter() {
-                    let addr = crate::utils::ipv6::compute_group_multicast_addr(
-                        fabric.fabric_id(),
-                        group_entry.group_id,
-                    );
+                for fabric in self.fabric_mgr.borrow().iter() {
+                    for group_entry in fabric.group_iter() {
+                        let addr = crate::utils::ipv6::compute_group_multicast_addr(
+                            fabric.fabric_id(),
+                            group_entry.group_id,
+                        );
 
-                    if !joined.contains(&addr) {
-                        // TODO: unregister when group is removed.
-                        match network.register_ipv6_multicast(addr).await {
-                            Ok(_) => {
-                                debug!("Registered multicast address: {}", addr);
-                                // `joined` should be able to contain theoretical maximum number of multicast address
-                                // So this unwrap should be safe
-                                unwrap!(joined.push(addr));
-                            },
-                            Err(_) => error!("Failed to register multicast address: {}.\n\t Group communication may not work as expected", addr),
+                        if !joined.contains(&addr) {
+                            // TODO: unregister when group is removed.
+                            match multicast_network.register_multicast(addr.into()).await {
+                                Ok(_) => {
+                                    debug!("Registered multicast address: {}", addr);
+                                    // `joined` should be able to contain theoretical maximum number of multicast address
+                                    // So this unwrap should be safe
+                                    unwrap!(joined.push(addr));
+                                },
+                                Err(_) => error!("Failed to register multicast address: {}.\n\t Group communication may not work as expected", addr),
+                            }
                         }
                     }
                 }
-            }
 
-            self.groups_notification.wait().await;
+                self.groups_notification.wait().await;
+            }
         }
     }
 
@@ -635,16 +641,28 @@ impl<'a> Matter<'a> {
     /// - `crypto`: The crypto backend
     /// - `send`: The network send interface
     /// - `recv`: The network receive interface
+    /// - `multicast`: The multicast network interface (for receiving groupcast messages)
     ///
-    /// Note: `recv` should be copy and implement both `NetworkRecv` and `NetworkIPv6` traits
-    pub async fn run<C, S, R>(&self, crypto: C, send: S, recv: R) -> Result<(), Error>
+    pub async fn run<C, S, R, M>(
+        &self,
+        crypto: C,
+        send: S,
+        recv: R,
+        multicast: Option<M>,
+    ) -> Result<(), Error>
     where
         S: NetworkSend,
-        R: NetworkReceive + NetworkIPv6Multicast + Copy,
+        R: NetworkReceive,
+        M: NetworkMulticast,
         C: Crypto,
     {
         let mut transport = pin!(self.run_transport(&crypto, send, recv));
-        let mut group_key_watcher = pin!(self.watch_group_keys(&crypto, recv));
+        let mut group_key_watcher = match multicast {
+            Some(multicast) => pin!(either::Either::Left(
+                self.watch_group_membership(&crypto, multicast)
+            )),
+            None => pin!(either::Either::Right(core::future::pending::<()>())),
+        };
 
         match select(&mut transport, &mut group_key_watcher).await {
             embassy_futures::select::Either::First(result) => result,
