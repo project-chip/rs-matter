@@ -804,13 +804,9 @@ impl SessionMgr {
     /// This assumes that the higher layer has taken care of doing anything required
     /// as per the spec before the sessions are removed or expired
     pub fn remove_for_fabric(&mut self, fabric_idx: NonZeroU8, expire_sess_id: Option<u32>) {
-        loop {
-            let Some(index) = self.sessions.iter().position(|sess| {
-                sess.get_local_fabric_idx() == fabric_idx.get() && Some(sess.id) != expire_sess_id
-            }) else {
-                break;
-            };
-
+        while let Some(index) = self.sessions.iter().position(|sess| {
+            sess.get_local_fabric_idx() == fabric_idx.get() && Some(sess.id) != expire_sess_id
+        }) {
             info!(
                 "Dropping session with ID {} for fabric index {} immediately",
                 self.sessions[index].id, fabric_idx

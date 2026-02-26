@@ -216,7 +216,7 @@ where
             None,
             HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
             EventReader::new(0),
-            &self.events,
+            self.events,
         );
 
         resp.respond(self, &mut wb, true).await?;
@@ -518,18 +518,9 @@ where
                         .iter()
                         .position(|sb| sb.subscription_id == id));
                     let sub = self.subscriptions_buffers.borrow_mut().remove(index);
-                    let rx = sub.buffer;
 
                     let result = self
-                        .process_subscription(
-                            matter,
-                            fabric_idx,
-                            peer_node_id,
-                            session_id,
-                            id,
-                            sub.min_event_number,
-                            &rx,
-                        )
+                        .process_subscription(matter, fabric_idx, peer_node_id, session_id, &sub)
                         .await;
 
                     let min_event_number = self.events.peek_next_event_no();
@@ -543,7 +534,7 @@ where
                                         peer_node_id,
                                         subscription_id: id,
                                         min_event_number,
-                                        buffer: rx,
+                                        buffer: sub.buffer,
                                     },
                                 );
                                 subscribed.set(true);
@@ -567,18 +558,14 @@ where
     /// - `fabric_idx` - the fabric index of the peer
     /// - `peer_node_id` - the node ID of the peer
     /// - `session_id` - the session ID of the peer, if any
-    /// - `id` - the subscription ID
-    /// - `min_event_number` TODO
-    /// - `rx` - the received and saved data for the subscription, when the subscription was primed
+    /// - `sub` - the received and saved data for the subscription, when the subscription was primed
     async fn process_subscription(
         &self,
         matter: &Matter<'_>,
         fabric_idx: NonZeroU8,
         peer_node_id: u64,
         session_id: Option<u32>,
-        id: u32,
-        min_event_number: u64,
-        rx: &[u8],
+        sub: &SubscriptionBuffer<B::Buffer<'_>>,
     ) -> Result<bool, Error> {
         let mut exchange = if let Some(session_id) = session_id {
             Exchange::initiate_for_session(matter, session_id)?
@@ -595,11 +582,11 @@ where
 
             let primed = self
                 .report_data(
-                    id,
+                    sub.subscription_id,
                     fabric_idx.get(),
                     peer_node_id,
-                    min_event_number,
-                    rx,
+                    sub.min_event_number,
+                    &sub.buffer,
                     &mut tx,
                     &mut exchange,
                     false,
@@ -612,7 +599,7 @@ where
         } else {
             error!(
                 "No TX buffer available for processing subscription [F:{:x},P:{:x}]::{}",
-                fabric_idx, peer_node_id, id
+                fabric_idx, peer_node_id, sub.subscription_id,
             );
 
             Ok(false)
@@ -704,7 +691,7 @@ where
             Some(id),
             HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
             EventReader::new(min_event_number),
-            &self.events,
+            self.events,
         );
 
         let sub_valid = resp.respond(self, &mut wb, false).await?;
