@@ -33,6 +33,8 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use crate::im::EventData;
 
+// TODO we currently only have this singular config to set the size, but the events are stored in three "tiered" buffers, and
+//      we probably want to allow configuring them separately. We also should spend some thinking tokens on what a good default here is.
 pub const DEFAULT_BYTES_PER_BUF: usize = 64;
 
 /// See EventsPersist for details
