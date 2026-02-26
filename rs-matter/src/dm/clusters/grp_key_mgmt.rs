@@ -25,7 +25,7 @@ use crate::dm::{
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::GrpKeyMapEntry;
-use crate::group_keys::GrpKeySetEntry;
+use crate::group_keys::{GroupEpochKeyEntry, GrpKeySetEntry};
 use crate::tlv::{Nullable, Octets, TLVArray, TLVBuilderParent};
 use crate::with;
 
@@ -321,16 +321,21 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         let mut entry = GrpKeySetEntry {
             group_key_set_id,
             group_key_security_policy: group_key_security_policy as u8,
-            epoch_start_time0: epoch_start_time_0_val,
             ..Default::default()
         };
 
-        // Copy epoch key 0
-        entry
-            .epoch_key0
-            .vec
-            .extend_from_slice(epoch_key_0_val.0)
+        // Push epoch key 0
+        let mut key0 = GroupEpochKeyEntry {
+            epoch_key: Default::default(),
+            epoch_start_time: epoch_start_time_0_val,
+        };
+        key0.epoch_key
+            .try_load_from_slice(epoch_key_0_val.0)
             .map_err(|_| ErrorCode::ConstraintError)?;
+        entry
+            .epoch_keys
+            .push(key0)
+            .map_err(|_| Error::from(ErrorCode::ConstraintError))?;
 
         if has_epoch_key_1 {
             let epoch_key_1_val = epoch_key_1.as_opt_ref().unwrap();
@@ -346,13 +351,17 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                 return Err(ErrorCode::InvalidCommand.into());
             }
 
-            entry.has_epoch_key1 = true;
-            entry
-                .epoch_key1
-                .vec
-                .extend_from_slice(epoch_key_1_val.0)
+            let mut key1 = GroupEpochKeyEntry {
+                epoch_key: Default::default(),
+                epoch_start_time: epoch_start_time_1_val,
+            };
+            key1.epoch_key
+                .try_load_from_slice(epoch_key_1_val.0)
                 .map_err(|_| ErrorCode::ConstraintError)?;
-            entry.epoch_start_time1 = epoch_start_time_1_val;
+            entry
+                .epoch_keys
+                .push(key1)
+                .map_err(|_| Error::from(ErrorCode::ConstraintError))?;
 
             // Check epoch key 2
             let has_epoch_key_2 = epoch_key_2.as_opt_ref().is_some();
@@ -376,13 +385,17 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                     return Err(ErrorCode::InvalidCommand.into());
                 }
 
-                entry.has_epoch_key2 = true;
-                entry
-                    .epoch_key2
-                    .vec
-                    .extend_from_slice(epoch_key_2_val.0)
+                let mut key2 = GroupEpochKeyEntry {
+                    epoch_key: Default::default(),
+                    epoch_start_time: epoch_start_time_2_val,
+                };
+                key2.epoch_key
+                    .try_load_from_slice(epoch_key_2_val.0)
                     .map_err(|_| ErrorCode::ConstraintError)?;
-                entry.epoch_start_time2 = epoch_start_time_2_val;
+                entry
+                    .epoch_keys
+                    .push(key2)
+                    .map_err(|_| Error::from(ErrorCode::ConstraintError))?;
             }
         } else {
             // If key1 not present, key2 must not be present either
@@ -436,16 +449,16 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                 },
             )?
             .epoch_key_0(Nullable::<Octets<'_>>::none())?
-            .epoch_start_time_0(Nullable::some(entry.epoch_start_time0))?
+            .epoch_start_time_0(Nullable::some(entry.epoch_keys[0].epoch_start_time))?
             .epoch_key_1(Nullable::<Octets<'_>>::none())?
-            .epoch_start_time_1(if entry.has_epoch_key1 {
-                Nullable::some(entry.epoch_start_time1)
+            .epoch_start_time_1(if let Some(k) = entry.epoch_keys.get(1) {
+                Nullable::some(k.epoch_start_time)
             } else {
                 Nullable::none()
             })?
             .epoch_key_2(Nullable::<Octets<'_>>::none())?
-            .epoch_start_time_2(if entry.has_epoch_key2 {
-                Nullable::some(entry.epoch_start_time2)
+            .epoch_start_time_2(if let Some(k) = entry.epoch_keys.get(2) {
+                Nullable::some(k.epoch_start_time)
             } else {
                 Nullable::none()
             })?

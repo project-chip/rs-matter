@@ -748,31 +748,14 @@ impl SessionMgr {
                     continue;
                 };
 
-                let epoch_keys: [Option<&[u8]>; 3] = [
-                    Some(key_set_entry.epoch_key0.vec.as_slice()),
-                    if key_set_entry.has_epoch_key1 {
-                        Some(key_set_entry.epoch_key1.vec.as_slice())
-                    } else {
-                        None
-                    },
-                    if key_set_entry.has_epoch_key2 {
-                        Some(key_set_entry.epoch_key2.vec.as_slice())
-                    } else {
-                        None
-                    },
-                ];
-
-                for epoch_key_bytes in epoch_keys.into_iter().flatten() {
+                for epoch_key_entry in key_set_entry.epoch_keys.iter() {
                     let mut temp_key_set = KeySet::new();
-                    let mut epoch_key_canon = AEAD_KEY_ZEROED;
-                    if epoch_key_canon
-                        .try_load_from_slice(epoch_key_bytes)
-                        .is_err()
-                    {
-                        continue;
-                    }
                     if temp_key_set
-                        .update(crypto, epoch_key_canon.reference(), &compressed_fabric_id)
+                        .update(
+                            crypto,
+                            epoch_key_entry.epoch_key.reference(),
+                            &compressed_fabric_id,
+                        )
                         .is_err()
                     {
                         continue;
