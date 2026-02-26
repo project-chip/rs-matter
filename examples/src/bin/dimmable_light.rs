@@ -204,13 +204,13 @@ fn run() -> Result<(), Error> {
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket)),
+        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket, Some(&socket))),
         core::mem::size_of_val(&mdns::run_mdns(matter, &crypto, &dm))
     );
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto, &dm));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket));
+    let mut transport = pin!(matter.run(&crypto, &socket, &socket, Some(&socket)));
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
