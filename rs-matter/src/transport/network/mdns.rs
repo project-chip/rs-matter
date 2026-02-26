@@ -550,10 +550,8 @@ impl Service<'_> {
                 let mut discr_svc_str = heapless::String::<7>::new();
                 // "_S{u16}""
                 let mut short_discr_svc_str = heapless::String::<7>::new();
-                // "_V{u16}""
-                let mut vp_svc_str = heapless::String::<7>::new();
-                // "_T{u32}"
-                let mut dt_svc_str = heapless::String::<12>::new();
+                // "_V{u16}P{u16}""
+                let mut vp_svc_str = heapless::String::<13>::new();
 
                 // "{u16}
                 let mut discr_str = heapless::String::<5>::new();
@@ -576,7 +574,7 @@ impl Service<'_> {
                     "_S{}",
                     Self::compute_short_discriminator(*discriminator)
                 );
-                write_unwrap!(&mut vp_svc_str, "_V{}", dev_det.vid);
+                write_unwrap!(&mut vp_svc_str, "_V{}P{}", dev_det.vid, dev_det.pid);
 
                 write_unwrap!(discr_str, "{}", *discriminator);
                 unwrap!(txt_kvs.push(("D", discr_str.as_str())));
@@ -596,18 +594,9 @@ impl Service<'_> {
                     unwrap!(txt_kvs.push(("DN", dev_det.device_name)));
                 }
 
-                let mut service_subtypes = heapless::Vec::<&str, 5>::new();
-                unwrap!(service_subtypes.push(discr_svc_str.as_str()));
-                unwrap!(service_subtypes.push(short_discr_svc_str.as_str()));
-                unwrap!(service_subtypes.push(vp_svc_str.as_str()));
-                unwrap!(service_subtypes.push("_CM"));
-
                 if let Some(device_type) = dev_det.device_type {
                     write_unwrap!(&mut dt_str, "{}", device_type);
                     unwrap!(txt_kvs.push(("DT", dt_str.as_str())));
-
-                    write_unwrap!(&mut dt_svc_str, "_T{}", device_type);
-                    unwrap!(service_subtypes.push(dt_svc_str.as_str()));
                 }
 
                 if !dev_det.pairing_hint.is_empty() {
@@ -625,7 +614,12 @@ impl Service<'_> {
                     protocol: "_udp",
                     service_protocol: "_matterc._udp",
                     port: matter_port,
-                    service_subtypes: service_subtypes.as_slice(),
+                    service_subtypes: &[
+                        discr_svc_str.as_str(),
+                        short_discr_svc_str.as_str(),
+                        vp_svc_str.as_str(),
+                        "_CM",
+                    ],
                     txt_kvs: txt_kvs.as_slice(),
                 })
                 .await
