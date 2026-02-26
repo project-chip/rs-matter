@@ -617,7 +617,6 @@ impl<'a> X509Cert<'a> {
             .basic_constraints
             .as_ref()
             .ok_or_else(|| Error::from(ErrorCode::NotFound))?;
-        eprintln!("DEBUG: BC critical={}, cA={}", bc.critical, bc.value.ca);
         if !bc.critical {
             return Err(ErrorCode::InvalidData.into());
         }
