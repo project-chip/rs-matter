@@ -15,7 +15,8 @@
  *    limitations under the License.
  */
 
-//! X.509 DER certificate parsing utilities for extracting Matter-specific data.
+//! X.509 DER certificate parsing utilities for extracting Matter-specific data in
+//! DAC, PAI, and PAA certificates.
 //!
 //! This module parses DER-encoded X.509 certificates with Matter specific constraints
 //! as defined in the Matter specification 6.2.2.3.
@@ -29,7 +30,25 @@ use crate::error::{Error, ErrorCode};
 use der::asn1::{
     AnyRef, BitStringRef, GeneralizedTime, ObjectIdentifier, OctetStringRef, UintRef, UtcTime,
 };
-use der::{Choice, Decode, DecodeValue, Header, Reader, Sequence, SliceReader, Tag};
+use der::{
+    Choice, Decode, DecodeValue, EncodeValue, FixedTag, Header, Reader, Sequence, SliceReader, Tag,
+};
+
+/// Type alias for DAC (Device Attestation Certificate)
+pub type DacCert<'a> = X509Cert<'a, DacExtensions<'a>>;
+
+/// Type alias for PAI (Product Attestation Intermediate) Certificate
+pub type PaiCert<'a> = X509Cert<'a, PaiExtensions<'a>>;
+
+/// Type alias for PAA (Product Attestation Authority) Certificate
+pub type PaaCert<'a> = X509Cert<'a, PaaExtensions<'a>>;
+
+/// OID 1.2.840.10045.4.3.2 — ECDSA with SHA256
+const OID_ECDSA_WITH_SHA256: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2");
+/// OID 1.2.840.10045.2.1 — ecPublicKey (Elliptic Curve Public Key)
+const OID_EC_PUBLIC_KEY: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
+/// OID 1.2.840.10045.3.1.7 — prime256v1 (secp256r1 / P-256)
+const OID_PRIME256V1: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.3.1.7");
 
 /// OID 2.5.29.14 — Subject Key Identifier
 const OID_SUBJECT_KEY_ID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.14");
@@ -115,30 +134,59 @@ fn default_false() -> bool {
 ///   decipherOnly       (8)
 /// }
 /// https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.3
-///
-/// For Matter DAC: only digitalSignature (MSB) should be set.
 struct KeyUsage {
     bits: u16,
 }
 
+#[allow(unused)]
 impl KeyUsage {
-    // MSB must be 1
-    const DIGITAL_SIGNATURE: u16 = 0x80;
+    // Bit positions
+    const DIGITAL_SIGNATURE: u16 = 0x8000;
+    const NON_REPUDIATION: u16 = 0x4000;
+    const KEY_ENCIPHERMENT: u16 = 0x2000;
+    const DATA_ENCIPHERMENT: u16 = 0x1000;
+    const KEY_AGREEMENT: u16 = 0x0800;
+    const KEY_CERT_SIGN: u16 = 0x0400;
+    const CRL_SIGN: u16 = 0x0200;
+    const ENCIPHER_ONLY: u16 = 0x0100;
+    const DECIPHER_ONLY: u16 = 0x0080;
 
     fn digital_signature(&self) -> bool {
         self.bits & Self::DIGITAL_SIGNATURE != 0
+    }
+
+    fn key_cert_sign(&self) -> bool {
+        self.bits & Self::KEY_CERT_SIGN != 0
+    }
+
+    fn crl_sign(&self) -> bool {
+        self.bits & Self::CRL_SIGN != 0
+    }
+
+    /// Check that only the specified bits are set (exact match)
+    fn has_only_bits(&self, mask: u16) -> bool {
+        self.bits == mask
     }
 }
 
 impl<'a> From<BitStringRef<'a>> for KeyUsage {
     fn from(bs: BitStringRef<'a>) -> Self {
         let bytes = bs.raw_bytes();
-        // KeyUsage is at most 2 bytes (9 bits defined)
-        let bits = match bytes.len() {
-            0 => 0u16,
-            1 => bytes[0] as u16,
-            _ => ((bytes[0] as u16) << 8) | (bytes[1] as u16),
-        };
+        let unused = bs.unused_bits();
+
+        // Load up to 2 bytes in (big-endian)
+        let mut buf = [0u8; 2];
+        let len = bytes.len().min(2);
+        buf[..len].copy_from_slice(&bytes[..len]);
+
+        let mut bits = u16::from_be_bytes(buf);
+
+        // Mask off unused padding bits
+        if unused > 0 {
+            let mask = !((1u16 << unused) - 1);
+            bits &= mask;
+        }
+
         Self { bits }
     }
 }
@@ -151,12 +199,11 @@ impl<'a> From<BitStringRef<'a>> for KeyUsage {
 ///
 /// KeyIdentifier ::= OCTET STRING
 ///
-/// We only need the keyIdentifier field. The `[0]` is IMPLICIT (default for
-/// context specific in X.509).
+/// We only need the keyIdentifier field. The `[0]` is IMPLICIT.
 #[derive(Sequence)]
 struct AuthorityKeyIdentifier<'a> {
-    #[asn1(context_specific = "0", tag_mode = "IMPLICIT", optional = "true")]
-    key_identifier: Option<OctetStringRef<'a>>,
+    #[asn1(context_specific = "0", tag_mode = "IMPLICIT")]
+    key_identifier: OctetStringRef<'a>,
 }
 
 /// A parsed extension with its critical flag and typed value.
@@ -165,77 +212,149 @@ struct ParsedExtension<T> {
     value: T,
 }
 
-/// Extensions ::= SEQUENCE SIZE (1..MAX) OF Extension
-///
-/// For Matter DAC certificates, the required extensions are (Matter Spec 6.2.2.3):
-/// - Basic Constraints (critical=TRUE, cA=FALSE)
-/// - Key Usage (critical=TRUE, digitalSignature only)
-/// - Authority Key Identifier
-/// - Subject Key Identifier
-struct Extensions<'a> {
+/// Helper structure to hold parsed extension fields during decoding
+struct ParsedExtensionFields<'a> {
     basic_constraints: Option<ParsedExtension<BasicConstraints>>,
     key_usage: Option<ParsedExtension<KeyUsage>>,
     subject_key_id: Option<ParsedExtension<OctetStringRef<'a>>>,
     authority_key_id: Option<ParsedExtension<AuthorityKeyIdentifier<'a>>>,
 }
 
-// We need to write DecodeValue in order to parse arbitrary Extensions which are only defined by
-// their extnID
-impl<'a> DecodeValue<'a> for Extensions<'a> {
+impl<'a> ParsedExtensionFields<'a> {
+    /// Parse X.509 extensions from a reader
+    fn parse<R: Reader<'a>>(reader: &mut R) -> der::Result<Self> {
+        let mut basic_constraints: Option<ParsedExtension<BasicConstraints>> = None;
+        let mut key_usage: Option<ParsedExtension<KeyUsage>> = None;
+        let mut subject_key_id: Option<ParsedExtension<OctetStringRef<'a>>> = None;
+        let mut authority_key_id: Option<ParsedExtension<AuthorityKeyIdentifier<'a>>> = None;
+
+        // Iterate through SEQUENCE OF Extension
+        while !reader.is_finished() {
+            // Each Extension is a SEQUENCE, so we decode it to get its contents
+            let ext_any = AnyRef::decode(reader)?;
+            let mut ext_reader = SliceReader::new(ext_any.value())?;
+
+            // extnID OBJECT IDENTIFIER
+            let extn_id = ObjectIdentifier::decode(&mut ext_reader)?;
+
+            // critical BOOLEAN DEFAULT FALSE
+            let critical = if !ext_reader.is_finished() && ext_reader.peek_tag()? == Tag::Boolean {
+                bool::decode(&mut ext_reader)?
+            } else {
+                false
+            };
+
+            // extnValue OCTET STRING
+            let extn_value = OctetStringRef::decode(&mut ext_reader)?;
+            let value_bytes = extn_value.as_bytes();
+
+            if extn_id == OID_BASIC_CONSTRAINTS {
+                let bc = BasicConstraints::from_der(value_bytes)?;
+                basic_constraints = Some(ParsedExtension {
+                    critical,
+                    value: bc,
+                });
+            } else if extn_id == OID_KEY_USAGE {
+                let bs = BitStringRef::from_der(value_bytes)?;
+                key_usage = Some(ParsedExtension {
+                    critical,
+                    value: bs.into(),
+                });
+            } else if extn_id == OID_SUBJECT_KEY_ID {
+                let skid = OctetStringRef::from_der(value_bytes)?;
+                subject_key_id = Some(ParsedExtension {
+                    critical,
+                    value: skid,
+                });
+            } else if extn_id == OID_AUTHORITY_KEY_ID {
+                let akid = AuthorityKeyIdentifier::from_der(value_bytes)?;
+                authority_key_id = Some(ParsedExtension {
+                    critical,
+                    value: akid,
+                });
+            }
+            // Ignore other optional extensions
+        }
+
+        Ok(Self {
+            basic_constraints,
+            key_usage,
+            subject_key_id,
+            authority_key_id,
+        })
+    }
+}
+
+/// Trait for certificate extension types (DAC, PAI, PAA).
+///
+/// Each certificate type has different extension requirements (Matter Spec 6.2).
+/// Implementations must:
+/// - Parse extensions from DER-encoded data
+/// - Validate requirements during parsing (fail if invalid)
+/// - Provide access to Subject Key Identifier and Authority Key Identifier
+pub trait CertExtensions<'a>: DecodeValue<'a> + der::FixedTag + der::EncodeValue {
+    /// Get subject key identifier if present for this certificate type
+    fn subject_key_id(&self) -> Option<&'a [u8]>;
+
+    /// Get authority key identifier if present for this certificate type
+    /// Note: PAA certificates do not have AKID (self-signed)
+    fn authority_key_id(&self) -> Option<&'a [u8]>;
+}
+
+/// DAC (Device Attestation Certificate) Extensions
+///
+/// A DAC SHALL have (Matter Spec 6.2.2.3):
+/// - Basic Constraints: critical=TRUE, cA=FALSE
+/// - Key Usage: critical=TRUE, only digitalSignature bit set
+/// - Authority Key Identifier: present
+/// - Subject Key Identifier: present
+#[allow(unused)]
+pub struct DacExtensions<'a> {
+    basic_constraints: ParsedExtension<BasicConstraints>,
+    key_usage: ParsedExtension<KeyUsage>,
+    subject_key_id: ParsedExtension<OctetStringRef<'a>>,
+    authority_key_id: ParsedExtension<AuthorityKeyIdentifier<'a>>,
+}
+
+// DAC Extensions parsing with validation
+impl<'a> DecodeValue<'a> for DacExtensions<'a> {
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
         reader.read_nested(header.length, |reader| {
-            let mut basic_constraints = None;
-            let mut key_usage = None;
-            let mut subject_key_id = None;
-            let mut authority_key_id = None;
+            // Parse all extension fields
+            let fields = ParsedExtensionFields::parse(reader)?;
 
-            // Iterate through SEQUENCE OF Extension
-            while !reader.is_finished() {
-                // Each Extension is a SEQUENCE, so we decode it to get its contents
-                let ext_any = AnyRef::decode(reader)?;
-                let mut ext_reader = SliceReader::new(ext_any.value())?;
+            // Validate DAC requirements: all fields must be present
+            let basic_constraints = fields
+                .basic_constraints
+                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
+            let key_usage = fields
+                .key_usage
+                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
+            let subject_key_id = fields
+                .subject_key_id
+                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
+            let authority_key_id = fields
+                .authority_key_id
+                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
 
-                // extnID OBJECT IDENTIFIER
-                let extn_id = ObjectIdentifier::decode(&mut ext_reader)?;
+            // Basic Constraints: SHALL be critical and cA SHALL be FALSE
+            if !basic_constraints.critical {
+                return Err(der::ErrorKind::Failed.into());
+            }
+            if basic_constraints.value.ca {
+                return Err(der::ErrorKind::Failed.into());
+            }
 
-                // critical BOOLEAN DEFAULT FALSE
-                let critical =
-                    if !ext_reader.is_finished() && ext_reader.peek_tag()? == Tag::Boolean {
-                        bool::decode(&mut ext_reader)?
-                    } else {
-                        false
-                    };
-
-                // extnValue OCTET STRING
-                let extn_value = OctetStringRef::decode(&mut ext_reader)?;
-                let value_bytes = extn_value.as_bytes();
-
-                if extn_id == OID_BASIC_CONSTRAINTS {
-                    let bc = BasicConstraints::from_der(value_bytes)?;
-                    basic_constraints = Some(ParsedExtension {
-                        critical,
-                        value: bc,
-                    });
-                } else if extn_id == OID_KEY_USAGE {
-                    let bs = BitStringRef::from_der(value_bytes)?;
-                    key_usage = Some(ParsedExtension {
-                        critical,
-                        value: bs.into(),
-                    });
-                } else if extn_id == OID_SUBJECT_KEY_ID {
-                    let skid = OctetStringRef::from_der(value_bytes)?;
-                    subject_key_id = Some(ParsedExtension {
-                        critical,
-                        value: skid,
-                    });
-                } else if extn_id == OID_AUTHORITY_KEY_ID {
-                    let akid = AuthorityKeyIdentifier::from_der(value_bytes)?;
-                    authority_key_id = Some(ParsedExtension {
-                        critical,
-                        value: akid,
-                    });
-                }
-                // Ignore other optional extensions
+            // Key Usage: SHALL be critical, SHALL only have digitalSignature bit set
+            if !key_usage.critical {
+                return Err(der::ErrorKind::Failed.into());
+            }
+            if !key_usage.value.digital_signature() {
+                return Err(der::ErrorKind::Failed.into());
+            }
+            // Only digitalSignature bit should be set (no other bits)
+            if !key_usage.value.has_only_bits(KeyUsage::DIGITAL_SIGNATURE) {
+                return Err(der::ErrorKind::Failed.into());
             }
 
             Ok(Self {
@@ -248,22 +367,231 @@ impl<'a> DecodeValue<'a> for Extensions<'a> {
     }
 }
 
-impl<'a> der::FixedTag for Extensions<'a> {
+impl<'a> der::FixedTag for DacExtensions<'a> {
     const TAG: Tag = Tag::Sequence;
 }
 
 // Dummy EncodeValue implementation
 // Required by der verision 0.7 for use with #[derive(Sequence)] on structs that contain Extensions.
 // TODO Remove when upgrading to der 0.8+ which separates Encode/Decode traits.
-impl<'a> der::EncodeValue for Extensions<'a> {
+impl<'a> der::EncodeValue for DacExtensions<'a> {
     fn value_len(&self) -> der::Result<der::Length> {
         // This should never be called since we only parse certificates, never create them
-        unimplemented!("Extensions encoding is not supported")
+        unimplemented!("DacExtensions encoding is not supported")
     }
 
     fn encode_value(&self, _writer: &mut impl der::Writer) -> der::Result<()> {
         // This should never be called since we only parse certificates, never create them
-        unimplemented!("Extensions encoding is not supported")
+        unimplemented!("DacExtensions encoding is not supported")
+    }
+}
+
+impl<'a> CertExtensions<'a> for DacExtensions<'a> {
+    fn subject_key_id(&self) -> Option<&'a [u8]> {
+        Some(self.subject_key_id.value.as_bytes())
+    }
+
+    fn authority_key_id(&self) -> Option<&'a [u8]> {
+        Some(self.authority_key_id.value.key_identifier.as_bytes())
+    }
+}
+
+/// PAI (Product Attestation Intermediate) Certificate Extensions
+///
+/// A PAI SHALL have (Matter Spec 6.2.2.4):
+/// - Basic Constraints: critical=TRUE, cA=TRUE, pathLen=0
+/// - Key Usage: critical=TRUE, keyCertSign and cRLSign bits set, digitalSignature MAY be set
+/// - Authority Key Identifier: present
+/// - Subject Key Identifier: present
+#[allow(unused)]
+pub struct PaiExtensions<'a> {
+    basic_constraints: ParsedExtension<BasicConstraints>,
+    key_usage: ParsedExtension<KeyUsage>,
+    subject_key_id: ParsedExtension<OctetStringRef<'a>>,
+    authority_key_id: ParsedExtension<AuthorityKeyIdentifier<'a>>,
+}
+
+// PAI Extensions parsing with validation
+impl<'a> DecodeValue<'a> for PaiExtensions<'a> {
+    fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
+        reader.read_nested(header.length, |reader| {
+            // Parse all extension fields
+            let fields = ParsedExtensionFields::parse(reader)?;
+
+            // Validate PAI requirements: all fields must be present
+            let basic_constraints = fields
+                .basic_constraints
+                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
+            let key_usage = fields
+                .key_usage
+                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
+            let subject_key_id = fields
+                .subject_key_id
+                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
+            let authority_key_id = fields
+                .authority_key_id
+                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
+
+            // Basic Constraints: SHALL be critical, cA SHALL be TRUE, pathLen SHALL be 0
+            if !basic_constraints.critical {
+                return Err(der::ErrorKind::Failed.into());
+            }
+            if !basic_constraints.value.ca {
+                return Err(der::ErrorKind::Failed.into());
+            }
+            // pathLen must be present and equal to 0
+            if basic_constraints.value.path_len_constraint != Some(0) {
+                return Err(der::ErrorKind::Failed.into());
+            }
+
+            // Key Usage: SHALL be critical
+            if !key_usage.critical {
+                return Err(der::ErrorKind::Failed.into());
+            }
+            // Both keyCertSign and cRLSign SHALL be set
+            if !key_usage.value.key_cert_sign() || !key_usage.value.crl_sign() {
+                return Err(der::ErrorKind::Failed.into());
+            }
+            // digitalSignature MAY be set, but no other bits should be set
+            let allowed_bits =
+                KeyUsage::KEY_CERT_SIGN | KeyUsage::CRL_SIGN | KeyUsage::DIGITAL_SIGNATURE;
+            if (key_usage.value.bits & !allowed_bits) != 0 {
+                return Err(der::ErrorKind::Failed.into());
+            }
+
+            Ok(Self {
+                basic_constraints,
+                key_usage,
+                subject_key_id,
+                authority_key_id,
+            })
+        })
+    }
+}
+
+impl<'a> der::FixedTag for PaiExtensions<'a> {
+    const TAG: Tag = Tag::Sequence;
+}
+
+// TODO Remove when upgrading to der 0.8+ which separates Encode/Decode traits.
+impl<'a> der::EncodeValue for PaiExtensions<'a> {
+    fn value_len(&self) -> der::Result<der::Length> {
+        unimplemented!("PaiExtensions encoding is not supported")
+    }
+
+    fn encode_value(&self, _writer: &mut impl der::Writer) -> der::Result<()> {
+        unimplemented!("PaiExtensions encoding is not supported")
+    }
+}
+
+impl<'a> CertExtensions<'a> for PaiExtensions<'a> {
+    fn subject_key_id(&self) -> Option<&'a [u8]> {
+        Some(self.subject_key_id.value.as_bytes())
+    }
+
+    fn authority_key_id(&self) -> Option<&'a [u8]> {
+        Some(self.authority_key_id.value.key_identifier.as_bytes())
+    }
+}
+
+/// PAA (Product Attestation Authority) Certificate Extensions
+///
+/// A PAA SHALL have (Matter Spec 6.2.2.4):
+/// - Basic Constraints: critical=TRUE, cA=TRUE, pathLen MAY be present and if so must be 1
+/// - Key Usage: critical=TRUE, keyCertSign and cRLSign bits set, digitalSignature MAY be set
+/// - Subject Key Identifier: present
+/// - Authority Key Identifier: NOT required (self-signed), but may be present
+#[allow(unused)]
+pub struct PaaExtensions<'a> {
+    basic_constraints: ParsedExtension<BasicConstraints>,
+    key_usage: ParsedExtension<KeyUsage>,
+    subject_key_id: ParsedExtension<OctetStringRef<'a>>,
+    authority_key_id: Option<ParsedExtension<AuthorityKeyIdentifier<'a>>>,
+}
+
+// PAA Extensions parsing with validation
+impl<'a> DecodeValue<'a> for PaaExtensions<'a> {
+    fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
+        reader.read_nested(header.length, |reader| {
+            // Parse all extension fields
+            let fields = ParsedExtensionFields::parse(reader)?;
+
+            // Validate PAA requirements
+            let basic_constraints = fields
+                .basic_constraints
+                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
+            let key_usage = fields
+                .key_usage
+                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
+            let subject_key_id = fields
+                .subject_key_id
+                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
+
+            // AKID is optional for PAA
+            let authority_key_id = fields.authority_key_id;
+
+            // Basic Constraints: SHALL be critical, cA SHALL be TRUE
+            if !basic_constraints.critical || !basic_constraints.value.ca {
+                return Err(der::ErrorKind::Failed.into());
+            }
+
+            // pathLen MAY be present, and if present it SHALL be 1
+            if let Some(path_len) = basic_constraints.value.path_len_constraint {
+                if path_len != 1 {
+                    return Err(der::ErrorKind::Failed.into());
+                }
+            }
+
+            // Key Usage: SHALL be critical
+            if !key_usage.critical {
+                return Err(der::ErrorKind::Failed.into());
+            }
+            // Both keyCertSign and cRLSign SHALL be set
+            if !key_usage.value.key_cert_sign() || !key_usage.value.crl_sign() {
+                return Err(der::ErrorKind::Failed.into());
+            }
+            // digitalSignature MAY be set, but no other bits should be set
+            let allowed_bits =
+                KeyUsage::KEY_CERT_SIGN | KeyUsage::CRL_SIGN | KeyUsage::DIGITAL_SIGNATURE;
+            if (key_usage.value.bits & !allowed_bits) != 0 {
+                return Err(der::ErrorKind::Failed.into());
+            }
+
+            Ok(Self {
+                basic_constraints,
+                key_usage,
+                subject_key_id,
+                authority_key_id,
+            })
+        })
+    }
+}
+
+impl<'a> FixedTag for PaaExtensions<'a> {
+    const TAG: Tag = Tag::Sequence;
+}
+
+// TODO Remove when upgrading to der 0.8+ which separates Encode/Decode traits.
+impl<'a> EncodeValue for PaaExtensions<'a> {
+    fn value_len(&self) -> der::Result<der::Length> {
+        unimplemented!("PaaExtensions encoding is not supported")
+    }
+
+    fn encode_value(&self, _writer: &mut impl der::Writer) -> der::Result<()> {
+        unimplemented!("PaaExtensions encoding is not supported")
+    }
+}
+
+impl<'a> CertExtensions<'a> for PaaExtensions<'a> {
+    fn subject_key_id(&self) -> Option<&'a [u8]> {
+        Some(self.subject_key_id.value.as_bytes())
+    }
+
+    fn authority_key_id(&self) -> Option<&'a [u8]> {
+        // PAA certificates do not require AKID, but may have it
+        self.authority_key_id
+            .as_ref()
+            .map(|ext| ext.value.key_identifier.as_bytes())
     }
 }
 
@@ -286,24 +614,23 @@ struct Validity {
     not_after: Time,
 }
 
-/// tbsCertificate    DACTBSCertificate
+/// TBSCertificate (To Be Signed Certificate)
 ///
-/// DACTBSCertificate ::= SEQUENCE {
-///   version INTEGER ( v3(2) ),
+/// Generic over extension type E to support DAC, PAI, and PAA certificates.
+///
+/// TBSCertificate ::= SEQUENCE {
+///   version [0] EXPLICIT INTEGER DEFAULT v1,
 ///   serialNumber INTEGER,
-///   signature MatterSignatureIdentifier,
-///   issuer MatterPAName,
+///   signature AlgorithmIdentifier,
+///   issuer Name,
 ///   validity Validity,
-///   subject MatterDACName,
-///   subjectPublicKeyInfo SEQUENCE {
-///     algorithm OBJECT IDENTIFIER(id-x962-prime256v1),
-///     subjectPublicKey BIT STRING
-///   },
-///   extensions DACExtensions
+///   subject Name,
+///   subjectPublicKeyInfo SubjectPublicKeyInfo,
+///   extensions [3] EXPLICIT Extensions
 /// }
 #[derive(Sequence)]
-struct TbsCertificate<'a> {
-    /// Version number (0=v1, 1=v2, 2=v3). If absent from DER, defaults to v1 (0).
+struct TbsCertificate<'a, E: CertExtensions<'a>> {
+    /// Version number (0=v1, 1=v2, 2=v3).
     #[asn1(context_specific = "0", tag_mode = "EXPLICIT")]
     version: UintRef<'a>,
     /// Raw bytes of the serial number INTEGER value.
@@ -318,13 +645,14 @@ struct TbsCertificate<'a> {
     subject: AnyRef<'a>,
     /// Subject public key info.
     subject_public_key_info: SubjectPublicKeyInfo<'a>,
-    /// Extensions [3] EXPLICIT Extensions OPTIONAL
-    /// Per RFC 5280, if present, version MUST be v3.
-    #[asn1(context_specific = "3", tag_mode = "EXPLICIT", optional = "true")]
-    extensions: Option<Extensions<'a>>,
+    /// Extensions field. Always present for Matter certificates (context tag [3]).
+    #[asn1(context_specific = "3", tag_mode = "EXPLICIT")]
+    extensions: E,
 }
 
 /// Top-level Certificate structure.
+///
+/// Generic over extension type E to support DAC, PAI, and PAA certificates.
 ///
 /// Certificate ::= SEQUENCE {
 ///   tbsCertificate     TBSCertificate,
@@ -332,16 +660,46 @@ struct TbsCertificate<'a> {
 ///   signatureValue     BIT STRING
 /// }
 #[allow(unused)]
-struct Certificate<'a> {
-    tbs_certificate: TbsCertificate<'a>,
+struct Certificate<'a, E: CertExtensions<'a>> {
+    tbs_certificate: TbsCertificate<'a, E>,
     signature_algorithm: AlgorithmIdentifier<'a>,
     signature_value: BitStringRef<'a>,
 }
 
-impl<'a> DecodeValue<'a> for Certificate<'a> {
+impl<'a, E: CertExtensions<'a>> DecodeValue<'a> for Certificate<'a, E> {
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
         reader.read_nested(header.length, |reader| {
             let tbs_certificate = TbsCertificate::decode(reader)?;
+
+            // Validate that version is 2 (v3 certificate)
+            let version_value = tbs_certificate.version.as_bytes();
+            if version_value.len() != 1 || version_value[0] != 2 {
+                return Err(der::ErrorKind::Failed.into());
+            }
+
+            // Validate that signature algorithm in TBS is ECDSA with SHA256
+            if tbs_certificate.signature.algorithm != OID_ECDSA_WITH_SHA256 {
+                return Err(der::ErrorKind::Failed.into());
+            }
+
+            // Validate that subjectPublicKeyInfo algorithm is ecPublicKey with prime256v1 curve
+            let spki_algo = &tbs_certificate.subject_public_key_info.algorithm;
+            if spki_algo.algorithm != OID_EC_PUBLIC_KEY {
+                return Err(der::ErrorKind::Failed.into());
+            }
+
+            // The parameters field must contain the named curve OID for prime256v1
+            // ECParameters ::= CHOICE { namedCurve OBJECT IDENTIFIER, ... }
+            // For Matter certs, only namedCurve is used, so we decode directly as an OID
+            // https://www.rfc-editor.org/rfc/rfc5480#section-2.1.1
+            let params = spki_algo.parameters.ok_or(der::ErrorKind::Failed)?;
+            let curve_oid: ObjectIdentifier =
+                params.try_into().map_err(|_| der::ErrorKind::Failed)?;
+
+            if curve_oid != OID_PRIME256V1 {
+                return Err(der::ErrorKind::Failed.into());
+            }
+
             let signature_algorithm = AlgorithmIdentifier::decode(reader)?;
             let signature_value = BitStringRef::decode(reader)?;
             Ok(Self {
@@ -353,25 +711,8 @@ impl<'a> DecodeValue<'a> for Certificate<'a> {
     }
 }
 
-impl<'a> der::FixedTag for Certificate<'a> {
+impl<'a, E: CertExtensions<'a>> der::FixedTag for Certificate<'a, E> {
     const TAG: Tag = Tag::Sequence;
-}
-
-/// Identifies a field within the TBSCertificate structure.
-///
-/// Used by `X509CertRef::tbs_field()` to provide access to individual
-/// TBS fields for testing and validation.
-#[allow(unused)]
-#[repr(usize)]
-enum TbsField {
-    Version,
-    SerialNum,
-    Signature,
-    Issuer,
-    Validity,
-    Subject,
-    SubjectPubKeyInfo,
-    Extensions,
 }
 
 /// Parse a hex character (0-9, A-F, a-f) into its numeric value.
@@ -421,24 +762,30 @@ fn time_to_unix_secs(time: &Time) -> Result<u64, Error> {
 
 /// A parsed DER-encoded X.509 certificate.
 ///
-/// Validates the incoming bytes are correctly DER-encoded x509 certificates.
+/// Generic over extension type E to support DAC, PAI, and PAA certificates.
+/// Use the type aliases `DacCert`, `PaiCert`, and `PaaCert` for convenience.
+///
+/// Validates the incoming bytes are correctly DER-encoded x509 certificates
+/// with the appropriate extensions for the certificate type.
 ///
 /// # Example
 ///
 /// ```ignore
-/// let cert = X509Cert::new(der_bytes)?;
+/// let cert = DacCert::new(der_bytes)?;
 /// let skid = cert.subject_key_id()?;
 /// let pubkey = cert.public_key()?;
 /// let vid = cert.vendor_id()?;
 /// ```
-pub struct X509Cert<'a> {
-    cert: Certificate<'a>,
+pub struct X509Cert<'a, E: CertExtensions<'a>> {
+    cert: Certificate<'a, E>,
 }
 
-impl<'a> X509Cert<'a> {
+impl<'a, E: CertExtensions<'a>> X509Cert<'a, E> {
     /// Create a new `X509Cert` from DER-encoded certificate bytes.
+    ///
+    /// Validates that the certificate parses correctly and has the required
+    /// extensions for the certificate type E.
     pub fn new(data: &'a [u8]) -> Result<Self, Error> {
-        // Validate that this parses as a Certificate at the top level.
         let cert = Certificate::from_der(data).map_err(|_| Error::from(ErrorCode::InvalidData))?;
 
         Ok(Self { cert })
@@ -449,17 +796,10 @@ impl<'a> X509Cert<'a> {
     /// The extnValue of the SubjectKeyIdentifier extension is an
     /// OCTET STRING containing the 20-byte key identifier.
     pub fn subject_key_id(&self) -> Result<&'a [u8], Error> {
-        let extensions = self
-            .cert
+        self.cert
             .tbs_certificate
             .extensions
-            .as_ref()
-            .ok_or(Error::from(ErrorCode::NotFound))?;
-
-        extensions
-            .subject_key_id
-            .as_ref()
-            .map(|ext| ext.value.as_bytes())
+            .subject_key_id()
             .ok_or(Error::from(ErrorCode::NotFound))
     }
 
@@ -467,19 +807,14 @@ impl<'a> X509Cert<'a> {
     ///
     /// The extnValue contains a SEQUENCE with a context-specific `[0]`
     /// field holding the 20-byte key identifier.
+    ///
+    /// Note: This will return NotFound for PAA certificates (which are self-signed
+    /// and do not have an Authority Key Identifier).
     pub fn authority_key_id(&self) -> Result<&'a [u8], Error> {
-        let extensions = self
-            .cert
+        self.cert
             .tbs_certificate
             .extensions
-            .as_ref()
-            .ok_or(Error::from(ErrorCode::NotFound))?;
-
-        extensions
-            .authority_key_id
-            .as_ref()
-            .and_then(|ext| ext.value.key_identifier.as_ref())
-            .map(|oct| oct.as_bytes())
+            .authority_key_id()
             .ok_or(Error::from(ErrorCode::NotFound))
     }
 
@@ -592,79 +927,6 @@ impl<'a> X509Cert<'a> {
         let not_after = self.not_after_unix()?;
 
         Ok(now_unix_secs >= not_before && now_unix_secs <= not_after)
-    }
-
-    /// Validate that this certificate meets Matter DAC (Device Attestation Certificate)
-    /// extension requirements per the Matter specification.
-    ///
-    /// Per Matter spec section 6.3.2, a DAC SHALL have:
-    /// - Basic Constraints: critical=TRUE, cA=FALSE
-    /// - Key Usage: critical=TRUE, only digitalSignature bit set
-    /// - Subject Key Identifier: present
-    /// - Authority Key Identifier: present
-    ///
-    /// Returns `Ok(())` if all requirements are met, or an error.
-    pub fn validate_dac_extensions(&self) -> Result<(), Error> {
-        let extensions = self
-            .cert
-            .tbs_certificate
-            .extensions
-            .as_ref()
-            .ok_or_else(|| Error::from(ErrorCode::NotFound))?;
-
-        // Basic Constraints: SHALL be critical, cA SHALL be FALSE
-        let bc = extensions
-            .basic_constraints
-            .as_ref()
-            .ok_or_else(|| Error::from(ErrorCode::NotFound))?;
-        if !bc.critical {
-            return Err(ErrorCode::InvalidData.into());
-        }
-        if bc.value.ca {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        // Key Usage: SHALL be critical, SHALL only have digitalSignature set
-        let ku = extensions
-            .key_usage
-            .as_ref()
-            .ok_or_else(|| Error::from(ErrorCode::NotFound))?;
-        if !ku.critical {
-            return Err(ErrorCode::InvalidData.into());
-        }
-        // Only digitalSignature bit should be set
-        if !ku.value.digital_signature() {
-            return Err(ErrorCode::InvalidData.into());
-        }
-        if ku.value.bits != KeyUsage::DIGITAL_SIGNATURE {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        // Subject Key Identifier: SHALL be present
-        if extensions.subject_key_id.is_none() {
-            return Err(ErrorCode::NotFound.into());
-        }
-
-        // Authority Key Identifier: SHALL be present
-        if extensions.authority_key_id.is_none() {
-            return Err(ErrorCode::NotFound.into());
-        }
-
-        // check VendorID in issuer & subject fields are the same
-        let issuer_vendor_id = parse_hex_u16(
-            Self::find_rdn_attr(
-                self.cert.tbs_certificate.issuer.value(),
-                &OID_MATTER_VENDOR_ID,
-            )?
-            .ok_or(Error::from(ErrorCode::NotFound))?,
-        )?;
-
-        let vendor_id = self.vendor_id().unwrap();
-        if vendor_id != issuer_vendor_id {
-            return Err(ErrorCode::NotFound.into());
-        }
-
-        Ok(())
     }
 }
 
@@ -781,7 +1043,7 @@ mod tests {
 
     #[test]
     fn test_paa_skid() {
-        let cert = X509Cert::new(PAA_DER).unwrap();
+        let cert = PaaCert::new(PAA_DER).unwrap();
         let skid = cert.subject_key_id().unwrap();
         assert_eq!(
             skid,
@@ -794,7 +1056,8 @@ mod tests {
 
     #[test]
     fn test_paa_self_signed_akid_equals_skid() {
-        let cert = X509Cert::new(PAA_DER).unwrap();
+        // PAA certificates may have AKID (for self-signed certs, AKID should equal SKID)
+        let cert = PaaCert::new(PAA_DER).unwrap();
         let skid = cert.subject_key_id().unwrap();
         let akid = cert.authority_key_id().unwrap();
         assert_eq!(skid, akid);
@@ -802,7 +1065,7 @@ mod tests {
 
     #[test]
     fn test_pai_skid() {
-        let cert = X509Cert::new(PAI_DER).unwrap();
+        let cert = PaiCert::new(PAI_DER).unwrap();
         let skid = cert.subject_key_id().unwrap();
         assert_eq!(
             skid,
@@ -815,7 +1078,7 @@ mod tests {
 
     #[test]
     fn test_dac_skid() {
-        let cert = X509Cert::new(DAC_DER).unwrap();
+        let cert = DacCert::new(DAC_DER).unwrap();
         let skid = cert.subject_key_id().unwrap();
         assert_eq!(
             skid,
@@ -828,8 +1091,8 @@ mod tests {
 
     #[test]
     fn test_dac_akid_matches_pai_skid() {
-        let dac = X509Cert::new(DAC_DER).unwrap();
-        let pai = X509Cert::new(PAI_DER).unwrap();
+        let dac = DacCert::new(DAC_DER).unwrap();
+        let pai = PaiCert::new(PAI_DER).unwrap();
         assert_eq!(
             dac.authority_key_id().unwrap(),
             pai.subject_key_id().unwrap()
@@ -838,7 +1101,7 @@ mod tests {
 
     #[test]
     fn test_paa_public_key() {
-        let cert = X509Cert::new(PAA_DER).unwrap();
+        let cert = PaaCert::new(PAA_DER).unwrap();
         let pk = cert.public_key().unwrap();
         assert_eq!(pk.len(), 65);
         assert_eq!(pk[0], 0x04); // uncompressed point marker
@@ -856,7 +1119,7 @@ mod tests {
 
     #[test]
     fn test_dac_public_key() {
-        let cert = X509Cert::new(DAC_DER).unwrap();
+        let cert = DacCert::new(DAC_DER).unwrap();
         let pk = cert.public_key().unwrap();
         assert_eq!(pk.len(), 65);
         assert_eq!(pk[0], 0x04);
@@ -874,25 +1137,25 @@ mod tests {
 
     #[test]
     fn test_dac_vendor_id() {
-        let cert = X509Cert::new(DAC_DER).unwrap();
+        let cert = DacCert::new(DAC_DER).unwrap();
         assert_eq!(cert.vendor_id().unwrap(), 0xFFF1);
     }
 
     #[test]
     fn test_dac_product_id() {
-        let cert = X509Cert::new(DAC_DER).unwrap();
+        let cert = DacCert::new(DAC_DER).unwrap();
         assert_eq!(cert.product_id().unwrap(), 0x8000);
     }
 
     #[test]
     fn test_pai_vendor_id() {
-        let cert = X509Cert::new(PAI_DER).unwrap();
+        let cert = PaiCert::new(PAI_DER).unwrap();
         assert_eq!(cert.vendor_id().unwrap(), 0xFFF1);
     }
 
     #[test]
     fn test_pai_no_product_id() {
-        let cert = X509Cert::new(PAI_DER).unwrap();
+        let cert = PaiCert::new(PAI_DER).unwrap();
         assert_eq!(
             cert.product_id().map_err(|e| e.code()),
             Err(ErrorCode::NotFound)
@@ -901,7 +1164,7 @@ mod tests {
 
     #[test]
     fn test_paa_no_vendor_id() {
-        let cert = X509Cert::new(PAA_DER).unwrap();
+        let cert = PaaCert::new(PAA_DER).unwrap();
         assert_eq!(
             cert.vendor_id().map_err(|e| e.code()),
             Err(ErrorCode::NotFound)
@@ -910,7 +1173,7 @@ mod tests {
 
     #[test]
     fn test_paa_no_product_id() {
-        let cert = X509Cert::new(PAA_DER).unwrap();
+        let cert = PaaCert::new(PAA_DER).unwrap();
         assert_eq!(
             cert.product_id().map_err(|e| e.code()),
             Err(ErrorCode::NotFound)
@@ -919,7 +1182,7 @@ mod tests {
 
     #[test]
     fn test_dac_not_before() {
-        let cert = X509Cert::new(DAC_DER).unwrap();
+        let cert = DacCert::new(DAC_DER).unwrap();
         let nb = cert.not_before_unix().unwrap();
         // 2022-02-05 00:00:00 UTC = 1644019200
         assert_eq!(nb, 1644019200);
@@ -927,7 +1190,7 @@ mod tests {
 
     #[test]
     fn test_dac_not_after_no_expiry() {
-        let cert = X509Cert::new(DAC_DER).unwrap();
+        let cert = DacCert::new(DAC_DER).unwrap();
         let na = cert.not_after_unix().unwrap();
         // 99991231235959Z => u64::MAX (no expiry)
         assert_eq!(na, u64::MAX);
@@ -935,7 +1198,7 @@ mod tests {
 
     #[test]
     fn test_paa_not_before() {
-        let cert = X509Cert::new(PAA_DER).unwrap();
+        let cert = PaaCert::new(PAA_DER).unwrap();
         let nb = cert.not_before_unix().unwrap();
         // 2021-06-28 14:23:43 UTC = 1624890223
         assert_eq!(nb, 1624890223);
@@ -943,7 +1206,7 @@ mod tests {
 
     #[test]
     fn test_dac_is_valid_at() {
-        let cert = X509Cert::new(DAC_DER).unwrap();
+        let cert = DacCert::new(DAC_DER).unwrap();
         // A time well after NotBefore (2023-11-14)
         assert!(cert.is_valid_at(1700000000).unwrap());
         // A time before NotBefore (2021-09-13)
@@ -952,17 +1215,17 @@ mod tests {
 
     #[test]
     fn test_invalid_empty_input() {
-        assert!(X509Cert::new(&[]).is_err());
+        assert!(DacCert::new(&[]).is_err());
     }
 
     #[test]
     fn test_invalid_not_sequence() {
-        assert!(X509Cert::new(&[0x01, 0x02, 0x03]).is_err());
+        assert!(DacCert::new(&[0x01, 0x02, 0x03]).is_err());
     }
 
     #[test]
     fn test_invalid_empty_sequence() {
-        assert!(X509Cert::new(&[0x30, 0x00]).is_err());
+        assert!(DacCert::new(&[0x30, 0x00]).is_err());
     }
 
     #[test]
@@ -978,7 +1241,17 @@ mod tests {
         // remove version field from the certificate
         der.drain(version_start..version_start + version_field_len);
 
-        assert!(X509Cert::new(&der).is_err());
+        assert!(PaaCert::new(&der).is_err());
+    }
+
+    #[test]
+    fn test_version_must_be_v3() {
+        let mut der = PAA_DER.to_vec();
+
+        // Change version from v3 (2) to v2 (1)
+        der[12] = 1;
+        // Matter certificate versions must be v3
+        assert!(PaaCert::new(&der).is_err());
     }
 
     #[test]
@@ -991,19 +1264,5 @@ mod tests {
         assert!(parse_hex_u16(b"FFF").is_err()); // too short
         assert!(parse_hex_u16(b"FFFFF").is_err()); // too long
         assert!(parse_hex_u16(b"GHIJ").is_err()); // invalid chars
-    }
-
-    #[test]
-    fn test_dac_extensions_valid() {
-        // DAC should pass DAC validation
-        let cert = X509Cert::new(DAC_DER).unwrap();
-        assert!(cert.validate_dac_extensions().is_ok());
-    }
-
-    #[test]
-    fn test_dac_extensions_fail_on_pai() {
-        // PAI should fail DAC validation (cA=TRUE, wrong key usage)
-        let cert = X509Cert::new(PAI_DER).unwrap();
-        assert!(cert.validate_dac_extensions().is_err());
     }
 }
