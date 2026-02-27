@@ -81,7 +81,7 @@ where
     buffers: &'a B,
     subscriptions: &'a Subscriptions<NS>,
     subscriptions_buffers: RefCell<heapless::Vec<SubscriptionBuffer<B::Buffer<'a>>, NS>>,
-    events: &'a Events<NE>,
+    events: Option<&'a Events<NE>>,
     handler: T,
 }
 
@@ -107,7 +107,7 @@ where
         crypto: C,
         buffers: &'a B,
         subscriptions: &'a Subscriptions<NS>,
-        events: &'a Events<NE>,
+        events: Option<&'a Events<NE>>,
         handler: T,
     ) -> Self {
         Self {
@@ -381,7 +381,7 @@ where
             )
             .await?;
 
-        let min_event_number = self.events.peek_next_event_no();
+        let min_event_number = self.events.map_or(0, |e| e.peek_next_event_no());
 
         if primed {
             exchange
@@ -523,7 +523,7 @@ where
                         .process_subscription(matter, fabric_idx, peer_node_id, session_id, &sub)
                         .await;
 
-                    let min_event_number = self.events.peek_next_event_no();
+                    let min_event_number = self.events.map_or(0, |e| e.peek_next_event_no());
 
                     match result {
                         Ok(primed) => {
@@ -852,7 +852,7 @@ where
     subscription_id: Option<u32>,
     invoker: HandlerInvoker<'b, 'c, C, D, B>,
     event_reader: EventReader,
-    events: &'a Events<NE, M>,
+    events: Option<&'a Events<NE, M>>,
 }
 
 impl<'a, 'b, 'c, C, D, B, const NE: usize, M> ReportDataResponder<'a, 'b, 'c, C, D, B, NE, M>
@@ -873,7 +873,7 @@ where
         subscription_id: Option<u32>,
         invoker: HandlerInvoker<'b, 'c, C, D, B>,
         event_reader: EventReader,
-        events: &'a Events<NE, M>,
+        events: Option<&'a Events<NE, M>>,
     ) -> Self {
         Self {
             req,
@@ -957,33 +957,35 @@ where
             wb.end_container()?;
         }
 
-        if let Some(event_reqs) = self.req.event_requests()? {
-            wb.start_array(&TLVTag::Context(ReportDataRespTag::EventReports as _))?;
-            let events = self.events.lock().await;
-            for event in events.iter() {
-                let event = event?;
-                loop {
-                    let result = self
-                        .event_reader
-                        .process_read(&event, &event_reqs, self.req.event_filters()?, &mut *wb)
-                        .await;
+        if let Some(events) = self.events {
+            if let Some(event_reqs) = self.req.event_requests()? {
+                wb.start_array(&TLVTag::Context(ReportDataRespTag::EventReports as _))?;
+                let events_guard = events.lock().await;
+                for event in events_guard.iter() {
+                    let event = event?;
+                    loop {
+                        let result = self
+                            .event_reader
+                            .process_read(&event, &event_reqs, self.req.event_filters()?, &mut *wb)
+                            .await;
 
-                    match result {
-                        Ok(()) => break,
-                        Err(err) if err.code() == ErrorCode::NoSpace => {
-                            debug!("<<< No TX space, chunking >>>");
-                            if !self
-                                .send(ReportDataChunkState::ChunkingEvents, false, wb)
-                                .await?
-                            {
-                                return Ok(false);
+                        match result {
+                            Ok(()) => break,
+                            Err(err) if err.code() == ErrorCode::NoSpace => {
+                                debug!("<<< No TX space, chunking >>>");
+                                if !self
+                                    .send(ReportDataChunkState::ChunkingEvents, false, wb)
+                                    .await?
+                                {
+                                    return Ok(false);
+                                }
                             }
+                            Err(err) => Err(err)?,
                         }
-                        Err(err) => Err(err)?,
                     }
                 }
+                wb.end_container()?;
             }
-            wb.end_container()?;
         }
 
         self.send(ReportDataChunkState::Done, suppress_last_resp, wb)

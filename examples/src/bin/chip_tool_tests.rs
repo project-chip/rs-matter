@@ -163,7 +163,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         buffers,
         subscriptions,
-        events,
+        Some(events),
         dm_handler(rand, unit_testing_data, &on_off_handler),
     );
 

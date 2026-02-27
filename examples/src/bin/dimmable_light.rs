@@ -179,7 +179,7 @@ fn run() -> Result<(), Error> {
         &crypto,
         buffers,
         subscriptions,
-        events,
+        Some(events),
         dm_handler(rand, &on_off_handler, &level_control_handler),
     );
 

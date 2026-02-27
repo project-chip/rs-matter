@@ -165,7 +165,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         &crypto,
         &buffers,
         &subscriptions,
-        &events,
+        Some(&events),
         dm_handler(rand, &on_off_handler, &net_ctl, &networks),
     );
 

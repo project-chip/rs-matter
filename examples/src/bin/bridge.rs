@@ -104,7 +104,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         &buffers,
         &subscriptions,
-        &events,
+        Some(&events),
         dm_handler(rand, &on_off_handler_ep2, &on_off_handler_ep3),
     );
 

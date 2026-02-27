@@ -37,6 +37,12 @@ use crate::im::EventData;
 //      we probably want to allow configuring them separately. We also should spend some thinking tokens on what a good default here is.
 pub const DEFAULT_BYTES_PER_BUF: usize = 64;
 
+/// A type alias for `Events` with the default maximum number of subscriptions.
+pub type DefaultEvents = Events<DEFAULT_BYTES_PER_BUF>;
+
+/// Convenience constant expression if you want to disable events
+pub const NO_EVENTS: Option<&'static Events<0, NoopRawMutex>> = None;
+
 /// See EventsPersist for details
 const EVENT_NO_EPOCH_SIZE: u64 = 0x10000;
 
@@ -65,21 +71,19 @@ pub(crate) struct PersistedState {
     pub(crate) changed: bool,
 }
 
-/// A type alias for `Events` with the default maximum number of subscriptions.
-pub type DefaultEvents = Events<DEFAULT_BYTES_PER_BUF>;
-
 /// This is the event queue system, it lets you publish Matter Events into a priority queue,
 /// and allows subscribers and remote clients to read the data you've published.
 ///
+/// If you are in a concurrent environment you need to select an appropriate mutex implementation for M.
+///
 /// NOTE: The API of this is provisional and subject to change
 ///
-/// If you are in a concurrent environment you need to select an appropriate mutex implementation for M
 /// The queue is implemented as three equally sized ring buffers, the size of the buffers is set by N.
 /// Hence the memory use of the buffers will be 3 * N. If you pick a very small N clients that poll may
 /// miss events as they fall out of the queue, but a large N of course uses more memory. You may need
 /// to experiment to pick an appropriate size for your event write load.
 ///
-/// If your application emits no events you can set N to 0.
+/// If your application emits no events you can disable this subsystem using the NO_EVENTS constant.
 pub struct Events<const N: usize = DEFAULT_BYTES_PER_BUF, M = NoopRawMutex>
 where
     M: RawMutex,

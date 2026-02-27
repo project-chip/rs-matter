@@ -363,7 +363,7 @@ fn main() -> ! {
             crypto,
             &stack.buffers,
             &stack.subscriptions,
-            &stack.events,
+            Some(&stack.events),
             (NODE, handler),
         )
     );

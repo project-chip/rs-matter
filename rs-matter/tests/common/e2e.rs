@@ -184,7 +184,7 @@ impl<C: Crypto> E2eRunner<C> {
             &self.crypto,
             &self.buffers,
             &self.subscriptions,
-            &self.events,
+            Some(&self.events),
             handler,
         );
 
