@@ -755,6 +755,11 @@ impl<'a, E: CertExtensions<'a>> DecodeValue<'a> for TbsCertificate<'a, E> {
                 return Err(der::ErrorKind::Failed.into());
             }
 
+            // SPK is P-256 which is 65-byte uncompressed (0x04 || X || Y).
+            if subject_public_key_info.subject_public_key.raw_bytes().len() != P256_PUBLIC_KEY_LEN {
+                return Err(der::ErrorKind::Failed.into());
+            }
+
             // The parameters field must contain the named curve OID for prime256v1
             // ECParameters ::= CHOICE { namedCurve OBJECT IDENTIFIER, ... }
             // For Matter certs, only namedCurve is used, so we decode directly as an OID
@@ -933,10 +938,6 @@ impl<'a, E: CertExtensions<'a>> X509Cert<'a, E> {
             .subject_public_key_info
             .subject_public_key
             .raw_bytes();
-
-        if spli_bytes.len() != P256_PUBLIC_KEY_LEN {
-            return Err(ErrorCode::InvalidData.into());
-        }
 
         Ok(spli_bytes)
     }
