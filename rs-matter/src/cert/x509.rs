@@ -106,6 +106,80 @@ struct AttributeTypeAndValue<'a> {
     value: AnyRef<'a>,
 }
 
+/// Parsed Matter-specific attributes from an RDNSequence (Subject or Issuer DN).
+///
+/// Only extracts Vendor ID and Product ID.
+/// Other standard DN attributes are ignored.
+#[derive(Debug, Clone, Default)]
+struct MatterDnAttrs {
+    /// Matter Vendor ID (OID 1.3.6.1.4.1.37244.2.1)
+    vendor_id: Option<u16>,
+    /// Matter Product ID (OID 1.3.6.1.4.1.37244.2.2)
+    product_id: Option<u16>,
+}
+
+impl MatterDnAttrs {
+    /// Parse Matter attributes from an RDNSequence
+    fn parse(rdn_bytes: &[u8]) -> der::Result<Self> {
+        let mut vendor_id = None;
+        let mut product_id = None;
+
+        // RDNSequence ::= SEQUENCE OF RelativeDistinguishedName
+        // RelativeDistinguishedName ::= SET OF AttributeTypeAndValue
+        let mut outer = SliceReader::new(rdn_bytes)?;
+
+        while !outer.is_finished() {
+            // Each RDN is a SET
+            let rdn_set = AnyRef::decode(&mut outer)?;
+            let mut set_reader = SliceReader::new(rdn_set.value())?;
+
+            while !set_reader.is_finished() {
+                let atv = AttributeTypeAndValue::decode(&mut set_reader)?;
+
+                if atv.oid == OID_MATTER_VENDOR_ID {
+                    let hex_bytes = atv.value.value();
+                    vendor_id = Some(parse_hex_u16(hex_bytes).map_err(|_| der::ErrorKind::Failed)?);
+                } else if atv.oid == OID_MATTER_PRODUCT_ID {
+                    let hex_bytes = atv.value.value();
+                    product_id =
+                        Some(parse_hex_u16(hex_bytes).map_err(|_| der::ErrorKind::Failed)?);
+                }
+            }
+        }
+
+        Ok(Self {
+            vendor_id,
+            product_id,
+        })
+    }
+}
+
+/// Name ::= SEQUENCE OF RelativeDistinguishedName
+///
+/// Stores the parsed Matter-specific attributes (Vendor ID and Product ID).
+///
+/// https://www.rfc-editor.org/rfc/rfc5280#section-4.1.2.4
+struct Name {
+    /// Parsed Matter-specific attributes
+    attrs: MatterDnAttrs,
+}
+
+impl<'a> DecodeValue<'a> for Name {
+    fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
+        // Read the entire SEQUENCE content (the RDNSequence) as a byte slice
+        let name_bytes = reader.read_slice(header.length)?;
+
+        // Parse the Matter-specific attributes from the RDNSequence
+        let attrs = MatterDnAttrs::parse(name_bytes)?;
+
+        Ok(Self { attrs })
+    }
+}
+
+impl der::FixedTag for Name {
+    const TAG: Tag = Tag::Sequence;
+}
+
 /// BasicConstraints ::= SEQUENCE {
 ///   cA                 BOOLEAN DEFAULT TRUE,
 ///   pathLenConstraint  INTEGER (0..MAX) OPTIONAL
@@ -637,12 +711,12 @@ struct TbsCertificate<'a, E: CertExtensions<'a>> {
     serial_number: AnyRef<'a>,
     /// Signature algorithm.
     signature: AlgorithmIdentifier<'a>,
-    /// Issuer RDNSequence (kept as raw AnyRef for walking).
-    issuer: AnyRef<'a>,
+    /// Issuer Name with parsed Matter attributes.
+    issuer: Name,
     /// Validity period.
     validity: Validity,
-    /// Subject RDNSequence (kept as raw AnyRef for walking).
-    subject: AnyRef<'a>,
+    /// Subject Name with parsed Matter attributes.
+    subject: Name,
     /// Subject public key info.
     subject_public_key_info: SubjectPublicKeyInfo<'a>,
     /// Extensions field. Always present for Matter certificates (context tag [3]).
@@ -670,9 +744,9 @@ impl<'a, E: CertExtensions<'a>> DecodeValue<'a> for TbsCertificate<'a, E> {
                 return Err(der::ErrorKind::Failed.into());
             }
 
-            let issuer = AnyRef::decode(reader)?;
+            let issuer = Name::decode(reader)?;
             let validity = Validity::decode(reader)?;
-            let subject = AnyRef::decode(reader)?;
+            let subject = Name::decode(reader)?;
             let subject_public_key_info = SubjectPublicKeyInfo::decode(reader)?;
 
             // Validate that subjectPublicKeyInfo algorithm is ecPublicKey with prime256v1 curve
@@ -869,65 +943,26 @@ impl<'a, E: CertExtensions<'a>> X509Cert<'a, E> {
 
     /// Extract the Matter Vendor ID from the Subject DN.
     ///
-    /// Searches for OID 1.3.6.1.4.1.37244.2.1 in the Subject distinguished
-    /// name. The value is a UTF8String containing the hex representation
-    /// (e.g., "FFF1"), which is parsed to a `u16`.
-    ///
     /// Returns `ErrorCode::NotFound` if not present in the Subject DN.
     pub fn vendor_id(&self) -> Result<u16, Error> {
-        let attr = Self::find_rdn_attr(
-            self.cert.tbs_certificate.subject.value(),
-            &OID_MATTER_VENDOR_ID,
-        )?
-        .ok_or(Error::from(ErrorCode::NotFound))?;
-
-        parse_hex_u16(attr)
+        self.cert
+            .tbs_certificate
+            .subject
+            .attrs
+            .vendor_id
+            .ok_or(Error::from(ErrorCode::NotFound))
     }
 
     /// Extract the Matter Product ID from the Subject DN.
     ///
-    /// Searches for OID 1.3.6.1.4.1.37244.2.2 in the Subject distinguished
-    /// name. The value is a UTF8String containing the hex representation
-    /// (e.g., "8000"), which is parsed to a `u16`.
-    ///
     /// Returns `ErrorCode::NotFound` if not present in the Subject DN.
     pub fn product_id(&self) -> Result<u16, Error> {
-        let attr = Self::find_rdn_attr(
-            self.cert.tbs_certificate.subject.value(),
-            &OID_MATTER_PRODUCT_ID,
-        )?
-        .ok_or(Error::from(ErrorCode::NotFound))?;
-
-        parse_hex_u16(attr)
-    }
-
-    fn find_rdn_attr(
-        rdn_bytes: &'a [u8],
-        target_oid: &ObjectIdentifier,
-    ) -> Result<Option<&'a [u8]>, Error> {
-        // RDNSequence ::= SEQUENCE OF RelativeDistinguishedName
-        // RelativeDistinguishedName ::= SET OF AttributeTypeAndValue
-        let mut outer =
-            SliceReader::new(rdn_bytes).map_err(|_| Error::from(ErrorCode::InvalidData))?;
-
-        while !outer.is_finished() {
-            // Each RDN is a SET
-            let rdn_set =
-                AnyRef::decode(&mut outer).map_err(|_| Error::from(ErrorCode::InvalidData))?;
-            let mut set_reader = SliceReader::new(rdn_set.value())
-                .map_err(|_| Error::from(ErrorCode::InvalidData))?;
-
-            while !set_reader.is_finished() {
-                let atv = AttributeTypeAndValue::decode(&mut set_reader)
-                    .map_err(|_| Error::from(ErrorCode::InvalidData))?;
-
-                if atv.oid == *target_oid {
-                    return Ok(Some(atv.value.value()));
-                }
-            }
-        }
-
-        Ok(None)
+        self.cert
+            .tbs_certificate
+            .subject
+            .attrs
+            .product_id
+            .ok_or(Error::from(ErrorCode::NotFound))
     }
 
     /// Extract the NotBefore time as Unix epoch seconds.
