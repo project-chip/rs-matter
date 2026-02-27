@@ -68,6 +68,7 @@ use rs_matter::dm::{
     EmptyHandler, Endpoint, EpClMatcher, InvokeContext, Node, ReadContext,
 };
 use rs_matter::error::{Error, ErrorCode};
+use rs_matter::group_keys::GroupStoreImpl;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
@@ -88,7 +89,11 @@ fn main() -> Result<(), Error> {
     );
 
     // Create the Matter object
-    let matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+    let mut matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+
+    // Configure the group store for groupcast support
+    let group_store = Box::leak(Box::new(GroupStoreImpl::<2>::new())); // 1 endpoint + root endpoint
+    matter.set_group_store(group_store);
 
     // Need to call this once
     matter.initialize_transport_buffers()?;
@@ -140,7 +145,7 @@ fn main() -> Result<(), Error> {
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, &dm));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket));
+    let mut transport = pin!(matter.run(&crypto, &socket, &socket, Some(&socket)));
 
     // Create, load and run the persister
     let mut psm: Psm<4096> = Psm::new();

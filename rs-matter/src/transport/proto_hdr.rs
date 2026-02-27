@@ -260,7 +260,14 @@ impl ProtoHdr {
     ) -> Result<(), Error> {
         if let Some(key) = dec_key {
             // We decrypt only if the decryption key is valid
-            decrypt_in_place(crypto, key, plain_hdr.ctr, peer_nodeid, parsebuf)?;
+            decrypt_in_place(
+                crypto,
+                key,
+                plain_hdr.sec_flags,
+                plain_hdr.ctr,
+                peer_nodeid,
+                parsebuf,
+            )?;
         }
 
         self.exch_flags = ExchFlags::from_bits(parsebuf.le_u8()?).ok_or(ErrorCode::Invalid)?;
@@ -360,11 +367,16 @@ impl defmt::Format for ProtoHdr {
     }
 }
 
-fn get_iv(recvd_ctr: u32, peer_nodeid: u64, iv: &mut crypto::AeadNonce) -> Result<(), Error> {
+fn get_iv(
+    sec_flags: u8,
+    recvd_ctr: u32,
+    peer_nodeid: u64,
+    iv: &mut crypto::AeadNonce,
+) -> Result<(), Error> {
     // The IV is the source address (64-bit) followed by the message counter (32-bit)
     let mut write_buf = WriteBuf::new(iv.access_mut());
-    // For some reason, this is 0 in the 'bypass' mode
-    write_buf.le_u8(0)?;
+    // First byte is the Security Flags from the plain header (Matter spec Section 4.7.2)
+    write_buf.le_u8(sec_flags)?;
     write_buf.le_u32(recvd_ctr)?;
     write_buf.le_u64(peer_nodeid)?;
     Ok(())
@@ -373,6 +385,7 @@ fn get_iv(recvd_ctr: u32, peer_nodeid: u64, iv: &mut crypto::AeadNonce) -> Resul
 pub fn encrypt_in_place<C: Crypto>(
     crypto: C,
     key: crypto::CanonAeadKeyRef<'_>,
+    sec_flags: u8,
     send_ctr: u32,
     peer_nodeid: u64,
     aad: &[u8],
@@ -382,7 +395,7 @@ pub fn encrypt_in_place<C: Crypto>(
 
     // IV
     let mut iv = crypto::AEAD_NONCE_ZEROED;
-    get_iv(send_ctr, peer_nodeid, &mut iv)?;
+    get_iv(sec_flags, send_ctr, peer_nodeid, &mut iv)?;
 
     // Cipher Text
     let tag_space = crypto::AEAD_TAG_ZEROED;
@@ -406,28 +419,23 @@ pub fn encrypt_in_place<C: Crypto>(
 fn decrypt_in_place<C: Crypto>(
     crypto: C,
     key: crypto::CanonAeadKeyRef<'_>,
+    sec_flags: u8,
     recvd_ctr: u32,
     peer_nodeid: u64,
     parsebuf: &mut ParseBuf<'_>,
 ) -> Result<(), Error> {
-    // TODO: Get rid of the temporary buffers
-
-    // AAD:
-    //    the unencrypted header of this packet
-    let mut aad = [0; 8];
-    let parsed_slice = parsebuf.parsed_as_slice();
-    if parsed_slice.len() == aad.len() {
-        // The plain_header is variable sized in length, I wonder if the AAD is fixed at 8, or the variable size.
-        // If so, we need to handle it cleanly here.
-        aad.copy_from_slice(parsed_slice);
-    } else {
-        Err(ErrorCode::InvalidAAD)?;
-    }
+    // AAD: the unencrypted header of this packet (variable length)
+    // Copy to a local buffer to avoid borrow conflict with cipher_text
+    let aad_slice = parsebuf.parsed_as_slice();
+    let aad_len = aad_slice.len();
+    let mut aad_buf = [0u8; plain_hdr::PlainHdr::MAX_LEN];
+    aad_buf[..aad_len].copy_from_slice(aad_slice);
+    let aad = &aad_buf[..aad_len];
 
     // IV:
     //   the specific way for creating IV is in get_iv
     let mut iv = crypto::AEAD_NONCE_ZEROED;
-    get_iv(recvd_ctr, peer_nodeid, &mut iv)?;
+    get_iv(sec_flags, recvd_ctr, peer_nodeid, &mut iv)?;
 
     let cipher_text = parsebuf.as_mut_slice();
     //println!("AAD: {:x?}", aad);
@@ -437,7 +445,7 @@ fn decrypt_in_place<C: Crypto>(
 
     let mut cypher = crypto.aead()?;
 
-    cypher.decrypt_in_place(key, iv.reference(), &aad, cipher_text)?;
+    cypher.decrypt_in_place(key, iv.reference(), aad, cipher_text)?;
     // println!("Plain Text: {:x?}", cipher_text);
     parsebuf.tail(crypto::AEAD_TAG_LEN)?;
 
@@ -472,7 +480,7 @@ mod tests {
         parsebuf.le_u32().unwrap();
         parsebuf.le_u32().unwrap();
 
-        decrypt_in_place(test_only_crypto(), KEY, recvd_ctr, 0, &mut parsebuf).unwrap();
+        decrypt_in_place(test_only_crypto(), KEY, 0, recvd_ctr, 0, &mut parsebuf).unwrap();
         assert_eq!(
             parsebuf.as_slice(),
             &[
@@ -508,6 +516,7 @@ mod tests {
         encrypt_in_place(
             test_only_crypto(),
             KEY,
+            0,
             send_ctr,
             0,
             PLAIN_HDR,

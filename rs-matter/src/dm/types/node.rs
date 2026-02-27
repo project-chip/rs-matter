@@ -449,7 +449,9 @@ where
         while (self.endpoint_index as usize) < self.node.endpoints.len() {
             let endpoint = &self.node.endpoints[self.endpoint_index as usize];
 
-            if path.endpoint.is_none() || path.endpoint == Some(endpoint.id) {
+            if (path.endpoint.is_none() || path.endpoint == Some(endpoint.id))
+                && self.accessor.is_endpoint_accessible(endpoint.id)
+            {
                 while (self.cluster_index as usize) < endpoint.clusters.len() {
                     let cluster = &endpoint.clusters[self.cluster_index as usize];
 
@@ -693,7 +695,13 @@ mod test {
         expected: &[Result<Result<GenericPath, IMStatusCode>, ErrorCode>],
     ) {
         let fab_mgr = RefCell::new(FabricMgr::new());
-        let accessor = Accessor::new(0, AccessorSubjects::new(0), Some(AuthMode::Pase), &fab_mgr);
+        let accessor = Accessor::new(
+            0,
+            AccessorSubjects::new(0),
+            Some(AuthMode::Pase),
+            &fab_mgr,
+            None,
+        );
 
         let expander =
             PathExpander::new(node, &accessor, false, Some(input.iter().cloned().map(Ok)));

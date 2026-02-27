@@ -43,6 +43,7 @@ use log::{info, warn};
 use rand::RngCore;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, NetworkType, Networks};
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
@@ -59,6 +60,7 @@ use rs_matter::dm::{
     Node,
 };
 use rs_matter::error::Error;
+use rs_matter::group_keys::GroupStoreImpl;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
@@ -125,7 +127,11 @@ fn main() -> Result<(), Error> {
 
 fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), Error> {
     // Create the Matter object
-    let matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+    let mut matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+
+    // Configure the group store for groupcast support
+    let group_store = Box::leak(Box::new(GroupStoreImpl::<2>::new())); // 1 endpoint + root endpoint
+    matter.set_group_store(group_store);
 
     // Need to call this once
     matter.initialize_transport_buffers()?;
@@ -206,7 +212,8 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         let btp = Btp::new(BluezGattPeripheral::new(None, connection), &BTP_CONTEXT);
         let mut bluetooth = pin!(btp.run("MT", &TEST_DEV_DET, TEST_DEV_COMM.discriminator));
 
-        let mut transport = pin!(matter.run(&crypto, &btp, &btp));
+        let mut transport = pin!(matter
+            .run::<_, _, _, rs_matter::transport::network::NoNetwork>(&crypto, &btp, &btp, None));
         let mut wifi_prov_task = pin!(async {
             NetCtlState::wait_prov_ready(&net_ctl_state, &btp).await;
             Ok(())
@@ -230,7 +237,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     let udp = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
     // Run the Matter transport
-    let mut transport = pin!(matter.run_transport(&crypto, &udp, &udp));
+    let mut transport = pin!(matter.run(&crypto, &udp, &udp, Some(&udp)));
 
     // Combine all async tasks in a single one
     let all = select4(
@@ -254,6 +261,7 @@ const NODE: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
                 on_off::test::TestOnOffDeviceLogic::CLUSTER
             ),
         },
@@ -286,6 +294,10 @@ where
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
                         Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                    )
+                    .chain(
+                        EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                        Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),

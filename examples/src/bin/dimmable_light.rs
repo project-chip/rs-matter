@@ -41,6 +41,7 @@ use rs_matter::dm::clusters::decl::level_control::{
 };
 use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::{self, LevelControlHooks};
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, OnOffHooks, StartUpOnOffEnum};
@@ -203,13 +204,13 @@ fn run() -> Result<(), Error> {
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket)),
+        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket, Some(&socket))),
         core::mem::size_of_val(&mdns::run_mdns(matter, &crypto, &dm))
     );
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto, &dm));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket));
+    let mut transport = pin!(matter.run(&crypto, &socket, &socket, Some(&socket)));
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
@@ -271,6 +272,7 @@ const NODE: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_DIMMABLE_LIGHT),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
                 OnOffDeviceLogic::CLUSTER,
                 LevelControlDeviceLogic::CLUSTER,
             ),
@@ -298,6 +300,10 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
                         Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                    )
+                    .chain(
+                        EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                        Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(OnOffDeviceLogic::CLUSTER.id)),

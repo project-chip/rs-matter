@@ -16,19 +16,22 @@
  */
 
 //! This module contains the implementation of the Group Key Management cluster and its handler.
-//! Note that the implementation is currently stubbed out, as `rs-matter` does not support Groups yet.
 
+use core::num::NonZeroU8;
+
+use crate::crypto::AEAD_CANON_KEY_LEN;
 use crate::dm::{
     ArrayAttributeRead, ArrayAttributeWrite, Cluster, Dataver, InvokeContext, ReadContext,
+    WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::tlv::TLVBuilderParent;
+use crate::group_keys::{GroupEpochKeyEntry, GrpKeyMapEntry, GrpKeySetEntry};
+use crate::tlv::{Nullable, Octets, TLVArray, TLVBuilderParent};
 use crate::with;
 
 pub use crate::dm::clusters::decl::group_key_management::*;
 
 /// The system implementation of a handler for the Group Key Management Matter cluster.
-/// This is a stub implementation, as `rs-matter` does not support Groups yet.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GrpKeyMgmtHandler {
@@ -60,80 +63,496 @@ impl ClusterHandler for GrpKeyMgmtHandler {
 
     fn group_key_map<P: TLVBuilderParent>(
         &self,
-        _ctx: impl ReadContext,
+        ctx: impl ReadContext,
         builder: ArrayAttributeRead<GroupKeyMapStructArrayBuilder<P>, GroupKeyMapStructBuilder<P>>,
     ) -> Result<P, Error> {
+        let Some(group_store) = ctx.exchange().matter().group_store() else {
+            // No group store configured — return empty array
+            return match builder {
+                ArrayAttributeRead::ReadAll(builder) => builder.end(),
+                ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
+            };
+        };
+        let attr = ctx.attr();
+
+        let fab_filter = if attr.fab_filter {
+            NonZeroU8::new(attr.fab_idx)
+        } else {
+            None
+        };
+
+        // Collect entries into a temporary buffer
+        // TODO: Get rid of this temporary buffer by using the group store directly
+        struct Entry {
+            fab_idx: NonZeroU8,
+            group_id: u16,
+            group_key_set_id: u16,
+        }
+        // TODO: Large buffer
+        let mut entries: heapless::Vec<Entry, 64> = heapless::Vec::new();
+
+        group_store.for_each_group_key_map(fab_filter, &mut |fab_idx, entry| {
+            let _ = entries.push(Entry {
+                fab_idx,
+                group_id: entry.group_id,
+                group_key_set_id: entry.group_key_set_id,
+            });
+        });
+
         match builder {
-            ArrayAttributeRead::ReadAll(builder) => builder.end(),
-            ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
+            ArrayAttributeRead::ReadAll(mut builder) => {
+                for entry in &entries {
+                    builder = builder
+                        .push()?
+                        .group_id(entry.group_id)?
+                        .group_key_set_id(entry.group_key_set_id)?
+                        .fabric_index(Some(entry.fab_idx.get()))?
+                        .end()?;
+                }
+                builder.end()
+            }
+            ArrayAttributeRead::ReadOne(index, builder) => {
+                let Some(entry) = entries.get(index as usize) else {
+                    return Err(ErrorCode::ConstraintError.into());
+                };
+                builder
+                    .group_id(entry.group_id)?
+                    .group_key_set_id(entry.group_key_set_id)?
+                    .fabric_index(Some(entry.fab_idx.get()))?
+                    .end()
+            }
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 
     fn group_table<P: TLVBuilderParent>(
         &self,
-        _ctx: impl ReadContext,
+        ctx: impl ReadContext,
         builder: ArrayAttributeRead<
             GroupInfoMapStructArrayBuilder<P>,
             GroupInfoMapStructBuilder<P>,
         >,
     ) -> Result<P, Error> {
+        let Some(group_store) = ctx.exchange().matter().group_store() else {
+            // No group store configured — return empty array
+            return match builder {
+                ArrayAttributeRead::ReadAll(builder) => builder.end(),
+                ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
+            };
+        };
+        let attr = ctx.attr();
+
+        let fab_filter = if attr.fab_filter {
+            NonZeroU8::new(attr.fab_idx)
+        } else {
+            None
+        };
+
+        // Build a deduplicated list of (fab_idx, group_id) -> (endpoints, group_name)
+        struct GroupInfo {
+            group_id: u16,
+            fab_idx: u8,
+            endpoints: heapless::Vec<u16, 8>,
+            group_name: heapless::String<16>,
+        }
+
+        let mut groups: heapless::Vec<GroupInfo, 24> = heapless::Vec::new();
+
+        group_store.for_each_group(fab_filter, &mut |fab_idx, entry| {
+            if let Some(existing) = groups
+                .iter_mut()
+                .find(|g| g.fab_idx == fab_idx.get() && g.group_id == entry.group_id)
+            {
+                let _ = existing.endpoints.push(entry.endpoint_id);
+            } else {
+                let mut info = GroupInfo {
+                    group_id: entry.group_id,
+                    fab_idx: fab_idx.get(),
+                    endpoints: heapless::Vec::new(),
+                    group_name: heapless::String::new(),
+                };
+                let _ = info.endpoints.push(entry.endpoint_id);
+                let _ = info.group_name.push_str(&entry.group_name);
+                let _ = groups.push(info);
+            }
+        });
+
         match builder {
-            ArrayAttributeRead::ReadAll(builder) => builder.end(),
-            ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
+            ArrayAttributeRead::ReadAll(mut builder) => {
+                for info in &groups {
+                    let mut endpoints_builder =
+                        builder.push()?.group_id(info.group_id)?.endpoints()?;
+                    for &ep in &info.endpoints {
+                        endpoints_builder = endpoints_builder.push(&ep)?;
+                    }
+                    builder = endpoints_builder
+                        .end()?
+                        .group_name(Some(info.group_name.as_str()))?
+                        .fabric_index(Some(info.fab_idx))?
+                        .end()?;
+                }
+                builder.end()
+            }
+            ArrayAttributeRead::ReadOne(index, builder) => {
+                let Some(info) = groups.get(index as usize) else {
+                    return Err(ErrorCode::ConstraintError.into());
+                };
+                let mut endpoints_builder = builder.group_id(info.group_id)?.endpoints()?;
+                for &ep in &info.endpoints {
+                    endpoints_builder = endpoints_builder.push(&ep)?;
+                }
+                endpoints_builder
+                    .end()?
+                    .group_name(Some(info.group_name.as_str()))?
+                    .fabric_index(Some(info.fab_idx))?
+                    .end()
+            }
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 
-    fn max_groups_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(1)
+    fn max_groups_per_fabric(&self, ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(ctx
+            .exchange()
+            .matter()
+            .group_store()
+            .map_or(0, |gs| gs.max_groups_per_fabric()))
     }
 
-    fn max_group_keys_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(1)
+    fn max_group_keys_per_fabric(&self, ctx: impl ReadContext) -> Result<u16, Error> {
+        // +1 for IPK (key set 0)
+        Ok(ctx
+            .exchange()
+            .matter()
+            .group_store()
+            .map_or(1, |gs| gs.max_group_keys_per_fabric() + 1))
     }
 
     fn set_group_key_map(
         &self,
-        _ctx: impl crate::dm::WriteContext,
-        _value: ArrayAttributeWrite<
-            crate::tlv::TLVArray<'_, GroupKeyMapStruct<'_>>,
-            GroupKeyMapStruct<'_>,
-        >,
+        ctx: impl WriteContext,
+        value: ArrayAttributeWrite<TLVArray<'_, GroupKeyMapStruct<'_>>, GroupKeyMapStruct<'_>>,
     ) -> Result<(), Error> {
+        let fab_idx = NonZeroU8::new(ctx.attr().fab_idx).ok_or(ErrorCode::Invalid)?;
+
+        let group_store = ctx
+            .exchange()
+            .matter()
+            .group_store()
+            .ok_or(ErrorCode::InvalidAction)?;
+
+        match value {
+            ArrayAttributeWrite::Replace(list) => {
+                let max_groups: usize = group_store.max_groups_per_fabric().into();
+
+                // First validate all entries
+                let mut count: usize = 0;
+                for entry in &list {
+                    count += 1;
+                    if count > max_groups {
+                        return Err(ErrorCode::Failure.into());
+                    }
+                    let entry = entry?;
+                    // GroupKeySetID must not be 0
+                    if entry.group_key_set_id()? == 0 {
+                        return Err(ErrorCode::ConstraintError.into());
+                    }
+                }
+
+                // Collect entries into a temporary buffer
+                let mut entries: heapless::Vec<GrpKeyMapEntry, 32> = heapless::Vec::new();
+                for entry in list.into_iter().flatten() {
+                    let _ = entries.push(GrpKeyMapEntry {
+                        group_id: entry.group_id().unwrap_or(0),
+                        group_key_set_id: entry.group_key_set_id().unwrap_or(0),
+                    });
+                }
+
+                group_store.group_key_map_replace(fab_idx, &entries)?;
+            }
+            ArrayAttributeWrite::Add(entry) => {
+                // GroupKeySetID must not be 0
+                if entry.group_key_set_id()? == 0 {
+                    return Err(ErrorCode::ConstraintError.into());
+                }
+
+                let new_entry = GrpKeyMapEntry {
+                    group_id: entry.group_id()?,
+                    group_key_set_id: entry.group_key_set_id()?,
+                };
+
+                group_store.group_key_map_add(fab_idx, new_entry)?;
+            }
+            _ => {
+                return Err(ErrorCode::InvalidAction.into());
+            }
+        }
+
+        ctx.exchange().matter().notify_groups_changed();
+
         Ok(())
     }
 
     fn handle_key_set_write(
         &self,
-        _ctx: impl InvokeContext,
-        _request: KeySetWriteRequest<'_>,
+        ctx: impl InvokeContext,
+        request: KeySetWriteRequest<'_>,
     ) -> Result<(), Error> {
+        let fab_idx =
+            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
+
+        let key_set = request.group_key_set()?;
+
+        let group_key_set_id = key_set.group_key_set_id()?;
+        let group_key_security_policy = key_set.group_key_security_policy()?;
+
+        // GroupKeySetID 0 is reserved for IPK
+        if group_key_set_id == 0 {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
+
+        // Parse nullable epoch keys and start times
+        let epoch_key_0 = key_set.epoch_key_0()?;
+        let epoch_start_time_0 = key_set.epoch_start_time_0()?;
+        let epoch_key_1 = key_set.epoch_key_1()?;
+        let epoch_start_time_1 = key_set.epoch_start_time_1()?;
+        let epoch_key_2 = key_set.epoch_key_2()?;
+        let epoch_start_time_2 = key_set.epoch_start_time_2()?;
+
+        // Validate EpochKey0 must not be null
+        let Some(epoch_key_0_val) = epoch_key_0.as_opt_ref() else {
+            return Err(ErrorCode::InvalidCommand.into());
+        };
+
+        // Validate EpochStartTime0 must not be null
+        let Some(&epoch_start_time_0_val) = epoch_start_time_0.as_opt_ref() else {
+            return Err(ErrorCode::InvalidCommand.into());
+        };
+
+        // Validate EpochStartTime0 must not be 0
+        if epoch_start_time_0_val == 0 {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
+
+        // Validate EpochKey0 length must be 16
+        if epoch_key_0_val.0.len() != AEAD_CANON_KEY_LEN {
+            return Err(ErrorCode::ConstraintError.into());
+        }
+
+        let has_epoch_key_1 = epoch_key_1.as_opt_ref().is_some();
+        let has_epoch_start_time_1 = epoch_start_time_1.as_opt_ref().is_some();
+
+        // If one of key1/time1 is present, both must be present
+        if has_epoch_key_1 != has_epoch_start_time_1 {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
+
+        let mut entry = GrpKeySetEntry {
+            group_key_set_id,
+            group_key_security_policy: group_key_security_policy as u8,
+            ..Default::default()
+        };
+
+        // Push epoch key 0
+        let mut key0 = GroupEpochKeyEntry {
+            epoch_key: Default::default(),
+            epoch_start_time: epoch_start_time_0_val,
+        };
+        key0.epoch_key
+            .try_load_from_slice(epoch_key_0_val.0)
+            .map_err(|_| ErrorCode::ConstraintError)?;
+        entry
+            .epoch_keys
+            .push(key0)
+            .map_err(|_| Error::from(ErrorCode::ConstraintError))?;
+
+        if has_epoch_key_1 {
+            let epoch_key_1_val = epoch_key_1.as_opt_ref().unwrap();
+            let &epoch_start_time_1_val = epoch_start_time_1.as_opt_ref().unwrap();
+
+            // Validate key length
+            if epoch_key_1_val.0.len() != AEAD_CANON_KEY_LEN {
+                return Err(ErrorCode::ConstraintError.into());
+            }
+
+            // Validate time1 > time0
+            if epoch_start_time_1_val <= epoch_start_time_0_val {
+                return Err(ErrorCode::InvalidCommand.into());
+            }
+
+            let mut key1 = GroupEpochKeyEntry {
+                epoch_key: Default::default(),
+                epoch_start_time: epoch_start_time_1_val,
+            };
+            key1.epoch_key
+                .try_load_from_slice(epoch_key_1_val.0)
+                .map_err(|_| ErrorCode::ConstraintError)?;
+            entry
+                .epoch_keys
+                .push(key1)
+                .map_err(|_| Error::from(ErrorCode::ConstraintError))?;
+
+            // Check epoch key 2
+            let has_epoch_key_2 = epoch_key_2.as_opt_ref().is_some();
+            let has_epoch_start_time_2 = epoch_start_time_2.as_opt_ref().is_some();
+
+            if has_epoch_key_2 != has_epoch_start_time_2 {
+                return Err(ErrorCode::InvalidCommand.into());
+            }
+
+            if has_epoch_key_2 {
+                let epoch_key_2_val = epoch_key_2.as_opt_ref().unwrap();
+                let &epoch_start_time_2_val = epoch_start_time_2.as_opt_ref().unwrap();
+
+                // Validate key length
+                if epoch_key_2_val.0.len() != AEAD_CANON_KEY_LEN {
+                    return Err(ErrorCode::ConstraintError.into());
+                }
+
+                // Validate time2 > time1
+                if epoch_start_time_2_val <= epoch_start_time_1_val {
+                    return Err(ErrorCode::InvalidCommand.into());
+                }
+
+                let mut key2 = GroupEpochKeyEntry {
+                    epoch_key: Default::default(),
+                    epoch_start_time: epoch_start_time_2_val,
+                };
+                key2.epoch_key
+                    .try_load_from_slice(epoch_key_2_val.0)
+                    .map_err(|_| ErrorCode::ConstraintError)?;
+                entry
+                    .epoch_keys
+                    .push(key2)
+                    .map_err(|_| Error::from(ErrorCode::ConstraintError))?;
+            }
+        } else {
+            // If key1 not present, key2 must not be present either
+            let has_epoch_key_2 = epoch_key_2.as_opt_ref().is_some();
+            let has_epoch_start_time_2 = epoch_start_time_2.as_opt_ref().is_some();
+
+            if has_epoch_key_2 || has_epoch_start_time_2 {
+                return Err(ErrorCode::InvalidCommand.into());
+            }
+        }
+
+        ctx.exchange()
+            .matter()
+            .group_store()
+            .ok_or(ErrorCode::InvalidAction)?
+            .group_key_set_add(fab_idx, entry)?;
+
+        ctx.exchange().matter().notify_groups_changed();
+
         Ok(())
     }
 
     fn handle_key_set_read<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
-        _request: KeySetReadRequest<'_>,
-        _response: KeySetReadResponseBuilder<P>,
+        ctx: impl InvokeContext,
+        request: KeySetReadRequest<'_>,
+        response: KeySetReadResponseBuilder<P>,
     ) -> Result<P, Error> {
-        Err(ErrorCode::NotFound.into())
+        let fab_idx =
+            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
+
+        let group_key_set_id = request.group_key_set_id()?;
+
+        let group_store = ctx
+            .exchange()
+            .matter()
+            .group_store()
+            .ok_or(ErrorCode::InvalidAction)?;
+
+        let entry = group_store
+            .group_key_set_get(fab_idx, group_key_set_id)?
+            .ok_or(ErrorCode::NotFound)?;
+
+        // Build response: epoch keys are always null, start times are preserved
+        response
+            .group_key_set()?
+            .group_key_set_id(group_key_set_id)?
+            .group_key_security_policy(
+                // SAFETY: group_key_security_policy is validated at write time
+                // and the enum is #[repr(u8)]
+                unsafe {
+                    core::mem::transmute::<u8, GroupKeySecurityPolicyEnum>(
+                        entry.group_key_security_policy,
+                    )
+                },
+            )?
+            .epoch_key_0(Nullable::<Octets<'_>>::none())?
+            .epoch_start_time_0(Nullable::some(entry.epoch_keys[0].epoch_start_time))?
+            .epoch_key_1(Nullable::<Octets<'_>>::none())?
+            .epoch_start_time_1(if let Some(k) = entry.epoch_keys.get(1) {
+                Nullable::some(k.epoch_start_time)
+            } else {
+                Nullable::none()
+            })?
+            .epoch_key_2(Nullable::<Octets<'_>>::none())?
+            .epoch_start_time_2(if let Some(k) = entry.epoch_keys.get(2) {
+                Nullable::some(k.epoch_start_time)
+            } else {
+                Nullable::none()
+            })?
+            .end()?
+            .end()
     }
 
     fn handle_key_set_remove(
         &self,
-        _ctx: impl InvokeContext,
-        _request: KeySetRemoveRequest<'_>,
+        ctx: impl InvokeContext,
+        request: KeySetRemoveRequest<'_>,
     ) -> Result<(), Error> {
+        let fab_idx =
+            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
+
+        let group_key_set_id = request.group_key_set_id()?;
+
+        // KeySetRemove of ID 0 (IPK) is not allowed
+        if group_key_set_id == 0 {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
+
+        ctx.exchange()
+            .matter()
+            .group_store()
+            .ok_or(ErrorCode::InvalidAction)?
+            .group_key_set_remove(fab_idx, group_key_set_id)?;
+
+        ctx.exchange().matter().notify_groups_changed();
+
         Ok(())
     }
 
     fn handle_key_set_read_all_indices<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         response: KeySetReadAllIndicesResponseBuilder<P>,
     ) -> Result<P, Error> {
-        response.group_key_set_i_ds()?.end()?.end()
+        let fab_idx =
+            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
+
+        let group_store = ctx
+            .exchange()
+            .matter()
+            .group_store()
+            .ok_or(ErrorCode::InvalidAction)?;
+
+        // Always include IPK (0) plus all stored key set IDs
+        let mut ids = response.group_key_set_i_ds()?;
+        ids = ids.push(&0u16)?;
+
+        let mut key_set_ids: heapless::Vec<u16, 8> = heapless::Vec::new();
+        group_store.for_each_group_key_set(Some(fab_idx), &mut |_fab_idx, entry| {
+            let _ = key_set_ids.push(entry.group_key_set_id);
+        });
+
+        for id in &key_set_ids {
+            ids = ids.push(id)?;
+        }
+        ids.end()?.end()
     }
 }

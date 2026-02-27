@@ -29,6 +29,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use rand::RngCore;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
@@ -43,6 +44,7 @@ use rs_matter::dm::{
     EpClMatcher, InvokeContext, Node, ReadContext,
 };
 use rs_matter::error::Error;
+use rs_matter::group_keys::GroupStoreImpl;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
@@ -67,7 +69,11 @@ fn main() -> Result<(), Error> {
     );
 
     // Create the Matter object
-    let matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+    let mut matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+
+    // Configure the group store for groupcast support
+    let group_store = Box::leak(Box::new(GroupStoreImpl::<3>::new())); // 2 endpoints + root endpoint
+    matter.set_group_store(group_store);
 
     // Need to call this once
     matter.initialize_transport_buffers()?;
@@ -124,7 +130,7 @@ fn main() -> Result<(), Error> {
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, &dm));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket));
+    let mut transport = pin!(matter.run(&crypto, &socket, &socket, Some(&socket)));
 
     // Create, load and run the persister
     let mut psm: Psm<4096> = Psm::new();
@@ -185,6 +191,7 @@ const NODE: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_BRIDGED_NODE),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
                 BridgedHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER
             ),
@@ -198,6 +205,7 @@ const NODE: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_BRIDGED_NODE),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
                 BridgedHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER
             ),
@@ -251,6 +259,10 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                         Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                     )
                     .chain(
+                        EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
+                        Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                    )
+                    .chain(
                         EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
                         on_off::HandlerAsyncAdaptor(on_off_ep2),
                     )
@@ -261,6 +273,10 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                     .chain(
                         EpClMatcher::new(Some(3), Some(desc::DescHandler::CLUSTER.id)),
                         Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                    )
+                    .chain(
+                        EpClMatcher::new(Some(3), Some(groups::GroupsHandler::CLUSTER.id)),
+                        Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                     )
                     .chain(
                         EpClMatcher::new(Some(3), Some(TestOnOffDeviceLogic::CLUSTER.id)),

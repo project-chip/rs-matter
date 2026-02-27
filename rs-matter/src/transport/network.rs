@@ -220,6 +220,30 @@ where
     }
 }
 
+/// A trait to listen for IPv6 multicast on supported network types
+///
+/// This is used for listening to groupcast messages
+pub trait NetworkMulticast {
+    /// Register to listen for data on specific multicast address
+    async fn register_multicast(&mut self, addr: IpAddr) -> Result<(), Error>;
+
+    /// Register to listen for data on specific multicast address
+    async fn unregister_multicast(&mut self, addr: IpAddr) -> Result<(), Error>;
+}
+
+impl<T> NetworkMulticast for &mut T
+where
+    T: NetworkMulticast,
+{
+    fn register_multicast(&mut self, addr: IpAddr) -> impl Future<Output = Result<(), Error>> {
+        (*self).register_multicast(addr)
+    }
+
+    fn unregister_multicast(&mut self, addr: IpAddr) -> impl Future<Output = Result<(), Error>> {
+        (*self).unregister_multicast(addr)
+    }
+}
+
 /// A network implementation that does not support any network communication:
 /// - Trying to send a packet always results in a `ErrorCode::NoNetworkInterface` error.
 /// - Trying to wait/receive a packet pends forever.
@@ -240,6 +264,16 @@ impl NetworkReceive for NoNetwork {
 
     async fn recv_from(&mut self, _buffer: &mut [u8]) -> Result<(usize, Address), Error> {
         core::future::pending().await
+    }
+}
+
+impl NetworkMulticast for NoNetwork {
+    async fn register_multicast(&mut self, _addr: IpAddr) -> Result<(), Error> {
+        Ok(())
+    }
+
+    async fn unregister_multicast(&mut self, _addr: IpAddr) -> Result<(), Error> {
+        Ok(())
     }
 }
 
@@ -329,5 +363,21 @@ where
         } else {
             self.next.send_to(data, addr).await
         }
+    }
+}
+
+impl<H, T, F> NetworkMulticast for ChainedNetwork<H, T, F>
+where
+    H: NetworkMulticast,
+    T: NetworkMulticast,
+{
+    async fn register_multicast(&mut self, addr: IpAddr) -> Result<(), Error> {
+        self.handler.register_multicast(addr).await?;
+        self.next.register_multicast(addr).await
+    }
+
+    async fn unregister_multicast(&mut self, addr: IpAddr) -> Result<(), Error> {
+        self.handler.unregister_multicast(addr).await?;
+        self.next.unregister_multicast(addr).await
     }
 }
