@@ -181,7 +181,7 @@ impl der::FixedTag for Name {
 }
 
 /// BasicConstraints ::= SEQUENCE {
-///   cA                 BOOLEAN DEFAULT TRUE,
+///   cA                 BOOLEAN DEFAULT FALSE,
 ///   pathLenConstraint  INTEGER (0..MAX) OPTIONAL
 /// }
 ///
@@ -367,7 +367,8 @@ impl<'a> ParsedExtensionFields<'a> {
 /// - Parse extensions from DER-encoded data
 /// - Validate requirements during parsing (fail if invalid)
 /// - Provide access to Subject Key Identifier and Authority Key Identifier
-pub trait CertExtensions<'a>: DecodeValue<'a> + der::FixedTag + der::EncodeValue {
+/// - Validate issuer and subject fields
+pub trait CertType<'a>: DecodeValue<'a> + der::FixedTag + der::EncodeValue {
     /// Get subject key identifier if present for this certificate type
     fn subject_key_id(&self) -> Option<&'a [u8]>;
 
@@ -465,7 +466,7 @@ impl<'a> der::EncodeValue for DacExtensions<'a> {
     }
 }
 
-impl<'a> CertExtensions<'a> for DacExtensions<'a> {
+impl<'a> CertType<'a> for DacExtensions<'a> {
     fn subject_key_id(&self) -> Option<&'a [u8]> {
         Some(self.subject_key_id.value.as_bytes())
     }
@@ -594,7 +595,7 @@ impl<'a> der::EncodeValue for PaiExtensions<'a> {
     }
 }
 
-impl<'a> CertExtensions<'a> for PaiExtensions<'a> {
+impl<'a> CertType<'a> for PaiExtensions<'a> {
     fn subject_key_id(&self) -> Option<&'a [u8]> {
         Some(self.subject_key_id.value.as_bytes())
     }
@@ -714,7 +715,7 @@ impl<'a> EncodeValue for PaaExtensions<'a> {
     }
 }
 
-impl<'a> CertExtensions<'a> for PaaExtensions<'a> {
+impl<'a> CertType<'a> for PaaExtensions<'a> {
     fn subject_key_id(&self) -> Option<&'a [u8]> {
         Some(self.subject_key_id.value.as_bytes())
     }
@@ -782,7 +783,7 @@ struct Validity {
 ///   extensions [3] EXPLICIT Extensions
 /// }
 #[allow(unused)]
-struct TbsCertificate<'a, E: CertExtensions<'a>> {
+struct TbsCertificate<'a, E: CertType<'a>> {
     /// Version number (0=v1, 1=v2, 2=v3).
     version: UintRef<'a>,
     /// Raw bytes of the serial number INTEGER value.
@@ -801,7 +802,7 @@ struct TbsCertificate<'a, E: CertExtensions<'a>> {
     extensions: E,
 }
 
-impl<'a, E: CertExtensions<'a>> DecodeValue<'a> for TbsCertificate<'a, E> {
+impl<'a, E: CertType<'a>> DecodeValue<'a> for TbsCertificate<'a, E> {
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
         reader.read_nested(header.length, |reader| {
             let version = reader
@@ -872,12 +873,12 @@ impl<'a, E: CertExtensions<'a>> DecodeValue<'a> for TbsCertificate<'a, E> {
     }
 }
 
-impl<'a, E: CertExtensions<'a>> der::FixedTag for TbsCertificate<'a, E> {
+impl<'a, E: CertType<'a>> der::FixedTag for TbsCertificate<'a, E> {
     const TAG: Tag = Tag::Sequence;
 }
 
 // TODO Remove when upgrading to der 0.8+ which separates Encode/Decode traits.
-impl<'a, E: CertExtensions<'a>> EncodeValue for TbsCertificate<'a, E> {
+impl<'a, E: CertType<'a>> EncodeValue for TbsCertificate<'a, E> {
     fn value_len(&self) -> der::Result<der::Length> {
         unimplemented!("PaaExtensions encoding is not supported")
     }
@@ -898,7 +899,7 @@ impl<'a, E: CertExtensions<'a>> EncodeValue for TbsCertificate<'a, E> {
 /// }
 #[allow(unused)]
 #[derive(Sequence)]
-struct Certificate<'a, E: CertExtensions<'a>> {
+struct Certificate<'a, E: CertType<'a>> {
     tbs_certificate: TbsCertificate<'a, E>,
     signature_algorithm: AlgorithmIdentifier<'a>,
     signature_value: BitStringRef<'a>,
@@ -965,11 +966,11 @@ fn time_to_unix_secs(time: &Time) -> Result<u64, Error> {
 /// let pubkey = cert.public_key()?;
 /// let vid = cert.vendor_id()?;
 /// ```
-pub struct X509Cert<'a, E: CertExtensions<'a>> {
+pub struct X509Cert<'a, E: CertType<'a>> {
     cert: Certificate<'a, E>,
 }
 
-impl<'a, E: CertExtensions<'a>> X509Cert<'a, E> {
+impl<'a, E: CertType<'a>> X509Cert<'a, E> {
     /// Create a new `X509Cert` from DER-encoded certificate bytes.
     ///
     /// Validates that the certificate parses correctly and has the required
@@ -1013,14 +1014,14 @@ impl<'a, E: CertExtensions<'a>> X509Cert<'a, E> {
     /// excluding the unused-bits prefix byte. For P-256 this is the 65-byte
     /// uncompressed point (0x04 || X || Y).
     pub fn public_key(&self) -> Result<&'a [u8], Error> {
-        let spli_bytes = &self
+        let spki_bytes = &self
             .cert
             .tbs_certificate
             .subject_public_key_info
             .subject_public_key
             .raw_bytes();
 
-        Ok(spli_bytes)
+        Ok(spki_bytes)
     }
 
     /// Extract the Matter Vendor ID from the Subject DN.
