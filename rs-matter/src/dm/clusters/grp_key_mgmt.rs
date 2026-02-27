@@ -19,6 +19,7 @@
 
 use core::num::NonZeroU8;
 
+use crate::crypto::AEAD_CANON_KEY_LEN;
 use crate::dm::{
     ArrayAttributeRead, ArrayAttributeWrite, Cluster, Dataver, InvokeContext, ReadContext,
     WriteContext,
@@ -306,7 +307,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         }
 
         // Validate EpochKey0 length must be 16
-        if epoch_key_0_val.0.len() != 16 {
+        if epoch_key_0_val.0.len() != AEAD_CANON_KEY_LEN {
             return Err(ErrorCode::ConstraintError.into());
         }
 
@@ -342,7 +343,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
             let &epoch_start_time_1_val = epoch_start_time_1.as_opt_ref().unwrap();
 
             // Validate key length
-            if epoch_key_1_val.0.len() != 16 {
+            if epoch_key_1_val.0.len() != AEAD_CANON_KEY_LEN {
                 return Err(ErrorCode::ConstraintError.into());
             }
 
@@ -376,7 +377,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                 let &epoch_start_time_2_val = epoch_start_time_2.as_opt_ref().unwrap();
 
                 // Validate key length
-                if epoch_key_2_val.0.len() != 16 {
+                if epoch_key_2_val.0.len() != AEAD_CANON_KEY_LEN {
                     return Err(ErrorCode::ConstraintError.into());
                 }
 
