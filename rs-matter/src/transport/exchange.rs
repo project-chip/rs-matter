@@ -210,7 +210,11 @@ impl ExchangeId {
 
     fn accessor<'a>(&self, matter: &'a Matter<'a>) -> Result<Accessor<'a>, Error> {
         self.with_session(matter, |sess| {
-            Ok(Accessor::for_session(sess, &matter.fabric_mgr))
+            Ok(Accessor::for_session(
+                sess,
+                &matter.fabric_mgr,
+                matter.group_store(),
+            ))
         })
     }
 

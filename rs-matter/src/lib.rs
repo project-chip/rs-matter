@@ -86,9 +86,9 @@ use crate::dm::clusters::basic_info::{BasicInfoConfig, BasicInfoSettings};
 use crate::dm::clusters::dev_att::DeviceAttestation;
 use crate::dm::{BasicContextInstance, ChangeNotify};
 use crate::error::{Error, ErrorCode};
-use crate::fabric::MAX_GROUPS_PER_FABRIC;
 use crate::fabric::{FabricMgr, MAX_FABRICS};
 use crate::failsafe::FailSafe;
+use crate::group_keys::{GroupStore, MAX_GROUPS_PER_FABRIC};
 use crate::pairing::qr::{
     no_optional_data, CommFlowType, NoOptionalData, Qr, QrPayload, QrTextType,
 };
@@ -263,6 +263,7 @@ pub struct Matter<'a> {
     dev_det: &'a BasicInfoConfig<'a>,
     dev_comm: BasicCommData,
     dev_att: &'a dyn DeviceAttestation,
+    group_store: Option<&'a dyn GroupStore>,
     port: u16,
 }
 
@@ -288,6 +289,11 @@ impl<'a> Matter<'a> {
         use crate::utils::epoch::sys_epoch;
 
         Self::new(dev_det, dev_comm, dev_att, sys_epoch, port)
+    }
+
+    /// Set the group store on this Matter instance.
+    pub fn set_group_store(&mut self, group_store: &'a dyn GroupStore) {
+        self.group_store = Some(group_store);
     }
 
     /// Create a new Matter object
@@ -323,6 +329,7 @@ impl<'a> Matter<'a> {
             dev_det,
             dev_comm,
             dev_att,
+            group_store: None,
             port,
         }
     }
@@ -383,6 +390,7 @@ impl<'a> Matter<'a> {
                 dev_det,
                 dev_comm,
                 dev_att,
+                group_store: None,
                 port,
             }
         )
@@ -398,6 +406,10 @@ impl<'a> Matter<'a> {
 
     pub fn dev_att(&self) -> &dyn DeviceAttestation {
         self.dev_att
+    }
+
+    pub fn group_store(&self) -> Option<&dyn GroupStore> {
+        self.group_store
     }
 
     pub fn dev_comm(&self) -> &BasicCommData {
@@ -574,53 +586,78 @@ impl<'a> Matter<'a> {
         self.pase_mgr.borrow_mut().close_comm_window(ctx)
     }
 
-    /// Rebuild the group operational key cache from the current fabric state.
-    fn rebuild_group_op_keys<C: Crypto>(&self, crypto: &C) {
-        let fm = self.fabric_mgr.borrow();
-        self.transport_mgr
-            .session_mgr
-            .borrow_mut()
-            .rebuild_group_op_keys(crypto, &fm);
-    }
-
-    /// Watch for fabric/group key changes, rebuild the op-key cache, and join new IPv6
+    /// Watch for fabric/group key changes and join new IPv6
     /// multicast groups as group key maps change.
     /// Runs forever (never returns).
-    fn watch_group_membership<'t, C, M>(
+    /// TODO: Refactor this so that multicast is joined / left as groups are added / removed,
+    /// Instead of a long running task.
+    fn watch_group_membership<'t, M>(
         &'t self,
-        crypto: C,
         mut multicast_network: M,
     ) -> impl Future<Output = ()> + 't
     where
-        C: Crypto + 't,
         M: NetworkMulticast + 't,
     {
         async move {
+            let Some(group_store) = self.group_store else {
+                // No group store configured, just wait forever
+                core::future::pending::<()>().await;
+                return;
+            };
+
             const MAX_ADDRS: usize = MAX_FABRICS * MAX_GROUPS_PER_FABRIC;
+            // TODO: Large buffer
             let mut joined: heapless::Vec<Ipv6Addr, MAX_ADDRS> = heapless::Vec::new();
 
             loop {
-                self.rebuild_group_op_keys(&crypto);
+                // Iterate fabrics and group entries via the group store
+                let fm = self.fabric_mgr.borrow();
+                for fabric in fm.iter() {
+                    let fab_idx = fabric.fab_idx();
+                    let fabric_id = fabric.fabric_id();
 
-                for fabric in self.fabric_mgr.borrow().iter() {
-                    for group_entry in fabric.group_iter() {
+                    group_store.for_each_group(Some(fab_idx), &mut |_fab_idx, group_entry| {
                         let addr = crate::utils::ipv6::compute_group_multicast_addr(
-                            fabric.fabric_id(),
+                            fabric_id,
                             group_entry.group_id,
                         );
 
                         if !joined.contains(&addr) {
-                            // TODO: unregister when group is removed.
-                            match multicast_network.register_multicast(addr.into()).await {
-                                Ok(_) => {
-                                    debug!("Registered multicast address: {}", addr);
-                                    // `joined` should be able to contain theoretical maximum number of multicast address
-                                    // So this unwrap should be safe
-                                    unwrap!(joined.push(addr));
-                                },
-                                Err(_) => error!("Failed to register multicast address: {}.\n\t Group communication may not work as expected", addr),
-                            }
+                            // Can't await inside a sync callback, so we do a best-effort approach
+                            // by collecting addresses to join after the loop
                         }
+                    });
+                }
+                drop(fm);
+
+                // Collect addresses that need joining
+                let fm = self.fabric_mgr.borrow();
+                // TODO: Large buffer
+                let mut addrs_to_join: heapless::Vec<Ipv6Addr, MAX_ADDRS> = heapless::Vec::new();
+                for fabric in fm.iter() {
+                    let fab_idx = fabric.fab_idx();
+                    let fabric_id = fabric.fabric_id();
+
+                    group_store.for_each_group(Some(fab_idx), &mut |_fab_idx, group_entry| {
+                        let addr = crate::utils::ipv6::compute_group_multicast_addr(
+                            fabric_id,
+                            group_entry.group_id,
+                        );
+
+                        if !joined.contains(&addr) {
+                            let _ = addrs_to_join.push(addr);
+                        }
+                    });
+                }
+                drop(fm);
+
+                for addr in &addrs_to_join {
+                    match multicast_network.register_multicast((*addr).into()).await {
+                        Ok(_) => {
+                            debug!("Registered multicast address: {}", addr);
+                            unwrap!(joined.push(*addr));
+                        },
+                        Err(_) => error!("Failed to register multicast address: {}.\n\t Group communication may not work as expected", addr),
                     }
                 }
 
@@ -658,9 +695,7 @@ impl<'a> Matter<'a> {
     {
         let mut transport = pin!(self.run_transport(&crypto, send, recv));
         let mut group_key_watcher = match multicast {
-            Some(multicast) => pin!(either::Either::Left(
-                self.watch_group_membership(&crypto, multicast)
-            )),
+            Some(multicast) => pin!(either::Either::Left(self.watch_group_membership(multicast))),
             None => pin!(either::Either::Right(core::future::pending::<()>())),
         };
 
@@ -694,7 +729,17 @@ impl<'a> Matter<'a> {
         R: NetworkReceive + 't,
         C: Crypto + 't,
     {
-        async move { self.transport_mgr.run(&crypto, send, recv).await }
+        let group_store = self.group_store.unwrap_or_else(|| {
+            // Fallback to a dummy that will fail for group messages
+            // This should be avoided by always setting group_store via set_group_store()
+            panic!("group_store must be configured for group message decryption")
+        });
+
+        async move {
+            self.transport_mgr
+                .run(&crypto, send, recv, &self.fabric_mgr, group_store)
+                .await
+        }
     }
     /// Reset the Matter state by removing all fabrics and resetting basic info settings
     ///

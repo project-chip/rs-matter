@@ -60,6 +60,7 @@ use rs_matter::dm::{
     Node,
 };
 use rs_matter::error::Error;
+use rs_matter::group_keys::GroupStoreImpl;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
@@ -126,7 +127,11 @@ fn main() -> Result<(), Error> {
 
 fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), Error> {
     // Create the Matter object
-    let matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+    let mut matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+
+    // Configure the group store for groupcast support
+    let group_store = Box::leak(Box::new(GroupStoreImpl::<2>::new())); // 1 endpoint + root endpoint
+    matter.set_group_store(group_store);
 
     // Need to call this once
     matter.initialize_transport_buffers()?;

@@ -695,7 +695,13 @@ mod test {
         expected: &[Result<Result<GenericPath, IMStatusCode>, ErrorCode>],
     ) {
         let fab_mgr = RefCell::new(FabricMgr::new());
-        let accessor = Accessor::new(0, AccessorSubjects::new(0), Some(AuthMode::Pase), &fab_mgr);
+        let accessor = Accessor::new(
+            0,
+            AccessorSubjects::new(0),
+            Some(AuthMode::Pase),
+            &fab_mgr,
+            None,
+        );
 
         let expander =
             PathExpander::new(node, &accessor, false, Some(input.iter().cloned().map(Ok)));

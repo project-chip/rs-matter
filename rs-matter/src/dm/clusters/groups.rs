@@ -21,6 +21,7 @@ use core::num::NonZeroU8;
 
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
+use crate::group_keys::GroupStore;
 use crate::tlv::{Nullable, TLVBuilderParent};
 use crate::with;
 
@@ -57,19 +58,8 @@ impl GroupsHandler {
     }
 
     /// Check if the fabric has security material (a group key map entry) for the given group ID.
-    fn has_group_material(
-        ctx: &impl InvokeContext,
-        fab_idx: NonZeroU8,
-        group_id: u16,
-    ) -> Result<bool, Error> {
-        let fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow();
-        let fabric = fabric_mgr.get(fab_idx).ok_or(ErrorCode::NotFound)?;
-
-        let result = fabric
-            .group_key_map_iter()
-            .any(|entry| entry.group_id == group_id);
-
-        Ok(result)
+    fn has_group_material(group_store: &dyn GroupStore, fab_idx: NonZeroU8, group_id: u16) -> bool {
+        group_store.has_group_key_map_entry(fab_idx, group_id)
     }
 }
 
@@ -100,6 +90,12 @@ impl ClusterHandler for GroupsHandler {
         let fab_idx =
             NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
+        let group_store = ctx
+            .exchange()
+            .matter()
+            .group_store()
+            .ok_or(ErrorCode::InvalidAction)?;
+
         let group_id = request.group_id()?;
         let group_name: &str = request.group_name()?;
 
@@ -112,7 +108,7 @@ impl ClusterHandler for GroupsHandler {
         }
 
         // Check if group security material is available
-        if !Self::has_group_material(&ctx, fab_idx, group_id)? {
+        if !Self::has_group_material(group_store, fab_idx, group_id) {
             return response
                 .status(STATUS_UNSUPPORTED_ACCESS)?
                 .group_id(group_id)?
@@ -121,12 +117,7 @@ impl ClusterHandler for GroupsHandler {
 
         // Add or update group membership
         let endpoint_id = ctx.cmd().endpoint_id;
-        match ctx.exchange().matter().fabric_mgr.borrow_mut().group_add(
-            fab_idx,
-            group_id,
-            endpoint_id,
-            group_name,
-        ) {
+        match group_store.group_add(fab_idx, group_id, endpoint_id, group_name) {
             Ok(_) => {
                 ctx.exchange().matter().notify_groups_changed();
                 response.status(STATUS_SUCCESS)?.group_id(group_id)?.end()
@@ -148,6 +139,12 @@ impl ClusterHandler for GroupsHandler {
         let fab_idx =
             NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
+        let group_store = ctx
+            .exchange()
+            .matter()
+            .group_store()
+            .ok_or(ErrorCode::InvalidAction)?;
+
         let group_id = request.group_id()?;
 
         // Validate constraints
@@ -160,16 +157,15 @@ impl ClusterHandler for GroupsHandler {
         }
 
         // Check membership for group_id
-        let fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow();
-        let fabric = fabric_mgr.get(fab_idx).ok_or(ErrorCode::NotFound)?;
-
         let endpoint_id = ctx.cmd().endpoint_id;
-        if fabric.has_group(group_id, endpoint_id) {
-            let name = fabric.group_name(group_id).unwrap_or("");
+        if group_store.has_group(fab_idx, group_id, endpoint_id) {
+            let name = group_store
+                .group_name(fab_idx, group_id)?
+                .unwrap_or_default();
             response
                 .status(STATUS_SUCCESS)?
                 .group_id(group_id)?
-                .group_name(name)?
+                .group_name(name.as_str())?
                 .end()
         } else {
             response
@@ -189,10 +185,13 @@ impl ClusterHandler for GroupsHandler {
         let fab_idx =
             NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
-        let request_group_list = request.group_list()?;
+        let group_store = ctx
+            .exchange()
+            .matter()
+            .group_store()
+            .ok_or(ErrorCode::InvalidAction)?;
 
-        let fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow();
-        let fabric = fabric_mgr.get(fab_idx).ok_or(ErrorCode::NotFound)?;
+        let request_group_list = request.group_list()?;
 
         // Capacity is nullable - return null to indicate unknown capacity
         let capacity = Nullable::<u8>::none();
@@ -202,15 +201,20 @@ impl ClusterHandler for GroupsHandler {
 
         if request_group_list.iter().count() == 0 {
             // Return all groups this endpoint is a member of
-            for entry in fabric.group_iter() {
+            // Collect group IDs for this endpoint
+            let mut group_ids: heapless::Vec<u16, 24> = heapless::Vec::new();
+            group_store.for_each_group(Some(fab_idx), &mut |_fab_idx, entry| {
                 if entry.endpoint_id == endpoint_id {
-                    group_list = group_list.push(&entry.group_id)?;
+                    let _ = group_ids.push(entry.group_id);
                 }
+            });
+            for gid in &group_ids {
+                group_list = group_list.push(gid)?;
             }
         } else {
             // Return intersection: only requested groups that this endpoint is a member of
             for gid in request_group_list.into_iter().flatten() {
-                if fabric.has_group(gid, endpoint_id) {
+                if group_store.has_group(fab_idx, gid, endpoint_id) {
                     group_list = group_list.push(&gid)?;
                 }
             }
@@ -228,6 +232,12 @@ impl ClusterHandler for GroupsHandler {
         let fab_idx =
             NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
+        let group_store = ctx
+            .exchange()
+            .matter()
+            .group_store()
+            .ok_or(ErrorCode::InvalidAction)?;
+
         let group_id = request.group_id()?;
 
         // Step 1: Validate constraints
@@ -240,12 +250,7 @@ impl ClusterHandler for GroupsHandler {
 
         // Steps 2-3: Remove membership
         let endpoint_id = ctx.cmd().endpoint_id;
-        let removed = ctx
-            .exchange()
-            .matter()
-            .fabric_mgr
-            .borrow_mut()
-            .group_remove(fab_idx, group_id, endpoint_id)?;
+        let removed = group_store.group_remove(fab_idx, group_id, endpoint_id)?;
 
         if removed {
             ctx.exchange().matter().notify_groups_changed();
@@ -259,12 +264,14 @@ impl ClusterHandler for GroupsHandler {
         let fab_idx =
             NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
-        let endpoint_id = ctx.cmd().endpoint_id;
-        ctx.exchange()
+        let group_store = ctx
+            .exchange()
             .matter()
-            .fabric_mgr
-            .borrow_mut()
-            .group_remove_all_for_endpoint(fab_idx, endpoint_id)?;
+            .group_store()
+            .ok_or(ErrorCode::InvalidAction)?;
+
+        let endpoint_id = ctx.cmd().endpoint_id;
+        group_store.group_remove_all_for_endpoint(fab_idx, endpoint_id)?;
 
         ctx.exchange().matter().notify_groups_changed();
 
