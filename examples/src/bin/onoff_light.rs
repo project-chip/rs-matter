@@ -45,6 +45,7 @@ use rs_matter::dm::{
     Node,
 };
 use rs_matter::error::Error;
+use rs_matter::group_keys::GroupStoreImpl;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
@@ -68,6 +69,7 @@ static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, IMBuffer>> = StaticCell::new();
 static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
 static PSM: StaticCell<Psm<4096>> = StaticCell::new();
+static GROUP_STORE: StaticCell<GroupStoreImpl<2>> = StaticCell::new(); // 1 endpoint + root endpoint
 
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
@@ -107,6 +109,10 @@ fn run() -> Result<(), Error> {
 
     // Need to call this once
     matter.initialize_transport_buffers()?;
+
+    // Configure the group store for groupcast support
+    let group_store = GROUP_STORE.init(GroupStoreImpl::<2>::new());
+    matter.set_group_store(group_store);
 
     // Create the transport buffers
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));

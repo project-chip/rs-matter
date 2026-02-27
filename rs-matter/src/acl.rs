@@ -31,6 +31,7 @@ use crate::dm::clusters::acl::{
 use crate::dm::{Access, ClusterId, EndptId, Privilege};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
+use crate::group_keys::GroupStore;
 use crate::im::GenericPath;
 use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
 use crate::transport::session::{Session, SessionMode, MAX_CAT_IDS_PER_NOC};
@@ -330,11 +331,16 @@ pub struct Accessor<'a> {
     auth_mode: Option<AuthMode>,
     // TODO: Is this the right place for this though, or should we just use a global-acl-handle-get
     fabric_mgr: &'a RefCell<FabricMgr>,
+    group_store: Option<&'a dyn GroupStore>,
 }
 
 impl<'a> Accessor<'a> {
     /// Create a new Accessor object for the given session
-    pub fn for_session(session: &Session, fabric_mgr: &'a RefCell<FabricMgr>) -> Self {
+    pub fn for_session(
+        session: &Session,
+        fabric_mgr: &'a RefCell<FabricMgr>,
+        group_store: Option<&'a dyn GroupStore>,
+    ) -> Self {
         match session.get_session_mode() {
             SessionMode::Case {
                 fab_idx, cat_ids, ..
@@ -346,21 +352,31 @@ impl<'a> Accessor<'a> {
                         let _ = subject.add_catid(i);
                     }
                 }
-                Accessor::new(fab_idx.get(), subject, Some(AuthMode::Case), fabric_mgr)
+                Accessor::new(
+                    fab_idx.get(),
+                    subject,
+                    Some(AuthMode::Case),
+                    fabric_mgr,
+                    group_store,
+                )
             }
             SessionMode::Pase { fab_idx } => Accessor::new(
                 *fab_idx,
                 AccessorSubjects::new(1),
                 Some(AuthMode::Pase),
                 fabric_mgr,
+                group_store,
             ),
             SessionMode::Group { fab_idx, group_id } => Accessor::new(
                 fab_idx.get(),
                 AccessorSubjects::new(*group_id as u64),
                 Some(AuthMode::Group),
                 fabric_mgr,
+                group_store,
             ),
-            SessionMode::PlainText => Accessor::new(0, AccessorSubjects::new(1), None, fabric_mgr),
+            SessionMode::PlainText => {
+                Accessor::new(0, AccessorSubjects::new(1), None, fabric_mgr, group_store)
+            }
         }
     }
 
@@ -371,17 +387,20 @@ impl<'a> Accessor<'a> {
     /// - `subjects`: The subjects of the accessor
     /// - `auth_mode`: The auth mode of the accessor
     /// - `fabric_mgr`: The fabric manager
+    /// - `group_store`: The optional group store
     pub const fn new(
         fab_idx: u8,
         subjects: AccessorSubjects,
         auth_mode: Option<AuthMode>,
         fabric_mgr: &'a RefCell<FabricMgr>,
+        group_store: Option<&'a dyn GroupStore>,
     ) -> Self {
         Self {
             fab_idx,
             subjects,
             auth_mode,
             fabric_mgr,
+            group_store,
         }
     }
 
@@ -406,15 +425,15 @@ impl<'a> Accessor<'a> {
 
         let group_id = self.subjects.0[0] as u16;
 
-        let fm = self.fabric_mgr.borrow();
         let Some(fab_idx) = core::num::NonZeroU8::new(self.fab_idx) else {
             return false;
         };
-        let Some(fabric) = fm.get(fab_idx) else {
+
+        let Some(group_store) = self.group_store else {
             return false;
         };
 
-        fabric.has_group(group_id, endpoint_id)
+        group_store.has_group(fab_idx, group_id, endpoint_id)
     }
 }
 
@@ -836,7 +855,13 @@ pub(crate) mod tests {
     fn test_basic_empty_subject_target() {
         let fm = RefCell::new(FabricMgr::new());
 
-        let accessor = Accessor::new(0, AccessorSubjects::new(112233), Some(AuthMode::Pase), &fm);
+        let accessor = Accessor::new(
+            0,
+            AccessorSubjects::new(112233),
+            Some(AuthMode::Pase),
+            &fm,
+            None,
+        );
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req_pase = AccessReq::new(&accessor, path, Access::READ);
         req_pase.set_target_perms(Access::RWVA);
@@ -844,7 +869,13 @@ pub(crate) mod tests {
         // Always allow for PASE sessions
         assert!(req_pase.allow());
 
-        let accessor = Accessor::new(2, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
+        let accessor = Accessor::new(
+            2,
+            AccessorSubjects::new(112233),
+            Some(AuthMode::Case),
+            &fm,
+            None,
+        );
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -883,7 +914,13 @@ pub(crate) mod tests {
         // Add fabric with ID 1
         fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
 
-        let accessor = Accessor::new(1, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
+        let accessor = Accessor::new(
+            1,
+            AccessorSubjects::new(112233),
+            Some(AuthMode::Case),
+            &fm,
+            None,
+        );
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -916,7 +953,7 @@ pub(crate) mod tests {
         let mut subjects = AccessorSubjects::new(112233);
         subjects.add_catid(gen_noc_cat(allow_cat, v2)).unwrap();
 
-        let accessor = Accessor::new(1, subjects, Some(AuthMode::Case), &fm);
+        let accessor = Accessor::new(1, subjects, Some(AuthMode::Case), &fm, None);
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -956,7 +993,7 @@ pub(crate) mod tests {
         let mut subjects = AccessorSubjects::new(112233);
         subjects.add_catid(gen_noc_cat(allow_cat, v3)).unwrap();
 
-        let accessor = Accessor::new(1, subjects, Some(AuthMode::Case), &fm);
+        let accessor = Accessor::new(1, subjects, Some(AuthMode::Case), &fm, None);
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -982,7 +1019,13 @@ pub(crate) mod tests {
         // Add fabric with ID 1
         fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
 
-        let accessor = Accessor::new(1, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
+        let accessor = Accessor::new(
+            1,
+            AccessorSubjects::new(112233),
+            Some(AuthMode::Case),
+            &fm,
+            None,
+        );
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -1046,7 +1089,13 @@ pub(crate) mod tests {
         // Add fabric with ID 1
         fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
 
-        let accessor = Accessor::new(1, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
+        let accessor = Accessor::new(
+            1,
+            AccessorSubjects::new(112233),
+            Some(AuthMode::Case),
+            &fm,
+            None,
+        );
         let path = GenericPath::new(Some(1), Some(1234), None);
 
         // Create an Exact Match ACL with View privilege
@@ -1093,10 +1142,22 @@ pub(crate) mod tests {
         fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
 
         let path = GenericPath::new(Some(1), Some(1234), None);
-        let accessor2 = Accessor::new(1, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
+        let accessor2 = Accessor::new(
+            1,
+            AccessorSubjects::new(112233),
+            Some(AuthMode::Case),
+            &fm,
+            None,
+        );
         let mut req1 = AccessReq::new(&accessor2, path.clone(), Access::READ);
         req1.set_target_perms(Access::RWVA);
-        let accessor3 = Accessor::new(2, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
+        let accessor3 = Accessor::new(
+            2,
+            AccessorSubjects::new(112233),
+            Some(AuthMode::Case),
+            &fm,
+            None,
+        );
         let mut req2 = AccessReq::new(&accessor3, path, Access::READ);
         req2.set_target_perms(Access::RWVA);
 

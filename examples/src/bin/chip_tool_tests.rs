@@ -57,6 +57,7 @@ use rs_matter::dm::{
     Node,
 };
 use rs_matter::error::Error;
+use rs_matter::group_keys::GroupStoreImpl;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
@@ -94,6 +95,7 @@ static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
 static EVENTS: StaticCell<DefaultEvents> = StaticCell::new();
 static PSM: StaticCell<Psm<32768>> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
+static GROUP_STORE: StaticCell<GroupStoreImpl<3>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     // Enable detailed backtraces for debugging test failures
@@ -124,6 +126,10 @@ fn main() -> Result<(), Error> {
         rs_matter::utils::epoch::sys_epoch,
         MATTER_PORT,
     ));
+
+    // Configure the group store for groupcast support
+    let group_store = GROUP_STORE.init(GroupStoreImpl::<3>::new()); // 2 endpoints + root endpoint
+    matter.set_group_store(group_store);
 
     // Need to call this once
     matter.initialize_transport_buffers()?;

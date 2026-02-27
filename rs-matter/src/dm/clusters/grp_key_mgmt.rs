@@ -25,8 +25,7 @@ use crate::dm::{
     WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::fabric::GrpKeyMapEntry;
-use crate::group_keys::{GroupEpochKeyEntry, GrpKeySetEntry};
+use crate::group_keys::{GroupEpochKeyEntry, GrpKeyMapEntry, GrpKeySetEntry};
 use crate::tlv::{Nullable, Octets, TLVArray, TLVBuilderParent};
 use crate::with;
 
@@ -67,38 +66,60 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<GroupKeyMapStructArrayBuilder<P>, GroupKeyMapStructBuilder<P>>,
     ) -> Result<P, Error> {
-        let fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow();
+        let Some(group_store) = ctx.exchange().matter().group_store() else {
+            // No group store configured — return empty array
+            return match builder {
+                ArrayAttributeRead::ReadAll(builder) => builder.end(),
+                ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
+            };
+        };
         let attr = ctx.attr();
 
-        let mut entries = fabric_mgr
-            .iter()
-            .filter(|fabric| !attr.fab_filter || fabric.fab_idx().get() == attr.fab_idx)
-            .flat_map(|fabric| {
-                fabric
-                    .group_key_map_iter()
-                    .map(move |entry| (fabric.fab_idx(), entry))
+        let fab_filter = if attr.fab_filter {
+            NonZeroU8::new(attr.fab_idx)
+        } else {
+            None
+        };
+
+        // Collect entries into a temporary buffer
+        // TODO: Get rid of this temporary buffer by using the group store directly
+        struct Entry {
+            fab_idx: NonZeroU8,
+            group_id: u16,
+            group_key_set_id: u16,
+        }
+        // TODO: Large buffer
+        let mut entries: heapless::Vec<Entry, 64> = heapless::Vec::new();
+
+        group_store.for_each_group_key_map(fab_filter, &mut |fab_idx, entry| {
+            let _ = entries.push(Entry {
+                fab_idx,
+                group_id: entry.group_id,
+                group_key_set_id: entry.group_key_set_id,
             });
+        });
 
         match builder {
             ArrayAttributeRead::ReadAll(mut builder) => {
-                for (fab_idx, entry) in entries {
+                for entry in &entries {
                     builder = builder
                         .push()?
                         .group_id(entry.group_id)?
                         .group_key_set_id(entry.group_key_set_id)?
-                        .fabric_index(Some(fab_idx.get()))?
+                        .fabric_index(Some(entry.fab_idx.get()))?
                         .end()?;
                 }
                 builder.end()
             }
             ArrayAttributeRead::ReadOne(index, builder) => {
-                let Some((fab_idx, entry)) = entries.nth(index as usize) else {
+                let Some(entry) = entries.get(index as usize) else {
                     return Err(ErrorCode::ConstraintError.into());
                 };
                 builder
                     .group_id(entry.group_id)?
                     .group_key_set_id(entry.group_key_set_id)?
-                    .fabric_index(Some(fab_idx.get()))?
+                    .fabric_index(Some(entry.fab_idx.get()))?
                     .end()
             }
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
@@ -113,11 +134,23 @@ impl ClusterHandler for GrpKeyMgmtHandler {
             GroupInfoMapStructBuilder<P>,
         >,
     ) -> Result<P, Error> {
-        let fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow();
+        let Some(group_store) = ctx.exchange().matter().group_store() else {
+            // No group store configured — return empty array
+            return match builder {
+                ArrayAttributeRead::ReadAll(builder) => builder.end(),
+                ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
+            };
+        };
         let attr = ctx.attr();
 
+        let fab_filter = if attr.fab_filter {
+            NonZeroU8::new(attr.fab_idx)
+        } else {
+            None
+        };
+
         // Build a deduplicated list of (fab_idx, group_id) -> (endpoints, group_name)
-        // by iterating over all group entries across all fabrics
         struct GroupInfo {
             group_id: u16,
             fab_idx: u8,
@@ -127,30 +160,24 @@ impl ClusterHandler for GrpKeyMgmtHandler {
 
         let mut groups: heapless::Vec<GroupInfo, 24> = heapless::Vec::new();
 
-        for fabric in fabric_mgr.iter() {
-            if attr.fab_filter && fabric.fab_idx().get() != attr.fab_idx {
-                continue;
+        group_store.for_each_group(fab_filter, &mut |fab_idx, entry| {
+            if let Some(existing) = groups
+                .iter_mut()
+                .find(|g| g.fab_idx == fab_idx.get() && g.group_id == entry.group_id)
+            {
+                let _ = existing.endpoints.push(entry.endpoint_id);
+            } else {
+                let mut info = GroupInfo {
+                    group_id: entry.group_id,
+                    fab_idx: fab_idx.get(),
+                    endpoints: heapless::Vec::new(),
+                    group_name: heapless::String::new(),
+                };
+                let _ = info.endpoints.push(entry.endpoint_id);
+                let _ = info.group_name.push_str(&entry.group_name);
+                let _ = groups.push(info);
             }
-            for entry in fabric.group_iter() {
-                // Try to find an existing group with the same (fab_idx, group_id)
-                if let Some(existing) = groups
-                    .iter_mut()
-                    .find(|g| g.fab_idx == fabric.fab_idx().get() && g.group_id == entry.group_id)
-                {
-                    let _ = existing.endpoints.push(entry.endpoint_id);
-                } else {
-                    let mut info = GroupInfo {
-                        group_id: entry.group_id,
-                        fab_idx: fabric.fab_idx().get(),
-                        endpoints: heapless::Vec::new(),
-                        group_name: heapless::String::new(),
-                    };
-                    let _ = info.endpoints.push(entry.endpoint_id);
-                    let _ = info.group_name.push_str(&entry.group_name);
-                    let _ = groups.push(info);
-                }
-            }
-        }
+        });
 
         match builder {
             ArrayAttributeRead::ReadAll(mut builder) => {
@@ -190,9 +217,8 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         Ok(ctx
             .exchange()
             .matter()
-            .fabric_mgr
-            .borrow()
-            .max_groups_per_fabric())
+            .group_store()
+            .map_or(0, |gs| gs.max_groups_per_fabric()))
     }
 
     fn max_group_keys_per_fabric(&self, ctx: impl ReadContext) -> Result<u16, Error> {
@@ -200,10 +226,8 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         Ok(ctx
             .exchange()
             .matter()
-            .fabric_mgr
-            .borrow()
-            .max_group_keys_per_fabric()
-            + 1)
+            .group_store()
+            .map_or(1, |gs| gs.max_group_keys_per_fabric() + 1))
     }
 
     fn set_group_key_map(
@@ -213,15 +237,21 @@ impl ClusterHandler for GrpKeyMgmtHandler {
     ) -> Result<(), Error> {
         let fab_idx = NonZeroU8::new(ctx.attr().fab_idx).ok_or(ErrorCode::Invalid)?;
 
-        let mut fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow_mut();
+        let group_store = ctx
+            .exchange()
+            .matter()
+            .group_store()
+            .ok_or(ErrorCode::InvalidAction)?;
 
         match value {
             ArrayAttributeWrite::Replace(list) => {
+                let max_groups: usize = group_store.max_groups_per_fabric().into();
+
                 // First validate all entries
                 let mut count: usize = 0;
                 for entry in &list {
                     count += 1;
-                    if count > fabric_mgr.max_groups_per_fabric().into() {
+                    if count > max_groups {
                         return Err(ErrorCode::Failure.into());
                     }
                     let entry = entry?;
@@ -231,16 +261,16 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                     }
                 }
 
-                // Now replace all entries
-                let entries = list.into_iter().filter_map(|entry| {
-                    let entry = entry.ok()?;
-                    Some(GrpKeyMapEntry {
-                        group_id: entry.group_id().ok()?,
-                        group_key_set_id: entry.group_key_set_id().ok()?,
-                    })
-                });
+                // Collect entries into a temporary buffer
+                let mut entries: heapless::Vec<GrpKeyMapEntry, 32> = heapless::Vec::new();
+                for entry in list.into_iter().flatten() {
+                    let _ = entries.push(GrpKeyMapEntry {
+                        group_id: entry.group_id().unwrap_or(0),
+                        group_key_set_id: entry.group_key_set_id().unwrap_or(0),
+                    });
+                }
 
-                fabric_mgr.group_key_map_replace(fab_idx, entries)?;
+                group_store.group_key_map_replace(fab_idx, &entries)?;
             }
             ArrayAttributeWrite::Add(entry) => {
                 // GroupKeySetID must not be 0
@@ -253,7 +283,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                     group_key_set_id: entry.group_key_set_id()?,
                 };
 
-                fabric_mgr.group_key_map_add(fab_idx, new_entry)?;
+                group_store.group_key_map_add(fab_idx, new_entry)?;
             }
             _ => {
                 return Err(ErrorCode::InvalidAction.into());
@@ -410,8 +440,8 @@ impl ClusterHandler for GrpKeyMgmtHandler {
 
         ctx.exchange()
             .matter()
-            .fabric_mgr
-            .borrow_mut()
+            .group_store()
+            .ok_or(ErrorCode::InvalidAction)?
             .group_key_set_add(fab_idx, entry)?;
 
         ctx.exchange().matter().notify_groups_changed();
@@ -430,10 +460,14 @@ impl ClusterHandler for GrpKeyMgmtHandler {
 
         let group_key_set_id = request.group_key_set_id()?;
 
-        let fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow();
-        let fabric = fabric_mgr.get(fab_idx).ok_or(ErrorCode::NotFound)?;
-        let entry = fabric
-            .group_key_set_get(group_key_set_id)
+        let group_store = ctx
+            .exchange()
+            .matter()
+            .group_store()
+            .ok_or(ErrorCode::InvalidAction)?;
+
+        let entry = group_store
+            .group_key_set_get(fab_idx, group_key_set_id)?
             .ok_or(ErrorCode::NotFound)?;
 
         // Build response: epoch keys are always null, start times are preserved
@@ -484,8 +518,8 @@ impl ClusterHandler for GrpKeyMgmtHandler {
 
         ctx.exchange()
             .matter()
-            .fabric_mgr
-            .borrow_mut()
+            .group_store()
+            .ok_or(ErrorCode::InvalidAction)?
             .group_key_set_remove(fab_idx, group_key_set_id)?;
 
         ctx.exchange().matter().notify_groups_changed();
@@ -501,14 +535,23 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         let fab_idx =
             NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
-        let fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow();
-        let fabric = fabric_mgr.get(fab_idx).ok_or(ErrorCode::NotFound)?;
+        let group_store = ctx
+            .exchange()
+            .matter()
+            .group_store()
+            .ok_or(ErrorCode::InvalidAction)?;
 
         // Always include IPK (0) plus all stored key set IDs
         let mut ids = response.group_key_set_i_ds()?;
         ids = ids.push(&0u16)?;
-        for entry in fabric.group_key_set_iter() {
-            ids = ids.push(&entry.group_key_set_id)?;
+
+        let mut key_set_ids: heapless::Vec<u16, 8> = heapless::Vec::new();
+        group_store.for_each_group_key_set(Some(fab_idx), &mut |_fab_idx, entry| {
+            let _ = key_set_ids.push(entry.group_key_set_id);
+        });
+
+        for id in &key_set_ids {
+            ids = ids.push(id)?;
         }
         ids.end()?.end()
     }

@@ -27,8 +27,8 @@ use crate::crypto::{
     canon, CanonAeadKey, CanonAeadKeyRef, Crypto, CryptoSensitive, Kdf, AEAD_KEY_ZEROED,
 };
 use crate::error::*;
-use crate::fabric::{FabricMgr, MAX_FABRICS, MAX_GROUPS_PER_FABRIC};
-use crate::group_keys::KeySet;
+use crate::fabric::FabricMgr;
+use crate::group_keys::{GroupStore, KeySet};
 
 use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::ReliableMessage;
@@ -50,10 +50,6 @@ use super::Packet;
 pub const MAX_CAT_IDS_PER_NOC: usize = 3;
 pub type NocCatIds = [u32; MAX_CAT_IDS_PER_NOC];
 
-/// Max number of pre-cached group operational keys.
-/// Each fabric can have up to [`MAX_GROUP_KEY_MAP_ENTRIES_PER_FABRIC`] key map entries × 3 epoch keys.
-pub const MAX_GROUP_OP_KEYS: usize = MAX_FABRICS * MAX_GROUPS_PER_FABRIC * 3;
-
 pub const ATT_CHALLENGE_LEN: usize = 16;
 
 canon!(
@@ -62,17 +58,6 @@ canon!(
     AttChallenge,
     AttChallengeRef
 );
-
-/// A pre-derived group operational key entry for the session layer cache.
-pub struct GroupOpKeyEntry {
-    pub fab_idx: NonZeroU8,
-    pub key_set_id: u16,
-    pub group_id: u16,
-    /// The derived Group Session ID for fast filtering.
-    pub session_id: u16,
-    /// The pre-derived operational key.
-    pub op_key: CanonAeadKey,
-}
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -689,7 +674,6 @@ pub struct SessionMgr {
     next_sess_id: u16,
     next_exch_id: u16,
     sessions: crate::utils::storage::Vec<Session, MAX_SESSIONS>,
-    group_op_keys: crate::utils::storage::Vec<GroupOpKeyEntry, MAX_GROUP_OP_KEYS>,
     group_ctr_store: GroupCtrStore,
     pub(crate) epoch: Epoch,
 }
@@ -700,7 +684,6 @@ impl SessionMgr {
     pub const fn new(epoch: Epoch) -> Self {
         Self {
             sessions: crate::utils::storage::Vec::new(),
-            group_op_keys: crate::utils::storage::Vec::new(),
             group_ctr_store: GroupCtrStore::new(),
             next_sess_unique_id: 0,
             next_sess_id: 1,
@@ -713,7 +696,6 @@ impl SessionMgr {
     pub fn init(epoch: Epoch) -> impl Init<Self> {
         init!(Self {
             sessions <- crate::utils::storage::Vec::init(),
-            group_op_keys: crate::utils::storage::Vec::new(),
             group_ctr_store: GroupCtrStore::new(),
             next_sess_unique_id: 0,
             next_sess_id: 1,
@@ -724,72 +706,17 @@ impl SessionMgr {
 
     pub fn reset(&mut self) {
         self.sessions.clear();
-        self.group_op_keys.clear();
         self.group_ctr_store = GroupCtrStore::new();
         self.next_sess_id = 1;
         self.next_exch_id = 1;
     }
 
-    /// Rebuild the group operational key cache from the current fabric state.
-    ///
-    /// Pre-derives all group operational keys so that the transport layer
-    /// can decrypt group messages without needing access to `FabricMgr`.
-    pub fn rebuild_group_op_keys<C: Crypto>(&mut self, crypto: &C, fabric_mgr: &FabricMgr) {
-        self.group_op_keys.clear();
-
-        for fabric in fabric_mgr.iter() {
-            let fab_idx = fabric.fab_idx();
-            let compressed_fabric_id = fabric.compressed_fabric_id();
-
-            // For each group key map entry, derive op keys from the referenced key set
-            for map_entry in fabric.group_key_map_iter() {
-                let Some(key_set_entry) = fabric.group_key_set_get(map_entry.group_key_set_id)
-                else {
-                    continue;
-                };
-
-                for epoch_key_entry in key_set_entry.epoch_keys.iter() {
-                    let mut temp_key_set = KeySet::new();
-                    if temp_key_set
-                        .update(
-                            crypto,
-                            epoch_key_entry.epoch_key.reference(),
-                            &compressed_fabric_id,
-                        )
-                        .is_err()
-                    {
-                        continue;
-                    }
-
-                    let op_key_ref = temp_key_set.op_key();
-                    if let Ok(session_id) = derive_group_session_id(crypto, op_key_ref) {
-                        let mut op_key = AEAD_KEY_ZEROED;
-                        op_key.load(op_key_ref);
-                        if let Err(_err) = self.group_op_keys.push(GroupOpKeyEntry {
-                            fab_idx,
-                            key_set_id: map_entry.group_key_set_id,
-                            group_id: map_entry.group_id,
-                            session_id,
-                            op_key,
-                        }) {
-                            warn!("Failed to save the operational keys for fabric index: {} group: {}", fab_idx, map_entry.group_id);
-                        };
-                    }
-                }
-            }
-        }
-
-        debug!(
-            "Group: Rebuilt op key cache with {} entries",
-            self.group_op_keys.len()
-        );
-    }
-
     /// Attempt to decrypt and accept a group (multicast) message.
     ///
-    /// Iterates over pre-cached group operational keys matching the packet's
-    /// `(session_id, group_id)`, tries to decrypt with each, validates the
-    /// group message counter, and creates an ephemeral group session on success.
+    /// Derives group operational keys on-demand by iterating through all fabrics
+    /// and group key maps, filtering by session_id and group_id, then attempting
+    /// decryption. Validates the group message counter and creates an ephemeral
+    /// group session on success.
     ///
     /// Returns the created session and payload range, mirroring how unicast
     /// uses `get_for_rx()` + `decode_remaining()`.
@@ -797,6 +724,8 @@ impl SessionMgr {
         &mut self,
         crypto: &C,
         packet: &mut Packet<N>,
+        fabric_mgr: &FabricMgr,
+        group_store: &dyn GroupStore,
     ) -> Result<(&mut Session, (usize, usize)), Error> {
         let src_nodeid = packet
             .header
@@ -820,33 +749,85 @@ impl SessionMgr {
         let mut pb = ParseBuf::new(&mut packet.buf[packet.payload_start..]);
         packet.header.plain.decode(&mut pb)?;
 
-        // Save the current
+        // Save the encrypted portion for retry using different key
         let encrypted_offset = pb.read_off();
         let encrypted_len = pb.as_slice().len();
+        // TODO: Large buffer
         let mut saved_encrypted = [0u8; 1280];
         if encrypted_len > saved_encrypted.len() {
             return Err(ErrorCode::BufferTooSmall.into());
         }
         saved_encrypted[..encrypted_len].copy_from_slice(pb.as_slice());
 
-        // Try cached keys matching session_id AND group_id
+        // Try to decrypt with on-demand derived keys from all fabrics
         let mut group_key_found: Option<(NonZeroU8, (usize, usize))> = None;
 
-        for entry in &self.group_op_keys {
-            if entry.session_id != expected_sess_id || entry.group_id != group_id {
-                continue;
-            }
+        for fabric in fabric_mgr.iter() {
+            let fab_idx = fabric.fab_idx();
+            let compressed_fabric_id = fabric.compressed_fabric_id();
 
-            if let Some(payload_range) = Self::try_group_decrypt(
-                crypto,
-                packet,
-                &saved_encrypted[..encrypted_len],
-                encrypted_offset,
-                entry.op_key.reference(),
-                src_nodeid,
-            ) {
-                group_key_found = Some((entry.fab_idx, payload_range));
-                break;
+            // Iterate through group key maps for this fabric
+            group_store.for_each_group_key_map(Some(fab_idx), &mut |_, map_entry| {
+                // Filter by group_id first
+                if map_entry.group_id != group_id {
+                    return;
+                }
+
+                // Get the key set for this map entry
+                let Ok(Some(key_set_entry)) =
+                    group_store.group_key_set_get(fab_idx, map_entry.group_key_set_id)
+                else {
+                    return;
+                };
+
+                // Try each epoch key in the key set
+                for epoch_key_entry in key_set_entry.epoch_keys.iter() {
+                    let mut temp_key_set = KeySet::new();
+                    if temp_key_set
+                        .update(
+                            crypto,
+                            epoch_key_entry.epoch_key.reference(),
+                            &compressed_fabric_id,
+                        )
+                        .is_err()
+                    {
+                        continue;
+                    }
+
+                    // Derive the operational key
+                    let op_key_ref = temp_key_set.op_key();
+
+                    // Derive session_id to filter by (session_id, group_id)
+                    let Ok(derived_sess_id) = derive_group_session_id(crypto, op_key_ref) else {
+                        continue;
+                    };
+
+                    // CRITICAL FILTER: Only try if session_id matches
+                    // This ensures we only try the correct fabric's key
+                    if derived_sess_id != expected_sess_id {
+                        continue;
+                    }
+
+                    // Load the key and try decryption
+                    let mut op_key = AEAD_KEY_ZEROED;
+                    op_key.load(op_key_ref);
+
+                    if let Some(payload_range) = Self::try_group_decrypt(
+                        crypto,
+                        packet,
+                        &saved_encrypted[..encrypted_len],
+                        encrypted_offset,
+                        op_key.reference(),
+                        src_nodeid,
+                    ) {
+                        group_key_found = Some((fab_idx, payload_range));
+                        return; // Break from for_each callback
+                    }
+                }
+            });
+
+            if group_key_found.is_some() {
+                break; // Break from fabric loop
             }
         }
 
