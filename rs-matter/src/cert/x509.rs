@@ -111,7 +111,7 @@ struct AttributeTypeAndValue<'a> {
 /// Only extracts Vendor ID and Product ID.
 /// Other standard DN attributes are ignored.
 #[derive(Debug, Clone, Default)]
-struct MatterDnAttrs {
+pub struct MatterDnAttrs {
     /// Matter Vendor ID (OID 1.3.6.1.4.1.37244.2.1)
     vendor_id: Option<u16>,
     /// Matter Product ID (OID 1.3.6.1.4.1.37244.2.2)
@@ -360,9 +360,9 @@ impl<'a> ParsedExtensionFields<'a> {
     }
 }
 
-/// Trait for certificate extension types (DAC, PAI, PAA).
+/// Trait for certificate types (DAC, PAI, PAA).
 ///
-/// Each certificate type has different extension requirements (Matter Spec 6.2).
+/// Each certificate type has different requirements (Matter Spec 6.2).
 /// Implementations must:
 /// - Parse extensions from DER-encoded data
 /// - Validate requirements during parsing (fail if invalid)
@@ -374,6 +374,10 @@ pub trait CertExtensions<'a>: DecodeValue<'a> + der::FixedTag + der::EncodeValue
     /// Get authority key identifier if present for this certificate type
     /// Note: PAA certificates do not have AKID (self-signed)
     fn authority_key_id(&self) -> Option<&'a [u8]>;
+
+    /// Validate issuer and subject fields according to certificate type requirements.
+    /// Called after decoding the extensions to validate the DN constraints.
+    fn validate_issuer_subject(issuer: &MatterDnAttrs, subject: &MatterDnAttrs) -> der::Result<()>;
 }
 
 /// DAC (Device Attestation Certificate) Extensions
@@ -468,6 +472,37 @@ impl<'a> CertExtensions<'a> for DacExtensions<'a> {
 
     fn authority_key_id(&self) -> Option<&'a [u8]> {
         Some(self.authority_key_id.value.key_identifier.as_bytes())
+    }
+
+    fn validate_issuer_subject(issuer: &MatterDnAttrs, subject: &MatterDnAttrs) -> der::Result<()> {
+        // DAC requirements (Matter Spec 6.2.2.3):
+        // Issuer:
+        // - SHALL have exactly one VendorID value present
+        // - SHALL have exactly zero or one ProductID value present
+        let issuer_vid = issuer.vendor_id.ok_or(der::ErrorKind::Failed)?;
+        // ProductID is optional in issuer (zero or one)
+
+        // Subject:
+        // - SHALL have exactly one VendorID value present
+        // - SHALL have exactly one ProductID value present
+        let subject_vid = subject.vendor_id.ok_or(der::ErrorKind::Failed)?;
+        let _subject_pid = subject.product_id.ok_or(der::ErrorKind::Failed)?;
+
+        // The VendorID in issuer SHALL match the VendorID in subject
+        if issuer_vid != subject_vid {
+            return Err(der::ErrorKind::Failed.into());
+        }
+
+        // If ProductID was present in issuer, it SHALL match the ProductID in subject
+        if let Some(issuer_pid) = issuer.product_id {
+            if let Some(subject_pid) = subject.product_id {
+                if issuer_pid != subject_pid {
+                    return Err(der::ErrorKind::Failed.into());
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -566,6 +601,28 @@ impl<'a> CertExtensions<'a> for PaiExtensions<'a> {
 
     fn authority_key_id(&self) -> Option<&'a [u8]> {
         Some(self.authority_key_id.value.key_identifier.as_bytes())
+    }
+
+    fn validate_issuer_subject(issuer: &MatterDnAttrs, subject: &MatterDnAttrs) -> der::Result<()> {
+        // PAI requirements (Matter Spec 6.2.2.4):
+        // Issuer:
+        // - SHALL have exactly zero or one VendorID value present
+        // (VendorID is optional in issuer)
+
+        // Subject:
+        // - SHALL have exactly one VendorID value present
+        // - SHALL have exactly zero or one ProductID value present
+        let subject_vid = subject.vendor_id.ok_or(der::ErrorKind::Failed)?;
+        // ProductID is optional in subject (zero or one)
+
+        // If VendorID was present in issuer, it SHALL match the VendorID in subject
+        if let Some(issuer_vid) = issuer.vendor_id {
+            if issuer_vid != subject_vid {
+                return Err(der::ErrorKind::Failed.into());
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -667,6 +724,27 @@ impl<'a> CertExtensions<'a> for PaaExtensions<'a> {
         self.authority_key_id
             .as_ref()
             .map(|ext| ext.value.key_identifier.as_bytes())
+    }
+
+    fn validate_issuer_subject(issuer: &MatterDnAttrs, subject: &MatterDnAttrs) -> der::Result<()> {
+        // PAA requirements (Matter Spec 6.2.2.5):
+        // Issuer:
+        // - SHALL have exactly zero or one VendorID value present
+        // Subject:
+        // - SHALL have exactly zero or one VendorID value present
+        // - A ProductID value SHALL NOT be present in either subject or issuer
+
+        // ProductID SHALL NOT be present in issuer or subject
+        if issuer.product_id.is_some() || subject.product_id.is_some() {
+            return Err(der::ErrorKind::Failed.into());
+        }
+
+        // Issuer and subject fields SHALL match exactly (for self-signed PAA)
+        if issuer.vendor_id != subject.vendor_id {
+            return Err(der::ErrorKind::Failed.into());
+        }
+
+        Ok(())
     }
 }
 
@@ -776,6 +854,9 @@ impl<'a, E: CertExtensions<'a>> DecodeValue<'a> for TbsCertificate<'a, E> {
             let extensions = reader
                 .context_specific::<E>(TagNumber::new(3), der::TagMode::Explicit)?
                 .ok_or(der::ErrorKind::Failed)?;
+
+            // Validate issuer and subject fields according to certificate type requirements
+            E::validate_issuer_subject(&issuer.attrs, &subject.attrs)?;
 
             Ok(Self {
                 version,
