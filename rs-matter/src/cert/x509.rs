@@ -32,6 +32,7 @@ use der::asn1::{
 };
 use der::{
     Choice, Decode, DecodeValue, EncodeValue, FixedTag, Header, Reader, Sequence, SliceReader, Tag,
+    TagNumber,
 };
 
 /// Type alias for DAC (Device Attestation Certificate)
@@ -628,10 +629,9 @@ struct Validity {
 ///   subjectPublicKeyInfo SubjectPublicKeyInfo,
 ///   extensions [3] EXPLICIT Extensions
 /// }
-#[derive(Sequence)]
+#[allow(unused)]
 struct TbsCertificate<'a, E: CertExtensions<'a>> {
     /// Version number (0=v1, 1=v2, 2=v3).
-    #[asn1(context_specific = "0", tag_mode = "EXPLICIT")]
     version: UintRef<'a>,
     /// Raw bytes of the serial number INTEGER value.
     serial_number: AnyRef<'a>,
@@ -646,44 +646,37 @@ struct TbsCertificate<'a, E: CertExtensions<'a>> {
     /// Subject public key info.
     subject_public_key_info: SubjectPublicKeyInfo<'a>,
     /// Extensions field. Always present for Matter certificates (context tag [3]).
-    #[asn1(context_specific = "3", tag_mode = "EXPLICIT")]
     extensions: E,
 }
 
-/// Top-level Certificate structure.
-///
-/// Generic over extension type E to support DAC, PAI, and PAA certificates.
-///
-/// Certificate ::= SEQUENCE {
-///   tbsCertificate     TBSCertificate,
-///   signatureAlgorithm AlgorithmIdentifier,
-///   signatureValue     BIT STRING
-/// }
-#[allow(unused)]
-struct Certificate<'a, E: CertExtensions<'a>> {
-    tbs_certificate: TbsCertificate<'a, E>,
-    signature_algorithm: AlgorithmIdentifier<'a>,
-    signature_value: BitStringRef<'a>,
-}
-
-impl<'a, E: CertExtensions<'a>> DecodeValue<'a> for Certificate<'a, E> {
+impl<'a, E: CertExtensions<'a>> DecodeValue<'a> for TbsCertificate<'a, E> {
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
         reader.read_nested(header.length, |reader| {
-            let tbs_certificate = TbsCertificate::decode(reader)?;
+            let version = reader
+                .context_specific::<UintRef<'a>>(TagNumber::new(0), der::TagMode::Explicit)?
+                .ok_or(der::ErrorKind::Failed)?;
 
             // Validate that version is 2 (v3 certificate)
-            let version_value = tbs_certificate.version.as_bytes();
+            let version_value = version.as_bytes();
             if version_value.len() != 1 || version_value[0] != 2 {
                 return Err(der::ErrorKind::Failed.into());
             }
 
-            // Validate that signature algorithm in TBS is ECDSA with SHA256
-            if tbs_certificate.signature.algorithm != OID_ECDSA_WITH_SHA256 {
+            let serial_number = AnyRef::decode(reader)?;
+            let signature = AlgorithmIdentifier::decode(reader)?;
+
+            // Validate that signature algorithm is ECDSA with SHA256
+            if signature.algorithm != OID_ECDSA_WITH_SHA256 {
                 return Err(der::ErrorKind::Failed.into());
             }
 
+            let issuer = AnyRef::decode(reader)?;
+            let validity = Validity::decode(reader)?;
+            let subject = AnyRef::decode(reader)?;
+            let subject_public_key_info = SubjectPublicKeyInfo::decode(reader)?;
+
             // Validate that subjectPublicKeyInfo algorithm is ecPublicKey with prime256v1 curve
-            let spki_algo = &tbs_certificate.subject_public_key_info.algorithm;
+            let spki_algo = &subject_public_key_info.algorithm;
             if spki_algo.algorithm != OID_EC_PUBLIC_KEY {
                 return Err(der::ErrorKind::Failed.into());
             }
@@ -700,19 +693,55 @@ impl<'a, E: CertExtensions<'a>> DecodeValue<'a> for Certificate<'a, E> {
                 return Err(der::ErrorKind::Failed.into());
             }
 
-            let signature_algorithm = AlgorithmIdentifier::decode(reader)?;
-            let signature_value = BitStringRef::decode(reader)?;
+            // Decode extensions [3] EXPLICIT
+            let extensions = reader
+                .context_specific::<E>(TagNumber::new(3), der::TagMode::Explicit)?
+                .ok_or(der::ErrorKind::Failed)?;
+
             Ok(Self {
-                tbs_certificate,
-                signature_algorithm,
-                signature_value,
+                version,
+                serial_number,
+                signature,
+                issuer,
+                validity,
+                subject,
+                subject_public_key_info,
+                extensions,
             })
         })
     }
 }
 
-impl<'a, E: CertExtensions<'a>> der::FixedTag for Certificate<'a, E> {
+impl<'a, E: CertExtensions<'a>> der::FixedTag for TbsCertificate<'a, E> {
     const TAG: Tag = Tag::Sequence;
+}
+
+// TODO Remove when upgrading to der 0.8+ which separates Encode/Decode traits.
+impl<'a, E: CertExtensions<'a>> EncodeValue for TbsCertificate<'a, E> {
+    fn value_len(&self) -> der::Result<der::Length> {
+        unimplemented!("PaaExtensions encoding is not supported")
+    }
+
+    fn encode_value(&self, _writer: &mut impl der::Writer) -> der::Result<()> {
+        unimplemented!("PaaExtensions encoding is not supported")
+    }
+}
+
+/// Top-level Certificate structure.
+///
+/// Generic over extension type E to support DAC, PAI, and PAA certificates.
+///
+/// Certificate ::= SEQUENCE {
+///   tbsCertificate     TBSCertificate,
+///   signatureAlgorithm AlgorithmIdentifier,
+///   signatureValue     BIT STRING
+/// }
+#[allow(unused)]
+#[derive(Sequence)]
+struct Certificate<'a, E: CertExtensions<'a>> {
+    tbs_certificate: TbsCertificate<'a, E>,
+    signature_algorithm: AlgorithmIdentifier<'a>,
+    signature_value: BitStringRef<'a>,
 }
 
 /// Parse a hex character (0-9, A-F, a-f) into its numeric value.
