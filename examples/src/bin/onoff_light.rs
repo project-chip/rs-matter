@@ -35,6 +35,7 @@ use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHoo
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
+use rs_matter::dm::events::NO_EVENTS;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::IMBuffer;
@@ -132,6 +133,7 @@ fn run() -> Result<(), Error> {
         &crypto,
         buffers,
         subscriptions,
+        NO_EVENTS,
         dm_handler(rand, &on_off_handler),
     );
 
@@ -171,10 +173,10 @@ fn run() -> Result<(), Error> {
     info!(
         "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B",
         core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS))
+        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS, NO_EVENTS))
     );
 
-    psm.load(&path, matter, NO_NETWORKS)?;
+    psm.load(&path, matter, NO_NETWORKS, NO_EVENTS)?;
 
     if !matter.is_commissioned() {
         // If the device is not commissioned yet, print the QR text and code to the console
@@ -186,7 +188,7 @@ fn run() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
     }
 
-    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS));
+    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, NO_EVENTS));
 
     // Combine all async tasks in a single one
     let all = select4(

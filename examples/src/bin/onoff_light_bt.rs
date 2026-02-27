@@ -50,6 +50,7 @@ use rs_matter::dm::clusters::wifi_diag::WifiDiag;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
+use rs_matter::dm::events::DefaultEvents;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, WifiNetworks};
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
@@ -140,6 +141,9 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
 
     let mut rand = crypto.rand()?;
 
+    // Create the event queue
+    let events = DefaultEvents::new_default();
+
     // Our on-off cluster
     let on_off_handler = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(&mut rand),
@@ -161,6 +165,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         &crypto,
         &buffers,
         &subscriptions,
+        Some(&events),
         dm_handler(rand, &on_off_handler, &net_ctl, &networks),
     );
 
@@ -179,9 +184,9 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     let mut psm: Psm<4096> = Psm::new();
     let path = std::env::temp_dir().join("rs-matter");
 
-    psm.load(&path, &matter, Some(&networks))?;
+    psm.load(&path, &matter, Some(&networks), Some(&events))?;
 
-    let mut persist = pin!(psm.run(&path, &matter, Some(&networks)));
+    let mut persist = pin!(psm.run(&path, &matter, Some(&networks), Some(&events)));
 
     // Create and run the mDNS responder
     let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, &dm));

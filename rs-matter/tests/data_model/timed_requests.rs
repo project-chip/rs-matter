@@ -23,10 +23,10 @@ use rs_matter::transport::exchange::MessageMeta;
 
 use crate::common::e2e::im::attributes::TestAttrData;
 use crate::common::e2e::im::{
-    echo_cluster, ReplyProcessor, TestInvReq, TestInvResp, TestWriteReq, TestWriteResp,
+    echo_cluster, ReplyProcessor, Setup, TestInvReq, TestInvResp, TestWriteReq, TestWriteResp,
 };
 use crate::common::e2e::new_default_runner;
-use crate::common::e2e::test::E2eTest;
+use crate::common::e2e::test::{E2eTest, E2eTestDirection};
 use crate::common::e2e::tlv::TLVTest;
 use crate::common::init_env_logger;
 use crate::{echo_req, echo_resp};
@@ -93,6 +93,8 @@ fn test_timed_write_fail_and_success() {
                 status: IMStatusCode::TimedRequestMisMatch,
             },
             process_reply: ReplyProcessor::none,
+            setup: Setup::none,
+            direction: E2eTestDirection::ClientInitiated,
         },
     );
 
@@ -127,6 +129,8 @@ fn test_timed_write_fail_and_success() {
                     status: IMStatusCode::TimedRequestMisMatch,
                 },
                 process_reply: ReplyProcessor::none,
+                setup: Setup::none,
+                direction: E2eTestDirection::ClientInitiated,
             },
         ],
     );
@@ -165,6 +169,8 @@ fn test_timed_write_fail_and_success() {
                     status: IMStatusCode::Timeout,
                 },
                 process_reply: ReplyProcessor::none,
+                setup: Setup::none,
+                direction: E2eTestDirection::ClientInitiated,
             },
         ],
     );
@@ -279,6 +285,8 @@ fn test_timed_cmd_timeout() {
                     status: IMStatusCode::Timeout,
                 },
                 process_reply: ReplyProcessor::none,
+                setup: Setup::none,
+                direction: E2eTestDirection::ClientInitiated,
             },
         ],
     );
@@ -318,6 +326,8 @@ fn test_timed_cmd_timeout_mismatch() {
                 status: IMStatusCode::TimedRequestMisMatch,
             },
             process_reply: ReplyProcessor::none,
+            setup: Setup::none,
+            direction: E2eTestDirection::ClientInitiated,
         },
     );
 
@@ -352,6 +362,8 @@ fn test_timed_cmd_timeout_mismatch() {
                     status: IMStatusCode::TimedRequestMisMatch,
                 },
                 process_reply: ReplyProcessor::none,
+                setup: Setup::none,
+                direction: E2eTestDirection::ClientInitiated,
             },
         ],
     );

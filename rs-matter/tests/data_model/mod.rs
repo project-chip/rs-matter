@@ -19,5 +19,6 @@ mod acl_and_dataver;
 mod attribute_lists;
 mod attributes;
 mod commands;
+mod events;
 mod long_reads;
 mod timed_requests;

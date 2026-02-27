@@ -35,6 +35,7 @@ use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHoo
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_AGGREGATOR, DEV_TYPE_BRIDGED_NODE, DEV_TYPE_ON_OFF_LIGHT};
 use rs_matter::dm::endpoints;
+use rs_matter::dm::events::DefaultEvents;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
@@ -82,6 +83,9 @@ fn main() -> Result<(), Error> {
 
     let mut rand = crypto.rand()?;
 
+    // Create the events
+    let events = DefaultEvents::new_default();
+
     // Our on-off clusters
     let on_off_handler_ep2 = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(&mut rand),
@@ -100,6 +104,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         &buffers,
         &subscriptions,
+        Some(&events),
         dm_handler(rand, &on_off_handler_ep2, &on_off_handler_ep3),
     );
 
@@ -125,7 +130,7 @@ fn main() -> Result<(), Error> {
     let mut psm: Psm<4096> = Psm::new();
     let path = std::env::temp_dir().join("rs-matter");
 
-    psm.load(&path, &matter, NO_NETWORKS)?;
+    psm.load(&path, &matter, NO_NETWORKS, Some(&events))?;
 
     if !matter.is_commissioned() {
         // If the device is not commissioned yet, print the QR text and code to the console
@@ -137,7 +142,7 @@ fn main() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
     }
 
-    let mut persist = pin!(psm.run(&path, &matter, NO_NETWORKS));
+    let mut persist = pin!(psm.run(&path, &matter, NO_NETWORKS, Some(&events)));
 
     // Combine all async tasks in a single one
     let all = select4(

@@ -113,6 +113,7 @@ bitflags = { version =  "2.5", default-features = false }
 heapless = "0.8"
 num = { version = "0.4", default-features = false }
 num-derive = "0.4"
+num_enum = { version = "0.7.5", default-features = false }
 num-traits = { version = "0.2", default-features = false }
 strum = { version = "0.26", features = ["derive"], default-features = false }
 log = { version = "0.4", optional = true }
@@ -188,3 +189,4 @@ static_cell = "2"
 similar = "2.6"
 embassy-time-queue-utils = { version = "0.3", features = ["generic-queue-64"] }
 trybuild = "1"
+tempfile = "3"

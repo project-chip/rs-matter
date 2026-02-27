@@ -71,6 +71,7 @@ use rs_matter::dm::clusters::wifi_diag::{
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::{SysHandler, WifiHandler};
+use rs_matter::dm::events::{Events, DEFAULT_BYTES_PER_BUF};
 use rs_matter::dm::networks::wireless::{
     NetCtlState, NetCtlStateMutex, NetCtlWithStatusImpl, WifiNetworks, WirelessMgr, MAX_CREDS_SIZE,
 };
@@ -158,6 +159,7 @@ struct MatterStack<'a, M: RawMutex> {
     matter: Matter<'a>, // #258 - Can't generify by the raw mutex
     buffers: PooledBuffers<10, M, IMBuffer>,
     subscriptions: Subscriptions<{ DEFAULT_MAX_SUBSCRIPTIONS }, M>,
+    events: Events<DEFAULT_BYTES_PER_BUF, M>,
     networks: WifiNetworks<3, M>,
     net_ctl_state: NetCtlStateMutex<M>,
     btp_context: BtpContext<CriticalSectionRawMutex>, // Need to be shareable across threads, for now
@@ -179,6 +181,7 @@ impl<'a, M: RawMutex> MatterStack<'a, M> {
             ),
             buffers <- PooledBuffers::init(0),
             subscriptions <- Subscriptions::init(),
+            events <- Events::init(dummy_epoch),
             networks <- WifiNetworks::init(),
             net_ctl_state <- NetCtlState::init_with_mutex(),
             btp_context <- BtpContext::init(),
@@ -206,6 +209,7 @@ type AppDmHandler<'a> = WifiHandler<'a, &'a AppNetCtl<'a>, SysHandler<'a, AppHan
 type AppDataModel<'a> = DataModel<
     'a,
     DEFAULT_MAX_SUBSCRIPTIONS,
+    DEFAULT_BYTES_PER_BUF,
     &'a AppCrypto,
     PooledBuffers<10, NoopRawMutex, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
@@ -214,6 +218,7 @@ type AppResponder<'d, 'a> = DefaultResponder<
     'd,
     'a,
     DEFAULT_MAX_SUBSCRIPTIONS,
+    DEFAULT_BYTES_PER_BUF,
     &'a AppCrypto,
     PooledBuffers<10, NoopRawMutex, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
@@ -272,6 +277,7 @@ fn main() -> ! {
         size_of_val(&stack.subscriptions),
         &mut stack_total,
     );
+    report_size("Events", size_of_val(&stack.events), &mut stack_total);
     report_size("Networks", size_of_val(&stack.networks), &mut stack_total);
     report_size(
         "NetCtl state",
@@ -357,6 +363,7 @@ fn main() -> ! {
             crypto,
             &stack.buffers,
             &stack.subscriptions,
+            Some(&stack.events),
             (NODE, handler),
         )
     );
