@@ -131,7 +131,7 @@ fn run() -> Result<(), Error> {
     let on_off_handler = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(&mut rand),
         1,
-        TestOnOffDeviceLogic::new(true),
+        TestOnOffDeviceLogic::new(false),
     );
 
     // Create the Data Model instance
