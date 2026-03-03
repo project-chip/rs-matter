@@ -31,40 +31,265 @@
 //!
 //! Reference: connectedhomeip `src/credentials/CertificationDeclaration.cpp`
 
-use crate::cert::x509::DerReader;
 use crate::credentials::cd_keys::{self, KEY_IDENTIFIER_LEN};
 use crate::crypto::{CanonPkcPublicKeyRef, CanonPkcSignatureRef, Crypto, PublicKey};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVElement, TLVSequence};
 
-/// ASN.1 DER tag constants
-const TAG_INTEGER: u8 = 0x02;
-const TAG_OCTET_STRING: u8 = 0x04;
-const TAG_OID: u8 = 0x06;
-const TAG_SEQUENCE: u8 = 0x30;
-const TAG_SET: u8 = 0x31;
-
-/// Context specific tags
-const TAG_CONTEXT_0: u8 = 0xA0;
-const TAG_CONTEXT_0_PRIM: u8 = 0x80; // SubjectKeyIdentifier in SignerInfo
+use der::asn1::{AnyRef, ObjectIdentifier, OctetStringRef};
+use der::{
+    Decode, DecodeValue, EncodeValue, FixedTag, Header, Reader, Sequence, SliceReader, Tag,
+    TagNumber, Tagged,
+};
 
 /// https://www.rfc-editor.org/rfc/rfc5652#section-12.1
 /// OID: 1.2.840.113549.1.7.2 (id-signedData)
-const OID_PKCS7_SIGNED_DATA: [u8; 9] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02];
+const OID_PKCS7_SIGNED_DATA: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.2");
 /// OID: 1.2.840.113549.1.7.1 (id-data)
-const OID_PKCS7_DATA: [u8; 9] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x01];
+const OID_PKCS7_DATA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.1");
 
 /// https://www.rfc-editor.org/rfc/rfc5758.html#section-2
 /// OID: 2.16.840.1.101.3.4.2.1 (id-sha256)
-const OID_SHA256: [u8; 9] = [0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01];
+const OID_SHA256: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1");
 /// OID: 1.2.840.10045.4.3.2 (ecdsa-with-SHA256)
-const OID_ECDSA_WITH_SHA256: [u8; 8] = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02];
+const OID_ECDSA_WITH_SHA256: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2");
 
 /// P-256 field element length in bytes (ECDSA signature r and s values).
 const P256_FE_LEN: usize = 32;
 
 /// Raw ECDSA signature length: r (32 bytes) || s (32 bytes).
 const RAW_SIGNATURE_LEN: usize = P256_FE_LEN * 2;
+
+/// AlgorithmIdentifier ::= SEQUENCE {
+///   algorithm  OBJECT IDENTIFIER,
+///   parameters ANY DEFINED BY algorithm OPTIONAL
+/// }
+///
+/// https://www.rfc-editor.org/rfc/rfc8410#section-3
+#[derive(Sequence)]
+struct AlgorithmIdentifier<'a> {
+    algorithm: ObjectIdentifier,
+    parameters: Option<AnyRef<'a>>,
+}
+
+/// ContentInfo ::= SEQUENCE {
+///   contentType OBJECT IDENTIFIER,
+///   content [0] EXPLICIT ANY DEFINED BY contentType
+/// }
+///
+/// https://www.rfc-editor.org/rfc/rfc5652#section-3
+struct ContentInfo<'a> {
+    content_type: ObjectIdentifier,
+    /// The raw bytes of the SignedData SEQUENCE (after [0] EXPLICIT unwrapping)
+    signed_data_bytes: &'a [u8],
+}
+
+impl<'a> DecodeValue<'a> for ContentInfo<'a> {
+    fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
+        reader.read_nested(header.length, |reader| {
+            // contentType OBJECT IDENTIFIER
+            let content_type = ObjectIdentifier::decode(reader)?;
+
+            // content [0] EXPLICIT - we need to unwrap and get the inner bytes
+            // Read the [0] context tag (should be context-specific, constructed, number 0)
+            let context_header = Header::decode(reader)?;
+            // Check for context-specific tag [0] constructed (0xA0)
+            if context_header.tag.number() != TagNumber::new(0)
+                || !context_header.tag.is_constructed()
+            {
+                return Err(der::ErrorKind::Failed.into());
+            }
+
+            // The content inside [0] is the SignedData SEQUENCE (the whole TLV)
+            let signed_data_bytes = reader.read_slice(context_header.length)?;
+
+            Ok(Self {
+                content_type,
+                signed_data_bytes,
+            })
+        })
+    }
+}
+
+impl<'a> FixedTag for ContentInfo<'a> {
+    const TAG: Tag = Tag::Sequence;
+}
+
+// TODO Remove when upgrading to der 0.8+ which separates Encode/Decode traits.
+impl<'a> EncodeValue for ContentInfo<'a> {
+    fn value_len(&self) -> der::Result<der::Length> {
+        unimplemented!("ContentInfo encoding is not supported")
+    }
+
+    fn encode_value(&self, _writer: &mut impl der::Writer) -> der::Result<()> {
+        unimplemented!("ContentInfo encoding is not supported")
+    }
+}
+
+/// EncapsulatedContentInfo ::= SEQUENCE {
+///   eContentType OBJECT IDENTIFIER,
+///   eContent [0] EXPLICIT OCTET STRING
+/// }
+///
+/// https://www.rfc-editor.org/rfc/rfc5652#section-5.2
+#[derive(Sequence)]
+struct EncapsulatedContentInfo<'a> {
+    econtent_type: ObjectIdentifier,
+    #[asn1(context_specific = "0", tag_mode = "EXPLICIT")]
+    econtent: OctetStringRef<'a>,
+}
+
+/// SignedData ::= SEQUENCE {
+///   version INTEGER,
+///   digestAlgorithms DigestAlgorithmIdentifiers,
+///   encapContentInfo EncapsulatedContentInfo,
+///   signerInfos SignerInfos
+/// }
+///
+/// https://www.rfc-editor.org/rfc/rfc5652#section-5.1
+struct SignedData<'a> {
+    version: u8,
+    encap_content_info: EncapsulatedContentInfo<'a>,
+    /// SignerInfos is a SET OF, but store as AnyRef for manual parsing
+    /// to extract the single SignerInfo
+    signer_infos: AnyRef<'a>,
+}
+
+impl<'a> DecodeValue<'a> for SignedData<'a> {
+    fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
+        reader.read_nested(header.length, |reader| {
+            let version = u8::decode(reader)?;
+
+            //  skip digestAlgorithms SET OF
+            let _digest_algorithms = AnyRef::decode(reader)?;
+            if _digest_algorithms.tag() != Tag::Set {
+                return Err(der::ErrorKind::Failed.into());
+            }
+
+            // encapContentInfo EncapsulatedContentInfo
+            let encap_content_info = EncapsulatedContentInfo::decode(reader)?;
+
+            // signerInfos SET OF
+            let signer_infos = AnyRef::decode(reader)?;
+            if signer_infos.tag() != Tag::Set {
+                return Err(der::ErrorKind::Failed.into());
+            }
+
+            Ok(Self {
+                version,
+                encap_content_info,
+                signer_infos,
+            })
+        })
+    }
+}
+
+impl<'a> FixedTag for SignedData<'a> {
+    const TAG: Tag = Tag::Sequence;
+}
+
+// TODO Remove when upgrading to der 0.8+ which separates Encode/Decode traits.
+impl<'a> EncodeValue for SignedData<'a> {
+    fn value_len(&self) -> der::Result<der::Length> {
+        unimplemented!("SignedData encoding is not supported")
+    }
+
+    fn encode_value(&self, _writer: &mut impl der::Writer) -> der::Result<()> {
+        unimplemented!("SignedData encoding is not supported")
+    }
+}
+
+/// SignerInfo ::= SEQUENCE {
+///   version INTEGER,
+///   subjectKeyIdentifier [0] IMPLICIT OCTET STRING,
+///   digestAlgorithm AlgorithmIdentifier,
+///   signatureAlgorithm AlgorithmIdentifier,
+///   signature OCTET STRING
+/// }
+///
+/// Matter-specific SignerInfo with subjectKeyIdentifier instead of SignerIdentifier.
+///
+/// https://www.rfc-editor.org/rfc/rfc5652#section-5.3
+#[allow(dead_code)]
+struct SignerInfo<'a> {
+    version: u8,
+    subject_key_identifier: &'a [u8],
+    digest_algorithm: AlgorithmIdentifier<'a>,
+    signature_algorithm: AlgorithmIdentifier<'a>,
+    signature: OctetStringRef<'a>,
+}
+
+impl<'a> DecodeValue<'a> for SignerInfo<'a> {
+    fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
+        reader.read_nested(header.length, |reader| {
+            // version INTEGER (v3 = 3)
+            let version = u8::decode(reader)?;
+            if version != 3 {
+                return Err(der::ErrorKind::Failed.into());
+            }
+
+            // subjectKeyIdentifier [0] IMPLICIT OCTET STRING
+            let ski_header = Header::decode(reader)?;
+
+            // Check for context-specific tag [0] primitive
+            if ski_header.tag.number() != TagNumber::new(0) || ski_header.tag.is_constructed() {
+                return Err(der::ErrorKind::Failed.into());
+            }
+
+            let subject_key_identifier = reader.read_slice(ski_header.length)?;
+
+            // Validate SKI is exactly 20 bytes
+            if subject_key_identifier.len() != KEY_IDENTIFIER_LEN {
+                return Err(der::ErrorKind::Failed.into());
+            }
+
+            // digestAlgorithm AlgorithmIdentifier
+            let digest_algorithm = AlgorithmIdentifier::decode(reader)?;
+
+            // Validate digest algorithm is SHA256
+            if digest_algorithm.algorithm != OID_SHA256 {
+                return Err(der::ErrorKind::Failed.into());
+            }
+
+            // signatureAlgorithm AlgorithmIdentifier
+            let signature_algorithm = AlgorithmIdentifier::decode(reader)?;
+
+            // Validate signature algorithm is ECDSA with SHA256
+            if signature_algorithm.algorithm != OID_ECDSA_WITH_SHA256 {
+                return Err(der::ErrorKind::Failed.into());
+            }
+
+            // signature OCTET STRING (contains DER-encoded ECDSA signature)
+            let signature = OctetStringRef::decode(reader)?;
+
+            Ok(Self {
+                version,
+                subject_key_identifier,
+                digest_algorithm,
+                signature_algorithm,
+                signature,
+            })
+        })
+    }
+}
+
+impl<'a> FixedTag for SignerInfo<'a> {
+    const TAG: Tag = Tag::Sequence;
+}
+
+// Dummy EncodeValue implementation
+// Required by der version 0.7 for use with #[derive(Sequence)] on structs that contain this type.
+// TODO: Remove when upgrading to der 0.8+ which separates Encode/Decode traits.
+impl<'a> EncodeValue for SignerInfo<'a> {
+    fn value_len(&self) -> der::Result<der::Length> {
+        unimplemented!("SignerInfo encoding is not supported")
+    }
+
+    fn encode_value(&self, _writer: &mut impl der::Writer) -> der::Result<()> {
+        unimplemented!("SignerInfo encoding is not supported")
+    }
+}
 
 /// Parsed contents of a CMS SignedData envelope
 pub struct CmsSignedData<'a> {
@@ -109,62 +334,34 @@ impl<'a> CmsSignedData<'a> {
     /// }
     /// ```
     pub fn parse(cms_message: &'a [u8]) -> Result<Self, Error> {
-        let reader = DerReader::new(cms_message);
+        // Parse ContentInfo
+        let content_info = ContentInfo::from_der(cms_message)
+            .map_err(|_| Error::from(ErrorCode::CdInvalidFormat))?;
 
-        // ContentInfo: SEQUENCE
-        let (tag, content_info, _rest) = reader.enter()?;
-        if tag != TAG_SEQUENCE {
+        // Validate contentType is id-signedData
+        if content_info.content_type != OID_PKCS7_SIGNED_DATA {
             return Err(ErrorCode::CdInvalidFormat.into());
         }
 
-        // ContentInfo.contentType: OID id-signedData (1.2.840.113549.1.7.2)
-        let (tag, oid_value, after_oid) = content_info.read_tlv()?;
-        if tag != TAG_OID || oid_value != OID_PKCS7_SIGNED_DATA {
+        // Parse SignedData from the raw bytes (includes SEQUENCE tag + length + value)
+        let signed_data = SignedData::from_der(content_info.signed_data_bytes)
+            .map_err(|_| Error::from(ErrorCode::CdInvalidFormat))?;
+
+        // Validate version is v3 (3)
+        if signed_data.version != 3 {
             return Err(ErrorCode::CdInvalidFormat.into());
         }
 
-        // ContentInfo.content: [0] EXPLICIT SignedData
-        let context0 = DerReader::new(after_oid);
-        let (tag, signed_data_inner, _rest) = context0.enter()?;
-        if tag != TAG_CONTEXT_0 {
+        // Validate eContentType is pkcs7-data
+        if signed_data.encap_content_info.econtent_type != OID_PKCS7_DATA {
             return Err(ErrorCode::CdInvalidFormat.into());
         }
 
-        // SignedData: SEQUENCE
-        let (tag, signed_data, _rest) = signed_data_inner.enter()?;
-        if tag != TAG_SEQUENCE {
-            return Err(ErrorCode::CdInvalidFormat.into());
-        }
+        // Extract CD content (TLV payload)
+        let cd_content = signed_data.encap_content_info.econtent.as_bytes();
 
-        // SignedData.version: INTEGER v3(3)
-        let (tag, version_bytes, after_version) = signed_data.read_tlv()?;
-        if tag != TAG_INTEGER || version_bytes.len() != 1 || version_bytes[0] != 3 {
-            return Err(ErrorCode::CdInvalidFormat.into());
-        }
-
-        // SignedData.digestAlgorithms: SET { OBJECT IDENTIFIER sha256 }
-        let digest_algos = DerReader::new(after_version);
-        let (tag, _digest_algos_value, after_digest_algos) = digest_algos.read_tlv()?;
-        if tag != TAG_SET {
-            return Err(ErrorCode::CdInvalidFormat.into());
-        }
-
-        // SignedData.encapContentInfo: EncapsulatedContentInfo
-        let encap = DerReader::new(after_digest_algos);
-        let (tag, encap_inner, after_encap) = encap.enter()?;
-        if tag != TAG_SEQUENCE {
-            return Err(ErrorCode::CdInvalidFormat.into());
-        }
-        let cd_content = decode_encapsulated_content(encap_inner)?;
-
-        // SignedData.signerInfos: SET { SignerInfo }
-        let signer_infos = DerReader::new(after_encap);
-        let (tag, signer_infos_inner, _rest) = signer_infos.enter()?;
-        if tag != TAG_SET {
-            return Err(ErrorCode::CdInvalidFormat.into());
-        }
-
-        let (signer_key_id, signature_raw) = decode_signer_info(signer_infos_inner)?;
+        // Parse SignerInfo from signerInfos SET to extract key ID and signature
+        let (signer_key_id, signature_raw) = parse_signer_info(signed_data.signer_infos.value())?;
 
         Ok(Self {
             signer_key_id,
@@ -174,107 +371,20 @@ impl<'a> CmsSignedData<'a> {
     }
 }
 
-/// Decode the EncapsulatedContentInfo to extract the OCTET STRING payload.
+/// Parse SignerInfo from a SET OF content, extracting the Key ID and signature.
 ///
-/// Structure:
-/// ```text
-/// EncapsulatedContentInfo ::= SEQUENCE {
-///   eContentType OBJECT IDENTIFIER pkcs7-data (1.2.840.113549.1.7.1),
-///   eContent [0] EXPLICIT OCTET STRING
-/// }
-/// ```
-fn decode_encapsulated_content<'a>(reader: DerReader<'a>) -> Result<&'a [u8], Error> {
-    // EncapsulatedContentInfo.eContentType: OID pkcs7-data (1.2.840.113549.1.7.1)
-    let (tag, oid_value, after_oid) = reader.read_tlv()?;
-    if tag != TAG_OID || oid_value != OID_PKCS7_DATA {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
+/// The signerInfos field is a SET OF SignerInfo. Matter CDs SHALL have exactly
+/// one SignerInfo. The bytes passed here are the content of the SET (without the SET tag/length).
+fn parse_signer_info(
+    signer_infos_content: &[u8],
+) -> Result<(&[u8], [u8; RAW_SIGNATURE_LEN]), Error> {
+    let signer_info = SignerInfo::from_der(signer_infos_content)
+        .map_err(|_| Error::from(ErrorCode::CdInvalidFormat))?;
 
-    // EncapsulatedContentInfo.eContent: [0] EXPLICIT OCTET STRING
-    let context0 = DerReader::new(after_oid);
-    let (tag, context0_inner, _rest) = context0.enter()?;
-    if tag != TAG_CONTEXT_0 {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
+    // Convert DER-encoded ECDSA signature to raw (r || s) format
+    let signature_raw = ecdsa_der_to_raw(signer_info.signature.as_bytes())?;
 
-    let (tag, content, _rest) = context0_inner.read_tlv()?;
-    if tag != TAG_OCTET_STRING {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-
-    Ok(content)
-}
-
-/// Decode the SignerInfo, extracting the Key ID and converting
-/// the DER-encoded ECDSA signature to raw format.
-///
-/// Structure:
-/// ```text
-/// SignerInfo ::= SEQUENCE {
-///   version INTEGER (v3(3)),
-///   subjectKeyIdentifier [0] IMPLICIT OCTET STRING,
-///   digestAlgorithm OBJECT IDENTIFIER sha256 (2.16.840.1.101.3.4.2.1),
-///   signatureAlgorithm OBJECT IDENTIFIER ecdsa-with-SHA256 (1.2.840.10045.4.3.2),
-///   signature OCTET STRING
-/// }
-/// ```
-fn decode_signer_info<'a>(
-    reader: DerReader<'a>,
-) -> Result<(&'a [u8], [u8; RAW_SIGNATURE_LEN]), Error> {
-    // SignerInfo: SEQUENCE
-    let (tag, signer_info, _rest) = reader.enter()?;
-    if tag != TAG_SEQUENCE {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-
-    // SignerInfo.version: INTEGER v3(3)
-    let (tag, version_bytes, after_version) = signer_info.read_tlv()?;
-    if tag != TAG_INTEGER || version_bytes.len() != 1 || version_bytes[0] != 3 {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-
-    // SignerInfo.subjectKeyIdentifier: [0] IMPLICIT OCTET STRING
-    let kid_reader = DerReader::new(after_version);
-    let (tag, kid, after_kid) = kid_reader.read_tlv()?;
-    if tag != TAG_CONTEXT_0_PRIM {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-    if kid.len() != KEY_IDENTIFIER_LEN {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-
-    // SignerInfo.digestAlgorithm: OBJECT IDENTIFIER sha256
-    let digest_algo = DerReader::new(after_kid);
-    let (tag, digest_algo_inner, after_digest) = digest_algo.enter()?;
-    if tag != TAG_SEQUENCE {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-    let (tag, oid_value, _rest) = digest_algo_inner.read_tlv()?;
-    if tag != TAG_OID || oid_value != OID_SHA256 {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-
-    // SignerInfo.signatureAlgorithm: OBJECT IDENTIFIER ecdsa-with-SHA256
-    let sig_algo = DerReader::new(after_digest);
-    let (tag, sig_algo_inner, after_sig_algo) = sig_algo.enter()?;
-    if tag != TAG_SEQUENCE {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-    let (tag, oid_value, _rest) = sig_algo_inner.read_tlv()?;
-    if tag != TAG_OID || oid_value != OID_ECDSA_WITH_SHA256 {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-
-    // SignerInfo.signature: OCTET STRING (DER-encoded ECDSA signature)
-    let sig_reader = DerReader::new(after_sig_algo);
-    let (tag, sig_der, _rest) = sig_reader.read_tlv()?;
-    if tag != TAG_OCTET_STRING {
-        return Err(ErrorCode::CdInvalidFormat.into());
-    }
-
-    let signature_raw = ecdsa_der_to_raw(sig_der)?;
-
-    Ok((kid, signature_raw))
+    Ok((signer_info.subject_key_identifier, signature_raw))
 }
 
 /// Convert a DER-encoded ECDSA signature to raw (r || s) format.
@@ -285,32 +395,35 @@ fn decode_signer_info<'a>(
 /// DER INTEGERs may have a leading 0x00 byte for positive representation,
 /// which must be stripped. They may also be shorter than 32 bytes.
 fn ecdsa_der_to_raw(der: &[u8]) -> Result<[u8; RAW_SIGNATURE_LEN], Error> {
-    let reader = DerReader::new(der);
+    let mut reader =
+        SliceReader::new(der).map_err(|_| Error::from(ErrorCode::CdInvalidSignature))?;
 
-    // SEQUENCE
-    let (tag, seq_inner, _rest) = reader.enter()?;
-    if tag != TAG_SEQUENCE {
+    // Read the SEQUENCE header
+    let seq_header =
+        Header::decode(&mut reader).map_err(|_| Error::from(ErrorCode::CdInvalidSignature))?;
+
+    if seq_header.tag != Tag::Sequence {
         return Err(ErrorCode::CdInvalidSignature.into());
     }
 
-    let inner = seq_inner;
-
-    // INTEGER r
-    let (tag, r_bytes, after_r) = inner.read_tlv()?;
-    if tag != TAG_INTEGER {
+    // Read INTEGER r
+    let r_any =
+        AnyRef::decode(&mut reader).map_err(|_| Error::from(ErrorCode::CdInvalidSignature))?;
+    if r_any.tag() != Tag::Integer {
         return Err(ErrorCode::CdInvalidSignature.into());
     }
 
-    // INTEGER s
-    let s_reader = DerReader::new(after_r);
-    let (tag, s_bytes, _rest) = s_reader.read_tlv()?;
-    if tag != TAG_INTEGER {
+    // Read INTEGER s
+    let s_any =
+        AnyRef::decode(&mut reader).map_err(|_| Error::from(ErrorCode::CdInvalidSignature))?;
+    if s_any.tag() != Tag::Integer {
         return Err(ErrorCode::CdInvalidSignature.into());
     }
 
+    // Convert to fixed-length raw format
     let mut raw = [0u8; RAW_SIGNATURE_LEN];
-    copy_integer_to_fixed(&mut raw[..P256_FE_LEN], r_bytes)?;
-    copy_integer_to_fixed(&mut raw[P256_FE_LEN..], s_bytes)?;
+    copy_integer_to_fixed(&mut raw[..P256_FE_LEN], r_any.value())?;
+    copy_integer_to_fixed(&mut raw[P256_FE_LEN..], s_any.value())?;
 
     Ok(raw)
 }
