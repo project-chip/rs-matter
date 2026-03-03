@@ -242,12 +242,10 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 
 fn run_exchange_test_internal(device_ip: &str, port: u16) -> Result<(), Error> {
     // Parse the device address
-    let ip: std::net::Ipv6Addr = if let Ok(ipv4) = device_ip.parse::<std::net::Ipv4Addr>() {
-        ipv4.to_ipv6_mapped()
-    } else {
-        device_ip
-            .parse::<std::net::Ipv6Addr>()
-            .map_err(|_| rs_matter::error::ErrorCode::InvalidData)?
+    let ip: std::net::Ipv6Addr = match device_ip.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ipv4)) => ipv4.to_ipv6_mapped(),
+        Ok(std::net::IpAddr::V6(ipv6)) => ipv6,
+        Err(_) => return Err(rs_matter::error::ErrorCode::InvalidData.into()),
     };
     let peer_addr = Address::Udp(SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)));
 
