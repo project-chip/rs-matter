@@ -99,19 +99,17 @@ where
     H: ExchangeHandler,
     T: ExchangeHandler,
 {
-    fn handle<'a>(
+    async fn handle<'a>(
         &self,
         exchange: &mut Exchange<'a>,
         group_store: Option<&'a dyn crate::group_keys::GroupStore>,
-    ) -> impl core::future::Future<Output = Result<(), Error>> {
-        async move {
-            let rx = exchange.recv_fetch().await?;
+    ) -> Result<(), Error> {
+        let rx = exchange.recv_fetch().await?;
 
-            if rx.meta().proto_id == self.handler_proto {
-                self.handler.handle(exchange, group_store).await
-            } else {
-                self.next.handle(exchange, group_store).await
-            }
+        if rx.meta().proto_id == self.handler_proto {
+            self.handler.handle(exchange, group_store).await
+        } else {
+            self.next.handle(exchange, group_store).await
         }
     }
 }
