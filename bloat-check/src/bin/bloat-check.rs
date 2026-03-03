@@ -497,7 +497,7 @@ fn respond_task_fut<'d, 'a>(
     responder: &'a AppResponder<'d, 'a>,
     handler_id: u8,
 ) -> impl Future<Output = Result<(), Error>> + 'a {
-    responder.responder().handle(handler_id)
+    responder.responder().handle(handler_id, None)
 }
 
 #[embassy_executor::task(pool_size = 4)]
@@ -511,7 +511,7 @@ fn respond_busy_task_fut<'d, 'a>(
     responder: &'a AppResponder<'d, 'a>,
     handler_id: u8,
 ) -> impl Future<Output = Result<(), Error>> + 'a {
-    responder.busy_responder().handle(handler_id)
+    responder.busy_responder().handle(handler_id, None)
 }
 
 #[embassy_executor::task(pool_size = 2)]
@@ -586,7 +586,7 @@ fn transport_task_fut<'a>(
     transport_send: &'a mut AppTransport<'static>,
     transport_recv: &'a mut AppTransport<'static>,
 ) -> impl Future<Output = Result<(), Error>> + 'a {
-    matter.run_transport(crypto, transport_send, transport_recv)
+    matter.run_transport(crypto, transport_send, transport_recv, None)
 }
 
 #[embassy_executor::task]
@@ -662,6 +662,7 @@ where
         endpoints::with_sys(
             &true,
             rand,
+            None,
             EmptyHandler
                 .chain(
                     EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
