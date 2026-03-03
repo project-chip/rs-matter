@@ -264,7 +264,6 @@ pub struct Matter<'a> {
     dev_det: &'a BasicInfoConfig<'a>,
     dev_comm: BasicCommData,
     dev_att: &'a dyn DeviceAttestation,
-    group_store: Option<&'a dyn GroupStore>,
     port: u16,
 }
 
@@ -290,11 +289,6 @@ impl<'a> Matter<'a> {
         use crate::utils::epoch::sys_epoch;
 
         Self::new(dev_det, dev_comm, dev_att, sys_epoch, port)
-    }
-
-    /// Set the group store on this Matter instance.
-    pub fn set_group_store(&mut self, group_store: &'a dyn GroupStore) {
-        self.group_store = Some(group_store);
     }
 
     /// Create a new Matter object
@@ -330,7 +324,6 @@ impl<'a> Matter<'a> {
             dev_det,
             dev_comm,
             dev_att,
-            group_store: None,
             port,
         }
     }
@@ -391,7 +384,6 @@ impl<'a> Matter<'a> {
                 dev_det,
                 dev_comm,
                 dev_att,
-                group_store: None,
                 port,
             }
         )
@@ -407,10 +399,6 @@ impl<'a> Matter<'a> {
 
     pub fn dev_att(&self) -> &dyn DeviceAttestation {
         self.dev_att
-    }
-
-    pub fn group_store(&self) -> Option<&dyn GroupStore> {
-        self.group_store
     }
 
     pub fn dev_comm(&self) -> &BasicCommData {
@@ -594,13 +582,14 @@ impl<'a> Matter<'a> {
     /// Instead of a long running task.
     fn watch_group_membership<'t, M>(
         &'t self,
+        group_store: Option<&'t dyn GroupStore>,
         mut multicast_network: M,
     ) -> impl Future<Output = ()> + 't
     where
         M: NetworkMulticast + 't,
     {
         async move {
-            let Some(group_store) = self.group_store else {
+            let Some(group_store) = group_store else {
                 // No group store configured, just wait forever
                 core::future::pending::<()>().await;
                 return;
@@ -680,6 +669,7 @@ impl<'a> Matter<'a> {
     /// - `send`: The network send interface
     /// - `recv`: The network receive interface
     /// - `multicast`: The multicast network interface (for receiving groupcast messages)
+    /// - `group_store`: The group store implementation for managing group memberships and keys
     ///
     pub async fn run<C, S, R, M>(
         &self,
@@ -687,6 +677,7 @@ impl<'a> Matter<'a> {
         send: S,
         recv: R,
         multicast: Option<M>,
+        group_store: Option<&'a dyn GroupStore>,
     ) -> Result<(), Error>
     where
         S: NetworkSend,
@@ -694,9 +685,11 @@ impl<'a> Matter<'a> {
         M: NetworkMulticast,
         C: Crypto,
     {
-        let mut transport = pin!(self.run_transport(&crypto, send, recv));
+        let mut transport = pin!(self.run_transport(&crypto, send, recv, group_store));
         let mut group_key_watcher = match multicast {
-            Some(multicast) => pin!(either::Either::Left(self.watch_group_membership(multicast))),
+            Some(multicast) => pin!(either::Either::Left(
+                self.watch_group_membership(group_store, multicast)
+            )),
             None => pin!(either::Either::Right(core::future::pending::<()>())),
         };
 
@@ -724,18 +717,13 @@ impl<'a> Matter<'a> {
         crypto: C,
         send: S,
         recv: R,
+        group_store: Option<&'t dyn GroupStore>,
     ) -> impl Future<Output = Result<(), Error>> + 't
     where
         S: NetworkSend + 't,
         R: NetworkReceive + 't,
         C: Crypto + 't,
     {
-        let group_store = self.group_store.unwrap_or_else(|| {
-            // Fallback to a dummy that will fail for group messages
-            // This should be avoided by always setting group_store via set_group_store()
-            panic!("group_store must be configured for group message decryption")
-        });
-
         async move {
             self.transport_mgr
                 .run(&crypto, send, recv, &self.fabric_mgr, group_store)

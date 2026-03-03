@@ -26,7 +26,6 @@ use super::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use super::clusters::eth_diag::{self, ClusterHandler as _, EthDiagHandler};
 use super::clusters::gen_comm::{self, ClusterHandler as _, CommPolicy, GenCommHandler};
 use super::clusters::gen_diag::{self, ClusterHandler as _, GenDiag, GenDiagHandler, NetifDiag};
-use super::clusters::groups::{self, ClusterHandler as _, GroupsHandler};
 use super::clusters::grp_key_mgmt::{self, ClusterHandler as _, GrpKeyMgmtHandler};
 use super::clusters::net_comm::{
     self, ClusterAsyncHandler as _, NetCommHandler, NetCtl, NetCtlStatus, NetworkType, Networks,
@@ -85,8 +84,7 @@ pub type SysHandler<'a, H> = handler_chain_type!(
     EpClMatcher => Async<adm_comm::HandlerAdaptor<AdminCommHandler>>,
     EpClMatcher => Async<noc::HandlerAdaptor<NocHandler>>,
     EpClMatcher => Async<acl::HandlerAdaptor<acl::AclHandler>>,
-    EpClMatcher => Async<grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>,
-    EpClMatcher => Async<groups::HandlerAdaptor<GroupsHandler>>
+    EpClMatcher => Async<grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler<'a>>>
     | H
 );
 
@@ -228,20 +226,18 @@ where
 /// # Arguments:
 /// - `comm_policy`: The commissioning policy to be used for the `GenCommHandler`.
 /// - `rand`: A random number generator.
+/// - `group_store`: Reference to the group store implementation, None if groups are not supported.
 /// - `handler`: The handler to be decorated.
 pub fn with_sys<'a, R: RngCore, H>(
     comm_policy: &'a dyn CommPolicy,
     mut rand: R,
+    group_store: Option<&'a dyn crate::group_keys::GroupStore>,
     handler: H,
 ) -> SysHandler<'a, H> {
     ChainedHandler::new(
-        EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GroupsHandler::CLUSTER.id)),
-        Async(GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-        handler,
-    )
-    .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GrpKeyMgmtHandler::CLUSTER.id)),
-        Async(GrpKeyMgmtHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+        Async(GrpKeyMgmtHandler::new(Dataver::new_rand(&mut rand), group_store).adapt()),
+        handler,
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(AclHandler::CLUSTER.id)),

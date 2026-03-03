@@ -129,7 +129,6 @@ fn main() -> Result<(), Error> {
 
     // Configure the group store for groupcast support
     let group_store = GROUP_STORE.init(GroupStoreImpl::<3>::new()); // 2 endpoints + root endpoint
-    matter.set_group_store(group_store);
 
     // Need to call this once
     matter.initialize_transport_buffers()?;
@@ -180,6 +179,7 @@ fn main() -> Result<(), Error> {
         Some(events),
         dm_handler(
             rand,
+            Some(group_store),
             unit_testing_data,
             &on_off_handler_1,
             &on_off_handler_2,
@@ -192,12 +192,12 @@ fn main() -> Result<(), Error> {
     info!(
         "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
         core::mem::size_of_val(&responder),
-        core::mem::size_of_val(&responder.run::<4, 4>())
+        core::mem::size_of_val(&responder.run::<4, 4>(Some(group_store)))
     );
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-    let mut respond = pin!(responder.run::<4, 4>());
+    let mut respond = pin!(responder.run::<4, 4>(Some(group_store)));
 
     // Run the background job of the data model
     let mut dm_job = pin!(dm.run());
@@ -207,13 +207,20 @@ fn main() -> Result<(), Error> {
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket, Some(&socket))),
+        core::mem::size_of_val(&matter.run(
+            &crypto,
+            &socket,
+            &socket,
+            Some(&socket),
+            Some(group_store)
+        )),
         core::mem::size_of_val(&mdns::run_mdns(matter, &crypto, &dm))
     );
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto, &dm));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket, Some(&socket)));
+    let mut transport =
+        pin!(matter.run(&crypto, &socket, &socket, Some(&socket), Some(group_store)));
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
@@ -306,6 +313,7 @@ const NODE: Node<'static> = Node {
 /// The handler is the root endpoint 0 handler plus the on-off and unit testing handlers.
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     mut rand: impl RngCore + Copy,
+    group_store: Option<&'a dyn rs_matter::group_keys::GroupStore>,
     unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
     on_off_1: &'a OnOffHandler<'a, OH, LH>,
     on_off_2: &'a OnOffHandler<'a, OH, LH>,
@@ -319,7 +327,21 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             endpoints::with_sys(
                 &false,
                 rand,
+                group_store,
                 EmptyHandler
+                    .chain(
+                        EpClMatcher::new(
+                            Some(endpoints::ROOT_ENDPOINT_ID),
+                            Some(groups::GroupsHandler::CLUSTER.id),
+                        ),
+                        Async(
+                            groups::GroupsHandler::new(
+                                Dataver::new_rand(&mut rand),
+                                group_store.unwrap(),
+                            )
+                            .adapt(),
+                        ),
+                    ) // temp
                     // Clusters for Endpoint 1
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
@@ -327,7 +349,13 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
-                        Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                        Async(
+                            groups::GroupsHandler::new(
+                                Dataver::new_rand(&mut rand),
+                                group_store.unwrap(),
+                            )
+                            .adapt(),
+                        ),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
@@ -350,7 +378,13 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                     )
                     .chain(
                         EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
-                        Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                        Async(
+                            groups::GroupsHandler::new(
+                                Dataver::new_rand(&mut rand),
+                                group_store.unwrap(),
+                            )
+                            .adapt(),
+                        ),
                     )
                     .chain(
                         EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),

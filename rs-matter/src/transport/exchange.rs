@@ -18,6 +18,8 @@
 use core::fmt::{self, Display};
 use core::pin::pin;
 
+use crate::group_keys::GroupStore;
+
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_time::{Duration, Instant, Timer};
 
@@ -209,13 +211,13 @@ impl ExchangeId {
         }
     }
 
-    fn accessor<'a>(&self, matter: &'a Matter<'a>) -> Result<Accessor<'a>, Error> {
+    fn accessor<'a>(
+        &self,
+        matter: &'a Matter<'a>,
+        group_store: Option<&'a dyn GroupStore>,
+    ) -> Result<Accessor<'a>, Error> {
         self.with_session(matter, |sess| {
-            Ok(Accessor::for_session(
-                sess,
-                &matter.fabric_mgr,
-                matter.group_store(),
-            ))
+            Ok(Accessor::for_session(sess, &matter.fabric_mgr, group_store))
         })
     }
 
@@ -1185,8 +1187,11 @@ impl<'a> Exchange<'a> {
         .await
     }
 
-    pub(crate) fn accessor(&self) -> Result<Accessor<'a>, Error> {
-        self.id.accessor(self.matter)
+    pub(crate) fn accessor(
+        &self,
+        group_store: Option<&'a dyn GroupStore>,
+    ) -> Result<Accessor<'a>, Error> {
+        self.id.accessor(self.matter, group_store)
     }
 
     pub fn is_groupcast(&self) -> Result<bool, Error> {

@@ -25,23 +25,30 @@ use crate::dm::{
     WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::group_keys::{GroupEpochKeyEntry, GrpKeyMapEntry, GrpKeySetEntry};
+use crate::group_keys::{GroupEpochKeyEntry, GroupStore, GrpKeyMapEntry, GrpKeySetEntry};
 use crate::tlv::{Nullable, Octets, TLVArray, TLVBuilderParent};
 use crate::with;
 
 pub use crate::dm::clusters::decl::group_key_management::*;
 
 /// The system implementation of a handler for the Group Key Management Matter cluster.
-#[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GrpKeyMgmtHandler {
+pub struct GrpKeyMgmtHandler<'a> {
     dataver: Dataver,
+    group_store: Option<&'a dyn GroupStore>,
 }
 
-impl GrpKeyMgmtHandler {
+impl<'a> GrpKeyMgmtHandler<'a> {
     /// Creates a new instance of the `GrpKeyMgmtHandler` with the given `Dataver`.
-    pub const fn new(dataver: Dataver) -> Self {
-        Self { dataver }
+    ///
+    /// # Arguments
+    /// * `dataver` - The data version tracker
+    /// * `group_store` - Optional reference to the group store implementation
+    pub const fn new(dataver: Dataver, group_store: Option<&'a dyn GroupStore>) -> Self {
+        Self {
+            dataver,
+            group_store,
+        }
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
@@ -50,7 +57,7 @@ impl GrpKeyMgmtHandler {
     }
 }
 
-impl ClusterHandler for GrpKeyMgmtHandler {
+impl<'a> ClusterHandler for GrpKeyMgmtHandler<'a> {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
 
     fn dataver(&self) -> u32 {
@@ -66,7 +73,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<GroupKeyMapStructArrayBuilder<P>, GroupKeyMapStructBuilder<P>>,
     ) -> Result<P, Error> {
-        let Some(group_store) = ctx.exchange().matter().group_store() else {
+        let Some(group_store) = self.group_store else {
             // No group store configured — return empty array
             return match builder {
                 ArrayAttributeRead::ReadAll(builder) => builder.end(),
@@ -74,6 +81,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                 ArrayAttributeRead::ReadNone(builder) => builder.end(),
             };
         };
+
         let attr = ctx.attr();
 
         let fab_filter = if attr.fab_filter {
@@ -134,7 +142,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
             GroupInfoMapStructBuilder<P>,
         >,
     ) -> Result<P, Error> {
-        let Some(group_store) = ctx.exchange().matter().group_store() else {
+        let Some(group_store) = self.group_store else {
             // No group store configured — return empty array
             return match builder {
                 ArrayAttributeRead::ReadAll(builder) => builder.end(),
@@ -142,6 +150,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                 ArrayAttributeRead::ReadNone(builder) => builder.end(),
             };
         };
+
         let attr = ctx.attr();
 
         let fab_filter = if attr.fab_filter {
@@ -213,20 +222,14 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         }
     }
 
-    fn max_groups_per_fabric(&self, ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(ctx
-            .exchange()
-            .matter()
-            .group_store()
-            .map_or(0, |gs| gs.max_groups_per_fabric()))
+    fn max_groups_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(self.group_store.map_or(0, |gs| gs.max_groups_per_fabric()))
     }
 
-    fn max_group_keys_per_fabric(&self, ctx: impl ReadContext) -> Result<u16, Error> {
+    fn max_group_keys_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         // +1 for IPK (key set 0)
-        Ok(ctx
-            .exchange()
-            .matter()
-            .group_store()
+        Ok(self
+            .group_store
             .map_or(1, |gs| gs.max_group_keys_per_fabric() + 1))
     }
 
@@ -235,13 +238,11 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         ctx: impl WriteContext,
         value: ArrayAttributeWrite<TLVArray<'_, GroupKeyMapStruct<'_>>, GroupKeyMapStruct<'_>>,
     ) -> Result<(), Error> {
-        let fab_idx = NonZeroU8::new(ctx.attr().fab_idx).ok_or(ErrorCode::Invalid)?;
+        let Some(group_store) = self.group_store else {
+            return Err(ErrorCode::InvalidAction.into());
+        };
 
-        let group_store = ctx
-            .exchange()
-            .matter()
-            .group_store()
-            .ok_or(ErrorCode::InvalidAction)?;
+        let fab_idx = NonZeroU8::new(ctx.attr().fab_idx).ok_or(ErrorCode::Invalid)?;
 
         match value {
             ArrayAttributeWrite::Replace(list) => {
@@ -301,7 +302,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         request: KeySetWriteRequest<'_>,
     ) -> Result<(), Error> {
         let fab_idx =
-            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
+            NonZeroU8::new(ctx.exchange().accessor(None)?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
         let key_set = request.group_key_set()?;
 
@@ -438,9 +439,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
             }
         }
 
-        ctx.exchange()
-            .matter()
-            .group_store()
+        self.group_store
             .ok_or(ErrorCode::InvalidAction)?
             .group_key_set_add(fab_idx, entry)?;
 
@@ -456,15 +455,11 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         response: KeySetReadResponseBuilder<P>,
     ) -> Result<P, Error> {
         let fab_idx =
-            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
+            NonZeroU8::new(ctx.exchange().accessor(None)?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
         let group_key_set_id = request.group_key_set_id()?;
 
-        let group_store = ctx
-            .exchange()
-            .matter()
-            .group_store()
-            .ok_or(ErrorCode::InvalidAction)?;
+        let group_store = self.group_store.ok_or(ErrorCode::InvalidAction)?;
 
         let entry = group_store
             .group_key_set_get(fab_idx, group_key_set_id)?
@@ -507,7 +502,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         request: KeySetRemoveRequest<'_>,
     ) -> Result<(), Error> {
         let fab_idx =
-            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
+            NonZeroU8::new(ctx.exchange().accessor(None)?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
         let group_key_set_id = request.group_key_set_id()?;
 
@@ -516,9 +511,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
             return Err(ErrorCode::InvalidCommand.into());
         }
 
-        ctx.exchange()
-            .matter()
-            .group_store()
+        self.group_store
             .ok_or(ErrorCode::InvalidAction)?
             .group_key_set_remove(fab_idx, group_key_set_id)?;
 
@@ -532,14 +525,14 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         ctx: impl InvokeContext,
         response: KeySetReadAllIndicesResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let fab_idx =
-            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
+        let Some(group_store) = self.group_store else {
+            // No group store configured — return only IPK
+            let ids = response.group_key_set_i_ds()?;
+            return ids.push(&0u16)?.end()?.end();
+        };
 
-        let group_store = ctx
-            .exchange()
-            .matter()
-            .group_store()
-            .ok_or(ErrorCode::InvalidAction)?;
+        let fab_idx =
+            NonZeroU8::new(ctx.exchange().accessor(None)?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
         // Always include IPK (0) plus all stored key set IDs
         let mut ids = response.group_key_set_i_ds()?;

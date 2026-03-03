@@ -111,8 +111,8 @@ fn run() -> Result<(), Error> {
     matter.initialize_transport_buffers()?;
 
     // Configure the group store for groupcast support
+    // TODO: Store groups using PSM
     let group_store = GROUP_STORE.init(GroupStoreImpl::<2>::new());
-    matter.set_group_store(group_store);
 
     // Create the transport buffers
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
@@ -141,7 +141,7 @@ fn run() -> Result<(), Error> {
         buffers,
         subscriptions,
         NO_EVENTS,
-        dm_handler(rand, &on_off_handler),
+        dm_handler(rand, group_store, &on_off_handler),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -150,12 +150,12 @@ fn run() -> Result<(), Error> {
     info!(
         "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
         core::mem::size_of_val(&responder),
-        core::mem::size_of_val(&responder.run::<4, 4>())
+        core::mem::size_of_val(&responder.run::<4, 4>(Some(group_store)))
     );
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-    let mut respond = pin!(responder.run::<4, 4>());
+    let mut respond = pin!(responder.run::<4, 4>(Some(group_store)));
 
     // Run the background job of the data model
     let mut dm_job = pin!(dm.run());
@@ -165,13 +165,20 @@ fn run() -> Result<(), Error> {
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket, Some(&socket))),
+        core::mem::size_of_val(&matter.run(
+            &crypto,
+            &socket,
+            &socket,
+            Some(&socket),
+            Some(group_store)
+        )),
         core::mem::size_of_val(&mdns::run_mdns(matter, &crypto, &dm))
     );
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto, &dm));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket, Some(&socket)));
+    let mut transport =
+        pin!(matter.run(&crypto, &socket, &socket, Some(&socket), Some(group_store)));
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
@@ -230,6 +237,7 @@ const NODE: Node<'static> = Node {
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     mut rand: impl RngCore + Copy,
+    group_store: &'a dyn rs_matter::group_keys::GroupStore,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
@@ -241,6 +249,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             endpoints::with_sys(
                 &false,
                 rand,
+                Some(group_store),
                 EmptyHandler
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
@@ -248,7 +257,10 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
-                        Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                        Async(
+                            groups::GroupsHandler::new(Dataver::new_rand(&mut rand), group_store)
+                                .adapt(),
+                        ),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),

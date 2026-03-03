@@ -81,7 +81,11 @@ impl BusySecureChannel {
 }
 
 impl ExchangeHandler for BusySecureChannel {
-    fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
+    fn handle(
+        &self,
+        exchange: &mut Exchange<'_>,
+        _group_store: Option<&dyn crate::group_keys::GroupStore>,
+    ) -> impl Future<Output = Result<(), Error>> {
         BusySecureChannel::handle(self, exchange)
     }
 }

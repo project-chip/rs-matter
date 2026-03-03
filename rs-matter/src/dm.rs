@@ -144,7 +144,11 @@ where
     }
 
     /// Answer a responding exchange using the `DataModelHandler` instance wrapped by this exchange handler.
-    pub async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    pub async fn handle<'b>(
+        &self,
+        exchange: &mut Exchange<'b>,
+        group_store: Option<&'b dyn crate::group_keys::GroupStore>,
+    ) -> Result<(), Error> {
         let fetch_meta = |exchange: &mut Exchange| {
             let meta = exchange.rx()?.meta();
             if meta.proto_id != PROTO_ID_INTERACTION_MODEL {
@@ -180,9 +184,9 @@ where
             OpCode::ReadRequest if is_groupcast => {
                 error!("Received a groupcast message for opcode: ReadRequest")
             }
-            OpCode::ReadRequest if !is_groupcast => self.read(exchange).await?,
-            OpCode::WriteRequest => self.write(exchange, timeout_instant, is_groupcast).await?,
-            OpCode::InvokeRequest => self.invoke(exchange, timeout_instant, is_groupcast).await?,
+            OpCode::ReadRequest if !is_groupcast => self.read(exchange, group_store).await?,
+            OpCode::WriteRequest => self.write(exchange, timeout_instant, is_groupcast, group_store).await?,
+            OpCode::InvokeRequest => self.invoke(exchange, timeout_instant, is_groupcast, group_store).await?,
             OpCode::SubscribeRequest if is_groupcast => {
                 error!("Received a groupcast message for opcode: SubscribeRequest")
             }
@@ -208,7 +212,11 @@ where
     }
 
     /// Respond to a `ReadReq` request.
-    async fn read(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    async fn read<'b>(
+        &self,
+        exchange: &mut Exchange<'b>,
+        group_store: Option<&'b dyn crate::group_keys::GroupStore>,
+    ) -> Result<(), Error> {
         let Some((mut tx, rx)) = self.buffers(exchange).await? else {
             return Ok(());
         };
@@ -227,7 +235,7 @@ where
             &req,
             &node,
             None,
-            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
+            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers, group_store),
             EventReader::new(0),
             self.events,
         );
@@ -242,11 +250,12 @@ where
     /// Arguments:
     /// - `exchange` - the exchange to respond to
     /// - `timeout_instant` - an optional timeout instant, if the request is a timed request
-    async fn write(
+    async fn write<'b>(
         &self,
-        exchange: &mut Exchange<'_>,
+        exchange: &mut Exchange<'b>,
         timeout_instant: Option<Duration>,
         is_groupcast: bool,
+        group_store: Option<&'b dyn crate::group_keys::GroupStore>,
     ) -> Result<(), Error> {
         while exchange.rx().is_ok() {
             // Loop while there are more write request chunks to process
@@ -272,7 +281,7 @@ where
             let mut resp = WriteResponder::new(
                 &req,
                 &node,
-                HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
+                HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers, group_store),
             );
 
             resp.respond(self, &mut wb, is_groupcast).await?;
@@ -292,11 +301,12 @@ where
     /// Arguments:
     /// - `exchange` - the exchange to respond to
     /// - `timeout_instant` - an optional timeout instant, if the request is a timed request
-    async fn invoke(
+    async fn invoke<'b>(
         &self,
-        exchange: &mut Exchange<'_>,
+        exchange: &mut Exchange<'b>,
         timeout_instant: Option<Duration>,
         is_groupcast: bool,
+        group_store: Option<&'b dyn crate::group_keys::GroupStore>,
     ) -> Result<(), Error> {
         let Some((mut tx, rx)) = self.buffers(exchange).await? else {
             return Ok(());
@@ -319,7 +329,7 @@ where
         let mut resp = InvokeResponder::new(
             &req,
             &node,
-            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
+            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers, group_store),
         );
 
         resp.respond(self, &mut wb, is_groupcast).await
@@ -704,7 +714,7 @@ where
             &req,
             &node,
             Some(id),
-            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
+            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers, None),
             EventReader::new(min_event_number),
             self.events,
         );
@@ -833,8 +843,8 @@ where
     T: DataModelHandler,
     B: BufferAccess<IMBuffer>,
 {
-    fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
-        DataModel::handle(self, exchange)
+    fn handle<'a>(&self, exchange: &mut Exchange<'a>, group_store: Option<&'a dyn crate::group_keys::GroupStore>) -> impl Future<Output = Result<(), Error>> {
+        DataModel::handle(self, exchange, group_store)
     }
 }
 
@@ -915,7 +925,8 @@ where
         wb: &mut WriteBuf<'_>,
         suppress_last_resp: bool,
     ) -> Result<bool, Error> {
-        let accessor = self.invoker.exchange().accessor()?;
+        let group_store = self.invoker.group_store();
+        let accessor = self.invoker.exchange().accessor(group_store)?;
 
         self.start_reply(wb)?;
 
@@ -1258,7 +1269,8 @@ where
         wb: &mut WriteBuf<'_>,
         suppress_resp: bool,
     ) -> Result<(), Error> {
-        let accessor = self.invoker.exchange().accessor()?;
+        let group_store = self.invoker.group_store();
+        let accessor = self.invoker.exchange().accessor(group_store)?;
 
         wb.reset();
 
@@ -1351,7 +1363,8 @@ where
             wb.start_array(&TLVTag::Context(InvRespTag::InvokeResponses as u8))?;
         }
 
-        let accessor = self.invoker.exchange().accessor()?;
+        let group_store = self.invoker.group_store();
+        let accessor = self.invoker.exchange().accessor(group_store)?;
 
         for item in self.node.invoke(self.req, &accessor)? {
             self.invoker

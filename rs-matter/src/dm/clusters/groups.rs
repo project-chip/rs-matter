@@ -37,19 +37,20 @@ const STATUS_UNSUPPORTED_ACCESS: u8 = 0x7e;
 /// The handler for the Groups Matter cluster.
 ///
 /// This handler manages per-endpoint group membership in the node-wide Group Table.
-#[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GroupsHandler {
+pub struct GroupsHandler<'a> {
     dataver: Dataver,
+    group_store: &'a dyn GroupStore,
 }
 
-impl GroupsHandler {
+impl<'a> GroupsHandler<'a> {
     /// Creates a new instance of the `GroupsHandler`.
     ///
     /// # Arguments
     /// * `dataver` - The data version tracker
-    pub const fn new(dataver: Dataver) -> Self {
-        Self { dataver }
+    /// * `group_store` - Reference to the group store implementation
+    pub const fn new(dataver: Dataver, group_store: &'a dyn GroupStore) -> Self {
+        Self { dataver, group_store }
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
@@ -58,12 +59,12 @@ impl GroupsHandler {
     }
 
     /// Check if the fabric has security material (a group key map entry) for the given group ID.
-    fn has_group_material(group_store: &dyn GroupStore, fab_idx: NonZeroU8, group_id: u16) -> bool {
-        group_store.has_group_key_map_entry(fab_idx, group_id)
+    fn has_group_material(&self, fab_idx: NonZeroU8, group_id: u16) -> bool {
+        self.group_store.has_group_key_map_entry(fab_idx, group_id)
     }
 }
 
-impl ClusterHandler for GroupsHandler {
+impl<'a> ClusterHandler for GroupsHandler<'a> {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
         .with_features(Feature::GROUP_NAMES.bits())
         .with_attrs(with!(required));
@@ -88,13 +89,7 @@ impl ClusterHandler for GroupsHandler {
         response: AddGroupResponseBuilder<P>,
     ) -> Result<P, Error> {
         let fab_idx =
-            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
-
-        let group_store = ctx
-            .exchange()
-            .matter()
-            .group_store()
-            .ok_or(ErrorCode::InvalidAction)?;
+            NonZeroU8::new(ctx.exchange().accessor(None)?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
         let group_id = request.group_id()?;
         let group_name: &str = request.group_name()?;
@@ -108,7 +103,7 @@ impl ClusterHandler for GroupsHandler {
         }
 
         // Check if group security material is available
-        if !Self::has_group_material(group_store, fab_idx, group_id) {
+        if !self.has_group_material(fab_idx, group_id) {
             return response
                 .status(STATUS_UNSUPPORTED_ACCESS)?
                 .group_id(group_id)?
@@ -117,7 +112,7 @@ impl ClusterHandler for GroupsHandler {
 
         // Add or update group membership
         let endpoint_id = ctx.cmd().endpoint_id;
-        match group_store.group_add(fab_idx, group_id, endpoint_id, group_name) {
+        match self.group_store.group_add(fab_idx, group_id, endpoint_id, group_name) {
             Ok(_) => {
                 ctx.exchange().matter().notify_groups_changed();
                 response.status(STATUS_SUCCESS)?.group_id(group_id)?.end()
@@ -137,13 +132,8 @@ impl ClusterHandler for GroupsHandler {
         response: ViewGroupResponseBuilder<P>,
     ) -> Result<P, Error> {
         let fab_idx =
-            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
+            NonZeroU8::new(ctx.exchange().accessor(None)?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
-        let group_store = ctx
-            .exchange()
-            .matter()
-            .group_store()
-            .ok_or(ErrorCode::InvalidAction)?;
 
         let group_id = request.group_id()?;
 
@@ -158,8 +148,8 @@ impl ClusterHandler for GroupsHandler {
 
         // Check membership for group_id
         let endpoint_id = ctx.cmd().endpoint_id;
-        if group_store.has_group(fab_idx, group_id, endpoint_id) {
-            let name = group_store
+        if self.group_store.has_group(fab_idx, group_id, endpoint_id) {
+            let name = self.group_store
                 .group_name(fab_idx, group_id)?
                 .unwrap_or_default();
             response
@@ -183,13 +173,8 @@ impl ClusterHandler for GroupsHandler {
         response: GetGroupMembershipResponseBuilder<P>,
     ) -> Result<P, Error> {
         let fab_idx =
-            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
+            NonZeroU8::new(ctx.exchange().accessor(None)?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
-        let group_store = ctx
-            .exchange()
-            .matter()
-            .group_store()
-            .ok_or(ErrorCode::InvalidAction)?;
 
         let request_group_list = request.group_list()?;
 
@@ -203,7 +188,7 @@ impl ClusterHandler for GroupsHandler {
             // Return all groups this endpoint is a member of
             // Collect group IDs for this endpoint
             let mut group_ids: heapless::Vec<u16, 24> = heapless::Vec::new();
-            group_store.for_each_group(Some(fab_idx), &mut |_fab_idx, entry| {
+            self.group_store.for_each_group(Some(fab_idx), &mut |_fab_idx, entry| {
                 if entry.endpoint_id == endpoint_id {
                     let _ = group_ids.push(entry.group_id);
                 }
@@ -214,7 +199,7 @@ impl ClusterHandler for GroupsHandler {
         } else {
             // Return intersection: only requested groups that this endpoint is a member of
             for gid in request_group_list.into_iter().flatten() {
-                if group_store.has_group(fab_idx, gid, endpoint_id) {
+                if self.group_store.has_group(fab_idx, gid, endpoint_id) {
                     group_list = group_list.push(&gid)?;
                 }
             }
@@ -230,13 +215,8 @@ impl ClusterHandler for GroupsHandler {
         response: RemoveGroupResponseBuilder<P>,
     ) -> Result<P, Error> {
         let fab_idx =
-            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
+            NonZeroU8::new(ctx.exchange().accessor(None)?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
-        let group_store = ctx
-            .exchange()
-            .matter()
-            .group_store()
-            .ok_or(ErrorCode::InvalidAction)?;
 
         let group_id = request.group_id()?;
 
@@ -250,7 +230,7 @@ impl ClusterHandler for GroupsHandler {
 
         // Steps 2-3: Remove membership
         let endpoint_id = ctx.cmd().endpoint_id;
-        let removed = group_store.group_remove(fab_idx, group_id, endpoint_id)?;
+        let removed = self.group_store.group_remove(fab_idx, group_id, endpoint_id)?;
 
         if removed {
             ctx.exchange().matter().notify_groups_changed();
@@ -262,16 +242,11 @@ impl ClusterHandler for GroupsHandler {
 
     fn handle_remove_all_groups(&self, ctx: impl InvokeContext) -> Result<(), Error> {
         let fab_idx =
-            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
+            NonZeroU8::new(ctx.exchange().accessor(None)?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
-        let group_store = ctx
-            .exchange()
-            .matter()
-            .group_store()
-            .ok_or(ErrorCode::InvalidAction)?;
 
         let endpoint_id = ctx.cmd().endpoint_id;
-        group_store.group_remove_all_for_endpoint(fab_idx, endpoint_id)?;
+        self.group_store.group_remove_all_for_endpoint(fab_idx, endpoint_id)?;
 
         ctx.exchange().matter().notify_groups_changed();
 

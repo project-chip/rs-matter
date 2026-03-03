@@ -84,6 +84,7 @@ pub struct E2eRunner<C> {
     pub subscriptions: Subscriptions<3>,
     pub events: Events<E2E_EVENTS_BUF_SIZE>,
     cat_ids: NocCatIds,
+    group_store: GroupStoreImpl<4>,
 }
 
 impl<C: Crypto> E2eRunner<C> {
@@ -101,13 +102,11 @@ impl<C: Crypto> E2eRunner<C> {
 
         // Create a GroupStoreImpl for tests that may need group operations
         // For tests that don't use groups, this will just not be used
-        let group_store = Box::leak(Box::new(GroupStoreImpl::<4>::new()));
+        let group_store = GroupStoreImpl::<4>::new();
 
-        let mut matter = Self::new_matter();
-        matter.set_group_store(group_store);
+        let matter = Self::new_matter();
 
-        let mut matter_client = Self::new_matter();
-        matter_client.set_group_store(group_store);
+        let matter_client = Self::new_matter();
 
         E2eRunner {
             matter,
@@ -117,6 +116,7 @@ impl<C: Crypto> E2eRunner<C> {
             subscriptions: Subscriptions::new(),
             events: Events::new(epoch),
             cat_ids,
+            group_store,
         }
     }
 
@@ -203,31 +203,22 @@ impl<C: Crypto> E2eRunner<C> {
 
         let responder = Responder::new_default(&dm);
 
-        let group_store_client = matter_client
-            .group_store()
-            .unwrap_or_else(|| panic!("group_store must be configured"));
-
-        let group_store_self = self
-            .matter
-            .group_store()
-            .unwrap_or_else(|| panic!("group_store must be configured"));
-
         select4(
             matter_client.transport_mgr.run(
                 &self.crypto,
                 NetworkSendImpl(send_local),
                 NetworkReceiveImpl(recv_local),
                 &matter_client.fabric_mgr,
-                group_store_client,
+                Some(&self.group_store),
             ),
             self.matter.transport_mgr.run(
                 &self.crypto,
                 NetworkSendImpl(send_remote),
                 NetworkReceiveImpl(recv_remote),
                 &self.matter.fabric_mgr,
-                group_store_self,
+                Some(&self.group_store),
             ),
-            responder.run::<4>(),
+            responder.run::<4>(Some(&self.group_store)),
             dm.process_subscriptions(&self.matter),
         )
         .coalesce()

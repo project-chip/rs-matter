@@ -309,7 +309,7 @@ impl TransportMgr {
         send: S,
         recv: R,
         fabric_mgr: &RefCell<FabricMgr>,
-        group_store: &dyn GroupStore,
+        group_store: Option<&dyn GroupStore>,
     ) -> Result<(), Error>
     where
         C: Crypto,
@@ -403,7 +403,7 @@ impl TransportMgr {
         mut recv: R,
         send: &IfMutex<NoopRawMutex, S>,
         fabric_mgr: &RefCell<FabricMgr>,
-        group_store: &dyn GroupStore,
+        group_store: Option<&dyn GroupStore>,
     ) -> Result<(), Error>
     where
         C: Crypto,
@@ -517,7 +517,7 @@ impl TransportMgr {
         packet: &mut Packet<N>,
         send: &IfMutex<NoopRawMutex, S>,
         fabric_mgr: &RefCell<FabricMgr>,
-        group_store: &dyn GroupStore,
+        group_store: Option<&dyn GroupStore>,
     ) -> Result<bool, Error>
     where
         C: Crypto,
@@ -871,7 +871,7 @@ impl TransportMgr {
         crypto: C,
         packet: &mut Packet<N>,
         fabric_mgr: &RefCell<FabricMgr>,
-        group_store: &dyn GroupStore,
+        group_store: Option<&dyn GroupStore>,
     ) -> Result<bool, Error> {
         packet.header.reset();
 
@@ -923,13 +923,17 @@ impl TransportMgr {
                 return session.post_recv(&packet.header, epoch);
             }
         } else if packet.header.plain.is_group_session() {
+            if group_store.is_none() {
+                error!("Group message received but group store is not configured!!");
+                return Err(ErrorCode::InvalidOpcode.into());
+            }
             // Group (multicast) message — decrypt using on-demand derived group operational keys
             let fabric_mgr_ref = fabric_mgr.borrow();
             let (session, payload_range) = session_mgr.get_or_create_for_group_rx(
                 &crypto,
                 packet,
                 &fabric_mgr_ref,
-                group_store,
+                group_store.unwrap(),
             )?;
             drop(fabric_mgr_ref); // Drop the borrow before we return
             set_payload(packet, payload_range);

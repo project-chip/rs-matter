@@ -17,6 +17,7 @@
 
 use rs_matter::crypto::{Crypto, RngCore};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
+use rs_matter::dm::clusters::groups::{self, ClusterHandler as _, GroupsHandler};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::on_off::{
     self, test::TestOnOffDeviceLogic, ClusterAsyncHandler as _, NoLevelControl, OnOffHandler,
@@ -29,6 +30,7 @@ use rs_matter::dm::{
     EpClMatcher, InvokeContext, InvokeReply, Node, ReadContext, ReadReply, WriteContext,
 };
 use rs_matter::error::Error;
+use rs_matter::group_keys::GroupStore;
 use rs_matter::{clusters, handler_chain_type};
 
 use crate::common::e2e::E2eRunner;
@@ -41,7 +43,8 @@ pub struct E2eTestHandler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
         EpClMatcher => on_off::HandlerAsyncAdaptor<OnOffHandler<'a, OH, LH>>,
         EpClMatcher => Async<EchoHandler>,
         EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'static>>>,
-        EpClMatcher => Async<EchoHandler>
+        EpClMatcher => Async<EchoHandler>,
+        EpClMatcher => Async<groups::HandlerAdaptor<GroupsHandler<'a>>>
         | EthHandler<'a, SysHandler<'a, EmptyHandler>>),
 );
 
@@ -66,8 +69,24 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
         ],
     };
 
-    pub fn new(mut rand: impl RngCore + Copy, on_off: on_off::OnOffHandler<'a, OH, LH>) -> Self {
-        let handler = with_eth(&(), &(), rand, with_sys(&false, rand, EmptyHandler));
+    pub fn new(
+        mut rand: impl RngCore + Copy,
+        on_off: on_off::OnOffHandler<'a, OH, LH>,
+        group_store: &'a dyn GroupStore,
+    ) -> Self {
+        let handler =
+            with_eth(&(), &(), rand, with_sys(&false, rand, Some(group_store), EmptyHandler));
+
+        let handler = ChainedHandler::new(
+            EpClMatcher::new(
+                Some(ROOT_ENDPOINT_ID),
+                Some(GroupsHandler::CLUSTER.id),
+            ),
+            Async(
+                GroupsHandler::new(Dataver::new_rand(&mut rand), group_store).adapt(),
+            ),
+            handler,
+        );
 
         let handler = ChainedHandler::new(
             EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(echo_cluster::ID)),
@@ -147,6 +166,6 @@ impl<C: Crypto> E2eRunner<C> {
             TestOnOffDeviceLogic::new(false),
         );
 
-        E2eTestHandler::new(rand, on_off_handler)
+        E2eTestHandler::new(rand, on_off_handler, &self.group_store)
     }
 }

@@ -45,13 +45,13 @@ use rs_matter::dm::{
     Node,
 };
 use rs_matter::error::Error;
-use rs_matter::group_keys::GroupStoreImpl;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
+use rs_matter::transport::network::NoNetwork;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
@@ -66,11 +66,7 @@ fn main() -> Result<(), Error> {
     );
 
     // Create the Matter object
-    let mut matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
-
-    // Configure the group store for groupcast support
-    let group_store = Box::leak(Box::new(GroupStoreImpl::<2>::new())); // 1 endpoint + root endpoint
-    matter.set_group_store(group_store);
+    let matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
     // Need to call this once
     matter.initialize_transport_buffers()?;
@@ -131,7 +127,7 @@ fn main() -> Result<(), Error> {
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-    let mut respond = pin!(responder.run::<4, 4>());
+    let mut respond = pin!(responder.run::<4, 4>(None));
 
     // Run the background job of the data model
     let mut dm_job = pin!(dm.run());
@@ -141,7 +137,8 @@ fn main() -> Result<(), Error> {
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, &dm));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket, Some(&socket)));
+    let mut transport =
+        pin!(matter.run::<_, _, _, NoNetwork>(&crypto, &socket, &socket, None, None));
 
     // Create, load and run the persister
     let mut psm: Psm<4096> = Psm::new();
@@ -206,6 +203,7 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
             endpoints::with_sys(
                 &false,
                 rand,
+                None,
                 EmptyHandler
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
