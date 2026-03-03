@@ -79,6 +79,7 @@ struct AlgorithmIdentifier<'a> {
 /// }
 ///
 /// https://www.rfc-editor.org/rfc/rfc5652#section-3
+#[allow(unused)]
 struct ContentInfo<'a> {
     content_type: ObjectIdentifier,
     /// The raw bytes of the SignedData SEQUENCE (after [0] EXPLICIT unwrapping)
@@ -90,6 +91,11 @@ impl<'a> DecodeValue<'a> for ContentInfo<'a> {
         reader.read_nested(header.length, |reader| {
             // contentType OBJECT IDENTIFIER
             let content_type = ObjectIdentifier::decode(reader)?;
+
+            // Validate contentType is id-signedData
+            if content_type != OID_PKCS7_SIGNED_DATA {
+                return Err(der::ErrorKind::Failed.into());
+            }
 
             // content [0] EXPLICIT - we need to unwrap and get the inner bytes
             // Read the [0] context tag (should be context-specific, constructed, number 0)
@@ -148,6 +154,7 @@ struct EncapsulatedContentInfo<'a> {
 /// }
 ///
 /// https://www.rfc-editor.org/rfc/rfc5652#section-5.1
+#[allow(unused)]
 struct SignedData<'a> {
     version: u8,
     encap_content_info: EncapsulatedContentInfo<'a>,
@@ -159,9 +166,13 @@ struct SignedData<'a> {
 impl<'a> DecodeValue<'a> for SignedData<'a> {
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
         reader.read_nested(header.length, |reader| {
+            // version INTEGER (v3 = 3)
             let version = u8::decode(reader)?;
+            if version != 3 {
+                return Err(der::ErrorKind::Failed.into());
+            }
 
-            //  skip digestAlgorithms SET OF
+            // skip digestAlgorithms SET OF
             let _digest_algorithms = AnyRef::decode(reader)?;
             if _digest_algorithms.tag() != Tag::Set {
                 return Err(der::ErrorKind::Failed.into());
@@ -169,6 +180,11 @@ impl<'a> DecodeValue<'a> for SignedData<'a> {
 
             // encapContentInfo EncapsulatedContentInfo
             let encap_content_info = EncapsulatedContentInfo::decode(reader)?;
+
+            // Validate eContentType is pkcs7-data
+            if encap_content_info.econtent_type != OID_PKCS7_DATA {
+                return Err(der::ErrorKind::Failed.into());
+            }
 
             // signerInfos SET OF
             let signer_infos = AnyRef::decode(reader)?;
@@ -211,7 +227,7 @@ impl<'a> EncodeValue for SignedData<'a> {
 /// Matter-specific SignerInfo with subjectKeyIdentifier instead of SignerIdentifier.
 ///
 /// https://www.rfc-editor.org/rfc/rfc5652#section-5.3
-#[allow(dead_code)]
+#[allow(unused)]
 struct SignerInfo<'a> {
     version: u8,
     subject_key_identifier: &'a [u8],
@@ -338,53 +354,26 @@ impl<'a> CmsSignedData<'a> {
         let content_info = ContentInfo::from_der(cms_message)
             .map_err(|_| Error::from(ErrorCode::CdInvalidFormat))?;
 
-        // Validate contentType is id-signedData
-        if content_info.content_type != OID_PKCS7_SIGNED_DATA {
-            return Err(ErrorCode::CdInvalidFormat.into());
-        }
-
         // Parse SignedData from the raw bytes (includes SEQUENCE tag + length + value)
         let signed_data = SignedData::from_der(content_info.signed_data_bytes)
             .map_err(|_| Error::from(ErrorCode::CdInvalidFormat))?;
-
-        // Validate version is v3 (3)
-        if signed_data.version != 3 {
-            return Err(ErrorCode::CdInvalidFormat.into());
-        }
-
-        // Validate eContentType is pkcs7-data
-        if signed_data.encap_content_info.econtent_type != OID_PKCS7_DATA {
-            return Err(ErrorCode::CdInvalidFormat.into());
-        }
 
         // Extract CD content (TLV payload)
         let cd_content = signed_data.encap_content_info.econtent.as_bytes();
 
         // Parse SignerInfo from signerInfos SET to extract key ID and signature
-        let (signer_key_id, signature_raw) = parse_signer_info(signed_data.signer_infos.value())?;
+        let signer_info = SignerInfo::from_der(signed_data.signer_infos.value())
+            .map_err(|_| Error::from(ErrorCode::CdInvalidFormat))?;
+
+        // Convert DER-encoded ECDSA signature to raw (r || s) format
+        let signature_raw = ecdsa_der_to_raw(signer_info.signature.as_bytes())?;
 
         Ok(Self {
-            signer_key_id,
+            signer_key_id: signer_info.subject_key_identifier,
             cd_content,
             signature_raw,
         })
     }
-}
-
-/// Parse SignerInfo from a SET OF content, extracting the Key ID and signature.
-///
-/// The signerInfos field is a SET OF SignerInfo. Matter CDs SHALL have exactly
-/// one SignerInfo. The bytes passed here are the content of the SET (without the SET tag/length).
-fn parse_signer_info(
-    signer_infos_content: &[u8],
-) -> Result<(&[u8], [u8; RAW_SIGNATURE_LEN]), Error> {
-    let signer_info = SignerInfo::from_der(signer_infos_content)
-        .map_err(|_| Error::from(ErrorCode::CdInvalidFormat))?;
-
-    // Convert DER-encoded ECDSA signature to raw (r || s) format
-    let signature_raw = ecdsa_der_to_raw(signer_info.signature.as_bytes())?;
-
-    Ok((signer_info.subject_key_identifier, signature_raw))
 }
 
 /// Convert a DER-encoded ECDSA signature to raw (r || s) format.
@@ -561,6 +550,11 @@ impl CertificationElements {
         let elem = TLVElement::new(cd_content);
         let structure = elem.structure()?;
 
+        let format_version = structure.find_ctx(CD_TAG_FORMAT_VERSION)?.u16()?;
+        if format_version != 1 {
+            return Err(ErrorCode::CdInvalidFormat.into());
+        }
+
         let (product_ids, product_ids_count) = Self::parse_product_ids(&structure)?;
         let certificate_id = Self::parse_certificate_id(&structure)?;
         let (dac_origin_vendor_id, dac_origin_product_id, dac_origin_vid_pid_present) =
@@ -569,7 +563,7 @@ impl CertificationElements {
             Self::parse_authorized_paa_list(&structure)?;
 
         Ok(Self {
-            format_version: structure.find_ctx(CD_TAG_FORMAT_VERSION)?.u16()?,
+            format_version,
             vendor_id: structure.find_ctx(CD_TAG_VENDOR_ID)?.u16()?,
             product_ids,
             product_ids_count,
