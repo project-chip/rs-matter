@@ -348,65 +348,64 @@ async fn run_exchange_flow<C: Crypto>(
     info!("PBKDFParamRequest sent, waiting for response...");
 
     // Step 3: Wait for response with a timeout
-    let (result, should_ack) = {
-        let mut should_ack = false;
-        let mut recv_fut = core::pin::pin!(exchange.recv());
-        let mut timeout = core::pin::pin!(Timer::after(embassy_time::Duration::from_secs(10)));
-
-        let result = match select(&mut recv_fut, &mut timeout).await {
-            Either::First(result) => {
-                let rx = result?;
-                let meta = rx.meta();
-
-                info!(
-                    "Received response: proto_id=0x{:04x}, opcode=0x{:02x}",
-                    meta.proto_id, meta.proto_opcode
-                );
-
-                if meta.proto_id == PROTO_ID_SECURE_CHANNEL
-                    && meta.proto_opcode == OpCode::PBKDFParamResponse as u8
-                {
-                    should_ack = true;
-                    info!("Got PBKDFParamResponse - exchange round-trip successful!");
-                    Ok(())
-                } else if meta.proto_id == PROTO_ID_SECURE_CHANNEL
-                    && meta.proto_opcode == OpCode::StatusReport as u8
-                {
-                    // A status report is also acceptable - it means the device received
-                    // our message and responded (e.g. Busy, or commissioning window not open)
-                    let mut rb = ReadBuf::new(rx.payload());
-                    match StatusReport::read(&mut rb) {
-                        Ok(report) => {
-                            info!(
-                                "Got StatusReport - general_code={:?}, proto_id=0x{:04x}, proto_code=0x{:04x}",
-                                report.general_code, report.proto_id, report.proto_code
-                            );
-                        }
-                        Err(e) => {
-                            warn!("Failed to parse StatusReport: {e:?}");
-                        }
-                    }
-                    should_ack = true;
-                    info!("Exchange round-trip successful (device responded with status)");
-                    Ok(())
-                } else {
-                    info!(
-                        "Unexpected response opcode: proto=0x{:04x} op=0x{:02x}",
-                        meta.proto_id, meta.proto_opcode
-                    );
-                    Err(rs_matter::error::ErrorCode::InvalidData.into())
-                }
-            }
-            Either::Second(_) => {
-                warn!("Timeout waiting for response");
-                Err(rs_matter::error::ErrorCode::RxTimeout.into())
-            }
-        };
-
-        (result, should_ack)
+    let rx = match select(
+        core::pin::pin!(exchange.recv()),
+        core::pin::pin!(Timer::after(embassy_time::Duration::from_secs(10))),
+    )
+    .await
+    {
+        Either::First(Ok(rx)) => rx,
+        Either::First(Err(e)) => return Err(e),
+        Either::Second(_) => {
+            warn!("Timeout waiting for response");
+            return Err(rs_matter::error::ErrorCode::RxTimeout.into());
+        }
     };
 
-    if should_ack {
+    let result = {
+        let meta = rx.meta();
+        info!(
+            "Received response: proto_id=0x{:04x}, opcode=0x{:02x}",
+            meta.proto_id, meta.proto_opcode
+        );
+
+        if meta.proto_id == PROTO_ID_SECURE_CHANNEL
+            && meta.proto_opcode == OpCode::PBKDFParamResponse as u8
+        {
+            info!("Got PBKDFParamResponse - exchange round-trip successful!");
+            Ok(())
+        } else if meta.proto_id == PROTO_ID_SECURE_CHANNEL
+            && meta.proto_opcode == OpCode::StatusReport as u8
+        {
+            // A status report is also acceptable - it means the device received
+            // our message and responded (e.g. Busy, or commissioning window not open)
+            let mut rb = ReadBuf::new(rx.payload());
+            match StatusReport::read(&mut rb) {
+                Ok(report) => {
+                    info!(
+                        "Got StatusReport - general_code={:?}, proto_id=0x{:04x}, proto_code=0x{:04x}",
+                        report.general_code, report.proto_id, report.proto_code
+                    );
+                }
+                Err(e) => {
+                    warn!("Failed to parse StatusReport: {e:?}");
+                }
+            }
+            info!("Exchange round-trip successful (device responded with status)");
+            Ok(())
+        } else {
+            info!(
+                "Unexpected response opcode: proto=0x{:04x} op=0x{:02x}",
+                meta.proto_id, meta.proto_opcode
+            );
+            Err(rs_matter::error::ErrorCode::InvalidData.into())
+        }
+    };
+
+    // Release rx's borrow on `exchange` so we can call `acknowledge()` below
+    drop(rx);
+
+    if result.is_ok() {
         // Send standalone ACK so the responder stops retransmitting
         exchange.acknowledge().await?;
     }
