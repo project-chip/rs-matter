@@ -178,7 +178,9 @@ where
         );
 
         for handler_id in 0..N {
-            unwrap!(handlers.push(self.handle(handler_id, group_store)).map_err(|_| ())); // Cannot fail because the vector has size N
+            unwrap!(handlers
+                .push(self.handle(handler_id, group_store))
+                .map_err(|_| ())); // Cannot fail because the vector has size N
         }
 
         let handlers = pin!(handlers);

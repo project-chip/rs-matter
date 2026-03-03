@@ -74,17 +74,16 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
         on_off: on_off::OnOffHandler<'a, OH, LH>,
         group_store: &'a dyn GroupStore,
     ) -> Self {
-        let handler =
-            with_eth(&(), &(), rand, with_sys(&false, rand, Some(group_store), EmptyHandler));
+        let handler = with_eth(
+            &(),
+            &(),
+            rand,
+            with_sys(&false, rand, Some(group_store), EmptyHandler),
+        );
 
         let handler = ChainedHandler::new(
-            EpClMatcher::new(
-                Some(ROOT_ENDPOINT_ID),
-                Some(GroupsHandler::CLUSTER.id),
-            ),
-            Async(
-                GroupsHandler::new(Dataver::new_rand(&mut rand), group_store).adapt(),
-            ),
+            EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GroupsHandler::CLUSTER.id)),
+            Async(GroupsHandler::new(Dataver::new_rand(&mut rand), group_store).adapt()),
             handler,
         );
 

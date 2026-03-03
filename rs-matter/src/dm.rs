@@ -185,8 +185,14 @@ where
                 error!("Received a groupcast message for opcode: ReadRequest")
             }
             OpCode::ReadRequest if !is_groupcast => self.read(exchange, group_store).await?,
-            OpCode::WriteRequest => self.write(exchange, timeout_instant, is_groupcast, group_store).await?,
-            OpCode::InvokeRequest => self.invoke(exchange, timeout_instant, is_groupcast, group_store).await?,
+            OpCode::WriteRequest => {
+                self.write(exchange, timeout_instant, is_groupcast, group_store)
+                    .await?
+            }
+            OpCode::InvokeRequest => {
+                self.invoke(exchange, timeout_instant, is_groupcast, group_store)
+                    .await?
+            }
             OpCode::SubscribeRequest if is_groupcast => {
                 error!("Received a groupcast message for opcode: SubscribeRequest")
             }
@@ -235,7 +241,13 @@ where
             &req,
             &node,
             None,
-            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers, group_store),
+            HandlerInvoker::new(
+                exchange,
+                &self.crypto,
+                &self.handler,
+                &self.buffers,
+                group_store,
+            ),
             EventReader::new(0),
             self.events,
         );
@@ -281,7 +293,13 @@ where
             let mut resp = WriteResponder::new(
                 &req,
                 &node,
-                HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers, group_store),
+                HandlerInvoker::new(
+                    exchange,
+                    &self.crypto,
+                    &self.handler,
+                    &self.buffers,
+                    group_store,
+                ),
             );
 
             resp.respond(self, &mut wb, is_groupcast).await?;
@@ -329,7 +347,13 @@ where
         let mut resp = InvokeResponder::new(
             &req,
             &node,
-            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers, group_store),
+            HandlerInvoker::new(
+                exchange,
+                &self.crypto,
+                &self.handler,
+                &self.buffers,
+                group_store,
+            ),
         );
 
         resp.respond(self, &mut wb, is_groupcast).await
@@ -843,7 +867,11 @@ where
     T: DataModelHandler,
     B: BufferAccess<IMBuffer>,
 {
-    fn handle<'a>(&self, exchange: &mut Exchange<'a>, group_store: Option<&'a dyn crate::group_keys::GroupStore>) -> impl Future<Output = Result<(), Error>> {
+    fn handle<'a>(
+        &self,
+        exchange: &mut Exchange<'a>,
+        group_store: Option<&'a dyn crate::group_keys::GroupStore>,
+    ) -> impl Future<Output = Result<(), Error>> {
         DataModel::handle(self, exchange, group_store)
     }
 }

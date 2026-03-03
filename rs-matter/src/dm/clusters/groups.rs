@@ -50,7 +50,10 @@ impl<'a> GroupsHandler<'a> {
     /// * `dataver` - The data version tracker
     /// * `group_store` - Reference to the group store implementation
     pub const fn new(dataver: Dataver, group_store: &'a dyn GroupStore) -> Self {
-        Self { dataver, group_store }
+        Self {
+            dataver,
+            group_store,
+        }
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
@@ -112,7 +115,10 @@ impl<'a> ClusterHandler for GroupsHandler<'a> {
 
         // Add or update group membership
         let endpoint_id = ctx.cmd().endpoint_id;
-        match self.group_store.group_add(fab_idx, group_id, endpoint_id, group_name) {
+        match self
+            .group_store
+            .group_add(fab_idx, group_id, endpoint_id, group_name)
+        {
             Ok(_) => {
                 ctx.exchange().matter().notify_groups_changed();
                 response.status(STATUS_SUCCESS)?.group_id(group_id)?.end()
@@ -134,7 +140,6 @@ impl<'a> ClusterHandler for GroupsHandler<'a> {
         let fab_idx =
             NonZeroU8::new(ctx.exchange().accessor(None)?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
-
         let group_id = request.group_id()?;
 
         // Validate constraints
@@ -149,7 +154,8 @@ impl<'a> ClusterHandler for GroupsHandler<'a> {
         // Check membership for group_id
         let endpoint_id = ctx.cmd().endpoint_id;
         if self.group_store.has_group(fab_idx, group_id, endpoint_id) {
-            let name = self.group_store
+            let name = self
+                .group_store
                 .group_name(fab_idx, group_id)?
                 .unwrap_or_default();
             response
@@ -175,7 +181,6 @@ impl<'a> ClusterHandler for GroupsHandler<'a> {
         let fab_idx =
             NonZeroU8::new(ctx.exchange().accessor(None)?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
-
         let request_group_list = request.group_list()?;
 
         // Capacity is nullable - return null to indicate unknown capacity
@@ -188,11 +193,12 @@ impl<'a> ClusterHandler for GroupsHandler<'a> {
             // Return all groups this endpoint is a member of
             // Collect group IDs for this endpoint
             let mut group_ids: heapless::Vec<u16, 24> = heapless::Vec::new();
-            self.group_store.for_each_group(Some(fab_idx), &mut |_fab_idx, entry| {
-                if entry.endpoint_id == endpoint_id {
-                    let _ = group_ids.push(entry.group_id);
-                }
-            });
+            self.group_store
+                .for_each_group(Some(fab_idx), &mut |_fab_idx, entry| {
+                    if entry.endpoint_id == endpoint_id {
+                        let _ = group_ids.push(entry.group_id);
+                    }
+                });
             for gid in &group_ids {
                 group_list = group_list.push(gid)?;
             }
@@ -217,7 +223,6 @@ impl<'a> ClusterHandler for GroupsHandler<'a> {
         let fab_idx =
             NonZeroU8::new(ctx.exchange().accessor(None)?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
-
         let group_id = request.group_id()?;
 
         // Step 1: Validate constraints
@@ -230,7 +235,9 @@ impl<'a> ClusterHandler for GroupsHandler<'a> {
 
         // Steps 2-3: Remove membership
         let endpoint_id = ctx.cmd().endpoint_id;
-        let removed = self.group_store.group_remove(fab_idx, group_id, endpoint_id)?;
+        let removed = self
+            .group_store
+            .group_remove(fab_idx, group_id, endpoint_id)?;
 
         if removed {
             ctx.exchange().matter().notify_groups_changed();
@@ -244,9 +251,9 @@ impl<'a> ClusterHandler for GroupsHandler<'a> {
         let fab_idx =
             NonZeroU8::new(ctx.exchange().accessor(None)?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
-
         let endpoint_id = ctx.cmd().endpoint_id;
-        self.group_store.group_remove_all_for_endpoint(fab_idx, endpoint_id)?;
+        self.group_store
+            .group_remove_all_for_endpoint(fab_idx, endpoint_id)?;
 
         ctx.exchange().matter().notify_groups_changed();
 
