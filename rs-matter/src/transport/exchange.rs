@@ -880,7 +880,7 @@ impl<'a> Exchange<'a> {
     /// (e.g. `PBKDFParamRequest` for PASE, or `Sigma1` for CASE).
     ///
     /// If there is no space for a new session, the method will attempt to evict
-    /// a session and retry, following the same pattern as `ReservedSession::reserve()`.
+    /// a session and retry.
     ///
     /// For flows that need direct access to the session ID (e.g. to upgrade the session
     /// with derived keys after a successful handshake), use
@@ -890,18 +890,19 @@ impl<'a> Exchange<'a> {
         crypto: C,
         peer_addr: network::Address,
     ) -> Result<Self, Error> {
-        let result = matter
+        match matter
             .transport_mgr
-            .initiate_unsecured_now(matter, &crypto, peer_addr);
+            .initiate_unsecured_now(matter, &crypto, peer_addr)
+        {
+            Ok(exchange) => Ok(exchange),
+            Err(e) if e.code() == ErrorCode::NoSpaceSessions => {
+                matter.transport_mgr.evict_some_session(&crypto).await?;
 
-        if let Ok(exchange) = result {
-            Ok(exchange)
-        } else {
-            matter.transport_mgr.evict_some_session(&crypto).await?;
-
-            matter
-                .transport_mgr
-                .initiate_unsecured_now(matter, &crypto, peer_addr)
+                matter
+                    .transport_mgr
+                    .initiate_unsecured_now(matter, &crypto, peer_addr)
+            }
+            Err(e) => Err(e),
         }
     }
 
