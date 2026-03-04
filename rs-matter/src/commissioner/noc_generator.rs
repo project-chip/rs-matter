@@ -263,9 +263,6 @@ impl NocGenerator {
         let csr_ref = CsrRef::new(csr)?;
         let device_pubkey = csr_ref.pubkey()?;
 
-        // Validate signature algorithm is ECDSA-with-SHA256
-        csr_ref.validate_signature_algorithm()?;
-
         // Verify the CSR signature
         csr_ref.verify(crypto)?;
 

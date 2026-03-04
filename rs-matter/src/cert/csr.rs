@@ -21,26 +21,26 @@
 //! It extracts the public key needed for NOC generation and can verify the CSR's
 //! self-signature.
 
+use der::asn1::{BitStringRef, UintRef};
+use der::oid::ObjectIdentifier;
+use der::{
+    AnyRef, Decode, DecodeValue, Encode, EncodeValue, Header, Length, Reader, Sequence,
+    SliceReader, Tag, Tagged, Writer,
+};
+use x509_cert::spki::AlgorithmIdentifier;
+
 use crate::crypto::{
     CanonPkcPublicKey, CanonPkcPublicKeyRef, Crypto, PublicKey, PKC_CANON_PUBLIC_KEY_LEN,
-    PKC_SIGNATURE_LEN,
+    PKC_CANON_SECRET_KEY_LEN, PKC_SIGNATURE_LEN,
 };
 use crate::error::{Error, ErrorCode};
 
-// ASN.1 DER tag constants
-const TAG_BIT_STRING: u8 = 0x03;
-const TAG_SEQUENCE: u8 = 0x30;
-
 /// OID for ECDSA-with-SHA256: 1.2.840.10045.4.3.2
-const OID_ECDSA_SHA256: [u8; 8] = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02];
-
-/// OID tag for ASN.1
-const TAG_OID: u8 = 0x06;
-
-// ASN.1 DER length encoding constants
-const LEN_SHORT_FORM_MAX: u8 = 0x7F;
-const LEN_LONG_FORM_1BYTE: u8 = 0x81;
-const LEN_LONG_FORM_2BYTE: u8 = 0x82;
+const OID_ECDSA_SHA256: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2");
+/// OID for id-ecPublicKey: 1.2.840.10045.2.1
+const OID_EC_PUBLIC_KEY: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
+/// OID for prime256v1 (secp256r1): 1.2.840.10045.3.1.7
+const OID_PRIME256V1: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.3.1.7");
 
 /// Matter uses the P-256 uncompressed public key length
 /// (0x04 || X || Y = 65 bytes)
@@ -49,79 +49,137 @@ const P256_PUBLIC_KEY_LEN: usize = PKC_CANON_PUBLIC_KEY_LEN;
 /// ECDSA signature length (r || s = 64 bytes)
 const ECDSA_SIGNATURE_LEN: usize = PKC_SIGNATURE_LEN;
 
-/// DER reader that operates on a borrowed byte slice.
-///
-/// Navigates the hierarchical structure of a DER-encoded CSR.
-#[derive(Clone, Copy)]
-struct DerReader<'a> {
-    data: &'a [u8],
+/// P-256 field element length in bytes (ECDSA signature r and s values).
+const P256_FE_LEN: usize = PKC_CANON_SECRET_KEY_LEN;
+
+struct CertificationRequest<'a> {
+    pub certification_request_info: CertificationRequestInfo<'a>,
+    pub signature_algorithm: AlgorithmIdentifier<()>,
+    pub signature: BitStringRef<'a>,
 }
 
-impl<'a> DerReader<'a> {
-    /// Create a new DerReader from a byte slice.
-    fn new(data: &'a [u8]) -> Self {
-        Self { data }
-    }
+impl<'a> DecodeValue<'a> for CertificationRequest<'a> {
+    fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
+        // Decode SEQUENCE
+        reader.read_nested(header.length, |reader| {
+            let certification_request_info =
+                CertificationRequestInfo::decode_value(reader, header)?;
+            // Decode algorithm identifier
+            let signature_algorithm: AlgorithmIdentifier<()> = AlgorithmIdentifier::decode(reader)?;
 
-    /// Read a DER length from the given byte slice.
-    ///
-    /// Returns `(length_value, rest_after_length)`.
-    fn read_length(data: &'a [u8]) -> Result<(usize, &'a [u8]), Error> {
-        if data.is_empty() {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        let first = data[0];
-        if first <= LEN_SHORT_FORM_MAX {
-            Ok((first as usize, &data[1..]))
-        } else if first == LEN_LONG_FORM_1BYTE {
-            if data.len() < 2 {
-                return Err(ErrorCode::InvalidData.into());
+            // Validate it's id-ecPublicKey
+            if signature_algorithm.oid != OID_ECDSA_SHA256 {
+                return Err(der::Tag::Sequence.value_error());
             }
-            Ok((data[1] as usize, &data[2..]))
-        } else if first == LEN_LONG_FORM_2BYTE {
-            if data.len() < 3 {
-                return Err(ErrorCode::InvalidData.into());
+
+            // Decode the public key bit string
+            let signature = BitStringRef::decode(reader)?;
+
+            Ok(Self {
+                certification_request_info,
+                signature_algorithm,
+                signature,
+            })
+        })
+    }
+}
+impl<'a> der::FixedTag for CertificationRequest<'a> {
+    const TAG: Tag = Tag::Sequence;
+}
+
+// TODO Remove when upgrading to der 0.8+ which separates Encode/Decode traits.
+impl<'a> EncodeValue for CertificationRequest<'a> {
+    fn value_len(&self) -> der::Result<Length> {
+        unimplemented!("CertificationRequest encoding is not supported")
+    }
+    fn encode_value(&self, _writer: &mut impl Writer) -> der::Result<()> {
+        unimplemented!("CertificationRequest encoding is not supported")
+    }
+}
+
+#[derive(Sequence)]
+struct CertificationRequestInfo<'a> {
+    pub version: UintRef<'a>,
+    pub subject: AnyRef<'a>,
+    pub subject_public_key_info: SubjectPublicKeyInfo<'a>,
+    #[asn1(context_specific = "0", tag_mode = "IMPLICIT")]
+    pub attributes: AnyRef<'a>,
+}
+
+struct SubjectPublicKeyInfo<'a> {
+    /// Algorithm oid verified id-ecPublicKey with prime256v1 curve oid
+    pub algorithm: AlgorithmIdentifier<()>,
+    /// SubjectPublicKey verified for size
+    pub subject_public_key: BitStringRef<'a>,
+}
+
+impl<'a> DecodeValue<'a> for SubjectPublicKeyInfo<'a> {
+    fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
+        // Decode SEQUENCE
+        reader.read_nested(header.length, |reader| {
+            // Decode algorithm identifier
+            let algorithm: AlgorithmIdentifier<()> = AlgorithmIdentifier::decode(reader)?;
+
+            // Validate it's id-ecPublicKey
+            if algorithm.oid != OID_EC_PUBLIC_KEY {
+                return Err(der::Tag::Sequence.value_error());
             }
-            let len = ((data[1] as usize) << 8) | (data[2] as usize);
-            Ok((len, &data[3..]))
-        } else {
-            Err(ErrorCode::InvalidData.into())
-        }
+
+            // Validate parameters contain prime256v1 OID
+            if let Some(params) = &algorithm.parameters {
+                // Parameters should be an OID for the curve
+                let curve_oid = ObjectIdentifier::from_der(params.to_der()?.as_slice())
+                    .map_err(|_| der::Tag::ObjectIdentifier.value_error())?;
+
+                if curve_oid != OID_PRIME256V1 {
+                    return Err(der::Tag::ObjectIdentifier.value_error());
+                }
+            } else {
+                // Parameters must be present for EC public keys
+                return Err(der::Tag::ObjectIdentifier.value_error());
+            }
+
+            // Decode the public key bit string
+            let subject_public_key = BitStringRef::decode(reader)?;
+
+            // Validate the public key is 65 bytes (0x04 || X || Y)
+            let key_bytes = subject_public_key
+                .as_bytes()
+                .ok_or_else(|| der::Tag::BitString.value_error())?;
+
+            // First byte is unused bits (should be 0), then 65 bytes of key
+            if key_bytes.len() != P256_PUBLIC_KEY_LEN + 1 || key_bytes[0] != 0 {
+                return Err(der::Tag::BitString.value_error());
+            }
+
+            // Verify it's an uncompressed point (starts with 0x04)
+            if key_bytes[1] != 0x04 {
+                return Err(der::Tag::BitString.value_error());
+            }
+
+            Ok(Self {
+                algorithm,
+                subject_public_key,
+            })
+        })
     }
+}
 
-    /// Read a complete TLV (tag, length, value) from the current position.
-    ///
-    /// Returns `(tag, value_bytes, rest_after_this_tlv)`.
-    fn read_tlv(&self) -> Result<(u8, &'a [u8], &'a [u8]), Error> {
-        if self.data.is_empty() {
-            return Err(ErrorCode::InvalidData.into());
-        }
+impl<'a> der::FixedTag for SubjectPublicKeyInfo<'a> {
+    const TAG: Tag = Tag::Sequence;
+}
 
-        let tag = self.data[0];
-        let (len, after_len) = Self::read_length(&self.data[1..])?;
-
-        if after_len.len() < len {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        let value = &after_len[..len];
-        let rest = &after_len[len..];
-        Ok((tag, value, rest))
+// TODO Remove when upgrading to der 0.8+ which separates Encode/Decode traits.
+impl<'a> EncodeValue for SubjectPublicKeyInfo<'a> {
+    fn value_len(&self) -> der::Result<Length> {
+        unimplemented!("SubjectPublicKeyInfo encoding is not supported")
+        // self.algorithm.encoded_len()? + self.subject_public_key.encoded_len()?
     }
-
-    /// Enter a constructed type (SEQUENCE, SET, etc.).
-    ///
-    /// Returns `(tag, inner_reader_over_value_bytes, rest_after_this_tlv)`.
-    fn enter(&self) -> Result<(u8, DerReader<'a>, &'a [u8]), Error> {
-        let (tag, value, rest) = self.read_tlv()?;
-        Ok((tag, DerReader::new(value), rest))
-    }
-
-    /// Skip the current TLV and return a reader positioned at the next element.
-    fn skip(&self) -> Result<DerReader<'a>, Error> {
-        let (_, _, rest) = self.read_tlv()?;
-        Ok(DerReader::new(rest))
+    fn encode_value(&self, _writer: &mut impl Writer) -> der::Result<()> {
+        unimplemented!("SubjectPublicKeyInfo encoding is not supported")
+        // self.algorithm.encode(writer)?;
+        // self.subject_public_key.encode(writer)?;
+        // Ok(())
     }
 }
 
@@ -148,7 +206,8 @@ impl<'a> DerReader<'a> {
 /// }
 /// ```
 pub struct CsrRef<'a> {
-    data: &'a [u8],
+    pub csr: CertificationRequest<'a>,
+    cert_req_info: &'a [u8],
 }
 
 impl<'a> CsrRef<'a> {
@@ -157,55 +216,34 @@ impl<'a> CsrRef<'a> {
     /// Validates that the outer structure is a SEQUENCE tag but does not
     /// parse the full CSR.
     pub fn new(der: &'a [u8]) -> Result<Self, Error> {
-        if der.len() < 2 {
-            return Err(ErrorCode::InvalidData.into());
-        }
-        // Outer structure must be a SEQUENCE
-        if der[0] != TAG_SEQUENCE {
-            return Err(ErrorCode::InvalidData.into());
-        }
-        // Validate that the length is consistent
-        let reader = DerReader::new(der);
-        let (_, value, _) = reader.read_tlv()?;
-        if value.is_empty() {
-            return Err(ErrorCode::InvalidData.into());
-        }
-        Ok(Self { data: der })
+        let csr = CertificationRequest::from_der(der).map_err(|_| ErrorCode::InvalidData)?;
+
+        // Also store the raw bytes of certificationRequestInfo for `crypto` crate verification
+        let mut reader = SliceReader::new(der).map_err(|_| ErrorCode::InvalidData)?;
+
+        // Decode the outer SEQUENCE header (CertificationRequest)
+        Header::decode(&mut reader).map_err(|_| ErrorCode::InvalidData)?;
+
+        // Now positioned at certificationRequestInfo
+        let start = usize::try_from(reader.position()).map_err(|_| ErrorCode::InvalidData)?;
+
+        // Decode and skip certificationRequestInfo to find its end
+        let _info =
+            CertificationRequestInfo::decode(&mut reader).map_err(|_| ErrorCode::InvalidData)?;
+
+        let end = usize::try_from(reader.position()).map_err(|_| ErrorCode::InvalidData)?;
+
+        Ok(Self {
+            csr,
+            cert_req_info: &der[start..end],
+        })
     }
 
     /// Get the raw certificationRequestInfo bytes (the TBS portion).
     ///
     /// This is the data that is signed.
     fn certification_request_info_raw(&self) -> Result<&'a [u8], Error> {
-        let outer = DerReader::new(self.data);
-        let (_, outer_content, _) = outer.enter()?;
-
-        // The certificationRequestInfo is the first child SEQUENCE
-        let (tag, _value, _) = outer_content.read_tlv()?;
-        if tag != TAG_SEQUENCE {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        // Return the full TLV (tag + length + value) for signature verification
-        // Calculate the length of the TLV header
-        let value_start = self.data.len() - outer_content.data.len();
-        let value_end = value_start
-            + (outer_content.data.len() - DerReader::new(outer_content.data).skip()?.data.len());
-
-        Ok(&self.data[value_start..value_end])
-    }
-
-    /// Get a DerReader over the certificationRequestInfo SEQUENCE contents.
-    fn certification_request_info(&self) -> Result<DerReader<'a>, Error> {
-        let outer = DerReader::new(self.data);
-        let (_, outer_content, _) = outer.enter()?;
-
-        // First child is certificationRequestInfo SEQUENCE
-        let (tag, cri_reader, _) = outer_content.enter()?;
-        if tag != TAG_SEQUENCE {
-            return Err(ErrorCode::InvalidData.into());
-        }
-        Ok(cri_reader)
+        Ok(self.cert_req_info)
     }
 
     /// Extract the uncompressed P-256 public key from the CSR.
@@ -213,42 +251,30 @@ impl<'a> CsrRef<'a> {
     /// Returns a 65-byte array containing the uncompressed public key
     /// (0x04 || X || Y).
     pub fn pubkey(&self) -> Result<[u8; P256_PUBLIC_KEY_LEN], Error> {
-        let mut cri_reader = self.certification_request_info()?;
+        // Access the subject_public_key from the parsed structure
+        let subject_pk = &self
+            .csr
+            .certification_request_info
+            .subject_public_key_info
+            .subject_public_key;
 
-        // Skip version (INTEGER)
-        cri_reader = cri_reader.skip()?;
+        // BitStringRef includes the unused bits count in its encoding
+        // Get the raw bytes (this should be the public key with 0x04 prefix)
+        let key_bytes = subject_pk.as_bytes().ok_or(ErrorCode::InvalidData)?;
 
-        // Skip subject (Name/SEQUENCE)
-        cri_reader = cri_reader.skip()?;
-
-        // subjectPKInfo is next (SEQUENCE)
-        let (tag, spki_value, _) = cri_reader.read_tlv()?;
-        if tag != TAG_SEQUENCE {
+        // The first byte should be 0 (unused bits count), skip it
+        let key = if key_bytes.len() > 0 && key_bytes[0] == 0 {
+            &key_bytes[1..]
+        } else {
             return Err(ErrorCode::InvalidData.into());
-        }
+        };
 
-        // SubjectPublicKeyInfo = SEQUENCE { algorithm, subjectPublicKey }
-        let mut spki_reader = DerReader::new(spki_value);
+        // // Verify it's the correct length
+        // if key.len() != P256_PUBLIC_KEY_LEN {
+        //     return Err(ErrorCode::InvalidData.into());
+        // }
 
-        // Skip algorithm SEQUENCE
-        spki_reader = spki_reader.skip()?;
-
-        // subjectPublicKey is a BIT STRING
-        let (tag, bs_value, _) = spki_reader.read_tlv()?;
-        if tag != TAG_BIT_STRING {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        // BIT STRING: first byte is unused bits count (must be 0)
-        if bs_value.is_empty() || bs_value[0] != 0x00 {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        let key = &bs_value[1..];
-        if key.len() != P256_PUBLIC_KEY_LEN {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
+        // Convert to fixed-size array
         let mut result = [0u8; P256_PUBLIC_KEY_LEN];
         result.copy_from_slice(key);
         Ok(result)
@@ -266,70 +292,45 @@ impl<'a> CsrRef<'a> {
     ///
     /// Returns the raw ECDSA signature bytes (r || s, 64 bytes).
     fn signature(&self) -> Result<[u8; ECDSA_SIGNATURE_LEN], Error> {
-        let outer = DerReader::new(self.data);
-        let (_, outer_content, _) = outer.enter()?;
-
-        // Skip certificationRequestInfo
-        let reader = outer_content.skip()?;
-
-        // Skip signatureAlgorithm
-        let reader = reader.skip()?;
-
-        // signature is a BIT STRING
-        let (tag, bs_value, _) = reader.read_tlv()?;
-        if tag != TAG_BIT_STRING {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        // BIT STRING: first byte is unused bits count (must be 0)
-        if bs_value.is_empty() || bs_value[0] != 0x00 {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        let sig_der = &bs_value[1..];
-
-        // The signature is DER-encoded as SEQUENCE { INTEGER r, INTEGER s }
-        // We need to extract the raw r and s values (32 bytes each)
-        Self::parse_ecdsa_signature_der(sig_der)
+        Self::ecdsa_der_to_raw(self.csr.signature.raw_bytes())
     }
 
     /// Parse a DER-encoded ECDSA signature into raw (r || s) format.
     ///
     /// DER format: SEQUENCE { INTEGER r, INTEGER s }
     /// Raw format: r (32 bytes, big-endian, zero-padded) || s (32 bytes)
-    fn parse_ecdsa_signature_der(der: &[u8]) -> Result<[u8; ECDSA_SIGNATURE_LEN], Error> {
-        let reader = DerReader::new(der);
-        let (tag, seq_value, _) = reader.read_tlv()?;
-        if tag != TAG_SEQUENCE {
-            return Err(ErrorCode::InvalidData.into());
+    fn ecdsa_der_to_raw(der: &[u8]) -> Result<[u8; ECDSA_SIGNATURE_LEN], Error> {
+        let mut reader =
+            SliceReader::new(der).map_err(|_| Error::from(ErrorCode::CdInvalidSignature))?;
+
+        // Read the SEQUENCE header
+        let seq_header =
+            Header::decode(&mut reader).map_err(|_| Error::from(ErrorCode::CdInvalidSignature))?;
+
+        if seq_header.tag != Tag::Sequence {
+            return Err(ErrorCode::CdInvalidSignature.into());
         }
 
-        let mut seq_reader = DerReader::new(seq_value);
-
-        // Read r INTEGER
-        let (tag, r_value, _) = seq_reader.read_tlv()?;
-        if tag != 0x02 {
-            // INTEGER tag
-            return Err(ErrorCode::InvalidData.into());
+        // Read INTEGER r
+        let r_any =
+            AnyRef::decode(&mut reader).map_err(|_| Error::from(ErrorCode::CdInvalidSignature))?;
+        if r_any.tag() != Tag::Integer {
+            return Err(ErrorCode::CdInvalidSignature.into());
         }
 
-        seq_reader = seq_reader.skip()?;
-
-        // Read s INTEGER
-        let (tag, s_value, _) = seq_reader.read_tlv()?;
-        if tag != 0x02 {
-            return Err(ErrorCode::InvalidData.into());
+        // Read INTEGER s
+        let s_any =
+            AnyRef::decode(&mut reader).map_err(|_| Error::from(ErrorCode::CdInvalidSignature))?;
+        if s_any.tag() != Tag::Integer {
+            return Err(ErrorCode::CdInvalidSignature.into());
         }
 
-        let mut result = [0u8; ECDSA_SIGNATURE_LEN];
+        // Convert to fixed-length raw format
+        let mut raw = [0u8; ECDSA_SIGNATURE_LEN];
+        Self::copy_integer_to_fixed(&mut raw[..P256_FE_LEN], r_any.value())?;
+        Self::copy_integer_to_fixed(&mut raw[P256_FE_LEN..], s_any.value())?;
 
-        // Copy r value (may have leading zero for sign, or be shorter than 32 bytes)
-        Self::copy_integer_to_fixed(&mut result[..32], r_value)?;
-
-        // Copy s value
-        Self::copy_integer_to_fixed(&mut result[32..], s_value)?;
-
-        Ok(result)
+        Ok(raw)
     }
 
     /// Copy a DER INTEGER value to a fixed-size buffer, handling leading zeros.
@@ -351,37 +352,6 @@ impl<'a> CsrRef<'a> {
         let pad_len = dest_len - src.len();
         dest[..pad_len].fill(0);
         dest[pad_len..].copy_from_slice(src);
-
-        Ok(())
-    }
-
-    /// Validate that the CSR uses ECDSA-with-SHA256 signature algorithm.
-    ///
-    /// Matter only supports ECDSA-with-SHA256 for CSR signatures.
-    pub fn validate_signature_algorithm(&self) -> Result<(), Error> {
-        let outer = DerReader::new(self.data);
-        let (_, outer_content, _) = outer.enter()?;
-
-        // Skip certificationRequestInfo
-        let reader = outer_content.skip()?;
-
-        // signatureAlgorithm is a SEQUENCE containing the algorithm OID
-        let (tag, alg_value, _) = reader.read_tlv()?;
-        if tag != TAG_SEQUENCE {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        // First element should be the OID
-        let alg_reader = DerReader::new(alg_value);
-        let (tag, oid_value, _) = alg_reader.read_tlv()?;
-        if tag != TAG_OID {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        // Verify it matches ECDSA-with-SHA256
-        if oid_value != OID_ECDSA_SHA256 {
-            return Err(ErrorCode::InvalidData.into());
-        }
 
         Ok(())
     }
@@ -428,24 +398,6 @@ mod tests {
     }
 
     #[test]
-    fn test_der_reader_read_length() {
-        // Short form length
-        let (len, rest) = DerReader::read_length(&[0x05, 0xAA, 0xBB]).unwrap();
-        assert_eq!(len, 5);
-        assert_eq!(rest, &[0xAA, 0xBB]);
-
-        // Long form 1-byte length
-        let (len, rest) = DerReader::read_length(&[0x81, 0x80, 0xAA]).unwrap();
-        assert_eq!(len, 128);
-        assert_eq!(rest, &[0xAA]);
-
-        // Long form 2-byte length
-        let (len, rest) = DerReader::read_length(&[0x82, 0x01, 0x00, 0xAA]).unwrap();
-        assert_eq!(len, 256);
-        assert_eq!(rest, &[0xAA]);
-    }
-
-    #[test]
     fn test_copy_integer_to_fixed() {
         // Test with exact size
         let mut dest = [0u8; 4];
@@ -461,13 +413,5 @@ mod tests {
         let mut dest = [0u8; 4];
         CsrRef::copy_integer_to_fixed(&mut dest, &[0x01, 0x02]).unwrap();
         assert_eq!(dest, [0x00, 0x00, 0x01, 0x02]);
-    }
-
-    #[test]
-    fn test_signature_algorithm_constants() {
-        // Verify OID constant is correct (1.2.840.10045.4.3.2)
-        assert_eq!(OID_ECDSA_SHA256.len(), 8);
-        assert_eq!(OID_ECDSA_SHA256[0], 0x2A); // 1.2
-        assert_eq!(OID_ECDSA_SHA256[1], 0x86); // 840 (part 1)
     }
 }
