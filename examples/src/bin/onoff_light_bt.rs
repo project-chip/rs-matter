@@ -195,9 +195,21 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     let mut psm: Psm<4096> = Psm::new();
     let path = std::env::temp_dir().join("rs-matter");
 
-    psm.load(&path, &matter, Some(&networks), Some(&events))?;
+    psm.load(
+        &path,
+        &matter,
+        Some(&networks),
+        Some(&events),
+        Some(&group_store),
+    )?;
 
-    let mut persist = pin!(psm.run(&path, &matter, Some(&networks), Some(&events)));
+    let mut persist = pin!(psm.run(
+        &path,
+        &matter,
+        Some(&networks),
+        Some(&events),
+        Some(&group_store)
+    ));
 
     // Create and run the mDNS responder
     let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, &dm));

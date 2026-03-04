@@ -47,7 +47,7 @@ use rs_matter::dm::{
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{Psm, NO_NETWORKS};
+use rs_matter::persist::{Psm, NO_GROUPS, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
@@ -144,7 +144,7 @@ fn main() -> Result<(), Error> {
     let mut psm: Psm<4096> = Psm::new();
     let path = std::env::temp_dir().join("rs-matter");
 
-    psm.load(&path, &matter, NO_NETWORKS, Some(&events))?;
+    psm.load(&path, &matter, NO_NETWORKS, Some(&events), NO_GROUPS)?;
 
     if !matter.is_commissioned() {
         // If the device is not commissioned yet, print the QR text and code to the console
@@ -156,7 +156,7 @@ fn main() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
     }
 
-    let mut persist = pin!(psm.run(&path, &matter, NO_NETWORKS, Some(&events)));
+    let mut persist = pin!(psm.run(&path, &matter, NO_NETWORKS, Some(&events), NO_GROUPS));
 
     // Combine all async tasks in a single one
     let all = select4(

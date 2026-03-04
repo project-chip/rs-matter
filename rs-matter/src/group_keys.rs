@@ -15,18 +15,21 @@
  *    limitations under the License.
  */
 
+use core::cell::Cell;
 use core::num::NonZeroU8;
 
 use cfg_if::cfg_if;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use heapless::String;
 
 use crate::crypto::{self, CanonAeadKey, CanonAeadKeyRef, Crypto, Kdf};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
-use crate::tlv::{FromTLV, ToTLV};
+use crate::tlv::{FromTLV, TLVArray, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
-use crate::utils::storage::Vec;
+use crate::utils::storage::{Vec, WriteBuf};
+use crate::utils::sync::Notification;
 
 pub const GROUP_MAX_EPOCH_KEYS: usize = 3;
 
@@ -295,12 +298,16 @@ pub trait GroupStore: GroupMembershipStore + GroupKeyStore {
 /// Note: Currently the root endpoint also implements the groups cluster, so `ENDPOINTS` must be at least 1.
 pub struct GroupStoreImpl<const ENDPOINTS: usize> {
     data: RefCell<Vec<FabricGroupData<ENDPOINTS>, MAX_FABRICS>>,
+    changed: Cell<bool>,
+    persist_notification: Notification<NoopRawMutex>,
 }
 
 impl<const ENDPOINTS: usize> GroupStoreImpl<ENDPOINTS> {
     pub const fn new() -> Self {
         Self {
             data: RefCell::new(Vec::new()),
+            changed: Cell::new(false),
+            persist_notification: Notification::new(),
         }
     }
 
@@ -428,6 +435,8 @@ impl<const ENDPOINTS: usize> GroupMembershipStore for GroupStoreImpl<ENDPOINTS> 
             })
             .map_err(|_| ErrorCode::ResourceExhausted)?;
 
+        self.changed.set(true);
+        self.persist_notification.notify();
         Ok(false)
     }
 
@@ -451,6 +460,10 @@ impl<const ENDPOINTS: usize> GroupMembershipStore for GroupStoreImpl<ENDPOINTS> 
                 break;
             }
         }
+        if removed {
+            self.changed.set(true);
+            self.persist_notification.notify();
+        }
         Ok(removed)
     }
 
@@ -465,6 +478,8 @@ impl<const ENDPOINTS: usize> GroupMembershipStore for GroupStoreImpl<ENDPOINTS> 
         };
 
         fd.groups.retain(|eg| eg.endpoint_id != endpoint_id);
+        self.changed.set(true);
+        self.persist_notification.notify();
         Ok(())
     }
 }
@@ -534,6 +549,8 @@ impl<const ENDPOINTS: usize> GroupKeyStore for GroupStoreImpl<ENDPOINTS> {
                 .push(entry)
                 .map_err(|_| ErrorCode::ResourceExhausted)?;
         }
+        self.changed.set(true);
+        self.persist_notification.notify();
         Ok(())
     }
 
@@ -553,6 +570,8 @@ impl<const ENDPOINTS: usize> GroupKeyStore for GroupStoreImpl<ENDPOINTS> {
         // Also remove referencing key map entries
         fd.group_key_map.retain(|e| e.group_key_set_id != id);
 
+        self.changed.set(true);
+        self.persist_notification.notify();
         Ok(())
     }
 
@@ -572,6 +591,8 @@ impl<const ENDPOINTS: usize> GroupKeyStore for GroupStoreImpl<ENDPOINTS> {
                 .push(entry.clone())
                 .map_err(|_| ErrorCode::ResourceExhausted)?;
         }
+        self.changed.set(true);
+        self.persist_notification.notify();
         Ok(())
     }
 
@@ -583,6 +604,8 @@ impl<const ENDPOINTS: usize> GroupKeyStore for GroupStoreImpl<ENDPOINTS> {
         fd.group_key_map
             .push(entry)
             .map_err(|_| ErrorCode::Failure)?;
+        self.changed.set(true);
+        self.persist_notification.notify();
         Ok(())
     }
 
@@ -598,6 +621,129 @@ impl<const ENDPOINTS: usize> GroupKeyStore for GroupStoreImpl<ENDPOINTS> {
 impl<const ENDPOINTS: usize> GroupStore for GroupStoreImpl<ENDPOINTS> {
     fn remove_fabric(&self, fab_idx: NonZeroU8) {
         let mut data = self.data.borrow_mut();
+        let before = data.len();
         data.retain(|d| d.fab_idx != fab_idx);
+        if data.len() < before {
+            self.changed.set(true);
+            self.persist_notification.notify();
+        }
+    }
+}
+
+impl<const ENDPOINTS: usize> GroupStoreImpl<ENDPOINTS> {
+    /// Returns true if the group store data has changed since the last `store()` call.
+    pub fn changed(&self) -> bool {
+        self.changed.get()
+    }
+
+    /// Wait until the group store data needs re-persisting.
+    pub async fn wait_persist(&self) {
+        loop {
+            if self.changed.get() {
+                break;
+            }
+            self.persist_notification.wait().await;
+        }
+    }
+
+    /// TLV-encode all fabric group data into the provided buffer.
+    /// Returns the number of bytes written.
+    pub fn store(&self, buf: &mut [u8]) -> Result<usize, Error> {
+        self.changed.set(false);
+
+        let data = self.data.borrow();
+        let mut wb = WriteBuf::new(buf);
+
+        wb.start_array(&TLVTag::Anonymous)?;
+        for fd in data.iter() {
+            wb.start_struct(&TLVTag::Anonymous)?;
+            wb.u8(&TLVTag::Context(0), fd.fab_idx.get())?;
+
+            // Key sets
+            wb.start_array(&TLVTag::Context(1))?;
+            for ks in fd.group_key_sets.iter() {
+                ks.to_tlv(&TLVTag::Anonymous, &mut wb)?;
+            }
+            wb.end_container()?;
+
+            // Key map
+            wb.start_array(&TLVTag::Context(2))?;
+            for km in fd.group_key_map.iter() {
+                km.to_tlv(&TLVTag::Anonymous, &mut wb)?;
+            }
+            wb.end_container()?;
+
+            // Groups: flatten EndpointGroups into GroupEntry array
+            wb.start_array(&TLVTag::Context(3))?;
+            for eg in fd.groups.iter() {
+                for entry in eg.memberships.iter() {
+                    entry.to_tlv(&TLVTag::Anonymous, &mut wb)?;
+                }
+            }
+            wb.end_container()?;
+
+            wb.end_container()?;
+        }
+        wb.end_container()?;
+
+        Ok(wb.get_tail())
+    }
+
+    /// TLV-decode fabric group data from the provided buffer and populate internal data.
+    pub fn load(&self, data: &[u8]) -> Result<(), Error> {
+        let mut store_data = self.data.borrow_mut();
+        store_data.clear();
+
+        let root = TLVElement::new(data);
+        let container = root.array()?;
+
+        for fabric_elem in container.iter() {
+            let fabric_elem = fabric_elem?;
+            let fabric_seq = fabric_elem.container()?;
+            let fab_idx_raw = fabric_seq.find_ctx(0)?.u8()?;
+            let fab_idx = NonZeroU8::new(fab_idx_raw).ok_or(ErrorCode::Invalid)?;
+
+            let mut fd = FabricGroupData::new(fab_idx);
+
+            // Key sets
+            let key_sets_arr: TLVArray<GrpKeySetEntry> = TLVArray::new(fabric_seq.find_ctx(1)?)?;
+            for ks in key_sets_arr {
+                fd.group_key_sets
+                    .push(ks?)
+                    .map_err(|_| ErrorCode::NoSpace)?;
+            }
+
+            // Key map
+            let key_map_arr: TLVArray<GrpKeyMapEntry> = TLVArray::new(fabric_seq.find_ctx(2)?)?;
+            for km in key_map_arr {
+                fd.group_key_map.push(km?).map_err(|_| ErrorCode::NoSpace)?;
+            }
+
+            // Groups: reconstruct EndpointGroups from flat GroupEntry array
+            let groups_arr: TLVArray<GroupEntry> = TLVArray::new(fabric_seq.find_ctx(3)?)?;
+            for entry in groups_arr {
+                let entry = entry?;
+                let endpoint_id = entry.endpoint_id;
+
+                let eg = if let Some(eg) = fd
+                    .groups
+                    .iter_mut()
+                    .find(|eg| eg.endpoint_id == endpoint_id)
+                {
+                    eg
+                } else {
+                    fd.groups
+                        .push(EndpointGroups::new(endpoint_id))
+                        .map_err(|_| ErrorCode::NoSpace)?;
+                    fd.groups.last_mut().unwrap()
+                };
+
+                eg.memberships.push(entry).map_err(|_| ErrorCode::NoSpace)?;
+            }
+
+            store_data.push(fd).map_err(|_| ErrorCode::NoSpace)?;
+        }
+
+        Ok(())
     }
 }

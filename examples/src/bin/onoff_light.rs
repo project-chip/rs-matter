@@ -111,7 +111,6 @@ fn run() -> Result<(), Error> {
     matter.initialize_transport_buffers()?;
 
     // Configure the group store for groupcast support
-    // TODO: Store groups using PSM
     let group_store = GROUP_STORE.init(GroupStoreImpl::<2>::new());
 
     // Create the transport buffers
@@ -187,10 +186,10 @@ fn run() -> Result<(), Error> {
     info!(
         "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B",
         core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS, NO_EVENTS))
+        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS, NO_EVENTS, Some(group_store)))
     );
 
-    psm.load(&path, matter, NO_NETWORKS, NO_EVENTS)?;
+    psm.load(&path, matter, NO_NETWORKS, NO_EVENTS, Some(group_store))?;
 
     if !matter.is_commissioned() {
         // If the device is not commissioned yet, print the QR text and code to the console
@@ -202,7 +201,7 @@ fn run() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
     }
 
-    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, NO_EVENTS));
+    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, NO_EVENTS, Some(group_store)));
 
     // Combine all async tasks in a single one
     let all = select4(

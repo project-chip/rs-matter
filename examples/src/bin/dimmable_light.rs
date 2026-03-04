@@ -58,7 +58,7 @@ use rs_matter::dm::{
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{Psm, NO_NETWORKS};
+use rs_matter::persist::{Psm, NO_GROUPS, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
@@ -223,11 +223,11 @@ fn run() -> Result<(), Error> {
     info!(
         "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B, Persist path={}",
         core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS, Some(events))),
+        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS, Some(events), NO_GROUPS)),
         path.as_path().to_str().unwrap_or("none")
     );
 
-    psm.load(&path, matter, NO_NETWORKS, Some(events))?;
+    psm.load(&path, matter, NO_NETWORKS, Some(events), NO_GROUPS)?;
 
     // We need to always print the QR text, because the test runner expects it to be printed
     // even if the device is already commissioned
@@ -242,7 +242,7 @@ fn run() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
     }
 
-    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, Some(events)));
+    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, Some(events), NO_GROUPS));
 
     // Listen to SIGTERM because at the end of the test we'll receive it
     let mut term_signal = Signals::new([Signal::Term])?;

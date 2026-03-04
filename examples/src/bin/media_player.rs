@@ -154,7 +154,13 @@ fn main() -> Result<(), Error> {
     let mut psm: Psm<4096> = Psm::new();
     let path = std::env::temp_dir().join("rs-matter");
 
-    psm.load(&path, &matter, NO_NETWORKS, Some(&events))?;
+    psm.load(
+        &path,
+        &matter,
+        NO_NETWORKS,
+        Some(&events),
+        Some(&group_store),
+    )?;
 
     if !matter.is_commissioned() {
         // If the device is not commissioned yet, print the QR text and code to the console
@@ -166,7 +172,13 @@ fn main() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
     }
 
-    let mut persist = pin!(psm.run(&path, &matter, NO_NETWORKS, Some(&events)));
+    let mut persist = pin!(psm.run(
+        &path,
+        &matter,
+        NO_NETWORKS,
+        Some(&events),
+        Some(&group_store)
+    ));
 
     // Combine all async tasks in a single one
     let all = select4(

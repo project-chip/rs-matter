@@ -28,12 +28,13 @@ pub mod fileio {
     use std::io::{Read, Write};
     use std::path::Path;
 
-    use embassy_futures::select::{select, select3};
+    use embassy_futures::select::select4;
     use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 
     use crate::dm::events::Events;
     use crate::dm::networks::wireless::{Wifi, WirelessNetwork, WirelessNetworks};
     use crate::error::{Error, ErrorCode};
+    use crate::group_keys::GroupStoreImpl;
     use crate::tlv::{
         Octets, TLVArray, TLVContainerIter, TLVElement, TLVTag, TLVValueType, TLVWrite,
     };
@@ -46,6 +47,9 @@ pub mod fileio {
 
     /// A constant representing the absence of events.
     pub const NO_EVENTS: Option<&'static Events<0, NoopRawMutex>> = None;
+
+    /// A constant representing the absence of groups.
+    pub const NO_GROUPS: Option<&'static GroupStoreImpl<0>> = None;
 
     /// A simple persistent storage manager (PSM) for `rs-matter`.
     ///
@@ -91,12 +95,13 @@ pub mod fileio {
         /// - `matter`: The `Matter` instance to load the state into (for fabrics and basic info settings).
         /// - `networks`: An optional reference to `WirelessNetworks` to load the wireless networks state into (if provided).
         /// - `events`: An optional reference to `Events` to load the events state into (if provided).
-        pub fn load<P, const W: usize, M, T, const NE: usize>(
+        pub fn load<P, const W: usize, M, T, const NE: usize, const E: usize>(
             &mut self,
             path: P,
             matter: &Matter,
             networks: Option<&WirelessNetworks<W, M, T>>,
             events: Option<&Events<NE, M>>,
+            groups: Option<&GroupStoreImpl<E>>,
         ) -> Result<(), Error>
         where
             P: AsRef<Path>,
@@ -135,6 +140,12 @@ pub mod fileio {
                 if let Some(events) = events {
                     events.load(container.find_ctx(3)?.octets()?)?;
                 }
+
+                if let Some(groups) = groups {
+                    if let Ok(elem) = container.find_ctx(4) {
+                        groups.load(elem.octets()?)?;
+                    }
+                }
             }
 
             Ok(())
@@ -150,12 +161,13 @@ pub mod fileio {
         /// - `matter`: The `Matter` instance whose state to store (for fabrics and basic info settings).
         /// - `networks`: An optional reference to `WirelessNetworks` whose state to store.
         /// - `events`: An optional reference to `Events` whose state to store.
-        pub fn store<P, const W: usize, M, T, const NE: usize>(
+        pub fn store<P, const W: usize, M, T, const NE: usize, const E: usize>(
             &mut self,
             path: P,
             matter: &Matter,
             networks: Option<&WirelessNetworks<W, M, T>>,
             events: Option<&Events<NE, M>>,
+            groups: Option<&GroupStoreImpl<E>>,
         ) -> Result<(), Error>
         where
             P: AsRef<Path>,
@@ -166,6 +178,7 @@ pub mod fileio {
                 && !matter.basic_info_changed()
                 && !networks.map(|networks| networks.changed()).unwrap_or(false)
                 && !events.map(|events| events.changed()).unwrap_or(false)
+                && !groups.map(|groups| groups.changed()).unwrap_or(false)
             {
                 return Ok(());
             }
@@ -188,6 +201,10 @@ pub mod fileio {
                 wb.str_cb(&TLVTag::Context(3), |buf| events.store(buf))?;
             }
 
+            if let Some(groups) = groups {
+                wb.str_cb(&TLVTag::Context(4), |buf| groups.store(buf))?;
+            }
+
             wb.end_container()?;
 
             Self::save_storage(path.as_ref(), wb.as_slice())?;
@@ -204,12 +221,13 @@ pub mod fileio {
         /// - `matter`: The `Matter` instance to monitor for changes and for state to store (for fabrics and basic info settings).
         /// - `networks`: An optional reference to `WirelessNetworks` to monitor for changes and for state to store (if provided).
         /// - `events`: An optional reference to `Events` to monitor for changes and for state to store (if provided).
-        pub async fn run<P, const W: usize, M, T, const NE: usize>(
+        pub async fn run<P, const W: usize, M, T, const NE: usize, const E: usize>(
             &mut self,
             path: P,
             matter: &Matter<'_>,
             networks: Option<&WirelessNetworks<W, M, T>>,
             events: Option<&Events<NE, M>>,
+            groups: Option<&GroupStoreImpl<E>>,
         ) -> Result<(), Error>
         where
             P: AsRef<Path>,
@@ -225,27 +243,34 @@ pub mod fileio {
             // self.load_networks(dir, networks)?;
 
             loop {
-                match (networks, events) {
-                    (Some(networks), Some(events)) => {
-                        select3(
-                            matter.wait_persist(),
-                            networks.wait_persist(),
-                            events.wait_persist(),
-                        )
-                        .await;
+                let networks_persist = async {
+                    match networks {
+                        Some(n) => n.wait_persist().await,
+                        None => core::future::pending().await,
                     }
-                    (Some(networks), None) => {
-                        select(matter.wait_persist(), networks.wait_persist()).await;
+                };
+                let events_persist = async {
+                    match events {
+                        Some(e) => e.wait_persist().await,
+                        None => core::future::pending().await,
                     }
-                    (None, Some(events)) => {
-                        select(matter.wait_persist(), events.wait_persist()).await;
+                };
+                let groups_persist = async {
+                    match groups {
+                        Some(g) => g.wait_persist().await,
+                        None => core::future::pending().await,
                     }
-                    (None, None) => {
-                        matter.wait_persist().await;
-                    }
-                }
+                };
 
-                self.store(path.as_ref(), matter, networks, events)?;
+                select4(
+                    matter.wait_persist(),
+                    networks_persist,
+                    events_persist,
+                    groups_persist,
+                )
+                .await;
+
+                self.store(path.as_ref(), matter, networks, events, groups)?;
             }
         }
 
@@ -346,7 +371,7 @@ pub mod fileio {
             });
 
             let mut psm = Psm::<32768>::new();
-            psm.store(&path, &initial_matter, NO_NETWORKS, Some(&events))
+            psm.store(&path, &initial_matter, NO_NETWORKS, Some(&events), NO_GROUPS)
                 .unwrap();
 
             assert!(path.exists());
@@ -368,6 +393,7 @@ pub mod fileio {
                 &roundtripped,
                 NO_NETWORKS,
                 Some(&roundtripped_events),
+                NO_GROUPS,
             )
             .unwrap();
 
@@ -421,11 +447,114 @@ pub mod fileio {
             );
 
             let mut psm = Psm::<32768>::new();
-            psm.load(&path, &matter, NO_NETWORKS, NO_EVENTS).unwrap();
+            psm.load(&path, &matter, NO_NETWORKS, NO_EVENTS, NO_GROUPS)
+                .unwrap();
 
             let basic = matter.basic_info_settings.borrow();
             assert_eq!(basic.node_label, "my-test-node");
             assert_eq!(basic.location.as_deref(), Some("ab"));
+        }
+
+        #[test]
+        fn test_groups_store_load_roundtrip() {
+            use core::num::NonZeroU8;
+
+            use crate::group_keys::{
+                GroupEpochKeyEntry, GroupKeyStore, GroupMembershipStore, GroupQuery, GroupStoreImpl,
+                GrpKeyMapEntry, GrpKeySetEntry,
+            };
+
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("groups.bin");
+
+            let matter = new_test_matter();
+            {
+                let mut basic = matter.basic_info_settings.borrow_mut();
+                basic.changed = true;
+            }
+
+            let groups = GroupStoreImpl::<4>::new();
+            let fab1 = NonZeroU8::new(1).unwrap();
+
+            // Add a group membership
+            groups.group_add(fab1, 100, 1, "LivingRoom").unwrap();
+            groups.group_add(fab1, 200, 2, "Kitchen").unwrap();
+            groups.group_add(fab1, 100, 2, "LivingRoom").unwrap();
+
+            // Add a key map entry
+            groups
+                .group_key_map_add(fab1, GrpKeyMapEntry { group_id: 100, group_key_set_id: 1 })
+                .unwrap();
+
+            // Add a key set
+            let mut epoch_keys = crate::utils::storage::Vec::new();
+            epoch_keys
+                .push(GroupEpochKeyEntry {
+                    epoch_key: Default::default(),
+                    epoch_start_time: 1000,
+                })
+                .unwrap();
+            groups
+                .group_key_set_add(
+                    fab1,
+                    GrpKeySetEntry {
+                        group_key_set_id: 1,
+                        group_key_security_policy: 0,
+                        epoch_keys,
+                    },
+                )
+                .unwrap();
+
+            // Store
+            let mut psm = Psm::<32768>::new();
+            psm.store(&path, &matter, NO_NETWORKS, NO_EVENTS, Some(&groups))
+                .unwrap();
+
+            assert!(path.exists());
+
+            // Load into fresh instances
+            let matter2 = Matter::new(
+                &TEST_DEV_DET,
+                TEST_DEV_COMM,
+                &TEST_DEV_ATT,
+                sys_epoch,
+                MATTER_PORT,
+            );
+            let groups2 = GroupStoreImpl::<4>::new();
+
+            let mut psm2 = Psm::<32768>::new();
+            psm2.load(&path, &matter2, NO_NETWORKS, NO_EVENTS, Some(&groups2))
+                .unwrap();
+
+            // Verify group memberships
+            assert!(groups2.has_group(fab1, 100, 1));
+            assert!(groups2.has_group(fab1, 200, 2));
+            assert!(groups2.has_group(fab1, 100, 2));
+            assert!(!groups2.has_group(fab1, 200, 1));
+
+            // Verify group name
+            let name = groups2.group_name(fab1, 100).unwrap();
+            assert_eq!(name.as_deref(), Some("LivingRoom"));
+
+            // Verify key map
+            let mut key_map_entries = heapless::Vec::<GrpKeyMapEntry, 4>::new();
+            groups2.for_each_group_key_map(Some(fab1), &mut |_, e| {
+                let _ = key_map_entries.push(e.clone());
+            });
+            assert_eq!(key_map_entries.len(), 1);
+            assert_eq!(key_map_entries[0].group_id, 100);
+            assert_eq!(key_map_entries[0].group_key_set_id, 1);
+
+            // Verify key set
+            let ks = groups2.group_key_set_get(fab1, 1).unwrap().unwrap();
+            assert_eq!(ks.group_key_set_id, 1);
+            assert_eq!(ks.epoch_keys.len(), 1);
+            assert_eq!(ks.epoch_keys[0].epoch_start_time, 1000);
+
+            // Verify for_each_group
+            let mut count = 0;
+            groups2.for_each_group(Some(fab1), &mut |_, _| count += 1);
+            assert_eq!(count, 3);
         }
     }
 }

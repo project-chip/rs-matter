@@ -229,10 +229,16 @@ fn main() -> Result<(), Error> {
     info!(
         "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B",
         core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS, Some(events)))
+        core::mem::size_of_val(&psm.run(
+            &path,
+            matter,
+            NO_NETWORKS,
+            Some(events),
+            Some(group_store)
+        ))
     );
 
-    psm.load(&path, matter, NO_NETWORKS, Some(events))?;
+    psm.load(&path, matter, NO_NETWORKS, Some(events), Some(group_store))?;
 
     // We need to always print the QR text, because the test runner expects it to be printed
     // even if the device is already commissioned
@@ -247,7 +253,7 @@ fn main() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
     }
 
-    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, Some(events)));
+    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, Some(events), Some(group_store)));
 
     // Listen to SIGTERM because at the end of the test we'll receive it
     let mut term_signal = Signals::new([Signal::Term])?;
