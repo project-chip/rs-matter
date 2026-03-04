@@ -236,7 +236,13 @@ pub fn with_sys<'a, R: RngCore, H>(
 ) -> SysHandler<'a, H> {
     ChainedHandler::new(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GrpKeyMgmtHandler::CLUSTER.id)),
-        Async(GrpKeyMgmtHandler::new(Dataver::new_rand(&mut rand), group_store).adapt()),
+        Async(
+            GrpKeyMgmtHandler::new(
+                Dataver::new_rand(&mut rand),
+                group_store.map(|s| s as &dyn crate::group_keys::GroupKeyStore),
+            )
+            .adapt(),
+        ),
         handler,
     )
     .chain(

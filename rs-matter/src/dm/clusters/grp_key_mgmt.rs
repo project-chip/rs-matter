@@ -25,7 +25,7 @@ use crate::dm::{
     WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::group_keys::{GroupEpochKeyEntry, GroupStore, GrpKeyMapEntry, GrpKeySetEntry};
+use crate::group_keys::{GroupEpochKeyEntry, GroupKeyStore, GrpKeyMapEntry, GrpKeySetEntry};
 use crate::tlv::{Nullable, Octets, TLVArray, TLVBuilderParent};
 use crate::with;
 
@@ -35,7 +35,7 @@ pub use crate::dm::clusters::decl::group_key_management::*;
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GrpKeyMgmtHandler<'a> {
     dataver: Dataver,
-    group_store: Option<&'a dyn GroupStore>,
+    group_store: Option<&'a dyn GroupKeyStore>,
 }
 
 impl<'a> GrpKeyMgmtHandler<'a> {
@@ -43,8 +43,8 @@ impl<'a> GrpKeyMgmtHandler<'a> {
     ///
     /// # Arguments
     /// * `dataver` - The data version tracker
-    /// * `group_store` - Optional reference to the group store implementation
-    pub const fn new(dataver: Dataver, group_store: Option<&'a dyn GroupStore>) -> Self {
+    /// * `group_store` - Optional reference to the group key store implementation
+    pub const fn new(dataver: Dataver, group_store: Option<&'a dyn GroupKeyStore>) -> Self {
         Self {
             dataver,
             group_store,

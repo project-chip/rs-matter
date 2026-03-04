@@ -21,7 +21,7 @@ use core::num::NonZeroU8;
 
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
-use crate::group_keys::GroupStore;
+use crate::group_keys::GroupMembershipStore;
 use crate::tlv::{Nullable, TLVBuilderParent};
 use crate::with;
 
@@ -40,7 +40,7 @@ const STATUS_UNSUPPORTED_ACCESS: u8 = 0x7e;
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GroupsHandler<'a> {
     dataver: Dataver,
-    group_store: &'a dyn GroupStore,
+    group_store: &'a dyn GroupMembershipStore,
 }
 
 impl<'a> GroupsHandler<'a> {
@@ -48,8 +48,8 @@ impl<'a> GroupsHandler<'a> {
     ///
     /// # Arguments
     /// * `dataver` - The data version tracker
-    /// * `group_store` - Reference to the group store implementation
-    pub const fn new(dataver: Dataver, group_store: &'a dyn GroupStore) -> Self {
+    /// * `group_store` - Reference to the group membership store implementation
+    pub const fn new(dataver: Dataver, group_store: &'a dyn GroupMembershipStore) -> Self {
         Self {
             dataver,
             group_store,

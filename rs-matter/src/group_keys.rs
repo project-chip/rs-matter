@@ -183,52 +183,18 @@ impl<const ENDPOINTS: usize> FabricGroupData<ENDPOINTS> {
     }
 }
 
-/// External trait for group-related storage.
-pub trait GroupStore {
-    /// Calls `callback` for each `(fab_idx, GrpKeyMapEntry)` that matches the filter.
-    fn for_each_group_key_map(
-        &self,
-        fab_filter: Option<NonZeroU8>,
-        callback: &mut dyn FnMut(NonZeroU8, &GrpKeyMapEntry),
-    );
-
+/// Shared group iteration, needed by both membership and key management handlers.
+pub trait GroupQuery {
     /// Calls `callback` for each `(fab_idx, GroupEntry)` that matches the filter.
     fn for_each_group(
         &self,
         fab_filter: Option<NonZeroU8>,
         callback: &mut dyn FnMut(NonZeroU8, &GroupEntry),
     );
+}
 
-    /// Calls `callback` for each `(fab_idx, GrpKeySetEntry)` that matches the filter.
-    fn for_each_group_key_set(
-        &self,
-        fab_filter: Option<NonZeroU8>,
-        callback: &mut dyn FnMut(NonZeroU8, &GrpKeySetEntry),
-    );
-
-    /// Find a group key set by fabric and key set ID.
-    fn group_key_set_get(
-        &self,
-        fab_idx: NonZeroU8,
-        id: u16,
-    ) -> Result<Option<GrpKeySetEntry>, Error>;
-
-    /// Add or update a group key set for a fabric.
-    fn group_key_set_add(&self, fab_idx: NonZeroU8, entry: GrpKeySetEntry) -> Result<(), Error>;
-
-    /// Remove a group key set by ID. Also removes referencing key map entries.
-    fn group_key_set_remove(&self, fab_idx: NonZeroU8, id: u16) -> Result<(), Error>;
-
-    /// Replace all group key map entries for a fabric.
-    fn group_key_map_replace(
-        &self,
-        fab_idx: NonZeroU8,
-        entries: &[GrpKeyMapEntry],
-    ) -> Result<(), Error>;
-
-    /// Add a single group key map entry.
-    fn group_key_map_add(&self, fab_idx: NonZeroU8, entry: GrpKeyMapEntry) -> Result<(), Error>;
-
+/// Membership operations for the Groups cluster handler.
+pub trait GroupMembershipStore: GroupQuery {
     /// Check if a fabric has a group key map entry for the given group ID.
     fn has_group_key_map_entry(&self, fab_idx: NonZeroU8, group_id: u16) -> bool;
 
@@ -265,15 +231,61 @@ pub trait GroupStore {
         fab_idx: NonZeroU8,
         endpoint_id: u16,
     ) -> Result<(), Error>;
+}
 
-    /// Remove all group data for a fabric (called on fabric removal).
-    fn remove_fabric(&self, fab_idx: NonZeroU8);
+/// Key management operations for the Group Key Management cluster handler.
+pub trait GroupKeyStore: GroupQuery {
+    /// Calls `callback` for each `(fab_idx, GrpKeyMapEntry)` that matches the filter.
+    fn for_each_group_key_map(
+        &self,
+        fab_filter: Option<NonZeroU8>,
+        callback: &mut dyn FnMut(NonZeroU8, &GrpKeyMapEntry),
+    );
+
+    /// Calls `callback` for each `(fab_idx, GrpKeySetEntry)` that matches the filter.
+    fn for_each_group_key_set(
+        &self,
+        fab_filter: Option<NonZeroU8>,
+        callback: &mut dyn FnMut(NonZeroU8, &GrpKeySetEntry),
+    );
+
+    /// Find a group key set by fabric and key set ID.
+    fn group_key_set_get(
+        &self,
+        fab_idx: NonZeroU8,
+        id: u16,
+    ) -> Result<Option<GrpKeySetEntry>, Error>;
+
+    /// Add or update a group key set for a fabric.
+    fn group_key_set_add(&self, fab_idx: NonZeroU8, entry: GrpKeySetEntry) -> Result<(), Error>;
+
+    /// Remove a group key set by ID. Also removes referencing key map entries.
+    fn group_key_set_remove(&self, fab_idx: NonZeroU8, id: u16) -> Result<(), Error>;
+
+    /// Replace all group key map entries for a fabric.
+    fn group_key_map_replace(
+        &self,
+        fab_idx: NonZeroU8,
+        entries: &[GrpKeyMapEntry],
+    ) -> Result<(), Error>;
+
+    /// Add a single group key map entry.
+    fn group_key_map_add(&self, fab_idx: NonZeroU8, entry: GrpKeyMapEntry) -> Result<(), Error>;
 
     /// Max groups per fabric.
     fn max_groups_per_fabric(&self) -> u16;
 
     /// Max group key sets per fabric (excluding IPK).
     fn max_group_keys_per_fabric(&self) -> u16;
+}
+
+/// Combined trait for the full group store, used by the integration layer.
+///
+/// This trait combines `GroupMembershipStore` and `GroupKeyStore` and adds
+/// `remove_fabric` which affects both membership and key data.
+pub trait GroupStore: GroupMembershipStore + GroupKeyStore {
+    /// Remove all group data for a fabric (called on fabric removal).
+    fn remove_fabric(&self, fab_idx: NonZeroU8);
 }
 
 /// Concrete implementation of `GroupStore` backed by fixed-size storage.
@@ -307,23 +319,7 @@ impl<const ENDPOINTS: usize> Default for GroupStoreImpl<ENDPOINTS> {
     }
 }
 
-impl<const ENDPOINTS: usize> GroupStore for GroupStoreImpl<ENDPOINTS> {
-    fn for_each_group_key_map(
-        &self,
-        fab_filter: Option<NonZeroU8>,
-        callback: &mut dyn FnMut(NonZeroU8, &GrpKeyMapEntry),
-    ) {
-        let data = self.data.borrow();
-        for fabric_group_data in data.iter() {
-            if fab_filter.is_some_and(|f| f != fabric_group_data.fab_idx) {
-                continue;
-            }
-            for entry in fabric_group_data.group_key_map.iter() {
-                callback(fabric_group_data.fab_idx, entry);
-            }
-        }
-    }
-
+impl<const ENDPOINTS: usize> GroupQuery for GroupStoreImpl<ENDPOINTS> {
     fn for_each_group(
         &self,
         fab_filter: Option<NonZeroU8>,
@@ -341,107 +337,9 @@ impl<const ENDPOINTS: usize> GroupStore for GroupStoreImpl<ENDPOINTS> {
             }
         }
     }
+}
 
-    fn for_each_group_key_set(
-        &self,
-        fab_filter: Option<NonZeroU8>,
-        callback: &mut dyn FnMut(NonZeroU8, &GrpKeySetEntry),
-    ) {
-        let data = self.data.borrow();
-        for fabric_group_data in data.iter() {
-            if fab_filter.is_some_and(|f| f != fabric_group_data.fab_idx) {
-                continue;
-            }
-            for entry in fabric_group_data.group_key_sets.iter() {
-                callback(fabric_group_data.fab_idx, entry);
-            }
-        }
-    }
-
-    fn group_key_set_get(
-        &self,
-        fab_idx: NonZeroU8,
-        id: u16,
-    ) -> Result<Option<GrpKeySetEntry>, Error> {
-        let data = self.data.borrow();
-        let Some(fd) = data.iter().find(|d| d.fab_idx == fab_idx) else {
-            return Ok(None);
-        };
-        Ok(fd
-            .group_key_sets
-            .iter()
-            .find(|e| e.group_key_set_id == id)
-            .cloned())
-    }
-
-    fn group_key_set_add(&self, fab_idx: NonZeroU8, entry: GrpKeySetEntry) -> Result<(), Error> {
-        let mut data = self.data.borrow_mut();
-        Self::ensure_fabric(&mut data, fab_idx);
-        let fd = data.iter_mut().find(|d| d.fab_idx == fab_idx).unwrap();
-
-        if let Some(existing) = fd
-            .group_key_sets
-            .iter_mut()
-            .find(|e| e.group_key_set_id == entry.group_key_set_id)
-        {
-            *existing = entry;
-        } else {
-            fd.group_key_sets
-                .push(entry)
-                .map_err(|_| ErrorCode::ResourceExhausted)?;
-        }
-        Ok(())
-    }
-
-    fn group_key_set_remove(&self, fab_idx: NonZeroU8, id: u16) -> Result<(), Error> {
-        let mut data = self.data.borrow_mut();
-        let Some(fd) = data.iter_mut().find(|d| d.fab_idx == fab_idx) else {
-            return Err(ErrorCode::NotFound.into());
-        };
-
-        let before = fd.group_key_sets.len();
-        fd.group_key_sets.retain(|e| e.group_key_set_id != id);
-
-        if fd.group_key_sets.len() >= before {
-            return Err(ErrorCode::NotFound.into());
-        }
-
-        // Also remove referencing key map entries
-        fd.group_key_map.retain(|e| e.group_key_set_id != id);
-
-        Ok(())
-    }
-
-    fn group_key_map_replace(
-        &self,
-        fab_idx: NonZeroU8,
-        entries: &[GrpKeyMapEntry],
-    ) -> Result<(), Error> {
-        let mut data = self.data.borrow_mut();
-        Self::ensure_fabric(&mut data, fab_idx);
-        let fabric_group_data = data.iter_mut().find(|d| d.fab_idx == fab_idx).unwrap();
-
-        fabric_group_data.group_key_map.clear();
-        for entry in entries {
-            fabric_group_data
-                .group_key_map
-                .push(entry.clone())
-                .map_err(|_| ErrorCode::ResourceExhausted)?;
-        }
-        Ok(())
-    }
-
-    fn group_key_map_add(&self, fab_idx: NonZeroU8, entry: GrpKeyMapEntry) -> Result<(), Error> {
-        let mut data = self.data.borrow_mut();
-        Self::ensure_fabric(&mut data, fab_idx);
-        let fd = data.iter_mut().find(|d| d.fab_idx == fab_idx).unwrap();
-
-        fd.group_key_map
-            .push(entry)
-            .map_err(|_| ErrorCode::Failure)?;
-        Ok(())
-    }
-
+impl<const ENDPOINTS: usize> GroupMembershipStore for GroupStoreImpl<ENDPOINTS> {
     fn has_group_key_map_entry(&self, fab_idx: NonZeroU8, group_id: u16) -> bool {
         let data = self.data.borrow();
         data.iter()
@@ -569,10 +467,123 @@ impl<const ENDPOINTS: usize> GroupStore for GroupStoreImpl<ENDPOINTS> {
         fd.groups.retain(|eg| eg.endpoint_id != endpoint_id);
         Ok(())
     }
+}
 
-    fn remove_fabric(&self, fab_idx: NonZeroU8) {
+impl<const ENDPOINTS: usize> GroupKeyStore for GroupStoreImpl<ENDPOINTS> {
+    fn for_each_group_key_map(
+        &self,
+        fab_filter: Option<NonZeroU8>,
+        callback: &mut dyn FnMut(NonZeroU8, &GrpKeyMapEntry),
+    ) {
+        let data = self.data.borrow();
+        for fabric_group_data in data.iter() {
+            if fab_filter.is_some_and(|f| f != fabric_group_data.fab_idx) {
+                continue;
+            }
+            for entry in fabric_group_data.group_key_map.iter() {
+                callback(fabric_group_data.fab_idx, entry);
+            }
+        }
+    }
+
+    fn for_each_group_key_set(
+        &self,
+        fab_filter: Option<NonZeroU8>,
+        callback: &mut dyn FnMut(NonZeroU8, &GrpKeySetEntry),
+    ) {
+        let data = self.data.borrow();
+        for fabric_group_data in data.iter() {
+            if fab_filter.is_some_and(|f| f != fabric_group_data.fab_idx) {
+                continue;
+            }
+            for entry in fabric_group_data.group_key_sets.iter() {
+                callback(fabric_group_data.fab_idx, entry);
+            }
+        }
+    }
+
+    fn group_key_set_get(
+        &self,
+        fab_idx: NonZeroU8,
+        id: u16,
+    ) -> Result<Option<GrpKeySetEntry>, Error> {
+        let data = self.data.borrow();
+        let Some(fd) = data.iter().find(|d| d.fab_idx == fab_idx) else {
+            return Ok(None);
+        };
+        Ok(fd
+            .group_key_sets
+            .iter()
+            .find(|e| e.group_key_set_id == id)
+            .cloned())
+    }
+
+    fn group_key_set_add(&self, fab_idx: NonZeroU8, entry: GrpKeySetEntry) -> Result<(), Error> {
         let mut data = self.data.borrow_mut();
-        data.retain(|d| d.fab_idx != fab_idx);
+        Self::ensure_fabric(&mut data, fab_idx);
+        let fd = data.iter_mut().find(|d| d.fab_idx == fab_idx).unwrap();
+
+        if let Some(existing) = fd
+            .group_key_sets
+            .iter_mut()
+            .find(|e| e.group_key_set_id == entry.group_key_set_id)
+        {
+            *existing = entry;
+        } else {
+            fd.group_key_sets
+                .push(entry)
+                .map_err(|_| ErrorCode::ResourceExhausted)?;
+        }
+        Ok(())
+    }
+
+    fn group_key_set_remove(&self, fab_idx: NonZeroU8, id: u16) -> Result<(), Error> {
+        let mut data = self.data.borrow_mut();
+        let Some(fd) = data.iter_mut().find(|d| d.fab_idx == fab_idx) else {
+            return Err(ErrorCode::NotFound.into());
+        };
+
+        let before = fd.group_key_sets.len();
+        fd.group_key_sets.retain(|e| e.group_key_set_id != id);
+
+        if fd.group_key_sets.len() >= before {
+            return Err(ErrorCode::NotFound.into());
+        }
+
+        // Also remove referencing key map entries
+        fd.group_key_map.retain(|e| e.group_key_set_id != id);
+
+        Ok(())
+    }
+
+    fn group_key_map_replace(
+        &self,
+        fab_idx: NonZeroU8,
+        entries: &[GrpKeyMapEntry],
+    ) -> Result<(), Error> {
+        let mut data = self.data.borrow_mut();
+        Self::ensure_fabric(&mut data, fab_idx);
+        let fabric_group_data = data.iter_mut().find(|d| d.fab_idx == fab_idx).unwrap();
+
+        fabric_group_data.group_key_map.clear();
+        for entry in entries {
+            fabric_group_data
+                .group_key_map
+                .push(entry.clone())
+                .map_err(|_| ErrorCode::ResourceExhausted)?;
+        }
+        Ok(())
+    }
+
+    fn group_key_map_add(&self, fab_idx: NonZeroU8, entry: GrpKeyMapEntry) -> Result<(), Error> {
+        let mut data = self.data.borrow_mut();
+        Self::ensure_fabric(&mut data, fab_idx);
+        let fd = data.iter_mut().find(|d| d.fab_idx == fab_idx).unwrap();
+
+        fd.group_key_map
+            .push(entry)
+            .map_err(|_| ErrorCode::Failure)?;
+        Ok(())
     }
 
     fn max_groups_per_fabric(&self) -> u16 {
@@ -581,5 +592,12 @@ impl<const ENDPOINTS: usize> GroupStore for GroupStoreImpl<ENDPOINTS> {
 
     fn max_group_keys_per_fabric(&self) -> u16 {
         MAX_GROUP_KEY_PER_FABRIC as u16
+    }
+}
+
+impl<const ENDPOINTS: usize> GroupStore for GroupStoreImpl<ENDPOINTS> {
+    fn remove_fabric(&self, fab_idx: NonZeroU8) {
+        let mut data = self.data.borrow_mut();
+        data.retain(|d| d.fab_idx != fab_idx);
     }
 }
