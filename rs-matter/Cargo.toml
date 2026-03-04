@@ -155,6 +155,7 @@ sha2 = { version = "0.10", default-features = false, optional = true }
 aes = { version = "0.8", optional = true }
 p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh", "ecdsa"], optional = true }
 x509-cert = { version = "0.2", default-features = false, features = ["pem"], optional = true } # TODO: requires `alloc`
+der = { version = "0.7", features = ["derive", "oid"] }
 
 # STD
 rand = { version = "0.8", optional = true, default-features = false, features = ["std", "std_rng"] }
@@ -168,7 +169,6 @@ libc = { version = "0.2", optional = true }
 futures-lite = { version = "2", optional = true }
 astro-dnssd = { version = "0.3", optional = true }
 zeroconf = { version = "0.15", optional = true }
-der = { version = "0.7", features = ["derive", "oid"] }
 
 [target.'cfg(all(unix, not(target_os = "espidf")))'.dependencies]
 bitflags = "2"
