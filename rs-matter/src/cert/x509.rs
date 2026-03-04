@@ -32,7 +32,7 @@ use der::asn1::{
 };
 use der::{
     Choice, Decode, DecodeValue, EncodeValue, FixedTag, Header, Reader, Sequence, SliceReader, Tag,
-    TagNumber,
+    TagNumber, Tagged,
 };
 
 /// Type alias for DAC (Device Attestation Certificate)
@@ -137,12 +137,17 @@ impl MatterDnAttrs {
                 let atv = AttributeTypeAndValue::decode(&mut set_reader)?;
 
                 if atv.oid == OID_MATTER_VENDOR_ID {
-                    let hex_bytes = atv.value.value();
-                    vendor_id = Some(parse_hex_u16(hex_bytes).map_err(|_| der::ErrorKind::Failed)?);
+                    let value = atv.value;
+                    vendor_id = Some(
+                        parse_hex_u16(value.value())
+                            .map_err(|_| der::ErrorKind::Value { tag: value.tag() })?,
+                    );
                 } else if atv.oid == OID_MATTER_PRODUCT_ID {
-                    let hex_bytes = atv.value.value();
-                    product_id =
-                        Some(parse_hex_u16(hex_bytes).map_err(|_| der::ErrorKind::Failed)?);
+                    let value = atv.value;
+                    product_id = Some(
+                        parse_hex_u16(value.value())
+                            .map_err(|_| der::ErrorKind::Value { tag: value.tag() })?,
+                    );
                 }
             }
         }
@@ -404,18 +409,10 @@ impl<'a> DecodeValue<'a> for DacExtensions<'a> {
             let fields = ParsedExtensionFields::parse(reader)?;
 
             // Validate DAC requirements: all fields must be present
-            let basic_constraints = fields
-                .basic_constraints
-                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
-            let key_usage = fields
-                .key_usage
-                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
-            let subject_key_id = fields
-                .subject_key_id
-                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
-            let authority_key_id = fields
-                .authority_key_id
-                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
+            let basic_constraints = fields.basic_constraints.ok_or(der::ErrorKind::Failed)?;
+            let key_usage = fields.key_usage.ok_or(der::ErrorKind::Failed)?;
+            let subject_key_id = fields.subject_key_id.ok_or(der::ErrorKind::Failed)?;
+            let authority_key_id = fields.authority_key_id.ok_or(der::ErrorKind::Failed)?;
 
             // Basic Constraints: SHALL be critical and cA SHALL be FALSE
             if !basic_constraints.critical {
@@ -530,18 +527,10 @@ impl<'a> DecodeValue<'a> for PaiExtensions<'a> {
             let fields = ParsedExtensionFields::parse(reader)?;
 
             // Validate PAI requirements: all fields must be present
-            let basic_constraints = fields
-                .basic_constraints
-                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
-            let key_usage = fields
-                .key_usage
-                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
-            let subject_key_id = fields
-                .subject_key_id
-                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
-            let authority_key_id = fields
-                .authority_key_id
-                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
+            let basic_constraints = fields.basic_constraints.ok_or(der::ErrorKind::Failed)?;
+            let key_usage = fields.key_usage.ok_or(der::ErrorKind::Failed)?;
+            let subject_key_id = fields.subject_key_id.ok_or(der::ErrorKind::Failed)?;
+            let authority_key_id = fields.authority_key_id.ok_or(der::ErrorKind::Failed)?;
 
             // Basic Constraints: SHALL be critical, cA SHALL be TRUE, pathLen SHALL be 0
             if !basic_constraints.critical {
@@ -650,15 +639,9 @@ impl<'a> DecodeValue<'a> for PaaExtensions<'a> {
             let fields = ParsedExtensionFields::parse(reader)?;
 
             // Validate PAA requirements
-            let basic_constraints = fields
-                .basic_constraints
-                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
-            let key_usage = fields
-                .key_usage
-                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
-            let subject_key_id = fields
-                .subject_key_id
-                .ok_or(der::Error::from(der::ErrorKind::Failed))?;
+            let basic_constraints = fields.basic_constraints.ok_or(der::ErrorKind::Failed)?;
+            let key_usage = fields.key_usage.ok_or(der::ErrorKind::Failed)?;
+            let subject_key_id = fields.subject_key_id.ok_or(der::ErrorKind::Failed)?;
 
             // AKID is optional for PAA
             let authority_key_id = fields.authority_key_id;
@@ -844,8 +827,7 @@ impl<'a, E: CertType<'a>> DecodeValue<'a> for TbsCertificate<'a, E> {
             // For Matter certs, only namedCurve is used, so we decode directly as an OID
             // https://www.rfc-editor.org/rfc/rfc5480#section-2.1.1
             let params = spki_algo.parameters.ok_or(der::ErrorKind::Failed)?;
-            let curve_oid: ObjectIdentifier =
-                params.try_into().map_err(|_| der::ErrorKind::Failed)?;
+            let curve_oid: ObjectIdentifier = params.try_into()?;
 
             if curve_oid != OID_PRIME256V1 {
                 return Err(der::ErrorKind::Failed.into());
@@ -976,7 +958,7 @@ impl<'a, E: CertType<'a>> X509Cert<'a, E> {
     /// Validates that the certificate parses correctly and has the required
     /// extensions for the certificate type E.
     pub fn new(data: &'a [u8]) -> Result<Self, Error> {
-        let cert = Certificate::from_der(data).map_err(|_| Error::from(ErrorCode::InvalidData))?;
+        let cert = Certificate::from_der(data).map_err(|_| ErrorCode::InvalidData)?;
 
         Ok(Self { cert })
     }
