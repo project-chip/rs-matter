@@ -254,16 +254,25 @@ impl<'a> From<BitStringRef<'a>> for KeyUsage {
         let bytes = bs.raw_bytes();
         let unused = bs.unused_bits();
 
-        // Load up to 2 bytes in (big-endian)
+        // Reject malformed bitstrings longer than 2 bytes since KeyUsage has a 9 bit max
+        if bytes.len() > 2 {
+            // Return empty KeyUsage for invalid input
+            return Self { bits: 0 };
+        }
+
+        // Load bytes big-endian
         let mut buf = [0u8; 2];
-        let len = bytes.len().min(2);
+        let len = bytes.len();
         buf[..len].copy_from_slice(&bytes[..len]);
 
         let mut bits = u16::from_be_bytes(buf);
 
-        // Mask off unused padding bits
-        if unused > 0 {
-            let mask = !((1u16 << unused) - 1);
+        // Mask off unused padding bits in the last byte
+        if unused > 0 && len > 0 {
+            // For len=1: unused bits are in byte[0] (upper 8 bits of u16)
+            // For len=2: unused bits are in byte[1] (lower 8 bits of u16)
+            let shift = if len == 1 { 8 } else { 0 };
+            let mask = !((1u16 << unused) - 1) << shift;
             bits &= mask;
         }
 
@@ -1393,5 +1402,94 @@ mod tests {
         assert!(parse_hex_u16(b"FFF").is_err()); // too short
         assert!(parse_hex_u16(b"FFFFF").is_err()); // too long
         assert!(parse_hex_u16(b"GHIJ").is_err()); // invalid chars
+    }
+
+    #[test]
+    fn test_keyusage_from_bitstring_1_byte_with_unused() {
+        // Represents only bit 0 set, with bits 1-7 as padding
+        let bs_bytes = &[0x81u8];
+        let bs = BitStringRef::new(7, bs_bytes).unwrap();
+        let ku = KeyUsage::from(bs);
+
+        // Should only have digitalSignature (0x8000)
+        assert_eq!(
+            ku.bits, 0x8000,
+            "Expected only bit 0 (digitalSignature) set"
+        );
+        assert!(ku.digital_signature());
+        assert!(ku.has_only_bits(KeyUsage::DIGITAL_SIGNATURE));
+    }
+
+    #[test]
+    fn test_keyusage_from_bitstring_1_byte_no_unused() {
+        // All 8 bits are valid, only bit 0 is set
+        let bs_bytes = &[0x80u8];
+        let bs = BitStringRef::new(0, bs_bytes).unwrap();
+        let ku = KeyUsage::from(bs);
+
+        assert_eq!(ku.bits, 0x8000);
+        assert!(ku.digital_signature());
+        assert!(ku.has_only_bits(KeyUsage::DIGITAL_SIGNATURE));
+    }
+
+    #[test]
+    fn test_keyusage_from_bitstring_2_bytes_with_unused() {
+        // Bits 0 and 8 are valid, bits 9-15 are padding
+        let bs_bytes = &[0x80u8, 0x80u8];
+        let bs = BitStringRef::new(7, bs_bytes).unwrap();
+        let ku = KeyUsage::from(bs);
+
+        // Should have digitalSignature (0x8000) and decipherOnly (0x0080)
+        assert_eq!(ku.bits, 0x8080);
+        assert!(ku.digital_signature());
+    }
+
+    #[test]
+    fn test_keyusage_from_bitstring_2_bytes_no_unused() {
+        // Only bit 5 (keyCertSign) is set
+        let bs_bytes = &[0x04u8, 0x00u8];
+        let bs = BitStringRef::new(0, bs_bytes).unwrap();
+        let ku = KeyUsage::from(bs);
+
+        assert_eq!(ku.bits, 0x0400);
+        assert!(ku.key_cert_sign());
+        assert!(ku.has_only_bits(KeyUsage::KEY_CERT_SIGN));
+    }
+
+    #[test]
+    fn test_keyusage_rejects_oversized_bitstring() {
+        // 3-byte bitstring (malformed, KeyUsage max is 9 bits, so 2 bytes)
+        let bs_bytes = &[0x80u8, 0x00u8, 0xFFu8];
+        let bs = BitStringRef::new(0, bs_bytes).unwrap();
+        let ku = KeyUsage::from(bs);
+
+        assert_eq!(ku.bits, 0, "Oversized bitstring should be rejected");
+        assert!(!ku.digital_signature());
+    }
+
+    #[test]
+    fn test_keyusage_1_byte_with_padding() {
+        // Only bit 0 should be valid; bits 1-7 should be masked off
+        let bs_bytes = &[0xFFu8];
+        let bs = BitStringRef::new(7, bs_bytes).unwrap();
+        let ku = KeyUsage::from(bs);
+
+        // Should mask to only bit 0
+        assert_eq!(ku.bits, 0x8000, "Should mask off unused padding bits");
+        assert!(ku.has_only_bits(KeyUsage::DIGITAL_SIGNATURE));
+    }
+
+    #[test]
+    fn test_keyusage_2_bytes_with_padding() {
+        // Bits 0-8 are valid (bit 0 and 8 set), bits 9-15 should be masked
+        let bs_bytes = &[0x80u8, 0xFFu8];
+        let bs = BitStringRef::new(7, bs_bytes).unwrap();
+        let ku = KeyUsage::from(bs);
+
+        // Should have bits 0 and 8, with bits 9-15 masked off
+        assert_eq!(
+            ku.bits, 0x8080,
+            "Should mask off unused padding bits in last byte"
+        );
     }
 }
