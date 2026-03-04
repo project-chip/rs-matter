@@ -668,8 +668,8 @@ impl ImClient {
     /// # Returns
     /// The value returned by the callback, or an error if no command
     /// response was found or the invoke failed.
-    pub async fn invoke_single<'a, T, F>(
-        exchange: &'a mut Exchange<'_>,
+    pub async fn invoke_single<T, F>(
+        exchange: &mut Exchange<'_>,
         endpoint: EndptId,
         cluster: ClusterId,
         cmd: u32,
@@ -735,6 +735,16 @@ impl ImClient {
     /// this does not occur for single-command requests; if you need chunked
     /// response handling, use [`invoke`](Self::invoke) directly.
     ///
+    /// **Note:** When the server sets `suppress_response=false` (the default
+    /// for InvokeResponse), the spec requires the client to send
+    /// `StatusResponse(Success)`. However, sending a StatusResponse clears
+    /// the RX buffer, which would break zero-copy access. This method
+    /// sends a standalone ACK instead, which completes the MRP-layer
+    /// exchange but deviates from the IM-layer spec requirement. In
+    /// practice this works because servers clean up the exchange on timeout.
+    /// If strict spec compliance is required, use
+    /// [`invoke_single`](Self::invoke_single) with a callback.
+    ///
     /// The exchange remains borrowed for the lifetime of the returned
     /// `CmdResp`, since the response data points into the exchange's RX
     /// buffer.
@@ -791,7 +801,8 @@ impl ImClient {
             }
         }
 
-        // Send ACK — this preserves the RX buffer (unlike send_with/sender which clear it)
+        // Send ACK — this preserves the RX buffer (unlike send_with which clears it).
+        // See doc comment on suppress_response handling above.
         exchange.acknowledge().await?;
 
         // Parse response from the still-valid RX buffer

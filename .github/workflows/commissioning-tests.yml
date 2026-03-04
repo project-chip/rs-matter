@@ -3,9 +3,9 @@ name: Commissioning Integration Test
 
 on:
   push:
-    branches: [main, development]
+    branches: [main]
   pull_request:
-    branches: [main, development]
+    branches: [main]
   schedule:
     # Run every night at 6:00 AM UTC (offset from other tests)
     - cron: "0 6 * * *"

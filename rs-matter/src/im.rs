@@ -92,6 +92,7 @@ impl From<ErrorCode> for IMStatusCode {
             ErrorCode::DataVersionMismatch => IMStatusCode::DataVersionMismatch,
             ErrorCode::ResourceExhausted => IMStatusCode::ResourceExhausted,
             ErrorCode::FailSafeRequired => IMStatusCode::FailSafeRequired,
+            ErrorCode::NeedsTimedInteraction => IMStatusCode::NeedsTimedInteraction,
             ErrorCode::ConstraintError => IMStatusCode::ConstraintError,
             ErrorCode::Failure => IMStatusCode::Failure,
             _ => IMStatusCode::Failure,
@@ -102,6 +103,33 @@ impl From<ErrorCode> for IMStatusCode {
 impl From<Error> for IMStatusCode {
     fn from(value: Error) -> Self {
         Self::from(value.code())
+    }
+}
+
+impl IMStatusCode {
+    /// Convert a non-success IM status code to an `ErrorCode`.
+    ///
+    /// Returns `None` for `Success`, since success is not an error.
+    pub fn to_error_code(self) -> Option<ErrorCode> {
+        match self {
+            Self::Success => None,
+            Self::UnsupportedAccess => Some(ErrorCode::UnsupportedAccess),
+            Self::InvalidAction => Some(ErrorCode::InvalidAction),
+            Self::UnsupportedCommand => Some(ErrorCode::CommandNotFound),
+            Self::InvalidCommand => Some(ErrorCode::InvalidCommand),
+            Self::UnsupportedAttribute => Some(ErrorCode::AttributeNotFound),
+            Self::ConstraintError => Some(ErrorCode::ConstraintError),
+            Self::ResourceExhausted => Some(ErrorCode::ResourceExhausted),
+            Self::NotFound => Some(ErrorCode::NotFound),
+            Self::InvalidDataType => Some(ErrorCode::InvalidDataType),
+            Self::DataVersionMismatch => Some(ErrorCode::DataVersionMismatch),
+            Self::Busy => Some(ErrorCode::Busy),
+            Self::UnsupportedEndpoint => Some(ErrorCode::EndpointNotFound),
+            Self::UnsupportedCluster => Some(ErrorCode::ClusterNotFound),
+            Self::NeedsTimedInteraction => Some(ErrorCode::NeedsTimedInteraction),
+            Self::FailSafeRequired => Some(ErrorCode::FailSafeRequired),
+            _ => Some(ErrorCode::Failure),
+        }
     }
 }
 
@@ -171,7 +199,6 @@ pub type ClusterId = u32;
 pub type AttrId = u32;
 pub type CmdId = u32;
 pub type ActionId = u8;
-pub type AttributeId = u32;
 pub type ClusterStatus = u8;
 pub type CommandRef = u16;
 pub type CompressedFabricId = u64;
