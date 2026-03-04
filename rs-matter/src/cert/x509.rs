@@ -365,8 +365,18 @@ impl<'a> ParsedExtensionFields<'a> {
                     critical,
                     value: akid,
                 });
+            } else {
+                // RFC 5280 Section 4.2 states that a certificate-using system MUST reject
+                // the certificate if it encounters a critical extension it does not recognize
+                // or a critical extension that contains information that it cannot process.
+                //
+                // Matter spec section 6.2.2 allows other non-critical extensions from RFC 5280 that don't
+                // violate size limitations, but all unrecognized critical extensions must be rejected.
+                if critical {
+                    return Err(der::ErrorKind::Failed.into());
+                }
+                // Non-critical unknown extensions are ignored
             }
-            // Ignore other optional extensions
         }
 
         Ok(Self {
