@@ -21,15 +21,16 @@
 //! on the P-256 (secp256r1) curve, including conversion between DER format and
 //! raw (r || s) format used by Matter for signature verification.
 
+use crate::crypto::{PKC_CANON_SECRET_KEY_LEN, PKC_SIGNATURE_LEN};
 use crate::error::{Error, ErrorCode};
 use der::asn1::AnyRef;
 use der::{Decode, Header, SliceReader, Tag, Tagged};
 
 /// P-256 field element length in bytes (ECDSA signature r and s values).
-pub const P256_FE_LEN: usize = 32;
+const P256_FE_LEN: usize = PKC_CANON_SECRET_KEY_LEN;
 
 /// Raw ECDSA signature length: r (32 bytes) || s (32 bytes).
-pub const RAW_SIGNATURE_LEN: usize = P256_FE_LEN * 2;
+const RAW_SIGNATURE_LEN: usize = PKC_SIGNATURE_LEN;
 
 /// Convert a DER-encoded ECDSA signature to raw (r || s) format.
 ///
