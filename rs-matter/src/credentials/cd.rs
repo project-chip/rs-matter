@@ -32,6 +32,7 @@
 //! Reference: connectedhomeip `src/credentials/CertificationDeclaration.cpp`
 
 use crate::cert::der_utils::ecdsa_der_to_raw;
+use crate::cert::x509::AlgorithmIdentifier;
 use crate::credentials::cd_keys::{self, KEY_IDENTIFIER_LEN};
 use crate::crypto::{CanonPkcPublicKeyRef, CanonPkcSignatureRef, Crypto, PublicKey};
 use crate::error::{Error, ErrorCode};
@@ -60,18 +61,6 @@ const P256_FE_LEN: usize = 32;
 
 /// Raw ECDSA signature length: r (32 bytes) || s (32 bytes).
 const RAW_SIGNATURE_LEN: usize = P256_FE_LEN * 2;
-
-/// AlgorithmIdentifier ::= SEQUENCE {
-///   algorithm  OBJECT IDENTIFIER,
-///   parameters ANY DEFINED BY algorithm OPTIONAL
-/// }
-///
-/// https://www.rfc-editor.org/rfc/rfc8410#section-3
-#[derive(Sequence)]
-struct AlgorithmIdentifier<'a> {
-    algorithm: ObjectIdentifier,
-    parameters: Option<AnyRef<'a>>,
-}
 
 /// ContentInfo ::= SEQUENCE {
 ///   contentType OBJECT IDENTIFIER,
