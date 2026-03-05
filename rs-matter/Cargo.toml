@@ -170,7 +170,6 @@ libc = { version = "0.2", optional = true }
 futures-lite = { version = "2", optional = true }
 astro-dnssd = { version = "0.3", optional = true }
 zeroconf = { version = "0.15", optional = true }
-der = { version = "0.7", features = ["derive", "oid"] }
 
 [target.'cfg(all(unix, not(target_os = "espidf")))'.dependencies]
 bitflags = "2"
