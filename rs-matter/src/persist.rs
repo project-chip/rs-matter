@@ -371,8 +371,14 @@ pub mod fileio {
             });
 
             let mut psm = Psm::<32768>::new();
-            psm.store(&path, &initial_matter, NO_NETWORKS, Some(&events), NO_GROUPS)
-                .unwrap();
+            psm.store(
+                &path,
+                &initial_matter,
+                NO_NETWORKS,
+                Some(&events),
+                NO_GROUPS,
+            )
+            .unwrap();
 
             assert!(path.exists());
             assert!(std::fs::metadata(&path).unwrap().len() > 0);
@@ -460,8 +466,8 @@ pub mod fileio {
             use core::num::NonZeroU8;
 
             use crate::group_keys::{
-                GroupEpochKeyEntry, GroupKeyStore, GroupMembershipStore, GroupQuery, GroupStoreImpl,
-                GrpKeyMapEntry, GrpKeySetEntry,
+                GroupEpochKeyEntry, GroupKeyStore, GroupMembershipStore, GroupQuery,
+                GroupStoreImpl, GrpKeyMapEntry, GrpKeySetEntry,
             };
 
             let dir = tempfile::tempdir().unwrap();
@@ -483,7 +489,13 @@ pub mod fileio {
 
             // Add a key map entry
             groups
-                .group_key_map_add(fab1, GrpKeyMapEntry { group_id: 100, group_key_set_id: 1 })
+                .group_key_map_add(
+                    fab1,
+                    GrpKeyMapEntry {
+                        group_id: 100,
+                        group_key_set_id: 1,
+                    },
+                )
                 .unwrap();
 
             // Add a key set
