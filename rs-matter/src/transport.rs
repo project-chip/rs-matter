@@ -222,7 +222,7 @@ impl TransportMgr {
         peer_addr: Address,
     ) -> Result<u32, Error> {
         let mut session_mgr = self.session_mgr.borrow_mut();
-        let mut rand = crypto.weak_rand()?;
+        let mut rand = crypto.rand()?;
 
         let session = session_mgr.add(rand.next_u32(), false, peer_addr, None)?;
 
@@ -886,7 +886,7 @@ impl TransportMgr {
                 // As per spec, new unencrypted sessions are only created for
                 // `PBKDFParamRequest` or `CASESigma1` unencrypted messages
 
-                let mut rand = crypto.weak_rand()?;
+                let mut rand = crypto.rand()?;
 
                 let session = session_mgr.add(
                     rand.next_u32(),
