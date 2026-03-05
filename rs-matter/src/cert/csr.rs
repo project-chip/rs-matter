@@ -27,7 +27,6 @@ use der::{
     AnyRef, Decode, DecodeValue, Encode, EncodeValue, Header, Length, Reader, Sequence,
     SliceReader, Tag, Tagged, Writer,
 };
-use x509_cert::spki::AlgorithmIdentifier;
 
 use crate::crypto::{
     CanonPkcPublicKey, CanonPkcPublicKeyRef, Crypto, PublicKey, PKC_CANON_PUBLIC_KEY_LEN,
@@ -52,10 +51,17 @@ const ECDSA_SIGNATURE_LEN: usize = PKC_SIGNATURE_LEN;
 /// P-256 field element length in bytes (ECDSA signature r and s values).
 const P256_FE_LEN: usize = PKC_CANON_SECRET_KEY_LEN;
 
+#[allow(unused)]
 struct CertificationRequest<'a> {
     pub certification_request_info: CertificationRequestInfo<'a>,
-    pub signature_algorithm: AlgorithmIdentifier<()>,
+    pub signature_algorithm: AlgorithmIdentifier<'a>,
     pub signature: BitStringRef<'a>,
+}
+
+#[derive(Sequence)]
+struct AlgorithmIdentifier<'a> {
+    oid: ObjectIdentifier,
+    parameters: Option<AnyRef<'a>>,
 }
 
 impl<'a> DecodeValue<'a> for CertificationRequest<'a> {
@@ -65,7 +71,7 @@ impl<'a> DecodeValue<'a> for CertificationRequest<'a> {
             let certification_request_info =
                 CertificationRequestInfo::decode_value(reader, header)?;
             // Decode algorithm identifier
-            let signature_algorithm: AlgorithmIdentifier<()> = AlgorithmIdentifier::decode(reader)?;
+            let signature_algorithm = AlgorithmIdentifier::decode(reader)?;
 
             // Validate it's id-ecPublicKey
             if signature_algorithm.oid != OID_ECDSA_SHA256 {
@@ -106,9 +112,10 @@ struct CertificationRequestInfo<'a> {
     pub attributes: AnyRef<'a>,
 }
 
+#[allow(unused)]
 struct SubjectPublicKeyInfo<'a> {
     /// Algorithm oid verified id-ecPublicKey with prime256v1 curve oid
-    pub algorithm: AlgorithmIdentifier<()>,
+    pub algorithm: AlgorithmIdentifier<'a>,
     /// SubjectPublicKey verified for size
     pub subject_public_key: BitStringRef<'a>,
 }
@@ -118,7 +125,7 @@ impl<'a> DecodeValue<'a> for SubjectPublicKeyInfo<'a> {
         // Decode SEQUENCE
         reader.read_nested(header.length, |reader| {
             // Decode algorithm identifier
-            let algorithm: AlgorithmIdentifier<()> = AlgorithmIdentifier::decode(reader)?;
+            let algorithm = AlgorithmIdentifier::decode(reader)?;
 
             // Validate it's id-ecPublicKey
             if algorithm.oid != OID_EC_PUBLIC_KEY {
@@ -206,7 +213,7 @@ impl<'a> EncodeValue for SubjectPublicKeyInfo<'a> {
 /// }
 /// ```
 pub struct CsrRef<'a> {
-    pub csr: CertificationRequest<'a>,
+    csr: CertificationRequest<'a>,
     cert_req_info: &'a [u8],
 }
 
@@ -263,7 +270,7 @@ impl<'a> CsrRef<'a> {
         let key_bytes = subject_pk.as_bytes().ok_or(ErrorCode::InvalidData)?;
 
         // The first byte should be 0 (unused bits count), skip it
-        let key = if key_bytes.len() > 0 && key_bytes[0] == 0 {
+        let key = if !key_bytes.is_empty() && key_bytes[0] == 0 {
             &key_bytes[1..]
         } else {
             return Err(ErrorCode::InvalidData.into());
