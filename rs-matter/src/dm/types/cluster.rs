@@ -464,19 +464,17 @@ impl defmt::Format for Cluster<'_> {
         defmt::write!(f, "attrs [");
         for (index, attr) in self.attributes().enumerate() {
             if index > 0 {
-                defmt::write!(f, ", {}", attr);
-            } else {
-                defmt::write!(f, "{}", attr);
+                defmt::write!(f, ", ");
             }
+            defmt::write!(f, "{}", attr);
         }
 
         defmt::write!(f, "], cmds [");
         for (index, cmd) in self.commands().enumerate() {
             if index > 0 {
-                defmt::write!(f, ", {}", cmd);
-            } else {
-                defmt::write!(f, "{}", cmd);
+                defmt::write!(f, ", ");
             }
+            defmt::write!(f, "{}", cmd);
         }
 
         defmt::write!(f, "]")
