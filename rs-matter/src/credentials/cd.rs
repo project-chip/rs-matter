@@ -632,10 +632,7 @@ impl CertificationElements {
         let pubkey_ref = CanonPkcPublicKeyRef::try_new(pubkey_bytes)?;
         let pubkey = crypto.pub_key(pubkey_ref)?;
 
-        let sig_ref = CanonPkcSignatureRef::new(
-            <&[u8; RAW_SIGNATURE_LEN]>::try_from(&cms.signature_raw[..])
-                .map_err(|_| Error::new(ErrorCode::CdInvalidSignature))?,
-        );
+        let sig_ref = CanonPkcSignatureRef::new(&cms.signature_raw);
 
         let valid = pubkey.verify(cms.cd_content, sig_ref)?;
         if !valid {
@@ -733,13 +730,8 @@ impl CertificationElements {
 
         // Rule 7: Authorized PAA list check
         if self.authorized_paa_list_count > 0 {
-            let mut found = false;
-            for i in 0..self.authorized_paa_list_count {
-                if self.authorized_paa_list[i] == device_info.paa_skid {
-                    found = true;
-                    break;
-                }
-            }
+            let found = self.authorized_paa_list[..self.authorized_paa_list_count]
+                .contains(&device_info.paa_skid);
             if !found {
                 return Err(ErrorCode::CdInvalidPaa.into());
             }
@@ -772,12 +764,7 @@ pub struct DeviceInfoForAttestation {
 
 /// Check if a product ID is present in the CD's product_id_array.
 fn product_id_in_list(pid: u16, cd: &CertificationElements) -> bool {
-    for i in 0..cd.product_ids_count {
-        if cd.product_ids[i] == pid {
-            return true;
-        }
-    }
-    false
+    cd.product_ids[..cd.product_ids_count].contains(&pid)
 }
 
 #[cfg(test)]
