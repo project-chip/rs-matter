@@ -22,17 +22,11 @@ use core::num::NonZeroU8;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::group_keys::GroupMembershipStore;
+use crate::im::IMStatusCode;
 use crate::tlv::{Nullable, TLVBuilderParent};
 use crate::with;
 
 pub use crate::dm::clusters::decl::groups::*;
-
-// Matter IM Status Codes used in Groups cluster responses
-const STATUS_SUCCESS: u8 = 0x00;
-const STATUS_CONSTRAINT_ERROR: u8 = 0x87;
-const STATUS_NOT_FOUND: u8 = 0x8b;
-const STATUS_RESOURCE_EXHAUSTED: u8 = 0x89;
-const STATUS_UNSUPPORTED_ACCESS: u8 = 0x7e;
 
 /// The handler for the Groups Matter cluster.
 ///
@@ -100,7 +94,7 @@ impl<'a> ClusterHandler for GroupsHandler<'a> {
         // Validate constraints
         if (group_id == 0) || (group_name.len() > 16) {
             return response
-                .status(STATUS_CONSTRAINT_ERROR)?
+                .status(IMStatusCode::ConstraintError as u8)?
                 .group_id(group_id)?
                 .end();
         }
@@ -108,7 +102,7 @@ impl<'a> ClusterHandler for GroupsHandler<'a> {
         // Check if group security material is available
         if !self.has_group_material(fab_idx, group_id) {
             return response
-                .status(STATUS_UNSUPPORTED_ACCESS)?
+                .status(IMStatusCode::UnsupportedAccess as u8)?
                 .group_id(group_id)?
                 .end();
         }
@@ -121,10 +115,13 @@ impl<'a> ClusterHandler for GroupsHandler<'a> {
         {
             Ok(_) => {
                 ctx.exchange().matter().notify_groups_changed();
-                response.status(STATUS_SUCCESS)?.group_id(group_id)?.end()
+                response
+                    .status(IMStatusCode::Success as u8)?
+                    .group_id(group_id)?
+                    .end()
             }
             Err(e) if e.code() == ErrorCode::ResourceExhausted => response
-                .status(STATUS_RESOURCE_EXHAUSTED)?
+                .status(IMStatusCode::ResourceExhausted as u8)?
                 .group_id(group_id)?
                 .end(),
             Err(e) => Err(e),
@@ -145,7 +142,7 @@ impl<'a> ClusterHandler for GroupsHandler<'a> {
         // Validate constraints
         if group_id == 0 {
             return response
-                .status(STATUS_CONSTRAINT_ERROR)?
+                .status(IMStatusCode::ConstraintError as u8)?
                 .group_id(group_id)?
                 .group_name("")?
                 .end();
@@ -159,13 +156,13 @@ impl<'a> ClusterHandler for GroupsHandler<'a> {
                 .group_name(fab_idx, group_id)?
                 .unwrap_or_default();
             response
-                .status(STATUS_SUCCESS)?
+                .status(IMStatusCode::Success as u8)?
                 .group_id(group_id)?
                 .group_name(name.as_str())?
                 .end()
         } else {
             response
-                .status(STATUS_NOT_FOUND)?
+                .status(IMStatusCode::NotFound as u8)?
                 .group_id(group_id)?
                 .group_name("")?
                 .end()
@@ -228,7 +225,7 @@ impl<'a> ClusterHandler for GroupsHandler<'a> {
         // Step 1: Validate constraints
         if group_id == 0 {
             return response
-                .status(STATUS_CONSTRAINT_ERROR)?
+                .status(IMStatusCode::ConstraintError as u8)?
                 .group_id(group_id)?
                 .end();
         }
@@ -241,9 +238,15 @@ impl<'a> ClusterHandler for GroupsHandler<'a> {
 
         if removed {
             ctx.exchange().matter().notify_groups_changed();
-            response.status(STATUS_SUCCESS)?.group_id(group_id)?.end()
+            response
+                .status(IMStatusCode::Success as u8)?
+                .group_id(group_id)?
+                .end()
         } else {
-            response.status(STATUS_NOT_FOUND)?.group_id(group_id)?.end()
+            response
+                .status(IMStatusCode::NotFound as u8)?
+                .group_id(group_id)?
+                .end()
         }
     }
 
