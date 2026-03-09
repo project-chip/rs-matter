@@ -44,7 +44,7 @@ use rs_matter::dm::{
     EpClMatcher, InvokeContext, Node, ReadContext,
 };
 use rs_matter::error::Error;
-use rs_matter::group_keys::GroupStoreImpl;
+use rs_matter::group_keys::MatterGroupStore;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
@@ -72,7 +72,7 @@ fn main() -> Result<(), Error> {
     let matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
     // Configure the group store for groupcast support
-    let group_store = GroupStoreImpl::<2>::new(); // Endpoints 2 and 3
+    let group_store = MatterGroupStore::<2>::new(); // Endpoints 2 and 3
 
     // Need to call this once
     matter.initialize_transport_buffers()?;

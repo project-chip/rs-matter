@@ -34,7 +34,7 @@ pub mod fileio {
     use crate::dm::events::Events;
     use crate::dm::networks::wireless::{Wifi, WirelessNetwork, WirelessNetworks};
     use crate::error::{Error, ErrorCode};
-    use crate::group_keys::GroupStoreImpl;
+    use crate::group_keys::MatterGroupStore;
     use crate::tlv::{
         Octets, TLVArray, TLVContainerIter, TLVElement, TLVTag, TLVValueType, TLVWrite,
     };
@@ -49,7 +49,7 @@ pub mod fileio {
     pub const NO_EVENTS: Option<&'static Events<0, NoopRawMutex>> = None;
 
     /// A constant representing the absence of groups.
-    pub const NO_GROUPS: Option<&'static GroupStoreImpl<0>> = None;
+    pub const NO_GROUPS: Option<&'static MatterGroupStore<0>> = None;
 
     /// A simple persistent storage manager (PSM) for `rs-matter`.
     ///
@@ -101,7 +101,7 @@ pub mod fileio {
             matter: &Matter,
             networks: Option<&WirelessNetworks<W, M, T>>,
             events: Option<&Events<NE, M>>,
-            groups: Option<&GroupStoreImpl<E>>,
+            groups: Option<&MatterGroupStore<E>>,
         ) -> Result<(), Error>
         where
             P: AsRef<Path>,
@@ -167,7 +167,7 @@ pub mod fileio {
             matter: &Matter,
             networks: Option<&WirelessNetworks<W, M, T>>,
             events: Option<&Events<NE, M>>,
-            groups: Option<&GroupStoreImpl<E>>,
+            groups: Option<&MatterGroupStore<E>>,
         ) -> Result<(), Error>
         where
             P: AsRef<Path>,
@@ -227,7 +227,7 @@ pub mod fileio {
             matter: &Matter<'_>,
             networks: Option<&WirelessNetworks<W, M, T>>,
             events: Option<&Events<NE, M>>,
-            groups: Option<&GroupStoreImpl<E>>,
+            groups: Option<&MatterGroupStore<E>>,
         ) -> Result<(), Error>
         where
             P: AsRef<Path>,
@@ -467,7 +467,7 @@ pub mod fileio {
 
             use crate::group_keys::{
                 GroupEpochKeyEntry, GroupKeyStore, GroupMembershipStore, GroupQuery,
-                GroupStoreImpl, GrpKeyMapEntry, GrpKeySetEntry,
+                GrpKeyMapEntry, GrpKeySetEntry, MatterGroupStore,
             };
 
             let dir = tempfile::tempdir().unwrap();
@@ -479,7 +479,7 @@ pub mod fileio {
                 basic.changed = true;
             }
 
-            let groups = GroupStoreImpl::<4>::new();
+            let groups = MatterGroupStore::<4>::new();
             let fab1 = NonZeroU8::new(1).unwrap();
 
             // Add a group membership
@@ -532,7 +532,7 @@ pub mod fileio {
                 sys_epoch,
                 MATTER_PORT,
             );
-            let groups2 = GroupStoreImpl::<4>::new();
+            let groups2 = MatterGroupStore::<4>::new();
 
             let mut psm2 = Psm::<32768>::new();
             psm2.load(&path, &matter2, NO_NETWORKS, NO_EVENTS, Some(&groups2))

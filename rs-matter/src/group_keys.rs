@@ -167,7 +167,7 @@ impl EndpointGroups {
     }
 }
 
-/// Per-fabric group data stored inside GroupStoreImpl.
+/// Per-fabric group data stored inside MatterGroupStore.
 struct FabricGroupData<const ENDPOINTS: usize> {
     fab_idx: NonZeroU8,
     group_key_sets: Vec<GrpKeySetEntry, MAX_GROUP_KEY_PER_FABRIC>,
@@ -296,13 +296,13 @@ pub trait GroupStore: GroupMembershipStore + GroupKeyStore {
 /// The const generic `ENDPOINTS` is the number of endpoints implementing the groups cluster on the node.
 /// Not having the accurate number of endpoints here might lead to errors while accessing the groups cluster.
 /// Note: Currently the root endpoint also implements the groups cluster, so `ENDPOINTS` must be at least 1.
-pub struct GroupStoreImpl<const ENDPOINTS: usize> {
+pub struct MatterGroupStore<const ENDPOINTS: usize> {
     data: RefCell<Vec<FabricGroupData<ENDPOINTS>, MAX_FABRICS>>,
     changed: Cell<bool>,
     persist_notification: Notification<NoopRawMutex>,
 }
 
-impl<const ENDPOINTS: usize> GroupStoreImpl<ENDPOINTS> {
+impl<const ENDPOINTS: usize> MatterGroupStore<ENDPOINTS> {
     pub const fn new() -> Self {
         Self {
             data: RefCell::new(Vec::new()),
@@ -320,13 +320,13 @@ impl<const ENDPOINTS: usize> GroupStoreImpl<ENDPOINTS> {
     }
 }
 
-impl<const ENDPOINTS: usize> Default for GroupStoreImpl<ENDPOINTS> {
+impl<const ENDPOINTS: usize> Default for MatterGroupStore<ENDPOINTS> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const ENDPOINTS: usize> GroupQuery for GroupStoreImpl<ENDPOINTS> {
+impl<const ENDPOINTS: usize> GroupQuery for MatterGroupStore<ENDPOINTS> {
     fn for_each_group(
         &self,
         fab_filter: Option<NonZeroU8>,
@@ -346,7 +346,7 @@ impl<const ENDPOINTS: usize> GroupQuery for GroupStoreImpl<ENDPOINTS> {
     }
 }
 
-impl<const ENDPOINTS: usize> GroupMembershipStore for GroupStoreImpl<ENDPOINTS> {
+impl<const ENDPOINTS: usize> GroupMembershipStore for MatterGroupStore<ENDPOINTS> {
     fn has_group_key_map_entry(&self, fab_idx: NonZeroU8, group_id: u16) -> bool {
         let data = self.data.borrow();
         data.iter()
@@ -484,7 +484,7 @@ impl<const ENDPOINTS: usize> GroupMembershipStore for GroupStoreImpl<ENDPOINTS> 
     }
 }
 
-impl<const ENDPOINTS: usize> GroupKeyStore for GroupStoreImpl<ENDPOINTS> {
+impl<const ENDPOINTS: usize> GroupKeyStore for MatterGroupStore<ENDPOINTS> {
     fn for_each_group_key_map(
         &self,
         fab_filter: Option<NonZeroU8>,
@@ -618,7 +618,7 @@ impl<const ENDPOINTS: usize> GroupKeyStore for GroupStoreImpl<ENDPOINTS> {
     }
 }
 
-impl<const ENDPOINTS: usize> GroupStore for GroupStoreImpl<ENDPOINTS> {
+impl<const ENDPOINTS: usize> GroupStore for MatterGroupStore<ENDPOINTS> {
     fn remove_fabric(&self, fab_idx: NonZeroU8) {
         let mut data = self.data.borrow_mut();
         let before = data.len();
@@ -630,7 +630,7 @@ impl<const ENDPOINTS: usize> GroupStore for GroupStoreImpl<ENDPOINTS> {
     }
 }
 
-impl<const ENDPOINTS: usize> GroupStoreImpl<ENDPOINTS> {
+impl<const ENDPOINTS: usize> MatterGroupStore<ENDPOINTS> {
     /// Returns true if the group store data has changed since the last `store()` call.
     pub fn changed(&self) -> bool {
         self.changed.get()
