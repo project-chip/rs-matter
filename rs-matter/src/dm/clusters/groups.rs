@@ -21,17 +21,11 @@ use core::num::NonZeroU8;
 
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
+use crate::im::IMStatusCode;
 use crate::tlv::{Nullable, TLVBuilderParent};
 use crate::with;
 
 pub use crate::dm::clusters::decl::groups::*;
-
-// Matter IM Status Codes used in Groups cluster responses
-const STATUS_SUCCESS: u8 = 0x00;
-const STATUS_CONSTRAINT_ERROR: u8 = 0x87;
-const STATUS_NOT_FOUND: u8 = 0x8b;
-const STATUS_RESOURCE_EXHAUSTED: u8 = 0x89;
-const STATUS_UNSUPPORTED_ACCESS: u8 = 0x7e;
 
 /// The handler for the Groups Matter cluster.
 ///
@@ -106,7 +100,7 @@ impl ClusterHandler for GroupsHandler {
         // Validate constraints
         if (group_id == 0) || (group_name.len() > 16) {
             return response
-                .status(STATUS_CONSTRAINT_ERROR)?
+                .status(IMStatusCode::ConstraintError as u8)?
                 .group_id(group_id)?
                 .end();
         }
@@ -114,7 +108,7 @@ impl ClusterHandler for GroupsHandler {
         // Check if group security material is available
         if !Self::has_group_material(&ctx, fab_idx, group_id)? {
             return response
-                .status(STATUS_UNSUPPORTED_ACCESS)?
+                .status(IMStatusCode::UnsupportedAccess as u8)?
                 .group_id(group_id)?
                 .end();
         }
@@ -129,10 +123,13 @@ impl ClusterHandler for GroupsHandler {
         ) {
             Ok(_) => {
                 ctx.exchange().matter().notify_groups_changed();
-                response.status(STATUS_SUCCESS)?.group_id(group_id)?.end()
+                response
+                    .status(IMStatusCode::Success as u8)?
+                    .group_id(group_id)?
+                    .end()
             }
             Err(e) if e.code() == ErrorCode::ResourceExhausted => response
-                .status(STATUS_RESOURCE_EXHAUSTED)?
+                .status(IMStatusCode::ResourceExhausted as u8)?
                 .group_id(group_id)?
                 .end(),
             Err(e) => Err(e),
@@ -153,7 +150,7 @@ impl ClusterHandler for GroupsHandler {
         // Validate constraints
         if group_id == 0 {
             return response
-                .status(STATUS_CONSTRAINT_ERROR)?
+                .status(IMStatusCode::ConstraintError as u8)?
                 .group_id(group_id)?
                 .group_name("")?
                 .end();
@@ -167,13 +164,13 @@ impl ClusterHandler for GroupsHandler {
         if fabric.has_group(group_id, endpoint_id) {
             let name = fabric.group_name(group_id).unwrap_or("");
             response
-                .status(STATUS_SUCCESS)?
+                .status(IMStatusCode::Success as u8)?
                 .group_id(group_id)?
                 .group_name(name)?
                 .end()
         } else {
             response
-                .status(STATUS_NOT_FOUND)?
+                .status(IMStatusCode::NotFound as u8)?
                 .group_id(group_id)?
                 .group_name("")?
                 .end()
@@ -233,7 +230,7 @@ impl ClusterHandler for GroupsHandler {
         // Step 1: Validate constraints
         if group_id == 0 {
             return response
-                .status(STATUS_CONSTRAINT_ERROR)?
+                .status(IMStatusCode::ConstraintError as u8)?
                 .group_id(group_id)?
                 .end();
         }
@@ -249,9 +246,15 @@ impl ClusterHandler for GroupsHandler {
 
         if removed {
             ctx.exchange().matter().notify_groups_changed();
-            response.status(STATUS_SUCCESS)?.group_id(group_id)?.end()
+            response
+                .status(IMStatusCode::Success as u8)?
+                .group_id(group_id)?
+                .end()
         } else {
-            response.status(STATUS_NOT_FOUND)?.group_id(group_id)?.end()
+            response
+                .status(IMStatusCode::NotFound as u8)?
+                .group_id(group_id)?
+                .end()
         }
     }
 
