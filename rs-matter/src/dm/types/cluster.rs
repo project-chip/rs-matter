@@ -463,6 +463,8 @@ impl defmt::Format for Cluster<'_> {
 
         defmt::write!(f, "attrs [");
         for (index, attr) in self.attributes().enumerate() {
+            // Clippy considers the if-else blocks as identical, even though they are slightly different
+            #[allow(clippy::if_same_then_else)]
             if index > 0 {
                 defmt::write!(f, ", ");
             }
@@ -471,6 +473,8 @@ impl defmt::Format for Cluster<'_> {
 
         defmt::write!(f, "], cmds [");
         for (index, cmd) in self.commands().enumerate() {
+            // Clippy considers the if-else blocks as identical, even though they are slightly different
+            #[allow(clippy::if_same_then_else)]
             if index > 0 {
                 defmt::write!(f, ", ");
             }
