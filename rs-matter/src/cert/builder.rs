@@ -28,7 +28,7 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVTag, TLVWrite};
 use crate::utils::storage::WriteBuf;
 
-use super::{x509::key_usage_tlv, CertTag, MAX_CERT_TLV_LEN};
+use super::{x509::key_usage_tlv, CertTag, DNTag, MAX_CERT_TLV_LEN};
 
 /// Subject Key Identifier length (SHA-1 hash)
 const SUBJECT_KEY_ID_LEN: usize = 20;
@@ -324,20 +324,24 @@ impl<'a> CertBuilder<'a> {
             CertType::Rcac => {
                 // Self-signed: issuer = subject
                 if let Some(id) = ca_id {
-                    tw.u64(&TLVTag::Context(20), id)?; // RCAC ID
+                    tw.u64(&TLVTag::Context(DNTag::RootCaId as u8), id)?;
                 }
                 if let Some(fid) = fabric_id {
-                    tw.u64(&TLVTag::Context(21), fid)?; // Fabric ID
+                    tw.u64(&TLVTag::Context(DNTag::FabricId as u8), fid)?; // Fabric ID
                 }
             }
             CertType::Icac | CertType::Noc => {
                 // Use provided issuer information
                 if let Some(id) = issuer_ca_id {
-                    let tag = if is_issuer_rcac { 20 } else { 19 }; // RCAC or ICAC ID
+                    let tag = if is_issuer_rcac {
+                        DNTag::RootCaId as u8
+                    } else {
+                        DNTag::IcaId as u8
+                    };
                     tw.u64(&TLVTag::Context(tag), id)?;
                 }
                 if let Some(fid) = issuer_fabric_id {
-                    tw.u64(&TLVTag::Context(21), fid)?;
+                    tw.u64(&TLVTag::Context(DNTag::FabricId as u8), fid)?;
                 }
             }
         }
@@ -355,31 +359,31 @@ impl<'a> CertBuilder<'a> {
             CertType::Noc => {
                 // NOC Subject: NodeId, FabricId, optional CAT IDs
                 if let Some(nid) = node_id {
-                    tw.u64(&TLVTag::Context(17), nid)?; // Node ID
+                    tw.u64(&TLVTag::Context(DNTag::NodeId as u8), nid)?;
                 }
                 if let Some(fid) = fabric_id {
-                    tw.u64(&TLVTag::Context(21), fid)?; // Fabric ID
+                    tw.u64(&TLVTag::Context(DNTag::FabricId as u8), fid)?
                 }
                 for cat_id in cat_ids {
-                    tw.u64(&TLVTag::Context(22), *cat_id as u64)?; // NOC CAT
+                    tw.u64(&TLVTag::Context(DNTag::NocCat as u8), *cat_id as u64)?;
                 }
             }
             CertType::Icac => {
                 // ICAC Subject: ICAC ID, FabricId
                 if let Some(id) = ca_id {
-                    tw.u64(&TLVTag::Context(19), id)?; // ICAC ID
+                    tw.u64(&TLVTag::Context(DNTag::IcaId as u8), id)?;
                 }
                 if let Some(fid) = fabric_id {
-                    tw.u64(&TLVTag::Context(21), fid)?; // Fabric ID
+                    tw.u64(&TLVTag::Context(DNTag::FabricId as u8), fid)?;
                 }
             }
             CertType::Rcac => {
                 // RCAC Subject: RCAC ID, FabricId
                 if let Some(id) = ca_id {
-                    tw.u64(&TLVTag::Context(20), id)?; // RCAC ID
+                    tw.u64(&TLVTag::Context(DNTag::RootCaId as u8), id)?;
                 }
                 if let Some(fid) = fabric_id {
-                    tw.u64(&TLVTag::Context(21), fid)?; // Fabric ID
+                    tw.u64(&TLVTag::Context(DNTag::FabricId as u8), fid)?;
                 }
             }
         }
