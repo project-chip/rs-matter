@@ -28,15 +28,10 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVTag, TLVWrite};
 use crate::utils::storage::WriteBuf;
 
-use super::{CertTag, MAX_CERT_TLV_LEN};
+use super::{x509::key_usage_tlv, CertTag, MAX_CERT_TLV_LEN};
 
 /// Subject Key Identifier length (SHA-1 hash)
 const SUBJECT_KEY_ID_LEN: usize = 20;
-
-/// Key Usage bit flags
-const KEY_USAGE_DIGITAL_SIGNATURE: u16 = 0x0001;
-const KEY_USAGE_KEY_CERT_SIGN: u16 = 0x0020;
-const KEY_USAGE_CRL_SIGN: u16 = 0x0040;
 
 /// Certificate type for builder
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -436,8 +431,10 @@ impl<'a> CertBuilder<'a> {
 
         // 2. Key Usage
         let key_usage = match cert_type {
-            CertType::Rcac | CertType::Icac => KEY_USAGE_KEY_CERT_SIGN | KEY_USAGE_CRL_SIGN,
-            CertType::Noc => KEY_USAGE_DIGITAL_SIGNATURE,
+            CertType::Rcac | CertType::Icac => {
+                key_usage_tlv::KEY_CERT_SIGN | key_usage_tlv::CRL_SIGN
+            }
+            CertType::Noc => key_usage_tlv::DIGITAL_SIGNATURE,
         };
         tw.u16(&TLVTag::Context(2), key_usage)?;
 

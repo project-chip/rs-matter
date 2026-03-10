@@ -206,6 +206,11 @@ fn default_false() -> bool {
     false
 }
 
+/// X.509 KeyUsage bit flags in DER BIT STRING format.
+///
+/// In X.509 DER encoding, bit 0 is the MSB (leftmost bit) in the bit string.
+/// When represented as a u16, bit 0 corresponds to 0x8000.
+///
 /// KeyUsage ::= BIT STRING {
 ///   digitalSignature   (0),
 ///   nonRepudiation     (1),
@@ -218,33 +223,51 @@ fn default_false() -> bool {
 ///   decipherOnly       (8)
 /// }
 /// https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.3
+pub mod key_usage_der {
+    pub const DIGITAL_SIGNATURE: u16 = 0x8000;
+    pub const NON_REPUDIATION: u16 = 0x4000;
+    pub const KEY_ENCIPHERMENT: u16 = 0x2000;
+    pub const DATA_ENCIPHERMENT: u16 = 0x1000;
+    pub const KEY_AGREEMENT: u16 = 0x0800;
+    pub const KEY_CERT_SIGN: u16 = 0x0400;
+    pub const CRL_SIGN: u16 = 0x0200;
+    pub const ENCIPHER_ONLY: u16 = 0x0100;
+    pub const DECIPHER_ONLY: u16 = 0x0080;
+}
+
+/// Matter TLV KeyUsage bit flags.
+///
+/// In Matter TLV encoding, the KeyUsage is stored as a plain u16 value
+/// where bit 0 is the LSB (standard bit numbering).
+///
+/// Bit positions follow the same naming as X.509 but use standard u16 bit positions.
+pub mod key_usage_tlv {
+    pub const DIGITAL_SIGNATURE: u16 = 0x0001;
+    pub const NON_REPUDIATION: u16 = 0x0002;
+    pub const KEY_ENCIPHERMENT: u16 = 0x0004;
+    pub const DATA_ENCIPHERMENT: u16 = 0x0008;
+    pub const KEY_AGREEMENT: u16 = 0x0010;
+    pub const KEY_CERT_SIGN: u16 = 0x0020;
+    pub const CRL_SIGN: u16 = 0x0040;
+    pub const ENCIPHER_ONLY: u16 = 0x0080;
+    pub const DECIPHER_ONLY: u16 = 0x0100;
+}
+
 struct KeyUsage {
     bits: u16,
 }
 
-#[allow(unused)]
 impl KeyUsage {
-    // Bit positions
-    const DIGITAL_SIGNATURE: u16 = 0x8000;
-    const NON_REPUDIATION: u16 = 0x4000;
-    const KEY_ENCIPHERMENT: u16 = 0x2000;
-    const DATA_ENCIPHERMENT: u16 = 0x1000;
-    const KEY_AGREEMENT: u16 = 0x0800;
-    const KEY_CERT_SIGN: u16 = 0x0400;
-    const CRL_SIGN: u16 = 0x0200;
-    const ENCIPHER_ONLY: u16 = 0x0100;
-    const DECIPHER_ONLY: u16 = 0x0080;
-
     fn digital_signature(&self) -> bool {
-        self.bits & Self::DIGITAL_SIGNATURE != 0
+        self.bits & key_usage_der::DIGITAL_SIGNATURE != 0
     }
 
     fn key_cert_sign(&self) -> bool {
-        self.bits & Self::KEY_CERT_SIGN != 0
+        self.bits & key_usage_der::KEY_CERT_SIGN != 0
     }
 
     fn crl_sign(&self) -> bool {
-        self.bits & Self::CRL_SIGN != 0
+        self.bits & key_usage_der::CRL_SIGN != 0
     }
 
     /// Check that only the specified bits are set (exact match)
@@ -461,7 +484,10 @@ impl<'a> DecodeValue<'a> for DacExtensions<'a> {
                 return Err(der::ErrorKind::Failed.into());
             }
             // Only digitalSignature bit should be set (no other bits)
-            if !key_usage.value.has_only_bits(KeyUsage::DIGITAL_SIGNATURE) {
+            if !key_usage
+                .value
+                .has_only_bits(key_usage_der::DIGITAL_SIGNATURE)
+            {
                 return Err(der::ErrorKind::Failed.into());
             }
 
@@ -589,8 +615,9 @@ impl<'a> DecodeValue<'a> for PaiExtensions<'a> {
                 return Err(der::ErrorKind::Failed.into());
             }
             // digitalSignature MAY be set, but no other bits should be set
-            let allowed_bits =
-                KeyUsage::KEY_CERT_SIGN | KeyUsage::CRL_SIGN | KeyUsage::DIGITAL_SIGNATURE;
+            let allowed_bits = key_usage_der::KEY_CERT_SIGN
+                | key_usage_der::CRL_SIGN
+                | key_usage_der::DIGITAL_SIGNATURE;
             if (key_usage.value.bits & !allowed_bits) != 0 {
                 return Err(der::ErrorKind::Failed.into());
             }
@@ -708,8 +735,9 @@ impl<'a> DecodeValue<'a> for PaaExtensions<'a> {
                 return Err(der::ErrorKind::Failed.into());
             }
             // digitalSignature MAY be set, but no other bits should be set
-            let allowed_bits =
-                KeyUsage::KEY_CERT_SIGN | KeyUsage::CRL_SIGN | KeyUsage::DIGITAL_SIGNATURE;
+            let allowed_bits = key_usage_der::KEY_CERT_SIGN
+                | key_usage_der::CRL_SIGN
+                | key_usage_der::DIGITAL_SIGNATURE;
             if (key_usage.value.bits & !allowed_bits) != 0 {
                 return Err(der::ErrorKind::Failed.into());
             }
@@ -1460,7 +1488,7 @@ mod tests {
             "Expected only bit 0 (digitalSignature) set"
         );
         assert!(ku.digital_signature());
-        assert!(ku.has_only_bits(KeyUsage::DIGITAL_SIGNATURE));
+        assert!(ku.has_only_bits(key_usage_der::DIGITAL_SIGNATURE));
     }
 
     #[test]
@@ -1472,7 +1500,7 @@ mod tests {
 
         assert_eq!(ku.bits, 0x8000);
         assert!(ku.digital_signature());
-        assert!(ku.has_only_bits(KeyUsage::DIGITAL_SIGNATURE));
+        assert!(ku.has_only_bits(key_usage_der::DIGITAL_SIGNATURE));
     }
 
     #[test]
@@ -1496,7 +1524,7 @@ mod tests {
 
         assert_eq!(ku.bits, 0x0400);
         assert!(ku.key_cert_sign());
-        assert!(ku.has_only_bits(KeyUsage::KEY_CERT_SIGN));
+        assert!(ku.has_only_bits(key_usage_der::KEY_CERT_SIGN));
     }
 
     #[test]
@@ -1519,7 +1547,7 @@ mod tests {
 
         // Should mask to only bit 0
         assert_eq!(ku.bits, 0x8000, "Should mask off unused padding bits");
-        assert!(ku.has_only_bits(KeyUsage::DIGITAL_SIGNATURE));
+        assert!(ku.has_only_bits(key_usage_der::DIGITAL_SIGNATURE));
     }
 
     #[test]
