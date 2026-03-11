@@ -47,7 +47,6 @@ use super::{PBKDFParamReq, PBKDFParamResp, Pake1, Pake2, Pake3, SPAKE2_SESSION_K
 /// 1. Create an unsecured exchange to the target device
 /// 2. Call `PaseInitiator::initiate()` with the setup passcode
 /// 3. On success, the exchange's session is upgraded to a secure PASE session
-#[allow(unused)]
 pub struct PaseInitiator<C: Crypto> {
     crypto: C,
     spake2p: Spake2P,
@@ -92,7 +91,6 @@ impl<C: Crypto> PaseInitiator<C> {
     /// # Returns
     /// - `Ok(())` on successful session establishment
     /// - `Err(Error)` on failure
-    #[allow(unused)]
     pub async fn initiate(
         exchange: &mut Exchange<'_>,
         crypto: C,
