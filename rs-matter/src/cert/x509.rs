@@ -78,7 +78,7 @@ const P256_PUBLIC_KEY_LEN: usize = 65;
 ///
 /// https://www.rfc-editor.org/rfc/rfc5280#appendix-A.1
 #[derive(Sequence)]
-struct AlgorithmIdentifier<'a> {
+pub struct AlgorithmIdentifier<'a> {
     pub algorithm: ObjectIdentifier,
     pub parameters: Option<AnyRef<'a>>,
 }

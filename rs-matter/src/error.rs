@@ -103,6 +103,13 @@ pub enum ErrorCode {
     NocLabelConflict,
     NocInvalidFabricIndex,
     Failure,
+    // Certification Declaration errors
+    CdInvalidFormat,
+    CdInvalidSignature,
+    CdSigningKeyNotFound,
+    CdInvalidVendorId,
+    CdInvalidProductId,
+    CdInvalidPaa,
 }
 
 impl From<ErrorCode> for Error {
