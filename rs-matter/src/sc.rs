@@ -31,7 +31,7 @@ use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::{ReadBuf, WriteBuf};
 
 use case::Case;
-use pase::Pase;
+use pase::PaseResponder;
 
 pub mod busy;
 pub mod case;
@@ -170,7 +170,7 @@ pub enum GeneralCode {
 #[derive(FromTLV, ToTLV, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1)]
-struct SessionParameters {
+pub(crate) struct SessionParameters {
     /// Session Idle Interval
     sii: Option<u32>,
     /// Session Active Interval
@@ -246,7 +246,7 @@ impl<'a, C: Crypto> SecureChannel<'a, C> {
         match meta.opcode()? {
             OpCode::PBKDFParamRequest => {
                 let mut pase = MaybeUninit::uninit(); // TODO LARGE BUFFER
-                pase.init_with(Pase::init(&self.crypto, self.notify))
+                pase.init_with(PaseResponder::init(&self.crypto, self.notify))
                     .handle(exchange)
                     .await
             }
