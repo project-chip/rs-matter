@@ -23,7 +23,7 @@
 //! - Optional Intermediate CA Certificate (ICAC)
 //! - Node Operational Certificate (NOC)
 
-use crate::cert::builder::CertBuilder;
+use crate::cert::builder::{IcacBuilder, NocBuilder, RcacBuilder};
 use crate::cert::csr::CsrRef;
 use crate::cert::MAX_CERT_TLV_LEN;
 use crate::crypto::{
@@ -109,12 +109,11 @@ impl NocGenerator {
 
         // Build the RCAC
         let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
-        let mut builder = CertBuilder::new(&mut cert_buf);
 
         // Load the secret key for signing
         let signing_key = crypto.secret_key(root_privkey.reference())?;
 
-        let cert_len = builder.build_rcac(
+        let cert_len = RcacBuilder::new(&mut cert_buf).build(
             crypto,
             rcac_id,
             fabric_id,
@@ -211,11 +210,10 @@ impl NocGenerator {
 
         // Build the ICAC (signed by RCAC)
         let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
-        let mut builder = CertBuilder::new(&mut cert_buf);
 
         let root_signing_key = crypto.secret_key(self.root_privkey.reference())?;
 
-        let cert_len = builder.build_icac(
+        let cert_len = IcacBuilder::new(&mut cert_buf).build(
             crypto,
             icac_id,
             self.fabric_id,
@@ -225,8 +223,8 @@ impl NocGenerator {
             &serial_bytes,
             0,              // not_before
             0,              // not_after (no expiry)
-            self.rcac_id,   // issuer_rcac_id
-            self.fabric_id, // issuer_fabric_id
+            self.rcac_id,   // rcac_id
+            self.fabric_id, // rcac_fabric_id
         )?;
 
         let mut icac_cert = heapless::Vec::new();
@@ -282,7 +280,6 @@ impl NocGenerator {
 
         // Build the NOC
         let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
-        let mut builder = CertBuilder::new(&mut cert_buf);
 
         let signing_key = crypto.secret_key(signing_privkey.reference())?;
 
@@ -293,7 +290,7 @@ impl NocGenerator {
             (self.rcac_id, true) // Signed directly by RCAC
         };
 
-        let cert_len = builder.build_noc(
+        let cert_len = NocBuilder::new(&mut cert_buf).build(
             crypto,
             node_id,
             self.fabric_id,
