@@ -190,7 +190,13 @@ impl FileAttestationTrustStore {
         for entry in entries {
             let entry = match entry {
                 Ok(e) => e,
-                Err(_) => continue,
+                Err(e) => {
+                    warn!(
+                        "Skipping directory entry due to read error: {}",
+                        e.to_string()
+                    );
+                    continue;
+                }
             };
 
             let path = entry.path();
