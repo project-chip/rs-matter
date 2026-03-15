@@ -85,11 +85,6 @@ pub struct FabricCredentials {
 impl FabricCredentials {
     /// Create new fabric credentials with a new Root CA.
     ///
-    /// This generates:
-    /// - A new P-256 keypair for the Root CA
-    /// - A self-signed RCAC
-    /// - A random IPK
-    ///
     /// # Arguments
     /// * `crypto` - Cryptographic backend
     /// * `fabric_id` - The fabric identifier
