@@ -48,6 +48,12 @@ pub trait AttestationTrustStore {
     fn get_paa(&self, skid: &[u8]) -> Result<&[u8], Error>;
 }
 
+impl<T: AttestationTrustStore> AttestationTrustStore for &T {
+    fn get_paa(&self, skid: &[u8]) -> Result<&[u8], Error> {
+        (**self).get_paa(skid)
+    }
+}
+
 /// Extract and validate the Subject Key Identifier from a DER-encoded certificate.
 fn extract_skid(cert: &[u8]) -> Result<[u8; SKID_LEN], Error> {
     PaaCert::new(cert)?
