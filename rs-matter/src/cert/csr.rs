@@ -25,12 +25,13 @@ use der::asn1::{BitStringRef, UintRef};
 use der::oid::ObjectIdentifier;
 use der::{
     AnyRef, Decode, DecodeValue, Encode, EncodeValue, Header, Length, Reader, Sequence,
-    SliceReader, Tag, Tagged, Writer,
+    SliceReader, Tag, Writer,
 };
 
+use crate::cert::der_utils;
 use crate::crypto::{
     CanonPkcPublicKey, CanonPkcPublicKeyRef, Crypto, PublicKey, PKC_CANON_PUBLIC_KEY_LEN,
-    PKC_CANON_SECRET_KEY_LEN, PKC_SIGNATURE_LEN,
+    PKC_SIGNATURE_LEN,
 };
 use crate::error::{Error, ErrorCode};
 
@@ -47,9 +48,6 @@ const P256_PUBLIC_KEY_LEN: usize = PKC_CANON_PUBLIC_KEY_LEN;
 
 /// ECDSA signature length (r || s = 64 bytes)
 const ECDSA_SIGNATURE_LEN: usize = PKC_SIGNATURE_LEN;
-
-/// P-256 field element length in bytes (ECDSA signature r and s values).
-const P256_FE_LEN: usize = PKC_CANON_SECRET_KEY_LEN;
 
 #[allow(unused)]
 struct CertificationRequest<'a> {
@@ -299,68 +297,7 @@ impl<'a> CsrRef<'a> {
     ///
     /// Returns the raw ECDSA signature bytes (r || s, 64 bytes).
     fn signature(&self) -> Result<[u8; ECDSA_SIGNATURE_LEN], Error> {
-        Self::ecdsa_der_to_raw(self.csr.signature.raw_bytes())
-    }
-
-    /// Parse a DER-encoded ECDSA signature into raw (r || s) format.
-    ///
-    /// DER format: SEQUENCE { INTEGER r, INTEGER s }
-    /// Raw format: r (32 bytes, big-endian, zero-padded) || s (32 bytes)
-    fn ecdsa_der_to_raw(der: &[u8]) -> Result<[u8; ECDSA_SIGNATURE_LEN], Error> {
-        let mut reader =
-            SliceReader::new(der).map_err(|_| Error::from(ErrorCode::CdInvalidSignature))?;
-
-        // Read the SEQUENCE header
-        let seq_header =
-            Header::decode(&mut reader).map_err(|_| Error::from(ErrorCode::CdInvalidSignature))?;
-
-        if seq_header.tag != Tag::Sequence {
-            return Err(ErrorCode::CdInvalidSignature.into());
-        }
-
-        // Read INTEGER r
-        let r_any =
-            AnyRef::decode(&mut reader).map_err(|_| Error::from(ErrorCode::CdInvalidSignature))?;
-        if r_any.tag() != Tag::Integer {
-            return Err(ErrorCode::CdInvalidSignature.into());
-        }
-
-        // Read INTEGER s
-        let s_any =
-            AnyRef::decode(&mut reader).map_err(|_| Error::from(ErrorCode::CdInvalidSignature))?;
-        if s_any.tag() != Tag::Integer {
-            return Err(ErrorCode::CdInvalidSignature.into());
-        }
-
-        // Convert to fixed-length raw format
-        let mut raw = [0u8; ECDSA_SIGNATURE_LEN];
-        Self::copy_integer_to_fixed(&mut raw[..P256_FE_LEN], r_any.value())?;
-        Self::copy_integer_to_fixed(&mut raw[P256_FE_LEN..], s_any.value())?;
-
-        Ok(raw)
-    }
-
-    /// Copy a DER INTEGER value to a fixed-size buffer, handling leading zeros.
-    fn copy_integer_to_fixed(dest: &mut [u8], src: &[u8]) -> Result<(), Error> {
-        let dest_len = dest.len();
-
-        // Skip leading zero byte if present (used for positive sign in DER)
-        let src = if !src.is_empty() && src[0] == 0x00 && src.len() > dest_len {
-            &src[1..]
-        } else {
-            src
-        };
-
-        if src.len() > dest_len {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        // Zero-pad on the left if src is shorter
-        let pad_len = dest_len - src.len();
-        dest[..pad_len].fill(0);
-        dest[pad_len..].copy_from_slice(src);
-
-        Ok(())
+        der_utils::ecdsa_der_to_raw(self.csr.signature.raw_bytes())
     }
 
     /// Verify the CSR's self-signature.
@@ -387,6 +324,8 @@ impl<'a> CsrRef<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::cert::der_utils;
+
     use super::*;
 
     #[test]
@@ -408,17 +347,17 @@ mod tests {
     fn test_copy_integer_to_fixed() {
         // Test with exact size
         let mut dest = [0u8; 4];
-        CsrRef::copy_integer_to_fixed(&mut dest, &[0x01, 0x02, 0x03, 0x04]).unwrap();
+        der_utils::copy_integer_to_fixed(&mut dest, &[0x01, 0x02, 0x03, 0x04]).unwrap();
         assert_eq!(dest, [0x01, 0x02, 0x03, 0x04]);
 
         // Test with leading zero (sign byte) that needs to be stripped
         let mut dest = [0u8; 4];
-        CsrRef::copy_integer_to_fixed(&mut dest, &[0x00, 0x01, 0x02, 0x03, 0x04]).unwrap();
+        der_utils::copy_integer_to_fixed(&mut dest, &[0x00, 0x01, 0x02, 0x03, 0x04]).unwrap();
         assert_eq!(dest, [0x01, 0x02, 0x03, 0x04]);
 
         // Test with shorter input (needs padding)
         let mut dest = [0u8; 4];
-        CsrRef::copy_integer_to_fixed(&mut dest, &[0x01, 0x02]).unwrap();
+        der_utils::copy_integer_to_fixed(&mut dest, &[0x01, 0x02]).unwrap();
         assert_eq!(dest, [0x00, 0x00, 0x01, 0x02]);
     }
 }
