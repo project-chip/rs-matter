@@ -58,16 +58,9 @@ pub const TEST_PAA_NOVID_SKID: [u8; 20] = [
     0x69, 0x68, 0x82, 0xD5,
 ];
 
-/// Create a test trust store containing both test PAAs.
+/// Test trust store containing both test PAAs.
 ///
 /// Use this for development and testing. For production, use
 /// [`FileAttestationTrustStore::from_directory`](super::trust_store::FileAttestationTrustStore::from_directory)
-/// (std) or [`ArrayAttestationTrustStore::from_certs`](super::trust_store::ArrayAttestationTrustStore::from_certs)
-/// with real PAA certificates.
-pub fn test_paa_store() -> super::trust_store::ArrayAttestationTrustStore<'static, 2> {
-    super::trust_store::ArrayAttestationTrustStore::from_certs(&[
-        TEST_PAA_FFF1_CERT,
-        TEST_PAA_NOVID_CERT,
-    ])
-    .unwrap()
-}
+/// (std) or a `&[&[u8]]` slice with real PAA certificates.
+pub const TEST_PAA_STORE: &[&[u8]] = &[TEST_PAA_FFF1_CERT, TEST_PAA_NOVID_CERT];

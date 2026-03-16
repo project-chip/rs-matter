@@ -20,9 +20,8 @@
 //! Provides the [`AttestationTrustStore`] trait for PAA certificate lookup by SKID,
 //! and two concrete implementations:
 //!
-//! - [`ArrayAttestationTrustStore`]: no-alloc, backed by a fixed-capacity `heapless::Vec`.
-//!   Stores `&'static [u8]` references — certificates embedded via `include_bytes!` stay
-//!   in flash (rodata) with no RAM copy.
+//! - `&[&[u8]]`: no-alloc, const-constructible. Stores `&'static [u8]` references —
+//!   certificates embedded via `include_bytes!` stay in flash (rodata) with no RAM copy.
 //!
 //! - [`FileAttestationTrustStore`]: heap-backed, owns DER bytes. Loads PAA certificates
 //!   from a directory of `.der` files at runtime (`std` only).
@@ -62,85 +61,25 @@ fn extract_skid(cert: &[u8]) -> Result<[u8; SKID_LEN], Error> {
         .map_err(|_| ErrorCode::InvalidData.into())
 }
 
-/// A single PAA certificate entry for [`ArrayAttestationTrustStore`]:
-/// pre-extracted SKID + reference to borrowed DER bytes.
-struct BorrowedPaaCertEntry<'a> {
-    skid: [u8; SKID_LEN],
-    der: &'a [u8],
-}
-
-/// PAA trust store backed by a fixed-capacity `heapless::Vec`.
-///
-/// Stores `&'a [u8]` references to DER bytes — no RAM copy of certificate data.
-/// Certificates embedded via `include_bytes!` are `'static` and live in flash (rodata);
-///
-/// The const generic `N` is the maximum number of PAA certificates.
-///
-/// To load PAAs from the filesystem at runtime, use [`FileAttestationTrustStore`].
+/// `AttestationTrustStore` implementation for a slice of DER-encoded certificates.
 ///
 /// # Example
 ///
 /// ```ignore
-/// use rs_matter::credentials::trust_store::ArrayAttestationTrustStore;
-///
-/// static PAA_CERT: &[u8] = include_bytes!("my-paa.der");
-///
-/// let store = ArrayAttestationTrustStore::<1>::from_certs(&[PAA_CERT]).unwrap();
+/// const PAA_STORE: &[&[u8]] = &[PAA_CERT_1, PAA_CERT_2];
+/// let paa = PAA_STORE.get_paa(&skid)?;
 /// ```
-pub struct ArrayAttestationTrustStore<'a, const N: usize> {
-    certs: heapless::Vec<BorrowedPaaCertEntry<'a>, N>,
-}
-
-impl<'a, const N: usize> ArrayAttestationTrustStore<'a, N> {
-    /// Create a trust store from DER-encoded PAA certificate slices.
-    ///
-    /// Extracts the SKID from each certificate and stores a reference to the original
-    /// bytes — the DER data is not copied into RAM.
-    ///
-    /// Returns `ErrorCode::InvalidData` if a certificate exceeds [`MAX_PAA_CERT_DER_LEN`],
-    /// is malformed, or has no SKID.
-    /// Returns `ErrorCode::NoSpace` if the number of certificates exceeds capacity `N`.
-    pub fn from_certs(certs: &[&'a [u8]]) -> Result<Self, Error> {
-        let mut store = Self {
-            certs: heapless::Vec::new(),
-        };
-
-        for cert in certs {
-            store.push_cert(cert)?;
-        }
-
-        Ok(store)
-    }
-
-    /// Number of PAA certificates in the store.
-    pub fn paa_count(&self) -> usize {
-        self.certs.len()
-    }
-
-    fn push_cert(&mut self, der: &'a [u8]) -> Result<(), Error> {
-        if der.len() > MAX_PAA_CERT_DER_LEN {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        let skid = extract_skid(der)?;
-
-        self.certs
-            .push(BorrowedPaaCertEntry { skid, der })
-            .map_err(|_| ErrorCode::NoSpace)?;
-
-        Ok(())
-    }
-}
-
-impl<'a, const N: usize> AttestationTrustStore for ArrayAttestationTrustStore<'a, N> {
+impl AttestationTrustStore for &[&[u8]] {
     fn get_paa(&self, skid: &[u8]) -> Result<&[u8], Error> {
         if skid.len() != SKID_LEN {
             return Err(ErrorCode::InvalidArgument.into());
         }
 
-        for entry in &self.certs {
-            if entry.skid.as_slice() == skid {
-                return Ok(entry.der);
+        for cert in self.iter() {
+            if let Ok(cert_skid) = extract_skid(cert) {
+                if cert_skid == skid {
+                    return Ok(cert);
+                }
             }
         }
 
@@ -161,8 +100,8 @@ struct OwnedPaaCertEntry {
 /// Owns the DER bytes for each certificate. Loads all valid `.der` files from a
 /// directory at construction time via [`from_directory`](Self::from_directory).
 ///
-/// For compile-time embedded certificates, use [`ArrayAttestationTrustStore`] instead
-/// — it is zero-copy and does not require `std`.
+/// For compile-time embedded certificates, implement [`AttestationTrustStore`]
+/// via `&[&[u8]]` instead — it is zero-copy and does not require `std`.
 ///
 /// # Example
 ///
@@ -302,12 +241,9 @@ mod tests {
     use crate::credentials::test_paa::*;
     use crate::error::ErrorCode;
 
-    // --- ArrayAttestationTrustStore tests ---
-
     #[test]
     fn store_finds_known_skid() {
-        let store = ArrayAttestationTrustStore::<2>::from_certs(&[TEST_PAA_FFF1_CERT]).unwrap();
-        assert_eq!(store.paa_count(), 1);
+        let store: &[&[u8]] = &[TEST_PAA_FFF1_CERT];
         let result = store.get_paa(&TEST_PAA_FFF1_SKID);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), TEST_PAA_FFF1_CERT);
@@ -315,8 +251,7 @@ mod tests {
 
     #[test]
     fn store_not_found_unknown_skid() {
-        let store = ArrayAttestationTrustStore::<2>::from_certs(&[TEST_PAA_FFF1_CERT]).unwrap();
-        assert_eq!(store.paa_count(), 1);
+        let store: &[&[u8]] = &[TEST_PAA_FFF1_CERT];
         let unknown_skid = [0xFF; 20];
         let result = store.get_paa(&unknown_skid);
         assert!(result.is_err());
@@ -325,8 +260,8 @@ mod tests {
 
     #[test]
     fn store_multiple_certs() {
-        let store = test_paa_store();
-        assert_eq!(store.paa_count(), 2);
+        let store = TEST_PAA_STORE;
+        assert_eq!(store.len(), 2);
 
         let fff1 = store.get_paa(&TEST_PAA_FFF1_SKID).unwrap();
         assert_eq!(fff1, TEST_PAA_FFF1_CERT);
@@ -337,8 +272,7 @@ mod tests {
 
     #[test]
     fn store_empty() {
-        let store = ArrayAttestationTrustStore::<2>::from_certs(&[]).unwrap();
-        assert_eq!(store.paa_count(), 0);
+        let store: &[&[u8]] = &[];
         let result = store.get_paa(&TEST_PAA_FFF1_SKID);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code(), ErrorCode::NotFound);
@@ -346,7 +280,7 @@ mod tests {
 
     #[test]
     fn store_wrong_skid_length() {
-        let store = ArrayAttestationTrustStore::<2>::from_certs(&[TEST_PAA_FFF1_CERT]).unwrap();
+        let store: &[&[u8]] = &[TEST_PAA_FFF1_CERT];
         let short_skid = [0xFF; 19];
         let long_skid = [0xFF; 21];
         assert_eq!(
@@ -357,26 +291,6 @@ mod tests {
             store.get_paa(&long_skid).unwrap_err().code(),
             ErrorCode::InvalidArgument
         );
-    }
-
-    #[test]
-    fn store_capacity_exceeded() {
-        let result =
-            ArrayAttestationTrustStore::<1>::from_certs(&[TEST_PAA_FFF1_CERT, TEST_PAA_NOVID_CERT]);
-        match result {
-            Err(e) => assert_eq!(e.code(), ErrorCode::NoSpace),
-            Ok(_) => panic!("expected NoSpace error"),
-        }
-    }
-
-    #[test]
-    fn store_cert_too_large() {
-        static OVERSIZED: [u8; MAX_PAA_CERT_DER_LEN + 1] = [0u8; MAX_PAA_CERT_DER_LEN + 1];
-        let result = ArrayAttestationTrustStore::<2>::from_certs(&[&OVERSIZED]);
-        match result {
-            Err(e) => assert_eq!(e.code(), ErrorCode::InvalidData),
-            Ok(_) => panic!("expected InvalidData error"),
-        }
     }
 }
 
