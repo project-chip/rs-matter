@@ -190,6 +190,10 @@ impl Session {
         self.local_sess_id = sess_id;
     }
 
+    pub(crate) fn set_local_nodeid(&mut self, nodeid: u64) {
+        self.local_nodeid = nodeid;
+    }
+
     pub fn get_peer_sess_id(&self) -> u16 {
         self.peer_sess_id
     }
@@ -266,7 +270,16 @@ impl Session {
             || rx_plain.get_src_nodeid().is_none()
             || self.peer_nodeid == rx_plain.get_src_nodeid();
 
+        // For unsecured sessions, also match by destination node ID (the echoed
+        // ephemeral initiator node ID) to disambiguate multiple unsecured sessions
+        // for the same peer (spec 4.13.2.1).
+        let dest_nodeid_matches = self.is_encrypted()
+            || self.local_nodeid == 0
+            || rx_plain.get_dst_unicast_nodeid().is_none()
+            || rx_plain.get_dst_unicast_nodeid() == Some(self.local_nodeid);
+
         nodeid_matches
+            && dest_nodeid_matches
             && self.local_sess_id == rx_plain.sess_id
             && self.peer_addr == *rx_peer
             && self.is_encrypted() == rx_plain.is_encrypted()
@@ -360,7 +373,12 @@ impl Session {
 
         tx_header.plain.sess_id = self.get_peer_sess_id();
         tx_header.plain.ctr = ctr.unwrap_or_else(|| self.get_msg_ctr());
-        tx_header.plain.set_src_nodeid(None);
+        // For unsecured initiator sessions, set Source Node ID to our ephemeral
+        // initiator node ID (spec 4.13.2.1: "enclosed by initiator as Source Node ID").
+        // Encrypted sessions and responder unsecured sessions (local_nodeid=0) send no Source.
+        tx_header.plain.set_src_nodeid(
+            (!self.is_encrypted() && self.local_nodeid != 0).then_some(self.local_nodeid),
+        );
         tx_header.plain.set_dst_unicast_nodeid(
             (self.mode == SessionMode::PlainText)
                 .then_some(self.peer_nodeid)

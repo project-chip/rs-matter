@@ -37,6 +37,16 @@ pub const CASE_RESUMPTION_ID_LEN: usize = 16;
 
 pub const CASE_SESSION_KEYS_LEN: usize = AEAD_CANON_KEY_LEN * 3;
 
+// TBEData2_Nonce per spec 4.14.2.3: "NCASE_Sigma2N"
+const SIGMA2_NONCE: AeadNonceRef = AeadNonceRef::new(&[
+    0x4e, 0x43, 0x41, 0x53, 0x45, 0x5f, 0x53, 0x69, 0x67, 0x6d, 0x61, 0x32, 0x4e,
+]);
+
+// TBEData3_Nonce per spec 4.14.2.3: "NCASE_Sigma3N"
+const SIGMA3_NONCE: AeadNonceRef = AeadNonceRef::new(&[
+    0x4e, 0x43, 0x41, 0x53, 0x45, 0x5f, 0x53, 0x69, 0x67, 0x6d, 0x61, 0x33, 0x4e,
+]);
+
 canon!(
     CASE_RANDOM_LEN,
     CASE_RANDOM_ZEROED,
@@ -145,6 +155,98 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
         Ok(())
     }
 
+    /// Initialize the CASE initiator state for Sigma1.
+    ///
+    /// Generates ephemeral keypair, initiator random, and destination ID.
+    /// Returns the ephemeral secret key — caller (`CaseInitiator`) retains it
+    /// for ECDH during `process_sigma2`, matching the PASE pattern where
+    /// initiator-specific state lives on `PaseInitiator`, not on `Spake2P`.
+    ///
+    /// The transcript hash is initialized but left empty; the caller is responsible
+    /// for feeding the serialized Sigma1 TLV bytes via `update_tt`.
+    pub fn start_initiator(
+        &mut self,
+        crypto: &'a C,
+        fabric: &Fabric,
+        peer_node_id: u64,
+        local_sessid: u16,
+        initiator_random_out: &mut CaseRandom,
+        destination_id_out: &mut Hash,
+    ) -> Result<C::SecretKey<'a>, Error> {
+        self.local_sessid = local_sessid;
+        self.local_fabric_idx = fabric.fab_idx().get();
+
+        // Create an ephemeral EC secret key
+        let secret_key = crypto.generate_secret_key()?;
+        secret_key.pub_key()?.write_canon(&mut self.our_pub_key)?;
+
+        // Generate initiator random
+        let mut rand = crypto.rand()?;
+        rand.fill_bytes(initiator_random_out.access_mut());
+
+        // Compute the destination ID for the peer node
+        fabric.compute_dest_id(
+            crypto,
+            initiator_random_out.access(),
+            peer_node_id,
+            destination_id_out,
+        )?;
+
+        // Initialize transcript hash; caller feeds Sigma1 TLV bytes in via update_tt
+        self.tt = Optional::some(crypto.hash()?);
+
+        Ok(secret_key)
+    }
+
+    /// Decrypt the Sigma2 TBE payload.
+    ///
+    /// Performs ECDH, derives S2K, updates the transcript hash with raw Sigma2,
+    /// and decrypts TBE2 in-place. Symmetric with `sigma3_decrypt`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn sigma2_decrypt(
+        &mut self,
+        crypto: &'a C,
+        fabric: &Fabric,
+        secret_key: &C::SecretKey<'a>,
+        raw_sigma2_payload: &[u8],
+        peer_random: CaseRandomRef<'_>,
+        peer_sessid: u16,
+        peer_eph_pub_key: CanonPkcPublicKeyRef<'_>,
+        encrypted2: &mut [u8],
+    ) -> Result<usize, Error> {
+        self.peer_sessid = peer_sessid;
+        self.peer_pub_key.load(peer_eph_pub_key);
+
+        // ECDH: derive shared secret using the initiator's retained secret key
+        let peer_pub_key_obj = crypto.pub_key(peer_eph_pub_key)?;
+        secret_key.derive_shared_secret(&peer_pub_key_obj, &mut self.shared_secret)?;
+
+        // Get transcript hash (Sigma1 only at this point)
+        let mut tt_hash = HASH_ZEROED;
+        self.current_tt_hash(&mut tt_hash)?;
+
+        // Derive S2K
+        let mut sigma2_key = AEAD_KEY_ZEROED;
+        self.compute_sigma2_key(
+            crypto,
+            fabric.ipk().op_key(),
+            peer_random,
+            peer_eph_pub_key,
+            tt_hash.reference(),
+            &mut sigma2_key,
+        )?;
+
+        // Add raw Sigma2 to transcript hash
+        self.update_tt(raw_sigma2_payload)?;
+
+        // Decrypt TBE2
+        let encrypted_len = encrypted2.len();
+        let mut cypher = crypto.aead()?;
+        cypher.decrypt_in_place(sigma2_key.reference(), SIGMA2_NONCE, &[], encrypted2)?;
+
+        Ok(encrypted_len - crypto::AEAD_TAG_LEN)
+    }
+
     pub fn local_fabric_idx(&self) -> u8 {
         self.local_fabric_idx
     }
@@ -198,6 +300,7 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
             crypto,
             fabric.ipk().op_key(),
             our_random,
+            self.our_pub_key.reference(),
             our_hash,
             &mut sigma2_key,
         )?;
@@ -214,9 +317,6 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
         tw.end_container()?;
 
         //println!("TBE is {:x?}", write_buf.as_borrow_slice());
-        const NONCE: AeadNonceRef = AeadNonceRef::new(&[
-            0x4e, 0x43, 0x41, 0x53, 0x45, 0x5f, 0x53, 0x69, 0x67, 0x6d, 0x61, 0x32, 0x4e,
-        ]);
         //        let nonce = GenericArray::from_slice(&nonce);
         //        type AesCcm = Ccm<Aes128, U16, U13>;
         //        let cipher = AesCcm::new(GenericArray::from_slice(key));
@@ -228,7 +328,7 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
 
         cypher.encrypt_in_place(
             sigma2_key.reference(),
-            NONCE,
+            SIGMA2_NONCE,
             &[],
             cipher_text,
             cipher_text.len() - AEAD_TAG_LEN,
@@ -276,9 +376,9 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
     ///
     /// # Arguments
     /// - `ipk` - The IPK
-    /// - `our_random` - Our random value
-    /// - `our_pub_key` - Our public key
-    /// - `our_hash` - Our transcript hash
+    /// - `responder_random` - The responder's random value
+    /// - `responder_eph_pub_key` - The responder's ephemeral public key
+    /// - `tt_hash` - The transcript hash
     /// - `key` - The output buffer to write the Sigma2 key to
     ///
     /// # Returns
@@ -288,8 +388,9 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
         &self,
         crypto: &C,
         ipk: CanonAeadKeyRef<'_>,
-        our_random: CaseRandomRef<'_>,
-        our_hash: HashRef<'_>,
+        responder_random: CaseRandomRef<'_>,
+        responder_eph_pub_key: CanonPkcPublicKeyRef<'_>,
+        tt_hash: HashRef<'_>,
         key: &mut CanonAeadKey,
     ) -> Result<(), Error> {
         const S2K_INFO: [u8; 6] = [0x53, 0x69, 0x67, 0x6d, 0x61, 0x32];
@@ -300,11 +401,11 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
 
         let salt_access: &mut [u8] = salt.access_mut();
         salt_access[..AEAD_CANON_KEY_LEN].copy_from_slice(ipk.access());
-        salt_access[AEAD_CANON_KEY_LEN..][..32].copy_from_slice(our_random.access());
+        salt_access[AEAD_CANON_KEY_LEN..][..32].copy_from_slice(responder_random.access());
         salt_access[AEAD_CANON_KEY_LEN..][32..][..PKC_CANON_PUBLIC_KEY_LEN]
-            .copy_from_slice(self.our_pub_key.access());
+            .copy_from_slice(responder_eph_pub_key.access());
         salt_access[AEAD_CANON_KEY_LEN..][32..][PKC_CANON_PUBLIC_KEY_LEN..]
-            .copy_from_slice(our_hash.access());
+            .copy_from_slice(tt_hash.access());
 
         crypto
             .kdf()?
@@ -375,7 +476,7 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
     /// # Returns
     /// - `Ok(())` - If the signature is valid
     /// - `Err(Error)` - If the signature is invalid
-    pub fn validate_sigma3_signature(
+    pub fn validate_peer_tbs_signature(
         &self,
         crypto: &C,
         initiator_noc: &[u8],
@@ -448,6 +549,102 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
         Ok(())
     }
 
+    /// Compute the Sigma3 TBSData3 and sign it with the fabric's operational secret key.
+    ///
+    /// TBSData3 structure (TLV):
+    /// - Tag 1: initiator NOC
+    /// - Tag 2: initiator ICAC (optional — omitted if empty)
+    /// - Tag 3: initiator ephemeral public key (sender)
+    /// - Tag 4: responder ephemeral public key (receiver)
+    ///
+    /// # Arguments
+    /// - `crypto` - The crypto provider
+    /// - `fabric` - The local fabric
+    /// - `tmp_buf` - A temporary buffer for constructing the TBS data
+    /// - `signature` - The output buffer to write the signature to
+    ///
+    /// # Returns
+    /// - `Ok(())` - If the signature was successfully generated
+    /// - `Err(Error)` - If an error occurred during the process
+    pub fn compute_sigma3_signature(
+        &self,
+        crypto: &C,
+        fabric: &Fabric,
+        tmp_buf: &mut [u8],
+        signature: &mut CanonPkcSignature,
+    ) -> Result<(), Error> {
+        let mut tw = WriteBuf::new(tmp_buf);
+
+        tw.start_struct(&TLVTag::Anonymous)?;
+        tw.str(&TLVTag::Context(1), fabric.noc())?;
+        if !fabric.icac().is_empty() {
+            tw.str(&TLVTag::Context(2), fabric.icac())?;
+        }
+        tw.str(&TLVTag::Context(3), self.our_pub_key.access())?;
+        tw.str(&TLVTag::Context(4), self.peer_pub_key.access())?;
+        tw.end_container()?;
+
+        let fabric_secret = crypto.secret_key(fabric.secret_key())?;
+        fabric_secret.sign(tw.as_slice(), signature)?;
+
+        Ok(())
+    }
+
+    /// Encrypt the Sigma3 TBE3 payload with S3K.
+    ///
+    /// Builds the TBE3 plaintext (NOC + ICAC + signature), appends an AEAD tag slot,
+    /// and encrypts in-place. Returns the total ciphertext length (plaintext + tag).
+    ///
+    /// TBE3 plaintext structure (TLV):
+    /// - Tag 1: initiator NOC
+    /// - Tag 2: initiator ICAC (optional — omitted if empty)
+    /// - Tag 3: signature
+    ///
+    /// # Arguments
+    /// - `crypto` - The crypto provider
+    /// - `fabric` - The local fabric
+    /// - `signature` - The Sigma3 signature
+    /// - `out` - The output buffer to write the encrypted data to
+    ///
+    /// # Returns
+    /// - `Ok(usize)` - The length of the encrypted data written to `out`
+    /// - `Err(Error)` - If an error occurred during the process
+    pub fn sigma3_encrypt(
+        &mut self,
+        crypto: &C,
+        fabric: &Fabric,
+        signature: CanonPkcSignatureRef<'_>,
+        out: &mut [u8],
+    ) -> Result<usize, Error> {
+        let mut sigma3_key = AEAD_KEY_ZEROED;
+        self.compute_sigma3_key(crypto, fabric.ipk().op_key(), &mut sigma3_key)?;
+
+        let mut tw = WriteBuf::new(out);
+
+        tw.start_struct(&TLVTag::Anonymous)?;
+        tw.str(&TLVTag::Context(1), fabric.noc())?;
+        if !fabric.icac().is_empty() {
+            tw.str(&TLVTag::Context(2), fabric.icac())?;
+        }
+        tw.str(&TLVTag::Context(3), signature.access())?;
+        tw.end_container()?;
+
+        tw.append(AEAD_TAG_ZEROED.access())?;
+        let cipher_text = tw.as_mut_slice();
+
+        let mut cypher = crypto.aead()?;
+
+        cypher.encrypt_in_place(
+            sigma3_key.reference(),
+            SIGMA3_NONCE,
+            &[],
+            cipher_text,
+            cipher_text.len() - AEAD_TAG_LEN,
+        )?;
+
+        Ok(tw.as_slice().len())
+    }
+
     /// Get the Sigma3 decrypted data
     ///
     /// # Arguments
@@ -467,15 +664,11 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
         self.compute_sigma3_key(crypto, ipk, &mut sigma3_key)?;
         // println!("Sigma3 Key: {:x?}", sigma3_key);
 
-        const NONCE: AeadNonceRef = AeadNonceRef::new(&[
-            0x4e, 0x43, 0x41, 0x53, 0x45, 0x5f, 0x53, 0x69, 0x67, 0x6d, 0x61, 0x33, 0x4e,
-        ]);
-
         let encrypted_len = encrypted.len();
 
         let mut cypher = crypto.aead()?;
 
-        cypher.decrypt_in_place(sigma3_key.reference(), NONCE, &[], encrypted)?;
+        cypher.decrypt_in_place(sigma3_key.reference(), SIGMA3_NONCE, &[], encrypted)?;
         Ok(encrypted_len - crypto::AEAD_TAG_LEN)
     }
 
