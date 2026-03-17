@@ -204,9 +204,10 @@ impl NocGenerator {
         let mut icac_privkey = CanonPkcSecretKey::new();
         icac_key.write_canon(&mut icac_privkey)?;
 
-        // Generate serial number
+        // Generate and encode serial number as ASN.1 INTEGER
         let serial = self.next_serial();
-        let serial_bytes = serial.to_be_bytes();
+        let serial_bytes_vec = Self::encode_serial_asn1(serial);
+        let serial_bytes = serial_bytes_vec.as_slice();
 
         // Build the ICAC (signed by RCAC)
         let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
@@ -220,7 +221,7 @@ impl NocGenerator {
             icac_pubkey.access(),
             self.root_pubkey.access(),
             &root_signing_key,
-            &serial_bytes,
+            serial_bytes,
             0,              // not_before
             0,              // not_after (no expiry)
             self.rcac_id,   // rcac_id
@@ -264,9 +265,10 @@ impl NocGenerator {
         // Verify the CSR signature
         csr_ref.verify(crypto)?;
 
-        // Generate serial number first (requires &mut self)
+        // Generate and encode serial number as ASN.1 INTEGER
         let serial = self.next_serial();
-        let serial_bytes = serial.to_be_bytes();
+        let serial_bytes_vec = Self::encode_serial_asn1(serial);
+        let serial_bytes = serial_bytes_vec.as_slice();
 
         // Determine signing key and issuer public key
         let (signing_privkey, issuer_pubkey) = if let Some(ref icac_privkey) = self.icac_privkey {
@@ -336,6 +338,36 @@ impl NocGenerator {
     /// Get the ICAC ID (if ICAC was generated).
     pub fn icac_id(&self) -> Option<u64> {
         self.icac_id
+    }
+
+    /// Encode a u64 serial number as an ASN.1 INTEGER.
+    ///
+    /// ASN.1 DER encoding rules require:
+    /// 1. Strip all leading zero bytes
+    /// 2. If the high bit of the resulting first byte is set (>= 0x80),
+    ///    prepend a 0x00 byte to indicate it's a positive number
+    /// 3. The leftmost 9 bits must not be all 0's or all 1's
+    fn encode_serial_asn1(serial: u64) -> heapless::Vec<u8, 9> {
+        // Convert to big-endian bytes
+        let serial_bytes_full = serial.to_be_bytes();
+
+        // Find first non-zero byte
+        let start = serial_bytes_full
+            .iter()
+            .position(|&b| b != 0)
+            .unwrap_or(serial_bytes_full.len() - 1);
+        let stripped = &serial_bytes_full[start..];
+
+        // Create result vec
+        let mut vec = heapless::Vec::<u8, 9>::new();
+
+        // If high bit is set, prepend 0x00 to indicate positive number
+        if !stripped.is_empty() && (stripped[0] & 0x80) != 0 {
+            vec.push(0).unwrap();
+        }
+        vec.extend_from_slice(stripped).unwrap();
+
+        vec
     }
 
     /// Get the next serial number and increment the counter.
