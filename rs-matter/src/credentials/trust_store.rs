@@ -29,7 +29,9 @@
 use crate::cert::x509::PaaCert;
 use crate::error::{Error, ErrorCode};
 
-const SKID_LEN: usize = 20;
+/// Matter certificate key identifier (SKID/AKID): 20-byte SHA-1 hash of the public key.
+/// Matter spec Section 6.1.2 mandates 20 octets, per RFC 5280 method (1).
+pub type KeyId = [u8; 20];
 
 /// Maximum length of a DER-encoded PAA certificate.
 /// Matches C++ SDK `kMaxDERCertLength` (CHIPCert.h).
@@ -44,17 +46,17 @@ pub trait AttestationTrustStore {
     ///
     /// Returns the DER-encoded PAA certificate, or `ErrorCode::NotFound`
     /// if no PAA with the given SKID is present in the store.
-    fn get_paa(&self, skid: &[u8]) -> Result<&[u8], Error>;
+    fn get_paa(&self, skid: &KeyId) -> Result<&[u8], Error>;
 }
 
 impl<T: AttestationTrustStore> AttestationTrustStore for &T {
-    fn get_paa(&self, skid: &[u8]) -> Result<&[u8], Error> {
+    fn get_paa(&self, skid: &KeyId) -> Result<&[u8], Error> {
         (**self).get_paa(skid)
     }
 }
 
 /// Extract and validate the Subject Key Identifier from a DER-encoded certificate.
-fn extract_skid(cert: &[u8]) -> Result<[u8; SKID_LEN], Error> {
+fn extract_skid(cert: &[u8]) -> Result<KeyId, Error> {
     PaaCert::new(cert)?
         .subject_key_id()?
         .try_into()
@@ -70,14 +72,10 @@ fn extract_skid(cert: &[u8]) -> Result<[u8; SKID_LEN], Error> {
 /// let paa = PAA_STORE.get_paa(&skid)?;
 /// ```
 impl AttestationTrustStore for &[&[u8]] {
-    fn get_paa(&self, skid: &[u8]) -> Result<&[u8], Error> {
-        if skid.len() != SKID_LEN {
-            return Err(ErrorCode::InvalidArgument.into());
-        }
-
+    fn get_paa(&self, skid: &KeyId) -> Result<&[u8], Error> {
         for cert in self.iter() {
             if let Ok(cert_skid) = extract_skid(cert) {
-                if cert_skid == skid {
+                if cert_skid == *skid {
                     return Ok(cert);
                 }
             }
@@ -91,7 +89,7 @@ impl AttestationTrustStore for &[&[u8]] {
 /// pre-extracted SKID + owned DER bytes.
 #[cfg(feature = "std")]
 struct OwnedPaaCertEntry {
-    skid: [u8; SKID_LEN],
+    skid: KeyId,
     der: Vec<u8>,
 }
 
@@ -220,13 +218,9 @@ impl FileAttestationTrustStore {
 
 #[cfg(feature = "std")]
 impl AttestationTrustStore for FileAttestationTrustStore {
-    fn get_paa(&self, skid: &[u8]) -> Result<&[u8], Error> {
-        if skid.len() != SKID_LEN {
-            return Err(ErrorCode::InvalidArgument.into());
-        }
-
+    fn get_paa(&self, skid: &KeyId) -> Result<&[u8], Error> {
         for entry in &self.certs {
-            if entry.skid.as_slice() == skid {
+            if entry.skid == *skid {
                 return Ok(&entry.der);
             }
         }
@@ -276,21 +270,6 @@ mod tests {
         let result = store.get_paa(&TEST_PAA_FFF1_SKID);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code(), ErrorCode::NotFound);
-    }
-
-    #[test]
-    fn store_wrong_skid_length() {
-        let store: &[&[u8]] = &[TEST_PAA_FFF1_CERT];
-        let short_skid = [0xFF; 19];
-        let long_skid = [0xFF; 21];
-        assert_eq!(
-            store.get_paa(&short_skid).unwrap_err().code(),
-            ErrorCode::InvalidArgument
-        );
-        assert_eq!(
-            store.get_paa(&long_skid).unwrap_err().code(),
-            ErrorCode::InvalidArgument
-        );
     }
 }
 
