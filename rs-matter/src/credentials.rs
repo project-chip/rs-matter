@@ -27,6 +27,8 @@
 pub mod cd;
 pub mod cd_keys;
 pub mod trust_store;
+#[cfg(feature = "std")]
+pub mod trust_store_file;
 
 #[cfg(test)]
 pub mod test_paa;
