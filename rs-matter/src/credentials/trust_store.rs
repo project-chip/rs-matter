@@ -46,12 +46,12 @@ pub trait AttestationTrustStore {
     ///
     /// Returns the DER-encoded PAA certificate, or `ErrorCode::NotFound`
     /// if no PAA with the given SKID is present in the store.
-    fn get_paa(&self, skid: &KeyId) -> Result<&[u8], Error>;
+    fn paa(&self, skid: &KeyId) -> Result<&[u8], Error>;
 }
 
 impl<T: AttestationTrustStore> AttestationTrustStore for &T {
-    fn get_paa(&self, skid: &KeyId) -> Result<&[u8], Error> {
-        (**self).get_paa(skid)
+    fn paa(&self, skid: &KeyId) -> Result<&[u8], Error> {
+        (**self).paa(skid)
     }
 }
 
@@ -69,10 +69,10 @@ fn extract_skid(cert: &[u8]) -> Result<KeyId, Error> {
 ///
 /// ```ignore
 /// const PAA_STORE: &[&[u8]] = &[PAA_CERT_1, PAA_CERT_2];
-/// let paa = PAA_STORE.get_paa(&skid)?;
+/// let paa = PAA_STORE.paa(&skid)?;
 /// ```
 impl AttestationTrustStore for &[&[u8]] {
-    fn get_paa(&self, skid: &KeyId) -> Result<&[u8], Error> {
+    fn paa(&self, skid: &KeyId) -> Result<&[u8], Error> {
         for cert in self.iter() {
             if let Ok(cert_skid) = extract_skid(cert) {
                 if cert_skid == *skid {
@@ -218,7 +218,7 @@ impl FileAttestationTrustStore {
 
 #[cfg(feature = "std")]
 impl AttestationTrustStore for FileAttestationTrustStore {
-    fn get_paa(&self, skid: &KeyId) -> Result<&[u8], Error> {
+    fn paa(&self, skid: &KeyId) -> Result<&[u8], Error> {
         for entry in &self.certs {
             if entry.skid == *skid {
                 return Ok(&entry.der);
@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn store_finds_known_skid() {
         let store: &[&[u8]] = &[TEST_PAA_FFF1_CERT];
-        let result = store.get_paa(&TEST_PAA_FFF1_SKID);
+        let result = store.paa(&TEST_PAA_FFF1_SKID);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), TEST_PAA_FFF1_CERT);
     }
@@ -247,7 +247,7 @@ mod tests {
     fn store_not_found_unknown_skid() {
         let store: &[&[u8]] = &[TEST_PAA_FFF1_CERT];
         let unknown_skid = [0xFF; 20];
-        let result = store.get_paa(&unknown_skid);
+        let result = store.paa(&unknown_skid);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code(), ErrorCode::NotFound);
     }
@@ -257,17 +257,17 @@ mod tests {
         let store = TEST_PAA_STORE;
         assert_eq!(store.len(), 2);
 
-        let fff1 = store.get_paa(&TEST_PAA_FFF1_SKID).unwrap();
+        let fff1 = store.paa(&TEST_PAA_FFF1_SKID).unwrap();
         assert_eq!(fff1, TEST_PAA_FFF1_CERT);
 
-        let novid = store.get_paa(&TEST_PAA_NOVID_SKID).unwrap();
+        let novid = store.paa(&TEST_PAA_NOVID_SKID).unwrap();
         assert_eq!(novid, TEST_PAA_NOVID_CERT);
     }
 
     #[test]
     fn store_empty() {
         let store: &[&[u8]] = &[];
-        let result = store.get_paa(&TEST_PAA_FFF1_SKID);
+        let result = store.paa(&TEST_PAA_FFF1_SKID);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code(), ErrorCode::NotFound);
     }
@@ -356,13 +356,13 @@ mod std_tests {
 
         let store = FileAttestationTrustStore::from_directory(dir.path()).unwrap();
 
-        let fff1 = store.get_paa(&TEST_PAA_FFF1_SKID).unwrap();
+        let fff1 = store.paa(&TEST_PAA_FFF1_SKID).unwrap();
         assert_eq!(fff1, TEST_PAA_FFF1_CERT);
 
-        let novid = store.get_paa(&TEST_PAA_NOVID_SKID).unwrap();
+        let novid = store.paa(&TEST_PAA_NOVID_SKID).unwrap();
         assert_eq!(novid, TEST_PAA_NOVID_CERT);
 
-        let unknown = store.get_paa(&[0xFF; 20]);
+        let unknown = store.paa(&[0xFF; 20]);
         assert!(unknown.is_err());
     }
 
@@ -372,7 +372,7 @@ mod std_tests {
 
         let store = FileAttestationTrustStore::from_directory(dir.path()).unwrap();
         assert_eq!(store.paa_count(), 0);
-        assert!(store.get_paa(&TEST_PAA_FFF1_SKID).is_err());
+        assert!(store.paa(&TEST_PAA_FFF1_SKID).is_err());
     }
 
     #[test]
