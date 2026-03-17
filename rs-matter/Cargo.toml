@@ -12,7 +12,7 @@ license = "Apache-2.0"
 rust-version = "1.87"
 
 [features]
-default = ["os", "rustcrypto", "log"]
+default = ["os", "rustcrypto", "log", "zbus"]
 
 # Sizing
 
@@ -93,7 +93,7 @@ max-btp-sessions-1 = [] # default
 # General
 astro-dnssd = ["os", "dep:astro-dnssd"]
 zeroconf = ["os", "dep:zeroconf"]
-zbus = ["dep:zbus", "os", "futures-lite", "libc", "uuid", "async-io"]
+zbus = ["dep:zbus", "os", "futures-lite", "libc", "uuid", "async-io", "async-channel"]
 os = ["std", "backtrace", "critical-section/std", "embassy-sync/std", "embassy-time/std"]
 std = ["alloc", "rand"]
 backtrace = []
@@ -165,6 +165,7 @@ async-compat = { version = "0.2", optional = true, default-features = false }
 
 # OS
 zbus = { version = "5.8", optional = true }
+async-channel = { version = "2", optional = true }
 uuid = { version = "1", optional = true, features = ["v4"] }
 libc = { version = "0.2", optional = true }
 futures-lite = { version = "2", optional = true }
@@ -177,7 +178,7 @@ nix = { version = "0.27", features = ["net"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 bluer = { version = "0.17", features = ["bluetoothd"] }
-tokio = { version = "1" }
+tokio = { version = "1", features = ["sync"] }
 tokio-stream = { version = "0.1" }
 
 [dev-dependencies]

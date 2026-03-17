@@ -17,7 +17,6 @@
 
 //! A module containing various types for managing Thread and Wifi networks.
 
-use core::borrow::Borrow;
 use core::fmt::{Debug, Display};
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
@@ -30,7 +29,7 @@ use crate::dm::clusters::{thread_diag, wifi_diag};
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
 use crate::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
-use crate::transport::network::btp::{Btp, BtpContext, GattPeripheral};
+use crate::transport::network::btp::Btp;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::{Vec, WriteBuf};
@@ -819,18 +818,15 @@ impl NetCtlState {
     ///
     /// This method is only useful for non-concurrent commisioning using wireless networks and BLE,
     /// and is likely to be used together with `NoopWirelessNetCtl`.
-    pub async fn wait_prov_ready<M, C, M2, G>(state: &NetCtlStateMutex<M>, btp: &Btp<C, M2, G>)
+    pub async fn wait_prov_ready<M>(state: &NetCtlStateMutex<M>, _btp: &Btp)
     where
         M: RawMutex,
-        C: Borrow<BtpContext<M2>> + Clone + Send + Sync + 'static,
-        M2: RawMutex + Send + Sync,
-        G: GattPeripheral,
     {
-        while !state.lock(|state| state.borrow().is_prov_ready() && btp.conn_ct() == 0) {
+        while !state.lock(|state| state.borrow().is_prov_ready()) {
             // Provisioning over BTP is considered complete when there is no longer an active connection
             // and the network ID is set (i.e. method `NetCtl::connect` was called successfully)
 
-            btp.wait_changed().await;
+            embassy_time::Timer::after_secs(1).await;
         }
     }
 }

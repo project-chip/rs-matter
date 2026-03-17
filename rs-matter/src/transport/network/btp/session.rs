@@ -33,25 +33,11 @@ mod packet;
 
 /// Matter Core spec constant:
 /// The maximum amount of time after receipt of a segment before a stand-alone ACK must be sent.
-pub(crate) const BTP_ACK_TIMEOUT_SECS: u16 = BTP_CONN_IDLE_TIMEOUT_SECS / 2;
+pub(crate) const BTP_ACK_TIMEOUT_SECS: u8 = BTP_CONN_IDLE_TIMEOUT_SECS / 2;
 /// Matter Core spec constant:
 /// The maximum amount of time no unique data has been sent over a BTP session before the
 /// Central Device must close the BTP session.
-pub(crate) const BTP_CONN_IDLE_TIMEOUT_SECS: u16 = 30;
-
-/// Represents the three possible states of each BTP session
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum SessionState {
-    /// The session was just created as a result of a remote peer writing a BTP Handshake Request SDU
-    /// to characteristic `C1`.
-    New,
-    /// After sending the BTP Handshake SDU, the remote peer now also subscribed to characteristic `C2`.
-    Subscribed,
-    /// The session is fully established and data can be exchanged, as we have sent (a.k.a. indicated)
-    /// to the remote peer a BTP Handshake Response SDU, via characteristic `C2`.
-    Running,
-}
+pub(crate) const BTP_CONN_IDLE_TIMEOUT_SECS: u8 = 30;
 
 /// Represents the sending window of a BTP session, as per the Matter Core spec.
 #[derive(Debug)]
@@ -65,20 +51,24 @@ struct SendWindow {
     last_sent_seq_num: u8,
     /// The instant when the last BTP segment was sent. `Instant::MAX` means no segment was received yet.
     sent_at: Instant,
-    /// Whether the session is currently locked for sending
-    sending: bool,
 }
 
 impl SendWindow {
     /// Initialize a new sending window with the provided window size
-    const fn new(window_size: u8) -> Self {
+    const fn new() -> Self {
         Self {
-            window_size,
-            level: window_size,
+            window_size: 0,
+            level: 0,
             last_sent_seq_num: 255,
             sent_at: Instant::MAX,
-            sending: false,
         }
+    }
+
+    fn reset(&mut self) {
+        self.window_size = 0;
+        self.level = 0;
+        self.last_sent_seq_num = 255;
+        self.sent_at = Instant::MAX;
     }
 
     /// Update the sending window level when a new BTP segment had arrived,
@@ -174,17 +164,39 @@ struct RecvWindow {
 }
 
 impl RecvWindow {
+    const fn new() -> Self {
+        Self {
+            buf: RingBuf::new(),
+            buf_messages_ct: 0,
+            level: 0,
+            ack_level: 0,
+            ack_seq: 255,
+            received_at: Instant::MAX,
+            rem_msg_len: 0,
+        }
+    }
+
     /// Create an in-place initializer for a receiving window with the provided window size.
-    pub fn init(window_size: u8) -> impl Init<Self> {
+    fn init() -> impl Init<Self> {
         init!(Self {
             buf <- RingBuf::init(),
             buf_messages_ct: 0,
-            level: window_size,
+            level: 0,
             ack_level: 0,
             ack_seq: 255,
             received_at: Instant::MAX,
             rem_msg_len: 0,
         })
+    }
+
+    fn reset(&mut self) {
+        self.buf.clear();
+        self.buf_messages_ct = 0;
+        self.level = 0;
+        self.ack_level = 0;
+        self.ack_seq = 255;
+        self.received_at = Instant::MAX;
+        self.rem_msg_len = 0;
     }
 
     /// Process an incoming BTP segment, updating the state of the window accordingly.
@@ -367,31 +379,78 @@ impl RecvWindow {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Session {
+    initiator: bool,
     address: BtAddr,
-    state: SessionState,
     version: u8,
     mtu: u16,
     window_size: u8,
+    handshake_pending: bool,
     recv_window: RecvWindow,
     send_window: SendWindow,
 }
 
 impl Session {
+    pub const fn new() -> Self {
+        Self {
+            initiator: false,
+            address: BtAddr([0; 6]),
+            version: 0,
+            mtu: 0,
+            window_size: 0,
+            handshake_pending: false,
+            recv_window: RecvWindow::new(),
+            send_window: SendWindow::new(),
+        }
+    }
+
     /// Return an in-place initializer for a new BTP session with the provided address, version,
     /// MTU and window size.
     ///
     /// Initializing a session is done based on the data that had arrived in the Handshake Request message,
     /// written by a remote peer on the `C1` characteristic.
-    fn init(address: BtAddr, version: u8, mtu: u16, window_size: u8) -> impl Init<Self> {
+    pub fn init() -> impl Init<Self> {
         init!(Self {
-            address,
-            state: SessionState::New,
-            version,
-            mtu,
-            window_size,
-            recv_window <- RecvWindow::init(window_size),
-            send_window: SendWindow::new(window_size),
+            initiator: false,
+            address: BtAddr(Default::default()),
+            version: 0,
+            mtu: 0,
+            window_size: 0,
+            handshake_pending: false,
+            recv_window <- RecvWindow::init(),
+            send_window: SendWindow::new(),
         })
+    }
+
+    pub fn reset(&mut self) {
+        self.address = BtAddr([0; 6]);
+        self.version = 0;
+        self.mtu = 0;
+        self.window_size = 0;
+        self.handshake_pending = false;
+        self.recv_window.reset();
+        self.send_window.reset();
+    }
+
+    #[allow(unused)]
+    pub fn set_initiator(&mut self, initiator: bool) {
+        self.initiator = initiator;
+        self.handshake_pending = initiator;
+    }
+
+    /// Return an in-place initializer for a new BTP session with the provided address, version,
+    /// MTU and window size.
+    ///
+    /// Initializing a session is done based on the data that had arrived in the Handshake Request message,
+    /// written by a remote peer on the `C1` characteristic.
+    fn setup(&mut self, address: BtAddr, version: u8, mtu: u16, window_size: u8) {
+        self.address = address;
+        self.version = version;
+        self.mtu = mtu;
+        self.window_size = window_size;
+        self.handshake_pending = !self.initiator;
+        self.recv_window.level = window_size;
+        self.send_window.window_size = window_size;
+        self.send_window.level = window_size;
     }
 
     /// Return the address of the remote peer.
@@ -399,17 +458,15 @@ impl Session {
         self.address
     }
 
-    /// Return true if this session is in a state where we need to send a BTP Handshake Response message
-    /// to the remote peer (i.e. the remote peer did subscribe to characteristic `C2`).
-    pub fn is_handshake_resp_due(&self) -> bool {
-        matches!(self.state, SessionState::Subscribed)
+    #[allow(unused)]
+    pub fn is_handshake_due(&self) -> bool {
+        self.handshake_pending
     }
 
     /// Return true if this session is in a state where an ACK is available and needs to be sent immediately.
     /// I.e. the inactivity timeout had expired, or the window is full.
     pub fn is_ack_due(&self, now: Instant, ack_timeout_secs: u16) -> bool {
-        matches!(self.state, SessionState::Running)
-            && self.recv_window.pending_ack().is_some()
+        self.recv_window.pending_ack().is_some()
             && (self.recv_window.level <= 1
                 || self
                     .recv_window
@@ -429,50 +486,10 @@ impl Session {
             .unwrap_or(false)
     }
 
-    /// Set the session in subscribed state.
-    /// This method should be called when the remote peer subscribes to the `C2` characteristic.
-    ///
-    /// Will return false if the current state of the session is not `New`.
-    pub fn set_subscribed(&mut self) -> bool {
-        if matches!(self.state, SessionState::New) {
-            self.state = SessionState::Subscribed;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Set the session in running state.
-    /// This method should be called after we had sent the BTP Handshake Response message to the remote peer.
-    /// Calling this method on an already running session has no effect.
-    ///
-    /// Will return false if the current state of the session is not `Subscribed` or `Running`.
-    pub fn set_running(&mut self) -> bool {
-        if matches!(self.state, SessionState::Running | SessionState::Subscribed) {
-            self.state = SessionState::Running;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Lock the session for sending.
-    /// (As per the Matter Core spec, at any moment in time, a session
-    /// can send the BTP segments of a single BTP SDU, hence the need for locking.)
-    ///
-    /// Will return `false` if sending is true and the session is already locked for sending.
-    pub fn set_sending(&mut self, sending: bool) -> bool {
-        if sending && self.send_window.sending {
-            return false; // already in sending mode, cannot set twice
-        }
-        self.send_window.sending = sending;
-        true
-    }
-
     /// Return `true` if the session buffer contains at least one complete DSDU, for consumption by the
     /// Matter transport stack.
     pub fn message_available(&self) -> bool {
-        matches!(self.state, SessionState::Running) && self.recv_window.buf_messages_ct > 0
+        self.recv_window.buf_messages_ct > 0
     }
 
     /// Fetches the data of the first DSDU available in the buffer of the session.
@@ -483,21 +500,54 @@ impl Session {
         self.recv_window.fetch_message(buf)
     }
 
-    /// A utility method to check if the provided BTP segment represents a Handshake Request message.
-    ///
-    /// Alleviates the need to expose the `BtpHdr` struct to the outside world.
-    pub fn is_handshake(data: &[u8]) -> Result<bool, Error> {
-        let hdr = BtpHdr::from(data.iter().copied())?;
-
-        Ok(hdr.is_handshake())
-    }
-
-    /// Process an incoming BTP segment of type Handshake Request, updating the state of the session accordingly.
-    pub fn process_rx_handshake(
+    pub fn process_rx(
+        &mut self,
         address: BtAddr,
         data: &[u8],
         gatt_mtu: Option<u16>,
-    ) -> Result<impl Init<Self>, Error> {
+    ) -> Result<(), Error> {
+        let mut iter = data.iter();
+
+        let hdr = BtpHdr::from((&mut iter).copied())?;
+
+        if hdr.is_handshake() {
+            if self.initiator {
+                self.process_rx_handshake_resp(address, data)
+            } else {
+                self.process_rx_handshake_req(address, data, gatt_mtu)
+            }
+        } else {
+            self.process_rx_data(data)
+        }
+    }
+
+    pub fn prep_tx_handshake(
+        &mut self,
+        gatt_mtu: Option<u16>,
+        buf: &mut [u8],
+    ) -> Result<usize, Error> {
+        if self.handshake_pending {
+            let len = if self.initiator {
+                self.prep_tx_handshake_req(gatt_mtu, buf)
+            } else {
+                self.prep_tx_handshake_resp(buf)
+            }?;
+
+            self.handshake_pending = false;
+
+            Ok(len)
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// Process an incoming BTP segment of type Handshake Request, updating the state of the session accordingly.
+    fn process_rx_handshake_req(
+        &mut self,
+        address: BtAddr,
+        data: &[u8],
+        gatt_mtu: Option<u16>,
+    ) -> Result<(), Error> {
         let mut iter = data.iter();
 
         let hdr = BtpHdr::from((&mut iter).copied())?;
@@ -532,18 +582,36 @@ impl Session {
 
         // Make sure we are using a window size that would allow us to receive at least one full BTP SDU
         // TODO: Revisit the mtu and window_size computations
-        let window_size = min(
-            req.window_size,
-            min(MAX_MESSAGE_SIZE as u16 / mtu / 2, 255) as u8,
-        );
+        let window_size = min(req.window_size, Self::initial_window_size(mtu));
 
         debug!("\n>>RCV (BTP IO) {} [{}]\n      HANDSHAKE REQ {:?}\nSelected version: {}, MTU: {}, window size: {}", address, hdr, req, version, mtu, window_size);
 
-        Ok(Self::init(address, version, mtu, window_size))
+        self.setup(address, version, mtu, window_size);
+
+        Ok(())
+    }
+
+    /// Process an incoming BTP segment of type Handshake Response, updating the state of the session accordingly.
+    fn process_rx_handshake_resp(&mut self, address: BtAddr, data: &[u8]) -> Result<(), Error> {
+        let mut iter = data.iter();
+
+        let hdr = BtpHdr::from((&mut iter).copied())?;
+        let payload = iter.as_slice();
+
+        // Check received packet integrity, as per the Matter Core spec
+        RecvWindow::check_handshake_integrity(&hdr)?;
+
+        let resp = HandshakeResp::from(payload.iter().copied())?;
+
+        debug!("\n>>RCV (BTP IO) {} [{}]\n      HANDSHAKE RESP {:?}\nSelected version: {}, MTU: {}, window size: {}", address, hdr, resp, resp.version, resp.mtu, resp.window_size);
+
+        self.setup(address, resp.version, resp.mtu, resp.window_size);
+
+        Ok(())
     }
 
     /// Process an incoming BTP segment of a regular data or ACK type, updating the state of the session accordingly.
-    pub fn process_rx_data(&mut self, data: &[u8]) -> Result<(), Error> {
+    fn process_rx_data(&mut self, data: &[u8]) -> Result<(), Error> {
         let mut iter = data.iter();
 
         let hdr = BtpHdr::from((&mut iter).copied())?;
@@ -563,7 +631,38 @@ impl Session {
     }
 
     /// Prepare a BTP segment to be sent as a response to a Handshake Request message.
-    pub fn prep_tx_handshake<'s>(&mut self, buf: &'s mut [u8]) -> Result<&'s [u8], Error> {
+    fn prep_tx_handshake_req(
+        &mut self,
+        gatt_mtu: Option<u16>,
+        buf: &mut [u8],
+    ) -> Result<usize, Error> {
+        let req = HandshakeReq {
+            versions: 4,
+            mtu: gatt_mtu.unwrap_or(MIN_MTU),
+            window_size: self.window_size, // TODO
+        };
+
+        let mut wb = WriteBuf::new(buf);
+
+        let mut hdr = BtpHdr::new();
+        hdr.set_handshake();
+        hdr.set_opcode(Some(0x6c));
+
+        debug!(
+            "\n<<SND (BTP IO) {} [{}]\n      HANDSHAKE REQ {:?}",
+            self.address, hdr, req
+        );
+
+        hdr.encode(&mut wb)?;
+        req.encode(&mut wb)?;
+
+        self.send_window.post_send();
+
+        Ok(wb.get_tail())
+    }
+
+    /// Prepare a BTP segment to be sent as a response to a Handshake Request message.
+    fn prep_tx_handshake_resp(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         let resp = HandshakeResp {
             version: self.version,
             mtu: self.mtu,
@@ -586,10 +685,7 @@ impl Session {
 
         self.send_window.post_send();
 
-        let len = wb.get_tail();
-        let slice = &buf[..len];
-
-        Ok(slice)
+        Ok(wb.get_tail())
     }
 
     /// Prepare a BTP segment to be sent as a regular data or a standalone ACK message.
@@ -600,14 +696,14 @@ impl Session {
     /// The method will return `None` if the session is not in a state where it can send data (i.e. send window full).
     /// In case the session is in a state where it can send data, the method will return the slice of the input `buf`
     /// filled with the binary BTP segment, and the new offset.
-    pub fn prep_tx_data<'s>(
+    pub fn prep_tx_data(
         &mut self,
         data: &[u8],
-        offset: usize,
-        buf: &'s mut [u8],
-    ) -> Result<Option<(&'s [u8], usize)>, Error> {
+        offset: &mut usize,
+        buf: &mut [u8],
+    ) -> Result<usize, Error> {
         if self.send_window.is_full(&self.recv_window) {
-            return Ok(None);
+            return Ok(0);
         }
 
         let mut hdr = BtpHdr::new();
@@ -618,13 +714,13 @@ impl Session {
         let segment_data = if !data.is_empty() {
             // Enhance to a data packet
 
-            if offset == 0 {
+            if *offset == 0 {
                 hdr.set_msg_len(Some(data.len() as u16));
             } else {
                 hdr.set_continue();
             }
 
-            let remaining_data = &data[offset..];
+            let remaining_data = &data[*offset..];
 
             let max_payload_len = self.mtu as usize - hdr.len();
 
@@ -657,8 +753,13 @@ impl Session {
         self.recv_window.post_send();
 
         let len = wb.get_tail();
-        let slice = &buf[..len];
 
-        Ok(Some((slice, offset + segment_data.len())))
+        *offset += segment_data.len();
+
+        Ok(len)
+    }
+
+    fn initial_window_size(mtu: u16) -> u8 {
+        min(MAX_MESSAGE_SIZE as u16 / mtu / 2, 255) as _
     }
 }

@@ -19,7 +19,7 @@
 
 use core::iter::once;
 use core::marker::PhantomData;
-use core::pin::pin;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use alloc::sync::Arc;
 
@@ -27,9 +27,10 @@ use std::collections::HashMap;
 use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::net::UnixDatagram;
 
+use async_channel::{Receiver, Sender};
 use async_io::Async;
 
-use embassy_futures::select::{select, select_slice, Either};
+use embassy_futures::select::{select, select3};
 
 use uuid::Uuid;
 
@@ -39,204 +40,114 @@ use zbus::zvariant::{ObjectPath, OwnedFd, OwnedObjectPath, OwnedValue, Value};
 use zbus::{interface, Connection};
 
 use crate::error::{Error, ErrorCode};
-use crate::transport::network::{btp::context::MAX_BTP_SESSIONS, BtAddr};
-use crate::utils::storage;
-use crate::utils::sync::blocking::raw::StdRawMutex;
-use crate::utils::sync::{IfMutex, IfMutexGuard, Notification};
+use crate::transport::network::btp::Btp;
+use crate::transport::network::BtAddr;
+use crate::utils::select::Coalesce;
 use crate::utils::zbus_proxies::bluez::adapter::AdapterProxy;
 use crate::utils::zbus_proxies::bluez::gatt_manager::GattManagerProxy;
 use crate::utils::zbus_proxies::bluez::le_advertising_manager::LEAdvertisingManagerProxy;
 
-use super::{
-    AdvData, GattPeripheral, GattPeripheralEvent, C1_CHARACTERISTIC_UUID, C2_CHARACTERISTIC_UUID,
-    MATTER_BLE_SERVICE_UUID,
-};
-
-const MAX_CONNECTIONS: usize = MAX_BTP_SESSIONS;
+use super::{AdvData, C1_CHARACTERISTIC_UUID, C2_CHARACTERISTIC_UUID, MATTER_BLE_SERVICE_UUID};
 
 const BLUEZ_MATTER_BLE_SERVICE_UUID: Uuid = Uuid::from_u128(MATTER_BLE_SERVICE_UUID);
 const BLUEZ_MATTER_C1_CHARACTERISTIC_UUID: Uuid = Uuid::from_u128(C1_CHARACTERISTIC_UUID);
 const BLUEZ_MATTER_C2_CHARACTERISTIC_UUID: Uuid = Uuid::from_u128(C2_CHARACTERISTIC_UUID);
 const BLUEZ_PATH_PREFIX: &str = "/org/projectchip/rs_matter/bluez";
 
-/// Implements the `GattPeripheral` trait using the BlueZ GATT stack.
-pub struct BluezGattPeripheral<'a> {
-    adapter_name: Option<&'a str>,
-    connection: &'a Connection,
-    ind_peers: Arc<IndPeers>,
-}
+pub async fn run_peripheral(
+    connection: &Connection,
+    adapter_name: Option<&str>,
+    service_name: &str,
+    service_adv_data: &AdvData,
+    btp: &Btp,
+) -> Result<(), Error> {
+    let adapter_path = adapter_path(connection, adapter_name).await?;
 
-impl<'a> BluezGattPeripheral<'a> {
-    /// Create a new instance.
-    ///
-    /// Arguments:
-    /// - `adapter_name`: The name of the Bluetooth adapter to use, or `None` to use the first available adapter.
-    /// - `connection`: The dBus connection to use for the GATT service.
-    pub fn new(adapter_name: Option<&'a str>, connection: &'a Connection) -> Self {
-        Self {
-            adapter_name,
-            connection,
-            ind_peers: Arc::new(IndPeers::new()),
-        }
-    }
+    let adapter = AdapterProxy::new(connection, adapter_path.as_ref()).await?;
+    adapter.set_powered(true).await?;
 
-    /// Runs the GATT peripheral service.
-    /// What this means in details:
-    /// - Advertises the service with the provided name and advertising data, where the advertising data
-    ///   contains the elements specified in the Matter Core spec.
-    /// - Serves a GATT peripheral service with the `C1` and `C2` characteristics, as specified
-    ///   in the Matter Core spec.
-    /// - Calls the provided callback with the events that occur during the service lifetime, on the `C1`
-    ///   and `C2` characteristics.
-    pub async fn run<F>(
-        &self,
-        service_adv_name: &str,
-        service_adv_data: &AdvData,
-        callback: F,
-    ) -> Result<(), Error>
-    where
-        F: Fn(GattPeripheralEvent) + Send + Sync + 'static,
-    {
-        let adapter_path = self.adapter_path().await?;
+    info!(
+        "Serving Matter GATT BTP service on Bluetooth adapter {}",
+        adapter_path
+    );
 
-        let adapter = AdapterProxy::new(self.connection, adapter_path.as_ref()).await?;
-        adapter.set_powered(true).await?;
+    // Register a "NoInputNoOutput" agent that will accept all incoming requests.
+    // TODO
+    // let _handle = bluez.register_agent(Agent::default()).await?;
 
-        info!(
-            "Serving Matter GATT BTP service on Bluetooth adapter {}",
-            adapter_path
-        );
+    let (write_sender, write_receiver) = async_channel::bounded(1);
+    let (notify_sender, notify_receiver) = async_channel::bounded(1);
 
-        // Register a "NoInputNoOutput" agent that will accept all incoming requests.
-        // TODO
-        // let _handle = bluez.register_agent(Agent::default()).await?;
+    let notifier_created = Arc::new(AtomicBool::new(false));
 
-        self.ind_peers.reset().await;
+    let mut app = AppReg::new(
+        connection,
+        service_name,
+        service_adv_data,
+        adapter_path.as_ref(),
+        write_sender,
+        notify_sender,
+        notifier_created.clone(),
+    )
+    .await?;
 
-        let mut app = AppReg::new(
-            self.connection,
-            service_adv_name,
-            service_adv_data,
-            adapter_path.as_ref(),
-            self.ind_peers.clone(),
-            callback,
-        )
-        .await?;
+    info!(
+        "Registered Matter GATT BTP service on Bluetooth adapter {}",
+        adapter_path,
+    );
 
-        info!(
-            "Registered Matter GATT BTP service on Bluetooth adapter {}",
-            adapter_path,
-        );
-
-        app.start_adv().await?;
-
+    loop {
         info!(
             "Advertising Matter GATT BTP service on Bluetooth adapter {}",
             adapter_path,
         );
 
-        let callback = app.callback.clone();
+        app.start_adv().await?;
 
-        self.ind_peers.monitor(move |event| callback(event)).await
-    }
+        let notifier = notify_receiver.recv().await.unwrap();
 
-    /// Indicate new data on characteristic `C2` to a remote peer.
-    pub async fn indicate(&self, data: &[u8], addr: BtAddr) -> Result<(), Error> {
-        self.ind_peers.indicate(data, addr).await
-    }
+        app.stop_adv().await?;
 
-    /// Get the path to the Bluetooth adapter designated by `adapter_name`,
-    /// or the first available adapter if `adapter_name` is `None`.
-    async fn adapter_path(&self) -> Result<OwnedObjectPath, Error> {
-        let om = ObjectManagerProxy::new(self.connection, "org.bluez", "/").await?;
+        btp.reset();
 
-        let objects = om.get_managed_objects().await?;
+        select3(
+            wait_complete(btp, &notifier),
+            process_write(btp, &write_receiver),
+            process_indicate(btp, None, &notifier, &mut [0; 512]),
+        )
+        .coalesce()
+        .await?;
 
-        let adapter_path = objects
-            .into_iter()
-            .find(|(path, interfaces)| {
-                if interfaces.contains_key("org.bluez.GattManager1")
-                    && interfaces.contains_key("org.bluez.Adapter1")
-                    && interfaces.contains_key("org.bluez.LEAdvertisingManager1")
-                {
-                    self.adapter_name
-                        .map(|adapter_name| {
-                            path.as_str().split('/').next_back() == Some(adapter_name)
-                        })
-                        .unwrap_or(true)
-                } else {
-                    false
-                }
-            })
-            .map(|(path, _)| path);
-
-        adapter_path.ok_or_else(|| ErrorCode::NoNetworkInterface.into())
+        notifier_created.store(false, Ordering::SeqCst);
     }
 }
 
-impl GattPeripheral for BluezGattPeripheral<'_> {
-    async fn run<F>(&self, service_name: &str, adv_data: &AdvData, callback: F) -> Result<(), Error>
-    where
-        F: Fn(GattPeripheralEvent) + Send + Sync + 'static,
-    {
-        BluezGattPeripheral::run(self, service_name, adv_data, callback).await
+/// Process incoming writes on characteristic `C1` and pass them to the BTP session for processing.
+async fn process_write(
+    btp: &Btp,
+    receiver: &Receiver<(u16, BtAddr, Vec<u8>)>,
+) -> Result<(), Error> {
+    while let Ok((mtu, addr, value)) = receiver.recv().await {
+        btp.process_incoming(Some(mtu), addr, &value)?;
     }
 
-    async fn indicate(&self, data: &[u8], address: BtAddr) -> Result<(), Error> {
-        BluezGattPeripheral::indicate(self, data, address).await
-    }
+    Ok(())
 }
 
-/// A helper type facilitating the sending of indications to all peers subscribed to characteristic C2.
-///
-/// Sending indications is a bit involved because in order to indicate data to a single, _concrete_ peer
-/// (that is, assuming that there _will_ be more than 1 connected peers at a time, which is actually the exception rather than the rule),
-/// is relatively involved because we have to use the `AcquireNotify` method of BlueZ's `GattCharacteristic1` interface,
-/// and this implies creating a duplex Unix domain socket connection with the peer.
-struct IndPeers {
-    /// The state of the of the type, which contains the list of subscribed peers
-    state: IfMutex<StdRawMutex, IndPeersState>,
-    /// Notification to stop monitoring the read (confirmation) half of the peer subscriptions
-    stop_monitoring_notif: Notification<StdRawMutex>,
-}
+/// Indicate new data on characteristic `C2` to a remote peer.
+async fn process_indicate(
+    btp: &Btp,
+    gatt_mtu: Option<u16>,
+    notifier: &Async<UnixDatagram>,
+    buf: &mut [u8],
+) -> Result<(), Error> {
+    loop {
+        let len = btp.process_outgoing(gatt_mtu, buf)?;
 
-impl IndPeers {
-    /// Create a new instance.
-    fn new() -> Self {
-        Self {
-            state: IfMutex::new(IndPeersState {
-                peers: storage::Vec::new(),
-                monitoring: true,
-            }),
-            stop_monitoring_notif: Notification::new(),
-        }
-    }
+        if len > 0 {
+            notifier.send(&buf[..len]).await?;
 
-    /// Reset the state of the `IndPeers` type, effectively removing all subscribed peers
-    async fn reset(&self) {
-        let mut state = self.state.lock().await;
-
-        state.peers.clear();
-        state.monitoring = true;
-    }
-
-    /// Indicate new data to a peer
-    ///
-    /// Arguments:
-    /// - `data`: The data to indicate to the peer.
-    /// - `peer_addr`: The address of the peer to indicate the data to.
-    async fn indicate(&self, data: &[u8], peer_addr: BtAddr) -> Result<(), Error> {
-        let state = self.lock(false).await;
-
-        let endpoint = state
-            .peers
-            .iter()
-            .find(|endpoint| endpoint.addr == peer_addr);
-
-        if let Some(endpoint) = endpoint {
-            assert_eq!(endpoint.socket.send(data).await?, data.len());
-
-            trace!("Sent indication to peer {}: {:?}", peer_addr, data);
+            trace!("Sent indication to peer: {:?}", &buf[..len]);
 
             // NOTE: This code would only work for BlueZ >= 5.80
             // See https://github.com/project-chip/connectedhomeip/pull/40147
@@ -260,204 +171,95 @@ impl IndPeers {
             // if confirmation[0] != 1 {
             //     return Err(Error::new(ErrorCode::Invalid));
             // }
-        }
-
-        Ok(())
-    }
-
-    /// Add a new peer.
-    ///
-    /// Arguments:
-    /// - `peer_addr`: The address of the peer to add.
-    /// - `f`: A callback function that will be called when the peer subscribes to notifications.
-    async fn add<F>(&self, peer_addr: BtAddr, f: F) -> zbus::fdo::Result<std::os::fd::OwnedFd>
-    where
-        F: Fn(GattPeripheralEvent),
-    {
-        let mut state = self.lock(false).await;
-
-        if state.peers.len() < MAX_CONNECTIONS {
-            // Enough space for a new peer.
-            // Create a new socket pipe for it, notify that a new peer had subscribed
-            // and send to the peer the other end of the socket pipe.
-
-            let (local, remote) = IndPeer::uds_pair().map_err(|e| {
-                zbus::fdo::Error::Failed(format!("Failed to create UDS pair: {}", e))
-            })?;
-
-            unwrap!(
-                state.peers.push(IndPeer {
-                    socket: local,
-                    addr: peer_addr,
-                }),
-                "Failed to add new peer, maximum number of connections reached"
-            );
-
-            trace!("Added new peer {}", peer_addr);
-
-            f(GattPeripheralEvent::NotifyConnected(peer_addr));
-            f(GattPeripheralEvent::NotifySubscribed(peer_addr));
-
-            Ok(remote
-                .into_inner()
-                .map_err(|e| {
-                    zbus::fdo::Error::Failed(format!("Failed to convert UDS to OwnedFd: {}", e))
-                })?
-                .into())
         } else {
-            // No space for another subscription
-            Err(zbus::fdo::Error::NoMemory(
-                "Maximum number of connections reached".into(),
-            ))
+            btp.wait_outgoing().await;
         }
     }
+}
 
-    /// Run the monitoring loop, monitoring for peers which did unsubscribe
-    /// from the C2 characteristic and deregistering those.
-    async fn monitor<F>(&self, f: F) -> !
-    where
-        F: Fn(GattPeripheralEvent) + Send + Sync + 'static,
-    {
-        loop {
-            let mut state = self.lock(true).await;
+/// Listen for unsubscription from characteristic `C2` as well as for session connection timeout.
+async fn wait_complete(btp: &Btp, notifier: &Async<UnixDatagram>) -> Result<(), Error> {
+    select(notifier.readable(), btp.wait_timeout()).await;
 
-            trace!("Monitoring for peer disconnections...");
+    Ok(())
+}
 
-            Self::monitor_close(&mut state, &self.stop_monitoring_notif, &f).await;
-        }
-    }
+/// Get the path to the Bluetooth adapter designated by `adapter_name`,
+/// or the first available adapter if `adapter_name` is `None`.
+async fn adapter_path(
+    connection: &Connection,
+    adapter_name: Option<&str>,
+) -> Result<OwnedObjectPath, Error> {
+    let om = ObjectManagerProxy::new(connection, "org.bluez", "/").await?;
 
-    /// Monitor the peers for disconnections by reading from the peers' sockets.
-    ///
-    /// This method will block until either a peer's socket becomes readable (indicating a disconnection or an error)
-    /// or the `notif` is notified to stop monitoring.
-    async fn monitor_close<F>(state: &mut IndPeersState, notif: &Notification<StdRawMutex>, f: F)
-    where
-        F: Fn(GattPeripheralEvent),
-    {
-        let result = {
-            let read = state
-                .peers
-                .iter_mut()
-                .map(|endpoint| endpoint.socket.readable())
-                .collect::<storage::Vec<_, MAX_CONNECTIONS>>();
+    let objects = om.get_managed_objects().await?;
 
-            let read = pin!(read);
-            let read = unsafe { read.map_unchecked_mut(|read| read.as_mut_slice()) };
-
-            select(select_slice(read), notif.wait()).await
-        };
-
-        match result {
-            Either::First((result, index)) => {
-                // A read on one of the peers did resolve with a success or an error
-                // Analyze and take actions
-                match result {
-                    Ok(()) => {
-                        trace!(
-                            "Peer {} disconnected or an error occurred: {:?}",
-                            state.peers[index].addr,
-                            result
-                        );
-
-                        // Unsubscribe the peer on error or on 0 bytes read = EOF
-                        let peer_addr = state.peers[index].addr;
-
-                        state.peers.swap_remove(index);
-
-                        f(GattPeripheralEvent::NotifyUnsubscribed(peer_addr));
-                        f(GattPeripheralEvent::NotifyDisconnected(peer_addr));
-                    }
-                    Err(e) => {
-                        // Reading data from the peer in the absence of a pending indication
-                        // is not expected, so we log an error and ignore it.
-
-                        error!(
-                            "Error reading from peer {}: {:?}",
-                            state.peers[index].addr, e
-                        );
-                    }
-                }
+    let adapter_path = objects
+        .into_iter()
+        .find(|(path, interfaces)| {
+            if interfaces.contains_key("org.bluez.GattManager1")
+                && interfaces.contains_key("org.bluez.Adapter1")
+                && interfaces.contains_key("org.bluez.LEAdvertisingManager1")
+            {
+                adapter_name
+                    .map(|adapter_name| path.as_str().split('/').next_back() == Some(adapter_name))
+                    .unwrap_or(true)
+            } else {
+                false
             }
-            Either::Second(_) => state.monitoring = false,
-        }
-    }
+        })
+        .map(|(path, _)| path);
 
-    async fn lock(&self, for_monitoring: bool) -> IfMutexGuard<'_, StdRawMutex, IndPeersState> {
-        if !for_monitoring {
-            loop {
-                // Stop the monitoring loop temporarily to allow adding a new peer
-                // This will release the mutex lock on the state and the `monitoring` flag will be set to false
-                self.stop_monitoring_notif.notify();
-
-                let guard = self.state.lock_if(|state| !state.monitoring);
-
-                // Timeout when waiting the lock is necessary because there are two futures competing to get the lock in
-                // non-monitoring state:
-                // - the `add` method, which is called when a new peer subscribes to the C2 characteristic;
-                // - the `indicate` method, which is called when we want to indicate data to a peer.
-                let timeout = embassy_time::Timer::after(embassy_time::Duration::from_millis(100));
-
-                if let Either::First(mut guard) = select(guard, timeout).await {
-                    // We got the lock, so we can return it
-                    guard.monitoring = true; // .. for when the future where this guard will be used completes or is dropped
-                    break guard;
-                }
-            }
-        } else {
-            let mut guard = self.state.lock_if(|state| state.monitoring).await;
-            guard.monitoring = false; // .. for when the future where this guard will be used completes or is dropped
-
-            guard
-        }
-    }
+    adapter_path.ok_or_else(|| ErrorCode::NoNetworkInterface.into())
 }
 
-/// The state of the `IndPeers` type
-struct IndPeersState {
-    /// The list of peers that are subscribed to the C2 characteristic
-    peers: storage::Vec<IndPeer, MAX_CONNECTIONS>,
-    /// Whether the monitoring loop is currently running
-    monitoring: bool,
+/// Add a new peer.
+///
+/// Arguments:
+/// - `peer_addr`: The address of the peer to add.
+fn create_socket(
+    _peer_addr: BtAddr,
+) -> zbus::fdo::Result<(Async<UnixDatagram>, std::os::fd::OwnedFd)> {
+    let (local, remote) = uds_pair()
+        .map_err(|e| zbus::fdo::Error::Failed(format!("Failed to create UDS pair: {}", e)))?;
+
+    Ok((
+        local,
+        remote
+            .into_inner()
+            .map_err(|e| {
+                zbus::fdo::Error::Failed(format!("Failed to convert UDS to OwnedFd: {}", e))
+            })?
+            .into(),
+    ))
 }
 
-/// A peer that is subscribed to the C2 characteristic.
-#[derive(Debug)]
-struct IndPeer {
-    /// The socket used to communicate with the peer (write an indication payload and read a confirmation 1-byte reply)
-    socket: Async<UnixDatagram>,
-    /// The address of the peer
-    addr: BtAddr,
-}
+// Why is this method necessary (copied from `bluer`)?
+// Why not just `let (local, remote) = Async::<UnixDatagram>::pair()`?
+// Because using the Rust STD pair method creates the UDS pair with the `SOCK_DGRAM` type,
+// which is not what we want. We need the `SOCK_SEQPACKET` type, which is what BlueZ apparently requires.
+// (Otherwise we can't monitor the socket with the `readable()` method, which is used to detect peer disconnections.)
+fn uds_pair() -> std::io::Result<(Async<UnixDatagram>, Async<UnixDatagram>)> {
+    let mut sv: [RawFd; 2] = [0; 2];
 
-impl IndPeer {
-    // Why is this method necessary (copied from `bluer`)?
-    // Why not just `let (local, remote) = Async::<UnixDatagram>::pair()`?
-    // Because using the Rust STD pair method creates the UDS pair with the `SOCK_DGRAM` type,
-    // which is not what we want. We need the `SOCK_SEQPACKET` type, which is what BlueZ apparently requires.
-    // (Otherwise we can't monitor the socket with the `readable()` method, which is used to detect peer disconnections.)
-    fn uds_pair() -> std::io::Result<(Async<UnixDatagram>, Async<UnixDatagram>)> {
-        let mut sv: [RawFd; 2] = [0; 2];
-
-        if unsafe {
-            libc::socketpair(
-                libc::AF_LOCAL,
-                libc::SOCK_SEQPACKET | libc::SOCK_CLOEXEC,
-                0,
-                sv.as_mut_ptr(),
-            )
-        } == -1
-        {
-            return Err(std::io::Error::last_os_error());
-        }
-
-        let [fd1, fd2] = sv;
-
-        let local = Async::new(unsafe { UnixDatagram::from_raw_fd(fd1) })?;
-        let remote = Async::new(unsafe { UnixDatagram::from_raw_fd(fd2) })?;
-
-        Ok((local, remote))
+    if unsafe {
+        libc::socketpair(
+            libc::AF_LOCAL,
+            libc::SOCK_SEQPACKET | libc::SOCK_CLOEXEC,
+            0,
+            sv.as_mut_ptr(),
+        )
+    } == -1
+    {
+        return Err(std::io::Error::last_os_error());
     }
+
+    let [fd1, fd2] = sv;
+
+    let local = Async::new(unsafe { UnixDatagram::from_raw_fd(fd1) })?;
+    let remote = Async::new(unsafe { UnixDatagram::from_raw_fd(fd2) })?;
+
+    Ok((local, remote))
 }
 
 /// A dBus object representing the Matter BLE advertisement.
@@ -578,15 +380,12 @@ struct C1Obj {
     /// The path to the Matter GATT service that this characteristic belongs to
     service: OwnedObjectPath,
     /// The callback function that will be called with GATT events
-    callback: Arc<dyn Fn(GattPeripheralEvent) + Send + Sync>,
+    callback: Sender<(u16, BtAddr, Vec<u8>)>,
 }
 
 impl C1Obj {
     /// Create a new instance of the `C1Obj` type.
-    fn new(
-        service: OwnedObjectPath,
-        callback: Arc<dyn Fn(GattPeripheralEvent) + Send + Sync>,
-    ) -> Self {
+    fn new(service: OwnedObjectPath, callback: Sender<(u16, BtAddr, Vec<u8>)>) -> Self {
         Self { service, callback }
     }
 }
@@ -608,7 +407,7 @@ impl C1Obj {
         self.service.clone()
     }
 
-    fn write_value(
+    async fn write_value(
         &self,
         value: &[u8],
         options: HashMap<&str, Value<'_>>,
@@ -621,11 +420,10 @@ impl C1Obj {
             value
         );
 
-        (self.callback)(GattPeripheralEvent::Write {
-            gatt_mtu: Some(ServiceObj::dict_mtu(&options)?),
-            address: peer_addr,
-            data: value,
-        });
+        self.callback
+            .send((ServiceObj::dict_mtu(&options)?, peer_addr, value.to_vec()))
+            .await
+            .unwrap();
 
         Ok(())
     }
@@ -635,23 +433,23 @@ impl C1Obj {
 struct C2Obj {
     /// The path to the Matter GATT service that this characteristic belongs to
     service: OwnedObjectPath,
-    /// The `IndPeers` instance that will be notified when a new peer subscribes to this characteristic
-    ind_peers: Arc<IndPeers>,
     /// The callback function that will be called with GATT events
-    callback: Arc<dyn Fn(GattPeripheralEvent) + Send + Sync>,
+    callback: Sender<Async<UnixDatagram>>,
+    /// Whether the notifier has been created (i.e. whether the `acquire_notify` method has been called)
+    notifier_created: Arc<AtomicBool>,
 }
 
 impl C2Obj {
     /// Create a new instance of the `C2Obj` type.
     fn new(
         service: OwnedObjectPath,
-        indications: Arc<IndPeers>,
-        callback: Arc<dyn Fn(GattPeripheralEvent) + Send + Sync>,
+        callback: Sender<Async<UnixDatagram>>,
+        notifier_created: Arc<AtomicBool>,
     ) -> Self {
         Self {
             service,
-            ind_peers: indications,
             callback,
+            notifier_created,
         }
     }
 }
@@ -690,12 +488,15 @@ impl C2Obj {
             peer_addr
         );
 
-        let callback = self.callback.clone();
+        if self.notifier_created.swap(true, Ordering::SeqCst) {
+            return Err(zbus::fdo::Error::Failed(
+                "Notifier already created for C2 characteristic".into(),
+            ));
+        }
 
-        let fd = self
-            .ind_peers
-            .add(peer_addr, move |event| callback(event))
-            .await?;
+        let (socket, fd) = create_socket(peer_addr)?;
+
+        self.callback.send(socket).await.unwrap();
 
         Ok((fd.into(), mtu))
     }
@@ -724,8 +525,6 @@ struct AppReg<'a> {
     c2: ObjReg<'a, C2Obj>,
     /// The GATT Advertisement object registration in dBus
     ad: ObjReg<'a, AdObj>,
-    /// The callback function that will be called with GATT events
-    callback: Arc<dyn Fn(GattPeripheralEvent) + Send + Sync>,
     /// Whether the app registration is deregistered or still active
     closed: bool,
 }
@@ -738,21 +537,17 @@ impl<'a> AppReg<'a> {
     /// - `service_adv_name`: The name of the service to advertise.
     /// - `service_adv_data`: The advertising data to use for the service.
     /// - `adapter`: The path to the Bluetooth adapter to use for the registration.
-    /// - `ind_peers`: The `IndPeers` instance to notify for newly-subscribed peers on the C2 characteristic.
-    /// - `f`: A callback function that will be called with GATT events.
-    async fn new<F>(
+    /// - `c1_cb`: A callback function that will be called with C1 characteristic events.
+    /// - `c2_cb`: A callback function that will be called with C2 characteristic events.
+    async fn new(
         conn: &'a Connection,
         service_adv_name: &str,
         service_adv_data: &AdvData,
         adapter: ObjectPath<'a>,
-        ind_peers: Arc<IndPeers>,
-        f: F,
-    ) -> Result<Self, Error>
-    where
-        F: Fn(GattPeripheralEvent) + Send + Sync + 'static,
-    {
-        let callback = Arc::new(f);
-
+        c1_cb: Sender<(u16, BtAddr, Vec<u8>)>,
+        c2_cb: Sender<Async<UnixDatagram>>,
+        c2_notifier_created: Arc<AtomicBool>,
+    ) -> Result<Self, Error> {
         let app_id = Uuid::new_v4().simple().to_string();
         let app_path = Self::path_for(&app_id, "app")?;
 
@@ -764,14 +559,14 @@ impl<'a> AppReg<'a> {
         let c1 = ObjReg::new(
             conn,
             Self::path_for(&app_id, "app/service/c1")?,
-            C1Obj::new(service.path().into(), callback.clone()),
+            C1Obj::new(service.path().into(), c1_cb),
         )
         .await?;
 
         let c2 = ObjReg::new(
             conn,
             Self::path_for(&app_id, "app/service/c2")?,
-            C2Obj::new(service.path().into(), ind_peers, callback.clone()),
+            C2Obj::new(service.path().into(), c2_cb, c2_notifier_created),
         )
         .await?;
 
@@ -798,7 +593,6 @@ impl<'a> AppReg<'a> {
             c1,
             c2,
             ad,
-            callback,
             closed: false,
         })
     }

@@ -410,7 +410,7 @@ impl defmt::Format for BtpHdr {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HandshakeReq {
     /// The versions supported by the BTP handshake request.
-    versions: u32,
+    pub versions: u32,
     /// The ATT MTU size supported by the BTP handshake request.
     pub mtu: u16,
     /// The window size supported by the BTP handshake request.
@@ -437,16 +437,16 @@ impl HandshakeReq {
             .filter(|version| *version > 0)
     }
 
-    // Future
-    // Set the versions supported by the BTP handshake request.
-    // fn set_versions<I>(&mut self, versions: I)
-    // where
-    //     I: Iterator<Item = u8>,
-    // {
-    //     for (index, version) in (0_u8..).zip(versions) {
-    //         self.versions |= (version as u32) << (index * 4);
-    //     }
-    // }
+    /// Set the versions supported by the BTP handshake request.
+    #[allow(unused)]
+    pub fn set_versions<I>(&mut self, versions: I)
+    where
+        I: Iterator<Item = u8>,
+    {
+        for (index, version) in (0_u8..).zip(versions) {
+            self.versions |= (version as u32) << (index * 4);
+        }
+    }
 
     /// Decode a BTP handshake request from a byte iterator representing the data payload of a BTP Handshake request packet.
     fn decode<I>(&mut self, mut msg: I) -> Result<(), Error>
@@ -468,15 +468,14 @@ impl HandshakeReq {
         Ok(())
     }
 
-    // Future
-    // Encode the BTP handshake request into a byte buffer.
-    // fn encode(&self, resp_buf: &mut WriteBuf) -> Result<(), Error> {
-    //     resp_buf.le_u32(self.versions)?;
-    //     resp_buf.le_u16(self.mtu)?;
-    //     resp_buf.le_u8(self.window_size)?;
+    /// Encode the BTP handshake request into a byte buffer.
+    pub fn encode(&self, resp_buf: &mut WriteBuf) -> Result<(), Error> {
+        resp_buf.le_u32(self.versions)?;
+        resp_buf.le_u16(self.mtu)?;
+        resp_buf.le_u8(self.window_size)?;
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 }
 
 /// Models the BTP handshake response.
@@ -492,21 +491,32 @@ pub struct HandshakeResp {
 }
 
 impl HandshakeResp {
-    // Future
-    // // Decode a BTP handshake request from a byte iterator representing the data payload of a BTP Handshake request packet.
-    // fn decode<I>(&mut self, mut msg: I) -> Result<(), Error>
-    // where
-    //     I: Iterator<Item = u8>,
-    // {
-    //     self.version = msg.next().ok_or(ErrorCode::Invalid)?;
-    //     self.mtu = u16::from_le_bytes([
-    //         msg.next().ok_or(ErrorCode::Invalid)?,
-    //         msg.next().ok_or(ErrorCode::Invalid)?,
-    //     ]);
-    //     self.window_size = msg.next().ok_or(ErrorCode::Invalid)?;
+    /// Create a new BTP handshake response from a byte iterator representing the raw BTP packet.
+    pub fn from<I>(msg: I) -> Result<Self, Error>
+    where
+        I: Iterator<Item = u8>,
+    {
+        let mut resp = Self::default();
 
-    //     Ok(())
-    // }
+        resp.decode(msg)?;
+
+        Ok(resp)
+    }
+
+    /// Decode a BTP handshake response from a byte iterator representing the data payload of a BTP Handshake response packet.
+    fn decode<I>(&mut self, mut msg: I) -> Result<(), Error>
+    where
+        I: Iterator<Item = u8>,
+    {
+        self.version = msg.next().ok_or(ErrorCode::Invalid)?;
+        self.mtu = u16::from_le_bytes([
+            msg.next().ok_or(ErrorCode::Invalid)?,
+            msg.next().ok_or(ErrorCode::Invalid)?,
+        ]);
+        self.window_size = msg.next().ok_or(ErrorCode::Invalid)?;
+
+        Ok(())
+    }
 
     /// Encode the BTP handshake response into a byte buffer.
     pub fn encode(&self, resp_buf: &mut WriteBuf) -> Result<(), Error> {
