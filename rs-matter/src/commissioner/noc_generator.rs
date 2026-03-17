@@ -300,7 +300,7 @@ impl NocGenerator {
             &device_pubkey,
             issuer_pubkey.access(),
             &signing_key,
-            &serial_bytes,
+            serial_bytes,
             0, // not_before
             0, // not_after (no expiry)
             issuer_ca_id,
@@ -380,6 +380,399 @@ impl NocGenerator {
 
 #[cfg(test)]
 mod tests {
-    // Integration tests would require a crypto backend
-    // These would be placed in a test module with feature flags
+    use super::*;
+    use crate::cert::CertRef;
+    use crate::crypto::test_only_crypto;
+    use crate::tlv::TLVElement;
+
+    /// Known valid CSR from C++ test vectors (TestChipCryptoPAL.cpp)
+    /// This CSR has a valid signature and can be verified.
+    const GOOD_CSR: &[u8] = &[
+        0x30, 0x81, 0xca, 0x30, 0x70, 0x02, 0x01, 0x00, 0x30, 0x0e, 0x31, 0x0c, 0x30, 0x0a, 0x06,
+        0x03, 0x55, 0x04, 0x0a, 0x0c, 0x03, 0x43, 0x53, 0x52, 0x30, 0x59, 0x30, 0x13, 0x06, 0x07,
+        0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03,
+        0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0xa3, 0xbe, 0xa1, 0xf5, 0x42, 0x01, 0x07, 0x3c, 0x4b,
+        0x75, 0x85, 0xd8, 0xe2, 0x98, 0xac, 0x2f, 0xf6, 0x98, 0xdb, 0xd9, 0x5b, 0xe0, 0x7e, 0xc1,
+        0x04, 0xd5, 0x73, 0xc5, 0xb0, 0x90, 0x77, 0x27, 0x00, 0x1e, 0x22, 0xc7, 0x89, 0x5e, 0x4d,
+        0x75, 0x07, 0x89, 0x82, 0x0f, 0x49, 0xb6, 0x59, 0xd5, 0xc5, 0x15, 0x7d, 0x93, 0xe6, 0x80,
+        0x5c, 0x70, 0x89, 0x0a, 0x43, 0x10, 0x3d, 0xeb, 0x3d, 0x4a, 0xa0, 0x00, 0x30, 0x0c, 0x06,
+        0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02, 0x05, 0x00, 0x03, 0x48, 0x00, 0x30,
+        0x45, 0x02, 0x20, 0x1d, 0x86, 0x21, 0xb4, 0xc2, 0xe1, 0xa9, 0xf3, 0xbc, 0xc8, 0x7c, 0xda,
+        0xb4, 0xb9, 0xc6, 0x8c, 0xd0, 0xe4, 0x9a, 0x9c, 0xef, 0x02, 0x93, 0x98, 0x27, 0x7e, 0x81,
+        0x21, 0x5d, 0x20, 0x9d, 0x32, 0x02, 0x21, 0x00, 0x8b, 0x6b, 0x49, 0xb6, 0x7d, 0x3e, 0x67,
+        0x9e, 0xb1, 0x22, 0xd3, 0x63, 0x82, 0x40, 0x4f, 0x49, 0xa4, 0xdc, 0x17, 0x35, 0xac, 0x4b,
+        0x7a, 0xbf, 0x52, 0x05, 0x58, 0x68, 0xe0, 0xaa, 0xd2, 0x8e,
+    ];
+
+    /// CSR with bad signature (should fail verification)
+    /// One byte changed in signature (0xb1, 0x21 instead of 0xb1, 0x22)
+    const BAD_SIGNATURE_CSR: &[u8] = &[
+        0x30, 0x81, 0xca, 0x30, 0x70, 0x02, 0x01, 0x00, 0x30, 0x0e, 0x31, 0x0c, 0x30, 0x0a, 0x06,
+        0x03, 0x55, 0x04, 0x0a, 0x0c, 0x03, 0x43, 0x53, 0x52, 0x30, 0x59, 0x30, 0x13, 0x06, 0x07,
+        0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03,
+        0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0xa3, 0xbe, 0xa1, 0xf5, 0x42, 0x01, 0x07, 0x3c, 0x4b,
+        0x75, 0x85, 0xd8, 0xe2, 0x98, 0xac, 0x2f, 0xf6, 0x98, 0xdb, 0xd9, 0x5b, 0xe0, 0x7e, 0xc1,
+        0x04, 0xd5, 0x73, 0xc5, 0xb0, 0x90, 0x77, 0x27, 0x00, 0x1e, 0x22, 0xc7, 0x89, 0x5e, 0x4d,
+        0x75, 0x07, 0x89, 0x82, 0x0f, 0x49, 0xb6, 0x59, 0xd5, 0xc5, 0x15, 0x7d, 0x93, 0xe6, 0x80,
+        0x5c, 0x70, 0x89, 0x0a, 0x43, 0x10, 0x3d, 0xeb, 0x3d, 0x4a, 0xa0, 0x00, 0x30, 0x0c, 0x06,
+        0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02, 0x05, 0x00, 0x03, 0x48, 0x00, 0x30,
+        0x45, 0x02, 0x20, 0x1d, 0x86, 0x21, 0xb4, 0xc2, 0xe1, 0xa9, 0xf3, 0xbc, 0xc8, 0x7c, 0xda,
+        0xb4, 0xb9, 0xc6, 0x8c, 0xd0, 0xe4, 0x9a, 0x9c, 0xef, 0x02, 0x93, 0x98, 0x27, 0x7e, 0x81,
+        0x21, 0x5d, 0x20, 0x9d, 0x32, 0x02, 0x21, 0x00, 0x8b, 0x6b, 0x49, 0xb6, 0x7d, 0x3e, 0x67,
+        0x9e, 0xb1, 0x21, 0xd3, 0x63, 0x82, 0x40, 0x4f, 0x49, 0xa4, 0xdc, 0x17, 0x35, 0xac, 0x4b,
+        0x7a, 0xbf, 0x52, 0x05, 0x58, 0x68, 0xe0, 0xaa, 0xd2, 0x8e,
+    ];
+
+    #[test]
+    fn test_new_creates_valid_generator() {
+        let crypto = test_only_crypto();
+        let fabric_id = 0x1234_5678_9ABC_DEF0;
+
+        let generator = unwrap!(NocGenerator::new(&crypto, fabric_id));
+
+        // Verify fabric_id is stored
+        assert_eq!(generator.fabric_id(), fabric_id);
+
+        // Verify RCAC was generated
+        assert!(generator.root_cert().len() > 0);
+
+        // Verify RCAC ID was set
+        assert!(generator.rcac_id() > 0);
+
+        // Verify ICAC not yet generated
+        assert!(generator.icac_cert().is_none());
+        assert!(generator.icac_id().is_none());
+
+        // Verify serial counter initialized to 1
+        assert_eq!(generator.next_serial, 1);
+    }
+
+    #[test]
+    fn test_from_root_ca_preserves_credentials() {
+        let crypto = test_only_crypto();
+        let fabric_id = 0xABCD;
+
+        let gen1 = unwrap!(NocGenerator::new(&crypto, fabric_id));
+        let root_cert = gen1.root_cert();
+        let rcac_id = gen1.rcac_id();
+
+        let mut root_cert_copy = heapless::Vec::<u8, MAX_CERT_TLV_LEN>::new();
+        unwrap!(root_cert_copy.extend_from_slice(root_cert));
+        let root_privkey = gen1.root_privkey.clone();
+
+        // Create new generator from existing root CA
+        let gen2 = unwrap!(NocGenerator::from_root_ca(
+            &crypto,
+            root_privkey,
+            &root_cert_copy,
+            fabric_id,
+            rcac_id
+        ));
+
+        // Verify credentials match
+        assert_eq!(gen2.fabric_id(), fabric_id);
+        assert_eq!(gen2.rcac_id(), rcac_id);
+        assert_eq!(gen2.root_cert(), root_cert);
+    }
+
+    #[test]
+    fn test_generate_icac_creates_certificate() {
+        let crypto = test_only_crypto();
+        let fabric_id = 0x1;
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id));
+
+        let icac = unwrap!(generator.generate_icac(&crypto));
+
+        // ICAC should be non-empty
+        assert!(icac.len() > 0);
+
+        // Should be able to parse as TLV
+        let _cert_ref = CertRef::new(TLVElement::new(icac));
+    }
+
+    #[test]
+    fn test_icac_cert_available_after_generation() {
+        let crypto = test_only_crypto();
+        let fabric_id = 0x1;
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id));
+
+        // Before generation, icac_cert() should return None
+        assert!(generator.icac_cert().is_none());
+        // Before generation, icac_id() should return None
+        assert!(generator.icac_id().is_none());
+
+        // Generate ICAC
+        unwrap!(generator.generate_icac(&crypto));
+
+        // After generation, icac_cert() should return Some
+        assert!(generator.icac_cert().is_some());
+        assert!(generator.icac_cert().unwrap().len() > 0);
+
+        // After generation, icac_id() should return Some
+        assert!(generator.icac_id().is_some());
+        assert!(generator.icac_id().unwrap() > 0);
+    }
+
+    #[test]
+    fn test_multiple_icac_calls_replace_previous() {
+        let crypto = test_only_crypto();
+        let fabric_id = 0x1;
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id));
+
+        // Generate first ICAC
+        unwrap!(generator.generate_icac(&crypto));
+        let icac1_id = generator.icac_id().unwrap();
+
+        // Copy first ICAC
+        let mut icac1_copy = heapless::Vec::<u8, MAX_CERT_TLV_LEN>::new();
+        unwrap!(icac1_copy.extend_from_slice(generator.icac_cert().unwrap()));
+
+        // Generate second ICAC
+        unwrap!(generator.generate_icac(&crypto));
+        let icac2_id = generator.icac_id().unwrap();
+
+        // IDs should be different (randomly generated)
+        assert_ne!(icac1_id, icac2_id);
+
+        // Second ICAC should replace the first
+        let icac2 = generator.icac_cert().unwrap();
+        assert_ne!(icac2, icac1_copy.as_slice());
+    }
+
+    #[test]
+    fn test_generate_noc_basic() {
+        let crypto = test_only_crypto();
+        let fabric_id = 0x1;
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id));
+
+        let node_id = 0x1234;
+        let creds = unwrap!(generator.generate_noc(&crypto, GOOD_CSR, node_id, &[]));
+
+        // NOC should be non-empty
+        assert!(creds.noc.len() > 0);
+
+        // Node ID should match
+        assert_eq!(creds.node_id, node_id);
+
+        // Should be able to parse as TLV
+        let _cert_ref = CertRef::new(TLVElement::new(&creds.noc));
+    }
+
+    #[test]
+    fn test_generate_noc_with_icac() {
+        let crypto = test_only_crypto();
+        let fabric_id = 0x1;
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id));
+
+        // Generate ICAC first
+        unwrap!(generator.generate_icac(&crypto));
+
+        let node_id = 0x5678;
+        let creds = unwrap!(generator.generate_noc(&crypto, GOOD_CSR, node_id, &[]));
+
+        // NOC should be generated successfully
+        assert!(creds.noc.len() > 0);
+        assert_eq!(creds.node_id, node_id);
+
+        // Should be able to parse
+        let _cert_ref = CertRef::new(TLVElement::new(&creds.noc));
+    }
+
+    #[test]
+    fn test_generate_noc_with_cat_ids() {
+        let crypto = test_only_crypto();
+        let fabric_id = 0x1;
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id));
+
+        let node_id = 0xABCD;
+        let cat_ids = [0x0001_0001, 0x0001_0002, 0x0001_0003];
+
+        let creds = unwrap!(generator.generate_noc(&crypto, GOOD_CSR, node_id, &cat_ids));
+
+        // NOC should be generated successfully with CAT IDs
+        assert!(creds.noc.len() > 0);
+        assert_eq!(creds.node_id, node_id);
+
+        // Parse and verify CAT IDs are present
+        let cert_ref = CertRef::new(TLVElement::new(&creds.noc));
+        let mut parsed_cat_ids = [0u32; 3];
+        unwrap!(cert_ref.get_cat_ids(&mut parsed_cat_ids));
+        assert_eq!(parsed_cat_ids, cat_ids);
+    }
+
+    #[test]
+    fn test_generate_noc_increments_serial() {
+        let crypto = test_only_crypto();
+        let fabric_id = 0x1;
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id));
+
+        // Initial serial should be 1
+        assert_eq!(generator.next_serial, 1);
+
+        // Generate first NOC
+        unwrap!(generator.generate_noc(&crypto, GOOD_CSR, 1, &[]));
+
+        // Serial should have incremented
+        assert_eq!(generator.next_serial, 2);
+
+        // Generate second NOC
+        unwrap!(generator.generate_noc(&crypto, GOOD_CSR, 2, &[]));
+
+        // Serial should have incremented again
+        assert_eq!(generator.next_serial, 3);
+    }
+
+    #[test]
+    fn test_noc_contains_correct_node_id() {
+        let crypto = test_only_crypto();
+        let fabric_id = 0x9999;
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id));
+
+        let node_id = 0xDEAD_BEEF_CAFE_BABE;
+        let creds = unwrap!(generator.generate_noc(&crypto, GOOD_CSR, node_id, &[]));
+
+        // Parse NOC and extract node_id
+        let cert_ref = CertRef::new(TLVElement::new(&creds.noc));
+        let parsed_node_id = unwrap!(cert_ref.get_node_id());
+
+        assert_eq!(parsed_node_id, node_id);
+    }
+
+    #[test]
+    fn test_noc_contains_device_pubkey_from_csr() {
+        let crypto = test_only_crypto();
+        let fabric_id = 0x1;
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id));
+
+        let creds = unwrap!(generator.generate_noc(&crypto, GOOD_CSR, 1, &[]));
+
+        // Parse CSR to get public key
+        let csr_ref = unwrap!(CsrRef::new(GOOD_CSR));
+        let csr_pubkey = unwrap!(csr_ref.pubkey());
+
+        // Parse NOC to get public key
+        let cert_ref = CertRef::new(TLVElement::new(&creds.noc));
+        let noc_pubkey = unwrap!(cert_ref.pubkey());
+
+        // Public keys should match
+        assert_eq!(noc_pubkey, csr_pubkey);
+    }
+
+    #[test]
+    fn test_encode_serial_small_value() {
+        // Serial = 1 should encode as [0x01]
+        let encoded = NocGenerator::encode_serial_asn1(1);
+        assert_eq!(encoded.as_slice(), &[0x01]);
+    }
+
+    #[test]
+    fn test_encode_serial_no_leading_zeros() {
+        // Serial = 256 (0x0100) should encode as [0x01, 0x00]
+        let encoded = NocGenerator::encode_serial_asn1(256);
+        assert_eq!(encoded.as_slice(), &[0x01, 0x00]);
+    }
+
+    #[test]
+    fn test_encode_serial_large_value() {
+        // Serial = 0x123456 should encode as [0x12, 0x34, 0x56]
+        let encoded = NocGenerator::encode_serial_asn1(0x123456);
+        assert_eq!(encoded.as_slice(), &[0x12, 0x34, 0x56]);
+    }
+
+    #[test]
+    fn test_encode_serial_strips_leading_zeros() {
+        // Serial = 0x00000100 should strip leading zeros to [0x01, 0x00]
+        let encoded = NocGenerator::encode_serial_asn1(0x100);
+        assert_eq!(encoded.as_slice(), &[0x01, 0x00]);
+
+        // Verify no leading zeros
+        assert_ne!(encoded.as_slice(), &[0x00, 0x01, 0x00]);
+    }
+
+    #[test]
+    fn test_encode_serial_prepends_zero_when_needed() {
+        // Serial = 0x8000 has high bit set, should prepend 0x00
+        let encoded = NocGenerator::encode_serial_asn1(0x8000);
+        assert_eq!(encoded.as_slice(), &[0x00, 0x80, 0x00]);
+
+        // Serial = 0xFF00 should also prepend
+        let encoded = NocGenerator::encode_serial_asn1(0xFF00);
+        assert_eq!(encoded.as_slice(), &[0x00, 0xFF, 0x00]);
+    }
+
+    #[test]
+    fn test_generate_noc_bad_signature_fails() {
+        let crypto = test_only_crypto();
+        let fabric_id = 0x1;
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id));
+
+        // CSR with bad signature should fail verification
+        let result = generator.generate_noc(&crypto, BAD_SIGNATURE_CSR, 1, &[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_generate_noc_too_many_cat_ids_fails() {
+        let crypto = test_only_crypto();
+        let fabric_id = 0x1;
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id));
+
+        // More than 3 CAT IDs should fail
+        let too_many_cat_ids = [0x0001_0001, 0x0001_0002, 0x0001_0003, 0x0001_0004];
+
+        let result = generator.generate_noc(&crypto, GOOD_CSR, 1, &too_many_cat_ids);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_generated_rcac_can_be_parsed() {
+        let crypto = test_only_crypto();
+        let fabric_id = 0x1234;
+        let generator = unwrap!(NocGenerator::new(&crypto, fabric_id));
+
+        let rcac = generator.root_cert();
+
+        // Should be able to parse as TLV certificate
+        let cert_ref = CertRef::new(TLVElement::new(rcac));
+
+        // Should be able to extract fabric_id
+        let parsed_fabric_id = unwrap!(cert_ref.get_fabric_id());
+        assert_eq!(parsed_fabric_id, fabric_id);
+    }
+
+    #[test]
+    fn test_generated_icac_can_be_parsed() {
+        let crypto = test_only_crypto();
+        let fabric_id = 0x5678;
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id));
+
+        let icac = unwrap!(generator.generate_icac(&crypto));
+
+        // Should be able to parse as TLV certificate
+        let cert_ref = CertRef::new(TLVElement::new(icac));
+
+        // Should be able to extract fabric_id
+        let parsed_fabric_id = unwrap!(cert_ref.get_fabric_id());
+        assert_eq!(parsed_fabric_id, fabric_id);
+    }
+
+    #[test]
+    fn test_generated_noc_can_be_parsed() {
+        let crypto = test_only_crypto();
+        let fabric_id = 0xABCD;
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id));
+
+        let node_id = 0x9999;
+        let creds = unwrap!(generator.generate_noc(&crypto, GOOD_CSR, node_id, &[]));
+
+        // Should be able to parse as TLV certificate
+        let cert_ref = CertRef::new(TLVElement::new(&creds.noc));
+
+        // Should be able to extract both fabric_id and node_id
+        let parsed_fabric_id = unwrap!(cert_ref.get_fabric_id());
+        let parsed_node_id = unwrap!(cert_ref.get_node_id());
+
+        assert_eq!(parsed_fabric_id, fabric_id);
+        assert_eq!(parsed_node_id, node_id);
+    }
 }
