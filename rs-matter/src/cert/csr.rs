@@ -131,15 +131,18 @@ impl<'a> DecodeValue<'a> for SubjectPublicKeyInfo<'a> {
 
             // Validate parameters contain prime256v1 OID
             if let Some(params) = &algorithm.parameters {
-                // Parameters should be an OID for the curve
-                let curve_oid = ObjectIdentifier::from_der(params.to_der()?.as_slice())
+                let mut buf = [0u8; 16]; // 16 bytes for OID should be plenty
+                let der_bytes = params
+                    .encode_to_slice(&mut buf)
+                    .map_err(|_| der::Tag::ObjectIdentifier.value_error())?;
+
+                let curve_oid = ObjectIdentifier::from_der(der_bytes)
                     .map_err(|_| der::Tag::ObjectIdentifier.value_error())?;
 
                 if curve_oid != OID_PRIME256V1 {
                     return Err(der::Tag::ObjectIdentifier.value_error());
                 }
             } else {
-                // Parameters must be present for EC public keys
                 return Err(der::Tag::ObjectIdentifier.value_error());
             }
 
@@ -178,13 +181,9 @@ impl<'a> der::FixedTag for SubjectPublicKeyInfo<'a> {
 impl<'a> EncodeValue for SubjectPublicKeyInfo<'a> {
     fn value_len(&self) -> der::Result<Length> {
         unimplemented!("SubjectPublicKeyInfo encoding is not supported")
-        // self.algorithm.encoded_len()? + self.subject_public_key.encoded_len()?
     }
     fn encode_value(&self, _writer: &mut impl Writer) -> der::Result<()> {
         unimplemented!("SubjectPublicKeyInfo encoding is not supported")
-        // self.algorithm.encode(writer)?;
-        // self.subject_public_key.encode(writer)?;
-        // Ok(())
     }
 }
 
