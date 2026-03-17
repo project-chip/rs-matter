@@ -235,7 +235,7 @@ pub async fn discover_commissionable<const A: usize>(
         .collect::<Vec<_>>();
 
     for instance in &service_instances {
-        let (name, type_, domain) = match parse_service_instance(&instance) {
+        let (name, type_, domain) = match parse_service_instance(instance) {
             Some(parts) => parts,
             None => {
                 warn!("Failed to parse service instance: {}", instance);

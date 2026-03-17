@@ -15,12 +15,9 @@
  *    limitations under the License.
  */
 
-use core::future::Future;
 use core::iter::{empty, once};
 
 use crate::dm::clusters::basic_info::BasicInfoConfig;
-use crate::error::Error;
-use crate::transport::network::BtAddr;
 
 use super::{GATT_HEADER_SIZE, MAX_BTP_SEGMENT_SIZE};
 
@@ -127,130 +124,5 @@ impl AdvData {
             0, // No additional data
         ]
         .into_iter()
-    }
-}
-
-/// A minimal GATT peripheral event.
-/// This enum is used to abstract the platform-specific GATT peripheral events.
-///
-/// The abstraction is "minimal" in the sense that it is good enough for the purposes of
-/// the Matter BTP protocol, but is otherwise not really having the ambition to model all
-/// possible events of a generic GATT peripheral, which would result in a much larger API surface.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum GattPeripheralEvent<'a> {
-    NotifyConnected(BtAddr),
-    NotifyDisconnected(BtAddr),
-    /// A GATT central has subscribed for notifications from characteristic `C2`.
-    /// In other words, the GATT central is now ready to receive BTP packets.
-    ///
-    /// See the Matter Core spec w.r.t. details on characteristic `C2`.
-    NotifySubscribed(BtAddr),
-    /// A GATT central has unsubscribed for notifications from characteristic `C2`.
-    /// In other words, the GATT central is closing the BTP session.
-    ///
-    /// See the Matter Core spec w.r.t. details on characteristic `C2`.
-    NotifyUnsubscribed(BtAddr),
-    /// A GATT central has requested a Write to characteristic `C1`.
-    /// In other words, the GATT central had sent a BTP packet.
-    ///
-    /// See the Matter Core spec w.r.t. details on characteristic `C1`.
-    ///
-    /// `gatt_mtu` is the ATT MTU (contains +3 bytes for the GATT header)
-    /// as negotiated between the GATT central and the GATT peripheral.
-    /// Might be `None` if a concrete GATT peripheral implementation does
-    /// not provide access to this value. In that case, the minimum MTU
-    /// will be used (23 bytes, including the GATT header).
-    Write {
-        address: BtAddr,
-        data: &'a [u8],
-        gatt_mtu: Option<u16>,
-    },
-}
-
-/// A minimal GATT peripheral trait.
-/// This trait is used to abstract the platform-specific GATT peripheral implementation.
-///
-/// The abstraction is "minimal" in the sense that it is good enough for the purposes of
-/// the Matter BTP protocol, but is otherwise not really having the ambition to model all
-/// the aspects of a generic GATT peripheral, which would result in a much larger trait.
-///
-/// The design of this trait is deliberately chosen to be simple and easy to implement
-/// on top of MCU-based GATT peripherals; hence the blocking, callback-based approach for modeling
-/// notification subscriptions and chracteristic writes, which - while making the BTP protocol
-/// implementation more complex - is a good fit for MCUs where these operations might also be
-/// implemented via a callback which cannot await.
-pub trait GattPeripheral {
-    /// Run the GATT peripheral.
-    ///
-    /// The implementation of this method is expected to do the following:
-    /// - GATT peripheral lifecycle:
-    ///   - Start avertising a GATT service with UUID `MATTER_BLE_SERVICE_UUID16`, by utilizing
-    ///     the provided `service_name` and `adv_data` parameters.
-    ///   - Possibly stop advertising the GATT service when the first notification subscription is received.
-    ///   - Stop advertising and tear down the GATT service when the future of this method is dropped.
-    /// - Gatt peripheral incoming data:
-    ///   - Handle incoming GATT events, and call the provided `callback` function for each event.
-    ///     See `GattPeripheralEvent` for the possible events and their semantics.
-    ///
-    /// The callback is constraned to be `Send`, `Sync`, `Clone` and `'static` on purpose, as it might be
-    /// the case that the GATT implementation needs to invoke the callback from a different thread than the Matter thread,
-    /// as well as it might need multiple instances of it.
-    /// Therefore, this constraint is not a problem but an advantage for `GattPeripheral` trait implementors (it is a deliberate design decision).
-    async fn run<F>(
-        &self,
-        service_name: &str,
-        adv_data: &AdvData,
-        callback: F,
-    ) -> Result<(), Error>
-    where
-        F: Fn(GattPeripheralEvent) + Send + Sync + Clone + 'static;
-
-    /// Indicate data changes in characteristics `C2` to to a GATT central.
-    /// In other words, send a BTP packet to a GATT central.
-    ///
-    /// See the Matter Core spec w.r.t. details on characteristic C2.
-    async fn indicate(&self, data: &[u8], address: BtAddr) -> Result<(), Error>;
-}
-
-impl<T> GattPeripheral for &T
-where
-    T: GattPeripheral,
-{
-    fn run<F>(
-        &self,
-        service_name: &str,
-        adv_data: &AdvData,
-        callback: F,
-    ) -> impl Future<Output = Result<(), Error>>
-    where
-        F: Fn(GattPeripheralEvent) + Send + Sync + Clone + 'static,
-    {
-        (*self).run(service_name, adv_data, callback)
-    }
-
-    fn indicate(&self, data: &[u8], address: BtAddr) -> impl Future<Output = Result<(), Error>> {
-        (*self).indicate(data, address)
-    }
-}
-
-impl<T> GattPeripheral for &mut T
-where
-    T: GattPeripheral,
-{
-    fn run<F>(
-        &self,
-        service_name: &str,
-        adv_data: &AdvData,
-        callback: F,
-    ) -> impl Future<Output = Result<(), Error>>
-    where
-        F: Fn(GattPeripheralEvent) + Send + Sync + Clone + 'static,
-    {
-        (**self).run(service_name, adv_data, callback)
-    }
-
-    fn indicate(&self, data: &[u8], address: BtAddr) -> impl Future<Output = Result<(), Error>> {
-        (**self).indicate(data, address)
     }
 }
