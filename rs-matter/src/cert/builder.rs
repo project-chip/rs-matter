@@ -21,12 +21,13 @@
 //! Intermediate CA Certificates (ICAC), and Root CA Certificates (RCAC) in Matter
 //! TLV format. (Matter Specification 6.5 "Operational Certificate Encoding")
 
+use crate::cert::CertRef;
 use crate::credentials::trust_store::SKID_LEN;
 use crate::crypto::{
     CanonPkcSignature, Crypto, Digest, PKC_CANON_PUBLIC_KEY_LEN, PKC_SIGNATURE_LEN,
 };
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{TLVTag, TLVWrite};
+use crate::tlv::{TLVElement, TLVTag, TLVWrite};
 use crate::utils::storage::WriteBuf;
 
 use super::{x509::key_usage_tlv, CertTag, DNTag, MAX_CERT_TLV_LEN};
@@ -112,8 +113,15 @@ impl<'a> CertBuilderCore<'a> {
         let mut tbs_copy = [0u8; MAX_CERT_TLV_LEN];
         tbs_copy[..tbs_len].copy_from_slice(&self.buf[..tbs_len]);
 
-        // Sign the TBS certificate
-        let signature = self.sign_tbs(crypto, &tbs_copy[..tbs_len], signing_key)?;
+        // Convert TBS to ASN1 format for signing
+        // According to the Matter Spec 6.5.2. "Matter certificate", the signature is over the
+        // "corresponding X.509 certificate, not a signature of the preceding Matter TLV data."
+        let tbs_cert_ref = CertRef::new(TLVElement::new(&tbs_copy[..tbs_len]));
+        let mut asn1_buf = [0u8; 600]; // TODO find better buffer size
+        let asn1_len = tbs_cert_ref.as_asn1(&mut asn1_buf)?;
+
+        // Sign the ASN1-encoded TBS certificate
+        let signature = self.sign_tbs(crypto, &asn1_buf[..asn1_len], signing_key)?;
 
         // Append signature to complete the certificate
         self.append_signature(&signature, tbs_len)
