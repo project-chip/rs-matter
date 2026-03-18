@@ -68,16 +68,14 @@ pub(crate) const MAX_MTU: u16 = (MAX_BTP_SEGMENT_SIZE + GATT_HEADER_SIZE) as u16
 ///   - `Btp::process_outgoing` - periodically and when `Btp::wait_outgoing` is notified, to check if there is any data to send to the peer
 ///     The data is to be send via a GATT Write request on the C1 characteristic.
 pub struct Btp {
+    /// The inner state of the BTP protocol, containing the session state, the outgoing SDU buffer, and the timeouts configuration.
     inner: Mutex<NoopRawMutex, RefCell<BtpInner>>,
+    /// Notification triggered when (potentially!) a new Matter packet (BTP SDU) is assembled and available for processing.
     recv_notif: Notification<NoopRawMutex>,
+    /// Notification triggered when (potentially!) there is now space for buffering a new outgoing Matter packet (BTP SDU).
     send_notif: Notification<NoopRawMutex>,
+    /// Notification triggered when (potentially!) there is new outgoing data to be sent to the peer, which can be either a handshake packet or a BTP SDU segment.
     outg_notif: Notification<NoopRawMutex>,
-}
-
-impl Default for Btp {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl Btp {
@@ -114,7 +112,10 @@ impl Btp {
     }
 
     /// Set the BTP timeouts, by configuring the ACK timeout and the connection idle timeout.
-    pub fn set_timeouts(&self, ack_timeout_secs: u8, conn_idle_timeout_secs: u8) {
+    ///
+    /// Only used by the unit tests.
+    #[allow(dead_code)]
+    pub(crate) fn set_timeouts(&self, ack_timeout_secs: u8, conn_idle_timeout_secs: u8) {
         self.inner.lock(|inner| {
             inner
                 .borrow_mut()
@@ -265,6 +266,12 @@ impl Btp {
     }
 }
 
+impl Default for Btp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NetworkSend for &Btp {
     async fn send_to(&mut self, data: &[u8], addr: Address) -> Result<(), Error> {
         (*self)
@@ -340,6 +347,7 @@ impl BtpInner {
     }
 
     /// Set the BTP timeouts, by configuring the ACK timeout and the connection idle timeout.
+    /// Only used by the unit tests.
     fn set_timeouts(&mut self, ack_timeout_secs: u8, conn_idle_timeout_secs: u8) {
         self.ack_timeout_secs = ack_timeout_secs;
         self.conn_idle_timeout_secs = conn_idle_timeout_secs;
