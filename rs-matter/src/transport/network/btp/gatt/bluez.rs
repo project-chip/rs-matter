@@ -66,11 +66,6 @@ pub async fn run_peripheral(
     let adapter = AdapterProxy::new(connection, adapter_path.as_ref()).await?;
     adapter.set_powered(true).await?;
 
-    info!(
-        "Serving Matter GATT BTP service on Bluetooth adapter {}",
-        adapter_path
-    );
-
     // Register a "NoInputNoOutput" agent that will accept all incoming requests.
     // TODO
     // let _handle = bluez.register_agent(Agent::default()).await?;
@@ -92,8 +87,8 @@ pub async fn run_peripheral(
     .await?;
 
     info!(
-        "Registered Matter GATT BTP service on Bluetooth adapter {}",
-        adapter_path,
+        "Serving Matter GATT BTP service on Bluetooth adapter {}",
+        adapter_path
     );
 
     loop {

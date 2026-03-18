@@ -360,7 +360,7 @@ impl BtpInner {
         addr: BtAddr,
         data: &[u8],
     ) -> Result<(), Error> {
-        self.session.process_rx(addr, data, gatt_mtu)
+        self.session.process_rx(gatt_mtu, addr, data)
     }
 
     /// Process outgoing data and prepare it to be sent to the peer.

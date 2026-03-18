@@ -76,12 +76,6 @@ pub async fn run_peripheral(
 
     adapter.set_powered(true).await?;
 
-    info!(
-        "Advertising on Bluetooth adapter {} with address {}",
-        adapter.name(),
-        BtAddr(adapter.address().await?.0)
-    );
-
     let le_advertisement = Advertisement {
         discoverable: Some(true),
         local_name: Some(service_name.into()),
@@ -93,11 +87,6 @@ pub async fn run_peripheral(
         .collect(),
         ..Default::default()
     };
-
-    info!(
-        "Serving GATT echo service on Bluetooth adapter {}",
-        adapter.name()
-    );
 
     let (write_sender, mut write_receiver) = tokio::sync::mpsc::channel(1);
 
@@ -160,12 +149,22 @@ pub async fn run_peripheral(
 
     let _app_handle = adapter.serve_gatt_application(app).await?;
 
+    info!(
+        "Serving Matter GATT BTP service on Bluetooth adapter {}",
+        adapter.name()
+    );
+
     loop {
         let notifier = {
             // Advertise until we get a connection + subscription to char C2
             // Then stop advertising, as per the Matter Core spec, since the peer is now connected and can interact with the GATT service.
 
             let _adv_handle = adapter.advertise(le_advertisement.clone()).await?;
+
+            info!(
+                "Advertising Matter GATT BTP service on Bluetooth adapter {}",
+                adapter.name(),
+            );
 
             notifier(&mut notify_cc).await
         };
