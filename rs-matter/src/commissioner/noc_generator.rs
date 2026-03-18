@@ -23,7 +23,7 @@
 //! - Optional Intermediate CA Certificate (ICAC)
 //! - Node Operational Certificate (NOC)
 
-use crate::cert::builder::{IcacBuilder, NocBuilder, RcacBuilder};
+use crate::cert::builder::{IcacBuilder, IssuerRDN, NocBuilder, RcacBuilder};
 use crate::cert::csr::CsrRef;
 use crate::cert::MAX_CERT_TLV_LEN;
 use crate::crypto::{
@@ -113,15 +113,25 @@ impl NocGenerator {
         // Load the secret key for signing
         let signing_key = crypto.secret_key(root_privkey.reference())?;
 
+        let subject = crate::cert::builder::SubjectDN {
+            node_id: None,
+            fabric_id: Some(fabric_id),
+            cat_ids: &[],
+            ca_id: Some(rcac_id),
+        };
+
+        let validity = crate::cert::builder::Validity {
+            not_before: 0, // epoch start
+            not_after: 0,  // no expiry
+        };
+
         let cert_len = RcacBuilder::new(&mut cert_buf).build(
             crypto,
-            rcac_id,
-            fabric_id,
+            subject,
+            validity,
             root_pubkey.access(),
             &signing_key,
             &serial_bytes,
-            0, // not_before = 0 (epoch start)
-            0, // not_after = 0 (no expiry)
         )?;
 
         let mut root_cert = heapless::Vec::new();
@@ -214,18 +224,33 @@ impl NocGenerator {
 
         let root_signing_key = crypto.secret_key(self.root_privkey.reference())?;
 
+        let subject = crate::cert::builder::SubjectDN {
+            node_id: None,
+            fabric_id: Some(self.fabric_id),
+            cat_ids: &[],
+            ca_id: Some(icac_id),
+        };
+
+        let validity = crate::cert::builder::Validity {
+            not_before: 0, // epoch start
+            not_after: 0,  // no expiry
+        };
+
+        let issuer = crate::cert::builder::IssuerRDN {
+            ca_id: Some(self.rcac_id),
+            fabric_id: Some(self.fabric_id),
+            is_rcac: true,
+        };
+
         let cert_len = IcacBuilder::new(&mut cert_buf).build(
             crypto,
-            icac_id,
-            self.fabric_id,
+            subject,
+            validity,
             icac_pubkey.access(),
             self.root_pubkey.access(),
             &root_signing_key,
             serial_bytes,
-            0,              // not_before
-            0,              // not_after (no expiry)
-            self.rcac_id,   // rcac_id
-            self.fabric_id, // rcac_fabric_id
+            issuer,
         )?;
 
         let mut icac_cert = heapless::Vec::new();
@@ -292,20 +317,33 @@ impl NocGenerator {
             (self.rcac_id, true) // Signed directly by RCAC
         };
 
+        let issuer = IssuerRDN {
+            ca_id: Some(issuer_ca_id),
+            fabric_id: Some(self.fabric_id),
+            is_rcac: is_issuer_rcac,
+        };
+
+        let subject = crate::cert::builder::SubjectDN {
+            node_id: Some(node_id),
+            fabric_id: Some(self.fabric_id),
+            cat_ids,
+            ca_id: None,
+        };
+
+        let validity = crate::cert::builder::Validity {
+            not_before: 0, // epoch start
+            not_after: 0,  // no expiry
+        };
+
         let cert_len = NocBuilder::new(&mut cert_buf).build(
             crypto,
-            node_id,
-            self.fabric_id,
-            cat_ids,
+            subject,
+            validity,
             &device_pubkey,
             issuer_pubkey.access(),
             &signing_key,
             serial_bytes,
-            0, // not_before
-            0, // not_after (no expiry)
-            issuer_ca_id,
-            self.fabric_id, // issuer_fabric_id
-            is_issuer_rcac,
+            issuer,
         )?;
 
         let mut noc = heapless::Vec::new();

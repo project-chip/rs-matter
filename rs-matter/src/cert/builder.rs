@@ -23,14 +23,14 @@
 
 use crate::cert::CertRef;
 use crate::credentials::trust_store::SKID_LEN;
-use crate::crypto::{
-    CanonPkcSignature, Crypto, Digest, PKC_CANON_PUBLIC_KEY_LEN, PKC_SIGNATURE_LEN,
-};
+use crate::crypto::{CanonPkcSignature, Crypto, Digest, PKC_CANON_PUBLIC_KEY_LEN};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVElement, TLVTag, TLVWrite};
 use crate::utils::storage::WriteBuf;
 
 use super::{x509::key_usage_tlv, CertTag, DNTag, MAX_CERT_TLV_LEN};
+
+const MAX_TBS_ASN1_LEN: usize = 600; // TODO is there a more deterministic buffer size?
 
 /// Certificate type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +50,26 @@ struct CertBuilderCore<'a> {
     buf: &'a mut [u8],
 }
 
+pub struct IssuerRDN {
+    pub(crate) ca_id: Option<u64>,
+    pub(crate) fabric_id: Option<u64>,
+    pub(crate) is_rcac: bool,
+}
+
+#[derive(Clone, Copy)]
+pub struct SubjectDN<'a> {
+    pub(crate) node_id: Option<u64>,
+    pub(crate) fabric_id: Option<u64>,
+    pub(crate) cat_ids: &'a [u32],
+    pub(crate) ca_id: Option<u64>,
+}
+
+#[derive(Clone, Copy)]
+pub struct Validity {
+    pub(crate) not_before: u32,
+    pub(crate) not_after: u32,
+}
+
 impl<'a> CertBuilderCore<'a> {
     /// Create a new certificate builder core with the given buffer.
     fn new(buf: &'a mut [u8]) -> Self {
@@ -65,20 +85,12 @@ impl<'a> CertBuilderCore<'a> {
         crypto: &C,
         cert_type: CertType,
         serial_number: &[u8],
-        not_before: u32,
-        not_after: u32,
+        validity: Validity,
         subject_pubkey: &[u8; PKC_CANON_PUBLIC_KEY_LEN],
         signing_key: &C::SecretKey<'_>,
         issuer_pubkey: Option<&[u8; PKC_CANON_PUBLIC_KEY_LEN]>,
-        // Subject DN fields
-        node_id: Option<u64>,
-        fabric_id: Option<u64>,
-        cat_ids: &[u32],
-        ca_id: Option<u64>,
-        // Issuer DN fields
-        issuer_ca_id: Option<u64>,
-        issuer_fabric_id: Option<u64>,
-        is_issuer_rcac: bool,
+        subject: SubjectDN,
+        issuer: IssuerRDN,
     ) -> Result<usize, Error> {
         // Validate serial number
         Self::validate_serial_number(serial_number)?;
@@ -95,19 +107,13 @@ impl<'a> CertBuilderCore<'a> {
         // Build the TBS (To-Be-Signed) certificate
         let tbs_len = self.write_tbs_certificate(
             serial_number,
-            not_before,
-            not_after,
+            validity,
             subject_pubkey,
             &subject_key_id,
             &authority_key_id,
             cert_type,
-            node_id,
-            fabric_id,
-            cat_ids,
-            ca_id,
-            issuer_ca_id,
-            issuer_fabric_id,
-            is_issuer_rcac,
+            subject,
+            issuer,
         )?;
 
         let mut tbs_copy = [0u8; MAX_CERT_TLV_LEN];
@@ -117,11 +123,11 @@ impl<'a> CertBuilderCore<'a> {
         // According to the Matter Spec 6.5.2. "Matter certificate", the signature is over the
         // "corresponding X.509 certificate, not a signature of the preceding Matter TLV data."
         let tbs_cert_ref = CertRef::new(TLVElement::new(&tbs_copy[..tbs_len]));
-        let mut asn1_buf = [0u8; 600]; // TODO find better buffer size
+        let mut asn1_buf = [0u8; MAX_TBS_ASN1_LEN];
         let asn1_len = tbs_cert_ref.as_asn1(&mut asn1_buf)?;
 
         // Sign the ASN1-encoded TBS certificate
-        let signature = self.sign_tbs(crypto, &asn1_buf[..asn1_len], signing_key)?;
+        let signature = self.sign_tbs::<C>(&asn1_buf[..asn1_len], signing_key)?;
 
         // Append signature to complete the certificate
         self.append_signature(&signature, tbs_len)
@@ -152,19 +158,13 @@ impl<'a> CertBuilderCore<'a> {
     fn write_tbs_certificate(
         &mut self,
         serial_number: &[u8],
-        not_before: u32,
-        not_after: u32,
+        validity: Validity,
         pubkey: &[u8; PKC_CANON_PUBLIC_KEY_LEN],
         subject_key_id: &[u8; SKID_LEN],
         authority_key_id: &[u8; SKID_LEN],
         cert_type: CertType,
-        node_id: Option<u64>,
-        fabric_id: Option<u64>,
-        cat_ids: &[u32],
-        ca_id: Option<u64>,
-        issuer_ca_id: Option<u64>,
-        issuer_fabric_id: Option<u64>,
-        is_issuer_rcac: bool,
+        subject: SubjectDN,
+        issuer: IssuerRDN,
     ) -> Result<usize, Error> {
         let mut tw = WriteBuf::new(self.buf);
 
@@ -181,24 +181,24 @@ impl<'a> CertBuilderCore<'a> {
         match cert_type {
             CertType::Rcac => {
                 // Self-signed: issuer = subject
-                if let Some(id) = ca_id {
+                if let Some(id) = subject.ca_id {
                     tw.u64(&TLVTag::Context(DNTag::RootCaId as u8), id)?;
                 }
-                if let Some(fid) = fabric_id {
+                if let Some(fid) = subject.fabric_id {
                     tw.u64(&TLVTag::Context(DNTag::FabricId as u8), fid)?; // Fabric ID
                 }
             }
             CertType::Icac | CertType::Noc => {
                 // Use provided issuer information
-                if let Some(id) = issuer_ca_id {
-                    let tag = if is_issuer_rcac {
+                if let Some(id) = issuer.ca_id {
+                    let tag = if issuer.is_rcac {
                         DNTag::RootCaId as u8
                     } else {
                         DNTag::IcaId as u8
                     };
                     tw.u64(&TLVTag::Context(tag), id)?;
                 }
-                if let Some(fid) = issuer_fabric_id {
+                if let Some(fid) = issuer.fabric_id {
                     tw.u64(&TLVTag::Context(DNTag::FabricId as u8), fid)?;
                 }
             }
@@ -206,41 +206,47 @@ impl<'a> CertBuilderCore<'a> {
         tw.end_container()?;
 
         // 4. Not Before
-        tw.u32(&TLVTag::Context(CertTag::NotBefore as u8), not_before)?;
+        tw.u32(
+            &TLVTag::Context(CertTag::NotBefore as u8),
+            validity.not_before,
+        )?;
 
         // 5. Not After (0 = no expiry)
-        tw.u32(&TLVTag::Context(CertTag::NotAfter as u8), not_after)?;
+        tw.u32(
+            &TLVTag::Context(CertTag::NotAfter as u8),
+            validity.not_after,
+        )?;
 
         // 6. Subject
         tw.start_list(&TLVTag::Context(CertTag::Subject as u8))?;
         match cert_type {
             CertType::Noc => {
                 // NOC Subject: NodeId, FabricId, optional CAT IDs
-                if let Some(nid) = node_id {
+                if let Some(nid) = subject.node_id {
                     tw.u64(&TLVTag::Context(DNTag::NodeId as u8), nid)?;
                 }
-                if let Some(fid) = fabric_id {
+                if let Some(fid) = subject.fabric_id {
                     tw.u64(&TLVTag::Context(DNTag::FabricId as u8), fid)?
                 }
-                for cat_id in cat_ids {
+                for cat_id in subject.cat_ids {
                     tw.u64(&TLVTag::Context(DNTag::NocCat as u8), *cat_id as u64)?;
                 }
             }
             CertType::Icac => {
                 // ICAC Subject: ICAC ID, FabricId
-                if let Some(id) = ca_id {
+                if let Some(id) = subject.ca_id {
                     tw.u64(&TLVTag::Context(DNTag::IcaId as u8), id)?;
                 }
-                if let Some(fid) = fabric_id {
+                if let Some(fid) = subject.fabric_id {
                     tw.u64(&TLVTag::Context(DNTag::FabricId as u8), fid)?;
                 }
             }
             CertType::Rcac => {
                 // RCAC Subject: RCAC ID, FabricId
-                if let Some(id) = ca_id {
+                if let Some(id) = subject.ca_id {
                     tw.u64(&TLVTag::Context(DNTag::RootCaId as u8), id)?;
                 }
-                if let Some(fid) = fabric_id {
+                if let Some(fid) = subject.fabric_id {
                     tw.u64(&TLVTag::Context(DNTag::FabricId as u8), fid)?;
                 }
             }
@@ -321,18 +327,14 @@ impl<'a> CertBuilderCore<'a> {
     /// Sign the TBS certificate data.
     fn sign_tbs<C: Crypto>(
         &self,
-        _crypto: &C,
         tbs_data: &[u8],
         signing_key: &C::SecretKey<'_>,
-    ) -> Result<[u8; PKC_SIGNATURE_LEN], Error> {
+    ) -> Result<CanonPkcSignature, Error> {
         use crate::crypto::SigningSecretKey;
 
         let mut signature = CanonPkcSignature::new();
         signing_key.sign(tbs_data, &mut signature)?;
-
-        let mut result = [0u8; PKC_SIGNATURE_LEN];
-        result.copy_from_slice(signature.access());
-        Ok(result)
+        Ok(signature)
     }
 
     /// Append the signature to complete the certificate.
@@ -341,7 +343,7 @@ impl<'a> CertBuilderCore<'a> {
     /// with the signature field added.
     fn append_signature(
         &mut self,
-        signature: &[u8; PKC_SIGNATURE_LEN],
+        signature: &CanonPkcSignature,
         tbs_len: usize,
     ) -> Result<usize, Error> {
         if tbs_len == 0 || self.buf[tbs_len - 1] != 0x18 {
@@ -352,7 +354,10 @@ impl<'a> CertBuilderCore<'a> {
 
         // Use proper TLV encoding via WriteBuf
         let mut tw = WriteBuf::new(&mut self.buf[insert_pos..]);
-        tw.str(&TLVTag::Context(CertTag::Signature as u8), signature)?;
+        tw.str(
+            &TLVTag::Context(CertTag::Signature as u8),
+            signature.access(),
+        )?;
         tw.end_container()?;
 
         Ok(insert_pos + tw.get_tail())
@@ -391,18 +396,13 @@ impl<'a> NocBuilder<'a> {
     ///
     /// # Arguments
     /// * `crypto` - Cryptographic backend
-    /// * `node_id` - The node identifier for this device
-    /// * `fabric_id` - The fabric identifier
-    /// * `cat_ids` - CASE Authentication Tags (up to 3)
+    /// * `subject` - Subject DN fields (node_id, fabric_id, cat_ids)
+    /// * `validity` - Certificate validity period
     /// * `subject_pubkey` - The device's public key (from CSR)
     /// * `issuer_pubkey` - The issuer's public key (ICAC or RCAC)
     /// * `issuer_privkey` - The issuer's signing key
     /// * `serial_number` - Certificate serial number
-    /// * `not_before` - Validity start (Matter epoch seconds)
-    /// * `not_after` - Validity end (0 = no expiry)
-    /// * `issuer_ca_id` - The issuer's CA identifier (ICAC or RCAC ID)
-    /// * `issuer_fabric_id` - The issuer's fabric identifier
-    /// * `is_issuer_rcac` - True if issuer is RCAC, false if ICAC
+    /// * `issuer` - Issuer RDN fields
     ///
     /// # Returns
     /// The length of the encoded certificate in the buffer.
@@ -410,25 +410,24 @@ impl<'a> NocBuilder<'a> {
     pub fn build<C: Crypto>(
         &mut self,
         crypto: &C,
-        node_id: u64,
-        fabric_id: u64,
-        cat_ids: &[u32],
+        subject: SubjectDN,
+        validity: Validity,
         subject_pubkey: &[u8; PKC_CANON_PUBLIC_KEY_LEN],
         issuer_pubkey: &[u8; PKC_CANON_PUBLIC_KEY_LEN],
         issuer_privkey: &C::SecretKey<'_>,
         serial_number: &[u8],
-        not_before: u32,
-        not_after: u32,
-        issuer_ca_id: u64,
-        issuer_fabric_id: u64,
-        is_issuer_rcac: bool,
+        issuer: IssuerRDN,
     ) -> Result<usize, Error> {
         // Validate NOC-specific requirements
-        if cat_ids.len() > 3 {
+        if subject.ca_id.is_some() {
             return Err(ErrorCode::InvalidData.into());
         }
 
-        for &cat_id in cat_ids {
+        if subject.cat_ids.len() > 3 {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        for &cat_id in subject.cat_ids {
             Self::validate_cat_id(cat_id)?;
         }
 
@@ -436,18 +435,12 @@ impl<'a> NocBuilder<'a> {
             crypto,
             CertType::Noc,
             serial_number,
-            not_before,
-            not_after,
+            validity,
             subject_pubkey,
             issuer_privkey,
             Some(issuer_pubkey),
-            Some(node_id),
-            Some(fabric_id),
-            cat_ids,
-            None, // No CA ID for NOC subject
-            Some(issuer_ca_id),
-            Some(issuer_fabric_id),
-            is_issuer_rcac,
+            subject,
+            issuer,
         )
     }
 
@@ -482,16 +475,13 @@ impl<'a> IcacBuilder<'a> {
     ///
     /// # Arguments
     /// * `crypto` - Cryptographic backend
-    /// * `icac_id` - The ICAC identifier
-    /// * `fabric_id` - The fabric identifier
+    /// * `subject` - Subject DN fields (ca_id as ICAC ID, fabric_id)
+    /// * `validity` - Certificate validity period
     /// * `subject_pubkey` - The ICAC's public key
     /// * `rcac_pubkey` - The RCAC's public key
     /// * `rcac_privkey` - The RCAC's signing key
     /// * `serial_number` - Certificate serial number
-    /// * `not_before` - Validity start (Matter epoch seconds)
-    /// * `not_after` - Validity end (0 = no expiry)
-    /// * `rcac_id` - The issuer RCAC's identifier
-    /// * `rcac_fabric_id` - The issuer's fabric identifier
+    /// * `issuer` - Issuer RDN fields (RCAC)
     ///
     /// # Returns
     /// The length of the encoded certificate in the buffer.
@@ -499,33 +489,37 @@ impl<'a> IcacBuilder<'a> {
     pub fn build<C: Crypto>(
         &mut self,
         crypto: &C,
-        icac_id: u64,
-        fabric_id: u64,
+        subject: SubjectDN,
+        validity: Validity,
         subject_pubkey: &[u8; PKC_CANON_PUBLIC_KEY_LEN],
         rcac_pubkey: &[u8; PKC_CANON_PUBLIC_KEY_LEN],
         rcac_privkey: &C::SecretKey<'_>,
         serial_number: &[u8],
-        not_before: u32,
-        not_after: u32,
-        rcac_id: u64,
-        rcac_fabric_id: u64,
+        issuer: IssuerRDN,
     ) -> Result<usize, Error> {
+        // Validate ICAC-specific requirements
+        if subject.node_id.is_some() {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        if !subject.cat_ids.is_empty() {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        if subject.ca_id.is_none() {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
         self.core.build_cert(
             crypto,
             CertType::Icac,
             serial_number,
-            not_before,
-            not_after,
+            validity,
             subject_pubkey,
             rcac_privkey,
             Some(rcac_pubkey),
-            None, // No node ID
-            Some(fabric_id),
-            &[], // No CAT IDs
-            Some(icac_id),
-            Some(rcac_id),
-            Some(rcac_fabric_id),
-            true, // Issuer is always RCAC for ICAC
+            subject,
+            issuer,
         )
     }
 }
@@ -552,44 +546,52 @@ impl<'a> RcacBuilder<'a> {
     ///
     /// # Arguments
     /// * `crypto` - Cryptographic backend
-    /// * `rcac_id` - The RCAC identifier
-    /// * `fabric_id` - The fabric identifier
+    /// * `subject` - Subject DN fields (ca_id as RCAC ID, fabric_id)
+    /// * `validity` - Certificate validity period
     /// * `pubkey` - The RCAC's public key
     /// * `privkey` - The RCAC's signing key (for self-signing)
     /// * `serial_number` - Certificate serial number
-    /// * `not_before` - Validity start (Matter epoch seconds)
-    /// * `not_after` - Validity end (0 = no expiry)
     ///
     /// # Returns
     /// The length of the encoded certificate in the buffer.
-    #[allow(clippy::too_many_arguments)]
     pub fn build<C: Crypto>(
         &mut self,
         crypto: &C,
-        rcac_id: u64,
-        fabric_id: u64,
+        subject: SubjectDN,
+        validity: Validity,
         pubkey: &[u8; PKC_CANON_PUBLIC_KEY_LEN],
         privkey: &C::SecretKey<'_>,
         serial_number: &[u8],
-        not_before: u32,
-        not_after: u32,
     ) -> Result<usize, Error> {
+        // Validate RCAC-specific requirements
+        if subject.node_id.is_some() {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        if !subject.cat_ids.is_empty() {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        if subject.ca_id.is_none() {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        let issuer = IssuerRDN {
+            ca_id: None,     // Self-signed: no issuer CA ID
+            fabric_id: None, // Self-signed: no issuer fabric ID
+            is_rcac: false,  // Not used for RCAC,
+        };
+
         self.core.build_cert(
             crypto,
             CertType::Rcac,
             serial_number,
-            not_before,
-            not_after,
+            validity,
             pubkey,
             privkey,
             None, // Self-signed: no separate issuer key
-            None, // No node ID
-            Some(fabric_id),
-            &[], // No CAT IDs
-            Some(rcac_id),
-            None,  // Self-signed: no issuer CA ID
-            None,  // Self-signed: no issuer fabric ID
-            false, // Not used for RCAC
+            subject,
+            issuer,
         )
     }
 }
@@ -648,18 +650,28 @@ mod tests {
         let not_before = 0u32; // Matter epoch start
         let not_after = 0u32; // No expiry
 
+        let subject = SubjectDN {
+            node_id: None,
+            fabric_id: Some(fabric_id),
+            cat_ids: &[],
+            ca_id: Some(rcac_id),
+        };
+
+        let validity = Validity {
+            not_before,
+            not_after,
+        };
+
         let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
         let mut builder = RcacBuilder::new(&mut cert_buf);
 
         let len = unwrap!(builder.build(
             &crypto,
-            rcac_id,
-            fabric_id,
+            subject,
+            validity,
             rcac_pubkey.access(),
             &rcac_secret_key,
             serial_number,
-            not_before,
-            not_after,
         ));
 
         assert!(len > 100);
@@ -694,21 +706,36 @@ mod tests {
         let not_before = 0u32;
         let not_after = 0u32;
 
+        let subject = SubjectDN {
+            node_id: None,
+            fabric_id: Some(fabric_id),
+            cat_ids: &[],
+            ca_id: Some(icac_id),
+        };
+
+        let validity = Validity {
+            not_before,
+            not_after,
+        };
+
+        let issuer = IssuerRDN {
+            ca_id: Some(rcac_id),
+            fabric_id: Some(fabric_id),
+            is_rcac: true,
+        };
+
         let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
         let mut builder = IcacBuilder::new(&mut cert_buf);
 
         let len = unwrap!(builder.build(
             &crypto,
-            icac_id,
-            fabric_id,
+            subject,
+            validity,
             icac_pubkey.access(),
             rcac_pubkey.access(),
             &rcac_secret_key,
             serial_number,
-            not_before,
-            not_after,
-            rcac_id,
-            fabric_id,
+            issuer,
         ));
 
         assert!(len > 100);
@@ -743,23 +770,36 @@ mod tests {
         let not_before = 0u32;
         let not_after = 0u32;
 
+        let subject = SubjectDN {
+            node_id: Some(node_id),
+            fabric_id: Some(fabric_id),
+            cat_ids: &[], // No CAT IDs
+            ca_id: None,
+        };
+
+        let validity = Validity {
+            not_before,
+            not_after,
+        };
+
+        let issuer = IssuerRDN {
+            ca_id: Some(rcac_id),
+            fabric_id: Some(fabric_id),
+            is_rcac: true, // Issuer is RCAC
+        };
+
         let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
         let mut builder = NocBuilder::new(&mut cert_buf);
 
         let len = unwrap!(builder.build(
             &crypto,
-            node_id,
-            fabric_id,
-            &[], // No CAT IDs
+            subject,
+            validity,
             noc_pubkey.access(),
             rcac_pubkey.access(),
             &rcac_secret_key,
             serial_number,
-            not_before,
-            not_after,
-            rcac_id,
-            fabric_id,
-            true, // Issuer is RCAC
+            issuer,
         ));
 
         assert!(len > 100);
@@ -795,23 +835,36 @@ mod tests {
         let not_before = 0u32;
         let not_after = 0u32;
 
+        let subject = SubjectDN {
+            node_id: Some(node_id),
+            fabric_id: Some(fabric_id),
+            cat_ids,
+            ca_id: None,
+        };
+
+        let validity = Validity {
+            not_before,
+            not_after,
+        };
+
+        let issuer = IssuerRDN {
+            ca_id: Some(rcac_id),
+            fabric_id: Some(fabric_id),
+            is_rcac: true,
+        };
+
         let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
         let mut builder = NocBuilder::new(&mut cert_buf);
 
         let len = unwrap!(builder.build(
             &crypto,
-            node_id,
-            fabric_id,
-            cat_ids,
+            subject,
+            validity,
             noc_pubkey.access(),
             rcac_pubkey.access(),
             &rcac_secret_key,
             serial_number,
-            not_before,
-            not_after,
-            rcac_id,
-            fabric_id,
-            true,
+            issuer,
         ));
 
         assert!(len > 100);
@@ -846,23 +899,36 @@ mod tests {
         let not_before = 0u32;
         let not_after = 0u32;
 
+        let subject = SubjectDN {
+            node_id: Some(node_id),
+            fabric_id: Some(fabric_id),
+            cat_ids: &[], // No CAT IDs
+            ca_id: None,
+        };
+
+        let validity = Validity {
+            not_before,
+            not_after,
+        };
+
+        let issuer = IssuerRDN {
+            ca_id: Some(icac_id),
+            fabric_id: Some(fabric_id),
+            is_rcac: false, // Issuer is ICAC, not RCAC
+        };
+
         let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
         let mut builder = NocBuilder::new(&mut cert_buf);
 
         let len = unwrap!(builder.build(
             &crypto,
-            node_id,
-            fabric_id,
-            &[], // No CAT IDs
+            subject,
+            validity,
             noc_pubkey.access(),
             icac_pubkey.access(),
             &icac_secret_key,
             serial_number,
-            not_before,
-            not_after,
-            icac_id,
-            fabric_id,
-            false, // Issuer is ICAC, not RCAC
+            issuer,
         ));
 
         assert!(len > 100);
@@ -889,17 +955,27 @@ mod tests {
             .unwrap()
             .write_canon(&mut rcac_pubkey));
 
+        let rcac_subject = SubjectDN {
+            node_id: None,
+            fabric_id: Some(fabric_id),
+            cat_ids: &[],
+            ca_id: Some(rcac_id),
+        };
+
+        let validity = Validity {
+            not_before,
+            not_after,
+        };
+
         let mut rcac_buf = [0u8; MAX_CERT_TLV_LEN];
         let mut rcac_builder = RcacBuilder::new(&mut rcac_buf);
         let rcac_len = unwrap!(rcac_builder.build(
             &crypto,
-            rcac_id,
-            fabric_id,
+            rcac_subject,
+            validity,
             rcac_pubkey.access(),
             &rcac_secret_key,
             &[0x01],
-            not_before,
-            not_after,
         ));
         assert!(rcac_len > 0);
 
@@ -911,20 +987,30 @@ mod tests {
             .unwrap()
             .write_canon(&mut icac_pubkey));
 
+        let icac_subject = SubjectDN {
+            node_id: None,
+            fabric_id: Some(fabric_id),
+            cat_ids: &[],
+            ca_id: Some(icac_id),
+        };
+
+        let icac_issuer = IssuerRDN {
+            ca_id: Some(rcac_id),
+            fabric_id: Some(fabric_id),
+            is_rcac: true,
+        };
+
         let mut icac_buf = [0u8; MAX_CERT_TLV_LEN];
         let mut icac_builder = IcacBuilder::new(&mut icac_buf);
         let icac_len = unwrap!(icac_builder.build(
             &crypto,
-            icac_id,
-            fabric_id,
+            icac_subject,
+            validity,
             icac_pubkey.access(),
             rcac_pubkey.access(),
             &rcac_secret_key,
             &[0x02],
-            not_before,
-            not_after,
-            rcac_id,
-            fabric_id,
+            icac_issuer,
         ));
         assert!(icac_len > 0);
 
@@ -936,22 +1022,31 @@ mod tests {
             .unwrap()
             .write_canon(&mut noc_pubkey));
 
+        let noc_subject = SubjectDN {
+            node_id: Some(node_id),
+            fabric_id: Some(fabric_id),
+            cat_ids: &[],
+            ca_id: None,
+        };
+
+        let noc_issuer = IssuerRDN {
+            ca_id: Some(icac_id),
+            fabric_id: Some(fabric_id),
+            is_rcac: false, // Issuer is ICAC
+        };
+
         let mut noc_buf = [0u8; MAX_CERT_TLV_LEN];
         let mut noc_builder = NocBuilder::new(&mut noc_buf);
+
         let noc_len = unwrap!(noc_builder.build(
             &crypto,
-            node_id,
-            fabric_id,
-            &[],
+            noc_subject,
+            validity,
             noc_pubkey.access(),
             icac_pubkey.access(),
             &icac_secret_key,
             &[0x03],
-            not_before,
-            not_after,
-            icac_id,
-            fabric_id,
-            false, // Issuer is ICAC
+            noc_issuer,
         ));
         assert!(noc_len > 0);
 
@@ -983,23 +1078,36 @@ mod tests {
         // Too many CAT IDs (max is 3)
         let cat_ids = &[0x00011111u32, 0x00022222u32, 0x00033333u32, 0x00044444u32];
 
+        let subject = SubjectDN {
+            node_id: Some(0x1234u64),
+            fabric_id: Some(0x0001u64),
+            cat_ids,
+            ca_id: None,
+        };
+
+        let validity = Validity {
+            not_before: 0u32,
+            not_after: 0u32,
+        };
+
+        let issuer = IssuerRDN {
+            ca_id: Some(0x5678u64),
+            fabric_id: Some(0x0001u64),
+            is_rcac: true,
+        };
+
         let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
         let mut builder = NocBuilder::new(&mut cert_buf);
 
         let result = builder.build(
             &crypto,
-            0x1234u64,
-            0x0001u64,
-            cat_ids,
+            subject,
+            validity,
             noc_pubkey.access(),
             rcac_pubkey.access(),
             &rcac_secret_key,
             &[0x01],
-            0u32,
-            0u32,
-            0x5678u64,
-            0x0001u64,
-            true,
+            issuer,
         );
 
         assert!(result.is_err());
@@ -1027,23 +1135,36 @@ mod tests {
         // Invalid CAT ID (version = 0)
         let cat_ids = &[0x00001234u32];
 
+        let subject = SubjectDN {
+            node_id: Some(0x1234u64),
+            fabric_id: Some(0x0001u64),
+            cat_ids,
+            ca_id: None,
+        };
+
+        let validity = Validity {
+            not_before: 0u32,
+            not_after: 0u32,
+        };
+
+        let issuer = IssuerRDN {
+            ca_id: Some(0x5678u64),
+            fabric_id: Some(0x0001u64),
+            is_rcac: true,
+        };
+
         let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
         let mut builder = NocBuilder::new(&mut cert_buf);
 
         let result = builder.build(
             &crypto,
-            0x1234u64,
-            0x0001u64,
-            cat_ids,
+            subject,
+            validity,
             noc_pubkey.access(),
             rcac_pubkey.access(),
             &rcac_secret_key,
             &[0x01],
-            0u32,
-            0u32,
-            0x5678u64,
-            0x0001u64,
-            true,
+            issuer,
         );
 
         assert!(result.is_err());
@@ -1067,18 +1188,28 @@ mod tests {
         // 10 years later
         let not_after = not_before + (10 * 365 * 24 * 60 * 60);
 
+        let subject = SubjectDN {
+            node_id: None,
+            fabric_id: Some(0x0000000000000001u64),
+            cat_ids: &[],
+            ca_id: Some(0x1234567890u64),
+        };
+
+        let validity = Validity {
+            not_before,
+            not_after,
+        };
+
         let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
         let mut builder = RcacBuilder::new(&mut cert_buf);
 
         let len = unwrap!(builder.build(
             &crypto,
-            0x1234567890u64,
-            0x0000000000000001u64,
+            subject,
+            validity,
             rcac_pubkey.access(),
             &rcac_secret_key,
             &[0x01],
-            not_before,
-            not_after,
         ));
 
         assert!(len > 100);

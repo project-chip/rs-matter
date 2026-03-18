@@ -109,7 +109,7 @@ struct CertificationRequestInfo<'a> {
     pub attributes: AnyRef<'a>,
 }
 
-#[allow(unused)]
+#[expect(unused)]
 struct SubjectPublicKeyInfo<'a> {
     /// Algorithm oid verified id-ecPublicKey with prime256v1 curve oid
     pub algorithm: AlgorithmIdentifier<'a>,
@@ -131,7 +131,7 @@ impl<'a> DecodeValue<'a> for SubjectPublicKeyInfo<'a> {
 
             // Validate parameters contain prime256v1 OID
             if let Some(params) = &algorithm.parameters {
-                let mut buf = [0u8; 16]; // 16 bytes for OID should be plenty
+                let mut buf = [0u8; ObjectIdentifier::MAX_SIZE];
                 let der_bytes = params
                     .encode_to_slice(&mut buf)
                     .map_err(|_| der::Tag::ObjectIdentifier.value_error())?;

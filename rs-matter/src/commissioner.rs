@@ -42,6 +42,9 @@
 //! ```ignore
 //! use rs_matter::commissioner::FabricCredentials;
 //!
+//! // Choose a unique fabric ID for your fabric
+//! let fabric_id = 0x0000_0000_0000_0001u64;
+//!
 //! // Create credentials for a new fabric
 //! let mut fabric_creds = FabricCredentials::new(&crypto, fabric_id)?;
 //!
