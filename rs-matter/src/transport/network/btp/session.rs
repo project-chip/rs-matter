@@ -502,9 +502,9 @@ impl Session {
 
     pub fn process_rx(
         &mut self,
+        gatt_mtu: Option<u16>,
         address: BtAddr,
         data: &[u8],
-        gatt_mtu: Option<u16>,
     ) -> Result<(), Error> {
         let mut iter = data.iter();
 
@@ -514,7 +514,7 @@ impl Session {
             if self.initiator {
                 self.process_rx_handshake_resp(address, data)
             } else {
-                self.process_rx_handshake_req(address, data, gatt_mtu)
+                self.process_rx_handshake_req(gatt_mtu, address, data)
             }
         } else {
             self.process_rx_data(data)
@@ -544,9 +544,9 @@ impl Session {
     /// Process an incoming BTP segment of type Handshake Request, updating the state of the session accordingly.
     fn process_rx_handshake_req(
         &mut self,
+        gatt_mtu: Option<u16>,
         address: BtAddr,
         data: &[u8],
-        gatt_mtu: Option<u16>,
     ) -> Result<(), Error> {
         let mut iter = data.iter();
 
