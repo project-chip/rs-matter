@@ -55,7 +55,7 @@ use embassy_executor::Executor;
 #[cfg(target_arch = "riscv32")]
 use esp_rtos::embassy::Executor;
 
-use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex, RawMutex};
+use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 
 use rs_matter::crypto::backend::rustcrypto::RustCrypto;
 use rs_matter::crypto::{Crypto, RngCore, WeakTestOnlyRand};
@@ -85,12 +85,10 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
-use rs_matter::transport::network::btp::{
-    AdvData, Btp, BtpContext, GattPeripheral, GattPeripheralEvent,
-};
+use rs_matter::transport::network::btp::Btp;
 use rs_matter::transport::network::mdns::builtin::{BuiltinMdnsResponder, Host};
 use rs_matter::transport::network::{
-    Address, BtAddr, ChainedNetwork, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend,
+    Address, ChainedNetwork, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend,
 };
 use rs_matter::utils::epoch::dummy_epoch;
 use rs_matter::utils::init::{init, Init, InitMaybeUninit};
@@ -162,7 +160,7 @@ struct MatterStack<'a, M: RawMutex> {
     events: Events<DEFAULT_BYTES_PER_BUF, M>,
     networks: WifiNetworks<3, M>,
     net_ctl_state: NetCtlStateMutex<M>,
-    btp_context: BtpContext<CriticalSectionRawMutex>, // Need to be shareable across threads, for now
+    btp: Btp,
     wireless_mgr_buffer: MaybeUninit<[u8; MAX_CREDS_SIZE]>,
     // We don't run a persistence task, but emulate its typical memory consumnption
     psm_buffer: MaybeUninit<[u8; 4096]>,
@@ -184,7 +182,7 @@ impl<'a, M: RawMutex> MatterStack<'a, M> {
             events <- Events::init(dummy_epoch),
             networks <- WifiNetworks::init(),
             net_ctl_state <- NetCtlState::init_with_mutex(),
-            btp_context <- BtpContext::init(),
+            btp <- Btp::init(),
             wireless_mgr_buffer: MaybeUninit::zeroed(),
             psm_buffer: MaybeUninit::zeroed(),
         })
@@ -196,9 +194,7 @@ impl<'a, M: RawMutex> MatterStack<'a, M> {
 
 type AppNetCtl<'a> = NetCtlWithStatusImpl<'a, NoopRawMutex, FakeWifi>;
 type AppWirelessMgr<'a> = WirelessMgr<'a, &'a WifiNetworks<3, NoopRawMutex>, &'a AppNetCtl<'a>>;
-type AppBtp<'a> =
-    Btp<&'a BtpContext<CriticalSectionRawMutex>, CriticalSectionRawMutex, FakeGattPeripheral>;
-type AppTransport<'a> = ChainedNetwork<FakeUdp, &'a AppBtp<'a>, fn(&Address) -> bool>;
+type AppTransport<'a> = ChainedNetwork<FakeUdp, &'a Btp, fn(&Address) -> bool>;
 type AppHandler<'a> = handler_chain_type!(
     EpClMatcher => on_off::HandlerAsyncAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>,
     EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>
@@ -284,11 +280,7 @@ fn main() -> ! {
         size_of_val(&stack.net_ctl_state),
         &mut stack_total,
     );
-    report_size(
-        "BTP context",
-        size_of_val(&stack.btp_context),
-        &mut stack_total,
-    );
+    report_size("BTP", size_of_val(&stack.btp), &mut stack_total);
     report_size(
         "Wireless mgr buffer",
         size_of_val(&stack.wireless_mgr_buffer),
@@ -306,12 +298,7 @@ fn main() -> ! {
     // Now create all types that do borrow the stack
     //
 
-    // The BTP transport impl with a fake GATT peripheral
-    let btp = mk_static!(AppBtp, Btp::new(FakeGattPeripheral, &stack.btp_context));
-
     let mut aux_total = 0;
-
-    report_size("BTP transport", size_of_val(&*btp), &mut aux_total);
 
     // The Wifi network controller with a fake underlying Wifi implementation
     let net_ctl = &*mk_static!(
@@ -379,7 +366,7 @@ fn main() -> ! {
 
     let transport_send = mk_static!(
         AppTransport<'static>,
-        ChainedNetwork::new(Address::is_udp, FakeUdp, &*btp)
+        ChainedNetwork::new(Address::is_udp, FakeUdp, &stack.btp)
     );
 
     report_size(
@@ -390,7 +377,7 @@ fn main() -> ! {
 
     let transport_recv = mk_static!(
         AppTransport<'static>,
-        ChainedNetwork::new(Address::is_udp, FakeUdp, &*btp)
+        ChainedNetwork::new(Address::is_udp, FakeUdp, &stack.btp)
     );
 
     report_size(
@@ -433,7 +420,11 @@ fn main() -> ! {
         size_of_val(&mdns_task_fut(mdns)),
         &mut fut_total,
     );
-    report_size("BTP task", size_of_val(&btp_task_fut(btp)), &mut fut_total);
+    report_size(
+        "BTP task",
+        size_of_val(&btp_task_fut(&stack.btp)),
+        &mut fut_total,
+    );
     report_size(
         "Wifi task",
         size_of_val(&wifi_task_fut(wifi_mgr)),
@@ -481,7 +472,7 @@ fn main() -> ! {
         unwrap!(spawner.spawn(respond_task(responder, 0)));
         unwrap!(spawner.spawn(dm_task(dm)));
         unwrap!(spawner.spawn(mdns_task(mdns)));
-        unwrap!(spawner.spawn(btp_task(btp)));
+        unwrap!(spawner.spawn(btp_task(&stack.btp)));
         unwrap!(spawner.spawn(wifi_task(wifi_mgr)));
         unwrap!(spawner.spawn(transport_task(
             &stack.matter,
@@ -556,12 +547,12 @@ async fn mdns_task(mdns: &'static mut BuiltinMdnsResponder<'static, &'static App
 }
 
 #[inline(always)]
-fn btp_task_fut<'a>(btp: &'a AppBtp<'static>) -> impl Future<Output = Result<(), Error>> + 'a {
-    btp.run("MT", &TEST_DEV_DET, TEST_DEV_COMM.discriminator)
+fn btp_task_fut<'a>(_btp: &'a Btp) -> impl Future<Output = Result<(), Error>> + 'a {
+    core::future::pending()
 }
 
 #[embassy_executor::task]
-async fn btp_task(btp: &'static AppBtp<'static>) {
+async fn btp_task(btp: &'static Btp) {
     info!("Starting BTP task...");
     unwrap!(btp_task_fut(btp).await);
 }
@@ -752,26 +743,5 @@ impl WifiDiag for FakeWifi {
 
     fn rssi(&self) -> Result<Nullable<i8>, Error> {
         Ok(Nullable::none())
-    }
-}
-
-/// A fake BTP GATT Peripheral implementation
-struct FakeGattPeripheral;
-
-impl GattPeripheral for FakeGattPeripheral {
-    fn run<F>(
-        &self,
-        _service_name: &str,
-        _adv_data: &AdvData,
-        _callback: F,
-    ) -> impl Future<Output = Result<(), Error>>
-    where
-        F: Fn(GattPeripheralEvent) + Send + Sync + Clone + 'static,
-    {
-        core::future::pending()
-    }
-
-    fn indicate(&self, _data: &[u8], _address: BtAddr) -> impl Future<Output = Result<(), Error>> {
-        core::future::pending()
     }
 }
