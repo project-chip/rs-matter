@@ -18,7 +18,7 @@
 use core::{mem::MaybeUninit, num::NonZeroU8};
 
 use crate::alloc;
-use crate::cert::CertRef;
+use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
 use crate::crypto::{CanonPkcSignature, CanonPkcSignatureRef, Crypto, Hash, AEAD_CANON_KEY_LEN};
 use crate::error::{Error, ErrorCode};
 use crate::sc::case::casep::{CaseP, CaseRandom, CaseResumptionId, CaseSessionKeys};
@@ -31,6 +31,9 @@ use crate::transport::session::{NocCatIds, ReservedSession, SessionMode};
 use crate::utils::init::{init, Init, InitMaybeUninit};
 
 mod casep;
+
+// Two certificates (NOC and ICAC), plus ECDSA etc -> approx 950b, doing 1024 to be safe
+const CASE_LARGE_BUF_SIZE: usize = MAX_CERT_TLV_LEN * 2 + 224;
 
 /// Sigma1 Request structure
 #[derive(FromTLV, Debug)]
