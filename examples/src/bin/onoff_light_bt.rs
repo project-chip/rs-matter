@@ -34,7 +34,6 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use async_compat::Compat;
 use embassy_futures::select::{select, select4};
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -66,7 +65,7 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter::transport::network::btp::{bluer, bluez, AdvData, Btp};
+use rs_matter::transport::network::btp::{bluez, AdvData, Btp};
 use rs_matter::transport::network::wifi::nm::NetMgrCtl;
 use rs_matter::transport::network::wifi::wpa_supp::unix::DhClientCtl;
 use rs_matter::transport::network::wifi::wpa_supp::WpaSuppCtl;
@@ -201,12 +200,14 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
 
         // The BTP transport impl
         let btp = Btp::new();
+        // BlueZ seems to report an incorrect GATT MTU, so we need to enable the relaxed MTU negotiation mode to be able to connect to BlueZ peripherals with MTU bigger than the minimum one
+        btp.set_relaxed_mtu_nego(true);
         let adv_data = AdvData::new(&TEST_DEV_DET, TEST_DEV_COMM.discriminator);
         let mut bluetooth = pin!(bluez::run_peripheral(
             connection, None, "MT", &adv_data, &btp
         ));
         // Here's how to run with the BlueR peripheral instead:
-        // let mut bluetooth = pin!(Compat::new(bluer::run_peripheral(
+        // let mut bluetooth = pin!(async_compat::Compat::new(rs_matter::transport::network::btp::bluer::run_peripheral(
         //     None, "MT", &adv_data, &btp
         // )));
 

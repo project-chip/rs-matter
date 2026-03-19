@@ -111,6 +111,13 @@ impl Btp {
         });
     }
 
+    /// Set the relaxed MTU negotiation mode, which changes the behavior of the MTU negotiation in the handshake phase
+    /// when there is a mismatch between the GATT MTU and the peer-reported MTU.
+    pub fn set_relaxed_mtu_nego(&self, relaxed_mtu_nego: bool) {
+        self.inner
+            .lock(|inner| inner.borrow_mut().set_relaxed_mtu_nego(relaxed_mtu_nego));
+    }
+
     /// Set the BTP timeouts, by configuring the ACK timeout and the connection idle timeout.
     ///
     /// Only used by the unit tests.
@@ -344,6 +351,12 @@ impl BtpInner {
         self.outgoing_sdu.reset();
         self.ack_timeout_secs = BTP_ACK_TIMEOUT_SECS;
         self.conn_idle_timeout_secs = BTP_CONN_IDLE_TIMEOUT_SECS;
+    }
+
+    /// Set the relaxed MTU negotiation mode, which changes the behavior of the MTU negotiation in the handshake phase
+    /// when there is a mismatch between the GATT MTU and the peer-reported MTU.
+    fn set_relaxed_mtu_nego(&mut self, relaxed_mtu_nego: bool) {
+        self.session.set_relaxed_mtu_nego(relaxed_mtu_nego);
     }
 
     /// Set the BTP timeouts, by configuring the ACK timeout and the connection idle timeout.
