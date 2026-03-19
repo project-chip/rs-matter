@@ -76,6 +76,7 @@ pub struct HandlerInvoker<'a, 'b, C, D, B> {
     crypto: C,
     handler: D,
     buffers: B,
+    group_store: Option<&'a dyn crate::group_keys::GroupStore>,
 }
 
 impl<'a, 'b, C, D, B> HandlerInvoker<'a, 'b, C, D, B>
@@ -84,17 +85,28 @@ where
     D: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
-    pub const fn new(exchange: &'b mut Exchange<'a>, crypto: C, handler: D, buffers: B) -> Self {
+    pub const fn new(
+        exchange: &'b mut Exchange<'a>,
+        crypto: C,
+        handler: D,
+        buffers: B,
+        group_store: Option<&'a dyn crate::group_keys::GroupStore>,
+    ) -> Self {
         Self {
             exchange,
             crypto,
             handler,
             buffers,
+            group_store,
         }
     }
 
     pub fn exchange(&mut self) -> &mut Exchange<'a> {
         self.exchange
+    }
+
+    pub fn group_store(&self) -> Option<&'a dyn crate::group_keys::GroupStore> {
+        self.group_store
     }
 
     pub async fn process_read<T: TLVWrite>(

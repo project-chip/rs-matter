@@ -57,7 +57,7 @@ mod types;
 ///
 /// The write requests are first wildcard-expanded, and these many number of
 /// write requests per-transaction will be supported.
-const MAX_WRITE_ATTRS_IN_ONE_TRANS: usize = 7;
+const MAX_WRITE_ATTRS_IN_ONE_TRANS: usize = 16;
 
 pub type IMBuffer = heapless::Vec<u8, MAX_EXCHANGE_RX_BUF_SIZE>;
 
@@ -144,7 +144,11 @@ where
     }
 
     /// Answer a responding exchange using the `DataModelHandler` instance wrapped by this exchange handler.
-    pub async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    pub async fn handle<'b>(
+        &self,
+        exchange: &mut Exchange<'b>,
+        group_store: Option<&'b dyn crate::group_keys::GroupStore>,
+    ) -> Result<(), Error> {
         let fetch_meta = |exchange: &mut Exchange| {
             let meta = exchange.rx()?.meta();
             if meta.proto_id != PROTO_ID_INTERACTION_MODEL {
@@ -158,9 +162,11 @@ where
             exchange.recv_fetch().await?;
         }
 
+        let is_groupcast = exchange.is_groupcast()?;
+
         let mut meta = fetch_meta(exchange)?;
 
-        let timeout_instant = if meta.opcode::<OpCode>()? == OpCode::TimedRequest {
+        let timeout_instant = if !is_groupcast && meta.opcode::<OpCode>()? == OpCode::TimedRequest {
             let timeout = self.timed(exchange).await?;
 
             exchange.recv_fetch().await?;
@@ -175,12 +181,27 @@ where
         // before read and subscribe. This is probably not allowed.
 
         match meta.opcode::<OpCode>()? {
-            OpCode::ReadRequest => self.read(exchange).await?,
-            OpCode::WriteRequest => self.write(exchange, timeout_instant).await?,
-            OpCode::InvokeRequest => self.invoke(exchange, timeout_instant).await?,
-            OpCode::SubscribeRequest => self.subscribe(exchange).await?,
-            OpCode::TimedRequest => {
+            OpCode::ReadRequest if is_groupcast => {
+                error!("Received a groupcast message for opcode: ReadRequest")
+            }
+            OpCode::ReadRequest if !is_groupcast => self.read(exchange, group_store).await?,
+            OpCode::WriteRequest => {
+                self.write(exchange, timeout_instant, is_groupcast, group_store)
+                    .await?
+            }
+            OpCode::InvokeRequest => {
+                self.invoke(exchange, timeout_instant, is_groupcast, group_store)
+                    .await?
+            }
+            OpCode::SubscribeRequest if is_groupcast => {
+                error!("Received a groupcast message for opcode: SubscribeRequest")
+            }
+            OpCode::SubscribeRequest if !is_groupcast => self.subscribe(exchange).await?,
+            OpCode::TimedRequest if !is_groupcast => {
                 Self::send_status(exchange, IMStatusCode::InvalidAction).await?
+            }
+            _ if is_groupcast => {
+                // Silently drop unsupported opcodes for group messages
             }
             opcode => {
                 error!("Invalid opcode: {:?}", opcode);
@@ -188,14 +209,20 @@ where
             }
         }
 
-        exchange.acknowledge().await?;
+        if !is_groupcast {
+            exchange.acknowledge().await?;
+        }
         exchange.matter().notify_persist();
 
         Ok(())
     }
 
     /// Respond to a `ReadReq` request.
-    async fn read(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    async fn read<'b>(
+        &self,
+        exchange: &mut Exchange<'b>,
+        group_store: Option<&'b dyn crate::group_keys::GroupStore>,
+    ) -> Result<(), Error> {
         let Some((mut tx, rx)) = self.buffers(exchange).await? else {
             return Ok(());
         };
@@ -214,7 +241,13 @@ where
             &req,
             &node,
             None,
-            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
+            HandlerInvoker::new(
+                exchange,
+                &self.crypto,
+                &self.handler,
+                &self.buffers,
+                group_store,
+            ),
             EventReader::new(0),
             self.events,
         );
@@ -229,10 +262,12 @@ where
     /// Arguments:
     /// - `exchange` - the exchange to respond to
     /// - `timeout_instant` - an optional timeout instant, if the request is a timed request
-    async fn write(
+    async fn write<'b>(
         &self,
-        exchange: &mut Exchange<'_>,
+        exchange: &mut Exchange<'b>,
         timeout_instant: Option<Duration>,
+        is_groupcast: bool,
+        group_store: Option<&'b dyn crate::group_keys::GroupStore>,
     ) -> Result<(), Error> {
         while exchange.rx().is_ok() {
             // Loop while there are more write request chunks to process
@@ -258,10 +293,16 @@ where
             let mut resp = WriteResponder::new(
                 &req,
                 &node,
-                HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
+                HandlerInvoker::new(
+                    exchange,
+                    &self.crypto,
+                    &self.handler,
+                    &self.buffers,
+                    group_store,
+                ),
             );
 
-            resp.respond(self, &mut wb).await?;
+            resp.respond(self, &mut wb, is_groupcast).await?;
 
             if req.more_chunks()? {
                 // This write request is just one of the chunks, so we need to wait and process
@@ -278,10 +319,12 @@ where
     /// Arguments:
     /// - `exchange` - the exchange to respond to
     /// - `timeout_instant` - an optional timeout instant, if the request is a timed request
-    async fn invoke(
+    async fn invoke<'b>(
         &self,
-        exchange: &mut Exchange<'_>,
+        exchange: &mut Exchange<'b>,
         timeout_instant: Option<Duration>,
+        is_groupcast: bool,
+        group_store: Option<&'b dyn crate::group_keys::GroupStore>,
     ) -> Result<(), Error> {
         let Some((mut tx, rx)) = self.buffers(exchange).await? else {
             return Ok(());
@@ -304,10 +347,16 @@ where
         let mut resp = InvokeResponder::new(
             &req,
             &node,
-            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
+            HandlerInvoker::new(
+                exchange,
+                &self.crypto,
+                &self.handler,
+                &self.buffers,
+                group_store,
+            ),
         );
 
-        resp.respond(self, &mut wb, false).await
+        resp.respond(self, &mut wb, is_groupcast).await
     }
 
     /// Respond to a `SubscribeReq` request by priming the subscription (i.e. doing an initial data report)
@@ -689,7 +738,7 @@ where
             &req,
             &node,
             Some(id),
-            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
+            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers, None),
             EventReader::new(min_event_number),
             self.events,
         );
@@ -818,8 +867,12 @@ where
     T: DataModelHandler,
     B: BufferAccess<IMBuffer>,
 {
-    fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
-        DataModel::handle(self, exchange)
+    fn handle<'a>(
+        &self,
+        exchange: &mut Exchange<'a>,
+        group_store: Option<&'a dyn crate::group_keys::GroupStore>,
+    ) -> impl Future<Output = Result<(), Error>> {
+        DataModel::handle(self, exchange, group_store)
     }
 }
 
@@ -900,7 +953,8 @@ where
         wb: &mut WriteBuf<'_>,
         suppress_last_resp: bool,
     ) -> Result<bool, Error> {
-        let accessor = self.invoker.exchange().accessor()?;
+        let group_store = self.invoker.group_store();
+        let accessor = self.invoker.exchange().accessor(group_store)?;
 
         self.start_reply(wb)?;
 
@@ -1241,8 +1295,10 @@ where
         &mut self,
         notify: &dyn ChangeNotify,
         wb: &mut WriteBuf<'_>,
+        suppress_resp: bool,
     ) -> Result<(), Error> {
-        let accessor = self.invoker.exchange().accessor()?;
+        let group_store = self.invoker.group_store();
+        let accessor = self.invoker.exchange().accessor(group_store)?;
 
         wb.reset();
 
@@ -1264,6 +1320,10 @@ where
 
         for item in write_attrs {
             self.invoker.process_write(&item?, &mut *wb, notify).await?;
+        }
+
+        if suppress_resp {
+            return Ok(());
         }
 
         wb.end_container()?;
@@ -1331,12 +1391,17 @@ where
             wb.start_array(&TLVTag::Context(InvRespTag::InvokeResponses as u8))?;
         }
 
-        let accessor = self.invoker.exchange().accessor()?;
+        let group_store = self.invoker.group_store();
+        let accessor = self.invoker.exchange().accessor(group_store)?;
 
         for item in self.node.invoke(self.req, &accessor)? {
             self.invoker
                 .process_invoke(&item?, &mut *wb, notify)
                 .await?;
+        }
+
+        if suppress_resp {
+            return Ok(());
         }
 
         if has_requests {

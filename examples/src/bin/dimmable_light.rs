@@ -58,10 +58,11 @@ use rs_matter::dm::{
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{Psm, NO_NETWORKS};
+use rs_matter::persist::{Psm, NO_GROUPS, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
+use rs_matter::transport::network::NoNetwork;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
@@ -189,12 +190,12 @@ fn run() -> Result<(), Error> {
     info!(
         "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
         core::mem::size_of_val(&responder),
-        core::mem::size_of_val(&responder.run::<4, 4>())
+        core::mem::size_of_val(&responder.run::<4, 4>(None))
     );
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-    let mut respond = pin!(responder.run::<4, 4>());
+    let mut respond = pin!(responder.run::<4, 4>(None));
 
     // Run the background job of the data model
     let mut dm_job = pin!(dm.run());
@@ -203,13 +204,14 @@ fn run() -> Result<(), Error> {
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket)),
+        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket, Some(&socket), None)),
         core::mem::size_of_val(&mdns::run_mdns(matter, &crypto, &dm))
     );
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto, &dm));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket));
+    let mut transport =
+        pin!(matter.run::<_, _, _, NoNetwork>(&crypto, &socket, &socket, None, None));
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
@@ -221,11 +223,11 @@ fn run() -> Result<(), Error> {
     info!(
         "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B, Persist path={}",
         core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS, Some(events))),
+        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS, Some(events), NO_GROUPS)),
         path.as_path().to_str().unwrap_or("none")
     );
 
-    psm.load(&path, matter, NO_NETWORKS, Some(events))?;
+    psm.load(&path, matter, NO_NETWORKS, Some(events), NO_GROUPS)?;
 
     // We need to always print the QR text, because the test runner expects it to be printed
     // even if the device is already commissioned
@@ -240,7 +242,7 @@ fn run() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
     }
 
-    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, Some(events)));
+    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, Some(events), NO_GROUPS));
 
     // Listen to SIGTERM because at the end of the test we'll receive it
     let mut term_signal = Signals::new([Signal::Term])?;
@@ -294,6 +296,7 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
             endpoints::with_sys(
                 &false,
                 rand,
+                None,
                 EmptyHandler
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),

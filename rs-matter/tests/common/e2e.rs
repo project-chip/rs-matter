@@ -1,5 +1,6 @@
 /*
  *
+ *
  *    Copyright (c) 2020-2022 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +33,7 @@ use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{AsyncHandler, AsyncMetadata, Privilege};
 use rs_matter::dm::{DataModel, IMBuffer};
 use rs_matter::error::Error;
+use rs_matter::group_keys::MatterGroupStore;
 use rs_matter::respond::Responder;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{
@@ -82,6 +84,7 @@ pub struct E2eRunner<C> {
     pub subscriptions: Subscriptions<3>,
     pub events: Events<E2E_EVENTS_BUF_SIZE>,
     cat_ids: NocCatIds,
+    group_store: MatterGroupStore<4>,
 }
 
 impl<C: Crypto> E2eRunner<C> {
@@ -96,14 +99,24 @@ impl<C: Crypto> E2eRunner<C> {
     /// Create a new runner with the given category IDs.
     pub fn new(crypto: C, cat_ids: NocCatIds) -> E2eRunner<C> {
         let epoch: Epoch = || core::time::Duration::from_millis(1337);
+
+        // Create a MatterGroupStore for tests that may need group operations
+        // For tests that don't use groups, this will just not be used
+        let group_store = MatterGroupStore::<4>::new();
+
+        let matter = Self::new_matter();
+
+        let matter_client = Self::new_matter();
+
         E2eRunner {
-            matter: Self::new_matter(),
-            matter_client: Self::new_matter(),
+            matter,
+            matter_client,
             crypto,
             buffers: PooledBuffers::new(0),
             subscriptions: Subscriptions::new(),
             events: Events::new(epoch),
             cat_ids,
+            group_store,
         }
     }
 
@@ -195,13 +208,17 @@ impl<C: Crypto> E2eRunner<C> {
                 &self.crypto,
                 NetworkSendImpl(send_local),
                 NetworkReceiveImpl(recv_local),
+                &matter_client.fabric_mgr,
+                Some(&self.group_store),
             ),
             self.matter.transport_mgr.run(
                 &self.crypto,
                 NetworkSendImpl(send_remote),
                 NetworkReceiveImpl(recv_remote),
+                &self.matter.fabric_mgr,
+                Some(&self.group_store),
             ),
-            responder.run::<4>(),
+            responder.run::<4>(Some(&self.group_store)),
             dm.process_subscriptions(&self.matter),
         )
         .coalesce()

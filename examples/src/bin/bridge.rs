@@ -29,6 +29,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use rand::RngCore;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
@@ -43,6 +44,7 @@ use rs_matter::dm::{
     EpClMatcher, InvokeContext, Node, ReadContext,
 };
 use rs_matter::error::Error;
+use rs_matter::group_keys::MatterGroupStore;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
@@ -68,6 +70,9 @@ fn main() -> Result<(), Error> {
 
     // Create the Matter object
     let matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+
+    // Configure the group store for groupcast support
+    let group_store = MatterGroupStore::<2>::new(); // Endpoints 2 and 3
 
     // Need to call this once
     matter.initialize_transport_buffers()?;
@@ -105,7 +110,12 @@ fn main() -> Result<(), Error> {
         &buffers,
         &subscriptions,
         Some(&events),
-        dm_handler(rand, &on_off_handler_ep2, &on_off_handler_ep3),
+        dm_handler(
+            rand,
+            Some(&group_store),
+            &on_off_handler_ep2,
+            &on_off_handler_ep3,
+        ),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -114,7 +124,7 @@ fn main() -> Result<(), Error> {
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-    let mut respond = pin!(responder.run::<4, 4>());
+    let mut respond = pin!(responder.run::<4, 4>(Some(&group_store)));
 
     // Run the background job of the data model
     let mut dm_job = pin!(dm.run());
@@ -124,13 +134,20 @@ fn main() -> Result<(), Error> {
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, &dm));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket));
+    let mut transport =
+        pin!(matter.run(&crypto, &socket, &socket, Some(&socket), Some(&group_store)));
 
     // Create, load and run the persister
     let mut psm: Psm<4096> = Psm::new();
     let path = std::env::temp_dir().join("rs-matter");
 
-    psm.load(&path, &matter, NO_NETWORKS, Some(&events))?;
+    psm.load(
+        &path,
+        &matter,
+        NO_NETWORKS,
+        Some(&events),
+        Some(&group_store),
+    )?;
 
     if !matter.is_commissioned() {
         // If the device is not commissioned yet, print the QR text and code to the console
@@ -142,7 +159,13 @@ fn main() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
     }
 
-    let mut persist = pin!(psm.run(&path, &matter, NO_NETWORKS, Some(&events)));
+    let mut persist = pin!(psm.run(
+        &path,
+        &matter,
+        NO_NETWORKS,
+        Some(&events),
+        Some(&group_store)
+    ));
 
     // Combine all async tasks in a single one
     let all = select4(
@@ -185,6 +208,7 @@ const NODE: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_BRIDGED_NODE),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
                 BridgedHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER
             ),
@@ -198,6 +222,7 @@ const NODE: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_BRIDGED_NODE),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
                 BridgedHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER
             ),
@@ -208,6 +233,7 @@ const NODE: Node<'static> = Node {
 /// The Data Model handler + meta-data for our Matter Bridge.
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     mut rand: impl RngCore + Copy,
+    group_store: Option<&'a dyn rs_matter::group_keys::GroupStore>,
     on_off_ep2: &'a on_off::OnOffHandler<'a, OH, LH>,
     on_off_ep3: &'a on_off::OnOffHandler<'a, OH, LH>,
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
@@ -220,6 +246,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             endpoints::with_sys(
                 &false,
                 rand,
+                group_store,
                 EmptyHandler
                     // The next chain is the handler for the "aggregator" endpoint 1.
                     //
@@ -251,6 +278,16 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                         Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                     )
                     .chain(
+                        EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
+                        Async(
+                            groups::GroupsHandler::new(
+                                Dataver::new_rand(&mut rand),
+                                group_store.unwrap(),
+                            )
+                            .adapt(),
+                        ),
+                    )
+                    .chain(
                         EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
                         on_off::HandlerAsyncAdaptor(on_off_ep2),
                     )
@@ -261,6 +298,16 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                     .chain(
                         EpClMatcher::new(Some(3), Some(desc::DescHandler::CLUSTER.id)),
                         Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                    )
+                    .chain(
+                        EpClMatcher::new(Some(3), Some(groups::GroupsHandler::CLUSTER.id)),
+                        Async(
+                            groups::GroupsHandler::new(
+                                Dataver::new_rand(&mut rand),
+                                group_store.unwrap(),
+                            )
+                            .adapt(),
+                        ),
                     )
                     .chain(
                         EpClMatcher::new(Some(3), Some(TestOnOffDeviceLogic::CLUSTER.id)),

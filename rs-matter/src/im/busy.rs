@@ -77,7 +77,11 @@ impl BusyInteractionModel {
 }
 
 impl ExchangeHandler for BusyInteractionModel {
-    fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
+    fn handle(
+        &self,
+        exchange: &mut Exchange<'_>,
+        _group_store: Option<&dyn crate::group_keys::GroupStore>,
+    ) -> impl Future<Output = Result<(), Error>> {
         BusyInteractionModel::handle(self, exchange)
     }
 }

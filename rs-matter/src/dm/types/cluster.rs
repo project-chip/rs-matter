@@ -463,6 +463,8 @@ impl defmt::Format for Cluster<'_> {
 
         defmt::write!(f, "attrs [");
         for (index, attr) in self.attributes().enumerate() {
+            // Clippy considers the if-else blocks as identical, even though they are slightly different
+            #[allow(clippy::if_same_then_else)]
             if index > 0 {
                 defmt::write!(f, ", ");
             }
@@ -471,6 +473,8 @@ impl defmt::Format for Cluster<'_> {
 
         defmt::write!(f, "], cmds [");
         for (index, cmd) in self.commands().enumerate() {
+            // Clippy considers the if-else blocks as identical, even though they are slightly different
+            #[allow(clippy::if_same_then_else)]
             if index > 0 {
                 defmt::write!(f, ", ");
             }
@@ -495,6 +499,7 @@ macro_rules! clusters {
             <$crate::dm::clusters::adm_comm::AdminCommHandler as $crate::dm::clusters::adm_comm::ClusterHandler>::CLUSTER,
             <$crate::dm::clusters::noc::NocHandler as $crate::dm::clusters::noc::ClusterHandler>::CLUSTER,
             <$crate::dm::clusters::grp_key_mgmt::GrpKeyMgmtHandler as $crate::dm::clusters::grp_key_mgmt::ClusterHandler>::CLUSTER,
+            <$crate::dm::clusters::groups::GroupsHandler as $crate::dm::clusters::groups::ClusterHandler>::CLUSTER,
             $($cluster,)*
         )
     };

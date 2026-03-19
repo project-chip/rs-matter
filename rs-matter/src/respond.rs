@@ -16,7 +16,6 @@
  */
 
 use core::fmt::Display;
-use core::future::Future;
 use core::pin::pin;
 
 use embassy_futures::select::{select3, select_slice};
@@ -40,15 +39,23 @@ const RESPOND_BUSY_MS: u32 = 500;
 
 /// A trait modeling a generic handler for an exchange.
 pub trait ExchangeHandler {
-    async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error>;
+    async fn handle<'a>(
+        &self,
+        exchange: &mut Exchange<'a>,
+        group_store: Option<&'a dyn crate::group_keys::GroupStore>,
+    ) -> Result<(), Error>;
 }
 
 impl<T> ExchangeHandler for &T
 where
     T: ExchangeHandler,
 {
-    fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
-        (*self).handle(exchange)
+    fn handle<'a>(
+        &self,
+        exchange: &mut Exchange<'a>,
+        group_store: Option<&'a dyn crate::group_keys::GroupStore>,
+    ) -> impl core::future::Future<Output = Result<(), Error>> {
+        (*self).handle(exchange, group_store)
     }
 }
 
@@ -92,13 +99,17 @@ where
     H: ExchangeHandler,
     T: ExchangeHandler,
 {
-    async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    async fn handle<'a>(
+        &self,
+        exchange: &mut Exchange<'a>,
+        group_store: Option<&'a dyn crate::group_keys::GroupStore>,
+    ) -> Result<(), Error> {
         let rx = exchange.recv_fetch().await?;
 
         if rx.meta().proto_id == self.handler_proto {
-            self.handler.handle(exchange).await
+            self.handler.handle(exchange, group_store).await
         } else {
-            self.next.handle(exchange).await
+            self.next.handle(exchange, group_store).await
         }
     }
 }
@@ -151,7 +162,10 @@ where
     }
 
     /// Run the responder with a given number of handlers.
-    pub async fn run<const N: usize>(&self) -> Result<(), Error> {
+    pub async fn run<const N: usize>(
+        &self,
+        group_store: Option<&dyn crate::group_keys::GroupStore>,
+    ) -> Result<(), Error> {
         info!("{}: Creating {} handlers", self.name, N);
 
         let mut handlers = heapless::Vec::<_, N>::new();
@@ -162,7 +176,9 @@ where
         );
 
         for handler_id in 0..N {
-            unwrap!(handlers.push(self.handle(handler_id)).map_err(|_| ())); // Cannot fail because the vector has size N
+            unwrap!(handlers
+                .push(self.handle(handler_id, group_store))
+                .map_err(|_| ())); // Cannot fail because the vector has size N
         }
 
         let handlers = pin!(handlers);
@@ -173,17 +189,25 @@ where
 
     /// A handler for one exchange.
     #[inline(always)]
-    pub async fn handle(&self, handler_id: impl Display) -> Result<(), Error> {
+    pub async fn handle(
+        &self,
+        handler_id: impl Display,
+        group_store: Option<&dyn crate::group_keys::GroupStore>,
+    ) -> Result<(), Error> {
         loop {
             // Ignore the error as it had been logged already
-            let _ = self.respond_once(&handler_id).await;
+            let _ = self.respond_once(&handler_id, group_store).await;
         }
     }
 
     /// Respond to a single exchange.
     /// Useful in e.g. integration tests, where we know that we are expecting to respond to a single exchange within the run of the test.
     #[inline(always)]
-    pub async fn respond_once(&self, handler_id: impl Display) -> Result<(), Error> {
+    pub async fn respond_once(
+        &self,
+        handler_id: impl Display,
+        group_store: Option<&dyn crate::group_keys::GroupStore>,
+    ) -> Result<(), Error> {
         let mut exchange = Exchange::accept_after(self.matter, self.respond_after_ms).await?;
 
         if self.log_warn() {
@@ -202,7 +226,7 @@ where
             );
         }
 
-        let result = self.handler.handle(&mut exchange).await;
+        let result = self.handler.handle(&mut exchange, group_store).await;
 
         if let Err(err) = &result {
             error!(
@@ -316,9 +340,12 @@ where
     }
 
     /// Run the responder.
-    pub async fn run<const A: usize, const O: usize>(&self) -> Result<(), Error> {
-        let mut actual = pin!(self.responder.run::<A>());
-        let mut busy = pin!(self.busy_responder.run::<O>());
+    pub async fn run<const A: usize, const O: usize>(
+        &self,
+        group_store: Option<&dyn crate::group_keys::GroupStore>,
+    ) -> Result<(), Error> {
+        let mut actual = pin!(self.responder.run::<A>(group_store));
+        let mut busy = pin!(self.busy_responder.run::<O>(group_store));
         let mut sub = pin!(self.process_subscriptions());
 
         select3(&mut actual, &mut busy, &mut sub).coalesce().await

@@ -265,7 +265,11 @@ impl<'a, C: Crypto> SecureChannel<'a, C> {
 }
 
 impl<C: Crypto> ExchangeHandler for SecureChannel<'_, C> {
-    fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
+    fn handle(
+        &self,
+        exchange: &mut Exchange<'_>,
+        _group_store: Option<&dyn crate::group_keys::GroupStore>,
+    ) -> impl Future<Output = Result<(), Error>> {
         SecureChannel::handle(self, exchange)
     }
 }

@@ -68,12 +68,14 @@ use rs_matter::dm::{
     EmptyHandler, Endpoint, EpClMatcher, InvokeContext, Node, ReadContext,
 };
 use rs_matter::error::{Error, ErrorCode};
+use rs_matter::group_keys::MatterGroupStore;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::{TLVBuilderParent, Utf8StrArrayBuilder, Utf8StrBuilder};
+use rs_matter::transport::network::NoNetwork;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
@@ -89,6 +91,9 @@ fn main() -> Result<(), Error> {
 
     // Create the Matter object
     let matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+
+    // Configure the group store for groupcast support
+    let group_store = MatterGroupStore::<2>::new(); // 1 endpoint + root endpoint
 
     // Need to call this once
     matter.initialize_transport_buffers()?;
@@ -130,7 +135,7 @@ fn main() -> Result<(), Error> {
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-    let mut respond = pin!(responder.run::<4, 4>());
+    let mut respond = pin!(responder.run::<4, 4>(Some(&group_store)));
 
     // Run the background job of the data model
     let mut dm_job = pin!(dm.run());
@@ -140,13 +145,22 @@ fn main() -> Result<(), Error> {
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, &dm));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket));
+
+    // This example does not support groupcast
+    let mut transport =
+        pin!(matter.run::<_, _, _, NoNetwork>(&crypto, &socket, &socket, None, None));
 
     // Create, load and run the persister
     let mut psm: Psm<4096> = Psm::new();
     let path = std::env::temp_dir().join("rs-matter");
 
-    psm.load(&path, &matter, NO_NETWORKS, Some(&events))?;
+    psm.load(
+        &path,
+        &matter,
+        NO_NETWORKS,
+        Some(&events),
+        Some(&group_store),
+    )?;
 
     if !matter.is_commissioned() {
         // If the device is not commissioned yet, print the QR text and code to the console
@@ -158,7 +172,13 @@ fn main() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
     }
 
-    let mut persist = pin!(psm.run(&path, &matter, NO_NETWORKS, Some(&events)));
+    let mut persist = pin!(psm.run(
+        &path,
+        &matter,
+        NO_NETWORKS,
+        Some(&events),
+        Some(&group_store)
+    ));
 
     // Combine all async tasks in a single one
     let all = select4(
@@ -206,6 +226,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             endpoints::with_sys(
                 &false,
                 rand,
+                None,
                 EmptyHandler
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),

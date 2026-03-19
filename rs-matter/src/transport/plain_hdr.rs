@@ -92,6 +92,7 @@ impl defmt::Format for MsgFlags {
 pub struct PlainHdr {
     flags: MsgFlags,
     pub sess_id: u16,
+    pub(crate) sec_flags: u8,
     pub ctr: u32,
     src_nodeid: u64,
     dst_nodeid: u64,
@@ -119,6 +120,7 @@ impl PlainHdr {
         Self {
             flags: MsgFlags::empty(),
             sess_id: 0,
+            sec_flags: 0,
             ctr: 0,
             src_nodeid: 0,
             dst_nodeid: 0,
@@ -144,7 +146,7 @@ impl PlainHdr {
     }
 
     pub fn get_dst_unicast_nodeid(&self) -> Option<u64> {
-        if self.flags.contains(MsgFlags::DSIZ_UNICAST_NODEID) {
+        if self.flags.bits() & 0x03 == MsgFlags::DSIZ_UNICAST_NODEID.bits() {
             Some(self.dst_nodeid)
         } else {
             None
@@ -164,7 +166,7 @@ impl PlainHdr {
     }
 
     pub fn get_dst_groupcast_nodeid(&self) -> Option<u16> {
-        if self.flags.contains(MsgFlags::DSIZ_GROUPCAST_NODEID) {
+        if self.flags.bits() & 0x03 == MsgFlags::DSIZ_GROUPCAST_NODEID.bits() {
             Some(self.dst_nodeid as u16)
         } else {
             None
@@ -187,7 +189,7 @@ impl PlainHdr {
     pub fn decode(&mut self, msg: &mut ParseBuf) -> Result<(), Error> {
         self.flags = MsgFlags::from_bits(msg.le_u8()?).ok_or(ErrorCode::Invalid)?;
         self.sess_id = msg.le_u16()?;
-        let _sec_flags = msg.le_u8()?;
+        self.sec_flags = msg.le_u8()?;
         self.ctr = msg.le_u32()?;
 
         if self.flags.contains(MsgFlags::SRC_ADDR_PRESENT) {
@@ -213,7 +215,7 @@ impl PlainHdr {
         trace!("[encode] {}", self);
         resp_buf.le_u8(self.flags.bits())?;
         resp_buf.le_u16(self.sess_id)?;
-        resp_buf.le_u8(0)?;
+        resp_buf.le_u8(self.sec_flags)?;
         resp_buf.le_u32(self.ctr)?;
 
         if self.flags.contains(MsgFlags::SRC_ADDR_PRESENT) {
@@ -234,8 +236,12 @@ impl PlainHdr {
         Ok(())
     }
 
+    pub fn is_group_session(&self) -> bool {
+        self.sec_flags & 0x01 != 0
+    }
+
     pub fn is_encrypted(&self) -> bool {
-        self.sess_id != 0
+        self.sess_id != 0 || self.is_group_session()
     }
 }
 

@@ -38,6 +38,7 @@ use rs_matter::dm::clusters::basic_info::{
     BasicInfoConfig, ColorEnum, PairingHintFlags, ProductAppearance, ProductFinishEnum,
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::test::TestOnOffDeviceLogic;
@@ -56,6 +57,7 @@ use rs_matter::dm::{
     Node,
 };
 use rs_matter::error::Error;
+use rs_matter::group_keys::MatterGroupStore;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
@@ -93,6 +95,7 @@ static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
 static EVENTS: StaticCell<DefaultEvents> = StaticCell::new();
 static PSM: StaticCell<Psm<32768>> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
+static GROUP_STORE: StaticCell<MatterGroupStore<3>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     // Enable detailed backtraces for debugging test failures
@@ -124,6 +127,9 @@ fn main() -> Result<(), Error> {
         MATTER_PORT,
     ));
 
+    // Configure the group store for groupcast support
+    let group_store = GROUP_STORE.init(MatterGroupStore::<3>::new()); // 2 endpoints + root endpoint
+
     // Need to call this once
     matter.initialize_transport_buffers()?;
 
@@ -146,9 +152,16 @@ fn main() -> Result<(), Error> {
         .init_with(DefaultEvents::init(rs_matter::utils::epoch::sys_epoch));
 
     // Our on-off cluster
-    let on_off_handler = OnOffHandler::new_standalone(
+    let on_off_handler_1 = OnOffHandler::new_standalone(
         Dataver::new_rand(&mut rand),
         1,
+        TestOnOffDeviceLogic::new(false),
+    );
+
+    // On-off cluster for 2nd endpoint
+    let on_off_handler_2 = OnOffHandler::new_standalone(
+        Dataver::new_rand(&mut rand),
+        2,
         TestOnOffDeviceLogic::new(false),
     );
 
@@ -164,7 +177,13 @@ fn main() -> Result<(), Error> {
         buffers,
         subscriptions,
         Some(events),
-        dm_handler(rand, unit_testing_data, &on_off_handler),
+        dm_handler(
+            rand,
+            Some(group_store),
+            unit_testing_data,
+            &on_off_handler_1,
+            &on_off_handler_2,
+        ),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -173,12 +192,12 @@ fn main() -> Result<(), Error> {
     info!(
         "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
         core::mem::size_of_val(&responder),
-        core::mem::size_of_val(&responder.run::<4, 4>())
+        core::mem::size_of_val(&responder.run::<4, 4>(Some(group_store)))
     );
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-    let mut respond = pin!(responder.run::<4, 4>());
+    let mut respond = pin!(responder.run::<4, 4>(Some(group_store)));
 
     // Run the background job of the data model
     let mut dm_job = pin!(dm.run());
@@ -188,13 +207,20 @@ fn main() -> Result<(), Error> {
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket)),
+        core::mem::size_of_val(&matter.run(
+            &crypto,
+            &socket,
+            &socket,
+            Some(&socket),
+            Some(group_store)
+        )),
         core::mem::size_of_val(&mdns::run_mdns(matter, &crypto, &dm))
     );
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto, &dm));
-    let mut transport = pin!(matter.run_transport(&crypto, &socket, &socket));
+    let mut transport =
+        pin!(matter.run(&crypto, &socket, &socket, Some(&socket), Some(group_store)));
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
@@ -203,10 +229,16 @@ fn main() -> Result<(), Error> {
     info!(
         "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B",
         core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS, Some(events)))
+        core::mem::size_of_val(&psm.run(
+            &path,
+            matter,
+            NO_NETWORKS,
+            Some(events),
+            Some(group_store)
+        ))
     );
 
-    psm.load(&path, matter, NO_NETWORKS, Some(events))?;
+    psm.load(&path, matter, NO_NETWORKS, Some(events), Some(group_store))?;
 
     // We need to always print the QR text, because the test runner expects it to be printed
     // even if the device is already commissioned
@@ -221,7 +253,7 @@ fn main() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
     }
 
-    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, Some(events)));
+    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, Some(events), Some(group_store)));
 
     // Listen to SIGTERM because at the end of the test we'll receive it
     let mut term_signal = Signals::new([Signal::Term])?;
@@ -265,6 +297,17 @@ const NODE: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
+                TestOnOffDeviceLogic::CLUSTER,
+                UnitTestingHandler::CLUSTER
+            ),
+        },
+        Endpoint {
+            id: 2,
+            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters: clusters!(
+                desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER,
                 UnitTestingHandler::CLUSTER
             ),
@@ -276,8 +319,10 @@ const NODE: Node<'static> = Node {
 /// The handler is the root endpoint 0 handler plus the on-off and unit testing handlers.
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     mut rand: impl RngCore + Copy,
+    group_store: Option<&'a dyn rs_matter::group_keys::GroupStore>,
     unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
-    on_off: &'a OnOffHandler<'a, OH, LH>,
+    on_off_1: &'a OnOffHandler<'a, OH, LH>,
+    on_off_2: &'a OnOffHandler<'a, OH, LH>,
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
@@ -288,14 +333,39 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             endpoints::with_sys(
                 &false,
                 rand,
+                group_store,
                 EmptyHandler
+                    .chain(
+                        EpClMatcher::new(
+                            Some(endpoints::ROOT_ENDPOINT_ID),
+                            Some(groups::GroupsHandler::CLUSTER.id),
+                        ),
+                        Async(
+                            groups::GroupsHandler::new(
+                                Dataver::new_rand(&mut rand),
+                                group_store.unwrap(),
+                            )
+                            .adapt(),
+                        ),
+                    ) // temp
+                    // Clusters for Endpoint 1
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
                         Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                     )
                     .chain(
+                        EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                        Async(
+                            groups::GroupsHandler::new(
+                                Dataver::new_rand(&mut rand),
+                                group_store.unwrap(),
+                            )
+                            .adapt(),
+                        ),
+                    )
+                    .chain(
                         EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                        on_off::HandlerAsyncAdaptor(on_off),
+                        on_off::HandlerAsyncAdaptor(on_off_1),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(UnitTestingHandler::CLUSTER.id)),
@@ -306,6 +376,25 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                             )
                             .adapt(),
                         ),
+                    )
+                    // (mostly) Similar Clusters for Endpoint 2
+                    .chain(
+                        EpClMatcher::new(Some(2), Some(desc::DescHandler::CLUSTER.id)),
+                        Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                    )
+                    .chain(
+                        EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
+                        Async(
+                            groups::GroupsHandler::new(
+                                Dataver::new_rand(&mut rand),
+                                group_store.unwrap(),
+                            )
+                            .adapt(),
+                        ),
+                    )
+                    .chain(
+                        EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                        on_off::HandlerAsyncAdaptor(on_off_2),
                     ),
             ),
         ),

@@ -91,7 +91,15 @@ impl PacketHdr {
         trace!("Unencrypted packet: {}", Bytes(wb.as_slice()));
         let ctr = self.plain.ctr;
         if let Some(enc_key) = enc_key {
-            proto_hdr::encrypt_in_place(crypto, enc_key, ctr, local_nodeid, plain_hdr_bytes, wb)?;
+            proto_hdr::encrypt_in_place(
+                crypto,
+                enc_key,
+                self.plain.sec_flags,
+                ctr,
+                local_nodeid,
+                plain_hdr_bytes,
+                wb,
+            )?;
         }
 
         wb.prepend(plain_hdr_bytes)?;

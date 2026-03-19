@@ -34,6 +34,26 @@ pub fn create_link_local_ipv6(mac: &[u8; 6]) -> Ipv6Addr {
     )
 }
 
+/// Compute the Matter IPv6 multicast address for a given fabric and group.
+///
+/// Per Matter Core Specification Section 4.3.1 and RFC 3306:
+/// - Network prefix (bytes 4-11): 0xFD + upper 56 bits of fabric_id
+/// - Group ID (bytes 12-15): lower 8 bits of fabric_id + 0x00 + group_id
+pub fn compute_group_multicast_addr(fabric_id: u64, group_id: u16) -> Ipv6Addr {
+    let prefix = 0xfd00_0000_0000_0000_u64 | ((fabric_id >> 8) & 0x00ff_ffff_ffff_ffff);
+    let group32 = ((fabric_id as u32) << 24) | group_id as u32;
+
+    let mut octets = [0u8; 16];
+    octets[0] = 0xff;
+    octets[1] = 0x35; // flags=0x3 (transient), scope=0x5 (site-local)
+    octets[2] = 0x00; // reserved
+    octets[3] = 0x40; // plen = 64
+    octets[4..12].copy_from_slice(&prefix.to_be_bytes());
+    octets[12..16].copy_from_slice(&group32.to_be_bytes());
+
+    Ipv6Addr::from(octets)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -41,6 +61,23 @@ mod tests {
     use crate::alloc::string::ToString;
 
     extern crate alloc;
+
+    #[test]
+    fn test_compute_group_multicast_addr() {
+        // fabric_id = 0x0001_0002_0003_0004, group_id = 0x0001
+        let addr = compute_group_multicast_addr(0x0001_0002_0003_0004, 0x0001);
+        let octets = addr.octets();
+        assert_eq!(octets[0], 0xff);
+        assert_eq!(octets[1], 0x35);
+        assert_eq!(octets[2], 0x00);
+        assert_eq!(octets[3], 0x40);
+        // prefix: 0xFD + upper 56 bits of fabric_id (0x00_0100_0200_0300)
+        // => 0xFD00_0100_0200_0300
+        assert_eq!(&octets[4..12], &0xfd00_0100_0200_0300_u64.to_be_bytes());
+        // group32: lower 8 bits of fabric_id (0x04) << 24 | 0x0001
+        // => 0x04000001
+        assert_eq!(&octets[12..16], &0x04000001_u32.to_be_bytes());
+    }
 
     #[test]
     fn test_create_link_local_ipv6() {

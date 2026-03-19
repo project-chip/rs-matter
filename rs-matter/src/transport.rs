@@ -28,7 +28,9 @@ use rand_core::RngCore;
 use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
+use crate::fabric::FabricMgr;
 use crate::fmt::Bytes;
+use crate::group_keys::GroupStore;
 use crate::sc::{sc_write, OpCode, SCStatusCodes, StatusReport, PROTO_ID_SECURE_CHANNEL};
 use crate::tlv::TLVElement;
 use crate::utils::cell::RefCell;
@@ -301,7 +303,14 @@ impl TransportMgr {
         Ok(exchange)
     }
 
-    pub async fn run<C, S, R>(&self, crypto: C, send: S, recv: R) -> Result<(), Error>
+    pub async fn run<C, S, R>(
+        &self,
+        crypto: C,
+        send: S,
+        recv: R,
+        fabric_mgr: &RefCell<FabricMgr>,
+        group_store: Option<&dyn GroupStore>,
+    ) -> Result<(), Error>
     where
         C: Crypto,
         S: NetworkSend,
@@ -311,7 +320,7 @@ impl TransportMgr {
 
         let send = IfMutex::new(send);
 
-        let mut rx = pin!(self.process_rx(&crypto, recv, &send));
+        let mut rx = pin!(self.process_rx(&crypto, recv, &send, fabric_mgr, group_store));
         let mut tx = pin!(self.process_tx(&crypto, &send));
         let mut orphaned = pin!(self.process_orphaned(&crypto));
 
@@ -393,6 +402,8 @@ impl TransportMgr {
         crypto: C,
         mut recv: R,
         send: &IfMutex<NoopRawMutex, S>,
+        fabric_mgr: &RefCell<FabricMgr>,
+        group_store: Option<&dyn GroupStore>,
     ) -> Result<(), Error>
     where
         C: Crypto,
@@ -417,7 +428,10 @@ impl TransportMgr {
             rx.buf.truncate(len);
             rx.payload_start = 0;
 
-            match self.handle_rx_packet(&crypto, &mut rx, send).await {
+            match self
+                .handle_rx_packet(&crypto, &mut rx, send, fabric_mgr, group_store)
+                .await
+            {
                 Ok(true) => {
                     // Leave the packet in place for accepting by responders
                     rx.clear_on_drop(false);
@@ -502,15 +516,23 @@ impl TransportMgr {
         crypto: C,
         packet: &mut Packet<N>,
         send: &IfMutex<NoopRawMutex, S>,
+        fabric_mgr: &RefCell<FabricMgr>,
+        group_store: Option<&dyn GroupStore>,
     ) -> Result<bool, Error>
     where
         C: Crypto,
         S: NetworkSend,
     {
-        let result = self.decode_packet(&crypto, packet);
+        let result = self.decode_packet(&crypto, packet, fabric_mgr, group_store);
         match result {
             Err(e) if matches!(e.code(), ErrorCode::Duplicate) => {
-                if !packet.peer.is_reliable()
+                if packet.header.plain.is_group_session() {
+                    // Group messages are multicast and don't use MRP; silently discard duplicates
+                    debug!(
+                        "\n>>RCV {}\n      => Duplicate group message, discarding",
+                        packet
+                    );
+                } else if !packet.peer.is_reliable()
                     && !MessageMeta::from(&packet.header.proto).is_standalone_ack()
                 {
                     debug!("\n>>RCV {}\n      => Duplicate, sending ACK", packet);
@@ -848,6 +870,8 @@ impl TransportMgr {
         &self,
         crypto: C,
         packet: &mut Packet<N>,
+        fabric_mgr: &RefCell<FabricMgr>,
+        group_store: Option<&dyn GroupStore>,
     ) -> Result<bool, Error> {
         packet.header.reset();
 
@@ -898,8 +922,25 @@ impl TransportMgr {
                 // Session created successfully: decode, indicate packet payload slice and process further
                 return session.post_recv(&packet.header, epoch);
             }
+        } else if packet.header.plain.is_group_session() {
+            if group_store.is_none() {
+                error!("Group message received but group store is not configured!!");
+                return Err(ErrorCode::InvalidOpcode.into());
+            }
+            // Group (multicast) message — decrypt using on-demand derived group operational keys
+            let fabric_mgr_ref = fabric_mgr.borrow();
+            let (session, payload_range) = session_mgr.get_or_create_for_group_rx(
+                &crypto,
+                packet,
+                &fabric_mgr_ref,
+                group_store.unwrap(),
+            )?;
+            drop(fabric_mgr_ref); // Drop the borrow before we return
+            set_payload(packet, payload_range);
+
+            return session.post_recv(&packet.header, epoch);
         } else {
-            // Packet cannot be decoded, set packet payload to empty
+            // Encrypted unicast packet with no matching session — cannot be decoded
             set_payload(packet, (0, 0));
         }
 

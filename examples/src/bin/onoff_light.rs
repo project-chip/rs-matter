@@ -29,6 +29,7 @@ use log::info;
 use rand::RngCore;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
@@ -44,6 +45,7 @@ use rs_matter::dm::{
     Node,
 };
 use rs_matter::error::Error;
+use rs_matter::group_keys::MatterGroupStore;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
@@ -67,6 +69,7 @@ static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, IMBuffer>> = StaticCell::new();
 static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
 static PSM: StaticCell<Psm<4096>> = StaticCell::new();
+static GROUP_STORE: StaticCell<MatterGroupStore<2>> = StaticCell::new(); // 1 endpoint + root endpoint
 
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
@@ -107,6 +110,9 @@ fn run() -> Result<(), Error> {
     // Need to call this once
     matter.initialize_transport_buffers()?;
 
+    // Configure the group store for groupcast support
+    let group_store = GROUP_STORE.init(MatterGroupStore::<2>::new());
+
     // Create the transport buffers
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
 
@@ -124,7 +130,7 @@ fn run() -> Result<(), Error> {
     let on_off_handler = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(&mut rand),
         1,
-        TestOnOffDeviceLogic::new(true),
+        TestOnOffDeviceLogic::new(false),
     );
 
     // Create the Data Model instance
@@ -134,7 +140,7 @@ fn run() -> Result<(), Error> {
         buffers,
         subscriptions,
         NO_EVENTS,
-        dm_handler(rand, &on_off_handler),
+        dm_handler(rand, group_store, &on_off_handler),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -143,12 +149,12 @@ fn run() -> Result<(), Error> {
     info!(
         "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
         core::mem::size_of_val(&responder),
-        core::mem::size_of_val(&responder.run::<4, 4>())
+        core::mem::size_of_val(&responder.run::<4, 4>(Some(group_store)))
     );
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-    let mut respond = pin!(responder.run::<4, 4>());
+    let mut respond = pin!(responder.run::<4, 4>(Some(group_store)));
 
     // Run the background job of the data model
     let mut dm_job = pin!(dm.run());
@@ -158,13 +164,20 @@ fn run() -> Result<(), Error> {
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket)),
+        core::mem::size_of_val(&matter.run(
+            &crypto,
+            &socket,
+            &socket,
+            Some(&socket),
+            Some(group_store)
+        )),
         core::mem::size_of_val(&mdns::run_mdns(matter, &crypto, &dm))
     );
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto, &dm));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket));
+    let mut transport =
+        pin!(matter.run(&crypto, &socket, &socket, Some(&socket), Some(group_store)));
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
@@ -173,10 +186,10 @@ fn run() -> Result<(), Error> {
     info!(
         "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B",
         core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS, NO_EVENTS))
+        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS, NO_EVENTS, Some(group_store)))
     );
 
-    psm.load(&path, matter, NO_NETWORKS, NO_EVENTS)?;
+    psm.load(&path, matter, NO_NETWORKS, NO_EVENTS, Some(group_store))?;
 
     if !matter.is_commissioned() {
         // If the device is not commissioned yet, print the QR text and code to the console
@@ -188,7 +201,7 @@ fn run() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
     }
 
-    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, NO_EVENTS));
+    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, NO_EVENTS, Some(group_store)));
 
     // Combine all async tasks in a single one
     let all = select4(
@@ -210,7 +223,11 @@ const NODE: Node<'static> = Node {
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
-            clusters: clusters!(desc::DescHandler::CLUSTER, TestOnOffDeviceLogic::CLUSTER),
+            clusters: clusters!(
+                desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
+                TestOnOffDeviceLogic::CLUSTER
+            ),
         },
     ],
 };
@@ -219,6 +236,7 @@ const NODE: Node<'static> = Node {
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     mut rand: impl RngCore + Copy,
+    group_store: &'a dyn rs_matter::group_keys::GroupStore,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
@@ -230,10 +248,18 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             endpoints::with_sys(
                 &false,
                 rand,
+                Some(group_store),
                 EmptyHandler
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
                         Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                    )
+                    .chain(
+                        EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                        Async(
+                            groups::GroupsHandler::new(Dataver::new_rand(&mut rand), group_store)
+                                .adapt(),
+                        ),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
