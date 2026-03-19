@@ -256,7 +256,7 @@ impl<'a, C: Crypto> Case<'a, C> {
                     .initiator_icac
                     .map(|icac| CertRef::new(TLVElement::new(icac.0)));
 
-                let mut buf = alloc!([0; 1024]); // TODO LARGE BUFFER
+                let mut buf = alloc!([0; CASE_LARGE_BUF_SIZE]);
                 let buf = &mut buf[..];
                 if let Err(e) = self.casep.validate_certs(
                     self.crypto,
