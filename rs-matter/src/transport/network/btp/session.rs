@@ -387,6 +387,7 @@ pub struct Session {
     handshake_pending: bool,
     recv_window: RecvWindow,
     send_window: SendWindow,
+    relaxed_mtu_nego: bool,
 }
 
 impl Session {
@@ -400,6 +401,7 @@ impl Session {
             handshake_pending: false,
             recv_window: RecvWindow::new(),
             send_window: SendWindow::new(),
+            relaxed_mtu_nego: false,
         }
     }
 
@@ -418,6 +420,7 @@ impl Session {
             handshake_pending: false,
             recv_window <- RecvWindow::init(),
             send_window: SendWindow::new(),
+            relaxed_mtu_nego: false,
         })
     }
 
@@ -429,6 +432,10 @@ impl Session {
         self.handshake_pending = false;
         self.recv_window.reset();
         self.send_window.reset();
+    }
+
+    pub fn set_relaxed_mtu_nego(&mut self, relaxed_mtu_nego: bool) {
+        self.relaxed_mtu_nego = relaxed_mtu_nego;
     }
 
     #[allow(unused)]
@@ -561,16 +568,24 @@ impl Session {
         let version = req.versions().min().unwrap_or(4);
 
         let mtu = if gatt_mtu.map(|gatt_mtu| gatt_mtu != req.mtu).unwrap_or(true) {
+            let mtu = if self.relaxed_mtu_nego {
+                // In the relaxed MTU negotiation mode, if the GATT MTU is not what the peer reports,
+                // we take as an MTU the minimum between our MTU and what the peer reports
+                min(min(req.mtu, gatt_mtu.unwrap_or(MIN_MTU)), MAX_MTU)
+            } else {
+                // We don't know our MTU or what we know is not what the other peer reports
+                // => use the minimum MTU
+                MIN_MTU
+            };
+
             if let Some(gatt_mtu) = gatt_mtu {
                 warn!(
                     "MTU mismatch: GATT MTU: {}, BTP MTU: {}, will use MTU: {}",
-                    gatt_mtu, req.mtu, MIN_MTU
+                    gatt_mtu, req.mtu, mtu
                 );
             }
 
-            // We don't know our MTU or what we know is not what the other peer reports
-            // => use the minimum MTU
-            MIN_MTU
+            mtu
         } else {
             // Used MTU should not be bigger than the maximum allowed
             min(req.mtu, MAX_MTU)
