@@ -238,7 +238,7 @@ impl<'a, C: Crypto> Case<'a, C> {
                 let req = get_root_node_struct(exchange.rx()?.payload())?;
                 let encrypted = req.structure()?.ctx(1)?.str()?;
 
-                let mut decrypted = alloc!([0; CASE_LARGE_BUF_SIZE]);
+                let mut decrypted = alloc!([0; CASE_LARGE_BUF_SIZE]); // TODO LARGE BUFFER
                 if encrypted.len() > decrypted.len() {
                     error!("Encrypted data too large");
                     Err(ErrorCode::BufferTooSmall)?;
@@ -259,7 +259,7 @@ impl<'a, C: Crypto> Case<'a, C> {
                     .initiator_icac
                     .map(|icac| CertRef::new(TLVElement::new(icac.0)));
 
-                let mut buf = alloc!([0; CASE_LARGE_BUF_SIZE]);
+                let mut buf = alloc!([0; CASE_LARGE_BUF_SIZE]); // TODO LARGE BUFFER
                 let buf = &mut buf[..];
                 if let Err(e) = self.casep.validate_certs(
                     self.crypto,
