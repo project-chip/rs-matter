@@ -30,10 +30,7 @@
 /// SKID: 6A:FD:22:77:1F:51:1F:EC:BF:16:41:97:67:10:DC:DC:31:A1:71:7E
 ///
 /// Source: connectedhomeip/credentials/development/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der
-pub const TEST_PAA_FFF1_CERT: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/credentials/Chip-Test-PAA-FFF1-Cert.der"
-));
+pub const TEST_PAA_FFF1_CERT: &[u8] = include_bytes!("test_paa/Chip-Test-PAA-FFF1-Cert.der");
 
 /// Expected SKID for TEST_PAA_FFF1_CERT.
 pub const TEST_PAA_FFF1_SKID: super::trust_store::KeyId = [
@@ -47,10 +44,7 @@ pub const TEST_PAA_FFF1_SKID: super::trust_store::KeyId = [
 /// SKID: 78:5C:E7:05:B8:6B:8F:4E:6F:C7:93:AA:60:CB:43:EA:69:68:82:D5
 ///
 /// Source: connectedhomeip/credentials/development/paa-root-certs/Chip-Test-PAA-NoVID-Cert.der
-pub const TEST_PAA_NOVID_CERT: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/credentials/Chip-Test-PAA-NoVID-Cert.der"
-));
+pub const TEST_PAA_NOVID_CERT: &[u8] = include_bytes!("test_paa/Chip-Test-PAA-NoVID-Cert.der");
 
 /// Expected SKID for TEST_PAA_NOVID_CERT.
 pub const TEST_PAA_NOVID_SKID: super::trust_store::KeyId = [

@@ -167,7 +167,7 @@ mod tests {
     use super::*;
     use crate::credentials::test_paa::*;
 
-    const TEST_DATA_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/credentials");
+    const TEST_DATA_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/credentials/test_paa");
 
     /// Unique temp path for a test, avoiding collisions via PID.
     fn test_path(test_name: &str) -> std::path::PathBuf {
