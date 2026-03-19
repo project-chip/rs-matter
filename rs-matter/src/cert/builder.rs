@@ -23,7 +23,7 @@
 
 use crate::cert::CertRef;
 use crate::credentials::trust_store::SKID_LEN;
-use crate::crypto::{CanonPkcSignature, Crypto, Digest, PKC_CANON_PUBLIC_KEY_LEN};
+use crate::crypto::{CanonPkcSignature, Crypto, PKC_CANON_PUBLIC_KEY_LEN};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVElement, TLVTag, TLVWrite};
 use crate::utils::storage::WriteBuf;
@@ -133,22 +133,15 @@ impl<'a> CertBuilderCore<'a> {
         self.append_signature(&signature, tbs_len)
     }
 
-    /// Compute the Subject Key Identifier (SHA-256 hash of public key truncated to 20 bytes).
+    /// Compute the Subject Key Identifier (SHA-1 hash of public key, 20 bytes).
     ///
-    /// Per the Matter specification, the key identifier is the first 20 bytes of the
-    /// SHA-256 hash of the public key.
+    /// Per RFC 5280 section 4.2.1.2 and the Matter spec 6.5.11.(4-5),
+    /// the key identifier is the 160-bit SHA-1 hash of the public key.
     fn compute_key_id<C: Crypto>(
         crypto: &C,
         pubkey: &[u8; PKC_CANON_PUBLIC_KEY_LEN],
     ) -> Result<[u8; SKID_LEN], Error> {
-        let mut hash = crate::crypto::Hash::new();
-        let mut hasher = crypto.hash()?;
-        hasher.update(pubkey)?;
-        hasher.finish(&mut hash)?;
-
-        let mut key_id = [0u8; SKID_LEN];
-        key_id.copy_from_slice(&hash.access()[..SKID_LEN]);
-        Ok(key_id)
+        crypto.compute_key_id(pubkey)
     }
 
     /// Write the TBS (To-Be-Signed) certificate structure.

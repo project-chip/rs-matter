@@ -28,6 +28,12 @@ use crate::utils::init::{init, zeroed, Init, IntoFallibleInit};
 /// As per the Matter spec, the hasher should be SHA-256.
 pub const HASH_LEN: usize = 32;
 
+/// Length of a key identifier (SKID/AKID) in bytes.
+///
+/// Per RFC 5280 section 4.2.1.2 and the Matter spec, the key identifier
+/// is the 160-bit SHA-1 hash of the public key.
+pub const KEY_ID_LEN: usize = 20;
+
 /// Length of the HMAC hash returned by the HMAC hasher (`Crypto::hmac`) in bytes.
 ///
 /// As per the Matter spec, the HMAC hasher should be HMAC-SHA-256.

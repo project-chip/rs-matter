@@ -74,7 +74,7 @@ use x509_cert::spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned};
 
 use crate::crypto::{
     CanonEcPointRef, CanonEcScalarRef, CanonPkcPublicKeyRef, CanonPkcSecretKeyRef, CanonUint320Ref,
-    Crypto, CryptoSensitive, CryptoSensitiveRef, SharedRand, EC_CANON_SCALAR_LEN,
+    Crypto, CryptoSensitive, CryptoSensitiveRef, SharedRand, EC_CANON_SCALAR_LEN, KEY_ID_LEN,
     UINT320_CANON_LEN,
 };
 use crate::error::{Error, ErrorCode};
@@ -283,6 +283,10 @@ where
 
     fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
         Ok(unsafe { ECPoint::generator() })
+    }
+
+    fn compute_key_id(&self, pubkey: &[u8]) -> Result<[u8; KEY_ID_LEN], Error> {
+        Ok(sha1::Sha1::digest(pubkey).into())
     }
 }
 
