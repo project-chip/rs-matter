@@ -235,7 +235,7 @@ impl<'a, C: Crypto> Case<'a, C> {
                 let req = get_root_node_struct(exchange.rx()?.payload())?;
                 let encrypted = req.structure()?.ctx(1)?.str()?;
 
-                let mut decrypted = alloc!([0; 1024]); // TODO LARGE BUFFER
+                let mut decrypted = alloc!([0; CASE_LARGE_BUF_SIZE]);
                 if encrypted.len() > decrypted.len() {
                     error!("Encrypted data too large");
                     Err(ErrorCode::BufferTooSmall)?;
