@@ -173,7 +173,7 @@ zeroconf = { version = "0.15", optional = true }
 
 [target.'cfg(all(unix, not(target_os = "espidf")))'.dependencies]
 bitflags = "2"
-nix = { version = "0.27", features = ["net"] }
+nix = { version = "0.30", features = ["net"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 bluer = { version = "0.17", features = ["bluetoothd"] }
@@ -183,7 +183,8 @@ tokio-stream = { version = "0.1" }
 [dev-dependencies]
 log = "0.4"
 env_logger = "0.11"
-nix = { version = "0.27", features = ["net"] }
+nix = { version = "0.30", features = ["net"] }
+socket2 = { version = "0.5", features = ["all"] }
 futures-lite = "2"
 async-channel = "2"
 static_cell = "2"
@@ -191,3 +192,4 @@ similar = "2.6"
 embassy-time-queue-utils = { version = "0.3", features = ["generic-queue-64"] }
 trybuild = "1"
 tempfile = "3"
+async-io = "2"
