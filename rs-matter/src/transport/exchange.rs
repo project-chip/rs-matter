@@ -783,35 +783,45 @@ impl<'a> Sender<'a> {
     /// }
     /// ```
     pub async fn tx(&mut self) -> Result<Option<SenderTx<'a, '_>>, Error> {
+        trace!(
+            "Sender::tx called, initial={}, complete={}",
+            self.initial,
+            self.complete
+        );
         if self.complete {
+            trace!("Sender::tx - already complete, returning None");
             return Ok(None);
         }
 
-        if !self.initial
-            && self
-                .exchange
-                .id
-                .wait_tx(self.exchange.matter)
-                .await?
-                .is_done()
-        {
-            // No need to re-transmit
-            self.complete = true;
-            return Ok(None);
+        if !self.initial {
+            trace!("Sender::tx - not initial, calling wait_tx");
+            let outcome = self.exchange.id.wait_tx(self.exchange.matter).await?;
+            trace!("Sender::tx - wait_tx returned {:?}", outcome);
+            if outcome.is_done() {
+                // No need to re-transmit
+                self.complete = true;
+                trace!("Sender::tx - ACK received, returning None");
+                return Ok(None);
+            }
+            trace!("Sender::tx - need to retransmit");
         }
 
         let id = self.exchange.id;
         let matter = self.exchange.matter;
 
+        trace!("Sender::tx - calling init_send");
         let tx = id.init_send(matter).await?;
+        trace!("Sender::tx - init_send returned");
 
         if self.initial || id.pending_retrans(matter)? {
+            trace!("Sender::tx - returning Some(SenderTx)");
             Ok(Some(SenderTx {
                 sender: self,
                 message: tx,
             }))
         } else {
             self.complete = true;
+            trace!("Sender::tx - no pending retrans, returning None");
             Ok(None)
         }
     }

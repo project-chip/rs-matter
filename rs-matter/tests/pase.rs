@@ -21,9 +21,7 @@
 mod common;
 
 use core::pin::pin;
-use std::net::UdpSocket;
 
-use async_io::Async;
 use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
 use log::info;
@@ -35,12 +33,14 @@ use rs_matter::respond::Responder;
 use rs_matter::sc::pase::{PaseInitiator, MAX_COMM_WINDOW_TIMEOUT_SECS};
 use rs_matter::sc::SecureChannel;
 use rs_matter::transport::exchange::Exchange;
-use rs_matter::transport::network::{Address, SocketAddr, SocketAddrV6};
+use rs_matter::transport::network::Address;
 use rs_matter::utils::epoch::sys_epoch;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::Matter;
 
-use crate::common::init_env_logger;
+use crate::common::{
+    create_localhost_socket_pair, init_env_logger, run_device_controller, run_with_transport,
+};
 
 /// Test that a full PASE handshake succeeds between two in-process Matter instances.
 ///
@@ -61,21 +61,8 @@ fn test_pase_handshake() {
 
         let crypto = test_only_crypto();
 
-        // Bind both UDP sockets on localhost ephemeral ports
-        let localhost = std::net::Ipv6Addr::LOCALHOST;
-        let device_socket =
-            Async::<UdpSocket>::bind(SocketAddr::V6(SocketAddrV6::new(localhost, 0, 0, 0)))
-                .unwrap();
-        let controller_socket =
-            Async::<UdpSocket>::bind(SocketAddr::V6(SocketAddrV6::new(localhost, 0, 0, 0)))
-                .unwrap();
-
-        let device_addr = device_socket.get_ref().local_addr().unwrap();
-        info!("Device bound to: {device_addr}");
-        let controller_addr = controller_socket.get_ref().local_addr().unwrap();
-        info!("Controller bound to: {controller_addr}");
-
-        let peer_addr = Address::Udp(device_addr);
+        let (device_socket, controller_socket) = create_localhost_socket_pair();
+        let peer_addr = Address::Udp(device_socket.get_ref().local_addr().unwrap());
 
         // Open commissioning window so the device accepts PBKDFParamRequest
         device_matter
@@ -96,40 +83,14 @@ fn test_pase_handshake() {
         };
 
         // Controller side: transport + PASE handshake
-        let controller_fut = async {
-            let mut transport = pin!(controller_matter.run_transport(
-                &crypto,
-                &controller_socket,
-                &controller_socket,
-            ));
-            let mut test = pin!(run_pase_handshake(&controller_matter, &crypto, peer_addr));
+        let controller_fut = run_with_transport(
+            controller_matter.run_transport(&crypto, &controller_socket, &controller_socket),
+            run_pase_handshake(&controller_matter, &crypto, peer_addr),
+        );
 
-            match select(&mut transport, &mut test).await {
-                Either::First(transport_result) => {
-                    panic!("Controller transport exited prematurely: {transport_result:?}");
-                }
-                Either::Second(test_result) => {
-                    // Give transport a moment to flush final messages
-                    let mut flush = pin!(Timer::after(Duration::from_millis(300)));
-                    if let Either::First(transport_result) =
-                        select(&mut transport, &mut flush).await
-                    {
-                        panic!("Controller transport error during flush: {transport_result:?}");
-                    }
-                    test_result
-                }
-            }
-        };
-
-        // Run device and controller concurrently
-        let mut device_fut = pin!(device_fut);
-        let mut controller_fut = pin!(controller_fut);
-
-        match select(&mut device_fut, &mut controller_fut).await {
-            Either::First(Err(e)) => panic!("Device error: {e:?}"),
-            Either::First(Ok(())) => panic!("Device exited unexpectedly"),
-            Either::Second(result) => result.unwrap(),
-        }
+        run_device_controller(device_fut, controller_fut)
+            .await
+            .unwrap();
     });
 }
 

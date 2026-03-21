@@ -25,11 +25,9 @@ use env_logger::fmt::style;
 use log::{Level, LevelFilter};
 
 use crate::itest::ITests;
-use crate::mdnstest::MdnsTests;
 
 mod common;
 mod itest;
-mod mdnstest;
 mod tlv;
 
 /// The main command-line interface for `xtask`.
@@ -88,47 +86,6 @@ enum Command {
         /// A comma-separated list of TLV octets to decode (e.g., "0x01,0x02,0x03" or "1,2,3")
         tlv: String,
     },
-    /// Test mDNS discovery against chip-all-clusters-app (calls `mdnstest-setup` as necessary)
-    Mdnstest {
-        #[command(flatten)]
-        setup_args: MdnstestSetupArgs,
-        #[command(flatten)]
-        run_args: MdnstestRunArgs,
-        /// Skip setting up of the environment (assume it's already set up)
-        #[arg(long)]
-        skip_setup: bool,
-    },
-    /// Setup environment for mDNS tests (builds chip-all-clusters-app)
-    MdnstestSetup(MdnstestSetupArgs),
-    /// Print mDNS test tooling information
-    MdnstestTools,
-    /// Print mDNS test packages information
-    MdnstestPackages,
-}
-
-/// Arguments for the `mdnstest-setup` command
-#[derive(Parser, Debug, Clone)]
-struct MdnstestSetupArgs {
-    /// connectedhomeip repository reference (branch/tag/commit)
-    #[arg(long, default_value = common::CHIP_DEFAULT_GITREF)]
-    chip_gitref: String,
-    /// Force setup even if cached
-    #[arg(long)]
-    force_setup: bool,
-}
-
-/// Arguments for the `mdnstest` run command
-#[derive(Parser, Debug, Clone)]
-struct MdnstestRunArgs {
-    /// Discriminator for the device (12-bit value)
-    #[arg(long, default_value_t = mdnstest::DEFAULT_DISCRIMINATOR)]
-    discriminator: u16,
-    /// Passcode for the device
-    #[arg(long, default_value_t = mdnstest::DEFAULT_PASSCODE)]
-    passcode: u32,
-    /// Discovery timeout in milliseconds
-    #[arg(long, default_value_t = mdnstest::DEFAULT_DISCOVERY_TIMEOUT_MS)]
-    timeout_ms: u32,
 }
 
 impl Command {
@@ -175,29 +132,6 @@ impl Command {
                 as_asn1,
                 tlv,
             } => tlv::decode(tlv, *dec, *cert, *as_asn1),
-            Command::MdnstestTools => {
-                MdnsTests::new(workspace_dir(), print_cmd_output).print_tooling()
-            }
-            Command::MdnstestPackages => {
-                MdnsTests::new(workspace_dir(), print_cmd_output).print_packages()
-            }
-            Command::MdnstestSetup(args) => MdnsTests::new(workspace_dir(), print_cmd_output)
-                .setup(Some(&args.chip_gitref), args.force_setup),
-            Command::Mdnstest {
-                setup_args,
-                run_args,
-                skip_setup,
-            } => {
-                if !*skip_setup {
-                    Command::MdnstestSetup(setup_args.clone()).run(print_cmd_output)?;
-                }
-
-                MdnsTests::new(workspace_dir(), print_cmd_output).run(
-                    run_args.discriminator,
-                    run_args.passcode,
-                    run_args.timeout_ms,
-                )
-            }
         }
     }
 }

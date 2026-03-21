@@ -137,7 +137,7 @@ impl UnixNetif {
             } else if let Some(ipv6_addr) = address.as_sockaddr_in6() {
                 self.ipv6addrs.push(ipv6_addr.ip());
             } else if let Some(ipv4_addr) = address.as_sockaddr_in() {
-                self.ipv4addrs.push(ipv4_addr.ip().into());
+                self.ipv4addrs.push(ipv4_addr.ip());
             }
         }
 

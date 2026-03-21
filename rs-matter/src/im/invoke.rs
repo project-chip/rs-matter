@@ -259,3 +259,19 @@ pub enum InvRespTag {
     SupressResponse = 0,
     InvokeResponses = 1,
 }
+
+/// A response to an invoke request in the Interaction Model.
+///
+/// Corresponds to the `InvokeResponseMessage` TLV structure in the Interaction Model.
+/// Used by clients to parse invoke responses from devices.
+#[derive(Debug, Clone, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[tlvargs(lifetime = "'a")]
+pub struct InvokeResp<'a> {
+    /// Whether the response should be suppressed (echo from request)
+    pub suppress_response: Option<bool>,
+    /// The list of invoke responses
+    pub invoke_responses: Option<TLVArray<'a, CmdResp<'a>>>,
+    /// Whether there are more chunked messages coming
+    pub more_chunks: Option<bool>,
+}

@@ -41,6 +41,7 @@ pub enum ErrorCode {
     InvalidAction,
     InvalidCommand,
     FailSafeRequired,
+    NeedsTimedInteraction,
     ConstraintError,
     InvalidDataType,
     UnsupportedAccess,
