@@ -141,9 +141,11 @@ impl Btp {
 
     /// Wait until the session has timed out due to inactivity (connection timeout).
     pub async fn wait_timeout(&self) {
-        // Check every second
+        // Check every 2 seconds
         // The connection timeout should be at least 1 second, but in production
         // use cases is anyway hard-coded to `BTP_CONN_IDLE_TIMEOUT_SECS`
+        //
+        // And even for testing, timeouting an extra second late is not a prob
         const TIMEOUT_CHECK_SECS: u64 = 2;
 
         while !self.timeout() {
@@ -214,7 +216,16 @@ impl Btp {
     /// Wait until there is at least one packet to be sent to the peer,
     /// by waiting for a notification that is triggered when there is new outgoing data to be sent.
     pub async fn wait_outgoing(&self) {
-        select(self.outg_notif.wait(), Timer::after_secs(2)).await;
+        // Check every second
+        // The ack timeout should be at least 1 second, but in production
+        // use cases is anyway hard-coded to `BTP_ACK_TIMEOUT_SECS`
+        const ACK_TIMEOUT_CHECK_SECS: u64 = 1;
+
+        select(
+            self.outg_notif.wait(),
+            Timer::after_secs(ACK_TIMEOUT_CHECK_SECS),
+        )
+        .await;
     }
 
     /// Wait until there is at least one Matter (a.k.a. BTP SDU) packet available for consumption.
