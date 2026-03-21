@@ -41,6 +41,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use log::{info, warn};
 
 use rand::RngCore;
+
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
@@ -64,23 +65,18 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter::transport::network::btp::bluez::BluezGattPeripheral;
-use rs_matter::transport::network::btp::{Btp, BtpContext};
+use rs_matter::transport::network::btp::{bluez, AdvData, Btp};
 use rs_matter::transport::network::wifi::nm::NetMgrCtl;
 use rs_matter::transport::network::wifi::wpa_supp::unix::DhClientCtl;
 use rs_matter::transport::network::wifi::wpa_supp::WpaSuppCtl;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::utils::sync::blocking::raw::StdRawMutex;
 use rs_matter::utils::zbus::Connection;
 use rs_matter::{clusters, devices, Matter, MATTER_PORT};
 
 #[path = "../common/mdns.rs"]
 mod mdns;
-
-/// Needs to be `'static`, for now
-static BTP_CONTEXT: BtpContext<StdRawMutex> = BtpContext::<StdRawMutex>::new();
 
 fn main() -> Result<(), Error> {
     env_logger::init_from_env(
@@ -203,8 +199,17 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
 
         // The BTP transport impl
-        let btp = Btp::new(BluezGattPeripheral::new(None, connection), &BTP_CONTEXT);
-        let mut bluetooth = pin!(btp.run("MT", &TEST_DEV_DET, TEST_DEV_COMM.discriminator));
+        let btp = Btp::new();
+        // BlueZ seems to report an incorrect GATT MTU, so we need to enable the relaxed MTU negotiation mode to be able to connect to BlueZ peripherals with MTU bigger than the minimum one
+        btp.set_relaxed_mtu_nego(true);
+        let adv_data = AdvData::new(&TEST_DEV_DET, TEST_DEV_COMM.discriminator);
+        let mut bluetooth = pin!(bluez::run_peripheral(
+            connection, None, "MT", &adv_data, &btp
+        ));
+        // Here's how to run with the BlueR peripheral instead:
+        // let mut bluetooth = pin!(async_compat::Compat::new(rs_matter::transport::network::btp::bluer::run_peripheral(
+        //     None, "MT", &adv_data, &btp
+        // )));
 
         let mut transport = pin!(matter.run(&crypto, &btp, &btp));
         let mut wifi_prov_task = pin!(async {
