@@ -141,8 +141,13 @@ impl Btp {
 
     /// Wait until the session has timed out due to inactivity (connection timeout).
     pub async fn wait_timeout(&self) {
+        // Check every second
+        // The connection timeout should be at least 1 second, but in production
+        // use cases is anyway hard-coded to `BTP_CONN_IDLE_TIMEOUT_SECS`
+        const TIMEOUT_CHECK_SECS: u64 = 2;
+
         while !self.timeout() {
-            Timer::after_secs(2).await;
+            Timer::after_secs(TIMEOUT_CHECK_SECS).await;
         }
     }
 
