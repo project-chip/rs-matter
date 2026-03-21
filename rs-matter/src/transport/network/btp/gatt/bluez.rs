@@ -30,7 +30,7 @@ use std::os::unix::net::UnixDatagram;
 use async_channel::{Receiver, Sender};
 use async_io::Async;
 
-use embassy_futures::select::{select, select3};
+use embassy_futures::select::{select, select3, Either};
 
 use uuid::Uuid;
 
@@ -174,7 +174,12 @@ async fn process_indicate(
 
 /// Listen for unsubscription from characteristic `C2` as well as for session connection timeout.
 async fn wait_complete(btp: &Btp, notifier: &Async<UnixDatagram>) -> Result<(), Error> {
-    select(notifier.readable(), btp.wait_timeout()).await;
+    let result = select(notifier.readable(), btp.wait_timeout()).await;
+
+    match result {
+        Either::First(_) => info!("Peer unsubscribed"),
+        Either::Second(_) => info!("Timeout while waiting for data from the peer"),
+    }
 
     Ok(())
 }
