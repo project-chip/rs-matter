@@ -29,7 +29,7 @@ use bluer::gatt::local::{
 use bluer::gatt::CharacteristicWriter;
 use bluer::Uuid;
 
-use embassy_futures::select::{select, select4};
+use embassy_futures::select::{select, select4, Either};
 
 use tokio::sync::mpsc::Receiver;
 use tokio_stream::StreamExt;
@@ -222,7 +222,12 @@ async fn process_cc_events(cc: &mut CharacteristicControl) -> Result<(), Error> 
 
 /// Listen for unsubscription from characteristic `C2` as well as for session connection timeout.
 async fn wait_complete(btp: &Btp, notifier: &CharacteristicWriter) -> Result<(), Error> {
-    select(notifier.closed(), btp.wait_timeout()).await;
+    let result = select(notifier.closed(), btp.wait_timeout()).await;
+
+    match result {
+        Either::First(_) => info!("Peer unsubscribed"),
+        Either::Second(_) => info!("Timeout while waiting for data from the peer"),
+    }
 
     Ok(())
 }
