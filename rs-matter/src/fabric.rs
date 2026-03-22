@@ -51,25 +51,25 @@ pub const MAX_GROUP_NAME_LEN: usize = 16;
 
 cfg_if! {
     if #[cfg(feature = "max-groups-per-fabric-32")] {
-        /// Max number of supported fabrics
+        /// Max number of group key map entries per fabric.
         pub const MAX_GROUPS_PER_FABRIC: usize = 32;
     } else if #[cfg(feature = "max-groups-per-fabric-16")] {
-        /// Max number of supported fabrics
+        /// Max number of group key map entries per fabric.
         pub const MAX_GROUPS_PER_FABRIC: usize = 16;
     } else if #[cfg(feature = "max-groups-per-fabric-12")] {
         /// Max number of group key map entries per fabric.
         pub const MAX_GROUPS_PER_FABRIC: usize = 12;
     } else if #[cfg(feature = "max-groups-per-fabric-8")] {
-        /// Max number of supported fabrics
+        /// Max number of group key map entries per fabric.
         pub const MAX_GROUPS_PER_FABRIC: usize = 9;
     } else if #[cfg(feature = "max-groups-per-fabric-7")] {
-        /// Max number of supported fabrics
+        /// Max number of group key map entries per fabric.
         pub const MAX_GROUPS_PER_FABRIC: usize = 7;
     } else if #[cfg(feature = "max-groups-per-fabric-6")] {
-        /// Max number of supported fabrics
+        /// Max number of group key map entries per fabric.
         pub const MAX_GROUPS_PER_FABRIC: usize = 6;
     } else if #[cfg(feature = "max-groups-per-fabric-5")] {
-        /// Max number of supported fabrics
+        /// Max number of group key map entries per fabric.
         pub const MAX_GROUPS_PER_FABRIC: usize = 5;
     } else {  // The spec requires maxGroupsPerFabric >= 4
         /// Max number of group key map entries per fabric.
