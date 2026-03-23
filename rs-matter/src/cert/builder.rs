@@ -22,7 +22,7 @@
 //! TLV format. (Matter Specification 6.5 "Operational Certificate Encoding")
 
 use crate::cert::CertRef;
-use crate::credentials::trust_store::SKID_LEN;
+use crate::credentials::trust_store::KeyId;
 use crate::crypto::{CanonPkcSignature, Crypto, PKC_CANON_PUBLIC_KEY_LEN};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVElement, TLVTag, TLVWrite};
@@ -140,7 +140,7 @@ impl<'a> CertBuilderCore<'a> {
     fn compute_key_id<C: Crypto>(
         crypto: &C,
         pubkey: &[u8; PKC_CANON_PUBLIC_KEY_LEN],
-    ) -> Result<[u8; SKID_LEN], Error> {
+    ) -> Result<KeyId, Error> {
         crypto.compute_key_id(pubkey)
     }
 
@@ -153,8 +153,8 @@ impl<'a> CertBuilderCore<'a> {
         serial_number: &[u8],
         validity: Validity,
         pubkey: &[u8; PKC_CANON_PUBLIC_KEY_LEN],
-        subject_key_id: &[u8; SKID_LEN],
-        authority_key_id: &[u8; SKID_LEN],
+        subject_key_id: &KeyId,
+        authority_key_id: &KeyId,
         cert_type: CertType,
         subject: SubjectDN,
         issuer: IssuerRDN,
@@ -269,8 +269,8 @@ impl<'a> CertBuilderCore<'a> {
     fn write_extensions(
         tw: &mut impl TLVWrite,
         cert_type: CertType,
-        subject_key_id: &[u8; SKID_LEN],
-        authority_key_id: &[u8; SKID_LEN],
+        subject_key_id: &KeyId,
+        authority_key_id: &KeyId,
     ) -> Result<(), Error> {
         // 1. Basic Constraints
         tw.start_struct(&TLVTag::Context(1))?;
@@ -1219,9 +1219,6 @@ mod tests {
         unwrap!(secret_key.pub_key().unwrap().write_canon(&mut pubkey));
 
         let key_id = unwrap!(CertBuilderCore::compute_key_id(&crypto, pubkey.access()));
-
-        // Key ID should be 20 bytes (SKID_LEN)
-        assert_eq!(key_id.len(), SKID_LEN);
 
         // Key ID should be deterministic for the same public key
         let key_id2 = unwrap!(CertBuilderCore::compute_key_id(&crypto, pubkey.access()));

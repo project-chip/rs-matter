@@ -72,9 +72,10 @@ use x509_cert::name::RdnSequence;
 use x509_cert::request::CertReq;
 use x509_cert::spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned};
 
+use crate::credentials::trust_store::KeyId;
 use crate::crypto::{
     CanonEcPointRef, CanonEcScalarRef, CanonPkcPublicKeyRef, CanonPkcSecretKeyRef, CanonUint320Ref,
-    Crypto, CryptoSensitive, CryptoSensitiveRef, SharedRand, EC_CANON_SCALAR_LEN, KEY_ID_LEN,
+    Crypto, CryptoSensitive, CryptoSensitiveRef, SharedRand, EC_CANON_SCALAR_LEN,
     UINT320_CANON_LEN,
 };
 use crate::error::{Error, ErrorCode};
@@ -285,7 +286,7 @@ where
         Ok(unsafe { ECPoint::generator() })
     }
 
-    fn compute_key_id(&self, pubkey: &[u8]) -> Result<[u8; KEY_ID_LEN], Error> {
+    fn compute_key_id(&self, pubkey: &[u8]) -> Result<KeyId, Error> {
         Ok(sha1::Sha1::digest(pubkey).into())
     }
 }

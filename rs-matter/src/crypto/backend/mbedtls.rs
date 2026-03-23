@@ -46,9 +46,7 @@ use mbedtls_rs_sys::merr;
 
 use rand_core::{CryptoRng, CryptoRngCore, RngCore};
 
-use crate::crypto::{
-    CanonPkcSecretKeyRef, CryptoSensitive, CryptoSensitiveRef, SharedRand, KEY_ID_LEN,
-};
+use crate::crypto::{CanonPkcSecretKeyRef, CryptoSensitive, CryptoSensitiveRef, KeyId, SharedRand};
 use crate::error::{Error, ErrorCode};
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
@@ -311,9 +309,9 @@ where
         Ok(result)
     }
 
-    fn compute_key_id(&self, pubkey: &[u8]) -> Result<[u8; KEY_ID_LEN], Error> {
+    fn compute_key_id(&self, pubkey: &[u8]) -> Result<KeyId, Error> {
         let mut ctx: mbedtls_rs_sys::mbedtls_sha1_context = Default::default();
-        let mut out = [0u8; KEY_ID_LEN];
+        let mut out: KeyId = [0; 20];
 
         unsafe {
             mbedtls_rs_sys::mbedtls_sha1_init(&mut ctx);
