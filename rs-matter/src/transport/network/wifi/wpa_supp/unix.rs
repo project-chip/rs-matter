@@ -22,7 +22,6 @@ use core::cell::RefCell;
 use std::process::Command;
 
 use embassy_futures::select::{select, Either};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
 
 use crate::dm::clusters::net_comm::NetCtlError;
@@ -40,7 +39,7 @@ use crate::utils::sync::blocking;
 pub struct DhClientCtl {
     ifname: String,
     self_assign_link_local_ipv6: bool,
-    netif: blocking::Mutex<NoopRawMutex, RefCell<Option<UnixNetif>>>,
+    netif: blocking::Mutex<RefCell<Option<UnixNetif>>>,
 }
 
 impl DhClientCtl {

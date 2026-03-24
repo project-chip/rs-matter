@@ -17,10 +17,11 @@
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
+use super::blocking::raw::MatterRawMutex;
 use super::signal::Signal;
 
 /// A notification primitive that allows for notifying a single waiter.
-pub struct Notification<M>(Signal<M, Option<()>>);
+pub struct Notification<M = MatterRawMutex>(Signal<Option<()>, M>);
 
 impl<M> Default for Notification<M>
 where
@@ -42,14 +43,11 @@ where
 
     /// Notify the waiter.
     pub fn notify(&self) {
-        self.0.modify(|state| {
-            *state = Some(());
-            (true, ())
-        });
+        self.0.signal(());
     }
 
     /// Wait for the notification.
     pub async fn wait(&self) {
-        self.0.wait(|state| state.take()).await;
+        self.0.wait_signalled().await;
     }
 }

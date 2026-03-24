@@ -26,9 +26,12 @@ mod mutex {
 
     use core::cell::UnsafeCell;
 
-    use embassy_sync::blocking_mutex::raw::{self, RawMutex};
+    use embassy_sync::blocking_mutex::raw::RawMutex;
 
-    use crate::utils::init::{init, Init, UnsafeCellInit};
+    use crate::utils::{
+        init::{init, Init, UnsafeCellInit},
+        sync::blocking::raw::MatterRawMutex,
+    };
 
     /// Blocking mutex (not async)
     ///
@@ -45,21 +48,21 @@ mod mutex {
     ///
     /// In all cases, the blocking mutex is intended to be short lived and not held across await points.
     /// Use the async [`Mutex`](crate::mutex::Mutex) if you need a lock that is held across await points.
-    pub struct Mutex<R, T: ?Sized> {
+    pub struct Mutex<T: ?Sized, R = MatterRawMutex> {
         // NOTE: `raw` must be FIRST, so when using ThreadModeMutex the "can't drop in non-thread-mode" gets
         // to run BEFORE dropping `data`.
         raw: R,
         data: UnsafeCell<T>,
     }
 
-    unsafe impl<R: RawMutex + Send, T: ?Sized + Send> Send for Mutex<R, T> {}
-    unsafe impl<R: RawMutex + Sync, T: ?Sized + Send> Sync for Mutex<R, T> {}
+    unsafe impl<T: ?Sized + Send, R: RawMutex + Send> Send for Mutex<T, R> {}
+    unsafe impl<T: ?Sized + Send, R: RawMutex + Sync> Sync for Mutex<T, R> {}
 
-    impl<R: RawMutex, T> Mutex<R, T> {
+    impl<T, R: RawMutex> Mutex<T, R> {
         /// Creates a new mutex in an unlocked state ready for use.
         #[inline]
-        pub const fn new(val: T) -> Mutex<R, T> {
-            Mutex {
+        pub const fn new(val: T) -> Self {
+            Self {
                 raw: R::INIT,
                 data: UnsafeCell::new(val),
             }
@@ -83,13 +86,13 @@ mod mutex {
         }
     }
 
-    impl<R, T> Mutex<R, T> {
+    impl<T, R> Mutex<T, R> {
         /// Creates a new mutex based on a pre-existing raw mutex.
         ///
         /// This allows creating a mutex in a constant context on stable Rust.
         #[inline]
-        pub const fn const_new(raw_mutex: R, val: T) -> Mutex<R, T> {
-            Mutex {
+        pub const fn const_new(raw_mutex: R, val: T) -> Self {
+            Self {
                 raw: raw_mutex,
                 data: UnsafeCell::new(val),
             }
@@ -110,117 +113,21 @@ mod mutex {
             unsafe { &mut *self.data.get() }
         }
     }
-
-    /// A mutex that allows borrowing data across executors and interrupts.
-    ///
-    /// # Safety
-    ///
-    /// This mutex is safe to share between different executors and interrupts.
-    pub type CriticalSectionMutex<T> = Mutex<raw::CriticalSectionRawMutex, T>;
-
-    /// A mutex that allows borrowing data in the context of a single executor.
-    ///
-    /// # Safety
-    ///
-    /// **This Mutex is only safe within a single executor.**
-    pub type NoopMutex<T> = Mutex<raw::NoopRawMutex, T>;
-
-    impl<T> Mutex<raw::CriticalSectionRawMutex, T> {
-        /// Borrows the data for the duration of the critical section
-        pub fn borrow<'cs>(&'cs self, _cs: critical_section::CriticalSection<'cs>) -> &'cs T {
-            let ptr = self.data.get() as *const T;
-            unsafe { &*ptr }
-        }
-    }
-
-    impl<T> Mutex<raw::NoopRawMutex, T> {
-        /// Borrows the data
-        pub fn borrow(&self) -> &T {
-            let ptr = self.data.get() as *const T;
-            unsafe { &*ptr }
-        }
-    }
-
-    // // ThreadModeMutex does NOT use the generic mutex from above because it's special:
-    // // it's Send+Sync even if T: !Send. There's no way to do that without specialization (I think?).
-    // //
-    // // There's still a ThreadModeRawMutex for use with the generic Mutex (handy with Channel, for example),
-    // // but that will require T: Send even though it shouldn't be needed.
-
-    // #[cfg(any(cortex_m, feature = "std"))]
-    // pub use thread_mode_mutex::*;
-    // #[cfg(any(cortex_m, feature = "std"))]
-    // mod thread_mode_mutex {
-    //     use super::*;
-
-    //     /// A "mutex" that only allows borrowing from thread mode.
-    //     ///
-    //     /// # Safety
-    //     ///
-    //     /// **This Mutex is only safe on single-core systems.**
-    //     ///
-    //     /// On multi-core systems, a `ThreadModeMutex` **is not sufficient** to ensure exclusive access.
-    //     pub struct ThreadModeMutex<T: ?Sized> {
-    //         inner: UnsafeCell<T>,
-    //     }
-
-    //     // NOTE: ThreadModeMutex only allows borrowing from one execution context ever: thread mode.
-    //     // Therefore it cannot be used to send non-sendable stuff between execution contexts, so it can
-    //     // be Send+Sync even if T is not Send (unlike CriticalSectionMutex)
-    //     unsafe impl<T: ?Sized> Sync for ThreadModeMutex<T> {}
-    //     unsafe impl<T: ?Sized> Send for ThreadModeMutex<T> {}
-
-    //     impl<T> ThreadModeMutex<T> {
-    //         /// Creates a new mutex
-    //         pub const fn new(value: T) -> Self {
-    //             ThreadModeMutex {
-    //                 inner: UnsafeCell::new(value),
-    //             }
-    //         }
-    //     }
-
-    //     impl<T: ?Sized> ThreadModeMutex<T> {
-    //         /// Lock the `ThreadModeMutex`, granting access to the data.
-    //         ///
-    //         /// # Panics
-    //         ///
-    //         /// This will panic if not currently running in thread mode.
-    //         pub fn lock<R>(&self, f: impl FnOnce(&T) -> R) -> R {
-    //             f(self.borrow())
-    //         }
-
-    //         /// Borrows the data
-    //         ///
-    //         /// # Panics
-    //         ///
-    //         /// This will panic if not currently running in thread mode.
-    //         pub fn borrow(&self) -> &T {
-    //             assert!(
-    //                 raw::in_thread_mode(),
-    //                 "ThreadModeMutex can only be borrowed from thread mode."
-    //             );
-    //             unsafe { &*self.inner.get() }
-    //         }
-    //     }
-
-    //     impl<T: ?Sized> Drop for ThreadModeMutex<T> {
-    //         fn drop(&mut self) {
-    //             // Only allow dropping from thread mode. Dropping calls drop on the inner `T`, so
-    //             // `drop` needs the same guarantees as `lock`. `ThreadModeMutex<T>` is Send even if
-    //             // T isn't, so without this check a user could create a ThreadModeMutex in thread mode,
-    //             // send it to interrupt context and drop it there, which would "send" a T even if T is not Send.
-    //             assert!(
-    //                 raw::in_thread_mode(),
-    //                 "ThreadModeMutex can only be dropped from thread mode."
-    //             );
-
-    //             // Drop of the inner `T` happens after this.
-    //         }
-    //     }
-    // }
 }
 
 pub mod raw {
+    /// The raw mutex used throughout the `rs-matter` codebase
+    #[cfg(not(feature = "sync-mutex"))]
+    pub type MatterRawMutex = embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+    /// The raw mutex used throughout the `rs-matter` codebase
+    #[cfg(all(feature = "sync-mutex", not(feature = "std")))]
+    pub type MatterRawMutex = embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+
+    /// The raw mutex used throughout the `rs-matter` codebase
+    #[cfg(all(feature = "sync-mutex", feature = "std"))]
+    pub type MatterRawMutex = StdRawMutex;
+
     #[cfg(feature = "std")]
     pub use std::*;
 

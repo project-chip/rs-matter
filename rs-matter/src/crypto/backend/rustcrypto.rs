@@ -60,8 +60,6 @@ use elliptic_curve::{
     Scalar, SecretKey,
 };
 
-use embassy_sync::blocking_mutex::raw::RawMutex;
-
 use primeorder::PrimeCurveParams;
 
 use rand_core::CryptoRngCore;
@@ -85,14 +83,14 @@ use crate::utils::init::InitMaybeUninit;
 extern crate alloc;
 
 /// A RustCrypto backend for the crypto traits
-pub struct RustCrypto<'s, M: RawMutex, T> {
+pub struct RustCrypto<'s, T> {
     /// A shared cryptographic random number generator
-    rng: SharedRand<M, T>,
+    rng: SharedRand<T>,
     /// The singleton secret key to be returned by `Crypto::singleton_singing_secret_key`
     singleton_secret_key: CanonPkcSecretKeyRef<'s>,
 }
 
-impl<'s, M: RawMutex, T> RustCrypto<'s, M, T> {
+impl<'s, T> RustCrypto<'s, T> {
     /// Create a new RustCrypto backend
     ///
     /// # Arguments
@@ -107,17 +105,17 @@ impl<'s, M: RawMutex, T> RustCrypto<'s, M, T> {
     }
 }
 
-impl<M: RawMutex, T> Crypto for RustCrypto<'_, M, T>
+impl<T> Crypto for RustCrypto<'_, T>
 where
     T: CryptoRngCore,
 {
     type Rand<'a>
-        = &'a SharedRand<M, T>
+        = &'a SharedRand<T>
     where
         Self: 'a;
 
     type WeakRand<'a>
-        = &'a SharedRand<M, T>
+        = &'a SharedRand<T>
     where
         Self: 'a;
 

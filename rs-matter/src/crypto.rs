@@ -17,8 +17,6 @@
 
 //! Cryptographic abstractions and backend.
 
-use embassy_sync::blocking_mutex::raw::RawMutex;
-
 use crate::error::Error;
 
 pub use rand_core::{CryptoRng, CryptoRngCore, RngCore};
@@ -624,25 +622,24 @@ pub trait EcPoint<'a, const LEN: usize, const SCALAR_LEN: usize> {
 }
 
 #[allow(unused)]
-pub fn default_crypto<'s, M, R>(
+pub fn default_crypto<'s, R>(
     rand: R,
     singleton_secret_key: CanonPkcSecretKeyRef<'s>,
 ) -> impl Crypto + 's
 where
-    M: RawMutex + 's,
     R: CryptoRngCore + 's,
 {
     #[cfg(feature = "openssl")]
     let crypto = backend::openssl::OpenSslCrypto::new(singleton_secret_key);
 
     #[cfg(all(feature = "mbedtls", not(feature = "openssl")))]
-    let crypto = backend::mbedtls::MbedtlsCrypto::<M, _>::new(rand, singleton_secret_key);
+    let crypto = backend::mbedtls::MbedtlsCrypto::new(rand, singleton_secret_key);
 
     #[cfg(all(
         feature = "rustcrypto",
         not(any(feature = "openssl", feature = "mbedtls"))
     ))]
-    let crypto = backend::rustcrypto::RustCrypto::<M, _>::new(rand, singleton_secret_key);
+    let crypto = backend::rustcrypto::RustCrypto::new(rand, singleton_secret_key);
 
     #[cfg(not(any(feature = "openssl", feature = "mbedtls", feature = "rustcrypto")))]
     let crypto = backend::dummy::DummyCrypto;
@@ -651,7 +648,7 @@ where
 }
 
 pub fn test_only_crypto() -> impl Crypto {
-    default_crypto::<embassy_sync::blocking_mutex::raw::NoopRawMutex, _>(
+    default_crypto(
         WeakTestOnlyRand::new_default(),
         crate::dm::devices::test::DAC_PRIVKEY,
     )

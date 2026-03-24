@@ -22,7 +22,6 @@ use core::pin::pin;
 use core::time::Duration;
 
 use embassy_futures::select::select3;
-use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::{Instant, Timer};
 
 use crate::crypto::Crypto;
@@ -843,24 +842,20 @@ where
 /// The responder handles chunking as needed. I.e. if reported data is too large to fit into a single
 /// Matter message, it will send the data in multiple chunks (i.e. with multiple Matter messages), waiting for
 /// a `Success` response from the peer after each chunk, and then continuing to send the next chunk until all data is sent.
-struct ReportDataResponder<'a, 'b, 'c, C, D, B, const NE: usize, M>
-where
-    M: RawMutex,
-{
+struct ReportDataResponder<'a, 'b, 'c, C, D, B, const NE: usize> {
     req: &'a ReportDataReq<'a>,
     node: &'a Node<'a>,
     subscription_id: Option<u32>,
     invoker: HandlerInvoker<'b, 'c, C, D, B>,
     event_reader: EventReader,
-    events: Option<&'a Events<NE, M>>,
+    events: Option<&'a Events<NE>>,
 }
 
-impl<'a, 'b, 'c, C, D, B, const NE: usize, M> ReportDataResponder<'a, 'b, 'c, C, D, B, NE, M>
+impl<'a, 'b, 'c, C, D, B, const NE: usize> ReportDataResponder<'a, 'b, 'c, C, D, B, NE>
 where
     C: Crypto,
     D: AsyncHandler,
     B: BufferAccess<IMBuffer>,
-    M: RawMutex,
 {
     // This is the amount of space we reserve for the structure/array closing TLVs
     // to be attached towards the end of long reads
@@ -873,7 +868,7 @@ where
         subscription_id: Option<u32>,
         invoker: HandlerInvoker<'b, 'c, C, D, B>,
         event_reader: EventReader,
-        events: Option<&'a Events<NE, M>>,
+        events: Option<&'a Events<NE>>,
     ) -> Self {
         Self {
             req,

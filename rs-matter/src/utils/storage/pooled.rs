@@ -25,6 +25,7 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::{Duration, Timer};
 
 use crate::utils::init::{init, Init, UnsafeCellInit};
+use crate::utils::sync::blocking::raw::MatterRawMutex;
 use crate::utils::sync::Signal;
 
 /// A trait for getting access to a `&mut T` buffer, potentially awaiting until a buffer becomes available.
@@ -70,13 +71,13 @@ where
 
 /// A concrete implementation of `BufferAccess` utilizing an internal pool of buffers.
 /// Accessing a buffer would fail when all buffers are still used elsewhere after a wait timeout expires.
-pub struct PooledBuffers<const N: usize, M, T> {
-    available: Signal<M, [bool; N]>,
+pub struct PooledBuffers<const N: usize, T, M = MatterRawMutex> {
+    available: Signal<[bool; N], M>,
     pool: UnsafeCell<crate::utils::storage::Vec<T, N>>,
     wait_timeout_ms: u32,
 }
 
-impl<const N: usize, M, T> PooledBuffers<N, M, T>
+impl<const N: usize, T, M> PooledBuffers<N, T, M>
 where
     M: RawMutex,
 {
@@ -106,13 +107,13 @@ where
     }
 }
 
-impl<const N: usize, M, T> BufferAccess<T> for PooledBuffers<N, M, T>
+impl<const N: usize, T, M> BufferAccess<T> for PooledBuffers<N, T, M>
 where
-    M: RawMutex,
     T: Default + Clone,
+    M: RawMutex,
 {
     type Buffer<'b>
-        = PooledBuffer<'b, N, M, T>
+        = PooledBuffer<'b, N, T, M>
     where
         Self: 'b;
 
@@ -175,16 +176,16 @@ where
     }
 }
 
-pub struct PooledBuffer<'a, const N: usize, M, T>
+pub struct PooledBuffer<'a, const N: usize, T, M = MatterRawMutex>
 where
     M: RawMutex,
 {
     index: usize,
     buffer: &'a mut T,
-    access: &'a PooledBuffers<N, M, T>,
+    access: &'a PooledBuffers<N, T, M>,
 }
 
-impl<const N: usize, M, T> Drop for PooledBuffer<'_, N, M, T>
+impl<const N: usize, T, M> Drop for PooledBuffer<'_, N, T, M>
 where
     M: RawMutex,
 {
@@ -196,7 +197,7 @@ where
     }
 }
 
-impl<const N: usize, M, T> Deref for PooledBuffer<'_, N, M, T>
+impl<const N: usize, T, M> Deref for PooledBuffer<'_, N, T, M>
 where
     M: RawMutex,
 {
@@ -207,7 +208,7 @@ where
     }
 }
 
-impl<const N: usize, M, T> DerefMut for PooledBuffer<'_, N, M, T>
+impl<const N: usize, T, M> DerefMut for PooledBuffer<'_, N, T, M>
 where
     M: RawMutex,
 {

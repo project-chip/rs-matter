@@ -17,8 +17,6 @@
 
 //! Random number generation utilities.
 
-use embassy_sync::blocking_mutex::raw::RawMutex;
-
 use rand_core::{CryptoRng, RngCore};
 
 use crate::utils::cell::RefCell;
@@ -29,11 +27,11 @@ use crate::utils::sync::blocking::Mutex;
 ///
 /// Implements the `RngCore` and `CryptoRng` traits for `&SharedRand<M, T>`, where `T` is the
 /// underlying RNG type and `M` is the mutex type.
-pub struct SharedRand<M: RawMutex, T> {
-    shared: Mutex<M, RefCell<T>>,
+pub struct SharedRand<T> {
+    shared: Mutex<RefCell<T>>,
 }
 
-impl<M: RawMutex, T> SharedRand<M, T> {
+impl<T> SharedRand<T> {
     /// Creates a new `SharedRand` instance wrapping the provided RNG.
     pub const fn new(rand: T) -> Self {
         Self {
@@ -49,7 +47,7 @@ impl<M: RawMutex, T> SharedRand<M, T> {
     }
 }
 
-impl<M: RawMutex, T> rand_core::RngCore for &SharedRand<M, T>
+impl<T> rand_core::RngCore for &SharedRand<T>
 where
     T: rand_core::RngCore,
 {
@@ -71,7 +69,7 @@ where
     }
 }
 
-impl<M: RawMutex, T> CryptoRng for &SharedRand<M, T> where T: CryptoRng {}
+impl<T> CryptoRng for &SharedRand<T> where T: CryptoRng {}
 
 /// A weak random number generator intended for use in tests only.
 ///

@@ -19,8 +19,6 @@
 
 use core::fmt::{Debug, Display};
 
-use embassy_sync::blocking_mutex::raw::RawMutex;
-
 use crate::dm::clusters::net_comm::{
     self, NetCtlError, NetworkCommissioningStatusEnum, NetworkType, NetworksError,
     ThreadCapabilitiesBitmap, WirelessCreds,
@@ -104,18 +102,14 @@ pub trait WirelessNetwork: for<'a> FromTLV<'a> + ToTLV {
 }
 
 /// A fixed-size storage for wireless networks credentials.
-pub struct WirelessNetworks<const N: usize, M, T>
-where
-    M: RawMutex,
-{
-    state: Mutex<M, RefCell<WirelessNetworksStore<N, T>>>,
-    state_changed: Notification<M>,
-    persist_state_changed: Notification<M>,
+pub struct WirelessNetworks<const N: usize, T> {
+    state: Mutex<RefCell<WirelessNetworksStore<N, T>>>,
+    state_changed: Notification,
+    persist_state_changed: Notification,
 }
 
-impl<const N: usize, M, T> WirelessNetworks<N, M, T>
+impl<const N: usize, T> WirelessNetworks<N, T>
 where
-    M: RawMutex,
     T: WirelessNetwork,
 {
     /// Create a new instance.
@@ -300,9 +294,8 @@ where
     }
 }
 
-impl<const N: usize, M, T> Default for WirelessNetworks<N, M, T>
+impl<const N: usize, T> Default for WirelessNetworks<N, T>
 where
-    M: RawMutex,
     T: WirelessNetwork + Clone,
 {
     fn default() -> Self {
@@ -310,9 +303,8 @@ where
     }
 }
 
-impl<const N: usize, M, T> net_comm::Networks for WirelessNetworks<N, M, T>
+impl<const N: usize, T> net_comm::Networks for WirelessNetworks<N, T>
 where
-    M: RawMutex,
     T: WirelessNetwork,
 {
     fn max_networks(&self) -> Result<u8, Error> {
@@ -377,9 +369,8 @@ where
     }
 }
 
-impl<const N: usize, M, T> NetChangeNotif for WirelessNetworks<N, M, T>
+impl<const N: usize, T> NetChangeNotif for WirelessNetworks<N, T>
 where
-    M: RawMutex,
     T: WirelessNetwork,
 {
     async fn wait_changed(&self) {
@@ -744,18 +735,12 @@ impl NetCtlState {
     }
 
     /// Create a new, empty instance of `NetCtlState` wrapped in a mutex.
-    pub const fn new_with_mutex<M>() -> NetCtlStateMutex<M>
-    where
-        M: RawMutex,
-    {
+    pub const fn new_with_mutex() -> NetCtlStateMutex {
         blocking::Mutex::new(RefCell::new(Self::new()))
     }
 
     /// Return an in-place initializer for a new, empty `NetCtlState` wrapped in a mutex.
-    pub fn init_with_mutex<M>() -> impl Init<NetCtlStateMutex<M>>
-    where
-        M: RawMutex,
-    {
+    pub fn init_with_mutex() -> impl Init<NetCtlStateMutex> {
         blocking::Mutex::init(RefCell::init(init!(Self {
             network_id <- OwnedWirelessNetworkId::init(),
             networking_status: None,
@@ -801,14 +786,11 @@ impl NetCtlState {
     /// Update the state with the provided network ID and result of the last operation.
     ///
     /// Return the result of the last operation.
-    pub fn update_with_mutex<M, R>(
-        state: &NetCtlStateMutex<M>,
+    pub fn update_with_mutex<R>(
+        state: &NetCtlStateMutex,
         network_id: Option<&[u8]>,
         result: Result<R, NetCtlError>,
-    ) -> Result<R, NetCtlError>
-    where
-        M: RawMutex,
-    {
+    ) -> Result<R, NetCtlError> {
         state.lock(|state| state.borrow_mut().update(network_id, result))
     }
 
@@ -818,10 +800,7 @@ impl NetCtlState {
     ///
     /// This method is only useful for non-concurrent commisioning using wireless networks and BLE,
     /// and is likely to be used together with `NoopWirelessNetCtl`.
-    pub async fn wait_prov_ready<M>(state: &NetCtlStateMutex<M>, _btp: &Btp)
-    where
-        M: RawMutex,
-    {
+    pub async fn wait_prov_ready(state: &NetCtlStateMutex, _btp: &Btp) {
         while !state.lock(|state| state.borrow().is_prov_ready()) {
             // Provisioning over BTP is considered complete when there is no longer an active connection
             // and the network ID is set (i.e. method `NetCtl::connect` was called successfully)
@@ -838,34 +817,27 @@ impl Default for NetCtlState {
 }
 
 /// A type alias for a `NetCtlState` instance wrapped in a mutex.
-pub type NetCtlStateMutex<M> = blocking::Mutex<M, RefCell<NetCtlState>>;
+pub type NetCtlStateMutex = blocking::Mutex<RefCell<NetCtlState>>;
 
 /// A wrapper around a `NetCtl` network controller that additionally implements the `NetCtlStatus`trait.
-pub struct NetCtlWithStatusImpl<'a, M, T>
-where
-    M: RawMutex,
-{
-    state: &'a NetCtlStateMutex<M>,
+pub struct NetCtlWithStatusImpl<'a, T> {
+    state: &'a NetCtlStateMutex,
     net_ctl: T,
 }
 
-impl<'a, M, T> NetCtlWithStatusImpl<'a, M, T>
-where
-    M: RawMutex,
-{
+impl<'a, T> NetCtlWithStatusImpl<'a, T> {
     /// Create a new instance of `NetCtlWithStatusImpl`.
     ///
     /// # Arguments
     /// - `state`: A reference to a `NetCtlState` instance wrapped in a mutex
     /// - `net_ctl`: A network controller that implements the `NetCtl` trait
-    pub const fn new(state: &'a NetCtlStateMutex<M>, net_ctl: T) -> Self {
+    pub const fn new(state: &'a NetCtlStateMutex, net_ctl: T) -> Self {
         Self { state, net_ctl }
     }
 }
 
-impl<M, T> net_comm::NetCtl for NetCtlWithStatusImpl<'_, M, T>
+impl<T> net_comm::NetCtl for NetCtlWithStatusImpl<'_, T>
 where
-    M: RawMutex,
     T: net_comm::NetCtl,
 {
     fn net_type(&self) -> NetworkType {
@@ -911,9 +883,8 @@ where
     }
 }
 
-impl<M, T> net_comm::NetCtlStatus for NetCtlWithStatusImpl<'_, M, T>
+impl<T> net_comm::NetCtlStatus for NetCtlWithStatusImpl<'_, T>
 where
-    M: RawMutex,
     T: net_comm::NetCtl,
 {
     fn last_networking_status(&self) -> Result<Option<NetworkCommissioningStatusEnum>, Error> {
@@ -940,9 +911,8 @@ where
     }
 }
 
-impl<M, T> NetChangeNotif for NetCtlWithStatusImpl<'_, M, T>
+impl<T> NetChangeNotif for NetCtlWithStatusImpl<'_, T>
 where
-    M: RawMutex,
     T: NetChangeNotif,
 {
     async fn wait_changed(&self) {
@@ -950,9 +920,8 @@ where
     }
 }
 
-impl<M, T> wifi_diag::WirelessDiag for NetCtlWithStatusImpl<'_, M, T>
+impl<T> wifi_diag::WirelessDiag for NetCtlWithStatusImpl<'_, T>
 where
-    M: RawMutex,
     T: wifi_diag::WirelessDiag,
 {
     fn connected(&self) -> Result<bool, Error> {
@@ -960,9 +929,8 @@ where
     }
 }
 
-impl<M, T> wifi_diag::WifiDiag for NetCtlWithStatusImpl<'_, M, T>
+impl<T> wifi_diag::WifiDiag for NetCtlWithStatusImpl<'_, T>
 where
-    M: RawMutex,
     T: wifi_diag::WifiDiag,
 {
     fn bssid(&self, f: &mut dyn FnMut(Option<&[u8]>) -> Result<(), Error>) -> Result<(), Error> {
@@ -986,9 +954,8 @@ where
     }
 }
 
-impl<M, T> thread_diag::ThreadDiag for NetCtlWithStatusImpl<'_, M, T>
+impl<T> thread_diag::ThreadDiag for NetCtlWithStatusImpl<'_, T>
 where
-    M: RawMutex,
     T: thread_diag::ThreadDiag,
 {
     fn channel(&self) -> Result<Option<u16>, Error> {

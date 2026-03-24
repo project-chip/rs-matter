@@ -12,7 +12,7 @@ license = "Apache-2.0"
 rust-version = "1.87"
 
 [features]
-default = ["os", "rustcrypto", "log", "zbus"]
+default = ["os", "rustcrypto", "log"]
 
 # Sizing
 
@@ -101,6 +101,7 @@ alloc = ["defmt?/alloc"]
 openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
 mbedtls = ["alloc", "dep:mbedtls-rs-sys"]
 rustcrypto = ["alloc", "digest", "cipher", "ccm", "elliptic-curve", "primeorder", "ecdsa", "sec1", "signature", "hmac", "hkdf", "pbkdf2", "crypto-bigint", "sha2", "aes", "p256", "x509-cert"]
+sync-mutex = []
 defmt = ["dep:defmt", "heapless/defmt-03", "embassy-time/defmt", "mbedtls-rs-sys?/defmt"]
 log = ["dep:log", "embassy-time/log"]
 debug-tlv-payload = []

@@ -22,7 +22,6 @@ use core::cell::RefCell;
 use std::collections::HashMap;
 
 use embassy_futures::select::{select, Either};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use embassy_time::{Duration, Timer};
 use futures_lite::StreamExt;
@@ -57,8 +56,8 @@ where
     connection: &'a Connection,
     ifname: &'a str,
     ip_stack_ctl: T,
-    network: IfMutex<NoopRawMutex, Option<OwnedObjectPath>>,
-    wifi_conn_info: blocking::Mutex<NoopRawMutex, RefCell<Option<WifiConnInfo>>>,
+    network: IfMutex<Option<OwnedObjectPath>>,
+    wifi_conn_info: blocking::Mutex<RefCell<Option<WifiConnInfo>>>,
 }
 
 impl<'a, T> WpaSuppCtl<'a, T>

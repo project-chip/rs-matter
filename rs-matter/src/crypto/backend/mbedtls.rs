@@ -42,8 +42,6 @@ macro_rules! merr_check {
 
 use core::ffi::{c_int, c_uchar, c_void};
 
-use embassy_sync::blocking_mutex::raw::RawMutex;
-
 use mbedtls_rs_sys::merr;
 
 use rand_core::{CryptoRng, CryptoRngCore, RngCore};
@@ -54,20 +52,19 @@ use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
 
 /// MbedTLS-based crypto backend for Matter.
-pub struct MbedtlsCrypto<'s, M: RawMutex, T> {
+pub struct MbedtlsCrypto<'s, T> {
     /// Elliptic curve group (secp256r1)
     ec_group: SharedECGroup<
         { crate::crypto::EC_CANON_POINT_LEN },
         { crate::crypto::EC_CANON_SCALAR_LEN },
-        M,
     >,
     /// A shared cryptographic random number generator
-    rng: SharedRand<M, T>,
+    rng: SharedRand<T>,
     /// The singleton secret key to be returned by `Crypto::singleton_singing_secret_key`
     singleton_secret_key: CanonPkcSecretKeyRef<'s>,
 }
 
-impl<'s, M: RawMutex, T> MbedtlsCrypto<'s, M, T> {
+impl<'s, T> MbedtlsCrypto<'s, T> {
     /// Create a new MbedTLS crypto backend.
     ///
     /// # Arguments
@@ -81,24 +78,24 @@ impl<'s, M: RawMutex, T> MbedtlsCrypto<'s, M, T> {
         });
 
         Self {
-            ec_group: SharedECGroup::<_, _, M>::new(ec_group),
+            ec_group: SharedECGroup::new(ec_group),
             rng: SharedRand::new(rng),
             singleton_secret_key,
         }
     }
 }
 
-impl<M: RawMutex, T> crate::crypto::Crypto for MbedtlsCrypto<'_, M, T>
+impl<T> crate::crypto::Crypto for MbedtlsCrypto<'_, T>
 where
     T: CryptoRngCore,
 {
     type Rand<'a>
-        = &'a SharedRand<M, T>
+        = &'a SharedRand<T>
     where
         Self: 'a;
 
     type WeakRand<'a>
-        = &'a SharedRand<M, T>
+        = &'a SharedRand<T>
     where
         Self: 'a;
 
@@ -136,8 +133,7 @@ where
         'a,
         { crate::crypto::EC_CANON_POINT_LEN },
         { crate::crypto::EC_CANON_SCALAR_LEN },
-        M,
-        SharedRand<M, T>,
+        SharedRand<T>,
     >
     where
         Self: 'a;
@@ -147,8 +143,7 @@ where
         'a,
         { crate::crypto::EC_CANON_SCALAR_LEN },
         { crate::crypto::EC_CANON_POINT_LEN },
-        M,
-        SharedRand<M, T>,
+        SharedRand<T>,
     >
     where
         Self: 'a;
@@ -158,8 +153,7 @@ where
         'a,
         { crate::crypto::EC_CANON_SCALAR_LEN },
         { crate::crypto::EC_CANON_POINT_LEN },
-        M,
-        SharedRand<M, T>,
+        SharedRand<T>,
     >
     where
         Self: 'a;
@@ -169,8 +163,7 @@ where
         'a,
         { crate::crypto::EC_CANON_SCALAR_LEN },
         { crate::crypto::EC_CANON_POINT_LEN },
-        M,
-        SharedRand<M, T>,
+        SharedRand<T>,
     >
     where
         Self: 'a;
@@ -180,8 +173,7 @@ where
         'a,
         { crate::crypto::EC_CANON_POINT_LEN },
         { crate::crypto::EC_CANON_SCALAR_LEN },
-        M,
-        SharedRand<M, T>,
+        SharedRand<T>,
     >
     where
         Self: 'a;
@@ -286,7 +278,7 @@ where
                 mbedtls_rs_sys::mbedtls_ecp_gen_privkey(
                     &group.raw,
                     &mut result.mpi.raw,
-                    Some(mbedtls_platform_rng::<SharedRand<M, T>>),
+                    Some(mbedtls_platform_rng::<SharedRand<T>>),
                     &self.rng as *const _ as *const _ as *mut _,
                 )
             })
@@ -726,11 +718,11 @@ impl Drop for Mpi {
 ///
 /// Necessary because a lot of MbedTLS EC functions require a mutable reference to the group,
 /// even for read-only operations.
-pub struct SharedECGroup<const LEN: usize, const SCALAR_LEN: usize, M: RawMutex> {
-    inner: Mutex<M, RefCell<ECGroup<LEN, SCALAR_LEN>>>,
+pub struct SharedECGroup<const LEN: usize, const SCALAR_LEN: usize> {
+    inner: Mutex<RefCell<ECGroup<LEN, SCALAR_LEN>>>,
 }
 
-impl<const LEN: usize, const SCALAR_LEN: usize, M: RawMutex> SharedECGroup<LEN, SCALAR_LEN, M> {
+impl<const LEN: usize, const SCALAR_LEN: usize> SharedECGroup<LEN, SCALAR_LEN> {
     /// Create a new shared EC group instance.
     pub const fn new(group: ECGroup<LEN, SCALAR_LEN>) -> Self {
         Self {
@@ -788,18 +780,16 @@ impl<const LEN: usize, const SCALAR_LEN: usize> Drop for ECGroup<LEN, SCALAR_LEN
 }
 
 /// Elliptic curve point implementation using MbedTLS.
-pub struct ECPoint<'a, const LEN: usize, const SCALAR_LEN: usize, M: RawMutex, R> {
+pub struct ECPoint<'a, const LEN: usize, const SCALAR_LEN: usize, R> {
     /// Associated EC group
-    group: &'a SharedECGroup<LEN, SCALAR_LEN, M>,
+    group: &'a SharedECGroup<LEN, SCALAR_LEN>,
     /// The random number generator
     rng: &'a R,
     /// Raw MbedTLS EC point
     raw: mbedtls_rs_sys::mbedtls_ecp_point,
 }
 
-impl<'a, const LEN: usize, const SCALAR_LEN: usize, M: RawMutex, R>
-    ECPoint<'a, LEN, SCALAR_LEN, M, R>
-{
+impl<'a, const LEN: usize, const SCALAR_LEN: usize, R> ECPoint<'a, LEN, SCALAR_LEN, R> {
     /// Create a new EC point instance with an empty point.
     ///
     /// The point MUST be initialized post-creation using `set()`.
@@ -809,7 +799,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize, M: RawMutex, R>
     ///
     /// # Returns
     /// - New EC point instance.
-    fn new(group: &'a SharedECGroup<LEN, SCALAR_LEN, M>, rng: &'a R) -> Self {
+    fn new(group: &'a SharedECGroup<LEN, SCALAR_LEN>, rng: &'a R) -> Self {
         let mut raw = Default::default();
 
         unsafe {
@@ -864,9 +854,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize, M: RawMutex, R>
     }
 }
 
-impl<const LEN: usize, const SCALAR_LEN: usize, M: RawMutex, R> Drop
-    for ECPoint<'_, LEN, SCALAR_LEN, M, R>
-{
+impl<const LEN: usize, const SCALAR_LEN: usize, R> Drop for ECPoint<'_, LEN, SCALAR_LEN, R> {
     fn drop(&mut self) {
         unsafe {
             mbedtls_rs_sys::mbedtls_ecp_point_free(&mut self.raw);
@@ -874,13 +862,13 @@ impl<const LEN: usize, const SCALAR_LEN: usize, M: RawMutex, R> Drop
     }
 }
 
-impl<'a, const LEN: usize, const SCALAR_LEN: usize, M: RawMutex, R>
-    crate::crypto::EcPoint<'a, LEN, SCALAR_LEN> for ECPoint<'a, LEN, SCALAR_LEN, M, R>
+impl<'a, const LEN: usize, const SCALAR_LEN: usize, R> crate::crypto::EcPoint<'a, LEN, SCALAR_LEN>
+    for ECPoint<'a, LEN, SCALAR_LEN, R>
 where
     for<'r> &'r R: CryptoRngCore,
 {
     type Scalar<'s>
-        = ECScalar<'s, SCALAR_LEN, LEN, M, R>
+        = ECScalar<'s, SCALAR_LEN, LEN, R>
     where
         Self: 'a + 's;
 
@@ -965,15 +953,9 @@ where
     }
 }
 
-impl<
-        'a,
-        const KEY_LEN: usize,
-        const SECRET_KEY_LEN: usize,
-        const SIGNATURE_LEN: usize,
-        M: RawMutex,
-        R,
-    > crate::crypto::PublicKey<'a, KEY_LEN, SIGNATURE_LEN>
-    for ECPoint<'a, KEY_LEN, SECRET_KEY_LEN, M, R>
+impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN: usize, R>
+    crate::crypto::PublicKey<'a, KEY_LEN, SIGNATURE_LEN>
+    for ECPoint<'a, KEY_LEN, SECRET_KEY_LEN, R>
 {
     fn verify(
         &self,
@@ -1016,23 +998,21 @@ impl<
 }
 
 /// Elliptic curve scalar implementation using MbedTLS.
-pub struct ECScalar<'a, const LEN: usize, const POINT_LEN: usize, M: RawMutex, R> {
+pub struct ECScalar<'a, const LEN: usize, const POINT_LEN: usize, R> {
     /// Associated EC group
-    group: &'a SharedECGroup<POINT_LEN, LEN, M>,
+    group: &'a SharedECGroup<POINT_LEN, LEN>,
     /// The random number generator
     rng: &'a R,
     /// Scalar
     mpi: Mpi,
 }
 
-impl<'a, const LEN: usize, const POINT_LEN: usize, M: RawMutex, R>
-    ECScalar<'a, LEN, POINT_LEN, M, R>
-{
+impl<'a, const LEN: usize, const POINT_LEN: usize, R> ECScalar<'a, LEN, POINT_LEN, R> {
     /// Create a new, empty EC scalar instance.
     ///
     /// The scalar value MUST be initialized post-creation
     /// using `set()`.
-    fn new(group: &'a SharedECGroup<POINT_LEN, LEN, M>, rng: &'a R) -> Self {
+    fn new(group: &'a SharedECGroup<POINT_LEN, LEN>, rng: &'a R) -> Self {
         Self {
             group,
             rng,
@@ -1051,8 +1031,8 @@ impl<'a, const LEN: usize, const POINT_LEN: usize, M: RawMutex, R>
     }
 }
 
-impl<'a, const LEN: usize, const POINT_LEN: usize, M: RawMutex, R> crate::crypto::EcScalar<'a, LEN>
-    for ECScalar<'a, LEN, POINT_LEN, M, R>
+impl<'a, const LEN: usize, const POINT_LEN: usize, R> crate::crypto::EcScalar<'a, LEN>
+    for ECScalar<'a, LEN, POINT_LEN, R>
 where
     for<'r> &'r R: CryptoRngCore,
 {
@@ -1081,20 +1061,14 @@ where
     }
 }
 
-impl<
-        'a,
-        const KEY_LEN: usize,
-        const PUB_KEY_LEN: usize,
-        const SIGNATURE_LEN: usize,
-        M: RawMutex,
-        R,
-    > crate::crypto::SigningSecretKey<'a, PUB_KEY_LEN, SIGNATURE_LEN>
-    for ECScalar<'a, KEY_LEN, PUB_KEY_LEN, M, R>
+impl<'a, const KEY_LEN: usize, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: usize, R>
+    crate::crypto::SigningSecretKey<'a, PUB_KEY_LEN, SIGNATURE_LEN>
+    for ECScalar<'a, KEY_LEN, PUB_KEY_LEN, R>
 where
     for<'r> &'r R: CryptoRngCore,
 {
     type PublicKey<'s>
-        = ECPoint<'s, PUB_KEY_LEN, KEY_LEN, M, R>
+        = ECPoint<'s, PUB_KEY_LEN, KEY_LEN, R>
     where
         Self: 's;
 
@@ -1251,10 +1225,9 @@ impl<
         const PUB_KEY_LEN: usize,
         const SIGNATURE_LEN: usize,
         const SHARED_SECRET_LEN: usize,
-        M: RawMutex,
         R,
     > crate::crypto::SecretKey<'a, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
-    for ECScalar<'a, KEY_LEN, PUB_KEY_LEN, M, R>
+    for ECScalar<'a, KEY_LEN, PUB_KEY_LEN, R>
 where
     for<'r> &'r R: CryptoRngCore,
 {

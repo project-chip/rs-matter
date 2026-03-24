@@ -24,6 +24,7 @@ use embassy_sync::waitqueue::WakerRegistration;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 
+use super::blocking::raw::MatterRawMutex;
 use super::blocking::Mutex;
 
 struct State<S> {
@@ -58,11 +59,11 @@ impl<S> State<S> {
 /// The generic nature of `Signal` allows for a wide range of use cases, including the implementation of:
 /// - the `Notification` primitive
 /// - the `IfMutex` primitive
-pub struct Signal<M, S> {
-    inner: Mutex<M, RefCell<State<S>>>,
+pub struct Signal<S, M = MatterRawMutex> {
+    inner: Mutex<RefCell<State<S>>, M>,
 }
 
-impl<M, S> Signal<M, S>
+impl<S, M> Signal<S, M>
 where
     M: RawMutex,
 {
@@ -121,5 +122,23 @@ where
                 Poll::Pending
             }
         })
+    }
+}
+
+impl<T, M> Signal<Option<T>, M>
+where
+    M: RawMutex,
+{
+    /// Notify the waiter.
+    pub fn signal(&self, value: T) {
+        self.modify(|state| {
+            *state = Some(value);
+            (true, ())
+        });
+    }
+
+    /// Wait for the notification.
+    pub async fn wait_signalled(&self) -> T {
+        self.wait(|state| state.take()).await
     }
 }

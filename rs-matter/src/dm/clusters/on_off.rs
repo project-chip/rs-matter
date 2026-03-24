@@ -33,8 +33,6 @@ use core::future::Future;
 use core::pin::pin;
 
 use embassy_futures::select::{select, select3, Either, Either3};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::signal::Signal;
 use embassy_time::Duration;
 
 use crate::dm::clusters::decl::{level_control, on_off};
@@ -46,6 +44,7 @@ use crate::error::{Error, ErrorCode};
 pub use crate::dm::clusters::decl::on_off::*;
 
 use crate::tlv::Nullable;
+use crate::utils::sync::Signal;
 
 /// Messages passed to the `notify` closure in `OnOffHooks::run()` method.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -115,7 +114,7 @@ pub struct OnOffHandler<'a, H: OnOffHooks, LH: LevelControlHooks> {
     endpoint_id: EndptId,
     hooks: H,
     level_control_handler: Cell<Option<&'a LevelControlHandler<'a, LH, H>>>,
-    state_change_signal: Signal<NoopRawMutex, OnOffCommand>,
+    state_change_signal: Signal<Option<OnOffCommand>>,
     state: Cell<OnOffClusterState>,
     global_scene_control: Cell<bool>,
     on_time: Cell<u16>,
@@ -157,7 +156,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
             endpoint_id,
             hooks,
             level_control_handler: Cell::new(None),
-            state_change_signal: Signal::new(),
+            state_change_signal: Signal::new(None),
             state: Cell::new(state),
             global_scene_control: Cell::new(true),
             on_time: Cell::new(0),
@@ -655,7 +654,7 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
         loop {
             let mut command = match select(
                 &mut hooks_fut,
-                self.state_change_signal.wait()
+                self.state_change_signal.wait_signalled()
             ).await {
                 Either::First(_) => panic!("OnOffHooks::run returned; implementers MUST not return. Implementations should loop forever or await core::future::pending::<()>()."),
                 Either::Second(command) => command,
@@ -665,7 +664,7 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
                 match select3(
                     &mut hooks_fut,
                     self.state_machine(command, &ctx),
-                    self.state_change_signal.wait(),
+                    self.state_change_signal.wait_signalled(),
                 )
                 .await
                 {

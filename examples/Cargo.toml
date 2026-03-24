@@ -9,7 +9,7 @@ name = "onoff_light"
 
 [[bin]]
 name = "onoff_light_bt"
-#required-features = ["zbus"]
+required-features = ["zbus"]
 
 [[bin]]
 name = "speaker"
