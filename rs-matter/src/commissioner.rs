@@ -71,5 +71,5 @@ pub mod ipk;
 pub mod noc_generator;
 
 pub use fabric_credentials::{DeviceCredentials, FabricCredentials};
-pub use ipk::{generate_ipk, IpkEpochKey, IPK_LEN};
+pub use ipk::{IpkEpochKey, IPK_LEN};
 pub use noc_generator::{NocCredentials, NocGenerator};

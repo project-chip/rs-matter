@@ -50,7 +50,7 @@ struct CertBuilderCore<'a> {
     buf: &'a mut [u8],
 }
 
-pub struct IssuerRDN {
+pub struct IssuerDN {
     pub(crate) ca_id: Option<u64>,
     pub(crate) fabric_id: Option<u64>,
     pub(crate) is_rcac: bool,
@@ -90,7 +90,7 @@ impl<'a> CertBuilderCore<'a> {
         signing_key: &C::SecretKey<'_>,
         issuer_pubkey: Option<&[u8; PKC_CANON_PUBLIC_KEY_LEN]>,
         subject: SubjectDN,
-        issuer: IssuerRDN,
+        issuer: IssuerDN,
     ) -> Result<usize, Error> {
         // Validate serial number
         Self::validate_serial_number(serial_number)?;
@@ -157,7 +157,7 @@ impl<'a> CertBuilderCore<'a> {
         authority_key_id: &KeyId,
         cert_type: CertType,
         subject: SubjectDN,
-        issuer: IssuerRDN,
+        issuer: IssuerDN,
     ) -> Result<usize, Error> {
         let mut tw = WriteBuf::new(self.buf);
 
@@ -409,7 +409,7 @@ impl<'a> NocBuilder<'a> {
         issuer_pubkey: &[u8; PKC_CANON_PUBLIC_KEY_LEN],
         issuer_privkey: &C::SecretKey<'_>,
         serial_number: &[u8],
-        issuer: IssuerRDN,
+        issuer: IssuerDN,
     ) -> Result<usize, Error> {
         // Validate NOC-specific requirements
         if subject.ca_id.is_some() {
@@ -488,7 +488,7 @@ impl<'a> IcacBuilder<'a> {
         rcac_pubkey: &[u8; PKC_CANON_PUBLIC_KEY_LEN],
         rcac_privkey: &C::SecretKey<'_>,
         serial_number: &[u8],
-        issuer: IssuerRDN,
+        issuer: IssuerDN,
     ) -> Result<usize, Error> {
         // Validate ICAC-specific requirements
         if subject.node_id.is_some() {
@@ -569,7 +569,7 @@ impl<'a> RcacBuilder<'a> {
             return Err(ErrorCode::InvalidData.into());
         }
 
-        let issuer = IssuerRDN {
+        let issuer = IssuerDN {
             ca_id: None,     // Self-signed: no issuer CA ID
             fabric_id: None, // Self-signed: no issuer fabric ID
             is_rcac: false,  // Not used for RCAC,
@@ -711,7 +711,7 @@ mod tests {
             not_after,
         };
 
-        let issuer = IssuerRDN {
+        let issuer = IssuerDN {
             ca_id: Some(rcac_id),
             fabric_id: Some(fabric_id),
             is_rcac: true,
@@ -775,7 +775,7 @@ mod tests {
             not_after,
         };
 
-        let issuer = IssuerRDN {
+        let issuer = IssuerDN {
             ca_id: Some(rcac_id),
             fabric_id: Some(fabric_id),
             is_rcac: true, // Issuer is RCAC
@@ -840,7 +840,7 @@ mod tests {
             not_after,
         };
 
-        let issuer = IssuerRDN {
+        let issuer = IssuerDN {
             ca_id: Some(rcac_id),
             fabric_id: Some(fabric_id),
             is_rcac: true,
@@ -904,7 +904,7 @@ mod tests {
             not_after,
         };
 
-        let issuer = IssuerRDN {
+        let issuer = IssuerDN {
             ca_id: Some(icac_id),
             fabric_id: Some(fabric_id),
             is_rcac: false, // Issuer is ICAC, not RCAC
@@ -987,7 +987,7 @@ mod tests {
             ca_id: Some(icac_id),
         };
 
-        let icac_issuer = IssuerRDN {
+        let icac_issuer = IssuerDN {
             ca_id: Some(rcac_id),
             fabric_id: Some(fabric_id),
             is_rcac: true,
@@ -1022,7 +1022,7 @@ mod tests {
             ca_id: None,
         };
 
-        let noc_issuer = IssuerRDN {
+        let noc_issuer = IssuerDN {
             ca_id: Some(icac_id),
             fabric_id: Some(fabric_id),
             is_rcac: false, // Issuer is ICAC
@@ -1083,7 +1083,7 @@ mod tests {
             not_after: 0u32,
         };
 
-        let issuer = IssuerRDN {
+        let issuer = IssuerDN {
             ca_id: Some(0x5678u64),
             fabric_id: Some(0x0001u64),
             is_rcac: true,
@@ -1140,7 +1140,7 @@ mod tests {
             not_after: 0u32,
         };
 
-        let issuer = IssuerRDN {
+        let issuer = IssuerDN {
             ca_id: Some(0x5678u64),
             fabric_id: Some(0x0001u64),
             is_rcac: true,

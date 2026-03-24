@@ -23,7 +23,7 @@
 //! - Optional Intermediate CA Certificate (ICAC)
 //! - Node Operational Certificate (NOC)
 
-use crate::cert::builder::{IcacBuilder, IssuerRDN, NocBuilder, RcacBuilder};
+use crate::cert::builder::{IcacBuilder, IssuerDN, NocBuilder, RcacBuilder};
 use crate::cert::csr::CsrRef;
 use crate::cert::MAX_CERT_TLV_LEN;
 use crate::crypto::{
@@ -236,7 +236,7 @@ impl NocGenerator {
             not_after: 0,  // no expiry
         };
 
-        let issuer = crate::cert::builder::IssuerRDN {
+        let issuer = crate::cert::builder::IssuerDN {
             ca_id: Some(self.rcac_id),
             fabric_id: Some(self.fabric_id),
             is_rcac: true,
@@ -297,12 +297,9 @@ impl NocGenerator {
 
         // Determine signing key and issuer public key
         let (signing_privkey, issuer_pubkey) = if let Some(ref icac_privkey) = self.icac_privkey {
-            (
-                icac_privkey.clone(),
-                self.icac_pubkey.as_ref().unwrap().clone(),
-            )
+            (icac_privkey, self.icac_pubkey.as_ref().unwrap())
         } else {
-            (self.root_privkey.clone(), self.root_pubkey.clone())
+            (&self.root_privkey, &self.root_pubkey)
         };
 
         // Build the NOC
@@ -317,7 +314,7 @@ impl NocGenerator {
             (self.rcac_id, true) // Signed directly by RCAC
         };
 
-        let issuer = IssuerRDN {
+        let issuer = IssuerDN {
             ca_id: Some(issuer_ca_id),
             fabric_id: Some(self.fabric_id),
             is_rcac: is_issuer_rcac,

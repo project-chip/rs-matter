@@ -80,13 +80,6 @@ impl From<[u8; IPK_LEN]> for IpkEpochKey {
     }
 }
 
-/// Generate a random 16-byte IPK.
-pub fn generate_ipk<C: Crypto>(crypto: &C) -> Result<[u8; IPK_LEN], Error> {
-    let mut ipk = [0u8; IPK_LEN];
-    crypto.rand()?.fill_bytes(&mut ipk);
-    Ok(ipk)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
