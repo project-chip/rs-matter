@@ -65,7 +65,9 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter::transport::network::btp::{bluez, AdvData, Btp};
+#[cfg(target_os = "linux")]
+use rs_matter::transport::network::btp::bluez;
+use rs_matter::transport::network::btp::{AdvData, Btp};
 use rs_matter::transport::network::wifi::nm::NetMgrCtl;
 use rs_matter::transport::network::wifi::wpa_supp::unix::DhClientCtl;
 use rs_matter::transport::network::wifi::wpa_supp::WpaSuppCtl;
@@ -198,37 +200,44 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
 
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
 
-        // The BTP transport impl
-        let btp = Btp::new();
-        // BlueZ seems to report an incorrect GATT MTU, so we need to enable the relaxed MTU negotiation mode to be able to connect to BlueZ peripherals with MTU bigger than the minimum one
-        btp.set_relaxed_mtu_nego(true);
-        let adv_data = AdvData::new(&TEST_DEV_DET, TEST_DEV_COMM.discriminator);
-        let mut bluetooth = pin!(bluez::run_peripheral(
-            connection, None, "MT", &adv_data, &btp
-        ));
-        // Here's how to run with the BlueR peripheral instead:
-        // let mut bluetooth = pin!(async_compat::Compat::new(rs_matter::transport::network::btp::bluer::run_peripheral(
-        //     None, "MT", &adv_data, &btp
-        // )));
+        // BLE commissioning via BlueZ is Linux-only.
+        #[cfg(not(target_os = "linux"))]
+        panic!("BLE commissioning requires Linux (BlueZ)");
 
-        let mut transport = pin!(matter.run(&crypto, &btp, &btp));
-        let mut wifi_prov_task = pin!(async {
-            NetCtlState::wait_prov_ready(&net_ctl_state, &btp).await;
-            Ok(())
-        });
+        #[cfg(target_os = "linux")]
+        {
+            // The BTP transport impl
+            let btp = Btp::new();
+            // BlueZ seems to report an incorrect GATT MTU, so we need to enable the relaxed MTU negotiation mode to be able to connect to BlueZ peripherals with MTU bigger than the minimum one
+            btp.set_relaxed_mtu_nego(true);
+            let adv_data = AdvData::new(&TEST_DEV_DET, TEST_DEV_COMM.discriminator);
+            let mut bluetooth = pin!(bluez::run_peripheral(
+                connection, None, "MT", &adv_data, &btp
+            ));
+            // Here's how to run with the BlueR peripheral instead:
+            // let mut bluetooth = pin!(async_compat::Compat::new(rs_matter::transport::network::btp::bluer::run_peripheral(
+            //     None, "MT", &adv_data, &btp
+            // )));
 
-        // Combine all async tasks in a single one
-        let all = select4(
-            &mut transport,
-            &mut bluetooth,
-            select(&mut wifi_prov_task, &mut persist).coalesce(),
-            select(&mut respond, &mut dm_job).coalesce(),
-        );
+            let mut transport = pin!(matter.run(&crypto, &btp, &btp));
+            let mut wifi_prov_task = pin!(async {
+                NetCtlState::wait_prov_ready(&net_ctl_state, &btp).await;
+                Ok(())
+            });
 
-        // Run with a simple `block_on`. Any local executor would do.
-        futures_lite::future::block_on(all.coalesce())?;
+            // Combine all async tasks in a single one
+            let all = select4(
+                &mut transport,
+                &mut bluetooth,
+                select(&mut wifi_prov_task, &mut persist).coalesce(),
+                select(&mut respond, &mut dm_job).coalesce(),
+            );
 
-        matter.reset_transport()?;
+            // Run with a simple `block_on`. Any local executor would do.
+            futures_lite::future::block_on(all.coalesce())?;
+
+            matter.reset_transport()?;
+        }
     }
 
     // Create the Matter UDP socket
