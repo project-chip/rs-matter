@@ -52,7 +52,7 @@ pub trait Reply {
     fn reset(&mut self);
 
     /// Return a TLV writer to write the TLV reply data manually.
-    fn writer(&mut self) -> impl TLVWrite + '_;
+    fn writer(&mut self) -> impl TLVWrite + Send + '_;
 
     /// Complete the manual TLV write of the reply.
     fn complete(self) -> Result<(), Error>;
@@ -97,7 +97,7 @@ where
         self.exchange
     }
 
-    pub async fn process_read<T: TLVWrite>(
+    pub async fn process_read<T: TLVWrite + Send>(
         &mut self,
         item: &Result<AttrDetails<'_>, AttrStatus>,
         mut tw: T,
@@ -115,7 +115,7 @@ where
         result
     }
 
-    async fn do_process_read<T: TLVWrite>(
+    async fn do_process_read<T: TLVWrite + Send>(
         &mut self,
         item: &Result<AttrDetails<'_>, AttrStatus>,
         mut tw: T,
@@ -152,7 +152,7 @@ where
         }
     }
 
-    pub fn read<'t, T: TLVWrite + 't>(
+    pub fn read<'t, T: TLVWrite + Send + 't>(
         &'t mut self,
         attr: &'t AttrDetails<'_>,
         tw: T,
@@ -243,7 +243,7 @@ where
         ))
     }
 
-    pub async fn process_invoke<T: TLVWrite>(
+    pub async fn process_invoke<T: TLVWrite + Send>(
         &mut self,
         item: &Result<(CmdDetails<'_>, TLVElement<'_>), CmdStatus>,
         mut tw: T,
@@ -261,7 +261,7 @@ where
         result
     }
 
-    async fn do_process_invoke<T: TLVWrite>(
+    async fn do_process_invoke<T: TLVWrite + Send>(
         &mut self,
         item: &Result<(CmdDetails<'_>, TLVElement<'_>), CmdStatus>,
         mut tw: T,
@@ -304,7 +304,7 @@ where
         }
     }
 
-    pub fn invoke<'t, T: TLVWrite + 't>(
+    pub fn invoke<'t, T: TLVWrite + Send + 't>(
         &'t mut self,
         cmd: &'t CmdDetails<'_>,
         data: &'t TLVElement<'_>,
@@ -447,7 +447,7 @@ where
 
 impl<T> ReadReply for ReadReplyInstance<T>
 where
-    T: TLVWrite,
+    T: TLVWrite + Send,
 {
     fn with_dataver(self, dataver: u32) -> Result<Option<impl Reply>, Error> {
         if self
@@ -496,7 +496,7 @@ where
 
 impl<T> Reply for AttrReadReplyInstance<T>
 where
-    T: TLVWrite,
+    T: TLVWrite + Send,
 {
     const TAG: TagType = Self::TAG;
 
@@ -512,7 +512,7 @@ where
         Ok(())
     }
 
-    fn writer(&mut self) -> impl TLVWrite + '_ {
+    fn writer(&mut self) -> impl TLVWrite + Send + '_ {
         &mut self.tw
     }
 
@@ -541,7 +541,7 @@ where
 
 impl<T> InvokeReply for InvokeReplyInstance<T>
 where
-    T: TLVWrite,
+    T: TLVWrite + Send,
 {
     fn with_command(mut self, cmd: u32) -> Result<impl Reply, Error> {
         let mut writer = CmdInvokeReplyInstance::new(self.tw);
@@ -583,7 +583,7 @@ where
 
 impl<T> Reply for CmdInvokeReplyInstance<T>
 where
-    T: TLVWrite,
+    T: TLVWrite + Send,
 {
     const TAG: TagType = Self::TAG;
 
@@ -599,7 +599,7 @@ where
         Ok(())
     }
 
-    fn writer(&mut self) -> impl TLVWrite + '_ {
+    fn writer(&mut self) -> impl TLVWrite + Send + '_ {
         &mut self.tw
     }
 

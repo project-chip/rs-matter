@@ -25,12 +25,12 @@ use crate::crypto::{
 };
 use crate::dm::BasicContext;
 use crate::error::{Error, ErrorCode};
-use crate::fabric::FabricMgr;
+use crate::fabric::Fabrics;
 use crate::im::IMStatusCode;
+use crate::sc::pase::Pase;
 use crate::tlv::TLVElement;
 use crate::transport::session::SessionMode;
 use crate::utils::bitflags::bitflags;
-use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::Vec;
@@ -114,6 +114,7 @@ impl FailSafe {
         timeout_secs: u16,
         breadcrumb: u64,
         session_mode: &SessionMode,
+        pase: &mut Pase,
         ctx: impl BasicContext,
     ) -> Result<(), Error> {
         self.update_state_timeout();
@@ -125,13 +126,7 @@ impl FailSafe {
             }
 
             // Cannot arm via CASE while there's an active window
-            if ctx
-                .matter()
-                .pase_mgr
-                .borrow_mut()
-                .comm_window(&ctx)?
-                .is_some()
-                && matches!(session_mode, SessionMode::Case { .. })
+            if pase.comm_window(&ctx)?.is_some() && matches!(session_mode, SessionMode::Case { .. })
             {
                 return Err(ErrorCode::Busy)?;
             }
@@ -267,7 +262,7 @@ impl FailSafe {
     pub fn update_noc<C: Crypto>(
         &mut self,
         crypto: C,
-        fabric_mgr: &RefCell<FabricMgr>,
+        fabrics: &mut Fabrics,
         session_mode: &SessionMode,
         icac: Option<&[u8]>,
         noc: &[u8],
@@ -294,7 +289,7 @@ impl FailSafe {
             buf,
         )?;
 
-        fabric_mgr.borrow_mut().update(
+        fabrics.update(
             &crypto,
             fab_idx,
             self.secret_key.reference(),
@@ -313,7 +308,7 @@ impl FailSafe {
     pub fn add_noc<C: Crypto>(
         &mut self,
         crypto: C,
-        fabric_mgr: &RefCell<FabricMgr>,
+        fabrics: &mut Fabrics,
         session_mode: &SessionMode,
         vendor_id: u16,
         icac: Option<&[u8]>,
@@ -344,8 +339,7 @@ impl FailSafe {
         // TODO: Copy functionality from C++ FabricTable::FindExistingFabricByNocChaining
         // i.e. need to check to see if a fabric with these creds are already present
 
-        let fab_idx = fabric_mgr
-            .borrow_mut()
+        let fab_idx = fabrics
             .add(
                 &crypto,
                 self.secret_key.reference(),

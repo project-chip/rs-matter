@@ -72,7 +72,7 @@ where
 /// A concrete implementation of `BufferAccess` utilizing an internal pool of buffers.
 /// Accessing a buffer would fail when all buffers are still used elsewhere after a wait timeout expires.
 pub struct PooledBuffers<const N: usize, T, M = MatterRawMutex> {
-    available: Signal<[bool; N], M>,
+    available: Signal<[bool; N], M>, // TODO XXX FIXME: Needs multiple wakers for work-stealing executors
     pool: UnsafeCell<crate::utils::storage::Vec<T, N>>,
     wait_timeout_ms: u32,
 }
@@ -105,6 +105,31 @@ where
             wait_timeout_ms,
         })
     }
+
+    fn init_buffers(pool: &UnsafeCell<crate::utils::storage::Vec<T, N>>)
+    where
+        T: Default + Clone,
+    {
+        let buffers = unwrap!(unsafe { pool.get().as_mut() });
+
+        if buffers.len() < N {
+            unwrap!(buffers.resize_default(N));
+        }
+    }
+}
+
+unsafe impl<const N: usize, T, M> Send for PooledBuffers<N, T, M>
+where
+    T: Send,
+    M: RawMutex + Send,
+{
+}
+
+unsafe impl<const N: usize, T, M> Sync for PooledBuffers<N, T, M>
+where
+    T: Send,
+    M: RawMutex + Send + Sync,
+{
 }
 
 impl<const N: usize, T, M> BufferAccess<T> for PooledBuffers<N, T, M>
@@ -120,6 +145,9 @@ where
     async fn get(&self) -> Option<Self::Buffer<'_>> {
         if self.wait_timeout_ms > 0 {
             let mut wait = pin!(self.available.wait(|available| {
+                // Make sure the buffers are properly sized before starting to use them
+                Self::init_buffers(&self.pool);
+
                 if let Some(index) = available.iter().position(|a| *a) {
                     available[index] = false;
                     Some(index)
@@ -153,6 +181,9 @@ where
 
     fn get_immediate(&self) -> Option<Self::Buffer<'_>> {
         let index = self.available.modify(|available| {
+            // Make sure the buffers are properly sized before starting to use them
+            Self::init_buffers(&self.pool);
+
             if let Some(index) = available.iter().position(|a| *a) {
                 available[index] = false;
                 (false, Some(index))
@@ -163,7 +194,6 @@ where
 
         index.map(|index| {
             let buffers = unwrap!(unsafe { self.pool.get().as_mut() });
-            unwrap!(buffers.resize_default(N));
 
             let buffer = &mut buffers[index];
 

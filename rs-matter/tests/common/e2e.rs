@@ -32,7 +32,7 @@ use rs_matter::error::Error;
 use rs_matter::respond::Responder;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{
-    Address, NetworkReceive, NetworkSend, MAX_RX_PACKET_SIZE, MAX_TX_PACKET_SIZE,
+    Address, NetworkReceive, NetworkSend, NoNetwork, MAX_RX_PACKET_SIZE, MAX_TX_PACKET_SIZE,
 };
 use rs_matter::transport::session::{NocCatIds, ReservedSession, SessionMode};
 use rs_matter::utils::epoch::Epoch;
@@ -135,11 +135,12 @@ impl<C: Crypto> E2eRunner<C> {
         // Only allow the standard peer node id of the IM Engine
         let mut default_acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
         default_acl.add_subject(Self::PEER_ID).unwrap();
-        self.matter
-            .fabric_mgr
-            .borrow_mut()
-            .acl_add(NonZeroU8::new(1).unwrap(), default_acl)
-            .unwrap();
+        self.matter.with_state(|state| {
+            state
+                .fabrics
+                .acl_add(NonZeroU8::new(1).unwrap(), default_acl)
+                .unwrap();
+        });
     }
 
     /// Initiates a new exchange on the local Matter instance
@@ -189,17 +190,17 @@ impl<C: Crypto> E2eRunner<C> {
         let responder = Responder::new_default(&dm);
 
         select4(
-            matter_client.transport_mgr.run(
+            matter_client.run(
                 &self.crypto,
-                &matter_client.fabric_mgr,
                 NetworkSendImpl(send_local),
                 NetworkReceiveImpl(recv_local),
+                NoNetwork,
             ),
-            self.matter.transport_mgr.run(
+            self.matter.run(
                 &self.crypto,
-                &self.matter.fabric_mgr,
                 NetworkSendImpl(send_remote),
                 NetworkReceiveImpl(recv_remote),
+                NoNetwork,
             ),
             responder.run::<4>(),
             dm.process_subscriptions(&self.matter),
@@ -226,11 +227,9 @@ impl<C: Crypto> E2eRunner<C> {
             MATTER_PORT,
         );
 
-        matter
-            .fabric_mgr
-            .borrow_mut()
-            .add_with_post_init(|_| Ok(()))
-            .unwrap();
+        matter.with_state(|state| {
+            state.fabrics.add_with_post_init(|_| Ok(())).unwrap();
+        });
 
         matter.initialize_transport_buffers().unwrap();
 
@@ -244,7 +243,7 @@ impl<C: Crypto> E2eRunner<C> {
         remote_nodeid: u64,
         cat_ids: &NocCatIds,
     ) -> Result<(), Error> {
-        matter.transport_mgr.reset()?;
+        matter.reset_transport()?;
 
         let mut session = ReservedSession::reserve_now(matter, crypto)?;
 

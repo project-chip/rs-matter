@@ -139,12 +139,7 @@ impl<C: Crypto> PaseInitiator<C> {
         let mut rand = self.crypto.rand()?;
         rand.fill_bytes(self.initiator_random.access_mut());
 
-        self.local_sessid = exchange
-            .matter()
-            .transport_mgr
-            .session_mgr
-            .borrow_mut()
-            .get_next_sess_id();
+        self.local_sessid = exchange.with_state(|state| Ok(state.sessions.get_next_sess_id()))?;
 
         // Build and send request
         let req = PBKDFParamReq {
@@ -376,7 +371,10 @@ impl<C: Crypto> PaseInitiator<C> {
             .map_err(|_| ErrorCode::InvalidData)?;
 
         // Get peer address
-        let peer_addr = exchange.with_session(|sess| Ok(sess.get_peer_addr()))?;
+        let peer_addr = exchange.with_state(|state| {
+            let sess = exchange.id().session(&mut state.sessions);
+            Ok(sess.get_peer_addr())
+        })?;
 
         // Split session keys into dec_key, enc_key, att_challenge
         // Note: For initiator, the key order is swapped compared to responder

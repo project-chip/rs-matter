@@ -706,20 +706,20 @@ cfg_if! {
     }
 }
 
-/// Fabric manager type
-pub struct FabricMgr {
+/// All fabrics
+pub struct Fabrics {
     fabrics: Vec<Fabric, MAX_FABRICS>,
     changed: bool,
 }
 
-impl Default for FabricMgr {
+impl Default for Fabrics {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl FabricMgr {
-    /// Create a new Fabric Manager
+impl Fabrics {
+    /// Create a new Fabrics instance
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
@@ -728,7 +728,7 @@ impl FabricMgr {
         }
     }
 
-    /// Return an in-place-initializer for a Fabric Manager
+    /// Return an in-place-initializer for a Fabrics type
     pub fn init() -> impl Init<Self> {
         init!(Self {
             fabrics <- Vec::init(),
@@ -800,7 +800,7 @@ impl FabricMgr {
         self.changed
     }
 
-    /// Add a new fabric to the manager with the provided data and immediately updates it with the provided post-init updater.
+    /// Add a new fabric to the fabrics with the provided data and immediately updates it with the provided post-init updater.
     ///
     /// This method is unlikely to be useful outside of tests.
     ///
@@ -841,7 +841,7 @@ impl FabricMgr {
         Ok(fabric)
     }
 
-    /// Add a new fabric to the manager with the provided data.
+    /// Add a new fabric to the fabrics with the provided data.
     ///
     /// If this operation succeeds, the fabric immediately becomes operational.
     #[allow(clippy::too_many_arguments)]
@@ -924,7 +924,7 @@ impl FabricMgr {
         Ok(())
     }
 
-    /// Remove a fabric from the manager
+    /// Remove a fabric from the fabrics
     pub fn remove(
         &mut self,
         fab_idx: NonZeroU8,

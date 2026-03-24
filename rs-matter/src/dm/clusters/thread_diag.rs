@@ -17,6 +17,8 @@
 
 //! This module contains the implementation of the Thread Network Diagnostics cluster and its handler.
 
+use core::fmt::Debug;
+
 use rs_matter_macros::{FromTLV, ToTLV};
 
 use crate::dm::{ArrayAttributeRead, Dataver, InvokeContext, ReadContext};
@@ -374,6 +376,7 @@ where
 impl ThreadDiag for () {}
 
 /// A cluster implementing the Matter Thread Diagnostics Cluster.
+#[derive(Clone)]
 pub struct ThreadDiagHandler<'a> {
     dataver: Dataver,
     diag: &'a dyn ThreadDiag,
@@ -685,5 +688,20 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
 
     fn handle_reset_counts(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
+    }
+}
+
+impl Debug for ThreadDiagHandler<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ThreadDiagHandler")
+            .field("dataver", &self.dataver)
+            .finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ThreadDiagHandler<'_> {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "ThreadDiagHandler {{ dataver: {} }}", self.dataver.get());
     }
 }

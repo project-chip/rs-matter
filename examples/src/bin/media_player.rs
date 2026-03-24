@@ -138,8 +138,8 @@ fn main() -> Result<(), Error> {
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
     // Run the Matter and mDNS transports
-    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, &dm));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket, Some(&socket)));
+    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, dm.change_notify()));
+    let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
     // Create, load and run the persister
     let mut psm: Psm<4096> = Psm::new();
@@ -154,7 +154,7 @@ fn main() -> Result<(), Error> {
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
 
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, dm.change_notify())?;
     }
 
     let mut persist = pin!(psm.run(&path, &matter, NO_NETWORKS, Some(&events)));

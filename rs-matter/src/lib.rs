@@ -15,58 +15,12 @@
  *    limitations under the License.
  */
 
-//! Native Rust Implementation of Matter (Smart-Home)
+//! Native Rust implementation of the Matter protocol by CSA-IOT.
 //!
 //! This crate implements the Matter specification that can be run on embedded devices
 //! to build Matter-compatible smart-home/IoT devices.
 //!
-//! Currently Ethernet based transport is supported.
-//!
-//! # Examples
-//! ```ignore
-//! /// TODO: Fix once new API has stabilized a bit
-//! use rs_matter::{Matter, CommissioningData};
-//! use rs_matter::dm::device_types::device_type_add_on_off_light;
-//! use rs_matter::dm::cluster_basic_information::BasicInfoConfig;
-//! use rs_matter::sc::spake2p::VerifierData;
-//!
-//! # use rs_matter::dm::sdm::dev_att::{DataType, DevAttDataFetcher};
-//! # use rs_matter::error::Error;
-//! # pub struct DevAtt{}
-//! # impl DevAttDataFetcher for DevAtt{
-//! # fn get_devatt_data(&self, data_type: DataType, data: &mut [u8]) -> Result<usize, Error> { Ok(0) }
-//! # }
-//! # let dev_att = Box::new(DevAtt{});
-//!
-//! /// The commissioning data for this device
-//! let comm_data = CommissioningData {
-//!     verifier: VerifierData::new_with_pw(123456),
-//!     discriminator: 250,
-//! };
-//!
-//! /// The basic information about this device
-//! let dev_info = BasicInfoConfig {
-//!     vid: 0x8000,
-//!     pid: 0xFFF1,
-//!     hw_ver: 2,
-//!     sw_ver: 1,
-//!     sw_ver_str: "1".to_string(),
-//!     serial_no: "aabbcc".to_string(),
-//!     device_name: "OnOff Light".to_string(),
-//! };
-//!
-//! /// Get the Matter Object
-//! /// The dev_att is an object that implements the DevAttDataFetcher trait.
-//! let mut matter = Matter::new(dev_info, dev_att, comm_data).unwrap();
-//! let dm = matter.get_data_model();
-//! {
-//!     let mut node = dm.node.write().unwrap();
-//!     /// Add our device-types
-//!     let endpoint = device_type_add_on_off_light(&mut node).unwrap();
-//! }
-//! // Start the Matter Daemon
-//! // matter.start_daemon().unwrap();
-//! ```
+//! Look at the examples project in the workspace for example applications built using this crate, and the tests directory for unit tests.
 //!
 //! Start off exploring by going to the [Matter] object.
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -76,31 +30,31 @@
 #![recursion_limit = "1024"]
 
 use core::future::Future;
-use core::net::Ipv6Addr;
-use core::pin::pin;
-use embassy_futures::select::select;
 
 use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::{BasicInfoConfig, BasicInfoSettings};
 use crate::dm::clusters::dev_att::DeviceAttestation;
 use crate::dm::{BasicContextInstance, ChangeNotify};
 use crate::error::{Error, ErrorCode};
-use crate::fabric::MAX_GROUPS_PER_FABRIC;
-use crate::fabric::{FabricMgr, MAX_FABRICS};
+use crate::fabric::Fabrics;
 use crate::failsafe::FailSafe;
 use crate::pairing::qr::{
     no_optional_data, CommFlowType, NoOptionalData, Qr, QrPayload, QrTextType,
 };
 use crate::pairing::DiscoveryCapabilities;
 use crate::sc::pase::spake2p::Spake2pVerifierPassword;
-use crate::sc::pase::PaseMgr;
+use crate::sc::pase::Pase;
 use crate::transport::network::{NetworkMulticast, NetworkReceive, NetworkSend};
-use crate::transport::TransportMgr;
+use crate::transport::session::Sessions;
+use crate::transport::{
+    PacketBufferExternalAccess, Transport, TransportRunner, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE,
+};
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::pooled::BufferAccess;
 use crate::utils::storage::WriteBuf;
+use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
 
 /// Re-export the `rs_matter_macros::import` proc-macro
@@ -251,18 +205,29 @@ pub struct BasicCommData {
 
 /// The primary Matter Object
 pub struct Matter<'a> {
-    pub fabric_mgr: RefCell<FabricMgr>, // Public for tests
-    pub(crate) pase_mgr: RefCell<PaseMgr>,
-    pub(crate) failsafe: RefCell<FailSafe>,
-    pub(crate) basic_info_settings: RefCell<BasicInfoSettings>,
-    pub transport_mgr: TransportMgr, // Public for tests
-    persist_notification: Notification,
-    mdns_notification: Notification,
-    groups_notification: Notification,
+    /// The internal state of the Matter Object, protected by a mutex for concurrent access from different threads and async tasks.
+    state: Mutex<RefCell<MatterState>>,
+    /// The transport state of the Matter Object
+    ///
+    /// Public for unit tests
+    pub transport: Transport,
+    /// A notification that the Matter state had changed in a way that might require persistence
+    state_changed: Notification,
+    /// A notification that the Matter mDNS services might have changed
+    mdns_changed: Notification,
+    /// A notification that a session had been removed
+    session_removed: Notification,
+    /// A notification that the groups have been modified
+    groups_modified: Notification,
+    /// The function to get the current epoch time in milliseconds
     epoch: Epoch,
+    /// The basic information configuration for this Matter device
     dev_det: &'a BasicInfoConfig<'a>,
+    /// The basic commissioning data for this Matter device
     dev_comm: BasicCommData,
+    /// The device attestation data fetcher for this Matter device
     dev_att: &'a dyn DeviceAttestation,
+    /// The port number on which the Matter stack will listen for incoming connections
     port: u16,
 }
 
@@ -311,14 +276,12 @@ impl<'a> Matter<'a> {
         port: u16,
     ) -> Self {
         Self {
-            fabric_mgr: RefCell::new(FabricMgr::new()),
-            pase_mgr: RefCell::new(PaseMgr::new(epoch)),
-            failsafe: RefCell::new(FailSafe::new(epoch)),
-            transport_mgr: TransportMgr::new(dev_det, epoch),
-            basic_info_settings: RefCell::new(BasicInfoSettings::new()),
-            persist_notification: Notification::new(),
-            mdns_notification: Notification::new(),
-            groups_notification: Notification::new(),
+            state: Mutex::new(RefCell::new(MatterState::new(epoch))),
+            transport: Transport::new(dev_det),
+            state_changed: Notification::new(),
+            mdns_changed: Notification::new(),
+            session_removed: Notification::new(),
+            groups_modified: Notification::new(),
             epoch,
             dev_det,
             dev_comm,
@@ -371,14 +334,12 @@ impl<'a> Matter<'a> {
     ) -> impl Init<Self> {
         init!(
             Self {
-                fabric_mgr <- RefCell::init(FabricMgr::init()),
-                pase_mgr <- RefCell::init(PaseMgr::init(epoch)),
-                failsafe: RefCell::new(FailSafe::new(epoch)),
-                transport_mgr <- TransportMgr::init(dev_det, epoch),
-                basic_info_settings <- RefCell::init(BasicInfoSettings::init()),
-                persist_notification: Notification::new(),
-                mdns_notification: Notification::new(),
-                groups_notification: Notification::new(),
+                state <- Mutex::init(RefCell::init(MatterState::init(epoch))),
+                transport <- Transport::init(dev_det),
+                state_changed: Notification::new(),
+                mdns_changed: Notification::new(),
+                session_removed: Notification::new(),
+                groups_modified: Notification::new(),
                 epoch,
                 dev_det,
                 dev_comm,
@@ -389,7 +350,7 @@ impl<'a> Matter<'a> {
     }
 
     pub fn initialize_transport_buffers(&self) -> Result<(), Error> {
-        self.transport_mgr.initialize_buffers()
+        self.transport.initialize_buffers()
     }
 
     pub fn dev_det(&self) -> &BasicInfoConfig<'_> {
@@ -412,12 +373,12 @@ impl<'a> Matter<'a> {
         self.epoch
     }
 
-    pub fn transport_rx_buffer(&self) -> impl BufferAccess<[u8]> + '_ {
-        self.transport_mgr.rx_buffer()
+    pub fn transport_rx_buffer(&self) -> PacketBufferExternalAccess<'_, MAX_RX_BUF_SIZE> {
+        self.transport.rx_buffer()
     }
 
-    pub fn transport_tx_buffer(&self) -> impl BufferAccess<[u8]> + '_ {
-        self.transport_mgr.tx_buffer()
+    pub fn transport_tx_buffer(&self) -> PacketBufferExternalAccess<'_, MAX_TX_BUF_SIZE> {
+        self.transport.tx_buffer()
     }
 
     /// A utility method to replace the initial Device Attestation with another one.
@@ -436,7 +397,7 @@ impl<'a> Matter<'a> {
     /// # Arguments
     /// - `disc_caps`: The discovery capabilities to be used in the QR code payload
     pub fn print_standard_qr_text(&self, disc_caps: DiscoveryCapabilities) -> Result<(), Error> {
-        let rx_buf = self.transport_mgr.rx_buffer();
+        let rx_buf = self.transport.rx_buffer();
 
         let mut buf = rx_buf.get_immediate().ok_or(ErrorCode::NoMemory)?;
         let buf = &mut *buf;
@@ -474,7 +435,7 @@ impl<'a> Matter<'a> {
             self.dev_comm.compute_pretty_pairing_code()
         );
 
-        let rx_buf = self.transport_mgr.rx_buffer();
+        let rx_buf = self.transport.rx_buffer();
 
         let mut buf = rx_buf.get_immediate().ok_or(ErrorCode::NoMemory)?;
         let buf = &mut *buf;
@@ -534,7 +495,7 @@ impl<'a> Matter<'a> {
     // after we receive `CommissioningComplete` on behalf of a Case session
     // for the fabric in question.
     pub fn is_commissioned(&self) -> bool {
-        self.fabric_mgr.borrow().iter().count() > 0
+        self.with_state(|state| state.fabrics.iter().count() > 0)
     }
 
     /// Open a basic commissioning window
@@ -552,13 +513,15 @@ impl<'a> Matter<'a> {
     ) -> Result<(), Error> {
         let ctx = BasicContextInstance::new(self, crypto, notify);
 
-        self.pase_mgr.borrow_mut().open_basic_comm_window(
-            ctx,
-            self.dev_comm.password.reference(),
-            self.dev_comm.discriminator,
-            timeout_secs,
-            None,
-        )
+        self.with_state(|state| {
+            state.pase.open_basic_comm_window(
+                ctx,
+                self.dev_comm.password.reference(),
+                self.dev_comm.discriminator,
+                timeout_secs,
+                None,
+            )
+        })
     }
 
     /// Close the basic commissioning window
@@ -571,126 +534,76 @@ impl<'a> Matter<'a> {
     ) -> Result<bool, Error> {
         let ctx = BasicContextInstance::new(self, crypto, notify);
 
-        self.pase_mgr.borrow_mut().close_comm_window(ctx)
+        self.with_state(|state| state.pase.close_comm_window(ctx))
     }
 
-    /// Watch for fabric/group key changes and join new IPv6 multicast groups
-    /// as group key maps change.
-    /// Runs forever (never returns).
-    fn watch_group_membership<'t, M>(
-        &'t self,
-        mut multicast_network: M,
-    ) -> impl Future<Output = ()> + 't
-    where
-        M: NetworkMulticast + 't,
-    {
-        async move {
-            const MAX_ADDRS: usize = MAX_FABRICS * MAX_GROUPS_PER_FABRIC;
-            let mut joined: heapless::Vec<Ipv6Addr, MAX_ADDRS> = heapless::Vec::new();
-
-            loop {
-                for fabric in self.fabric_mgr.borrow().iter() {
-                    for entry in fabric.group_iter() {
-                        let addr = crate::utils::ipv6::compute_group_multicast_addr(
-                            fabric.fabric_id(),
-                            entry.group_id,
-                        );
-
-                        if !joined.contains(&addr) {
-                            // TODO: unregister when group is removed.
-                            match multicast_network.register_multicast(addr.into()).await {
-                                Ok(_) => {
-                                    debug!("Registered multicast address: {}", addr);
-                                    // `joined` should be able to contain theoretical maximum number of multicast address
-                                    // So this unwrap should be safe
-                                    unwrap!(joined.push(addr));
-                                },
-                                Err(_) => error!("Failed to register multicast address: {}.\n\t Group communication may not work as expected", addr),
-                            }
-                        }
-                    }
-                }
-
-                self.groups_notification.wait().await;
-            }
-        }
+    /// Create a new transport runner instance
+    pub fn transport_runner<C: Crypto>(&self, crypto: C) -> TransportRunner<'_, C> {
+        TransportRunner::new(self, crypto)
     }
 
-    /// Run the Matter transport layer along with the background group membership watcher.
-    ///
-    /// This is the main entry point for running the transport. It:
-    /// 1. Joins IPv6 multicast groups for any already-configured group key maps
-    /// 2. Runs the transport and a background task that listens on multicast address for
-    ///    groupcast messages
+    /// Run the Matter transport layer.
     ///
     /// # Arguments
     /// - `crypto`: The crypto backend
     /// - `send`: The network send interface
     /// - `recv`: The network receive interface
     /// - `multicast`: The multicast network interface (for receiving groupcast messages)
-    ///
+    ///   When running on top of non-IP networks like BLE pass a no-op implementation like `NoNetwork` here and the multicast functionality will be disabled.
     pub async fn run<C, S, R, M>(
         &self,
         crypto: C,
         send: S,
         recv: R,
-        multicast: Option<M>,
+        multicast: M,
     ) -> Result<(), Error>
     where
+        C: Crypto,
         S: NetworkSend,
         R: NetworkReceive,
         M: NetworkMulticast,
-        C: Crypto,
     {
-        let mut transport = pin!(self.run_transport(&crypto, send, recv));
-        let mut group_key_watcher = match multicast {
-            Some(multicast) => pin!(either::Either::Left(self.watch_group_membership(multicast))),
-            None => pin!(either::Either::Right(core::future::pending::<()>())),
-        };
+        let mut transport_runner = self.transport_runner(crypto);
 
-        match select(&mut transport, &mut group_key_watcher).await {
-            embassy_futures::select::Either::First(result) => result,
-            embassy_futures::select::Either::Second(_) => unreachable!(),
-        }
+        transport_runner.run(send, recv, multicast).await
     }
 
-    /// Resets the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
+    /// Access the Matter state by invoking a closure with a mutable reference to the state.
+    pub fn with_state<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut MatterState) -> R,
+    {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            f(&mut state)
+        })
+    }
+
+    /// Reset the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
     /// NOTE: User should be careful _not_ to call this method while the transport layer and/or the built-in mDNS is running.
     pub fn reset_transport(&self) -> Result<(), Error> {
-        self.transport_mgr.reset()
+        self.with_state(|state| {
+            state.sessions.reset();
+
+            self.transport.reset()
+        })
     }
 
     /// Notify that groups have changed (keys, key maps, or membership) and
     /// multicast registrations need updating.
     pub fn notify_groups_changed(&self) {
-        self.groups_notification.notify();
+        self.groups_modified.notify();
     }
 
-    /// Run only the transport layer (packet send/receive and session management).
-    pub fn run_transport<'t, C, S, R>(
-        &'t self,
-        crypto: C,
-        send: S,
-        recv: R,
-    ) -> impl Future<Output = Result<(), Error>> + 't
-    where
-        S: NetworkSend + 't,
-        R: NetworkReceive + 't,
-        C: Crypto + 't,
-    {
-        async move {
-            self.transport_mgr
-                .run(&crypto, &self.fabric_mgr, send, recv)
-                .await
-        }
-    }
-    /// Reset the Matter state by removing all fabrics and resetting basic info settings
+    /// Reset the Matter persistable state by removing all fabrics and resetting basic info settings
     ///
     /// # Arguments
     /// - `flag_changed`: If true, notifies that fabrics and basic info settings have changed
     pub fn reset_persist(&self, flag_changed: bool) {
-        self.basic_info_settings.borrow_mut().reset(flag_changed);
-        self.fabric_mgr.borrow_mut().reset(flag_changed);
+        self.with_state(|state| {
+            state.basic_info_settings.reset(flag_changed);
+            state.fabrics.reset(flag_changed);
+        });
 
         self.notify_mdns();
 
@@ -706,7 +619,7 @@ impl<'a> Matter<'a> {
     ///
     /// TODO: Fix the method name as it is not clear enough. Potentially revamp the whole persistence notification logic
     pub fn notify_persist(&self) {
-        self.persist_notification.notify();
+        self.state_changed.notify();
     }
 
     /// Load fabrics from the given data
@@ -714,9 +627,7 @@ impl<'a> Matter<'a> {
     /// Arguments:
     /// - `data`: The data to load the fabrics from
     pub fn load_fabrics(&self, data: &[u8]) -> Result<(), Error> {
-        self.fabric_mgr
-            .borrow_mut()
-            .load(data, &mut || self.notify_mdns())
+        self.with_state(|state| state.fabrics.load(data, &mut || self.notify_mdns()))
     }
 
     /// Store fabrics into the given buffer
@@ -726,12 +637,12 @@ impl<'a> Matter<'a> {
     ///
     /// Returns the number of bytes written into the buffer.
     pub fn store_fabrics(&self, buf: &mut [u8]) -> Result<usize, Error> {
-        self.fabric_mgr.borrow_mut().store(buf)
+        self.with_state(|state| state.fabrics.store(buf))
     }
 
     /// Return true if the fabrics have changed since the last call to `store_fabrics`
     pub fn fabrics_changed(&self) -> bool {
-        self.fabric_mgr.borrow().is_changed()
+        self.with_state(|state| state.fabrics.is_changed())
     }
 
     /// Load basic info settings from the given data
@@ -739,7 +650,7 @@ impl<'a> Matter<'a> {
     /// Arguments:
     /// - `data`: The data to load the basic info settings from
     pub fn load_basic_info(&self, data: &[u8]) -> Result<(), Error> {
-        self.basic_info_settings.borrow_mut().load(data)
+        self.with_state(|state| state.basic_info_settings.load(data))
     }
 
     /// Store basic info settings into the given buffer
@@ -749,12 +660,12 @@ impl<'a> Matter<'a> {
     ///
     /// Returns the number of bytes written into the buffer.
     pub fn store_basic_info(&self, buf: &mut [u8]) -> Result<usize, Error> {
-        self.basic_info_settings.borrow_mut().store(buf)
+        self.with_state(|state| state.basic_info_settings.store(buf))
     }
 
     /// Return true if the basic info settings have changed since the last call to `store_basic_info`
     pub fn basic_info_changed(&self) -> bool {
-        self.basic_info_settings.borrow().changed
+        self.with_state(|state| state.basic_info_settings.changed)
     }
 
     /// A hook for user persistence code to wait for potential changes in ACLs, Fabrics or basic info.
@@ -764,7 +675,7 @@ impl<'a> Matter<'a> {
     ///
     /// TODO: Fix the method name as it is not clear enough. Potentially revamp the whole persistence notification logic
     pub fn wait_persist(&self) -> impl Future<Output = ()> + '_ {
-        self.persist_notification.wait()
+        self.state_changed.wait()
     }
 
     /// Invoke the given closure for each currently published Matter mDNS service.
@@ -782,35 +693,34 @@ impl<'a> Matter<'a> {
 
         debug!("=== Currently published mDNS services");
 
-        let mut pase_mgr = self.pase_mgr.borrow_mut();
-        let fabric_mgr = self.fabric_mgr.borrow();
-
-        if let Some(comm_window) = pase_mgr.comm_window(ctx)? {
-            // Do not remove this logging line or change its formatting.
-            // C++ E2E tests rely on this log line to determine when the mDNS service is published
-            debug!("mDNS service published: {:?}", comm_window.mdns_service());
-
-            f(comm_window.mdns_service())?;
-        }
-
-        for fabric in fabric_mgr.iter() {
-            if let Some(service) = fabric.mdns_service() {
+        self.with_state(|state| {
+            if let Some(comm_window) = state.pase.comm_window(ctx)? {
                 // Do not remove this logging line or change its formatting.
                 // C++ E2E tests rely on this log line to determine when the mDNS service is published
-                debug!("mDNS service published: {:?}", service);
+                debug!("mDNS service published: {:?}", comm_window.mdns_service());
 
-                f(service)?;
+                f(comm_window.mdns_service())?;
             }
-        }
 
-        debug!("===");
+            for fabric in state.fabrics.iter() {
+                if let Some(service) = fabric.mdns_service() {
+                    // Do not remove this logging line or change its formatting.
+                    // C++ E2E tests rely on this log line to determine when the mDNS service is published
+                    debug!("mDNS service published: {:?}", service);
 
-        Ok(())
+                    f(service)?;
+                }
+            }
+
+            debug!("===");
+
+            Ok(())
+        })
     }
 
     /// Notify that the Matter mDNS services _might_ have changed.
     pub(crate) fn notify_mdns(&self) {
-        self.mdns_notification.notify();
+        self.mdns_changed.notify();
     }
 
     /// A hook for user code to wait for notification that the Matter mDNS services might have changed.
@@ -818,6 +728,64 @@ impl<'a> Matter<'a> {
     /// Once this future resolves, user code is supposed to inspect the mDNS services for changes, and
     /// if there are changes, re-publish the changed mDNS services in an mDNS responder accordingly.
     pub fn wait_mdns(&self) -> impl Future<Output = ()> + '_ {
-        self.mdns_notification.wait()
+        self.mdns_changed.wait()
+    }
+}
+
+/// The internal state of the Matter Object
+///
+/// Public for unit tests.
+pub struct MatterState {
+    /// All fabrics
+    ///
+    /// Public for unit tests
+    pub fabrics: Fabrics,
+    /// All sessions
+    sessions: Sessions,
+    /// The PASE session state
+    pase: Pase,
+    /// The Failsafe state
+    failsafe: FailSafe,
+    /// The mutable basic information settings
+    basic_info_settings: BasicInfoSettings,
+}
+
+impl MatterState {
+    /// Create a new instance of MatterState
+    #[inline(always)]
+    const fn new(epoch: Epoch) -> Self {
+        Self {
+            fabrics: Fabrics::new(),
+            sessions: Sessions::new(epoch),
+            pase: Pase::new(epoch),
+            failsafe: FailSafe::new(epoch),
+            basic_info_settings: BasicInfoSettings::new(),
+        }
+    }
+
+    /// Return an in-place initializer for MatterState
+    fn init(epoch: Epoch) -> impl Init<Self> {
+        init!(Self {
+            fabrics <- Fabrics::init(),
+            sessions <- Sessions::init(epoch),
+            pase <- Pase::init(epoch),
+            failsafe <- FailSafe::init(epoch),
+            basic_info_settings <- BasicInfoSettings::init(),
+        })
+    }
+}
+
+#[cfg(test)]
+pub mod test {
+    use crate::{utils::epoch::dummy_epoch, Matter};
+
+    pub fn test_matter() -> Matter<'static> {
+        Matter::new(
+            &crate::dm::devices::test::TEST_DEV_DET,
+            crate::dm::devices::test::TEST_DEV_COMM,
+            &crate::dm::devices::test::TEST_DEV_ATT,
+            dummy_epoch,
+            0,
+        )
     }
 }

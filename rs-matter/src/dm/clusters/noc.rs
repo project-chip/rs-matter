@@ -70,9 +70,9 @@ impl NocHandler {
     }
 
     /// Computes the attestation signature using the provided `DeviceAttestation`
-    fn compute_attestation_signature<C: Crypto, D: DeviceAttestation>(
+    fn compute_attestation_signature<C: Crypto>(
         crypto: C,
-        dev_att: D,
+        dev_att: &dyn DeviceAttestation,
         attest_element: &mut WriteBuf,
         attest_challenge: AttChallengeRef<'_>,
         signature: &mut CanonPkcSignature,
@@ -117,39 +117,41 @@ impl ClusterHandler for NocHandler {
         }
 
         let attr = ctx.attr();
-        let fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow();
-        let mut fabrics = fabric_mgr.iter().filter(|fabric| {
-            (!attr.fab_filter || attr.fab_idx == fabric.fab_idx().get())
-                && !fabric.root_ca().is_empty()
-        });
 
-        match builder {
-            ArrayAttributeRead::ReadAll(mut builder) => {
-                for fabric in fabrics {
-                    if attr.fab_idx != fabric.fab_idx().get() {
-                        continue;
+        ctx.exchange().with_state(|state| {
+            let mut fabrics = state.fabrics.iter().filter(|fabric| {
+                (!attr.fab_filter || attr.fab_idx == fabric.fab_idx().get())
+                    && !fabric.root_ca().is_empty()
+            });
+
+            match builder {
+                ArrayAttributeRead::ReadAll(mut builder) => {
+                    for fabric in fabrics {
+                        if attr.fab_idx != fabric.fab_idx().get() {
+                            continue;
+                        }
+
+                        builder = read_into(fabric, builder.push()?)?;
                     }
 
-                    builder = read_into(fabric, builder.push()?)?;
+                    builder.end()
                 }
+                ArrayAttributeRead::ReadOne(index, builder) => {
+                    let fabric = fabrics.nth(index as _);
 
-                builder.end()
-            }
-            ArrayAttributeRead::ReadOne(index, builder) => {
-                let fabric = fabrics.nth(index as _);
-
-                if let Some(fabric) = fabric {
-                    if attr.fab_idx != fabric.fab_idx().get() {
-                        Err(ErrorCode::ConstraintError.into())
+                    if let Some(fabric) = fabric {
+                        if attr.fab_idx != fabric.fab_idx().get() {
+                            Err(ErrorCode::ConstraintError.into())
+                        } else {
+                            read_into(fabric, builder)
+                        }
                     } else {
-                        read_into(fabric, builder)
+                        Err(ErrorCode::ConstraintError.into())
                     }
-                } else {
-                    Err(ErrorCode::ConstraintError.into())
                 }
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
             }
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
+        })
     }
 
     fn fabrics<P: TLVBuilderParent>(
@@ -179,31 +181,33 @@ impl ClusterHandler for NocHandler {
         }
 
         let attr = ctx.attr();
-        let fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow();
-        let mut fabrics = fabric_mgr.iter().filter(|fabric| {
-            (!attr.fab_filter || attr.fab_idx == fabric.fab_idx().get())
-                && !fabric.root_ca().is_empty()
-        });
 
-        match builder {
-            ArrayAttributeRead::ReadAll(mut builder) => {
-                for fabric in fabrics {
-                    builder = read_into(fabric, builder.push()?)?;
+        ctx.exchange().with_state(|state| {
+            let mut fabrics = state.fabrics.iter().filter(|fabric| {
+                (!attr.fab_filter || attr.fab_idx == fabric.fab_idx().get())
+                    && !fabric.root_ca().is_empty()
+            });
+
+            match builder {
+                ArrayAttributeRead::ReadAll(mut builder) => {
+                    for fabric in fabrics {
+                        builder = read_into(fabric, builder.push()?)?;
+                    }
+
+                    builder.end()
                 }
+                ArrayAttributeRead::ReadOne(index, builder) => {
+                    let fabric = fabrics.nth(index as _);
 
-                builder.end()
-            }
-            ArrayAttributeRead::ReadOne(index, builder) => {
-                let fabric = fabrics.nth(index as _);
-
-                if let Some(fabric) = fabric {
-                    read_into(fabric, builder)
-                } else {
-                    Err(ErrorCode::ConstraintError.into())
+                    if let Some(fabric) = fabric {
+                        read_into(fabric, builder)
+                    } else {
+                        Err(ErrorCode::ConstraintError.into())
+                    }
                 }
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
             }
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
+        })
     }
 
     fn supported_fabrics(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
@@ -211,7 +215,8 @@ impl ClusterHandler for NocHandler {
     }
 
     fn commissioned_fabrics(&self, ctx: impl ReadContext) -> Result<u8, Error> {
-        Ok(ctx.exchange().matter().fabric_mgr.borrow().iter().count() as _)
+        ctx.exchange()
+            .with_state(|state| Ok(state.fabrics.iter().count() as u8))
     }
 
     fn trusted_root_certificates<P: TLVBuilderParent>(
@@ -220,31 +225,33 @@ impl ClusterHandler for NocHandler {
         builder: ArrayAttributeRead<OctetsArrayBuilder<P>, OctetsBuilder<P>>,
     ) -> Result<P, Error> {
         let attr = ctx.attr();
-        let fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow();
-        let mut fabrics = fabric_mgr.iter().filter(|fabric| {
-            (!attr.fab_filter || attr.fab_idx == fabric.fab_idx().get())
-                && !fabric.root_ca().is_empty()
-        });
 
-        match builder {
-            ArrayAttributeRead::ReadAll(mut builder) => {
-                for fabric in fabrics {
-                    builder = builder.push(Octets::new(fabric.root_ca()))?;
+        ctx.exchange().with_state(|state| {
+            let mut fabrics = state.fabrics.iter().filter(|fabric| {
+                (!attr.fab_filter || attr.fab_idx == fabric.fab_idx().get())
+                    && !fabric.root_ca().is_empty()
+            });
+
+            match builder {
+                ArrayAttributeRead::ReadAll(mut builder) => {
+                    for fabric in fabrics {
+                        builder = builder.push(Octets::new(fabric.root_ca()))?;
+                    }
+
+                    builder.end()
                 }
+                ArrayAttributeRead::ReadOne(index, builder) => {
+                    let fabric = fabrics.nth(index as _);
 
-                builder.end()
-            }
-            ArrayAttributeRead::ReadOne(index, builder) => {
-                let fabric = fabrics.nth(index as _);
-
-                if let Some(fabric) = fabric {
-                    builder.set(Octets::new(fabric.root_ca()))
-                } else {
-                    Err(ErrorCode::ConstraintError.into())
+                    if let Some(fabric) = fabric {
+                        builder.set(Octets::new(fabric.root_ca()))
+                    } else {
+                        Err(ErrorCode::ConstraintError.into())
+                    }
                 }
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
             }
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
+        })
     }
 
     fn current_fabric_index(&self, ctx: impl ReadContext) -> Result<u8, Error> {
@@ -260,7 +267,9 @@ impl ClusterHandler for NocHandler {
     ) -> Result<P, Error> {
         info!("Got Attestation Request");
 
-        ctx.exchange().with_session(|sess| {
+        ctx.exchange().with_state(|state| {
+            let sess = ctx.exchange().id().session(&mut state.sessions);
+
             // Switch to raw writer for the response
             // Necessary, as we want to take advantage of the `TLVWrite::str_cb` method
             // to in-place compute and write the attestation response and the signature as an octet string
@@ -346,14 +355,18 @@ impl ClusterHandler for NocHandler {
     ) -> Result<P, Error> {
         info!("Got CSR Request");
 
-        ctx.exchange().with_session(|sess| {
-            let mut failsafe = ctx.exchange().matter().failsafe.borrow_mut();
+        ctx.exchange().with_state(|state| {
+            let sess = ctx.exchange().id().session(&mut state.sessions);
 
             let secret_key = if request.is_for_update_noc()?.unwrap_or(false) {
-                failsafe.update_csr_req(ctx.crypto(), sess.get_session_mode())
+                state
+                    .failsafe
+                    .update_csr_req(ctx.crypto(), sess.get_session_mode())?
             } else {
-                failsafe.add_csr_req(ctx.crypto(), sess.get_session_mode())
-            }?;
+                state
+                    .failsafe
+                    .add_csr_req(ctx.crypto(), sess.get_session_mode())?
+            };
 
             // Switch to raw writer for the response
             // Necessary, as we want to take advantage of the `TLVWrite::str_cb` method
@@ -419,11 +432,12 @@ impl ClusterHandler for NocHandler {
 
         let buf = response.writer().available_space();
 
-        let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_session(|sess| {
-            let matter = ctx.exchange().matter();
-            let fab_idx = ctx.exchange().matter().failsafe.borrow_mut().add_noc(
+        let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_state(|state| {
+            let sess = ctx.exchange().id().session(&mut state.sessions);
+
+            let fab_idx = state.failsafe.add_noc(
                 ctx.crypto(),
-                &ctx.exchange().matter().fabric_mgr,
+                &mut state.fabrics,
                 sess.get_session_mode(),
                 request.admin_vendor_id()?,
                 icac,
@@ -431,7 +445,7 @@ impl ClusterHandler for NocHandler {
                 request.ipk_value()?.0,
                 request.case_admin_subject()?,
                 buf,
-                &mut || matter.notify_mdns(),
+                &mut || ctx.exchange().matter().notify_mdns(),
             )?;
 
             let succeeded = Cell::new(false);
@@ -441,9 +455,8 @@ impl ClusterHandler for NocHandler {
                     // Remove the fabric if we fail further down this function
                     warn!("Removing fabric {} due to failure", fab_idx.get());
 
-                    unwrap!(matter
-                        .fabric_mgr
-                        .borrow_mut()
+                    unwrap!(state
+                        .fabrics
                         .remove(fab_idx, &mut || ctx.exchange().matter().notify_mdns()));
                 }
             });
@@ -482,10 +495,12 @@ impl ClusterHandler for NocHandler {
 
         let buf = response.writer().available_space();
 
-        let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_session(|sess| {
-            ctx.exchange().matter().failsafe.borrow_mut().update_noc(
+        let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_state(|state| {
+            let sess = ctx.exchange().id().session(&mut state.sessions);
+
+            state.failsafe.update_noc(
                 ctx.crypto(),
-                &ctx.exchange().matter().fabric_mgr,
+                &mut state.fabrics,
                 sess.get_session_mode(),
                 icac,
                 request.noc_value()?.0,
@@ -513,17 +528,17 @@ impl ClusterHandler for NocHandler {
 
         let mut updated_fab_idx = None;
 
-        let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_session(|sess| {
+        let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_state(|state| {
+            let sess = ctx.exchange().id().session(&mut state.sessions);
+
             let SessionMode::Case { fab_idx, .. } = sess.get_session_mode() else {
                 return Err(ErrorCode::GennCommInvalidAuthentication.into());
             };
 
             updated_fab_idx = Some(fab_idx.get());
 
-            ctx.exchange()
-                .matter()
-                .fabric_mgr
-                .borrow_mut()
+            state
+                .fabrics
                 .update_label(*fab_idx, request.label()?)
                 .map_err(|e| {
                     if e.code() == ErrorCode::Invalid {
@@ -551,58 +566,49 @@ impl ClusterHandler for NocHandler {
 
         let fab_idx = NonZeroU8::new(request.fabric_index()?).ok_or(ErrorCode::ConstraintError)?;
 
-        let status = if ctx
-            .exchange()
-            .matter()
-            .fabric_mgr
-            .borrow_mut()
-            .remove(fab_idx, &mut || ctx.exchange().matter().notify_mdns())
-            .is_ok()
-        {
-            // If our own session is running on the fabric being removed,
-            // we need to expire it rather than immediately remove it, so that
-            // the response can be sent back properly
-            let expire_sess_id = ctx.exchange().with_session(|sess| {
-                Ok((sess.get_local_fabric_idx() == fab_idx.get()).then_some(sess.id()))
-            })?;
+        ctx.exchange().with_state(|state| {
+            let sess = ctx.exchange().id().session(&mut state.sessions);
 
-            // Remove all sessions related to the fabric being removed
-            // If `expire_sess_id` is Some, the session will be expired instead of removed.
-            ctx.exchange()
-                .matter()
-                .transport_mgr
-                .session_mgr
-                .borrow_mut()
-                .remove_for_fabric(fab_idx, expire_sess_id);
+            let status = if state
+                .fabrics
+                .remove(fab_idx, &mut || ctx.exchange().matter().notify_mdns())
+                .is_ok()
+            {
+                // If our own session is running on the fabric being removed,
+                // we need to expire it rather than immediately remove it, so that
+                // the response can be sent back properly
+                let expire_sess_id =
+                    (sess.get_local_fabric_idx() == fab_idx.get()).then_some(sess.id());
 
-            // Notify that the fabrics need to be persisted
-            // We need to explicitly do this because if the fabric being removed
-            // is the one on which the session is running, the session will be removed
-            // and the response will fail
-            ctx.exchange().matter().notify_persist();
+                // Remove all sessions related to the fabric being removed
+                // If `expire_sess_id` is Some, the session will be expired instead of removed.
+                state.sessions.remove_for_fabric(fab_idx, expire_sess_id);
 
-            // Notify that a session was removed
-            ctx.exchange()
-                .matter()
-                .transport_mgr
-                .session_removed
-                .notify();
+                // Notify that the fabrics need to be persisted
+                // We need to explicitly do this because if the fabric being removed
+                // is the one on which the session is running, the session will be removed
+                // and the response will fail
+                ctx.exchange().matter().notify_persist();
 
-            // Note that since we might have removed our own session, the exchange
-            // will terminate with a "NoSession" error, but that's OK and handled properly
+                // Notify that a session was removed
+                ctx.exchange().matter().session_removed.notify();
 
-            info!("Removed operational fabric with local index {}", fab_idx);
+                // Note that since we might have removed our own session, the exchange
+                // will terminate with a "NoSession" error, but that's OK and handled properly
 
-            NodeOperationalCertStatusEnum::OK
-        } else {
-            NodeOperationalCertStatusEnum::InvalidFabricIndex
-        };
+                info!("Removed operational fabric with local index {}", fab_idx);
 
-        response
-            .status_code(status)?
-            .fabric_index(Some(fab_idx.get()))?
-            .debug_text(None)?
-            .end()
+                NodeOperationalCertStatusEnum::OK
+            } else {
+                NodeOperationalCertStatusEnum::InvalidFabricIndex
+            };
+
+            response
+                .status_code(status)?
+                .fabric_index(Some(fab_idx.get()))?
+                .debug_text(None)?
+                .end()
+        })
     }
 
     fn handle_add_trusted_root_certificate(
@@ -612,11 +618,11 @@ impl ClusterHandler for NocHandler {
     ) -> Result<(), Error> {
         info!("Got Add Trusted Root Cert Request");
 
-        ctx.exchange().with_session(|sess| {
-            ctx.exchange()
-                .matter()
+        ctx.exchange().with_state(|state| {
+            let sess = ctx.exchange().id().session(&mut state.sessions);
+
+            state
                 .failsafe
-                .borrow_mut()
                 .add_trusted_root_cert(sess.get_session_mode(), request.root_ca_certificate()?.0)
         })
     }

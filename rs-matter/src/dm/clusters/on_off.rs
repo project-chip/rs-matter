@@ -33,7 +33,6 @@ use core::future::Future;
 use core::pin::pin;
 
 use embassy_futures::select::{select, select3, Either, Either3};
-use embassy_time::Duration;
 
 use crate::dm::clusters::decl::{level_control, on_off};
 use crate::dm::clusters::level_control::{LevelControlHandler, LevelControlHooks};
@@ -44,6 +43,8 @@ use crate::error::{Error, ErrorCode};
 pub use crate::dm::clusters::decl::on_off::*;
 
 use crate::tlv::Nullable;
+use crate::utils::cell::RefCell;
+use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Signal;
 
 /// Messages passed to the `notify` closure in `OnOffHooks::run()` method.
@@ -94,6 +95,24 @@ enum OnOffCommand {
     Update,
 }
 
+struct OnOffState {
+    state: OnOffClusterState,
+    global_scene_control: bool,
+    on_time: u16,
+    off_wait_time: u16,
+}
+
+impl OnOffState {
+    pub const fn new(state: OnOffClusterState) -> Self {
+        Self {
+            state,
+            global_scene_control: true,
+            on_time: 0,
+            off_wait_time: 0,
+        }
+    }
+}
+
 /// Implementation of the Matter On/Off cluster handler.
 ///
 /// This struct provides the logic for managing the On/Off cluster state machine, handling commands,
@@ -109,16 +128,16 @@ enum OnOffCommand {
 /// # Panics
 /// - The handler will panic during initialisation if the cluster configuration is invalid or missing required
 ///   attributes/commands for enabled features.
+// TODO:
+// #[derive(Clone, Debug)]
+// #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct OnOffHandler<'a, H: OnOffHooks, LH: LevelControlHooks> {
     dataver: Dataver,
     endpoint_id: EndptId,
     hooks: H,
-    level_control_handler: Cell<Option<&'a LevelControlHandler<'a, LH, H>>>,
+    level_control_handler: Mutex<Cell<Option<&'a LevelControlHandler<'a, LH, H>>>>,
+    state: Mutex<RefCell<OnOffState>>,
     state_change_signal: Signal<Option<OnOffCommand>>,
-    state: Cell<OnOffClusterState>,
-    global_scene_control: Cell<bool>,
-    on_time: Cell<u16>,
-    off_wait_time: Cell<u16>,
 }
 
 impl<H: OnOffHooks> OnOffHandler<'_, H, NoLevelControl> {
@@ -155,12 +174,9 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
             dataver,
             endpoint_id,
             hooks,
-            level_control_handler: Cell::new(None),
+            level_control_handler: Mutex::new(Cell::new(None)),
+            state: Mutex::new(RefCell::new(OnOffState::new(state))),
             state_change_signal: Signal::new(None),
-            state: Cell::new(state),
-            global_scene_control: Cell::new(true),
-            on_time: Cell::new(0),
-            off_wait_time: Cell::new(0),
         }
     }
 
@@ -188,7 +204,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         }
 
         // Check LIGHTING feature requirements
-        if self.supports_feature(on_off::Feature::LIGHTING.bits()) {
+        if Self::supports_feature(on_off::Feature::LIGHTING.bits()) {
             if Self::CLUSTER
                 .attribute(AttributeId::GlobalSceneControl as _)
                 .is_none()
@@ -218,7 +234,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         }
 
         // Check OFFONLY feature requirements
-        if self.supports_feature(on_off::Feature::OFF_ONLY.bits())
+        if Self::supports_feature(on_off::Feature::OFF_ONLY.bits())
             && (Self::CLUSTER.command(CommandId::On as _).is_some()
                 || Self::CLUSTER.command(CommandId::Toggle as _).is_some())
         {
@@ -239,7 +255,8 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
     /// panics if the `state`'s `CLUSTER` is misconfigured.
     pub fn init(&self, level_control_handler: Option<&'a LevelControlHandler<'a, LH, H>>) {
         // Wire any coupled clusters
-        self.level_control_handler.set(level_control_handler);
+        self.level_control_handler
+            .lock(|h| h.set(level_control_handler));
 
         self.validate();
 
@@ -288,7 +305,12 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
 
     /// Sets the on_off state to true and updates the off_wait_time and global_scene_control accordingly.
     /// If not initiated by LevelControl and LevelControl cluster is coupled, call the LevelControl coupling logic.
-    fn set_on(&self, level_control_initiated: bool, ctx: impl HandlerContext) {
+    fn set_on(
+        &self,
+        state: &mut OnOffState,
+        level_control_initiated: bool,
+        ctx: impl HandlerContext,
+    ) {
         if self.hooks.on_off() {
             return;
         }
@@ -297,14 +319,14 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         // ... on receipt of the On command, a server SHALL set the OnOff attribute to TRUE.
         self.hooks.set_on_off(true);
 
-        let _ = self.update_attr_on();
+        let _ = Self::update_attr_on(state);
 
         self.dataver_changed();
         ctx.notify_attribute_changed(self.endpoint_id, Self::CLUSTER.id, AttributeId::OnOff as _);
 
         // LevelControl coupling logic defined in section 1.6.4.1.1
         if !level_control_initiated {
-            if let Some(level_control_handler) = self.level_control_handler.get() {
+            if let Some(level_control_handler) = self.level_control_handler.lock(|h| h.get()) {
                 level_control_handler.coupled_on_off_cluster_on_off_state_change(true);
             }
         }
@@ -312,23 +334,23 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
 
     // Updates Matter attributes when the state changes to On.
     // Returns true if attributes have been updated and hence Matter notification is required.
-    fn update_attr_on(&self) -> bool {
+    fn update_attr_on(state: &mut OnOffState) -> bool {
         // Note: The OnTime, OffWaitTime and GlobalScenesControl attributes are only supported and must
         // be supported when the LIGHTING feature is enabled.
         // This configuration is ensured by the validate method upon initialisation.
-        if self.supports_feature(on_off::Feature::LIGHTING.bits()) {
+        if Self::supports_feature(on_off::Feature::LIGHTING.bits()) {
             // 1.5.7.2. On Command
             // ... when the OnTime and OffWaitTime attributes are both supported, if the value of the
             // OnTime attribute is equal to 0, the server SHALL set the OffWaitTime attribute to 0.
-            if self.on_time.get() == 0 {
-                self.off_wait_time.set(0)
+            if state.on_time == 0 {
+                state.off_wait_time = 0;
             }
 
             // 1.5.6.3. GlobalSceneControl Attribute
             // This attribute SHALL be set to TRUE after the reception of a command which causes the OnOff
             // attribute to be set to TRUE, such as a standard On command, a MoveToLevel(WithOnOff) command,
             // a RecallScene command or a OnWithRecallGlobalScene command.
-            self.global_scene_control.set(true);
+            state.global_scene_control = true;
 
             return true;
         }
@@ -341,34 +363,38 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
     /// In this case, the method will not set the on_off state to false and returns false.
     /// Otherwise, we set the on_off state to false and return true.
     /// The return boolean indicates if the on_off state has been set.
-    fn set_off(&self, level_control_initiated: bool, ctx: impl HandlerContext) -> bool {
+    fn set_off(
+        &self,
+        state: &mut OnOffState,
+        level_control_initiated: bool,
+        ctx: impl HandlerContext,
+    ) -> bool {
         if !self.hooks.on_off() {
             return true;
         }
 
-        let attr_updated = self.update_attr_off();
+        let attr_updated = Self::update_attr_off(state);
 
         // LevelControl coupling logic defined in section 1.6.4.1.1
-        if self.level_control_handler.get().is_some() && !level_control_initiated {
-            // Use of unwrap is safe due to the previous check that level_control_handler is Some.
-            self.level_control_handler
-                .get()
-                .unwrap()
-                .coupled_on_off_cluster_on_off_state_change(false);
+        let level_control_handler = self.level_control_handler.lock(|h| h.get());
+        if let Some(level_control_handler) = level_control_handler {
+            if !level_control_initiated {
+                level_control_handler.coupled_on_off_cluster_on_off_state_change(false);
 
-            if attr_updated {
-                self.dataver_changed();
-                ctx.notify_attribute_changed(
-                    self.endpoint_id,
-                    Self::CLUSTER.id,
-                    AttributeId::OnOff as _,
-                );
+                if attr_updated {
+                    self.dataver_changed();
+                    ctx.notify_attribute_changed(
+                        self.endpoint_id,
+                        Self::CLUSTER.id,
+                        AttributeId::OnOff as _,
+                    );
+                }
+
+                // When calling the LevelControl with false (off), the levelControl cluster will call
+                // back into the OnOff cluster to set the OnOff attribute to false when it is done.
+                // Hence, we return without setting the on_off attribute.
+                return false;
             }
-
-            // When calling the LevelControl with false (off), the levelControl cluster will call
-            // back into the OnOff cluster to set the OnOff attribute to false when it is done.
-            // Hence, we return without setting the on_off attribute.
-            return false;
         }
 
         // 1.5.7.1. Off Command
@@ -382,54 +408,32 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
 
     // Update Matter attributes when the state changes to Off.
     // Returns true if attributes have been updated and hence Matter notification is required.
-    fn update_attr_off(&self) -> bool {
-        if self.supports_feature(on_off::Feature::LIGHTING.bits()) && self.on_time.get() != 0 {
+    fn update_attr_off(state: &mut OnOffState) -> bool {
+        if Self::supports_feature(on_off::Feature::LIGHTING.bits()) && state.on_time != 0 {
             // 1.5.7.1. Off Command
             // ... when the OnTime attribute is supported, the server SHALL set the OnTime attribute to 0.
-            self.on_time.set(0);
+            state.on_time = 0;
             return true;
         }
         false
     }
 
-    fn supports_feature(&self, features: u32) -> bool {
+    fn supports_feature(features: u32) -> bool {
         H::CLUSTER.feature_map & features != 0
-    }
-
-    async fn handle_off_with_effect(
-        &self,
-        effect_variant: EffectVariantEnum,
-        ctx: impl HandlerContext,
-    ) {
-        // 1.5.7.4.3. Effect on Receipt
-        // On receipt of the OffWithEffect command the server SHALL check the value of the
-        // GlobalSceneControl attribute.
-        // If the GlobalSceneControl attribute is equal to TRUE, the server SHALL store its settings in its global
-        // scene then set the GlobalSceneControl attribute to FALSE...
-        if self.global_scene_control.get() {
-            // todo: store the GlobalSceneControl setting (true) in the global scene.
-
-            self.global_scene_control.set(false);
-        }
-
-        self.hooks.handle_off_with_effect(effect_variant).await;
-
-        // This is set to true because in this case we do not want to also run the effects from the LevelControl cluster.
-        let _ = self.set_off(true, ctx);
     }
 
     // Updates the state of the state machine and Matter attributes to match the state of the physical device.
     // The state of the physical device is not modified.
-    fn update(&self, ctx: impl HandlerContext) {
+    fn update(&self, state: &mut OnOffState, ctx: impl HandlerContext) {
         match self.on_off() {
             true => {
-                if self.state.get() == OnOffClusterState::On {
+                if state.state == OnOffClusterState::On {
                     return;
                 }
 
-                self.state.set(OnOffClusterState::On);
+                state.state = OnOffClusterState::On;
 
-                let _ = self.update_attr_on();
+                let _ = Self::update_attr_on(state);
 
                 self.dataver_changed();
                 ctx.notify_attribute_changed(
@@ -439,13 +443,13 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                 );
             }
             false => {
-                if self.state.get() == OnOffClusterState::Off {
+                if state.state == OnOffClusterState::Off {
                     return;
                 }
 
-                self.state.set(OnOffClusterState::Off);
+                state.state = OnOffClusterState::Off;
 
-                let _ = self.update_attr_off();
+                let _ = Self::update_attr_off(state);
 
                 self.dataver_changed();
                 ctx.notify_attribute_changed(
@@ -458,145 +462,193 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
     }
 
     async fn state_machine(&self, command: OnOffCommand, ctx: impl HandlerContext) {
-        let start_time = embassy_time::Instant::now();
+        enum Outcome {
+            Done,
+            Continue,
+            OffWithEffect {
+                effect_variant: EffectVariantEnum,
+                final_state: OnOffClusterState,
+            },
+            Delay,
+        }
 
         loop {
-            match self.state.get() {
-                OnOffClusterState::On => match command {
-                    OnOffCommand::Off | OnOffCommand::Toggle => {
-                        if self.set_off(false, &ctx) {
-                            self.state.set(OnOffClusterState::Off);
-                        }
-                        break;
-                    }
-                    OnOffCommand::CoupledClusterOff => {
-                        self.set_off(true, &ctx);
-                        self.state.set(OnOffClusterState::Off);
-                        break;
-                    }
-                    OnOffCommand::On | OnOffCommand::CoupledClusterOn => break,
-                    OnOffCommand::OffWithEffect(effect) => {
-                        self.handle_off_with_effect(effect, &ctx).await;
-                        self.state.set(OnOffClusterState::Off);
-                        break;
-                    }
-                    OnOffCommand::OnWithTimedOff => self.state.set(OnOffClusterState::TimedOn),
-                    OnOffCommand::Update => {
-                        self.update(&ctx);
-                        break;
-                    }
-                },
-                OnOffClusterState::Off => match command {
-                    OnOffCommand::Off
-                    | OnOffCommand::OffWithEffect(_)
-                    | OnOffCommand::CoupledClusterOff => break,
-                    OnOffCommand::On | OnOffCommand::Toggle => {
-                        self.state.set(OnOffClusterState::On);
-                        self.set_on(false, &ctx);
-                        break;
-                    }
-                    OnOffCommand::CoupledClusterOn => {
-                        self.state.set(OnOffClusterState::On);
-                        self.set_on(true, &ctx);
-                        break;
-                    }
-                    OnOffCommand::OnWithTimedOff => self.state.set(OnOffClusterState::TimedOn),
-                    OnOffCommand::Update => {
-                        self.update(ctx);
-                        break;
-                    }
-                },
-                OnOffClusterState::TimedOn => {
-                    match command {
+            let outcome = self.with_state(|state| {
+                match state.state {
+                    OnOffClusterState::On => match command {
                         OnOffCommand::Off | OnOffCommand::Toggle => {
-                            trace!("Got Off command from TimedOn state");
-                            if self.set_off(false, &ctx) {
-                                self.state.set(OnOffClusterState::DelayedOff);
-                            } else {
-                                // If set_off returns false, we brake and expect to be called again by the CoupledClusterOff command.
-                                break;
+                            if self.set_off(state, false, &ctx) {
+                                state.state = OnOffClusterState::Off;
                             }
+                            Outcome::Done
                         }
                         OnOffCommand::CoupledClusterOff => {
-                            self.set_off(true, &ctx);
-                            self.state.set(OnOffClusterState::DelayedOff);
+                            self.set_off(state, true, &ctx);
+                            state.state = OnOffClusterState::Off;
+                            Outcome::Done
                         }
+                        OnOffCommand::On | OnOffCommand::CoupledClusterOn => Outcome::Done,
                         OnOffCommand::OffWithEffect(effect) => {
-                            self.handle_off_with_effect(effect, &ctx).await;
-                            self.state.set(OnOffClusterState::DelayedOff);
-                        }
-                        // 1.5.7.6.4. Effect on Receipt
-                        // If the value of the OnOff attribute is equal to TRUE and the value of the OnTime attribute is
-                        // greater than zero, the server SHALL decrement the value of the OnTime attribute. If the value of
-                        // the OnTime attribute reaches 0, the server SHALL set the OffWaitTime and OnOff attributes to 0
-                        // and FALSE, respectively.
-                        OnOffCommand::On | OnOffCommand::OnWithTimedOff => {
-                            let mut next_tick = start_time + Duration::from_millis(100);
-                            while self.on_time.get() > 0 {
-                                let now = embassy_time::Instant::now();
-                                if next_tick > now {
-                                    embassy_time::Timer::after(next_tick - now).await;
-                                }
-                                self.on_time.set(self.on_time.get() - 1);
-                                next_tick += Duration::from_millis(100);
-                            }
+                            // 1.5.7.4.3. Effect on Receipt
+                            // On receipt of the OffWithEffect command the server SHALL check the value of the
+                            // GlobalSceneControl attribute.
+                            // If the GlobalSceneControl attribute is equal to TRUE, the server SHALL store its settings in its global
+                            // scene then set the GlobalSceneControl attribute to FALSE...
+                            // todo: store the GlobalSceneControl setting (true) in the global scene.
+                            state.global_scene_control = false;
 
-                            self.off_wait_time.set(0);
-                            if self.set_off(false, &ctx) {
-                                self.state.set(OnOffClusterState::Off);
+                            Outcome::OffWithEffect {
+                                effect_variant: effect,
+                                final_state: OnOffClusterState::Off,
                             }
-                            break;
                         }
-                        OnOffCommand::CoupledClusterOn => {
-                            // This should not be reachable as the device would already be on so a change in the LevelControl cluster cannot cause the OnOff cluster to switch to On.
-                            unreachable!("CoupledClusterOn should not be reachable in TimedOn state: device is already on");
+                        OnOffCommand::OnWithTimedOff => {
+                            state.state = OnOffClusterState::TimedOn;
+                            Outcome::Continue
                         }
                         OnOffCommand::Update => {
-                            self.update(&ctx);
-                            break;
+                            self.update(state, &ctx);
+                            Outcome::Done
+                        }
+                    },
+                    OnOffClusterState::Off => match command {
+                        OnOffCommand::Off
+                        | OnOffCommand::OffWithEffect(_)
+                        | OnOffCommand::CoupledClusterOff => Outcome::Done,
+                        OnOffCommand::On | OnOffCommand::Toggle => {
+                            state.state = OnOffClusterState::On;
+                            self.set_on(state, false, &ctx);
+                            Outcome::Done
+                        }
+                        OnOffCommand::CoupledClusterOn => {
+                            state.state = OnOffClusterState::On;
+                            self.set_on(state, true, &ctx);
+                            Outcome::Done
+                        }
+                        OnOffCommand::OnWithTimedOff => {
+                            state.state = OnOffClusterState::TimedOn;
+                            Outcome::Continue
+                        }
+                        OnOffCommand::Update => {
+                            self.update(state, &ctx);
+                            Outcome::Done
+                        }
+                    },
+                    OnOffClusterState::TimedOn => {
+                        match command {
+                            OnOffCommand::Off | OnOffCommand::Toggle => {
+                                trace!("Got Off command from TimedOn state");
+                                if self.set_off(state, false, &ctx) {
+                                    state.state = OnOffClusterState::DelayedOff;
+                                    Outcome::Continue
+                                } else {
+                                    // If set_off returns false, we brake and expect to be called again by the CoupledClusterOff command.
+                                    Outcome::Done
+                                }
+                            }
+                            OnOffCommand::CoupledClusterOff => {
+                                self.set_off(state, true, &ctx);
+                                state.state = OnOffClusterState::DelayedOff;
+                                Outcome::Done
+                            }
+                            OnOffCommand::OffWithEffect(effect) => {
+                                // 1.5.7.4.3. Effect on Receipt
+                                // On receipt of the OffWithEffect command the server SHALL check the value of the
+                                // GlobalSceneControl attribute.
+                                // If the GlobalSceneControl attribute is equal to TRUE, the server SHALL store its settings in its global
+                                // scene then set the GlobalSceneControl attribute to FALSE...
+                                // todo: store the GlobalSceneControl setting (true) in the global scene.
+                                state.global_scene_control = false;
+
+                                Outcome::OffWithEffect {
+                                    effect_variant: effect,
+                                    final_state: OnOffClusterState::DelayedOff,
+                                }
+                            }
+                            // 1.5.7.6.4. Effect on Receipt
+                            // If the value of the OnOff attribute is equal to TRUE and the value of the OnTime attribute is
+                            // greater than zero, the server SHALL decrement the value of the OnTime attribute. If the value of
+                            // the OnTime attribute reaches 0, the server SHALL set the OffWaitTime and OnOff attributes to 0
+                            // and FALSE, respectively.
+                            OnOffCommand::On | OnOffCommand::OnWithTimedOff => {
+                                if state.on_time > 0 {
+                                    state.on_time -= 1;
+                                    Outcome::Delay
+                                } else {
+                                    state.off_wait_time = 0;
+                                    if self.set_off(state, false, &ctx) {
+                                        state.state = OnOffClusterState::Off;
+                                    }
+                                    Outcome::Done
+                                }
+                            }
+                            OnOffCommand::CoupledClusterOn => {
+                                // This should not be reachable as the device would already be on so a change in the LevelControl cluster cannot cause the OnOff cluster to switch to On.
+                                unreachable!("CoupledClusterOn should not be reachable in TimedOn state: device is already on")
+                            }
+                            OnOffCommand::Update => {
+                                self.update(state, &ctx);
+                                Outcome::Done
+                            }
+                        }
+                    }
+                    OnOffClusterState::DelayedOff => {
+                        match command {
+                            // 1.5.6.5. OffWaitTime Attribute
+                            // This attribute specifies the length of time (in 1/10ths second) that the Off state SHALL be guarded to
+                            // prevent another OnWithTimedOff command turning the server back to its On state.
+                            OnOffCommand::On | OnOffCommand::Toggle => {
+                                state.state = OnOffClusterState::On;
+                                self.set_on(state, false, &ctx);
+                                Outcome::Done
+                            }
+                            OnOffCommand::CoupledClusterOn => {
+                                state.state = OnOffClusterState::On;
+                                self.set_on(state, true, &ctx);
+                                Outcome::Done
+                            }
+                            OnOffCommand::Off
+                            | OnOffCommand::OffWithEffect(_)
+                            | OnOffCommand::OnWithTimedOff
+                            | OnOffCommand::CoupledClusterOff => {
+                                // 1.5.7.6.4. Effect on Receipt
+                                // If the value of the OnOff attribute is equal to FALSE and the value of the OffWaitTime attribute
+                                // is greater than zero, the server SHALL decrement the value of the OffWaitTime attribute. If the
+                                // value of the OffWaitTime attribute reaches 0, the server SHALL terminate the update.
+                                if state.off_wait_time > 0 {
+                                    state.off_wait_time -= 1;
+                                    Outcome::Delay
+                                } else {
+                                    state.state = OnOffClusterState::Off;
+                                    Outcome::Done
+                                }
+                            }
+                            OnOffCommand::Update => {
+                                self.update(state, &ctx);
+                                Outcome::Done
+                            }
                         }
                     }
                 }
-                OnOffClusterState::DelayedOff => {
-                    match command {
-                        // 1.5.6.5. OffWaitTime Attribute
-                        // This attribute specifies the length of time (in 1/10ths second) that the Off state SHALL be guarded to
-                        // prevent another OnWithTimedOff command turning the server back to its On state.
-                        OnOffCommand::On | OnOffCommand::Toggle => {
-                            self.state.set(OnOffClusterState::On);
-                            self.set_on(false, ctx);
-                            break;
-                        }
-                        OnOffCommand::CoupledClusterOn => {
-                            self.state.set(OnOffClusterState::On);
-                            self.set_on(true, ctx);
-                            break;
-                        }
-                        OnOffCommand::Off
-                        | OnOffCommand::OffWithEffect(_)
-                        | OnOffCommand::OnWithTimedOff
-                        | OnOffCommand::CoupledClusterOff => (),
-                        OnOffCommand::Update => {
-                            self.update(ctx);
-                            break;
-                        }
-                    }
+            });
 
-                    // 1.5.7.6.4. Effect on Receipt
-                    // If the value of the OnOff attribute is equal to FALSE and the value of the OffWaitTime attribute
-                    // is greater than zero, the server SHALL decrement the value of the OffWaitTime attribute. If the
-                    // value of the OffWaitTime attribute reaches 0, the server SHALL terminate the update.
-                    let mut next_tick = embassy_time::Instant::now() + Duration::from_millis(100);
-                    while self.off_wait_time.get() > 0 {
-                        let now = embassy_time::Instant::now();
-                        if next_tick > now {
-                            embassy_time::Timer::after(next_tick - now).await;
-                        }
-                        self.off_wait_time.set(self.off_wait_time.get() - 1);
-                        next_tick += Duration::from_millis(100);
-                    }
+            match outcome {
+                Outcome::Done => break,
+                Outcome::Continue => (),
+                Outcome::Delay => embassy_time::Timer::after_millis(100).await,
+                Outcome::OffWithEffect {
+                    effect_variant,
+                    final_state,
+                } => {
+                    self.hooks.handle_off_with_effect(effect_variant).await;
 
-                    self.state.set(OnOffClusterState::Off);
+                    self.with_state(|state| {
+                        // This is set to true because in this case we do not want to also run the effects from the LevelControl cluster.
+                        let _ = self.set_off(state, true, &ctx);
+
+                        state.state = final_state;
+                    });
+
                     break;
                 }
             }
@@ -619,20 +671,33 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
             on
         );
 
-        match on {
-            true => {
-                if self.state.get() == OnOffClusterState::DelayedOff {
-                    warn!("LevelControl is trying to set OnOff to true while the OnOff cluster is in the guarded 'Delayed Off' state");
-                    return;
-                }
+        self.with_state(|state| {
+            match on {
+                true => {
+                    if state.state == OnOffClusterState::DelayedOff {
+                        warn!("LevelControl is trying to set OnOff to true while the OnOff cluster is in the guarded 'Delayed Off' state");
+                        return;
+                    }
 
-                self.state_change_signal
-                    .signal(OnOffCommand::CoupledClusterOn);
+                    self.state_change_signal
+                        .signal(OnOffCommand::CoupledClusterOn);
+                }
+                false => self
+                    .state_change_signal
+                    .signal(OnOffCommand::CoupledClusterOff),
             }
-            false => self
-                .state_change_signal
-                .signal(OnOffCommand::CoupledClusterOff),
-        }
+        })
+    }
+
+    fn with_state<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut OnOffState) -> R,
+    {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+
+            f(&mut state)
+        })
     }
 }
 
@@ -682,15 +747,15 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
     }
 
     async fn global_scene_control(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
-        Ok(self.global_scene_control.get())
+        Ok(self.with_state(|state| state.global_scene_control))
     }
 
     async fn on_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(self.on_time.get())
+        Ok(self.with_state(|state| state.on_time))
     }
 
     async fn off_wait_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(self.off_wait_time.get())
+        Ok(self.with_state(|state| state.off_wait_time))
     }
 
     async fn start_up_on_off(
@@ -701,17 +766,21 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
     }
 
     async fn set_on_time(&self, ctx: impl WriteContext, value: u16) -> Result<(), Error> {
-        self.on_time.set(value);
-        self.dataver_changed();
-        ctx.notify_changed();
-        Ok(())
+        self.with_state(|state| {
+            state.on_time = value;
+            self.dataver_changed();
+            ctx.notify_changed();
+            Ok(())
+        })
     }
 
     async fn set_off_wait_time(&self, ctx: impl WriteContext, value: u16) -> Result<(), Error> {
-        self.off_wait_time.set(value);
-        self.dataver_changed();
-        ctx.notify_changed();
-        Ok(())
+        self.with_state(|state| {
+            state.off_wait_time = value;
+            self.dataver_changed();
+            ctx.notify_changed();
+            Ok(())
+        })
     }
 
     async fn set_start_up_on_off(
@@ -749,7 +818,7 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
         _ctx: impl InvokeContext,
         request: OffWithEffectRequest<'_>,
     ) -> Result<(), Error> {
-        if !self.supports_feature(on_off::Feature::LIGHTING.bits()) {
+        if !Self::supports_feature(on_off::Feature::LIGHTING.bits()) {
             // This error is currently mapped to the IM status UnsupportedCommand.
             return Err(ErrorCode::CommandNotFound.into());
         }
@@ -789,23 +858,25 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
         &self,
         _ctx: impl InvokeContext,
     ) -> Result<(), Error> {
-        // 1.5.7.5.1. Effect on Receipt
-        // On receipt of the OnWithRecallGlobalScene command, if the GlobalSceneControl attribute is equal
-        // to TRUE, the server SHALL discard the command.
-        if self.global_scene_control.get() {
-            return Ok(());
-        }
+        self.with_state(|state| {
+            // 1.5.7.5.1. Effect on Receipt
+            // On receipt of the OnWithRecallGlobalScene command, if the GlobalSceneControl attribute is equal
+            // to TRUE, the server SHALL discard the command.
+            if state.global_scene_control {
+                return Ok(());
+            }
 
-        // If the GlobalSceneControl attribute is equal to FALSE, the Scene cluster server on the same endpoint
-        // SHALL recall its global scene, updating the OnOff attribute accordingly. The OnOff server SHALL
-        // then set the GlobalSceneControl attribute to TRUE.
-        // Additionally, when the OnTime and OffWaitTime attributes are both supported, if the value of the
-        // OnTime attribute is equal to 0, the server SHALL set the OffWaitTime attribute to 0.
-        // todo Implement the above statement once the Scene cluster is implemented.
-        // self.set_on(false);
+            // If the GlobalSceneControl attribute is equal to FALSE, the Scene cluster server on the same endpoint
+            // SHALL recall its global scene, updating the OnOff attribute accordingly. The OnOff server SHALL
+            // then set the GlobalSceneControl attribute to TRUE.
+            // Additionally, when the OnTime and OffWaitTime attributes are both supported, if the value of the
+            // OnTime attribute is equal to 0, the server SHALL set the OffWaitTime attribute to 0.
+            // todo Implement the above statement once the Scene cluster is implemented.
+            // self.set_on(false);
 
-        // This error is currently mapped to the IM status UnsupportedCommand.
-        Err(ErrorCode::CommandNotFound.into())
+            // This error is currently mapped to the IM status UnsupportedCommand.
+            Err(ErrorCode::CommandNotFound.into())
+        })
     }
 
     async fn handle_on_with_timed_off(
@@ -824,33 +895,34 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
             return Ok(());
         }
 
-        // If the value of the OffWaitTime attribute is greater than zero and the value of the OnOff attribute is
-        // equal to FALSE, then the server SHALL set the OffWaitTime attribute to the minimum of the
-        // OffWaitTime attribute and the value specified in the OffWaitTime field.
-        if self.off_wait_time.get() > 0 && !self.hooks.on_off() {
-            self.off_wait_time
-                .set(self.off_wait_time.get().min(request.off_wait_time()?));
-        }
-        // In all other cases, the server SHALL set the OnTime attribute to the maximum of the OnTime
-        // attribute and the value specified in the OnTime field, set the OffWaitTime attribute to the value
-        // specified in the OffWaitTime field and set the OnOff attribute to TRUE.
-        else {
-            self.on_time.set(self.on_time.get().max(request.on_time()?));
-            self.off_wait_time.set(request.off_wait_time()?);
-            self.set_on(false, &ctx);
-        }
+        self.with_state(|state| {
+            // If the value of the OffWaitTime attribute is greater than zero and the value of the OnOff attribute is
+            // equal to FALSE, then the server SHALL set the OffWaitTime attribute to the minimum of the
+            // OffWaitTime attribute and the value specified in the OffWaitTime field.
+            if state.off_wait_time > 0 && !self.hooks.on_off() {
+                state.off_wait_time = state.off_wait_time.min(request.off_wait_time()?);
+            }
+            // In all other cases, the server SHALL set the OnTime attribute to the maximum of the OnTime
+            // attribute and the value specified in the OnTime field, set the OffWaitTime attribute to the value
+            // specified in the OffWaitTime field and set the OnOff attribute to TRUE.
+            else {
+                state.on_time = state.on_time.max(request.on_time()?);
+                state.off_wait_time = request.off_wait_time()?;
+                self.set_on(state, false, &ctx);
+            }
 
-        // If the values of the OnTime and OffWaitTime attributes are both not equal to 0xFFFF, the server
-        // SHALL then update these attributes every 1/10th second until both the OnTime and OffWaitTime
-        // attributes are equal to 0, as follows:
-        if self.on_time.get() == 0xFFFF && self.off_wait_time.get() == 0xFFFF {
-            return Ok(());
-        }
+            // If the values of the OnTime and OffWaitTime attributes are both not equal to 0xFFFF, the server
+            // SHALL then update these attributes every 1/10th second until both the OnTime and OffWaitTime
+            // attributes are equal to 0, as follows:
+            if state.on_time == 0xFFFF && state.off_wait_time == 0xFFFF {
+                return Ok(());
+            }
 
-        self.state_change_signal
-            .signal(OnOffCommand::OnWithTimedOff);
+            self.state_change_signal
+                .signal(OnOffCommand::OnWithTimedOff);
 
-        Ok(())
+            Ok(())
+        })
     }
 }
 
@@ -941,31 +1013,44 @@ impl LevelControlHooks for NoLevelControl {
 pub mod test {
     use embassy_time::{Duration, Timer};
 
-    use crate::error::Error;
-    use crate::tlv::Nullable;
-    use core::cell::Cell;
-
     use crate::dm::clusters::decl::on_off as on_off_cluster;
     use crate::dm::clusters::on_off::{
         EffectVariantEnum, OnOffHooks, OutOfBandMessage, StartUpOnOffEnum,
     };
     use crate::dm::Cluster;
-
+    use crate::error::Error;
+    use crate::tlv::Nullable;
+    use crate::utils::cell::RefCell;
+    use crate::utils::sync::blocking::Mutex;
     use crate::with;
 
+    struct TestOnOffState {
+        on_off: bool,
+        start_up_on_off: Option<StartUpOnOffEnum>,
+    }
+
+    impl TestOnOffState {
+        const fn new() -> Self {
+            Self {
+                on_off: false,
+                start_up_on_off: None,
+            }
+        }
+    }
+
     /// This is a basic implementation of the OnOff device logic, an implementer of OnOffHooks, used for testing.
-    #[derive(Default)]
+    // TODO:
+    // #[derive(Clone, Debug)]
+    // #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct TestOnOffDeviceLogic {
-        on_off: Cell<bool>,
-        start_up_on_off: Cell<Option<StartUpOnOffEnum>>,
+        state: Mutex<RefCell<TestOnOffState>>,
         toggle_periodically: bool,
     }
 
     impl TestOnOffDeviceLogic {
         pub const fn new(toggle_periodically: bool) -> Self {
             Self {
-                on_off: Cell::new(false),
-                start_up_on_off: Cell::new(None),
+                state: Mutex::new(RefCell::new(TestOnOffState::new())),
                 toggle_periodically,
             }
         }
@@ -985,22 +1070,23 @@ pub mod test {
             ));
 
         fn on_off(&self) -> bool {
-            self.on_off.get()
+            self.state.lock(|state| state.borrow().on_off)
         }
 
         fn set_on_off(&self, on: bool) {
-            self.on_off.set(on)
+            self.state.lock(|state| state.borrow_mut().on_off = on);
         }
 
         fn start_up_on_off(&self) -> Nullable<StartUpOnOffEnum> {
-            match self.start_up_on_off.get() {
+            match self.state.lock(|state| state.borrow().start_up_on_off) {
                 Some(value) => Nullable::some(value),
                 None => Nullable::none(),
             }
         }
 
         fn set_start_up_on_off(&self, value: Nullable<StartUpOnOffEnum>) -> Result<(), Error> {
-            self.start_up_on_off.set(value.into_option());
+            self.state
+                .lock(|state| state.borrow_mut().start_up_on_off = value.into_option());
             Ok(())
         }
 

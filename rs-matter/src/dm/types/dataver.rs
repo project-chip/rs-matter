@@ -16,13 +16,14 @@
  */
 
 use core::cell::Cell;
+use core::fmt::Debug;
 use core::num::Wrapping;
 
 use rand_core::RngCore;
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Dataver(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] Cell<Wrapping<u32>>);
+use crate::utils::sync::blocking::Mutex;
+
+pub struct Dataver(Mutex<Cell<Wrapping<u32>>>);
 
 impl Dataver {
     pub fn new_rand<R: RngCore>(rand: &mut R) -> Self {
@@ -30,16 +31,38 @@ impl Dataver {
     }
 
     pub const fn new(initial: u32) -> Self {
-        Self(Cell::new(Wrapping(initial)))
+        Self(Mutex::new(Cell::new(Wrapping(initial))))
     }
 
     pub fn get(&self) -> u32 {
-        self.0.get().0
+        self.0.lock(|state| state.get().0)
     }
 
     pub fn changed(&self) -> u32 {
-        self.0.set(self.0.get() + Wrapping(1));
+        self.0.lock(|state| {
+            state.set(state.get() + Wrapping(1));
 
-        self.get()
+            state.get().0
+        })
+    }
+}
+
+impl Clone for Dataver {
+    fn clone(&self) -> Self {
+        Self(Mutex::new(Cell::new(Wrapping(self.get()))))
+    }
+}
+
+impl Debug for Dataver {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.lock(|state| write!(f, "Dataver({})", state.get()))
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for Dataver {
+    fn format(&self, fmt: defmt::Formatter) {
+        self.0
+            .lock(|state| defmt::write!(fmt, "Dataver({})", state.get().0))
     }
 }

@@ -650,10 +650,9 @@ mod test {
         Access, Attribute, Cluster, ClusterId, Command, DeviceType, Endpoint, EndptId, Quality,
     };
     use crate::error::{Error, ErrorCode};
-    use crate::fabric::FabricMgr;
     use crate::im::GenericPath;
     use crate::im::IMStatusCode;
-    use crate::utils::cell::RefCell;
+    use crate::test::test_matter;
 
     use super::{Node, Operation, PathExpander, PathExpansionItem};
 
@@ -694,8 +693,8 @@ mod test {
         input: &[GenericPath],
         expected: &[Result<Result<GenericPath, IMStatusCode>, ErrorCode>],
     ) {
-        let fab_mgr = RefCell::new(FabricMgr::new());
-        let accessor = Accessor::new(0, AccessorSubjects::new(0), Some(AuthMode::Pase), &fab_mgr);
+        let matter = test_matter();
+        let accessor = Accessor::new(0, AccessorSubjects::new(0), Some(AuthMode::Pase), &matter);
 
         let expander =
             PathExpander::new(node, &accessor, false, Some(input.iter().cloned().map(Ok)));

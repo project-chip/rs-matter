@@ -27,7 +27,6 @@ use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, TLVTag, ToTLV,
 use crate::transport::exchange::Exchange;
 use crate::transport::session::MAX_SESSIONS;
 use crate::utils::bitflags::bitflags;
-use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::WriteBuf;
 use crate::{except, with};
@@ -402,8 +401,11 @@ impl BasicInfoHandler {
         exchange.matter().dev_det()
     }
 
-    fn settings<'a>(exchange: &'a Exchange) -> &'a RefCell<BasicInfoSettings> {
-        &exchange.matter().basic_info_settings
+    fn with_settings<F, R>(exchange: &Exchange, f: F) -> Result<R, Error>
+    where
+        F: FnOnce(&mut BasicInfoSettings) -> Result<R, Error>,
+    {
+        exchange.with_state(|state| f(&mut state.basic_info_settings))
     }
 }
 
@@ -477,7 +479,9 @@ impl ClusterHandler for BasicInfoHandler {
         ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        out.set(Self::settings(ctx.exchange()).borrow().node_label.as_str())
+        Self::with_settings(ctx.exchange(), |settings| {
+            out.set(settings.node_label.as_str())
+        })
     }
 
     fn set_node_label(&self, ctx: impl WriteContext, label: &str) -> Result<(), Error> {
@@ -485,18 +489,18 @@ impl ClusterHandler for BasicInfoHandler {
             return Err(ErrorCode::ConstraintError.into());
         }
 
-        let mut settings = Self::settings(ctx.exchange()).borrow_mut();
+        Self::with_settings(ctx.exchange(), |settings| {
+            settings.node_label.clear();
+            settings
+                .node_label
+                .push_str(label)
+                .map_err(|_| ErrorCode::ConstraintError)?;
+            settings.changed = true;
 
-        settings.node_label.clear();
-        settings
-            .node_label
-            .push_str(label)
-            .map_err(|_| ErrorCode::ConstraintError)?;
-        settings.changed = true;
+            ctx.exchange().matter().notify_persist();
 
-        ctx.exchange().matter().notify_persist();
-
-        Ok(())
+            Ok(())
+        })
     }
 
     fn location<P: TLVBuilderParent>(
@@ -504,8 +508,9 @@ impl ClusterHandler for BasicInfoHandler {
         ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        let settings = Self::settings(ctx.exchange()).borrow();
-        out.set(settings.location.as_ref().map_or("XX", |loc| loc.as_str()))
+        Self::with_settings(ctx.exchange(), |settings| {
+            out.set(settings.location.as_ref().map_or("XX", |loc| loc.as_str()))
+        })
     }
 
     fn set_location(&self, ctx: impl WriteContext, location: &str) -> Result<(), Error> {
@@ -513,13 +518,13 @@ impl ClusterHandler for BasicInfoHandler {
             return Err(ErrorCode::ConstraintError.into());
         }
 
-        let mut settings = Self::settings(ctx.exchange()).borrow_mut();
+        Self::with_settings(ctx.exchange(), |settings| {
+            settings.set_location(location);
 
-        settings.set_location(location);
+            ctx.exchange().matter().notify_persist();
 
-        ctx.exchange().matter().notify_persist();
-
-        Ok(())
+            Ok(())
+        })
     }
 
     fn capability_minima<P: TLVBuilderParent>(
@@ -592,20 +597,21 @@ impl ClusterHandler for BasicInfoHandler {
     }
 
     fn local_config_disabled(&self, ctx: impl ReadContext) -> Result<bool, Error> {
-        Ok(Self::settings(ctx.exchange())
-            .borrow()
-            .local_config_disabled)
+        Self::with_settings(
+            ctx.exchange(),
+            |settings| Ok(settings.local_config_disabled),
+        )
     }
 
     fn set_local_config_disabled(&self, ctx: impl WriteContext, value: bool) -> Result<(), Error> {
-        let mut settings = Self::settings(ctx.exchange()).borrow_mut();
+        Self::with_settings(ctx.exchange(), |settings| {
+            settings.local_config_disabled = value;
+            settings.changed = true;
 
-        settings.local_config_disabled = value;
-        settings.changed = true;
+            ctx.exchange().matter().notify_persist();
 
-        ctx.exchange().matter().notify_persist();
-
-        Ok(())
+            Ok(())
+        })
     }
 
     fn unique_id<P: TLVBuilderParent>(

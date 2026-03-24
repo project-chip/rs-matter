@@ -324,16 +324,14 @@ where
         ipv4_interface
             .map(|_| SocketAddr::V4(SocketAddrV4::new(MDNS_IPV4_BROADCAST_ADDR, MDNS_PORT)))
             .into_iter(),
-        ipv6_interface
-            .map(|interface| {
-                SocketAddr::V6(SocketAddrV6::new(
-                    MDNS_IPV6_BROADCAST_ADDR,
-                    MDNS_PORT,
-                    0,
-                    interface,
-                ))
-            })
-            .into_iter(),
+        ipv6_interface.map(|interface| {
+            SocketAddr::V6(SocketAddrV6::new(
+                MDNS_IPV6_BROADCAST_ADDR,
+                MDNS_PORT,
+                0,
+                interface,
+            ))
+        }),
     ) {
         info!("Sending mDNS query for {} to {}", service_type, addr);
         if let Err(e) = send.send_to(&buf[..query_len], Address::Udp(addr)).await {

@@ -308,11 +308,9 @@ pub mod fileio {
                 MATTER_PORT,
             );
 
-            matter
-                .fabric_mgr
-                .borrow_mut()
-                .add_with_post_init(|_| Ok(()))
-                .unwrap();
+            matter.with_state(|state| {
+                state.fabrics.add_with_post_init(|_| Ok(())).unwrap();
+            });
 
             matter
         }
@@ -325,10 +323,12 @@ pub mod fileio {
             // Set up a matter instance with some non-default config
             let initial_matter = new_test_matter();
             {
-                let mut basic = initial_matter.basic_info_settings.borrow_mut();
-                basic.node_label = heapless::String::try_from("my-test-node").unwrap();
-                basic.location = Some(heapless::String::try_from("ab").unwrap());
-                basic.changed = true;
+                initial_matter.with_state(|state| {
+                    let basic = &mut state.basic_info_settings;
+                    basic.node_label = heapless::String::try_from("my-test-node").unwrap();
+                    basic.location = Some(heapless::String::try_from("ab").unwrap());
+                    basic.changed = true;
+                });
             }
 
             // Set up events with a recognizable epoch value
@@ -368,9 +368,11 @@ pub mod fileio {
             .unwrap();
 
             // Basic info fields should've been restored
-            let basic = roundtripped.basic_info_settings.borrow();
-            assert_eq!(basic.node_label, "my-test-node");
-            assert_eq!(basic.location.as_deref(), Some("ab"));
+            roundtripped.with_state(|state| {
+                let basic = &state.basic_info_settings;
+                assert_eq!(basic.node_label, "my-test-node");
+                assert_eq!(basic.location.as_deref(), Some("ab"));
+            });
 
             // Events epoch should've been restored and bumped by one epoch
             let events = roundtripped_events.persisted_state.lock(|cell| cell.get());
@@ -383,11 +385,11 @@ pub mod fileio {
             // Generate a "legacy" blob using the old array-based format
             // (anonymous array with positional anonymous octet-strings)
             let source_matter = new_test_matter();
-            {
-                let mut basic = source_matter.basic_info_settings.borrow_mut();
+            source_matter.with_state(|state| {
+                let basic = &mut state.basic_info_settings;
                 basic.node_label = heapless::String::try_from("my-test-node").unwrap();
                 basic.location = Some(heapless::String::try_from("ab").unwrap());
-            }
+            });
 
             let mut buf = [0u8; 4096];
             let mut wb = crate::utils::storage::WriteBuf::new(&mut buf);
@@ -419,9 +421,11 @@ pub mod fileio {
             let mut psm = Psm::<32768>::new();
             psm.load(&path, &matter, NO_NETWORKS, NO_EVENTS).unwrap();
 
-            let basic = matter.basic_info_settings.borrow();
-            assert_eq!(basic.node_label, "my-test-node");
-            assert_eq!(basic.location.as_deref(), Some("ab"));
+            matter.with_state(|state| {
+                let basic = &state.basic_info_settings;
+                assert_eq!(basic.node_label, "my-test-node");
+                assert_eq!(basic.location.as_deref(), Some("ab"));
+            });
         }
     }
 }

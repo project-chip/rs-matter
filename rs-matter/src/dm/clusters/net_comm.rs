@@ -17,7 +17,7 @@
 
 //! This module contains the implementation of the Network Commissioning cluster and its handler.
 
-use core::fmt;
+use core::fmt::{self, Debug};
 
 use crate::dm::networks::wireless::{Thread, ThreadTLV, MAX_WIRELESS_NETWORK_ID_LEN};
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
@@ -26,6 +26,7 @@ use crate::tlv::{
     Nullable, NullableBuilder, Octets, OctetsBuilder, TLVBuilder, TLVBuilderParent, TLVWrite,
     ToTLVArrayBuilder, ToTLVBuilder,
 };
+use crate::utils::sync::DynBase;
 use crate::{clusters, with};
 
 pub use crate::dm::clusters::decl::network_commissioning::*;
@@ -407,7 +408,7 @@ impl NetworkCommissioningStatusEnum {
 }
 
 /// Trait for managing networks' credentials storage
-pub trait Networks {
+pub trait Networks: DynBase {
     /// Return the maximum number of networks supported by the implementation
     ///
     /// For `NetworkType::Ethernet` this method should always return 1
@@ -674,6 +675,7 @@ where
 }
 
 /// The system implementation of a handler for the Network Commissioning Matter cluster.
+#[derive(Clone)]
 pub struct NetCommHandler<'a, T> {
     dataver: Dataver,
     networks: &'a dyn Networks,
@@ -1134,5 +1136,20 @@ where
         _response: QueryIdentityResponseBuilder<P>,
     ) -> Result<P, Error> {
         Err(ErrorCode::InvalidAction.into())
+    }
+}
+
+impl Debug for NetCommHandler<'_, ()> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NetCommHandler")
+            .field("dataver", &self.dataver.get())
+            .finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for NetCommHandler<'_, ()> {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "NetCommHandler {{ dataver: {} }}", self.dataver.get());
     }
 }

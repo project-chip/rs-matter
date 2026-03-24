@@ -258,7 +258,7 @@ where
             ChainedExchangeHandler::new(
                 PROTO_ID_INTERACTION_MODEL,
                 data_model,
-                SecureChannel::new(data_model.crypto(), data_model),
+                SecureChannel::new(data_model.crypto(), data_model.change_notify()),
             ),
             data_model.matter(),
             0,

@@ -28,8 +28,8 @@ use rand::RngCore;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::{
-    self, test::LevelControlDeviceLogic, AttributeDefaults, LevelControlHandler, LevelControlHooks,
-    OptionsBitmap,
+    self, test::TestLevelControlDeviceLogic, AttributeDefaults, LevelControlHandler,
+    LevelControlHooks, OptionsBitmap,
 };
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHandler, OnOffHooks};
@@ -94,7 +94,7 @@ fn main() -> Result<(), Error> {
     let level_control_handler = LevelControlHandler::new(
         Dataver::new_rand(&mut rand),
         1,
-        LevelControlDeviceLogic::new(),
+        TestLevelControlDeviceLogic::new(),
         AttributeDefaults {
             on_level: Nullable::some(42),
             options: OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
@@ -134,8 +134,8 @@ fn main() -> Result<(), Error> {
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
     // Run the Matter and mDNS transports
-    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, &dm));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket, Some(&socket)));
+    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, dm.change_notify()));
+    let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
     // Create, load and run the persister
     let mut psm: Psm<4096> = Psm::new();
@@ -150,7 +150,7 @@ fn main() -> Result<(), Error> {
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
 
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, dm.change_notify())?;
     }
 
     let mut persist = pin!(psm.run(&path, &matter, NO_NETWORKS, Some(&events)));
@@ -178,7 +178,7 @@ const NODE: Node<'static> = Node {
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER,
-                LevelControlDeviceLogic::CLUSTER
+                TestLevelControlDeviceLogic::CLUSTER
             ),
         },
     ],
@@ -206,7 +206,7 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
                         Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                     )
                     .chain(
-                        EpClMatcher::new(Some(1), Some(LevelControlDeviceLogic::CLUSTER.id)),
+                        EpClMatcher::new(Some(1), Some(TestLevelControlDeviceLogic::CLUSTER.id)),
                         level_control::HandlerAsyncAdaptor(level_control),
                     )
                     .chain(

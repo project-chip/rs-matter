@@ -17,16 +17,19 @@
 
 //! This module contains the implementation of the Wifi Network Diagnostics cluster and its handler.
 
+use core::fmt::Debug;
+
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{Nullable, NullableBuilder, Octets, OctetsBuilder, TLVBuilderParent};
+use crate::utils::sync::DynBase;
 use crate::with;
 
 pub use crate::dm::clusters::decl::wi_fi_network_diagnostics::*;
 
 /// A trait required by `WifiDiag` and `ThreadDiag` that provides information whether the
-/// devicde is connected to a wireless network
-pub trait WirelessDiag {
+/// device is connected to a wireless network
+pub trait WirelessDiag: DynBase {
     /// Returns true if the device is connected to a wireless network
     fn connected(&self) -> Result<bool, Error> {
         Ok(false)
@@ -169,5 +172,20 @@ impl ClusterHandler for WifiDiagHandler<'_> {
 
     fn handle_reset_counts(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
+    }
+}
+
+impl Debug for WifiDiagHandler<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("WifiDiagHandler")
+            .field("dataver", &self.dataver)
+            .finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for WifiDiagHandler<'_> {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "WifiDiagHandler {{ dataver: {} }}", self.dataver.get());
     }
 }

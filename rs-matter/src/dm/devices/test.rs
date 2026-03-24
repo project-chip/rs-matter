@@ -22,6 +22,7 @@ use crate::crypto::{CanonPkcPublicKeyRef, CanonPkcSecretKeyRef};
 use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::dm::clusters::dev_att::DeviceAttestation;
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, Spake2pVerifierPasswordRef};
+use crate::utils::sync::DynBase;
 use crate::BasicCommData;
 
 /// Test Device Attestation credentials
@@ -177,6 +178,8 @@ const CERT_DECLARATION: &[u8] = &[
     0xa7, 0x11, 0xfc, 0xb7, 0x9b, 0x97, 0xe3, 0x97, 0xce, 0xda, 0x66, 0x7b, 0xae, 0x46, 0x4e, 0x2b,
     0xd3, 0xff, 0xdf, 0xc3, 0xcc, 0xed, 0x7a, 0xa8, 0xca, 0x5f, 0x4c, 0x1a, 0x7c,
 ];
+
+impl DynBase for TestDeviceAttestation {}
 
 impl DeviceAttestation for TestDeviceAttestation {
     fn cert_declaration(&self) -> &[u8] {

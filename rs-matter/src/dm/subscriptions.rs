@@ -19,13 +19,12 @@ use core::num::NonZeroU8;
 
 use embassy_time::Instant;
 
-use crate::dm::EventId;
-use crate::dm::{AttrId, ClusterId, EndptId};
+use crate::dm::{AttrId, ChangeNotify, ClusterId, EndptId, EventId};
 use crate::fabric::MAX_FABRICS;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::Notification;
+use crate::utils::sync::{DynBase, Notification};
 
 /// The maximum number of subscriptions that can be tracked at the same time by default.
 ///
@@ -292,5 +291,13 @@ impl<const N: usize> Subscriptions<N> {
 impl<const N: usize> Default for Subscriptions<N> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<const N: usize> DynBase for Subscriptions<N> {}
+
+impl<const N: usize> ChangeNotify for Subscriptions<N> {
+    fn notify(&self, endpt: EndptId, clust: ClusterId, attr: AttrId) {
+        self.notify_attribute_changed(endpt, clust, attr);
     }
 }

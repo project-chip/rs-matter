@@ -2664,7 +2664,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     g.iter().count() == 2 && {
                         let mut result = true;
 
-                        for (i, j) in g.iter().zip([0u8, 255].into_iter()) {
+                        for (i, j) in g.iter().zip([0u8, 255]) {
                             result = result || i? == j;
                         }
 

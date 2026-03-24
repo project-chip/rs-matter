@@ -199,13 +199,13 @@ fn main() -> Result<(), Error> {
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket, Some(&socket))),
-        core::mem::size_of_val(&mdns::run_mdns(matter, &crypto, &dm))
+        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket, &socket)),
+        core::mem::size_of_val(&mdns::run_mdns(matter, &crypto, dm.change_notify()))
     );
 
     // Run the Matter and mDNS transports
-    let mut mdns = pin!(mdns::run_mdns(matter, &crypto, &dm));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket, Some(&socket)));
+    let mut mdns = pin!(mdns::run_mdns(matter, &crypto, dm.change_notify()));
+    let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
@@ -229,7 +229,7 @@ fn main() -> Result<(), Error> {
 
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
 
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, dm.change_notify())?;
     }
 
     let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, Some(events)));
