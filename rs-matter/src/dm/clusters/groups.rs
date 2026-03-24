@@ -161,7 +161,7 @@ impl ClusterHandler for GroupsHandler {
         let fabric = fabric_mgr.get(fab_idx).ok_or(ErrorCode::NotFound)?;
 
         let endpoint_id = ctx.cmd().endpoint_id;
-        if fabric.has_group(group_id, endpoint_id) {
+        if fabric.has_group(endpoint_id, group_id) {
             let name = fabric.group_name(group_id).unwrap_or("");
             response
                 .status(IMStatusCode::Success as u8)?
@@ -199,15 +199,15 @@ impl ClusterHandler for GroupsHandler {
 
         if request_group_list.iter().count() == 0 {
             // Return all groups this endpoint is a member of
-            for entry in fabric.group_iter() {
-                if entry.endpoint_id == endpoint_id {
-                    group_list = group_list.push(&entry.group_id)?;
+            if let Some(em) = fabric.group_iter().find(|em| em.endpoint_id == endpoint_id) {
+                for &group_id in em.groups.iter() {
+                    group_list = group_list.push(&group_id)?;
                 }
             }
         } else {
             // Return intersection: only requested groups that this endpoint is a member of
             for gid in request_group_list.into_iter().flatten() {
-                if fabric.has_group(gid, endpoint_id) {
+                if fabric.has_group(endpoint_id, gid) {
                     group_list = group_list.push(&gid)?;
                 }
             }

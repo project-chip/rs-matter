@@ -414,7 +414,7 @@ impl<'a> Accessor<'a> {
             return false;
         };
 
-        fabric.has_group(group_id, endpoint_id)
+        fabric.has_group(endpoint_id, group_id)
     }
 }
 

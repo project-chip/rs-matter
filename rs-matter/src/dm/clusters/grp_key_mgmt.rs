@@ -18,6 +18,8 @@
 //! This module contains the implementation of the Group Key Management cluster and its handler.
 
 use core::num::NonZeroU8;
+use core::str::FromStr;
+use heapless::String;
 
 use crate::crypto::AEAD_CANON_KEY_LEN;
 use crate::dm::{
@@ -131,23 +133,28 @@ impl ClusterHandler for GrpKeyMgmtHandler {
             if attr.fab_filter && fabric.fab_idx().get() != attr.fab_idx {
                 continue;
             }
-            for entry in fabric.group_iter() {
-                // Try to find an existing group with the same (fab_idx, group_id)
-                if let Some(existing) = groups
-                    .iter_mut()
-                    .find(|g| g.fab_idx == fabric.fab_idx().get() && g.group_id == entry.group_id)
-                {
-                    let _ = existing.endpoints.push(entry.endpoint_id);
-                } else {
-                    let mut info = GroupInfo {
-                        group_id: entry.group_id,
-                        fab_idx: fabric.fab_idx().get(),
-                        endpoints: heapless::Vec::new(),
-                        group_name: heapless::String::new(),
-                    };
-                    let _ = info.endpoints.push(entry.endpoint_id);
-                    let _ = info.group_name.push_str(&entry.group_name);
-                    let _ = groups.push(info);
+            for em in fabric.group_iter() {
+                for &group_id in em.groups.iter() {
+                    // Try to find an existing group with the same (fab_idx, group_id)
+                    if let Some(existing) = groups
+                        .iter_mut()
+                        .find(|g| g.fab_idx == fabric.fab_idx().get() && g.group_id == group_id)
+                    {
+                        let _ = existing.endpoints.push(em.endpoint_id);
+                        existing.group_name =
+                            unwrap!(String::from_str(fabric.group_name(group_id).unwrap_or("")));
+                    } else {
+                        let mut info = GroupInfo {
+                            group_id,
+                            fab_idx: fabric.fab_idx().get(),
+                            endpoints: heapless::Vec::new(),
+                            group_name: unwrap!(String::from_str(
+                                fabric.group_name(group_id).unwrap_or("")
+                            )),
+                        };
+                        let _ = info.endpoints.push(em.endpoint_id);
+                        let _ = groups.push(info);
+                    }
                 }
             }
         }
@@ -248,12 +255,15 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                     return Err(ErrorCode::ConstraintError.into());
                 }
 
-                let new_entry = GrpKeyMapEntry {
-                    group_id: entry.group_id()?,
-                    group_key_set_id: entry.group_key_set_id()?,
-                };
-
-                fabric_mgr.group_key_map_add(fab_idx, new_entry)?;
+                fabric_mgr.group_key_map_add(
+                    fab_idx,
+                    GrpKeyMapEntry {
+                        group_id: entry.group_id().map_err(|_| ErrorCode::InvalidCommand)?,
+                        group_key_set_id: entry
+                            .group_key_set_id()
+                            .map_err(|_| ErrorCode::InvalidCommand)?,
+                    },
+                )?;
             }
             _ => {
                 return Err(ErrorCode::InvalidAction.into());
