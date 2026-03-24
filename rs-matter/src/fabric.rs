@@ -579,8 +579,8 @@ impl Fabric {
     /// Returns true if the endpoint was already a member, false if newly added.
     fn group_add(
         &mut self,
-        group_id: u16,
         endpoint_id: u16,
+        group_id: u16,
         group_name: &str,
     ) -> Result<bool, Error> {
         let em = if let Some(em) = self
@@ -1196,15 +1196,15 @@ impl FabricMgr {
     /// Returns true if the endpoint was already a member (name updated).
     pub fn group_add(
         &mut self,
-        fab_idx: NonZeroU8,
-        group_id: u16,
         endpoint_id: u16,
+        group_id: u16,
         group_name: &str,
+        fab_idx: NonZeroU8,
     ) -> Result<bool, Error> {
         let result = self
             .get_mut(fab_idx)
             .ok_or(ErrorCode::NotFound)?
-            .group_add(group_id, endpoint_id, group_name)?;
+            .group_add(endpoint_id, group_id, group_name)?;
         self.changed = true;
         Ok(result)
     }

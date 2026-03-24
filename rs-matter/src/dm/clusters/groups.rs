@@ -116,10 +116,10 @@ impl ClusterHandler for GroupsHandler {
         // Add or update group membership
         let endpoint_id = ctx.cmd().endpoint_id;
         match ctx.exchange().matter().fabric_mgr.borrow_mut().group_add(
-            fab_idx,
-            group_id,
             endpoint_id,
+            group_id,
             group_name,
+            fab_idx,
         ) {
             Ok(_) => {
                 ctx.exchange().matter().notify_groups_changed();
