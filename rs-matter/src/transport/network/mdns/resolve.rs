@@ -440,6 +440,16 @@ mod tests {
         assert_eq!(parse_dns_name(&data), None);
     }
 
+    #[test]
+    fn parse_dns_name_with_spaces() {
+        // "Matter Device" in DNS wire format
+        // The space must not be escaped in the string
+        let data = [
+            13, b'M', b'a', b't', b't', b'e', b'r', b' ', b'D', b'e', b'v', b'i', b'c', b'e', 0,
+        ];
+        assert_eq!(parse_dns_name(&data), Some("Matter Device".to_string()));
+    }
+
     // Tests for parse_service_instance()
 
     #[test]
