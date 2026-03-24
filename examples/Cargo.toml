@@ -9,7 +9,7 @@ name = "onoff_light"
 
 [[bin]]
 name = "onoff_light_bt"
-required-features = ["zbus"]
+#required-features = ["zbus"]
 
 [[bin]]
 name = "speaker"
@@ -50,6 +50,7 @@ embassy-time-queue-utils = { version = "0.3", features = ["generic-queue-64"] }
 static_cell = "1"
 nix = { version = "0.27", features = ["net"] }
 async-io = "2"
+async-compat = "0.2"
 futures-lite = "2"
 rs-matter = { path = "../rs-matter", features = ["async-io"] }
 rand = { version = "0.8", features = ["std", "std_rng"] }

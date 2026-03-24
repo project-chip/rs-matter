@@ -327,9 +327,9 @@ pub async fn discover_commissionable<const A: usize>(
                     pending_services.push(PendingService::new(
                         args.interface,
                         args.protocol,
-                        &args.name,
-                        &args.type_,
-                        &args.domain,
+                        args.name,
+                        args.type_,
+                        args.domain,
                     ));
                 }
             }
