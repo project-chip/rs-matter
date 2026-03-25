@@ -18,8 +18,6 @@
 //! This module contains the implementation of the Group Key Management cluster and its handler.
 
 use core::num::NonZeroU8;
-use core::str::FromStr;
-use heapless::String;
 
 use crate::crypto::AEAD_CANON_KEY_LEN;
 use crate::dm::{
@@ -118,75 +116,43 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         let fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow();
         let attr = ctx.attr();
 
-        // Build a deduplicated list of (fab_idx, group_id) -> (endpoints, group_name)
-        // by iterating over all group entries across all fabrics
-        struct GroupInfo {
-            group_id: u16,
-            fab_idx: u8,
-            endpoints: heapless::Vec<u16, 8>,
-            group_name: heapless::String<16>,
-        }
-
-        let mut groups: heapless::Vec<GroupInfo, 24> = heapless::Vec::new();
-
-        for fabric in fabric_mgr.iter() {
-            if attr.fab_filter && fabric.fab_idx().get() != attr.fab_idx {
-                continue;
-            }
-            for em in fabric.group_iter() {
-                for &group_id in em.groups.iter() {
-                    // Try to find an existing group with the same (fab_idx, group_id)
-                    if let Some(existing) = groups
-                        .iter_mut()
-                        .find(|g| g.fab_idx == fabric.fab_idx().get() && g.group_id == group_id)
-                    {
-                        let _ = existing.endpoints.push(em.endpoint_id);
-                        existing.group_name =
-                            unwrap!(String::from_str(fabric.group_name(group_id).unwrap_or("")));
-                    } else {
-                        let mut info = GroupInfo {
-                            group_id,
-                            fab_idx: fabric.fab_idx().get(),
-                            endpoints: heapless::Vec::new(),
-                            group_name: unwrap!(String::from_str(
-                                fabric.group_name(group_id).unwrap_or("")
-                            )),
-                        };
-                        let _ = info.endpoints.push(em.endpoint_id);
-                        let _ = groups.push(info);
-                    }
-                }
-            }
-        }
+        let mut entries = fabric_mgr
+            .iter()
+            .filter(|fabric| !attr.fab_filter || fabric.fab_idx().get() == attr.fab_idx)
+            .flat_map(|fabric| {
+                fabric
+                    .group_iter()
+                    .map(move |entry| (fabric.fab_idx(), entry))
+            });
 
         match builder {
             ArrayAttributeRead::ReadAll(mut builder) => {
-                for info in &groups {
+                for (fab_idx, entry) in entries {
                     let mut endpoints_builder =
-                        builder.push()?.group_id(info.group_id)?.endpoints()?;
-                    for &ep in &info.endpoints {
+                        builder.push()?.group_id(entry.group_id)?.endpoints()?;
+                    for &ep in entry.endpoints.iter() {
                         endpoints_builder = endpoints_builder.push(&ep)?;
                     }
                     builder = endpoints_builder
                         .end()?
-                        .group_name(Some(info.group_name.as_str()))?
-                        .fabric_index(Some(info.fab_idx))?
+                        .group_name(Some(entry.group_name.as_str()))?
+                        .fabric_index(Some(fab_idx.get()))?
                         .end()?;
                 }
                 builder.end()
             }
             ArrayAttributeRead::ReadOne(index, builder) => {
-                let Some(info) = groups.get(index as usize) else {
+                let Some((fab_idx, entry)) = entries.nth(index as usize) else {
                     return Err(ErrorCode::ConstraintError.into());
                 };
-                let mut endpoints_builder = builder.group_id(info.group_id)?.endpoints()?;
-                for &ep in &info.endpoints {
+                let mut endpoints_builder = builder.group_id(entry.group_id)?.endpoints()?;
+                for &ep in entry.endpoints.iter() {
                     endpoints_builder = endpoints_builder.push(&ep)?;
                 }
                 endpoints_builder
                     .end()?
-                    .group_name(Some(info.group_name.as_str()))?
-                    .fabric_index(Some(info.fab_idx))?
+                    .group_name(Some(entry.group_name.as_str()))?
+                    .fabric_index(Some(fab_idx.get()))?
                     .end()
             }
             ArrayAttributeRead::ReadNone(builder) => builder.end(),

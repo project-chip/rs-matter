@@ -161,20 +161,21 @@ impl ClusterHandler for GroupsHandler {
         let fabric = fabric_mgr.get(fab_idx).ok_or(ErrorCode::NotFound)?;
 
         let endpoint_id = ctx.cmd().endpoint_id;
-        if fabric.has_group(endpoint_id, group_id) {
-            let name = fabric.group_name(group_id).unwrap_or("");
-            response
-                .status(IMStatusCode::Success as u8)?
-                .group_id(group_id)?
-                .group_name(name)?
-                .end()
-        } else {
-            response
-                .status(IMStatusCode::NotFound as u8)?
-                .group_id(group_id)?
-                .group_name("")?
-                .end()
+        if let Some(entry) = fabric.group_get(group_id) {
+            if entry.endpoints.contains(&endpoint_id) {
+                return response
+                    .status(IMStatusCode::Success as u8)?
+                    .group_id(group_id)?
+                    .group_name(entry.group_name.as_str())?
+                    .end();
+            }
         }
+
+        response
+            .status(IMStatusCode::NotFound as u8)?
+            .group_id(group_id)?
+            .group_name("")?
+            .end()
     }
 
     fn handle_get_group_membership<P: TLVBuilderParent>(
@@ -199,16 +200,18 @@ impl ClusterHandler for GroupsHandler {
 
         if request_group_list.iter().count() == 0 {
             // Return all groups this endpoint is a member of
-            if let Some(em) = fabric.group_iter().find(|em| em.endpoint_id == endpoint_id) {
-                for &group_id in em.groups.iter() {
-                    group_list = group_list.push(&group_id)?;
+            for entry in fabric.group_iter() {
+                if entry.endpoints.contains(&endpoint_id) {
+                    group_list = group_list.push(&entry.group_id)?;
                 }
             }
         } else {
             // Return intersection: only requested groups that this endpoint is a member of
             for gid in request_group_list.into_iter().flatten() {
-                if fabric.has_group(endpoint_id, gid) {
-                    group_list = group_list.push(&gid)?;
+                if let Some(entry) = fabric.group_get(gid) {
+                    if entry.endpoints.contains(&endpoint_id) {
+                        group_list = group_list.push(&gid)?;
+                    }
                 }
             }
         }
@@ -242,7 +245,7 @@ impl ClusterHandler for GroupsHandler {
             .matter()
             .fabric_mgr
             .borrow_mut()
-            .group_remove(fab_idx, group_id, endpoint_id)?;
+            .group_remove(endpoint_id, group_id, fab_idx)?;
 
         if removed {
             ctx.exchange().matter().notify_groups_changed();
@@ -267,7 +270,7 @@ impl ClusterHandler for GroupsHandler {
             .matter()
             .fabric_mgr
             .borrow_mut()
-            .group_remove_all_for_endpoint(fab_idx, endpoint_id)?;
+            .group_remove_all_for_endpoint(endpoint_id, fab_idx)?;
 
         ctx.exchange().matter().notify_groups_changed();
 

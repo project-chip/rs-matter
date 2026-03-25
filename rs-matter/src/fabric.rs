@@ -75,13 +75,14 @@ cfg_if! {
 }
 
 pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 3;
-pub const GROUP_MEMBERSHIPS_PER_ENDPOINT: usize = 12;
 
+/// A group table entry mapping a group ID to its endpoints and name.
 #[derive(Debug, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GrpEndpointMapEntry {
-    pub endpoint_id: u16,
-    pub groups: Vec<u16, GROUP_MEMBERSHIPS_PER_ENDPOINT>,
+pub struct GrpInfoMapEntry {
+    pub group_id: u16,
+    pub endpoints: Vec<u16, GROUP_ENDPOINTS_PER_FABRIC>,
+    pub group_name: String<MAX_GROUP_NAME_LEN>,
 }
 
 /// A stored group key map entry (maps group ID to key set).
@@ -94,22 +95,13 @@ pub struct GrpKeyMapEntry {
 
 #[derive(Debug, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GrpNameMapping {
-    id: u16,
-    name: String<MAX_GROUP_NAME_LEN>,
-}
-
-#[derive(Debug, FromTLV, ToTLV)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct FabricGroupInformation {
     /// Group key sets (excluding IPK which is stored in `ipk`)
     key_sets: Vec<GrpKeySetEntry, MAX_GROUP_KEY_PER_FABRIC>,
     /// Groups keyset mapping
     key_map: Vec<GrpKeyMapEntry, MAX_GROUPS_PER_FABRIC>,
-    /// Group Names mapping
-    names: Vec<GrpNameMapping, MAX_GROUPS_PER_FABRIC>,
-    /// Group membership entries (endpoint-to-group associations)
-    endpoint_mappings: Vec<GrpEndpointMapEntry, GROUP_ENDPOINTS_PER_FABRIC>,
+    /// Group table (group ID → endpoints + name)
+    group_table: Vec<GrpInfoMapEntry, MAX_GROUPS_PER_FABRIC>,
 }
 
 impl FabricGroupInformation {
@@ -117,8 +109,7 @@ impl FabricGroupInformation {
         init!(Self {
             key_sets <- Vec::init(),
             key_map <- Vec::init(),
-            names <- Vec::init(),
-            endpoint_mappings <- Vec::init(),
+            group_table <- Vec::init(),
         })
     }
 }
@@ -553,151 +544,82 @@ impl Fabric {
             .retain(|e| e.group_key_set_id != key_set_id);
     }
 
-    /// Return an iterator over the group-endpoint mappings of the fabric
-    pub fn group_iter(&self) -> impl Iterator<Item = &GrpEndpointMapEntry> {
-        self.groups.endpoint_mappings.iter()
+    /// Return an iterator over the group table entries
+    pub fn group_iter(&self) -> impl Iterator<Item = &GrpInfoMapEntry> {
+        self.groups.group_table.iter()
     }
 
-    /// Check if an endpoint is a member of a group
-    pub fn has_group(&self, endpoint_id: u16, group_id: u16) -> bool {
+    /// Look up a group by ID
+    pub fn group_get(&self, group_id: u16) -> Option<&GrpInfoMapEntry> {
         self.groups
-            .endpoint_mappings
+            .group_table
             .iter()
-            .any(|e| e.endpoint_id == endpoint_id && e.groups.contains(&group_id))
-    }
-
-    /// Get the group name for a group ID (shared across endpoints)
-    pub fn group_name(&self, group_id: u16) -> Option<&str> {
-        self.groups
-            .names
-            .iter()
-            .find(|e| e.id == group_id)
-            .map(|e| e.name.as_str())
+            .find(|e| e.group_id == group_id)
     }
 
     /// Add an endpoint to a group.
-    /// Returns true if the endpoint was already a member, false if newly added.
+    /// Returns true if the endpoint was already a member (name still updated per spec).
     fn group_add(
         &mut self,
         endpoint_id: u16,
         group_id: u16,
         group_name: &str,
     ) -> Result<bool, Error> {
-        let em = if let Some(em) = self
+        let entry = if let Some(entry) = self
             .groups
-            .endpoint_mappings
+            .group_table
             .iter_mut()
-            .find(|em| em.endpoint_id == endpoint_id)
+            .find(|e| e.group_id == group_id)
         {
-            em
+            entry
         } else {
             self.groups
-                .endpoint_mappings
-                .push(GrpEndpointMapEntry {
-                    endpoint_id,
-                    groups: Vec::new(),
+                .group_table
+                .push(GrpInfoMapEntry {
+                    group_id,
+                    endpoints: Vec::new(),
+                    group_name: unwrap!(String::from_str(group_name)),
                 })
                 .map_err(|_| ErrorCode::ResourceExhausted)?;
-            unwrap!(self.groups.endpoint_mappings.last_mut())
+            unwrap!(self.groups.group_table.last_mut())
         };
 
-        if em.groups.contains(&group_id) {
-            // Update group name per Matter spec (AddGroup updates name even if already member)
-            if let Some(mapping) = self.groups.names.iter_mut().find(|m| m.id == group_id) {
-                mapping.name.clear();
-                unwrap!(mapping.name.push_str(group_name));
-            }
+        // Update group name
+        entry.group_name.clear();
+        unwrap!(entry.group_name.push_str(group_name));
+
+        if entry.endpoints.contains(&endpoint_id) {
             return Ok(true);
         }
 
-        em.groups
-            .push(group_id)
+        entry
+            .endpoints
+            .push(endpoint_id)
             .map_err(|_| ErrorCode::ResourceExhausted)?;
-
-        if self
-            .groups
-            .names
-            .iter_mut()
-            .find(|m| m.id == group_id)
-            .is_none()
-        {
-            self.groups
-                .names
-                .push(GrpNameMapping {
-                    id: group_id,
-                    name: unwrap!(String::from_str(group_name)),
-                })
-                .map_err(|_| ErrorCode::ResourceExhausted)?;
-        }
 
         Ok(false)
     }
 
-    /// Remove an endpoint from a group. Returns true if the endpoint was a member.
-    fn group_remove(&mut self, group_id: u16, endpoint_id: u16) -> bool {
-        let removed = if let Some(em) = self
-            .groups
-            .endpoint_mappings
-            .iter_mut()
-            .find(|em| em.endpoint_id == endpoint_id)
-        {
-            let before = em.groups.len();
-            em.groups.retain(|&gid| gid != group_id);
-            em.groups.len() < before
-        } else {
-            false
-        };
+    /// Remove an endpoint from a group, or from all groups if `group_id` is `None`.
+    /// Returns true if the endpoint was removed from at least one group.
+    fn group_remove(&mut self, endpoint_id: u16, group_id: Option<u16>) -> bool {
+        let mut removed = false;
 
-        if removed {
-            // Remove empty endpoint slots
-            self.groups
-                .endpoint_mappings
-                .retain(|em| !em.groups.is_empty());
-
-            // Remove orphaned name mappings (no endpoint still has this group)
-            let group_still_exists = self
-                .groups
-                .endpoint_mappings
-                .iter()
-                .any(|em| em.groups.contains(&group_id));
-            if !group_still_exists {
-                self.groups.names.retain(|m| m.id != group_id);
+        for entry in self.groups.group_table.iter_mut() {
+            if group_id.is_some_and(|id| id != entry.group_id) {
+                continue;
+            }
+            let before = entry.endpoints.len();
+            entry.endpoints.retain(|&ep| ep != endpoint_id);
+            if entry.endpoints.len() < before {
+                removed = true;
             }
         }
+
+        // Remove entries with no endpoints left
+        self.groups.group_table.retain(|e| !e.endpoints.is_empty());
 
         removed
-    }
-
-    /// Remove all group memberships for an endpoint
-    fn group_remove_all_for_endpoint(&mut self, endpoint_id: u16) {
-        // Collect group IDs that were on this endpoint before removing
-        let mut removed_groups = Vec::<u16, GROUP_MEMBERSHIPS_PER_ENDPOINT>::new();
-        if let Some(em) = self
-            .groups
-            .endpoint_mappings
-            .iter()
-            .find(|em| em.endpoint_id == endpoint_id)
-        {
-            for &gid in em.groups.iter() {
-                let _ = removed_groups.push(gid);
-            }
-        }
-
-        self.groups
-            .endpoint_mappings
-            .retain(|em| em.endpoint_id != endpoint_id);
-
-        // Clean up orphaned name mappings
-        for gid in &removed_groups {
-            let group_still_exists = self
-                .groups
-                .endpoint_mappings
-                .iter()
-                .any(|em| em.groups.contains(gid));
-            if !group_still_exists {
-                self.groups.names.retain(|m| m.id != *gid);
-            }
-        }
     }
 
     /// Compute the compressed fabric ID
@@ -1213,14 +1135,14 @@ impl FabricMgr {
     /// Returns true if the endpoint was a member and was removed.
     pub fn group_remove(
         &mut self,
-        fab_idx: NonZeroU8,
-        group_id: u16,
         endpoint_id: u16,
+        group_id: u16,
+        fab_idx: NonZeroU8,
     ) -> Result<bool, Error> {
         let removed = self
             .get_mut(fab_idx)
             .ok_or(ErrorCode::NotFound)?
-            .group_remove(group_id, endpoint_id);
+            .group_remove(endpoint_id, Some(group_id));
         if removed {
             self.changed = true;
         }
@@ -1230,12 +1152,12 @@ impl FabricMgr {
     /// Remove all group memberships for an endpoint on the given fabric.
     pub fn group_remove_all_for_endpoint(
         &mut self,
-        fab_idx: NonZeroU8,
         endpoint_id: u16,
+        fab_idx: NonZeroU8,
     ) -> Result<(), Error> {
         self.get_mut(fab_idx)
             .ok_or(ErrorCode::NotFound)?
-            .group_remove_all_for_endpoint(endpoint_id);
+            .group_remove(endpoint_id, None);
         self.changed = true;
         Ok(())
     }

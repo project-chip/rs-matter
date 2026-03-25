@@ -414,7 +414,9 @@ impl<'a> Accessor<'a> {
             return false;
         };
 
-        fabric.has_group(endpoint_id, group_id)
+        fabric
+            .group_get(group_id)
+            .is_some_and(|e| e.endpoints.contains(&endpoint_id))
     }
 }
 

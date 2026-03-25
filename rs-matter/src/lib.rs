@@ -603,24 +603,22 @@ impl<'a> Matter<'a> {
                 self.rebuild_group_op_keys(&crypto);
 
                 for fabric in self.fabric_mgr.borrow().iter() {
-                    for em in fabric.group_iter() {
-                        for &group_id in em.groups.iter() {
-                            let addr = crate::utils::ipv6::compute_group_multicast_addr(
-                                fabric.fabric_id(),
-                                group_id,
-                            );
+                    for entry in fabric.group_iter() {
+                        let addr = crate::utils::ipv6::compute_group_multicast_addr(
+                            fabric.fabric_id(),
+                            entry.group_id,
+                        );
 
-                            if !joined.contains(&addr) {
-                                // TODO: unregister when group is removed.
-                                match multicast_network.register_multicast(addr.into()).await {
-                                    Ok(_) => {
-                                        debug!("Registered multicast address: {}", addr);
-                                        // `joined` should be able to contain theoretical maximum number of multicast address
-                                        // So this unwrap should be safe
-                                        unwrap!(joined.push(addr));
-                                    },
-                                    Err(_) => error!("Failed to register multicast address: {}.\n\t Group communication may not work as expected", addr),
-                                }
+                        if !joined.contains(&addr) {
+                            // TODO: unregister when group is removed.
+                            match multicast_network.register_multicast(addr.into()).await {
+                                Ok(_) => {
+                                    debug!("Registered multicast address: {}", addr);
+                                    // `joined` should be able to contain theoretical maximum number of multicast address
+                                    // So this unwrap should be safe
+                                    unwrap!(joined.push(addr));
+                                },
+                                Err(_) => error!("Failed to register multicast address: {}.\n\t Group communication may not work as expected", addr),
                             }
                         }
                     }
