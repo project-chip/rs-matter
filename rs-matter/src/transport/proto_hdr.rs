@@ -263,7 +263,7 @@ impl ProtoHdr {
             decrypt_in_place(
                 crypto,
                 key,
-                plain_hdr.sec_flags,
+                plain_hdr.sec_flags.bits(),
                 plain_hdr.ctr,
                 peer_nodeid,
                 parsebuf,

@@ -28,7 +28,15 @@ bitflags::bitflags! {
         const DSIZ_GROUPCAST_NODEID = 0x02;
         const SRC_ADDR_PRESENT = 0x04;
     }
+
+    #[repr(transparent)]
+    #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    pub struct SecFlags: u8 {
+        const GROUP_SESSION = 0x01;
+    }
 }
+
+const DSIZ_MASK: MsgFlags = MsgFlags::DSIZ_UNICAST_NODEID.union(MsgFlags::DSIZ_GROUPCAST_NODEID);
 
 impl fmt::Display for MsgFlags {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -92,7 +100,7 @@ impl defmt::Format for MsgFlags {
 pub struct PlainHdr {
     flags: MsgFlags,
     pub sess_id: u16,
-    pub(crate) sec_flags: u8,
+    pub(crate) sec_flags: SecFlags,
     pub ctr: u32,
     src_nodeid: u64,
     dst_nodeid: u64,
@@ -120,7 +128,7 @@ impl PlainHdr {
         Self {
             flags: MsgFlags::empty(),
             sess_id: 0,
-            sec_flags: 0,
+            sec_flags: SecFlags::empty(),
             ctr: 0,
             src_nodeid: 0,
             dst_nodeid: 0,
@@ -146,7 +154,7 @@ impl PlainHdr {
     }
 
     pub fn get_dst_unicast_nodeid(&self) -> Option<u64> {
-        if self.flags.bits() & 0x03 == MsgFlags::DSIZ_UNICAST_NODEID.bits() {
+        if self.flags.intersection(DSIZ_MASK) == MsgFlags::DSIZ_UNICAST_NODEID {
             Some(self.dst_nodeid)
         } else {
             None
@@ -159,14 +167,13 @@ impl PlainHdr {
             self.flags.remove(MsgFlags::DSIZ_GROUPCAST_NODEID);
             self.dst_nodeid = id;
         } else {
-            self.flags
-                .remove(MsgFlags::DSIZ_UNICAST_NODEID | MsgFlags::DSIZ_GROUPCAST_NODEID);
+            self.flags.remove(DSIZ_MASK);
             self.dst_nodeid = 0;
         }
     }
 
     pub fn get_dst_groupcast_nodeid(&self) -> Option<u16> {
-        if self.flags.bits() & 0x03 == MsgFlags::DSIZ_GROUPCAST_NODEID.bits() {
+        if self.flags.intersection(DSIZ_MASK) == MsgFlags::DSIZ_GROUPCAST_NODEID {
             Some(self.dst_nodeid as u16)
         } else {
             None
@@ -179,8 +186,7 @@ impl PlainHdr {
             self.flags.remove(MsgFlags::DSIZ_UNICAST_NODEID);
             self.dst_nodeid = id as u64;
         } else {
-            self.flags
-                .remove(MsgFlags::DSIZ_UNICAST_NODEID | MsgFlags::DSIZ_GROUPCAST_NODEID);
+            self.flags.remove(DSIZ_MASK);
             self.dst_nodeid = 0;
         }
     }
@@ -189,17 +195,14 @@ impl PlainHdr {
     pub fn decode(&mut self, msg: &mut ParseBuf) -> Result<(), Error> {
         self.flags = MsgFlags::from_bits(msg.le_u8()?).ok_or(ErrorCode::Invalid)?;
         self.sess_id = msg.le_u16()?;
-        self.sec_flags = msg.le_u8()?;
+        self.sec_flags = SecFlags::from_bits(msg.le_u8()?).ok_or(ErrorCode::Invalid)?;
         self.ctr = msg.le_u32()?;
 
         if self.flags.contains(MsgFlags::SRC_ADDR_PRESENT) {
             self.src_nodeid = msg.le_u64()?;
         }
 
-        if !self
-            .flags
-            .contains(MsgFlags::DSIZ_UNICAST_NODEID | MsgFlags::DSIZ_GROUPCAST_NODEID)
-        {
+        if !self.flags.contains(DSIZ_MASK) {
             if self.flags.contains(MsgFlags::DSIZ_UNICAST_NODEID) {
                 self.dst_nodeid = msg.le_u64()?;
             } else if self.flags.contains(MsgFlags::DSIZ_GROUPCAST_NODEID) {
@@ -215,17 +218,14 @@ impl PlainHdr {
         trace!("[encode] {}", self);
         resp_buf.le_u8(self.flags.bits())?;
         resp_buf.le_u16(self.sess_id)?;
-        resp_buf.le_u8(self.sec_flags)?;
+        resp_buf.le_u8(self.sec_flags.bits())?;
         resp_buf.le_u32(self.ctr)?;
 
         if self.flags.contains(MsgFlags::SRC_ADDR_PRESENT) {
             resp_buf.le_u64(self.src_nodeid)?;
         }
 
-        if !self
-            .flags
-            .contains(MsgFlags::DSIZ_UNICAST_NODEID | MsgFlags::DSIZ_GROUPCAST_NODEID)
-        {
+        if !self.flags.contains(DSIZ_MASK) {
             if self.flags.contains(MsgFlags::DSIZ_UNICAST_NODEID) {
                 resp_buf.le_u64(self.dst_nodeid)?;
             } else if self.flags.contains(MsgFlags::DSIZ_GROUPCAST_NODEID) {
@@ -237,7 +237,7 @@ impl PlainHdr {
     }
 
     pub fn is_group_session(&self) -> bool {
-        self.sec_flags & 0x01 != 0
+        self.sec_flags.contains(SecFlags::GROUP_SESSION)
     }
 
     pub fn is_encrypted(&self) -> bool {

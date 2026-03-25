@@ -94,7 +94,7 @@ impl PacketHdr {
             proto_hdr::encrypt_in_place(
                 crypto,
                 enc_key,
-                self.plain.sec_flags,
+                self.plain.sec_flags.bits(),
                 ctr,
                 local_nodeid,
                 plain_hdr_bytes,
