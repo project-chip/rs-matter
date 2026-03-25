@@ -38,9 +38,24 @@ use crate::MatterMdnsService;
 
 const COMPRESSED_FABRIC_ID_LEN: usize = 8;
 
-/// Max number of group key sets per fabric (excluding IPK at index 0).
-/// The spec requires maxGroupKeysPerFabric >= 3, so 2 + IPK = 3.
-pub const MAX_GROUP_KEY_PER_FABRIC: usize = 2;
+cfg_if! {
+    if #[cfg(feature = "max-group-keys-per-fabric-5")] {
+        /// Max number of group key sets per fabric (excluding IPK at index 0).
+        pub const MAX_GROUP_KEY_PER_FABRIC: usize = 5;
+    } else if #[cfg(feature = "max-group-keys-per-fabric-4")] {
+        /// Max number of group key sets per fabric (excluding IPK at index 0).
+        pub const MAX_GROUP_KEY_PER_FABRIC: usize = 4;
+    } else if #[cfg(feature = "max-group-keys-per-fabric-3")] {
+        /// Max number of group key sets per fabric (excluding IPK at index 0).
+        pub const MAX_GROUP_KEY_PER_FABRIC: usize = 3;
+    } else if #[cfg(feature = "max-group-keys-per-fabric-2")] {
+        /// Max number of group key sets per fabric (excluding IPK at index 0).
+        pub const MAX_GROUP_KEY_PER_FABRIC: usize = 2;
+    } else {
+        /// Max number of group key sets per fabric (excluding IPK at index 0).
+        pub const MAX_GROUP_KEY_PER_FABRIC: usize = 0;
+    }
+}
 
 /// Max length of a group name (per Matter spec).
 pub const MAX_GROUP_NAME_LEN: usize = 16;
@@ -67,14 +82,36 @@ cfg_if! {
     } else if #[cfg(feature = "max-groups-per-fabric-5")] {
         /// Max number of group key map entries per fabric.
         pub const MAX_GROUPS_PER_FABRIC: usize = 5;
-    } else {  // The spec requires maxGroupsPerFabric >= 4
+    } else if #[cfg(feature = "max-groups-per-fabric-4")] {
         /// Max number of group key map entries per fabric.
         pub const MAX_GROUPS_PER_FABRIC: usize = 4;
+    } else {
+        /// Max number of group key map entries per fabric.
+        pub const MAX_GROUPS_PER_FABRIC: usize = 0;
     }
-
 }
 
-pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 3;
+cfg_if! {
+    if #[cfg(feature = "max-group-endpoints-per-fabric-5")] {
+        /// Max number of endpoints per group entry.
+        pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 5;
+    } else if #[cfg(feature = "max-group-endpoints-per-fabric-4")] {
+        /// Max number of endpoints per group entry.
+        pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 4;
+    } else if #[cfg(feature = "max-group-endpoints-per-fabric-3")] {
+        /// Max number of endpoints per group entry.
+        pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 3;
+    } else if #[cfg(feature = "max-group-endpoints-per-fabric-2")] {
+        /// Max number of endpoints per group entry.
+        pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 2;
+    } else if #[cfg(feature = "max-group-endpoints-per-fabric-1")] {
+        /// Max number of endpoints per group entry.
+        pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 1;
+    } else {
+        /// Max number of endpoints per group entry.
+        pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 0;
+    }
+}
 
 /// A group table entry mapping a group ID to its endpoints and name.
 #[derive(Debug, FromTLV, ToTLV)]

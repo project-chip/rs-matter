@@ -36,7 +36,18 @@ max-groups-per-fabric-8 = []
 max-groups-per-fabric-7 = []
 max-groups-per-fabric-6 = []
 max-groups-per-fabric-5 = []
-max-groups-per-fabric-4 = [] # default
+max-groups-per-fabric-4 = []
+
+max-group-keys-per-fabric-5 = []
+max-group-keys-per-fabric-4 = []
+max-group-keys-per-fabric-3 = []
+max-group-keys-per-fabric-2 = []
+
+max-group-endpoints-per-fabric-5 = []
+max-group-endpoints-per-fabric-4 = []
+max-group-endpoints-per-fabric-3 = []
+max-group-endpoints-per-fabric-2 = []
+max-group-endpoints-per-fabric-1 = []
 
 # Number of ACL entries per fabric
 max-acls-per-fabric-32 = []
