@@ -321,11 +321,7 @@ fn parse_dns_name(data: &[u8]) -> Option<String> {
         .filter_map(|label| core::str::from_utf8(label.as_slice()).ok())
         .collect();
 
-    if labels.is_empty() {
-        None
-    } else {
-        Some(labels.join("."))
-    }
+    (!labels.is_empty()).then(|| labels.join("."))
 }
 
 /// Parse a service instance name into (name, type, domain) components
