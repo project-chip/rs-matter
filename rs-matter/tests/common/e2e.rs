@@ -19,10 +19,7 @@ use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use core::num::NonZeroU8;
 
 use embassy_futures::select::select4;
-use embassy_sync::{
-    blocking_mutex::raw::NoopRawMutex,
-    zerocopy_channel::{Channel, Receiver, Sender},
-};
+use embassy_sync::zerocopy_channel::{Channel, Receiver, Sender};
 
 use rs_matter::acl::{AclEntry, AuthMode};
 use rs_matter::crypto::{test_only_crypto, Crypto};
@@ -41,6 +38,7 @@ use rs_matter::transport::session::{NocCatIds, ReservedSession, SessionMode};
 use rs_matter::utils::epoch::Epoch;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
+use rs_matter::utils::sync::blocking::raw::MatterRawMutex;
 use rs_matter::{Matter, MATTER_PORT};
 
 pub mod im;
@@ -78,7 +76,7 @@ pub struct E2eRunner<C> {
     pub matter: Matter<'static>,
     matter_client: Matter<'static>,
     crypto: C,
-    buffers: PooledBuffers<10, NoopRawMutex, IMBuffer>,
+    buffers: PooledBuffers<10, IMBuffer>,
     pub subscriptions: Subscriptions<3>,
     pub events: Events<E2E_EVENTS_BUF_SIZE>,
     cat_ids: NocCatIds,
@@ -269,9 +267,9 @@ impl<C: Crypto> E2eRunner<C> {
     }
 }
 
-type NetworkPipe<'a, const N: usize> = Channel<'a, NoopRawMutex, heapless::Vec<u8, N>>;
+type NetworkPipe<'a, const N: usize> = Channel<'a, MatterRawMutex, heapless::Vec<u8, N>>;
 
-struct NetworkReceiveImpl<'a, const N: usize>(Receiver<'a, NoopRawMutex, heapless::Vec<u8, N>>);
+struct NetworkReceiveImpl<'a, const N: usize>(Receiver<'a, MatterRawMutex, heapless::Vec<u8, N>>);
 
 impl<const N: usize> NetworkSend for NetworkSendImpl<'_, N> {
     async fn send_to(&mut self, data: &[u8], _addr: Address) -> Result<(), Error> {
@@ -286,7 +284,7 @@ impl<const N: usize> NetworkSend for NetworkSendImpl<'_, N> {
     }
 }
 
-struct NetworkSendImpl<'a, const N: usize>(Sender<'a, NoopRawMutex, heapless::Vec<u8, N>>);
+struct NetworkSendImpl<'a, const N: usize>(Sender<'a, MatterRawMutex, heapless::Vec<u8, N>>);
 
 impl<const N: usize> NetworkReceive for NetworkReceiveImpl<'_, N> {
     async fn wait_available(&mut self) -> Result<(), Error> {

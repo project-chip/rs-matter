@@ -17,8 +17,6 @@
 
 use core::num::NonZeroU8;
 
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::Instant;
 
 use crate::dm::EventId;
@@ -99,18 +97,12 @@ impl<const N: usize> SubscriptionsInner<N> {
 ///
 /// The `N` type parameter specifies the maximum number of subscriptions that can be tracked at the same time.
 /// Additional subscriptions are rejected by the data model with a "resource exhausted" IM status message.
-pub struct Subscriptions<const N: usize = DEFAULT_MAX_SUBSCRIPTIONS, M = NoopRawMutex>
-where
-    M: RawMutex,
-{
-    state: Mutex<M, RefCell<SubscriptionsInner<N>>>,
-    pub(crate) notification: Notification<M>,
+pub struct Subscriptions<const N: usize = DEFAULT_MAX_SUBSCRIPTIONS> {
+    state: Mutex<RefCell<SubscriptionsInner<N>>>,
+    pub(crate) notification: Notification,
 }
 
-impl<const N: usize, M> Subscriptions<N, M>
-where
-    M: RawMutex,
-{
+impl<const N: usize> Subscriptions<N> {
     /// Create the instance.
     #[inline(always)]
     pub const fn new() -> Self {

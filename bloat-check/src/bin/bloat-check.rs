@@ -55,8 +55,6 @@ use embassy_executor::Executor;
 #[cfg(target_arch = "riscv32")]
 use esp_rtos::embassy::Executor;
 
-use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
-
 use rs_matter::crypto::backend::rustcrypto::RustCrypto;
 use rs_matter::crypto::{Crypto, RngCore, WeakTestOnlyRand};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
@@ -153,20 +151,20 @@ macro_rules! unwrap {
 }
 
 /// One large struct holding the entire Matter stack state
-struct MatterStack<'a, M: RawMutex> {
-    matter: Matter<'a>, // #258 - Can't generify by the raw mutex
-    buffers: PooledBuffers<10, M, IMBuffer>,
-    subscriptions: Subscriptions<{ DEFAULT_MAX_SUBSCRIPTIONS }, M>,
-    events: Events<DEFAULT_BYTES_PER_BUF, M>,
-    networks: WifiNetworks<3, M>,
-    net_ctl_state: NetCtlStateMutex<M>,
+struct MatterStack<'a> {
+    matter: Matter<'a>,
+    buffers: PooledBuffers<10, IMBuffer>,
+    subscriptions: Subscriptions<{ DEFAULT_MAX_SUBSCRIPTIONS }>,
+    events: Events<DEFAULT_BYTES_PER_BUF>,
+    networks: WifiNetworks<3>,
+    net_ctl_state: NetCtlStateMutex,
     btp: Btp,
     wireless_mgr_buffer: MaybeUninit<[u8; MAX_CREDS_SIZE]>,
     // We don't run a persistence task, but emulate its typical memory consumnption
     psm_buffer: MaybeUninit<[u8; 4096]>,
 }
 
-impl<'a, M: RawMutex> MatterStack<'a, M> {
+impl<'a> MatterStack<'a> {
     /// Return an in-place initializer for the Matter stack
     fn init() -> impl Init<Self> {
         init!(Self {
@@ -192,22 +190,22 @@ impl<'a, M: RawMutex> MatterStack<'a, M> {
 // Fully spelled-out types for everything which is passed down as arguments to `embassy-executor` tasks
 // Necessary, because `embassy-executor` doesn't grok generics
 
-type AppNetCtl<'a> = NetCtlWithStatusImpl<'a, NoopRawMutex, FakeWifi>;
-type AppWirelessMgr<'a> = WirelessMgr<'a, &'a WifiNetworks<3, NoopRawMutex>, &'a AppNetCtl<'a>>;
+type AppNetCtl<'a> = NetCtlWithStatusImpl<'a, FakeWifi>;
+type AppWirelessMgr<'a> = WirelessMgr<'a, &'a WifiNetworks<3>, &'a AppNetCtl<'a>>;
 type AppTransport<'a> = ChainedNetwork<FakeUdp, &'a Btp, fn(&Address) -> bool>;
 type AppHandler<'a> = handler_chain_type!(
     EpClMatcher => on_off::HandlerAsyncAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>,
     EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>
     | EmptyHandler
 );
-type AppCrypto = RustCrypto<'static, NoopRawMutex, WeakTestOnlyRand>;
+type AppCrypto = RustCrypto<'static, WeakTestOnlyRand>;
 type AppDmHandler<'a> = WifiHandler<'a, &'a AppNetCtl<'a>, SysHandler<'a, AppHandler<'a>>>;
 type AppDataModel<'a> = DataModel<
     'a,
     DEFAULT_MAX_SUBSCRIPTIONS,
     DEFAULT_BYTES_PER_BUF,
     &'a AppCrypto,
-    PooledBuffers<10, NoopRawMutex, IMBuffer>,
+    PooledBuffers<10, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
 >;
 type AppResponder<'d, 'a> = DefaultResponder<
@@ -216,7 +214,7 @@ type AppResponder<'d, 'a> = DefaultResponder<
     DEFAULT_MAX_SUBSCRIPTIONS,
     DEFAULT_BYTES_PER_BUF,
     &'a AppCrypto,
-    PooledBuffers<10, NoopRawMutex, IMBuffer>,
+    PooledBuffers<10, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
 >;
 
@@ -262,7 +260,7 @@ fn main() -> ! {
     info!("===================================================");
     info!("Memory usage report");
 
-    let stack = mk_static!(MatterStack<'static, NoopRawMutex>).init_with(MatterStack::init());
+    let stack = mk_static!(MatterStack<'static>).init_with(MatterStack::init());
 
     let mut stack_total = 0;
 

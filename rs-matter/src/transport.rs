@@ -20,7 +20,6 @@ use core::ops::{Deref, DerefMut};
 use core::pin::pin;
 
 use embassy_futures::select::{select, select3};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::Timer;
 
 use rand_core::RngCore;
@@ -78,10 +77,10 @@ pub(crate) const MAX_TX_BUF_SIZE: usize = network::MAX_TX_PACKET_SIZE;
 ///
 /// To the outside world, the transport layer is only visible and usable via the notion of `Exchange`.
 pub struct TransportMgr {
-    pub(crate) rx: IfMutex<NoopRawMutex, Packet<MAX_RX_BUF_SIZE>>,
-    pub(crate) tx: IfMutex<NoopRawMutex, Packet<MAX_TX_BUF_SIZE>>,
-    pub(crate) dropped: Notification<NoopRawMutex>,
-    pub(crate) session_removed: Notification<NoopRawMutex>,
+    pub(crate) rx: IfMutex<Packet<MAX_RX_BUF_SIZE>>,
+    pub(crate) tx: IfMutex<Packet<MAX_TX_BUF_SIZE>>,
+    pub(crate) dropped: Notification,
+    pub(crate) session_removed: Notification,
     pub session_mgr: RefCell<SessionMgr>, // For testing
     device_sai: Option<u16>,
     device_sii: Option<u16>,
@@ -336,7 +335,7 @@ impl TransportMgr {
 
     pub(crate) async fn get_if<'a, F, const N: usize>(
         &'a self,
-        packet_mutex: &'a IfMutex<NoopRawMutex, Packet<N>>,
+        packet_mutex: &'a IfMutex<Packet<N>>,
         f: F,
     ) -> PacketAccess<'a, N>
     where
@@ -345,22 +344,14 @@ impl TransportMgr {
         PacketAccess(packet_mutex.lock_if(f).await, false)
     }
 
-    async fn with_locked<'a, F, R, T>(
-        &'a self,
-        packet_mutex: &'a IfMutex<NoopRawMutex, T>,
-        f: F,
-    ) -> R
+    async fn with_locked<'a, F, R, T>(&'a self, packet_mutex: &'a IfMutex<T>, f: F) -> R
     where
         F: FnMut(&mut T) -> Option<R>,
     {
         packet_mutex.with(f).await
     }
 
-    async fn process_tx<C, S>(
-        &self,
-        crypto: C,
-        send: &IfMutex<NoopRawMutex, S>,
-    ) -> Result<(), Error>
+    async fn process_tx<C, S>(&self, crypto: C, send: &IfMutex<S>) -> Result<(), Error>
     where
         C: Crypto,
         S: NetworkSend,
@@ -392,7 +383,7 @@ impl TransportMgr {
         &self,
         crypto: C,
         mut recv: R,
-        send: &IfMutex<NoopRawMutex, S>,
+        send: &IfMutex<S>,
     ) -> Result<(), Error>
     where
         C: Crypto,
@@ -501,7 +492,7 @@ impl TransportMgr {
         &self,
         crypto: C,
         packet: &mut Packet<N>,
-        send: &IfMutex<NoopRawMutex, S>,
+        send: &IfMutex<S>,
     ) -> Result<bool, Error>
     where
         C: Crypto,
@@ -1126,7 +1117,7 @@ impl TransportMgr {
     }
 
     async fn netw_send<S>(
-        send: &IfMutex<NoopRawMutex, S>,
+        send: &IfMutex<S>,
         peer: Address,
         data: &[u8],
         system: bool,
@@ -1451,7 +1442,7 @@ impl<const N: usize> DerefMut for PacketBuffer<N> {
 // holds a lock on the RX or TX packet. This is enforced by protecting the packets with an `IfMutex` asynchronous mutex.
 //
 // This type is only known and used by `TransportMgr` and the `exchange` module
-pub(crate) struct PacketAccess<'a, const N: usize>(IfMutexGuard<'a, NoopRawMutex, Packet<N>>, bool);
+pub(crate) struct PacketAccess<'a, const N: usize>(IfMutexGuard<'a, Packet<N>>, bool);
 
 impl<const N: usize> PacketAccess<'_, N> {
     pub fn clear_on_drop(&mut self, clear: bool) {
@@ -1491,9 +1482,7 @@ impl<const N: usize> Display for PacketAccess<'_, N> {
 // in case it needs temporary access to a `&mut [u8]`-shaped memory
 //
 // Used by the builtin mDNS responder, as well as by the QR code generator
-pub(crate) struct PacketBufferExternalAccess<'a, const N: usize>(
-    pub(crate) &'a IfMutex<NoopRawMutex, Packet<N>>,
-);
+pub(crate) struct PacketBufferExternalAccess<'a, const N: usize>(pub(crate) &'a IfMutex<Packet<N>>);
 
 impl<const N: usize> BufferAccess<[u8]> for PacketBufferExternalAccess<'_, N> {
     type Buffer<'b>
@@ -1526,7 +1515,7 @@ impl<const N: usize> BufferAccess<[u8]> for PacketBufferExternalAccess<'_, N> {
 }
 
 // Wraps the RX or TX packet of the transport manager in something that looks like a `&mut [u8]` buffer.
-pub struct ExternalPacketBuffer<'a, const N: usize>(IfMutexGuard<'a, NoopRawMutex, Packet<N>>);
+pub struct ExternalPacketBuffer<'a, const N: usize>(IfMutexGuard<'a, Packet<N>>);
 
 impl<const N: usize> Deref for ExternalPacketBuffer<'_, N> {
     type Target = [u8];

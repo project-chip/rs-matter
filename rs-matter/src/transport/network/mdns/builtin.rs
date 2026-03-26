@@ -24,8 +24,6 @@ use core::net::IpAddr;
 use core::pin::pin;
 
 use embassy_futures::select::select;
-use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
-use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
 
 use rand_core::RngCore;
@@ -41,6 +39,7 @@ use crate::transport::network::{
 };
 use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::BufferAccess;
+use crate::utils::sync::IfMutex;
 use crate::Matter;
 
 use self::proto::Services;
@@ -99,7 +98,7 @@ where
         S: NetworkSend,
         R: NetworkReceive,
     {
-        let send = Mutex::<NoopRawMutex, _>::new(send);
+        let send = IfMutex::new(send);
 
         let mut broadcast = pin!(self.broadcast(&send, host, ipv4_interface, ipv6_interface));
         let mut respond = pin!(self.respond(&send, recv, host, ipv4_interface, ipv6_interface));
@@ -109,7 +108,7 @@ where
 
     async fn broadcast<S>(
         &self,
-        send: &Mutex<impl RawMutex, S>,
+        send: &IfMutex<S>,
         host: &Host<'_>,
         ipv4_interface: Option<Ipv4Addr>,
         ipv6_interface: Option<u32>,
@@ -159,7 +158,7 @@ where
     #[allow(clippy::too_many_arguments)]
     async fn respond<S, R>(
         &self,
-        send: &Mutex<impl RawMutex, S>,
+        send: &IfMutex<S>,
         mut recv: R,
         host: &Host<'_>,
         ipv4_interface: Option<Ipv4Addr>,

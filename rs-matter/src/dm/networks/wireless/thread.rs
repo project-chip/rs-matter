@@ -27,7 +27,7 @@ use crate::utils::storage::Vec;
 
 use super::{WirelessNetwork, WirelessNetworks};
 
-pub type ThreadNetworks<const N: usize, M> = WirelessNetworks<N, M, Thread>;
+pub type ThreadNetworks<const N: usize> = WirelessNetworks<N, Thread>;
 
 /// A struct implementing the `WirelessNetwork` trait for Thread networks.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, ToTLV, FromTLV)]

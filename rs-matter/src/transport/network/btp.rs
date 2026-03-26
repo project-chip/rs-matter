@@ -20,7 +20,6 @@
 use core::future::Future;
 
 use embassy_futures::select::select;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Instant, Timer};
 
 use session::{BTP_ACK_TIMEOUT_SECS, BTP_CONN_IDLE_TIMEOUT_SECS};
@@ -69,13 +68,13 @@ pub(crate) const MAX_MTU: u16 = (MAX_BTP_SEGMENT_SIZE + GATT_HEADER_SIZE) as u16
 ///     The data is to be send via a GATT Write request on the C1 characteristic.
 pub struct Btp {
     /// The inner state of the BTP protocol, containing the session state, the outgoing SDU buffer, and the timeouts configuration.
-    inner: Mutex<NoopRawMutex, RefCell<BtpInner>>,
+    inner: Mutex<RefCell<BtpInner>>,
     /// Notification triggered when (potentially!) a new Matter packet (BTP SDU) is assembled and available for processing.
-    recv_notif: Notification<NoopRawMutex>,
+    recv_notif: Notification,
     /// Notification triggered when (potentially!) there is now space for buffering a new outgoing Matter packet (BTP SDU).
-    send_notif: Notification<NoopRawMutex>,
+    send_notif: Notification,
     /// Notification triggered when (potentially!) there is new outgoing data to be sent to the peer, which can be either a handshake packet or a BTP SDU segment.
-    outg_notif: Notification<NoopRawMutex>,
+    outg_notif: Notification,
 }
 
 impl Btp {

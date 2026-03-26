@@ -199,7 +199,7 @@ fn parse_response<const D: usize, const AD: usize>(
             write_unwrap!(&mut owner, "{}", record.owner());
 
             if let Ok(Some(ptr)) = record.to_record::<Ptr<_>>() {
-                let mut instance_name = heapless::String::<64>::new();
+                let mut instance_name = heapless::String::<128>::new();
                 write_unwrap!(&mut instance_name, "{}", ptr.data().ptrdname());
 
                 let exists = states

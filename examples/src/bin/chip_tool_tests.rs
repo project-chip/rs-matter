@@ -26,7 +26,6 @@ use std::path::PathBuf;
 use async_signal::{Signal, Signals};
 
 use embassy_futures::select::{select3, select4};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use futures_lite::StreamExt;
 
@@ -87,8 +86,7 @@ const PERSIST_FILE_NAME: &str = "/tmp/chip_kvs";
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
-static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, rs_matter::dm::IMBuffer>> =
-    StaticCell::new();
+static BUFFERS: StaticCell<PooledBuffers<10, rs_matter::dm::IMBuffer>> = StaticCell::new();
 static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
 static EVENTS: StaticCell<DefaultEvents> = StaticCell::new();
 static PSM: StaticCell<Psm<32768>> = StaticCell::new();
@@ -112,7 +110,7 @@ fn main() -> Result<(), Error> {
     info!(
         "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
         core::mem::size_of::<Matter>(),
-        core::mem::size_of::<PooledBuffers<10, NoopRawMutex, rs_matter::dm::IMBuffer>>(),
+        core::mem::size_of::<PooledBuffers<10, rs_matter::dm::IMBuffer>>(),
         core::mem::size_of::<DefaultSubscriptions>()
     );
 
@@ -136,7 +134,7 @@ fn main() -> Result<(), Error> {
         .init_with(DefaultSubscriptions::init());
 
     // Create the crypto instance
-    let crypto = default_crypto::<NoopRawMutex, _>(rand::thread_rng(), DAC_PRIVKEY);
+    let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
 
     let mut rand = crypto.rand()?;
 

@@ -77,8 +77,6 @@
 
 use core::future::Future;
 
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-
 use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::{BasicInfoConfig, BasicInfoSettings};
 use crate::dm::clusters::dev_att::DeviceAttestation;
@@ -254,8 +252,8 @@ pub struct Matter<'a> {
     pub(crate) failsafe: RefCell<FailSafe>,
     pub(crate) basic_info_settings: RefCell<BasicInfoSettings>,
     pub transport_mgr: TransportMgr, // Public for tests
-    persist_notification: Notification<NoopRawMutex>,
-    mdns_notification: Notification<NoopRawMutex>,
+    persist_notification: Notification,
+    mdns_notification: Notification,
     epoch: Epoch,
     dev_det: &'a BasicInfoConfig<'a>,
     dev_comm: BasicCommData,

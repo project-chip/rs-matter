@@ -15,8 +15,6 @@
  *    limitations under the License.
  */
 
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-
 use crate::crypto::backend::dummy::DummyCrypto;
 use crate::crypto::Crypto;
 use crate::dm::IMBuffer;
@@ -154,7 +152,7 @@ pub trait Context: HandlerContext {
             &'static ReadContextInstance<
                 DummyCrypto,
                 EmptyHandler,
-                PooledBuffers<0, NoopRawMutex, IMBuffer>,
+                PooledBuffers<0, IMBuffer>,
             >,
         >::None
     }
@@ -166,7 +164,7 @@ pub trait Context: HandlerContext {
             &'static WriteContextInstance<
                 DummyCrypto,
                 EmptyHandler,
-                PooledBuffers<0, NoopRawMutex, IMBuffer>,
+                PooledBuffers<0, IMBuffer>,
             >,
         >::None
     }
@@ -175,11 +173,7 @@ pub trait Context: HandlerContext {
     /// The operation will return `Some` only if the underlying context represents an invoke operation.
     fn as_invoke_ctx(&self) -> Option<impl InvokeContext> {
         Option::<
-            &'static InvokeContextInstance<
-                DummyCrypto,
-                EmptyHandler,
-                PooledBuffers<0, NoopRawMutex, IMBuffer>,
-            >,
+            &'static InvokeContextInstance<DummyCrypto, EmptyHandler, PooledBuffers<0, IMBuffer>>,
         >::None
     }
 }

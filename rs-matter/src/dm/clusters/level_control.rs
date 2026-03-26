@@ -34,8 +34,6 @@ use core::ops::Mul;
 use core::pin::pin;
 
 use embassy_futures::select::{select, select3, Either, Either3};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant};
 
 pub use crate::dm::clusters::decl::level_control::*;
@@ -46,6 +44,7 @@ use crate::dm::{
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::Nullable;
+use crate::utils::sync::Signal;
 
 /// Messages passed to the `notify` closure in `LevelControlHooks::run()` method.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -126,7 +125,7 @@ pub struct LevelControlHandler<'a, H: LevelControlHooks, OH: OnOffHooks> {
     endpoint_id: EndptId,
     hooks: H,
     on_off_handler: Cell<Option<&'a OnOffHandler<'a, OH, H>>>,
-    task_signal: Signal<NoopRawMutex, Task>,
+    task_signal: Signal<Option<Task>>,
     on_level: Cell<Nullable<u8>>,
     options: Cell<OptionsBitmap>,
     remaining_time: Cell<u16>,
@@ -220,7 +219,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             endpoint_id,
             hooks,
             on_off_handler: Cell::new(None),
-            task_signal: Signal::new(),
+            task_signal: Signal::new(None),
             on_level: Cell::new(attribute_defaults.on_level),
             options: Cell::new(attribute_defaults.options),
             remaining_time: Cell::new(0),
@@ -1222,7 +1221,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         loop {
             let mut task = match select(
                 &mut hooks_fut,
-                self.task_signal.wait(),
+                self.task_signal.wait_signalled(),
             ).await {
                 Either::First(_) => panic!("LevelControlHooks::run returned; implementers MUST not return. Implementations should loop forever or await core::future::pending::<()>()."),
                 Either::Second(task) => task,
@@ -1232,7 +1231,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
                 match select3(
                     &mut hooks_fut,
                     self.task_manager(&ctx, task),
-                    self.task_signal.wait(),
+                    self.task_signal.wait_signalled(),
                 )
                 .await
                 {

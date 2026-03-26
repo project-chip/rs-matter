@@ -29,7 +29,6 @@ pub mod fileio {
     use std::path::Path;
 
     use embassy_futures::select::{select, select3};
-    use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 
     use crate::dm::events::Events;
     use crate::dm::networks::wireless::{Wifi, WirelessNetwork, WirelessNetworks};
@@ -42,10 +41,10 @@ pub mod fileio {
     use crate::Matter;
 
     /// A constant representing the absence of wireless networks.
-    pub const NO_NETWORKS: Option<&'static WirelessNetworks<0, NoopRawMutex, Wifi>> = None;
+    pub const NO_NETWORKS: Option<&'static WirelessNetworks<0, Wifi>> = None;
 
     /// A constant representing the absence of events.
-    pub const NO_EVENTS: Option<&'static Events<0, NoopRawMutex>> = None;
+    pub const NO_EVENTS: Option<&'static Events<0>> = None;
 
     /// A simple persistent storage manager (PSM) for `rs-matter`.
     ///
@@ -91,16 +90,15 @@ pub mod fileio {
         /// - `matter`: The `Matter` instance to load the state into (for fabrics and basic info settings).
         /// - `networks`: An optional reference to `WirelessNetworks` to load the wireless networks state into (if provided).
         /// - `events`: An optional reference to `Events` to load the events state into (if provided).
-        pub fn load<P, const W: usize, M, T, const NE: usize>(
+        pub fn load<P, const W: usize, T, const NE: usize>(
             &mut self,
             path: P,
             matter: &Matter,
-            networks: Option<&WirelessNetworks<W, M, T>>,
-            events: Option<&Events<NE, M>>,
+            networks: Option<&WirelessNetworks<W, T>>,
+            events: Option<&Events<NE>>,
         ) -> Result<(), Error>
         where
             P: AsRef<Path>,
-            M: RawMutex,
             T: WirelessNetwork,
         {
             let buf = unsafe { self.buf.assume_init_mut() };
@@ -150,16 +148,15 @@ pub mod fileio {
         /// - `matter`: The `Matter` instance whose state to store (for fabrics and basic info settings).
         /// - `networks`: An optional reference to `WirelessNetworks` whose state to store.
         /// - `events`: An optional reference to `Events` whose state to store.
-        pub fn store<P, const W: usize, M, T, const NE: usize>(
+        pub fn store<P, const W: usize, T, const NE: usize>(
             &mut self,
             path: P,
             matter: &Matter,
-            networks: Option<&WirelessNetworks<W, M, T>>,
-            events: Option<&Events<NE, M>>,
+            networks: Option<&WirelessNetworks<W, T>>,
+            events: Option<&Events<NE>>,
         ) -> Result<(), Error>
         where
             P: AsRef<Path>,
-            M: RawMutex,
             T: WirelessNetwork,
         {
             if !matter.fabrics_changed()
@@ -204,16 +201,15 @@ pub mod fileio {
         /// - `matter`: The `Matter` instance to monitor for changes and for state to store (for fabrics and basic info settings).
         /// - `networks`: An optional reference to `WirelessNetworks` to monitor for changes and for state to store (if provided).
         /// - `events`: An optional reference to `Events` to monitor for changes and for state to store (if provided).
-        pub async fn run<P, const W: usize, M, T, const NE: usize>(
+        pub async fn run<P, const W: usize, T, const NE: usize>(
             &mut self,
             path: P,
             matter: &Matter<'_>,
-            networks: Option<&WirelessNetworks<W, M, T>>,
-            events: Option<&Events<NE, M>>,
+            networks: Option<&WirelessNetworks<W, T>>,
+            events: Option<&Events<NE>>,
         ) -> Result<(), Error>
         where
             P: AsRef<Path>,
-            M: RawMutex,
             T: WirelessNetwork,
         {
             // NOTE: Calling `load` here does not make sense, because the `Psm::run` future / async method is executed

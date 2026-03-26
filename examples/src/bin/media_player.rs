@@ -28,7 +28,6 @@ use core::pin::pin;
 use std::net::UdpSocket;
 
 use embassy_futures::select::{select, select4};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::info;
 
@@ -94,13 +93,13 @@ fn main() -> Result<(), Error> {
     matter.initialize_transport_buffers()?;
 
     // Create the transport buffers
-    let buffers = PooledBuffers::<10, NoopRawMutex, _>::new(0);
+    let buffers = PooledBuffers::<10, _>::new(0);
 
     // Create the subscriptions
     let subscriptions = DefaultSubscriptions::new();
 
     // Create the crypto instance
-    let crypto = default_crypto::<NoopRawMutex, _>(rand::thread_rng(), DAC_PRIVKEY);
+    let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
 
     let mut rand = crypto.rand()?;
 

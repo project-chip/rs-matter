@@ -36,8 +36,6 @@ use std::net::UdpSocket;
 
 use embassy_futures::select::{select, select4};
 
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-
 use log::{info, warn};
 
 use rand::RngCore;
@@ -129,13 +127,13 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     matter.initialize_transport_buffers()?;
 
     // Create the transport buffers
-    let buffers = PooledBuffers::<10, NoopRawMutex, _>::new(0);
+    let buffers = PooledBuffers::<10, _>::new(0);
 
     // Create the subscriptions
     let subscriptions = DefaultSubscriptions::new();
 
     // Create the crypto instance
-    let crypto = default_crypto::<NoopRawMutex, _>(rand::thread_rng(), DAC_PRIVKEY);
+    let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
 
     let mut rand = crypto.rand()?;
 
@@ -150,10 +148,10 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     );
 
     // A storage for the Wifi networks
-    let networks = WifiNetworks::<3, NoopRawMutex>::new();
+    let networks = WifiNetworks::<3>::new();
 
     // The network controller
-    let net_ctl_state = NetCtlState::new_with_mutex::<NoopRawMutex>();
+    let net_ctl_state = NetCtlState::new_with_mutex();
 
     let net_ctl = NetCtlWithStatusImpl::new(&net_ctl_state, net_ctl);
 

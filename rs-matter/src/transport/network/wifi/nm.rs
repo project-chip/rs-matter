@@ -26,7 +26,6 @@ use core::cell::RefCell;
 use std::collections::HashMap;
 
 use embassy_futures::select::{select, select3, Either, Either3};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use embassy_time::{Duration, Timer};
 use futures_lite::StreamExt;
@@ -58,8 +57,8 @@ use crate::utils::zbus_proxies::nm::{NM80211ApSecurityFlags, NM80211Mode, NMDevi
 pub struct NetMgrCtl<'a> {
     connection: &'a Connection,
     ifname: &'a str,
-    net_conn: IfMutex<NoopRawMutex, Option<OwnedObjectPath>>,
-    wifi_conn_info: blocking::Mutex<NoopRawMutex, RefCell<Option<WifiConnInfo>>>,
+    net_conn: IfMutex<Option<OwnedObjectPath>>,
+    wifi_conn_info: blocking::Mutex<RefCell<Option<WifiConnInfo>>>,
 }
 
 impl<'a> NetMgrCtl<'a> {
@@ -109,7 +108,7 @@ impl<'a> NetMgrCtl<'a> {
             let bss = wifi.active_access_point().await?;
 
             let (changed, connected) = if bss.len() > 1 {
-                let connected = interface.dev_state().await? == NMDeviceState::Activated as _;
+                let connected = interface.dev_state().await? == NMDeviceState::Activated as u32;
 
                 self.network_scan_info(&bss, |info| {
                     let info = info.map(|info| WifiConnInfo::new(info, connected));
@@ -179,7 +178,7 @@ impl<'a> NetMgrCtl<'a> {
     {
         let bss_info = AccessPointProxy::new(self.connection, bss).await?;
 
-        if bss_info.mode().await? == NM80211Mode::Infra as _ {
+        if bss_info.mode().await? == NM80211Mode::Infra as u32 {
             let wpa = NM80211ApSecurityFlags::from_bits_truncate(bss_info.wpa_flags().await?);
             let rsn = NM80211ApSecurityFlags::from_bits_truncate(bss_info.rsn_flags().await?);
 

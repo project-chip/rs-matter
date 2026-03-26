@@ -22,7 +22,6 @@ use core::pin::pin;
 use std::net::UdpSocket;
 
 use embassy_futures::select::{select, select4};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::info;
 
@@ -64,7 +63,7 @@ mod mdns;
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
-static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, IMBuffer>> = StaticCell::new();
+static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
 static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
 static PSM: StaticCell<Psm<4096>> = StaticCell::new();
 
@@ -92,7 +91,7 @@ fn run() -> Result<(), Error> {
     info!(
         "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
         core::mem::size_of::<Matter>(),
-        core::mem::size_of::<PooledBuffers<10, NoopRawMutex, IMBuffer>>(),
+        core::mem::size_of::<PooledBuffers<10, IMBuffer>>(),
         core::mem::size_of::<DefaultSubscriptions>()
     );
 
@@ -116,7 +115,7 @@ fn run() -> Result<(), Error> {
         .init_with(DefaultSubscriptions::init());
 
     // Create the crypto instance
-    let crypto = default_crypto::<NoopRawMutex, _>(rand::thread_rng(), DAC_PRIVKEY);
+    let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
 
     let mut rand = crypto.rand()?;
 

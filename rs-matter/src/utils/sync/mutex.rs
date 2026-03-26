@@ -25,6 +25,7 @@ use core::ops::{Deref, DerefMut};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use crate::utils::init::{init, Init, UnsafeCellInit};
+use crate::utils::sync::blocking::raw::MatterRawMutex;
 
 use super::signal::Signal;
 
@@ -35,20 +36,20 @@ pub struct TryLockError;
 
 /// Async mutex with conditional locking based on the data inside the mutex.
 /// Check `embassy_sync::Mutex` for the original unconditional implementation.
-pub struct IfMutex<M, T>
+pub struct IfMutex<T, M = MatterRawMutex>
 where
-    M: RawMutex,
     T: ?Sized,
+    M: RawMutex,
 {
-    state: Signal<M, bool>,
+    state: Signal<bool, M>,
     inner: UnsafeCell<T>,
 }
 
-unsafe impl<M: RawMutex + Send, T: ?Sized + Send> Send for IfMutex<M, T> {}
-unsafe impl<M: RawMutex + Sync, T: ?Sized + Send> Sync for IfMutex<M, T> {}
+unsafe impl<T: ?Sized + Send, M: RawMutex + Send> Send for IfMutex<T, M> {}
+unsafe impl<T: ?Sized + Send, M: RawMutex + Sync> Sync for IfMutex<T, M> {}
 
 /// Async mutex.
-impl<M, T> IfMutex<M, T>
+impl<T, M> IfMutex<T, M>
 where
     M: RawMutex,
 {
@@ -56,7 +57,7 @@ where
     #[inline(always)]
     pub const fn new(value: T) -> Self {
         Self {
-            state: Signal::<M, _>::new(false),
+            state: Signal::new(false),
             inner: UnsafeCell::new(value),
         }
     }
@@ -64,28 +65,28 @@ where
     /// Creates a mutex in-place initializer with the given value initializer.
     pub fn init<I: Init<T>>(value: I) -> impl Init<Self> {
         init!(Self {
-            state: Signal::<M, _>::new(false),
+            state: Signal::new(false),
             inner <- UnsafeCell::init(value),
         })
     }
 }
 
-impl<M, T> IfMutex<M, T>
+impl<T, M> IfMutex<T, M>
 where
-    M: RawMutex,
     T: ?Sized,
+    M: RawMutex,
 {
     /// Lock the mutex.
     ///
     /// This will wait for the mutex to be unlocked if it's already locked.
-    pub async fn lock(&self) -> IfMutexGuard<'_, M, T> {
+    pub async fn lock(&self) -> IfMutexGuard<'_, T, M> {
         self.lock_if(|_| true).await
     }
 
     /// Lock the mutex.
     ///
     /// This will wait for the mutex to be unlocked if it's already locked _and_ for the provided condition on the data to become true.
-    pub async fn lock_if<F>(&self, f: F) -> IfMutexGuard<'_, M, T>
+    pub async fn lock_if<F>(&self, f: F) -> IfMutexGuard<'_, T, M>
     where
         F: Fn(&T) -> bool,
     {
@@ -137,14 +138,14 @@ where
     }
 
     /// Attempt to immediately lock the mutex.
-    pub fn try_lock(&self) -> Result<IfMutexGuard<'_, M, T>, TryLockError> {
+    pub fn try_lock(&self) -> Result<IfMutexGuard<'_, T, M>, TryLockError> {
         self.try_lock_if(|_| true)
     }
 
     /// Attempt to immediately lock the mutex.
     ///
     /// If the mutex is already locked or the condition on the data is not true, this will return an error instead of waiting.
-    pub fn try_lock_if<F>(&self, mut f: F) -> Result<IfMutexGuard<'_, M, T>, TryLockError>
+    pub fn try_lock_if<F>(&self, mut f: F) -> Result<IfMutexGuard<'_, T, M>, TryLockError>
     where
         F: FnMut(&T) -> bool,
     {
@@ -188,18 +189,18 @@ where
 /// successfully locked the mutex, and grants access to the contents.
 ///
 /// Dropping it unlocks the mutex.
-pub struct IfMutexGuard<'a, M, T>
+pub struct IfMutexGuard<'a, T, M = MatterRawMutex>
 where
-    M: RawMutex,
     T: ?Sized,
+    M: RawMutex,
 {
-    mutex: &'a IfMutex<M, T>,
+    mutex: &'a IfMutex<T, M>,
 }
 
-impl<M, T> Drop for IfMutexGuard<'_, M, T>
+impl<T, M> Drop for IfMutexGuard<'_, T, M>
 where
-    M: RawMutex,
     T: ?Sized,
+    M: RawMutex,
 {
     fn drop(&mut self) {
         self.mutex.state.modify(|locked| {
@@ -212,10 +213,10 @@ where
     }
 }
 
-impl<M, T> Deref for IfMutexGuard<'_, M, T>
+impl<T, M> Deref for IfMutexGuard<'_, T, M>
 where
-    M: RawMutex,
     T: ?Sized,
+    M: RawMutex,
 {
     type Target = T;
 
@@ -226,10 +227,10 @@ where
     }
 }
 
-impl<M, T> DerefMut for IfMutexGuard<'_, M, T>
+impl<T, M> DerefMut for IfMutexGuard<'_, T, M>
 where
-    M: RawMutex,
     T: ?Sized,
+    M: RawMutex,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // Safety: the MutexGuard represents exclusive access to the contents

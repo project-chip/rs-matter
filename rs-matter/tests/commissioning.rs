@@ -39,18 +39,18 @@
     any(target_os = "linux", feature = "astro-dnssd")
 ))]
 
-#[allow(dead_code)]
-mod common;
-
 use core::pin::pin;
 use std::net::UdpSocket;
 
 use embassy_futures::select::{select, select4, Either};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
+
 use log::{debug, info, warn};
+
 use rand_core::RngCore;
+
 use socket2::{Domain, Protocol, Socket, Type};
+
 use static_cell::StaticCell;
 
 use rs_matter::crypto::{test_only_crypto, Crypto};
@@ -88,6 +88,9 @@ use rs_matter::{clusters, devices, Matter, MATTER_PORT};
 
 use crate::common::{init_env_logger, run_device_controller, run_with_transport};
 
+#[allow(dead_code)]
+mod common;
+
 /// Passcode used by `TEST_DEV_COMM`
 const TEST_PASSCODE: u32 = 20202021;
 /// Discriminator used by `TEST_DEV_COMM`
@@ -104,7 +107,7 @@ const MAX_DEVICE_ADDRESSES: usize = 4;
 const MAX_DISCOVERED_DEVICES: usize = 8;
 
 static DEVICE_MATTER: StaticCell<Matter> = StaticCell::new();
-static DEVICE_BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, IMBuffer>> = StaticCell::new();
+static DEVICE_BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
 static DEVICE_SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
 static CTRL_MATTER: StaticCell<Matter> = StaticCell::new();
 

@@ -18,7 +18,7 @@ use core::cell::Cell;
 use core::fmt::Debug;
 
 use crate::error::{Error, ErrorCode};
-use crate::im::{EventDataTag, EventDataTimestamp, EventPath, EventRespTag};
+use crate::im::{EventData, EventDataTag, EventDataTimestamp, EventPath, EventRespTag};
 use crate::tlv::{
     FromTLV, TLVElement, TLVSequence, TLVSequenceIter, TLVTag, TLVWrite, TagType, ToTLV,
 };
@@ -28,10 +28,6 @@ use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking;
 use crate::utils::sync::Notification;
 use crate::utils::sync::{IfMutex, IfMutexGuard};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::blocking_mutex::raw::RawMutex;
-
-use crate::im::EventData;
 
 // TODO we currently only have this singular config to set the size, but the events are stored in three "tiered" buffers, and
 //      we probably want to allow configuring them separately. We also should spend some thinking tokens on what a good default here is.
@@ -41,7 +37,7 @@ pub const DEFAULT_BYTES_PER_BUF: usize = 64;
 pub type DefaultEvents = Events<DEFAULT_BYTES_PER_BUF>;
 
 /// Convenience constant expression if you want to disable events
-pub const NO_EVENTS: Option<&'static Events<0, NoopRawMutex>> = None;
+pub const NO_EVENTS: Option<&'static Events<0>> = None;
 
 /// See EventsPersist for details
 const EVENT_NO_EPOCH_SIZE: u64 = 0x10000;
@@ -84,20 +80,14 @@ pub(crate) struct PersistedState {
 /// to experiment to pick an appropriate size for your event write load.
 ///
 /// If your application emits no events you can disable this subsystem using the NO_EVENTS constant.
-pub struct Events<const N: usize = DEFAULT_BYTES_PER_BUF, M = NoopRawMutex>
-where
-    M: RawMutex,
-{
-    state: IfMutex<M, EventsInner<N>>,
+pub struct Events<const N: usize = DEFAULT_BYTES_PER_BUF> {
+    state: IfMutex<EventsInner<N>>,
     epoch: Epoch,
-    pub(crate) persisted_state: blocking::Mutex<M, Cell<PersistedState>>,
-    persist_notification: Notification<M>,
+    pub(crate) persisted_state: blocking::Mutex<Cell<PersistedState>>,
+    persist_notification: Notification,
 }
 
-impl<const N: usize, M> Events<N, M>
-where
-    M: RawMutex,
-{
+impl<const N: usize> Events<N> {
     const PERSIST_INIT: PersistedState = PersistedState {
         next_event_no: 0,
         event_epoch_end: 0,
@@ -174,7 +164,7 @@ where
 
     /// Lock the events queue so you can read it; the returned guard gives you the ability to iterate over stored events.
     /// TODO: Note that this guard is held across long reads, which will cause writers to be stalled over network waits; we should fix this, see https://github.com/project-chip/rs-matter/pull/361#issuecomment-3906929345
-    pub async fn lock(&'_ self) -> EventsGuard<'_, M, N> {
+    pub async fn lock(&'_ self) -> EventsGuard<'_, N> {
         let internal = self.state.lock().await;
         EventsGuard::new(internal)
     }
@@ -237,18 +227,12 @@ where
 /// Most of the time the stalling of writers is very short, just enough to move the events into outbound
 /// network buffers. However if there are a lot of events, such that we need to chunk publishing into multiple packets,
 /// then we will hold this across network calls, forcing writers to slow down until readers have caught up.
-pub struct EventsGuard<'a, M, const N: usize>
-where
-    M: RawMutex,
-{
-    guard: IfMutexGuard<'a, M, EventsInner<N>>,
+pub struct EventsGuard<'a, const N: usize> {
+    guard: IfMutexGuard<'a, EventsInner<N>>,
 }
 
-impl<'a, M, const N: usize> EventsGuard<'a, M, N>
-where
-    M: RawMutex,
-{
-    fn new(guard: IfMutexGuard<'a, M, EventsInner<N>>) -> Self {
+impl<'a, const N: usize> EventsGuard<'a, N> {
+    fn new(guard: IfMutexGuard<'a, EventsInner<N>>) -> Self {
         Self { guard }
     }
 
