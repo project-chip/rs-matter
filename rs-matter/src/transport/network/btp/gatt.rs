@@ -23,10 +23,9 @@ use super::{GATT_HEADER_SIZE, MAX_BTP_SEGMENT_SIZE};
 
 #[cfg(all(feature = "os", target_os = "linux"))]
 pub mod bluer;
-// `unix` necessary because BlueZ requires Unix Domain sockets.
-// Note that BlueZ is anyway Linux-only, even though this module - thanks to zbus itself being cross-platform - builds
-// on any Unix-like platform supporting Unix domain sockets.
-#[cfg(all(feature = "zbus", unix))]
+// BlueZ is Linux-only (it uses the Linux Bluetooth stack and Linux-specific
+// socket flags such as `SOCK_CLOEXEC`).
+#[cfg(all(feature = "zbus", target_os = "linux"))]
 pub mod bluez;
 
 // The 16-bit, registered Matter Service UUID, as per the Matter Core spec.
