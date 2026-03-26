@@ -314,16 +314,14 @@ pub async fn discover_commissionable<const A: usize>(
 /// In the context of systemd-resolved's D-Bus API, PTR record RDATA
 /// is typically returned uncompressed.
 fn parse_dns_name(data: &[u8]) -> Option<String> {
-    Name::from_slice(data)
-        .map(|name| name.to_string())
-        .ok()
-        .and_then(|result| {
-            if result.is_empty() || result == "." {
-                None
-            } else {
-                Some(result)
-            }
-        })
+    let labels: Vec<&str> = Name::from_slice(data)
+        .ok()?
+        .iter()
+        .filter(|label| !label.is_empty())
+        .filter_map(|label| core::str::from_utf8(label.as_slice()).ok())
+        .collect();
+
+    (!labels.is_empty()).then(|| labels.join("."))
 }
 
 /// Parse a service instance name into (name, type, domain) components
@@ -436,6 +434,16 @@ mod tests {
         // Label claims 10 bytes but only 5 are present
         let data = [10, b'h', b'e', b'l', b'l', b'o'];
         assert_eq!(parse_dns_name(&data), None);
+    }
+
+    #[test]
+    fn parse_dns_name_with_spaces() {
+        // "Matter Device" in DNS wire format
+        // The space must not be escaped in the string
+        let data = [
+            13, b'M', b'a', b't', b't', b'e', b'r', b' ', b'D', b'e', b'v', b'i', b'c', b'e', 0,
+        ];
+        assert_eq!(parse_dns_name(&data), Some("Matter Device".to_string()));
     }
 
     // Tests for parse_service_instance()
