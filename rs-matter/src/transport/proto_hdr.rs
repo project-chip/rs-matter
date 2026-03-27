@@ -428,6 +428,8 @@ fn decrypt_in_place<C: Crypto>(
     // Copy to a local buffer to avoid borrow conflict with cipher_text
     let aad_slice = parsebuf.parsed_as_slice();
     let aad_len = aad_slice.len();
+
+    // TODO: Temporary buffer
     let mut aad_buf = [0u8; plain_hdr::PlainHdr::MAX_LEN];
     aad_buf[..aad_len].copy_from_slice(aad_slice);
     let aad = &aad_buf[..aad_len];
