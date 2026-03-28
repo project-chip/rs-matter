@@ -25,7 +25,7 @@ use crate::dm::{
     WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::fabric::GrpKeyMapEntry;
+use crate::fabric::GroupKeyMapping;
 use crate::group_keys::{GroupEpochKeyEntry, GrpKeySetEntry};
 use crate::tlv::{Nullable, Octets, TLVArray, TLVBuilderParent};
 use crate::with;
@@ -207,7 +207,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                 // Now replace all entries
                 let entries = list.into_iter().filter_map(|entry| {
                     let entry = entry.ok()?;
-                    Some(GrpKeyMapEntry {
+                    Some(GroupKeyMapping {
                         group_id: entry.group_id().ok()?,
                         group_key_set_id: entry.group_key_set_id().ok()?,
                     })
@@ -223,7 +223,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
 
                 fabric_mgr.group_key_map_add(
                     fab_idx,
-                    GrpKeyMapEntry {
+                    GroupKeyMapping {
                         group_id: entry.group_id().map_err(|_| ErrorCode::InvalidCommand)?,
                         group_key_set_id: entry
                             .group_key_set_id()

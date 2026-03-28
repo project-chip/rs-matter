@@ -125,7 +125,7 @@ pub struct GrpInfoMapEntry {
 /// A stored group key map entry (maps group ID to key set).
 #[derive(Debug, Clone, Default, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GrpKeyMapEntry {
+pub struct GroupKeyMapping {
     pub group_id: u16,
     pub group_key_set_id: u16,
 }
@@ -136,7 +136,7 @@ struct FabricGroupInformation {
     /// Group key sets (excluding IPK which is stored in `ipk`)
     key_sets: Vec<GrpKeySetEntry, MAX_GROUP_KEYS_PER_FABRIC>,
     /// Groups keyset mapping
-    key_map: Vec<GrpKeyMapEntry, MAX_GROUPS_PER_FABRIC>,
+    key_map: Vec<GroupKeyMapping, MAX_GROUPS_PER_FABRIC>,
     /// Group table (group ID → endpoints + name)
     group_table: Vec<GrpInfoMapEntry, MAX_GROUPS_PER_FABRIC>,
 }
@@ -545,7 +545,7 @@ impl Fabric {
         }
     }
 
-    fn group_key_map_add(&mut self, entry: GrpKeyMapEntry) -> Result<(), Error> {
+    fn group_key_map_add(&mut self, entry: GroupKeyMapping) -> Result<(), Error> {
         self.groups
             .key_map
             .push(entry)
@@ -555,14 +555,14 @@ impl Fabric {
     }
 
     /// Return an iterator over the group key map entries of the fabric
-    pub fn group_key_map_iter(&self) -> impl Iterator<Item = &GrpKeyMapEntry> {
+    pub fn group_key_map_iter(&self) -> impl Iterator<Item = &GroupKeyMapping> {
         self.groups.key_map.iter()
     }
 
     /// Replace all group key map entries
     fn group_key_map_replace(
         &mut self,
-        entries: impl Iterator<Item = GrpKeyMapEntry>,
+        entries: impl Iterator<Item = GroupKeyMapping>,
     ) -> Result<(), Error> {
         self.groups.key_map.clear();
         for entry in entries {
@@ -1118,7 +1118,7 @@ impl FabricMgr {
     pub fn group_key_map_replace(
         &mut self,
         fab_idx: NonZeroU8,
-        entries: impl Iterator<Item = GrpKeyMapEntry>,
+        entries: impl Iterator<Item = GroupKeyMapping>,
     ) -> Result<(), Error> {
         self.get_mut(fab_idx)
             .ok_or(ErrorCode::NotFound)?
@@ -1131,7 +1131,7 @@ impl FabricMgr {
     pub fn group_key_map_add(
         &mut self,
         fab_idx: NonZeroU8,
-        entry: GrpKeyMapEntry,
+        entry: GroupKeyMapping,
     ) -> Result<(), Error> {
         self.get_mut(fab_idx)
             .ok_or(ErrorCode::NotFound)?
