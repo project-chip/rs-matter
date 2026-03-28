@@ -116,7 +116,7 @@ cfg_if! {
 /// A group table entry mapping a group ID to its endpoints and name.
 #[derive(Debug, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GrpInfoMapEntry {
+pub struct GroupEndpointMapping {
     pub group_id: u16,
     pub endpoints: Vec<u16, GROUP_ENDPOINTS_PER_FABRIC>,
     pub group_name: String<MAX_GROUP_NAME_LEN>,
@@ -138,7 +138,7 @@ struct Groups {
     /// Groups keyset mapping
     key_map: Vec<GroupKeyMapping, MAX_GROUPS_PER_FABRIC>,
     /// Group table (group ID → endpoints + name)
-    group_table: Vec<GrpInfoMapEntry, MAX_GROUPS_PER_FABRIC>,
+    endpoint_mapping: Vec<GroupEndpointMapping, MAX_GROUPS_PER_FABRIC>,
 }
 
 impl Groups {
@@ -146,7 +146,7 @@ impl Groups {
         init!(Self {
             key_sets <- Vec::init(),
             key_map <- Vec::init(),
-            group_table <- Vec::init(),
+            endpoint_mapping <- Vec::init(),
         })
     }
 }
@@ -582,14 +582,14 @@ impl Fabric {
     }
 
     /// Return an iterator over the group table entries
-    pub fn group_iter(&self) -> impl Iterator<Item = &GrpInfoMapEntry> {
-        self.groups.group_table.iter()
+    pub fn group_iter(&self) -> impl Iterator<Item = &GroupEndpointMapping> {
+        self.groups.endpoint_mapping.iter()
     }
 
     /// Look up a group by ID
-    pub fn group_get(&self, group_id: u16) -> Option<&GrpInfoMapEntry> {
+    pub fn group_get(&self, group_id: u16) -> Option<&GroupEndpointMapping> {
         self.groups
-            .group_table
+            .endpoint_mapping
             .iter()
             .find(|e| e.group_id == group_id)
     }
@@ -604,21 +604,21 @@ impl Fabric {
     ) -> Result<bool, Error> {
         let entry = if let Some(entry) = self
             .groups
-            .group_table
+            .endpoint_mapping
             .iter_mut()
             .find(|e| e.group_id == group_id)
         {
             entry
         } else {
             self.groups
-                .group_table
-                .push(GrpInfoMapEntry {
+                .endpoint_mapping
+                .push(GroupEndpointMapping {
                     group_id,
                     endpoints: Vec::new(),
                     group_name: unwrap!(String::from_str(group_name)),
                 })
                 .map_err(|_| ErrorCode::ResourceExhausted)?;
-            unwrap!(self.groups.group_table.last_mut())
+            unwrap!(self.groups.endpoint_mapping.last_mut())
         };
 
         // Update group name
@@ -642,7 +642,7 @@ impl Fabric {
     fn group_remove(&mut self, endpoint_id: u16, group_id: Option<u16>) -> bool {
         let mut removed = false;
 
-        for entry in self.groups.group_table.iter_mut() {
+        for entry in self.groups.endpoint_mapping.iter_mut() {
             if group_id.is_some_and(|id| id != entry.group_id) {
                 continue;
             }
@@ -654,7 +654,9 @@ impl Fabric {
         }
 
         // Remove entries with no endpoints left
-        self.groups.group_table.retain(|e| !e.endpoints.is_empty());
+        self.groups
+            .endpoint_mapping
+            .retain(|e| !e.endpoints.is_empty());
 
         removed
     }
