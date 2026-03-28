@@ -26,7 +26,7 @@ use crate::dm::{
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::GroupKeyMapping;
-use crate::group_keys::{GroupEpochKeyEntry, GrpKeySetEntry};
+use crate::group_keys::{GroupEpochKeyEntry, GroupKeySet};
 use crate::tlv::{Nullable, Octets, TLVArray, TLVBuilderParent};
 use crate::with;
 
@@ -295,7 +295,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
             return Err(ErrorCode::InvalidCommand.into());
         }
 
-        let mut entry = GrpKeySetEntry {
+        let mut entry = GroupKeySet {
             group_key_set_id,
             group_key_security_policy: group_key_security_policy as u8,
             ..Default::default()

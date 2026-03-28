@@ -34,7 +34,7 @@ pub struct GroupEpochKeyEntry {
 /// A stored group key set entry.
 #[derive(Debug, Clone, Default, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct GrpKeySetEntry {
+pub struct GroupKeySet {
     pub group_key_set_id: u16,
     pub group_key_security_policy: u8,
     pub epoch_keys: Vec<GroupEpochKeyEntry, GROUP_MAX_EPOCH_KEYS>,

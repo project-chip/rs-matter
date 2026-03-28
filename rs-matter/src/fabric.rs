@@ -30,7 +30,7 @@ use crate::crypto::{
 };
 use crate::dm::Privilege;
 use crate::error::{Error, ErrorCode};
-use crate::group_keys::{GrpKeySetEntry, KeySet};
+use crate::group_keys::{GroupKeySet, KeySet};
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::utils::init::{init, Init, InitMaybeUninit, IntoFallibleInit};
 use crate::utils::storage::{Vec, WriteBuf};
@@ -134,7 +134,7 @@ pub struct GroupKeyMapping {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct FabricGroupInformation {
     /// Group key sets (excluding IPK which is stored in `ipk`)
-    key_sets: Vec<GrpKeySetEntry, MAX_GROUP_KEYS_PER_FABRIC>,
+    key_sets: Vec<GroupKeySet, MAX_GROUP_KEYS_PER_FABRIC>,
     /// Groups keyset mapping
     key_map: Vec<GroupKeyMapping, MAX_GROUPS_PER_FABRIC>,
     /// Group table (group ID → endpoints + name)
@@ -502,12 +502,12 @@ impl Fabric {
     }
 
     /// Return an iterator over the group key sets of the fabric
-    pub fn group_key_set_iter(&self) -> impl Iterator<Item = &GrpKeySetEntry> {
+    pub fn group_key_set_iter(&self) -> impl Iterator<Item = &GroupKeySet> {
         self.groups.key_sets.iter()
     }
 
     /// Find a group key set by ID
-    pub fn group_key_set_get(&self, id: u16) -> Option<&GrpKeySetEntry> {
+    pub fn group_key_set_get(&self, id: u16) -> Option<&GroupKeySet> {
         self.groups
             .key_sets
             .iter()
@@ -515,7 +515,7 @@ impl Fabric {
     }
 
     /// Add or update a group key set
-    fn group_key_set_add(&mut self, entry: GrpKeySetEntry) -> Result<(), Error> {
+    fn group_key_set_add(&mut self, entry: GroupKeySet) -> Result<(), Error> {
         if let Some(existing) = self
             .groups
             .key_sets
@@ -1094,7 +1094,7 @@ impl FabricMgr {
     pub fn group_key_set_add(
         &mut self,
         fab_idx: NonZeroU8,
-        entry: GrpKeySetEntry,
+        entry: GroupKeySet,
     ) -> Result<(), Error> {
         self.get_mut(fab_idx)
             .ok_or(ErrorCode::NotFound)?
