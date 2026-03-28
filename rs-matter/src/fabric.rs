@@ -41,19 +41,19 @@ const COMPRESSED_FABRIC_ID_LEN: usize = 8;
 cfg_if! {
     if #[cfg(feature = "max-group-keys-per-fabric-5")] {
         /// Max number of group key sets per fabric (excluding IPK at index 0).
-        pub const MAX_GROUP_KEY_PER_FABRIC: usize = 5;
+        pub const MAX_GROUP_KEYS_PER_FABRIC: usize = 5;
     } else if #[cfg(feature = "max-group-keys-per-fabric-4")] {
         /// Max number of group key sets per fabric (excluding IPK at index 0).
-        pub const MAX_GROUP_KEY_PER_FABRIC: usize = 4;
+        pub const MAX_GROUP_KEYS_PER_FABRIC: usize = 4;
     } else if #[cfg(feature = "max-group-keys-per-fabric-3")] {
         /// Max number of group key sets per fabric (excluding IPK at index 0).
-        pub const MAX_GROUP_KEY_PER_FABRIC: usize = 3;
+        pub const MAX_GROUP_KEYS_PER_FABRIC: usize = 3;
     } else if #[cfg(feature = "max-group-keys-per-fabric-2")] {
         /// Max number of group key sets per fabric (excluding IPK at index 0).
-        pub const MAX_GROUP_KEY_PER_FABRIC: usize = 2;
+        pub const MAX_GROUP_KEYS_PER_FABRIC: usize = 2;
     } else {
         /// Max number of group key sets per fabric (excluding IPK at index 0).
-        pub const MAX_GROUP_KEY_PER_FABRIC: usize = 0;
+        pub const MAX_GROUP_KEYS_PER_FABRIC: usize = 0;
     }
 }
 
@@ -134,7 +134,7 @@ pub struct GrpKeyMapEntry {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct FabricGroupInformation {
     /// Group key sets (excluding IPK which is stored in `ipk`)
-    key_sets: Vec<GrpKeySetEntry, MAX_GROUP_KEY_PER_FABRIC>,
+    key_sets: Vec<GrpKeySetEntry, MAX_GROUP_KEYS_PER_FABRIC>,
     /// Groups keyset mapping
     key_map: Vec<GrpKeyMapEntry, MAX_GROUPS_PER_FABRIC>,
     /// Group table (group ID → endpoints + name)
@@ -1143,7 +1143,7 @@ impl FabricMgr {
     #[inline(always)]
     pub fn max_group_keys_per_fabric(&self) -> u16 {
         // Group key sets + IPK
-        MAX_GROUP_KEY_PER_FABRIC as u16
+        MAX_GROUP_KEYS_PER_FABRIC as u16
     }
 
     #[inline(always)]
