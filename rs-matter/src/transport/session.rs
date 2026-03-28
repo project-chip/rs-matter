@@ -33,7 +33,7 @@ use crate::transport::mrp::ReliableMessage;
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init, IntoFallibleInit};
-use crate::utils::storage::{ParseBuf, WriteBuf};
+use crate::utils::storage::{ParseBuf, Vec, WriteBuf};
 use crate::Matter;
 
 use super::dedup::{GroupCtrStore, RxCtrState};
@@ -108,7 +108,7 @@ pub struct Session {
     msg_ctr: u32,
     rx_ctr_state: RxCtrState,
     mode: SessionMode,
-    pub(crate) exchanges: crate::utils::storage::Vec<Option<ExchangeState>, MAX_EXCHANGES>,
+    pub(crate) exchanges: Vec<Option<ExchangeState>, MAX_EXCHANGES>,
     last_use: Duration,
     /// If `true` then the session is considered "expired". Session expiration happens
     /// for the session on behalf of which a fabric is removed.
@@ -142,7 +142,7 @@ impl Session {
             msg_ctr: msg_ctr & MATTER_MSG_CTR_RANGE,
             rx_ctr_state: RxCtrState::new(0),
             mode: SessionMode::PlainText,
-            exchanges: crate::utils::storage::Vec::new(),
+            exchanges: Vec::new(),
             last_use: epoch(),
             expired: false,
         }
@@ -170,7 +170,7 @@ impl Session {
             msg_ctr: msg_ctr & MATTER_MSG_CTR_RANGE,
             rx_ctr_state: RxCtrState::new(0),
             mode: SessionMode::PlainText,
-            exchanges: crate::utils::storage::Vec::new(),
+            exchanges <- Vec::init(),
             last_use: epoch(),
             expired: false,
         })
@@ -671,7 +671,7 @@ pub struct SessionMgr {
     next_sess_unique_id: u32,
     next_sess_id: u16,
     next_exch_id: u16,
-    sessions: crate::utils::storage::Vec<Session, MAX_SESSIONS>,
+    sessions: Vec<Session, MAX_SESSIONS>,
     group_ctr_store: GroupCtrStore,
     pub(crate) epoch: Epoch,
 }
@@ -681,7 +681,7 @@ impl SessionMgr {
     #[inline(always)]
     pub const fn new(epoch: Epoch) -> Self {
         Self {
-            sessions: crate::utils::storage::Vec::new(),
+            sessions: Vec::new(),
             group_ctr_store: GroupCtrStore::new(),
             next_sess_unique_id: 0,
             next_sess_id: 1,
@@ -693,7 +693,7 @@ impl SessionMgr {
     /// Create an in-place initializer for a new session manager.
     pub fn init(epoch: Epoch) -> impl Init<Self> {
         init!(Self {
-            sessions <- crate::utils::storage::Vec::init(),
+            sessions <- Vec::init(),
             group_ctr_store: GroupCtrStore::new(),
             next_sess_unique_id: 0,
             next_sess_id: 1,
