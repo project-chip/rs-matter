@@ -416,7 +416,10 @@ impl TransportMgr {
             rx.buf.truncate(len);
             rx.payload_start = 0;
 
-            match self.handle_rx_packet(&crypto, fabric_mgr, &mut rx, send).await {
+            match self
+                .handle_rx_packet(&crypto, fabric_mgr, &mut rx, send)
+                .await
+            {
                 Ok(true) => {
                     // Leave the packet in place for accepting by responders
                     rx.clear_on_drop(false);

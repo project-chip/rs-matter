@@ -644,9 +644,7 @@ impl<'a> Matter<'a> {
     {
         let mut transport = pin!(self.run_transport(&crypto, send, recv));
         let mut group_key_watcher = match multicast {
-            Some(multicast) => pin!(either::Either::Left(
-                self.watch_group_membership(multicast)
-            )),
+            Some(multicast) => pin!(either::Either::Left(self.watch_group_membership(multicast))),
             None => pin!(either::Either::Right(core::future::pending::<()>())),
         };
 
