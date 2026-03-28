@@ -132,7 +132,7 @@ pub struct GroupKeyMapping {
 
 #[derive(Debug, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct FabricGroupInformation {
+struct Groups {
     /// Group key sets (excluding IPK which is stored in `ipk`)
     key_sets: Vec<GroupKeySet, MAX_GROUP_KEYS_PER_FABRIC>,
     /// Groups keyset mapping
@@ -141,7 +141,7 @@ struct FabricGroupInformation {
     group_table: Vec<GrpInfoMapEntry, MAX_GROUPS_PER_FABRIC>,
 }
 
-impl FabricGroupInformation {
+impl Groups {
     fn init() -> impl Init<Self> {
         init!(Self {
             key_sets <- Vec::init(),
@@ -187,7 +187,7 @@ pub struct Fabric {
     /// Access Control List
     acl: Vec<AclEntry, { acl::MAX_ACL_ENTRIES_PER_FABRIC }>,
     /// Fabric group information
-    groups: FabricGroupInformation,
+    groups: Groups,
 }
 
 impl Fabric {
@@ -213,7 +213,7 @@ impl Fabric {
             ipk <- KeySet::init(),
             label: String::new(),
             acl <- Vec::init(),
-            groups <- FabricGroupInformation::init(),
+            groups <- Groups::init(),
         })
     }
 
