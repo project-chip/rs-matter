@@ -270,7 +270,7 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        endpoints::root_endpoint(NetworkType::Ethernet),
+        endpoints::root_endpoint_with_groups(NetworkType::Ethernet),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
@@ -311,43 +311,46 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             endpoints::with_sys(
                 &false,
                 rand,
-                EmptyHandler
-                    // Clusters for Endpoint 1
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
-                        Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                        on_off::HandlerAsyncAdaptor(on_off_1),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(UnitTestingHandler::CLUSTER.id)),
-                        Async(
-                            UnitTestingHandler::new(
-                                Dataver::new_rand(&mut rand),
-                                unit_testing_data,
-                            )
-                            .adapt(),
+                endpoints::with_groups(
+                    rand,
+                    EmptyHandler
+                        // Clusters for Endpoint 1
+                        .chain(
+                            EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                            Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                        )
+                        .chain(
+                            EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                            Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                        )
+                        .chain(
+                            EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                            on_off::HandlerAsyncAdaptor(on_off_1),
+                        )
+                        .chain(
+                            EpClMatcher::new(Some(1), Some(UnitTestingHandler::CLUSTER.id)),
+                            Async(
+                                UnitTestingHandler::new(
+                                    Dataver::new_rand(&mut rand),
+                                    unit_testing_data,
+                                )
+                                .adapt(),
+                            ),
+                        )
+                        // (mostly) Similar Clusters for Endpoint 2
+                        .chain(
+                            EpClMatcher::new(Some(2), Some(desc::DescHandler::CLUSTER.id)),
+                            Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                        )
+                        .chain(
+                            EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
+                            Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                        )
+                        .chain(
+                            EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                            on_off::HandlerAsyncAdaptor(on_off_2),
                         ),
-                    )
-                    // (mostly) Similar Clusters for Endpoint 2
-                    .chain(
-                        EpClMatcher::new(Some(2), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
-                        Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                        on_off::HandlerAsyncAdaptor(on_off_2),
-                    ),
+                ),
             ),
         ),
     )
