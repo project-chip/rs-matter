@@ -52,7 +52,7 @@ nix = { version = "0.27", features = ["net"] }
 async-io = "2"
 async-compat = "0.2"
 futures-lite = "2"
-rs-matter = { path = "../rs-matter", features = ["async-io", "max-groups-per-fabric-12"] }
+rs-matter = { path = "../rs-matter", features = ["async-io", "max-groups-per-fabric-12", "max-group-keys-per-fabric-2", "max-group-endpoints-per-fabric-3"] }
 rand = { version = "0.8", features = ["std", "std_rng"] }
 async-signal = "0.2"
 socket2 = "0.5"
