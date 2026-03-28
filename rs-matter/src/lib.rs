@@ -574,25 +574,14 @@ impl<'a> Matter<'a> {
         self.pase_mgr.borrow_mut().close_comm_window(ctx)
     }
 
-    /// Rebuild the group operational key cache from the current fabric state.
-    fn rebuild_group_op_keys<C: Crypto>(&self, crypto: &C) {
-        let fm = self.fabric_mgr.borrow();
-        self.transport_mgr
-            .session_mgr
-            .borrow_mut()
-            .rebuild_group_op_keys(crypto, &fm);
-    }
-
-    /// Watch for fabric/group key changes, rebuild the op-key cache, and join new IPv6
-    /// multicast groups as group key maps change.
+    /// Watch for fabric/group key changes and join new IPv6 multicast groups
+    /// as group key maps change.
     /// Runs forever (never returns).
-    fn watch_group_membership<'t, C, M>(
+    fn watch_group_membership<'t, M>(
         &'t self,
-        crypto: C,
         mut multicast_network: M,
     ) -> impl Future<Output = ()> + 't
     where
-        C: Crypto + 't,
         M: NetworkMulticast + 't,
     {
         async move {
@@ -600,8 +589,6 @@ impl<'a> Matter<'a> {
             let mut joined: heapless::Vec<Ipv6Addr, MAX_ADDRS> = heapless::Vec::new();
 
             loop {
-                self.rebuild_group_op_keys(&crypto);
-
                 for fabric in self.fabric_mgr.borrow().iter() {
                     for entry in fabric.group_iter() {
                         let addr = crate::utils::ipv6::compute_group_multicast_addr(
@@ -629,12 +616,11 @@ impl<'a> Matter<'a> {
         }
     }
 
-    /// Run the Matter transport layer along with the background group key cache watcher.
+    /// Run the Matter transport layer along with the background group membership watcher.
     ///
     /// This is the main entry point for running the transport. It:
-    /// 1. Builds the initial group operational key cache from persisted fabrics
-    /// 2. Joins IPv6 multicast groups for any already-configured group key maps
-    /// 3. Runs the transport and a background task that listens on multicast address for
+    /// 1. Joins IPv6 multicast groups for any already-configured group key maps
+    /// 2. Runs the transport and a background task that listens on multicast address for
     ///    groupcast messages
     ///
     /// # Arguments
@@ -659,7 +645,7 @@ impl<'a> Matter<'a> {
         let mut transport = pin!(self.run_transport(&crypto, send, recv));
         let mut group_key_watcher = match multicast {
             Some(multicast) => pin!(either::Either::Left(
-                self.watch_group_membership(&crypto, multicast)
+                self.watch_group_membership(multicast)
             )),
             None => pin!(either::Either::Right(core::future::pending::<()>())),
         };
@@ -676,8 +662,8 @@ impl<'a> Matter<'a> {
         self.transport_mgr.reset()
     }
 
-    /// Notify that groups have changed (keys, key maps, or membership) and the
-    /// group operational key cache and multicast registrations need updating.
+    /// Notify that groups have changed (keys, key maps, or membership) and
+    /// multicast registrations need updating.
     pub fn notify_groups_changed(&self) {
         self.groups_notification.notify();
     }
@@ -694,7 +680,11 @@ impl<'a> Matter<'a> {
         R: NetworkReceive + 't,
         C: Crypto + 't,
     {
-        async move { self.transport_mgr.run(&crypto, send, recv).await }
+        async move {
+            self.transport_mgr
+                .run(&crypto, &self.fabric_mgr, send, recv)
+                .await
+        }
     }
     /// Reset the Matter state by removing all fabrics and resetting basic info settings
     ///

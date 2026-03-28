@@ -27,6 +27,7 @@ use rand_core::RngCore;
 use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
+use crate::fabric::FabricMgr;
 use crate::fmt::Bytes;
 use crate::sc::{sc_write, OpCode, SCStatusCodes, StatusReport, PROTO_ID_SECURE_CHANNEL};
 use crate::tlv::TLVElement;
@@ -300,7 +301,13 @@ impl TransportMgr {
         Ok(exchange)
     }
 
-    pub async fn run<C, S, R>(&self, crypto: C, send: S, recv: R) -> Result<(), Error>
+    pub async fn run<C, S, R>(
+        &self,
+        crypto: C,
+        fabric_mgr: &RefCell<FabricMgr>,
+        send: S,
+        recv: R,
+    ) -> Result<(), Error>
     where
         C: Crypto,
         S: NetworkSend,
@@ -310,7 +317,7 @@ impl TransportMgr {
 
         let send = IfMutex::new(send);
 
-        let mut rx = pin!(self.process_rx(&crypto, recv, &send));
+        let mut rx = pin!(self.process_rx(&crypto, fabric_mgr, recv, &send));
         let mut tx = pin!(self.process_tx(&crypto, &send));
         let mut orphaned = pin!(self.process_orphaned(&crypto));
 
@@ -382,6 +389,7 @@ impl TransportMgr {
     async fn process_rx<C, R, S>(
         &self,
         crypto: C,
+        fabric_mgr: &RefCell<FabricMgr>,
         mut recv: R,
         send: &IfMutex<S>,
     ) -> Result<(), Error>
@@ -408,7 +416,7 @@ impl TransportMgr {
             rx.buf.truncate(len);
             rx.payload_start = 0;
 
-            match self.handle_rx_packet(&crypto, &mut rx, send).await {
+            match self.handle_rx_packet(&crypto, fabric_mgr, &mut rx, send).await {
                 Ok(true) => {
                     // Leave the packet in place for accepting by responders
                     rx.clear_on_drop(false);
@@ -491,6 +499,7 @@ impl TransportMgr {
     async fn handle_rx_packet<const N: usize, C, S>(
         &self,
         crypto: C,
+        fabric_mgr: &RefCell<FabricMgr>,
         packet: &mut Packet<N>,
         send: &IfMutex<S>,
     ) -> Result<bool, Error>
@@ -498,7 +507,7 @@ impl TransportMgr {
         C: Crypto,
         S: NetworkSend,
     {
-        let result = self.decode_packet(&crypto, packet);
+        let result = self.decode_packet(&crypto, fabric_mgr, packet);
         match result {
             Err(e) if matches!(e.code(), ErrorCode::Duplicate) => {
                 if packet.header.plain.is_group_session() {
@@ -844,6 +853,7 @@ impl TransportMgr {
     fn decode_packet<const N: usize, C: Crypto>(
         &self,
         crypto: C,
+        fabric_mgr: &RefCell<FabricMgr>,
         packet: &mut Packet<N>,
     ) -> Result<bool, Error> {
         packet.header.reset();
@@ -896,9 +906,10 @@ impl TransportMgr {
                 return session.post_recv(&packet.header, epoch);
             }
         } else if packet.header.plain.is_group_session() {
-            // Group (multicast) message — decrypt using pre-cached group operational keys
+            // Group (multicast) message — derive keys on-the-fly and decrypt
+            let fm = fabric_mgr.borrow();
             let (session, payload_range) =
-                session_mgr.get_or_create_for_group_rx(&crypto, packet)?;
+                session_mgr.get_or_create_for_group_rx(&crypto, &fm, packet)?;
             set_payload(packet, payload_range);
 
             return session.post_recv(&packet.header, epoch);
