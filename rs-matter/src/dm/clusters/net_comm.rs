@@ -29,6 +29,7 @@ use crate::tlv::{
 use crate::{clusters, with};
 
 pub use crate::dm::clusters::decl::network_commissioning::*;
+pub use crate::dm::clusters::groups;
 
 /// Network type supported by the `NetCtl` implementations
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -66,6 +67,23 @@ impl NetworkType {
         static ETH: &[Cluster<'static>] = clusters!(eth;);
         static WIFI: &[Cluster<'static>] = clusters!(wifi;);
         static THREAD: &[Cluster<'static>] = clusters!(thread;);
+
+        match self {
+            Self::Ethernet => ETH,
+            Self::Wifi => WIFI,
+            Self::Thread => THREAD,
+        }
+    }
+
+    /// Return the root clusters necessary for the given network type and the groups cluster.
+    /// This is same as [Self::root_clusters()] but with the groups cluster added.
+    pub const fn root_clusters_with_groups(&self) -> &'static [Cluster<'static>] {
+        static ETH: &[Cluster<'static>] =
+            clusters!(eth;<groups::GroupsHandler as groups::ClusterHandler>::CLUSTER);
+        static WIFI: &[Cluster<'static>] =
+            clusters!(wifi;<groups::GroupsHandler as groups::ClusterHandler>::CLUSTER);
+        static THREAD: &[Cluster<'static>] =
+            clusters!(thread;<groups::GroupsHandler as groups::ClusterHandler>::CLUSTER);
 
         match self {
             Self::Ethernet => ETH,

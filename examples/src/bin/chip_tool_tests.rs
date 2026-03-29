@@ -37,6 +37,7 @@ use rs_matter::dm::clusters::basic_info::{
     BasicInfoConfig, ColorEnum, PairingHintFlags, ProductAppearance, ProductFinishEnum,
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::test::TestOnOffDeviceLogic;
@@ -144,9 +145,16 @@ fn main() -> Result<(), Error> {
         .init_with(DefaultEvents::init(rs_matter::utils::epoch::sys_epoch));
 
     // Our on-off cluster
-    let on_off_handler = OnOffHandler::new_standalone(
+    let on_off_handler_1 = OnOffHandler::new_standalone(
         Dataver::new_rand(&mut rand),
         1,
+        TestOnOffDeviceLogic::new(false),
+    );
+
+    // On-off cluster for 2nd endpoint
+    let on_off_handler_2 = OnOffHandler::new_standalone(
+        Dataver::new_rand(&mut rand),
+        2,
         TestOnOffDeviceLogic::new(false),
     );
 
@@ -162,7 +170,12 @@ fn main() -> Result<(), Error> {
         buffers,
         subscriptions,
         Some(events),
-        dm_handler(rand, unit_testing_data, &on_off_handler),
+        dm_handler(
+            rand,
+            unit_testing_data,
+            &on_off_handler_1,
+            &on_off_handler_2,
+        ),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -186,13 +199,13 @@ fn main() -> Result<(), Error> {
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket)),
+        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket, Some(&socket))),
         core::mem::size_of_val(&mdns::run_mdns(matter, &crypto, &dm))
     );
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto, &dm));
-    let mut transport = pin!(matter.run_transport(&crypto, &socket, &socket));
+    let mut transport = pin!(matter.run(&crypto, &socket, &socket, Some(&socket)));
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
@@ -257,12 +270,23 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        endpoints::root_endpoint(NetworkType::Ethernet),
+        endpoints::root_endpoint_with_groups(NetworkType::Ethernet),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
+                TestOnOffDeviceLogic::CLUSTER,
+                UnitTestingHandler::CLUSTER
+            ),
+        },
+        Endpoint {
+            id: 2,
+            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters: clusters!(
+                desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER,
                 UnitTestingHandler::CLUSTER
             ),
@@ -275,7 +299,8 @@ const NODE: Node<'static> = Node {
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     mut rand: impl RngCore + Copy,
     unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
-    on_off: &'a OnOffHandler<'a, OH, LH>,
+    on_off_1: &'a OnOffHandler<'a, OH, LH>,
+    on_off_2: &'a OnOffHandler<'a, OH, LH>,
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
@@ -286,25 +311,46 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             endpoints::with_sys(
                 &false,
                 rand,
-                EmptyHandler
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                        on_off::HandlerAsyncAdaptor(on_off),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(UnitTestingHandler::CLUSTER.id)),
-                        Async(
-                            UnitTestingHandler::new(
-                                Dataver::new_rand(&mut rand),
-                                unit_testing_data,
-                            )
-                            .adapt(),
+                endpoints::with_groups(
+                    rand,
+                    EmptyHandler
+                        // Clusters for Endpoint 1
+                        .chain(
+                            EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                            Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                        )
+                        .chain(
+                            EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                            Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                        )
+                        .chain(
+                            EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                            on_off::HandlerAsyncAdaptor(on_off_1),
+                        )
+                        .chain(
+                            EpClMatcher::new(Some(1), Some(UnitTestingHandler::CLUSTER.id)),
+                            Async(
+                                UnitTestingHandler::new(
+                                    Dataver::new_rand(&mut rand),
+                                    unit_testing_data,
+                                )
+                                .adapt(),
+                            ),
+                        )
+                        // (mostly) Similar Clusters for Endpoint 2
+                        .chain(
+                            EpClMatcher::new(Some(2), Some(desc::DescHandler::CLUSTER.id)),
+                            Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                        )
+                        .chain(
+                            EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
+                            Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                        )
+                        .chain(
+                            EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                            on_off::HandlerAsyncAdaptor(on_off_2),
                         ),
-                    ),
+                ),
             ),
         ),
     )

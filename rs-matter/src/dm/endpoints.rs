@@ -26,6 +26,7 @@ use super::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use super::clusters::eth_diag::{self, ClusterHandler as _, EthDiagHandler};
 use super::clusters::gen_comm::{self, ClusterHandler as _, CommPolicy, GenCommHandler};
 use super::clusters::gen_diag::{self, ClusterHandler as _, GenDiag, GenDiagHandler, NetifDiag};
+use super::clusters::groups::{self, ClusterHandler as _, GroupsHandler};
 use super::clusters::grp_key_mgmt::{self, ClusterHandler as _, GrpKeyMgmtHandler};
 use super::clusters::net_comm::{
     self, ClusterAsyncHandler as _, NetCommHandler, NetCtl, NetCtlStatus, NetworkType, Networks,
@@ -42,6 +43,15 @@ pub const fn root_endpoint(net_type: NetworkType) -> Endpoint<'static> {
         id: ROOT_ENDPOINT_ID,
         device_types: devices!(super::devices::DEV_TYPE_ROOT_NODE),
         clusters: net_type.root_clusters(),
+    }
+}
+
+/// A utility function to create a root (Endpoint 0) object using the requested operational network type and the groups cluster.
+pub const fn root_endpoint_with_groups(net_type: NetworkType) -> Endpoint<'static> {
+    Endpoint {
+        id: ROOT_ENDPOINT_ID,
+        device_types: devices!(super::devices::DEV_TYPE_ROOT_NODE),
+        clusters: net_type.root_clusters_with_groups(),
     }
 }
 
@@ -85,6 +95,12 @@ pub type SysHandler<'a, H> = handler_chain_type!(
     EpClMatcher => Async<noc::HandlerAdaptor<NocHandler>>,
     EpClMatcher => Async<acl::HandlerAdaptor<acl::AclHandler>>,
     EpClMatcher => Async<grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>
+    | H
+);
+
+/// A type alias for the handler chain returned by `with_groups()`.
+pub type GroupsDmHandler<'a, H> = handler_chain_type!(
+    EpClMatcher => Async<groups::HandlerAdaptor<GroupsHandler>>
     | H
 );
 
@@ -260,5 +276,18 @@ pub fn with_sys<'a, R: RngCore, H>(
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(DescHandler::CLUSTER.id)),
         Async(DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+    )
+}
+
+/// Decorates the provided `handler` with the group model handlers installed on the root endpoint (0).
+///
+/// # Arguments:
+/// - `rand`: A random number generator.
+/// - `handler`: The handler to be decorated.
+pub fn with_groups<'a, R: RngCore, H>(mut rand: R, handler: H) -> GroupsDmHandler<'a, H> {
+    ChainedHandler::new(
+        EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GroupsHandler::CLUSTER.id)),
+        Async(GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+        handler,
     )
 }

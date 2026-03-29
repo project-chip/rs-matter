@@ -28,6 +28,7 @@ use log::info;
 use rand::RngCore;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
@@ -157,13 +158,13 @@ fn run() -> Result<(), Error> {
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket)),
+        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket, Some(&socket))),
         core::mem::size_of_val(&mdns::run_mdns(matter, &crypto, &dm))
     );
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto, &dm));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket));
+    let mut transport = pin!(matter.run(&crypto, &socket, &socket, Some(&socket)));
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
@@ -205,11 +206,15 @@ fn run() -> Result<(), Error> {
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        endpoints::root_endpoint(NetworkType::Ethernet),
+        endpoints::root_endpoint_with_groups(NetworkType::Ethernet),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
-            clusters: clusters!(desc::DescHandler::CLUSTER, TestOnOffDeviceLogic::CLUSTER),
+            clusters: clusters!(
+                desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
+                TestOnOffDeviceLogic::CLUSTER
+            ),
         },
     ],
 };
@@ -229,15 +234,22 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             endpoints::with_sys(
                 &false,
                 rand,
-                EmptyHandler
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                        on_off::HandlerAsyncAdaptor(on_off),
-                    ),
+                endpoints::with_groups(
+                    rand,
+                    EmptyHandler
+                        .chain(
+                            EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                            Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                        )
+                        .chain(
+                            EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                            Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                        )
+                        .chain(
+                            EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                            on_off::HandlerAsyncAdaptor(on_off),
+                        ),
+                ),
             ),
         ),
     )

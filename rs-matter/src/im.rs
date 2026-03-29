@@ -94,6 +94,7 @@ impl From<ErrorCode> for IMStatusCode {
             ErrorCode::FailSafeRequired => IMStatusCode::FailSafeRequired,
             ErrorCode::NeedsTimedInteraction => IMStatusCode::NeedsTimedInteraction,
             ErrorCode::ConstraintError => IMStatusCode::ConstraintError,
+            ErrorCode::NotFound => IMStatusCode::NotFound,
             ErrorCode::Failure => IMStatusCode::Failure,
             _ => IMStatusCode::Failure,
         }

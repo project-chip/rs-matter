@@ -191,11 +191,13 @@ impl<C: Crypto> E2eRunner<C> {
         select4(
             matter_client.transport_mgr.run(
                 &self.crypto,
+                &matter_client.fabric_mgr,
                 NetworkSendImpl(send_local),
                 NetworkReceiveImpl(recv_local),
             ),
             self.matter.transport_mgr.run(
                 &self.crypto,
+                &self.matter.fabric_mgr,
                 NetworkSendImpl(send_remote),
                 NetworkReceiveImpl(recv_remote),
             ),
