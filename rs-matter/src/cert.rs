@@ -38,8 +38,14 @@ pub mod der_utils;
 mod printer;
 pub mod x509;
 
-// As per section 6.1.3 "Certificate Sizes" of the Matter 1.1 spec
+/// As per section 6.1.3 "Certificate Sizes" of the Matter 1.1 spec
 pub const MAX_CERT_TLV_LEN: usize = 400;
+/// As per section 6.1.3 "Certificate Sizes" of the Matter 1.1 spec, DER formatted DAC and NOC
+/// chains must not be longer than this size
+pub const MAX_CERT_ASN1_LEN: usize = 600;
+/// Must be large enough to hold both TLV encoding and intermediate ASN.1 encoding during building
+/// in order to sign over the ASN1-encoded TBS certificate
+pub const MAX_CERT_TLV_AND_ASN1_LEN: usize = MAX_CERT_TLV_LEN + MAX_CERT_ASN1_LEN;
 
 // As per https://datatracker.ietf.org/doc/html/rfc5280
 

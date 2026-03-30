@@ -28,9 +28,7 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVElement, TLVTag, TLVWrite};
 use crate::utils::storage::WriteBuf;
 
-use super::{x509::key_usage_tlv, CertTag, DNTag, MAX_CERT_TLV_LEN};
-
-const MAX_TBS_ASN1_LEN: usize = 600; // TODO is there a more deterministic buffer size?
+use super::{x509::key_usage_tlv, CertTag, DNTag};
 
 /// Certificate type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,18 +114,15 @@ impl<'a> CertBuilderCore<'a> {
             issuer,
         )?;
 
-        let mut tbs_copy = [0u8; MAX_CERT_TLV_LEN];
-        tbs_copy[..tbs_len].copy_from_slice(&self.buf[..tbs_len]);
-
         // Convert TBS to ASN1 format for signing
         // According to the Matter Spec 6.5.2. "Matter certificate", the signature is over the
         // "corresponding X.509 certificate, not a signature of the preceding Matter TLV data."
-        let tbs_cert_ref = CertRef::new(TLVElement::new(&tbs_copy[..tbs_len]));
-        let mut asn1_buf = [0u8; MAX_TBS_ASN1_LEN];
-        let asn1_len = tbs_cert_ref.as_asn1(&mut asn1_buf)?;
+        let (tlv_buf, asn1_buf) = self.buf.split_at_mut(tbs_len);
+        let tbs_cert_ref = CertRef::new(TLVElement::new(tlv_buf));
+        let asn1_len = tbs_cert_ref.as_asn1(asn1_buf)?;
 
         // Sign the ASN1-encoded TBS certificate
-        let signature = self.sign_tbs::<C>(&asn1_buf[..asn1_len], signing_key)?;
+        let signature = Self::sign_tbs::<C>(&asn1_buf[..asn1_len], signing_key)?;
 
         // Append signature to complete the certificate
         self.append_signature(&signature, tbs_len)
@@ -319,7 +314,6 @@ impl<'a> CertBuilderCore<'a> {
 
     /// Sign the TBS certificate data.
     fn sign_tbs<C: Crypto>(
-        &self,
         tbs_data: &[u8],
         signing_key: &C::SecretKey<'_>,
     ) -> Result<CanonPkcSignature, Error> {
@@ -592,7 +586,10 @@ impl<'a> RcacBuilder<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::{test_only_crypto, CanonPkcPublicKey, PublicKey, SigningSecretKey};
+    use crate::{
+        cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN},
+        crypto::{test_only_crypto, CanonPkcPublicKey, PublicKey, SigningSecretKey},
+    };
 
     #[test]
     fn test_validate_cat_id_valid() {
@@ -655,7 +652,7 @@ mod tests {
             not_after,
         };
 
-        let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
+        let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
         let mut builder = RcacBuilder::new(&mut cert_buf);
 
         let len = unwrap!(builder.build(
@@ -717,7 +714,7 @@ mod tests {
             is_rcac: true,
         };
 
-        let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
+        let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
         let mut builder = IcacBuilder::new(&mut cert_buf);
 
         let len = unwrap!(builder.build(
@@ -781,7 +778,7 @@ mod tests {
             is_rcac: true, // Issuer is RCAC
         };
 
-        let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
+        let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
         let mut builder = NocBuilder::new(&mut cert_buf);
 
         let len = unwrap!(builder.build(
@@ -846,7 +843,7 @@ mod tests {
             is_rcac: true,
         };
 
-        let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
+        let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
         let mut builder = NocBuilder::new(&mut cert_buf);
 
         let len = unwrap!(builder.build(
@@ -910,7 +907,7 @@ mod tests {
             is_rcac: false, // Issuer is ICAC, not RCAC
         };
 
-        let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
+        let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
         let mut builder = NocBuilder::new(&mut cert_buf);
 
         let len = unwrap!(builder.build(
@@ -960,7 +957,7 @@ mod tests {
             not_after,
         };
 
-        let mut rcac_buf = [0u8; MAX_CERT_TLV_LEN];
+        let mut rcac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
         let mut rcac_builder = RcacBuilder::new(&mut rcac_buf);
         let rcac_len = unwrap!(rcac_builder.build(
             &crypto,
@@ -993,7 +990,7 @@ mod tests {
             is_rcac: true,
         };
 
-        let mut icac_buf = [0u8; MAX_CERT_TLV_LEN];
+        let mut icac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
         let mut icac_builder = IcacBuilder::new(&mut icac_buf);
         let icac_len = unwrap!(icac_builder.build(
             &crypto,
@@ -1028,7 +1025,7 @@ mod tests {
             is_rcac: false, // Issuer is ICAC
         };
 
-        let mut noc_buf = [0u8; MAX_CERT_TLV_LEN];
+        let mut noc_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
         let mut noc_builder = NocBuilder::new(&mut noc_buf);
 
         let noc_len = unwrap!(noc_builder.build(
@@ -1089,7 +1086,7 @@ mod tests {
             is_rcac: true,
         };
 
-        let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
+        let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
         let mut builder = NocBuilder::new(&mut cert_buf);
 
         let result = builder.build(
@@ -1146,7 +1143,7 @@ mod tests {
             is_rcac: true,
         };
 
-        let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
+        let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
         let mut builder = NocBuilder::new(&mut cert_buf);
 
         let result = builder.build(
@@ -1193,7 +1190,7 @@ mod tests {
             not_after,
         };
 
-        let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
+        let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
         let mut builder = RcacBuilder::new(&mut cert_buf);
 
         let len = unwrap!(builder.build(

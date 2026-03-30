@@ -25,7 +25,7 @@
 
 use crate::cert::builder::{IcacBuilder, IssuerDN, NocBuilder, RcacBuilder};
 use crate::cert::csr::CsrRef;
-use crate::cert::MAX_CERT_TLV_LEN;
+use crate::cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN};
 use crate::crypto::{
     CanonPkcPublicKey, CanonPkcSecretKey, Crypto, PublicKey, RngCore, SecretKey, SigningSecretKey,
 };
@@ -108,7 +108,7 @@ impl NocGenerator {
         crypto.rand()?.fill_bytes(&mut serial_bytes);
 
         // Build the RCAC
-        let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
+        let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
 
         // Load the secret key for signing
         let signing_key = crypto.secret_key(root_privkey.reference())?;
@@ -220,7 +220,7 @@ impl NocGenerator {
         let serial_bytes = serial_bytes_vec.as_slice();
 
         // Build the ICAC (signed by RCAC)
-        let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
+        let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
 
         let root_signing_key = crypto.secret_key(self.root_privkey.reference())?;
 
@@ -303,7 +303,7 @@ impl NocGenerator {
         };
 
         // Build the NOC
-        let mut cert_buf = [0u8; MAX_CERT_TLV_LEN];
+        let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
 
         let signing_key = crypto.secret_key(signing_privkey.reference())?;
 
