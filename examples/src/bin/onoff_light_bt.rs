@@ -186,7 +186,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     let mut persist = pin!(psm.run(&path, &matter, Some(&networks), Some(&events)));
 
     // Create and run the mDNS responder
-    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, &dm));
+    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, dm.change_notify()));
 
     if !matter.is_commissioned() {
         // Not commissioned yet, start commissioning first
@@ -197,7 +197,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
 
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &dm)?;
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, dm.change_notify())?;
 
         // BLE commissioning via BlueZ is Linux-only.
         #[cfg(not(target_os = "linux"))]
@@ -206,6 +206,8 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         #[cfg(target_os = "linux")]
         {
             // The BTP transport impl
+
+            use rs_matter::transport::network::NoNetwork;
             let btp = Btp::new();
             // BlueZ seems to report an incorrect GATT MTU, so we need to enable the relaxed MTU negotiation mode to be able to connect to BlueZ peripherals with MTU bigger than the minimum one
             btp.set_relaxed_mtu_nego(true);
@@ -218,10 +220,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
             //     None, "MT", &adv_data, &btp
             // )));
 
-            let mut transport = pin!(matter
-                .run::<_, _, _, rs_matter::transport::network::NoNetwork>(
-                    &crypto, &btp, &btp, None
-                ));
+            let mut transport = pin!(matter.run(&crypto, &btp, &btp, NoNetwork));
             let mut wifi_prov_task = pin!(async {
                 NetCtlState::wait_prov_ready(&net_ctl_state, &btp).await;
                 Ok(())
@@ -246,7 +245,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     let udp = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
     // Run the Matter transport
-    let mut transport = pin!(matter.run(&crypto, &udp, &udp, Some(&udp)));
+    let mut transport = pin!(matter.run(&crypto, &udp, &udp, &udp));
 
     // Combine all async tasks in a single one
     let all = select4(

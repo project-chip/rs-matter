@@ -26,7 +26,7 @@ use crate::dm::{
     ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::fabric::FabricMgr;
+use crate::fabric::Fabrics;
 use crate::tlv::{TLVArray, TLVBuilderParent};
 use crate::with;
 
@@ -51,17 +51,17 @@ impl AclHandler {
     }
 
     /// For unit-testing
-    /// Read the ACL entries from the fabric manager and write them into the builder
+    /// Read the ACL entries from the fabrics and write them into the builder
     fn acl<P: TLVBuilderParent>(
         &self,
-        fabric_mgr: &FabricMgr,
+        fabrics: &Fabrics,
         attr: &AttrDetails<'_>,
         builder: ArrayAttributeRead<
             AccessControlEntryStructArrayBuilder<P>,
             AccessControlEntryStructBuilder<P>,
         >,
     ) -> Result<P, Error> {
-        let mut acls = fabric_mgr
+        let mut acls = fabrics
             .iter()
             .filter(|fabric| !attr.fab_filter || fabric.fab_idx().get() == attr.fab_idx)
             .flat_map(|fabric| fabric.acl_iter().map(|entry| (fabric.fab_idx(), entry)));
@@ -87,10 +87,10 @@ impl AclHandler {
     }
 
     /// For unit-testing
-    /// Set the ACL entries in the fabric manager
+    /// Set the ACL entries in the fabrics
     fn set_acl(
         &self,
-        fabric_mgr: &mut FabricMgr,
+        fabrics: &mut Fabrics,
         fab_idx: NonZeroU8,
         value: ArrayAttributeWrite<
             TLVArray<'_, AccessControlEntryStruct<'_>>,
@@ -112,26 +112,26 @@ impl AclHandler {
                 }
 
                 // Now add everything once we know all are valid
-                fabric_mgr.acl_remove_all(fab_idx)?;
+                fabrics.acl_remove_all(fab_idx)?;
                 for entry in &list {
                     // unwrap! calls below can't fail because we already checked that the entry is well-formed
                     // and the length of the list is within the limit
                     let entry = unwrap!(entry);
-                    unwrap!(fabric_mgr.acl_add_init(fab_idx, AclEntry::init_with(fab_idx, &entry)));
+                    unwrap!(fabrics.acl_add_init(fab_idx, AclEntry::init_with(fab_idx, &entry)));
                 }
             }
             ArrayAttributeWrite::Add(entry) => {
-                fabric_mgr.acl_add_init(fab_idx, AclEntry::init_with(fab_idx, &entry))?;
+                fabrics.acl_add_init(fab_idx, AclEntry::init_with(fab_idx, &entry))?;
             }
             ArrayAttributeWrite::Update(index, entry) => {
-                fabric_mgr.acl_update_init(
+                fabrics.acl_update_init(
                     fab_idx,
                     index as _,
                     AclEntry::init_with(fab_idx, &entry),
                 )?;
             }
             ArrayAttributeWrite::Remove(index) => {
-                fabric_mgr.acl_remove(fab_idx, index as _)?;
+                fabrics.acl_remove(fab_idx, index as _)?;
             }
         }
 
@@ -158,11 +158,8 @@ impl ClusterHandler for AclHandler {
             AccessControlEntryStructBuilder<P>,
         >,
     ) -> Result<P, Error> {
-        self.acl(
-            &ctx.exchange().matter().fabric_mgr.borrow(),
-            ctx.attr(),
-            builder,
-        )
+        ctx.exchange()
+            .with_state(|state| self.acl(&state.fabrics, ctx.attr(), builder))
     }
 
     fn subjects_per_access_control_entry(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
@@ -185,12 +182,10 @@ impl ClusterHandler for AclHandler {
             AccessControlEntryStruct<'_>,
         >,
     ) -> Result<(), Error> {
-        let fab_idx = NonZeroU8::new(ctx.attr().fab_idx).ok_or(ErrorCode::Invalid)?;
-        self.set_acl(
-            &mut ctx.exchange().matter().fabric_mgr.borrow_mut(),
-            fab_idx,
-            value,
-        )
+        ctx.exchange().with_state(|state| {
+            let fab_idx = NonZeroU8::new(ctx.attr().fab_idx).ok_or(ErrorCode::Invalid)?;
+            self.set_acl(&mut state.fabrics, fab_idx, value)
+        })
     }
 
     fn handle_review_fabric_restrictions<P: TLVBuilderParent>(
@@ -216,7 +211,7 @@ mod tests {
         ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, AttrReadReplyInstance, Node,
         Privilege, ReadReply, ReadReplyInstance, Reply,
     };
-    use crate::fabric::FabricMgr;
+    use crate::fabric::Fabrics;
     use crate::tlv::{get_root_node_struct, TLVElement, TLVTag, TLVWriteParent, ToTLV};
     use crate::utils::storage::WriteBuf;
 
@@ -230,10 +225,10 @@ mod tests {
         let mut buf: [u8; 100] = [0; 100];
         let mut tw = WriteBuf::new(&mut buf);
 
-        let mut fab_mgr = FabricMgr::new();
+        let mut fabrics = Fabrics::new();
 
         // Add fabric with ID 1
-        unwrap!(fab_mgr.add_with_post_init(|_| Ok(())));
+        unwrap!(fabrics.add_with_post_init(|_| Ok(())));
 
         let acl = AclHandler::new(Dataver::new(0));
 
@@ -244,10 +239,10 @@ mod tests {
 
         // Test, ACL has fabric index 2, but the accessing fabric is 1
         //    the fabric index in the TLV should be ignored and the ACL should be created with entry 1
-        acl_add(&acl, &mut fab_mgr, &data, FAB_1);
+        acl_add(&acl, &mut fabrics, &data, FAB_1);
 
         let verifier = AclEntry::new(Some(FAB_1), Privilege::VIEW, AuthMode::Case);
-        for fabric in fab_mgr.iter() {
+        for fabric in fabrics.iter() {
             for a in fabric.acl_iter() {
                 assert_eq!(*a, verifier);
             }
@@ -260,13 +255,13 @@ mod tests {
         let mut buf: [u8; 100] = [0; 100];
         let mut tw = WriteBuf::new(&mut buf);
 
-        let mut fab_mgr = FabricMgr::new();
+        let mut fabrics = Fabrics::new();
 
         // Add fabric with ID 1
-        fab_mgr.add_with_post_init(|_| Ok(())).unwrap();
+        fabrics.add_with_post_init(|_| Ok(())).unwrap();
 
         // Add fabric with ID 2
-        fab_mgr.add_with_post_init(|_| Ok(())).unwrap();
+        fabrics.add_with_post_init(|_| Ok(())).unwrap();
 
         // Add 3 ACLs, belonging to fabric index 2, 1 and 2, in that order
         let mut verifier = [
@@ -275,7 +270,7 @@ mod tests {
             AclEntry::new(Some(FAB_2), Privilege::ADMIN, AuthMode::Case),
         ];
         for i in &verifier {
-            fab_mgr.acl_add(i.fab_idx.unwrap(), i.clone()).unwrap();
+            fabrics.acl_add(i.fab_idx.unwrap(), i.clone()).unwrap();
         }
         let acl = AclHandler::new(Dataver::new(0));
 
@@ -284,23 +279,23 @@ mod tests {
         let data = get_root_node_struct(tw.as_slice()).unwrap();
 
         // Test, Edit Fabric 2's index 1 - with accessing fabric as 2 - allow
-        acl_edit(&acl, &mut fab_mgr, 1, &data, FAB_2);
+        acl_edit(&acl, &mut fabrics, 1, &data, FAB_2);
         // Fabric 2's index 1, is actually our index 2, update the verifier
         verifier[2] = new;
 
-        // Also validate in the fab_mgr that the entries are in the right order
-        assert_eq!(fab_mgr.get(FAB_1).unwrap().acl_iter().count(), 1);
+        // Also validate in the fabrics that the entries are in the right order
+        assert_eq!(fabrics.get(FAB_1).unwrap().acl_iter().count(), 1);
         assert_eq!(
-            fab_mgr.get(FAB_1).unwrap().acl_iter().next().unwrap(),
+            fabrics.get(FAB_1).unwrap().acl_iter().next().unwrap(),
             &verifier[1]
         );
-        assert_eq!(fab_mgr.get(FAB_2).unwrap().acl_iter().count(), 2);
+        assert_eq!(fabrics.get(FAB_2).unwrap().acl_iter().count(), 2);
         assert_eq!(
-            fab_mgr.get(FAB_2).unwrap().acl_iter().next().unwrap(),
+            fabrics.get(FAB_2).unwrap().acl_iter().next().unwrap(),
             &verifier[0]
         );
         assert_eq!(
-            fab_mgr.get(FAB_2).unwrap().acl_iter().nth(1).unwrap(),
+            fabrics.get(FAB_2).unwrap().acl_iter().nth(1).unwrap(),
             &verifier[2]
         );
     }
@@ -308,13 +303,13 @@ mod tests {
     #[test]
     /// - The listindex used for delete should be relative to the current fabric
     fn acl_cluster_delete() {
-        let mut fab_mgr = FabricMgr::new();
+        let mut fabrics = Fabrics::new();
 
         // Add fabric with ID 1
-        fab_mgr.add_with_post_init(|_| Ok(())).unwrap();
+        fabrics.add_with_post_init(|_| Ok(())).unwrap();
 
         // Add fabric with ID 2
-        fab_mgr.add_with_post_init(|_| Ok(())).unwrap();
+        fabrics.add_with_post_init(|_| Ok(())).unwrap();
 
         // Add 3 ACLs, belonging to fabric index 2, 1 and 2, in that order
         let input = [
@@ -323,17 +318,17 @@ mod tests {
             AclEntry::new(Some(FAB_2), Privilege::ADMIN, AuthMode::Case),
         ];
         for i in &input {
-            fab_mgr.acl_add(i.fab_idx.unwrap(), i.clone()).unwrap();
+            fabrics.acl_add(i.fab_idx.unwrap(), i.clone()).unwrap();
         }
         let acl = AclHandler::new(Dataver::new(0));
 
         // Test: delete Fabric 1's index 0
-        acl_remove(&acl, &mut fab_mgr, 0, FAB_1);
+        acl_remove(&acl, &mut fabrics, 0, FAB_1);
 
         let verifier = [input[0].clone(), input[2].clone()];
-        // Also validate in the fab_mgr that the entries are in the right order
+        // Also validate in the fabrics that the entries are in the right order
         let mut index = 0;
-        for fabric in fab_mgr.iter() {
+        for fabric in fabrics.iter() {
             for a in fabric.acl_iter() {
                 assert_eq!(*a, verifier[index]);
                 index += 1;
@@ -347,13 +342,13 @@ mod tests {
         let mut buf: [u8; 100] = [0; 100];
         let mut writebuf = WriteBuf::new(&mut buf);
 
-        let mut fab_mgr = FabricMgr::new();
+        let mut fabrics = Fabrics::new();
 
         // Add fabric with ID 1
-        fab_mgr.add_with_post_init(|_| Ok(())).unwrap();
+        fabrics.add_with_post_init(|_| Ok(())).unwrap();
 
         // Add fabric with ID 2
-        fab_mgr.add_with_post_init(|_| Ok(())).unwrap();
+        fabrics.add_with_post_init(|_| Ok(())).unwrap();
 
         // Add 3 ACLs, belonging to fabric index 2, 1 and 2, in that order
         let input = [
@@ -362,7 +357,7 @@ mod tests {
             AclEntry::new(Some(FAB_2), Privilege::ADMIN, AuthMode::Case),
         ];
         for i in input {
-            fab_mgr.acl_add(i.fab_idx.unwrap(), i).unwrap();
+            fabrics.acl_add(i.fab_idx.unwrap(), i).unwrap();
         }
         let acl = AclHandler::new(Dataver::new(0));
 
@@ -384,7 +379,7 @@ mod tests {
                 wildcard: false,
             };
 
-            acl_read(&acl, &fab_mgr, &attr, &mut writebuf);
+            acl_read(&acl, &fabrics, &attr, &mut writebuf);
             assert_eq!(
                 &[
                     21, 53, 1, 36, 0, 0, 55, 1, 36, 2, 0, 36, 3, 0, 36, 4, 0, 24, 54, 2, 21, 36, 1,
@@ -414,7 +409,7 @@ mod tests {
                 wildcard: false,
             };
 
-            acl_read(&acl, &fab_mgr, &attr, &mut writebuf);
+            acl_read(&acl, &fabrics, &attr, &mut writebuf);
             assert_eq!(
                 &[
                     21, 53, 1, 36, 0, 0, 55, 1, 36, 2, 0, 36, 3, 0, 36, 4, 0, 24, 54, 2, 21, 36, 1,
@@ -443,7 +438,7 @@ mod tests {
                 wildcard: false,
             };
 
-            acl_read(&acl, &fab_mgr, &attr, &mut writebuf);
+            acl_read(&acl, &fabrics, &attr, &mut writebuf);
             assert_eq!(
                 &[
                     21, 53, 1, 36, 0, 0, 55, 1, 36, 2, 0, 36, 3, 0, 36, 4, 0, 24, 54, 2, 21, 36, 1,
@@ -457,7 +452,7 @@ mod tests {
 
     fn acl_read(
         acl: &AclHandler,
-        fab_mgr: &FabricMgr,
+        fabrics: &Fabrics,
         attr: &AttrDetails<'_>,
         tw: &mut WriteBuf<'_>,
     ) {
@@ -465,7 +460,7 @@ mod tests {
         let mut writer = unwrap!(unwrap!(encoder.with_dataver(acl.dataver.get())));
         let build_root = TLVWriteParent::new((), writer.writer());
         unwrap!(acl.acl(
-            fab_mgr,
+            fabrics,
             attr,
             ArrayAttributeRead::ReadAll(unwrap!(AccessControlEntryStructArrayBuilder::new(
                 build_root,
@@ -476,14 +471,9 @@ mod tests {
         unwrap!(writer.complete());
     }
 
-    fn acl_add(
-        acl: &AclHandler,
-        fab_mgr: &mut FabricMgr,
-        data: &TLVElement<'_>,
-        fab_idx: NonZeroU8,
-    ) {
+    fn acl_add(acl: &AclHandler, fabrics: &mut Fabrics, data: &TLVElement<'_>, fab_idx: NonZeroU8) {
         unwrap!(acl.set_acl(
-            fab_mgr,
+            fabrics,
             fab_idx,
             ArrayAttributeWrite::Add(AccessControlEntryStruct::new(data.clone())),
         ));
@@ -491,19 +481,19 @@ mod tests {
 
     fn acl_edit(
         acl: &AclHandler,
-        fab_mgr: &mut FabricMgr,
+        fabrics: &mut Fabrics,
         index: u16,
         data: &TLVElement<'_>,
         fab_idx: NonZeroU8,
     ) {
         unwrap!(acl.set_acl(
-            fab_mgr,
+            fabrics,
             fab_idx,
             ArrayAttributeWrite::Update(index, AccessControlEntryStruct::new(data.clone())),
         ));
     }
 
-    fn acl_remove(acl: &AclHandler, fab_mgr: &mut FabricMgr, index: u16, fab_idx: NonZeroU8) {
-        unwrap!(acl.set_acl(fab_mgr, fab_idx, ArrayAttributeWrite::Remove(index)));
+    fn acl_remove(acl: &AclHandler, fabrics: &mut Fabrics, index: u16, fab_idx: NonZeroU8) {
+        unwrap!(acl.set_acl(fabrics, fab_idx, ArrayAttributeWrite::Remove(index)));
     }
 }

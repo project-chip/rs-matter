@@ -32,7 +32,7 @@ use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::sc::{OpCode, SecureChannel, PROTO_ID_SECURE_CHANNEL};
 use rs_matter::tlv::{OctetStr, TLVTag, TLVWrite, ToTLV};
 use rs_matter::transport::exchange::{Exchange, MessageMeta};
-use rs_matter::transport::network::Address;
+use rs_matter::transport::network::{Address, NoNetwork};
 use rs_matter::utils::epoch::sys_epoch;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::Matter;
@@ -75,7 +75,7 @@ fn test_unsecured_exchange_over_udp() {
 
         let device_fut = async {
             select(
-                device_matter.run_transport(&crypto, &device_socket, &device_socket),
+                device_matter.run(&crypto, &device_socket, &device_socket, NoNetwork),
                 responder.run::<4>(),
             )
             .coalesce()
@@ -84,7 +84,7 @@ fn test_unsecured_exchange_over_udp() {
 
         // Controller side: transport + exchange test
         let controller_fut = run_with_transport(
-            controller_matter.run_transport(&crypto, &controller_socket, &controller_socket),
+            controller_matter.run(&crypto, &controller_socket, &controller_socket, NoNetwork),
             run_exchange_flow(&controller_matter, &crypto, peer_addr),
         );
 

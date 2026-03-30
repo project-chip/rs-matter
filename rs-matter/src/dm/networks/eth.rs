@@ -22,6 +22,7 @@ use crate::dm::clusters::net_comm::{
     NetworkType, NetworksError, WirelessCreds,
 };
 use crate::error::{Error, ErrorCode};
+use crate::utils::sync::DynBase;
 
 /// A fixed `Networks` trait implementation for Ethernet.
 ///
@@ -37,6 +38,8 @@ impl<'a> EthNetwork<'a> {
         Self { network_id }
     }
 }
+
+impl DynBase for EthNetwork<'_> {}
 
 impl net_comm::Networks for EthNetwork<'_> {
     fn max_networks(&self) -> Result<u8, Error> {

@@ -77,7 +77,7 @@ use rs_matter::sc::pase::{PaseInitiator, MAX_COMM_WINDOW_TIMEOUT_SECS};
 use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::mdns::{CommissionableFilter, DiscoveredDevice};
-use rs_matter::transport::network::{Address, SocketAddr, SocketAddrV6};
+use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::epoch::sys_epoch;
 use rs_matter::utils::init::InitMaybeUninit;
@@ -220,10 +220,10 @@ async fn run_test() -> Result<(), Error> {
 
     let device_fut = async {
         select4(
-            device_matter.run_transport(&device_crypto, &device_socket, &device_socket),
+            device_matter.run(&device_crypto, &device_socket, &device_socket, NoNetwork),
             // `run_mdns` dispatches to the right backend for the current platform:
             // builtin multicast on Linux, AstroMdnsResponder (Bonjour) on macOS.
-            common::mdns::run_mdns(device_matter, test_only_crypto(), &dm),
+            common::mdns::run_mdns(device_matter, test_only_crypto(), dm.change_notify()),
             responder.run::<4, 4>(),
             dm.run(),
         )
@@ -232,7 +232,7 @@ async fn run_test() -> Result<(), Error> {
     };
 
     let controller_fut = run_with_transport(
-        ctrl_matter.run_transport(&ctrl_crypto, &ctrl_socket, &ctrl_socket),
+        ctrl_matter.run(&ctrl_crypto, &ctrl_socket, &ctrl_socket, NoNetwork),
         run_controller_flow(ctrl_matter, &ctrl_crypto),
     );
 

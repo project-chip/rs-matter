@@ -224,29 +224,30 @@ where
 ///
 /// This is used for listening to groupcast messages
 pub trait NetworkMulticast {
-    /// Register to listen for data on specific multicast address
-    async fn register_multicast(&mut self, addr: IpAddr) -> Result<(), Error>;
+    /// Join a multicast group with the specified address.
+    async fn join(&mut self, addr: IpAddr) -> Result<(), Error>;
 
-    /// Register to listen for data on specific multicast address
-    async fn unregister_multicast(&mut self, addr: IpAddr) -> Result<(), Error>;
+    /// Leave a multicast group with the specified address.
+    async fn leave(&mut self, addr: IpAddr) -> Result<(), Error>;
 }
 
 impl<T> NetworkMulticast for &mut T
 where
     T: NetworkMulticast,
 {
-    fn register_multicast(&mut self, addr: IpAddr) -> impl Future<Output = Result<(), Error>> {
-        (*self).register_multicast(addr)
+    fn join(&mut self, addr: IpAddr) -> impl Future<Output = Result<(), Error>> {
+        (*self).join(addr)
     }
 
-    fn unregister_multicast(&mut self, addr: IpAddr) -> impl Future<Output = Result<(), Error>> {
-        (*self).unregister_multicast(addr)
+    fn leave(&mut self, addr: IpAddr) -> impl Future<Output = Result<(), Error>> {
+        (*self).leave(addr)
     }
 }
 
 /// A network implementation that does not support any network communication:
 /// - Trying to send a packet always results in a `ErrorCode::NoNetworkInterface` error.
 /// - Trying to wait/receive a packet pends forever.
+/// - Joining/leaving multicast groups is a no-op that always succeeds.
 ///
 /// Useful when chaining multiple network interfaces together to serve as the last network interface in the chain.
 pub struct NoNetwork;
@@ -268,11 +269,11 @@ impl NetworkReceive for NoNetwork {
 }
 
 impl NetworkMulticast for NoNetwork {
-    async fn register_multicast(&mut self, _addr: IpAddr) -> Result<(), Error> {
+    async fn join(&mut self, _addr: IpAddr) -> Result<(), Error> {
         Ok(())
     }
 
-    async fn unregister_multicast(&mut self, _addr: IpAddr) -> Result<(), Error> {
+    async fn leave(&mut self, _addr: IpAddr) -> Result<(), Error> {
         Ok(())
     }
 }
@@ -371,13 +372,13 @@ where
     H: NetworkMulticast,
     T: NetworkMulticast,
 {
-    async fn register_multicast(&mut self, addr: IpAddr) -> Result<(), Error> {
-        self.handler.register_multicast(addr).await?;
-        self.next.register_multicast(addr).await
+    async fn join(&mut self, addr: IpAddr) -> Result<(), Error> {
+        self.handler.join(addr).await?;
+        self.next.join(addr).await
     }
 
-    async fn unregister_multicast(&mut self, addr: IpAddr) -> Result<(), Error> {
-        self.handler.unregister_multicast(addr).await?;
-        self.next.unregister_multicast(addr).await
+    async fn leave(&mut self, addr: IpAddr) -> Result<(), Error> {
+        self.handler.leave(addr).await?;
+        self.next.leave(addr).await
     }
 }

@@ -35,7 +35,9 @@ use crate::respond::ExchangeHandler;
 use crate::tlv::{get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite};
 use crate::transport::exchange::{Exchange, MAX_EXCHANGE_RX_BUF_SIZE, MAX_EXCHANGE_TX_BUF_SIZE};
 use crate::utils::storage::pooled::BufferAccess;
-use crate::utils::storage::WriteBuf;
+use crate::utils::storage::{Vec, WriteBuf};
+use crate::utils::sync::blocking::raw::MatterRawMutex;
+use crate::utils::sync::blocking::Mutex;
 use crate::Matter;
 
 use events::Events;
@@ -79,7 +81,7 @@ where
     crypto: C,
     buffers: &'a B,
     subscriptions: &'a Subscriptions<NS>,
-    subscriptions_buffers: RefCell<heapless::Vec<SubscriptionBuffer<B::Buffer<'a>>, NS>>,
+    subscriptions_buffers: Mutex<RefCell<Vec<SubscriptionBuffer<B::Buffer<'a>>, NS>>>,
     events: Option<&'a Events<NE>>,
     handler: T,
 }
@@ -114,7 +116,7 @@ where
             crypto,
             buffers,
             subscriptions,
-            subscriptions_buffers: RefCell::new(heapless::Vec::new()),
+            subscriptions_buffers: Mutex::new(RefCell::new(Vec::new())),
             events,
             handler,
         }
@@ -129,6 +131,12 @@ where
         &self.crypto
     }
 
+    /// Return a reference to the `ChangeNotify` instance used by this data model for tracking changes in the data model
+    /// and notifying the subscription processing task about them.
+    pub const fn change_notify(&self) -> &dyn ChangeNotify {
+        self.subscriptions
+    }
+
     /// Run the Data Model instance.
     pub async fn run(&self) -> Result<(), Error> {
         let ctx = HandlerContextInstance::new(
@@ -136,7 +144,7 @@ where
             &self.crypto,
             &self.handler,
             self.buffers,
-            self,
+            self.change_notify(),
         );
 
         self.handler.run(&ctx).await
@@ -231,7 +239,7 @@ where
             self.events,
         );
 
-        resp.respond(self, &mut wb, true).await?;
+        resp.respond(self.change_notify(), &mut wb, true).await?;
 
         Ok(())
     }
@@ -274,7 +282,8 @@ where
                 HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
             );
 
-            resp.respond(self, &mut wb, is_groupcast).await?;
+            resp.respond(self.change_notify(), &mut wb, is_groupcast)
+                .await?;
 
             if req.more_chunks()? {
                 // This write request is just one of the chunks, so we need to wait and process
@@ -321,7 +330,8 @@ where
             HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
         );
 
-        resp.respond(self, &mut wb, is_groupcast).await
+        resp.respond(self.change_notify(), &mut wb, is_groupcast)
+            .await
     }
 
     /// Respond to a `SubscribeReq` request by priming the subscription (i.e. doing an initial data report)
@@ -340,7 +350,9 @@ where
             return Self::send_status(exchange, err.code().into()).await;
         }
 
-        let (fabric_idx, peer_node_id) = exchange.with_session(|sess| {
+        let (fabric_idx, peer_node_id) = exchange.with_state(|state| {
+            let sess = exchange.id().session(&mut state.sessions);
+
             let fabric_idx =
                 NonZeroU8::new(sess.get_local_fabric_idx()).ok_or(ErrorCode::Invalid)?;
             let peer_node_id = sess.get_peer_node_id().ok_or(ErrorCode::Invalid)?;
@@ -351,9 +363,10 @@ where
         if !req.keep_subs()? {
             self.subscriptions
                 .remove(Some(fabric_idx), Some(peer_node_id), None);
-            self.subscriptions_buffers
-                .borrow_mut()
-                .retain(|sb| sb.fabric_idx != fabric_idx || sb.peer_node_id != peer_node_id);
+            self.subscriptions_buffers.lock(|sb| {
+                sb.borrow_mut()
+                    .retain(|sb| sb.fabric_idx != fabric_idx || sb.peer_node_id != peer_node_id)
+            });
 
             debug!(
                 "All subscriptions for [F:{:x},P:{:x}] removed",
@@ -374,10 +387,10 @@ where
             return Self::send_status(exchange, IMStatusCode::ResourceExhausted).await;
         };
 
-        let subscribed = Cell::new(false);
+        let subscribed = Mutex::<_, MatterRawMutex>::new(Cell::new(false));
 
         let _guard = scopeguard::guard((), |_| {
-            if !subscribed.get() {
+            if !subscribed.lock(|s| s.get()) {
                 self.subscriptions.remove(None, None, Some(id));
             }
         });
@@ -411,18 +424,17 @@ where
             );
 
             if self.subscriptions.mark_reported(id) {
-                let _ = self
-                    .subscriptions_buffers
-                    .borrow_mut()
-                    .push(SubscriptionBuffer {
+                let _ = self.subscriptions_buffers.lock(|sb| {
+                    sb.borrow_mut().push(SubscriptionBuffer {
                         fabric_idx,
                         peer_node_id,
                         subscription_id: id,
                         min_event_number,
                         buffer: rx,
-                    });
+                    })
+                });
 
-                subscribed.set(true);
+                subscribed.lock(|s| s.set(true));
             }
         }
 
@@ -469,24 +481,19 @@ where
             // TODO: Un-hardcode these 4 seconds of waiting when the more precise change detection logic is implemented
             let mut timeout = pin!(Timer::after(embassy_time::Duration::from_secs(4)));
             let mut notification = pin!(self.subscriptions.notification.wait());
-            let mut session_removed = pin!(matter.transport_mgr.session_removed.wait());
+            let mut session_removed = pin!(matter.session_removed.wait());
 
             select3(&mut notification, &mut timeout, &mut session_removed).await;
 
             while let Some((fabric_idx, peer_node_id, session_id, id)) =
                 self.subscriptions.find_removed_session(|session_id| {
-                    matter
-                        .transport_mgr
-                        .session_mgr
-                        .borrow_mut()
-                        .get(session_id)
-                        .is_none()
+                    matter.with_state(|state| state.sessions.get(session_id).is_none())
                 })
             {
                 self.subscriptions.remove(None, None, Some(id));
-                self.subscriptions_buffers
-                    .borrow_mut()
-                    .retain(|sb| sb.subscription_id != id);
+                self.subscriptions_buffers.lock(|sb| {
+                    sb.borrow_mut().retain(|sb| sb.subscription_id != id);
+                });
 
                 debug!(
                     "Subscription [F:{:x},P:{:x}]::{} removed since its session ({}) had been removed too",
@@ -502,9 +509,9 @@ where
             while let Some((fabric_idx, peer_node_id, _, id)) = self.subscriptions.find_expired(now)
             {
                 self.subscriptions.remove(None, None, Some(id));
-                self.subscriptions_buffers
-                    .borrow_mut()
-                    .retain(|sb| sb.subscription_id != id);
+                self.subscriptions_buffers.lock(|sb| {
+                    sb.borrow_mut().retain(|sb| sb.subscription_id != id);
+                });
 
                 warn!(
                     "Subscription [F:{:x},P:{:x}]::{} removed due to inactivity",
@@ -516,22 +523,22 @@ where
                 let sub = self.subscriptions.find_report_due(now);
 
                 if let Some((fabric_idx, peer_node_id, session_id, id)) = sub {
-                    let subscribed = Cell::new(false);
+                    let subscribed = Mutex::<_, MatterRawMutex>::new(Cell::new(false));
 
                     let _guard = scopeguard::guard((), |_| {
-                        if !subscribed.get() {
+                        if !subscribed.lock(|s| s.get()) {
                             self.subscriptions.remove(None, None, Some(id));
                         }
                     });
 
                     // TODO: Do a more sophisticated check whether something had actually changed w.r.t. this subscription
+                    let sub = self.subscriptions_buffers.lock(|sb| {
+                        let mut sb = sb.borrow_mut();
 
-                    let index = unwrap!(self
-                        .subscriptions_buffers
-                        .borrow()
-                        .iter()
-                        .position(|sb| sb.subscription_id == id));
-                    let sub = self.subscriptions_buffers.borrow_mut().remove(index);
+                        let index = unwrap!(sb.iter().position(|sb| sb.subscription_id == id));
+
+                        sb.remove(index)
+                    });
 
                     let result = self
                         .process_subscription(matter, fabric_idx, peer_node_id, session_id, &sub)
@@ -542,16 +549,17 @@ where
                     match result {
                         Ok(primed) => {
                             if primed && self.subscriptions.mark_reported(id) {
-                                let _ = self.subscriptions_buffers.borrow_mut().push(
-                                    SubscriptionBuffer {
+                                self.subscriptions_buffers.lock(|sb| {
+                                    let _ = sb.borrow_mut().push(SubscriptionBuffer {
                                         fabric_idx,
                                         peer_node_id,
                                         subscription_id: id,
                                         min_event_number,
                                         buffer: sub.buffer,
-                                    },
-                                );
-                                subscribed.set(true);
+                                    });
+
+                                    subscribed.lock(|s| s.set(true));
+                                });
                             }
                         }
                         Err(e) => {
@@ -708,7 +716,7 @@ where
             self.events,
         );
 
-        let sub_valid = resp.respond(self, &mut wb, false).await?;
+        let sub_valid = resp.respond(self.change_notify(), &mut wb, false).await?;
         if !sub_valid {
             debug!(
                 "Subscription [F:{:x},P:{:x}]::{} removed during reporting",
@@ -834,18 +842,6 @@ where
 {
     fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
         DataModel::handle(self, exchange)
-    }
-}
-
-impl<const NS: usize, const NE: usize, C, B, T> ChangeNotify for DataModel<'_, NS, NE, C, B, T>
-where
-    C: Crypto,
-    T: DataModelHandler,
-    B: BufferAccess<IMBuffer>,
-{
-    fn notify(&self, endpoint_id: EndptId, cluster_id: ClusterId, attr_id: AttrId) {
-        self.subscriptions
-            .notify_attribute_changed(endpoint_id, cluster_id, attr_id);
     }
 }
 

@@ -12,6 +12,10 @@ name = "onoff_light_bt"
 required-features = ["zbus"]
 
 [[bin]]
+name = "onoff_light_work_stealing"
+required-features = ["sync-mutex"]
+
+[[bin]]
 name = "speaker"
 
 [[bin]]
@@ -31,6 +35,7 @@ default = ["log"]
 log = []
 mbedtls = ["rs-matter/mbedtls"]
 openssl = ["rs-matter/openssl"]
+sync-mutex = ["rs-matter/sync-mutex"]
 zbus = ["rs-matter/zbus"]
 astro-dnssd = ["rs-matter/astro-dnssd"]
 zeroconf = ["rs-matter/zeroconf"]
@@ -56,3 +61,4 @@ rs-matter = { path = "../rs-matter", features = ["async-io", "max-groups-per-fab
 rand = { version = "0.8", features = ["std", "std_rng"] }
 async-signal = "0.2"
 socket2 = "0.5"
+async-executor = "1"

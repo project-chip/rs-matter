@@ -26,10 +26,11 @@ use crate::crypto::Crypto;
 use crate::error::{Error, ErrorCode};
 use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
 use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
+use crate::transport::session::Sessions;
 use crate::transport::TxPayloadState;
 use crate::utils::epoch::Epoch;
 use crate::utils::storage::WriteBuf;
-use crate::Matter;
+use crate::{Matter, MatterState};
 
 use super::mrp::{ReliableMessage, RetransEntry};
 use super::network;
@@ -73,6 +74,18 @@ impl ExchangeId {
         (self.0 >> 28) as _
     }
 
+    /// Get the session associated with this exchange from the given sessions store.
+    ///
+    /// ATTENTION: This method will panic if the session is not found in the store, so make sure to only call it when you are sure the session exists.
+    pub(crate) fn session<'a>(&self, sessions: &'a mut Sessions) -> &'a mut Session {
+        unwrap!(sessions.get(self.session_id()))
+    }
+
+    /// Get the exchange state associated with this exchange from the given sessions store.
+    pub(crate) fn exch<'a>(&self, session: &'a mut Session) -> &'a mut ExchangeState {
+        unwrap!(session.exchanges[self.exchange_index()].as_mut())
+    }
+
     pub(crate) fn display<'a>(&'a self, session: &'a Session) -> ExchangeIdDisplay<'a> {
         ExchangeIdDisplay { id: self, session }
     }
@@ -80,18 +93,17 @@ impl ExchangeId {
     async fn recv<'a>(&self, matter: &'a Matter<'a>) -> Result<RxMessage<'a>, Error> {
         self.check_no_pending_retrans(matter)?;
 
-        let transport_mgr = &matter.transport_mgr;
-
         loop {
-            let mut recv = pin!(transport_mgr.get_if(&transport_mgr.rx, |packet| {
+            let mut recv = pin!(matter.transport.get_if_rx(|packet| {
                 if packet.buf.is_empty() {
                     false
                 } else {
-                    let for_us = self.with_ctx(matter, |sess, exch_index| {
+                    let for_us = self.with_state(matter, |state| {
+                        let sess = self.session(&mut state.sessions);
                         if sess.is_for_rx(&packet.peer, &packet.header.plain) {
-                            let exchange = unwrap!(sess.exchanges[exch_index].as_ref());
+                            let exch = self.exch(sess);
 
-                            return Ok(exchange.is_for_rx(&packet.header.proto));
+                            return Ok(exch.is_for_rx(&packet.header.proto));
                         }
 
                         Ok(false)
@@ -101,7 +113,7 @@ impl ExchangeId {
                 }
             }));
 
-            let mut session_removed = pin!(transport_mgr.session_removed.wait());
+            let mut session_removed = pin!(matter.session_removed.wait());
 
             let mut timeout = pin!(Timer::after(Duration::from_millis(
                 RetransEntry::new(matter.dev_det().sai, 0).max_delay_ms() * 3 / 2
@@ -119,7 +131,7 @@ impl ExchangeId {
                     // Session removed
 
                     // Bail out if it was ours
-                    self.with_session(matter, |_| Ok(()))?;
+                    self.with_state(matter, |_| Ok(()))?;
 
                     // If not, go back waiting for a packet
                     continue;
@@ -142,13 +154,12 @@ impl ExchangeId {
     /// Note also that if the uderlying session or exchange tracked by the Matter stack is dropped
     /// (say, because of lack of resources or a hard networking error), the method will return an error.
     async fn init_send<'a>(&self, matter: &'a Matter<'a>) -> Result<TxMessage<'a>, Error> {
-        self.with_ctx(matter, |_, _| Ok(()))?;
+        self.with_state(matter, |_| Ok(()))?;
 
-        let transport_mgr = &matter.transport_mgr;
-
-        let mut packet = transport_mgr
-            .get_if(&transport_mgr.tx, |packet| {
-                packet.buf.is_empty() || self.with_ctx(matter, |_, _| Ok(())).is_err()
+        let mut packet = matter
+            .transport
+            .get_if_tx(|packet| {
+                packet.buf.is_empty() || self.with_state(matter, |_| Ok(())).is_err()
             })
             .await;
 
@@ -163,7 +174,7 @@ impl ExchangeId {
             packet,
         };
 
-        self.with_ctx(matter, |_, _| Ok(()))?;
+        self.with_state(matter, |_| Ok(()))?;
 
         Ok(tx)
     }
@@ -185,7 +196,7 @@ impl ExchangeId {
 
             loop {
                 let mut notification = pin!(self.internal_wait_ack(matter));
-                let mut session_removed = pin!(matter.transport_mgr.session_removed.wait());
+                let mut session_removed = pin!(matter.session_removed.wait());
                 let mut timer = pin!(Timer::at(expired));
 
                 if !matches!(
@@ -196,7 +207,7 @@ impl ExchangeId {
                 }
 
                 // Bail out if the removed session was ours
-                self.with_session(matter, |_| Ok(()))?;
+                self.with_state(matter, |_| Ok(()))?;
             }
 
             if self.retrans_delay_ms(matter)?.is_some() {
@@ -210,63 +221,59 @@ impl ExchangeId {
     }
 
     fn accessor<'a>(&self, matter: &'a Matter<'a>) -> Result<Accessor<'a>, Error> {
-        self.with_session(matter, |sess| {
-            Ok(Accessor::for_session(sess, &matter.fabric_mgr))
+        self.with_state(matter, |state| {
+            let sess = self.session(&mut state.sessions);
+
+            Ok(Accessor::for_session(sess, matter))
         })
     }
 
-    fn with_session<'a, F, T>(&self, matter: &'a Matter<'a>, f: F) -> Result<T, Error>
+    fn with_state<'a, F, T>(&self, matter: &'a Matter<'a>, f: F) -> Result<T, Error>
     where
-        F: FnOnce(&mut Session) -> Result<T, Error>,
+        F: FnOnce(&mut MatterState) -> Result<T, Error>,
     {
-        self.with_ctx(matter, |sess, _| f(sess))
-    }
-
-    fn with_ctx<'a, F, T>(&self, matter: &'a Matter<'a>, f: F) -> Result<T, Error>
-    where
-        F: FnOnce(&mut Session, usize) -> Result<T, Error>,
-    {
-        let mut session_mgr = matter.transport_mgr.session_mgr.borrow_mut();
-
-        if let Some(session) = session_mgr.get(self.session_id()) {
-            f(session, self.exchange_index())
-        } else {
-            warn!("Exchange {}: No session", self);
-            Err(ErrorCode::NoSession.into())
-        }
+        matter.with_state(|state| {
+            if state.sessions.get(self.session_id()).is_some() {
+                f(state)
+            } else {
+                warn!("Exchange {}: No session", self);
+                Err(ErrorCode::NoSession.into())
+            }
+        })
     }
 
     async fn internal_wait_ack<'a>(&self, matter: &'a Matter<'a>) -> Result<(), Error> {
-        let transport_mgr = &matter.transport_mgr;
-
-        transport_mgr
-            .get_if(&transport_mgr.rx, |_| {
+        matter
+            .transport
+            .get_if_rx(|_| {
                 self.retrans_delay_ms(matter)
                     .map(|retrans| retrans.is_none())
                     .unwrap_or(true)
             })
             .await;
 
-        self.with_ctx(matter, |_, _| Ok(()))
+        self.with_state(matter, |_| Ok(()))
     }
 
     fn retrans_delay_ms<'a>(&self, matter: &'a Matter<'a>) -> Result<Option<u64>, Error> {
-        self.with_ctx(matter, |sess, exch_index| {
-            let exchange = unwrap!(sess.exchanges[exch_index].as_mut());
+        self.with_state(matter, |state| {
+            let sess = self.session(&mut state.sessions);
+            let exch = self.exch(sess);
 
             let mut jitter_rand = [0; 1];
             // TODO XXX FIXME matter.rand()(&mut jitter_rand);
             jitter_rand[0] = 100;
 
-            Ok(exchange.retrans_delay_ms(jitter_rand[0]))
+            Ok(exch.retrans_delay_ms(jitter_rand[0]))
         })
     }
 
     fn check_no_pending_retrans<'a>(&self, matter: &'a Matter<'a>) -> Result<(), Error> {
-        self.with_ctx(matter, |sess, exch_index| {
-            let exchange = unwrap!(sess.exchanges[exch_index].as_mut());
+        self.with_state(matter, |state| {
+            let sess = self.session(&mut state.sessions);
+            let exch = self.exch(sess);
 
-            if exchange.mrp.is_retrans_pending() {
+            if exch.mrp.is_retrans_pending() {
                 error!("Exchange {}: Retransmission pending", self.display(sess));
                 Err(ErrorCode::InvalidState)?;
             }
@@ -280,10 +287,11 @@ impl ExchangeId {
     }
 
     fn pending_ack<'a>(&self, matter: &'a Matter<'a>) -> Result<bool, Error> {
-        self.with_ctx(matter, |sess, exch_index| {
-            let exchange = unwrap!(sess.exchanges[exch_index].as_ref());
+        self.with_state(matter, |state| {
+            let sess = self.session(&mut state.sessions);
+            let exch = self.exch(sess);
 
-            Ok(exchange.mrp.is_ack_pending())
+            Ok(exch.mrp.is_ack_pending())
         })
     }
 }
@@ -653,37 +661,38 @@ impl TxMessage<'_> {
 
         meta.set_into(&mut self.packet.header.proto);
 
-        let mut session_mgr = self.matter.transport_mgr.session_mgr.borrow_mut();
+        self.matter.with_state(|state| {
+            let session = state
+                .sessions
+                .get(self.exchange_id.session_id())
+                .ok_or(ErrorCode::NoSession)?;
 
-        let session = session_mgr
-            .get(self.exchange_id.session_id())
-            .ok_or(ErrorCode::NoSession)?;
+            let (peer, retransmission) = session.pre_send(
+                Some(self.exchange_id.exchange_index()),
+                &mut self.packet.header,
+                // NOTE: It is not entirely correct to use our own SAI/SII when sending to a peer,
+                // as the peer might be slower than us
+                //
+                // However, given that for now `rs-matter` would be in the role of the device rather
+                // than a controller, that's a good-enough approximation (i.e. if we are running on Thread,
+                // the controller would either be running on Thread as well, or on a network faster than ours)
+                self.matter.dev_det().sai,
+                self.matter.dev_det().sii,
+            )?;
 
-        let (peer, retransmission) = session.pre_send(
-            Some(self.exchange_id.exchange_index()),
-            &mut self.packet.header,
-            // NOTE: It is not entirely correct to use our own SAI/SII when sending to a peer,
-            // as the peer might be slower than us
-            //
-            // However, given that for now `rs-matter` would be in the role of the device rather
-            // than a controller, that's a good-enough approximation (i.e. if we are running on Thread,
-            // the controller would either be running on Thread as well, or on a network faster than ours)
-            self.matter.dev_det().sai,
-            self.matter.dev_det().sii,
-        )?;
+            self.packet.peer = peer;
+            self.packet.payload_start = PacketHdr::HDR_RESERVE + payload_start;
+            self.packet
+                .buf
+                .truncate(PacketHdr::HDR_RESERVE + payload_end);
+            self.packet.tx_info.payload_state = TxPayloadState::NotEncoded {
+                session_id: session.id,
+            };
+            self.packet.tx_info.retransmission = retransmission;
+            self.packet.clear_on_drop(false);
 
-        self.packet.peer = peer;
-        self.packet.payload_start = PacketHdr::HDR_RESERVE + payload_start;
-        self.packet
-            .buf
-            .truncate(PacketHdr::HDR_RESERVE + payload_end);
-        self.packet.tx_info.payload_state = TxPayloadState::NotEncoded {
-            session_id: session.id,
-        };
-        self.packet.tx_info.retransmission = retransmission;
-        self.packet.clear_on_drop(false);
-
-        Ok(())
+            Ok(())
+        })
     }
 }
 
@@ -870,7 +879,7 @@ impl<'a> Exchange<'a> {
         secure: bool,
     ) -> Result<Self, Error> {
         matter
-            .transport_mgr
+            .transport
             .initiate(matter, fabric_idx, peer_node_id, secure)
             .await
     }
@@ -878,9 +887,7 @@ impl<'a> Exchange<'a> {
     /// Create a new initiator exchange on the provided Matter stack for the provided session ID.
     #[inline(always)]
     pub fn initiate_for_session(matter: &'a Matter<'a>, session_id: u32) -> Result<Self, Error> {
-        matter
-            .transport_mgr
-            .initiate_for_session(matter, session_id)
+        matter.transport.initiate_for_session(matter, session_id)
     }
 
     /// Create a new initiator exchange on a new unsecured (plain-text) session to the given peer address.
@@ -894,22 +901,24 @@ impl<'a> Exchange<'a> {
     ///
     /// For flows that need direct access to the session ID (e.g. to upgrade the session
     /// with derived keys after a successful handshake), use
-    /// `TransportMgr::create_unsecured_session()` + `Exchange::initiate_for_session()` separately.
+    /// `Transport::create_unsecured_session()` + `Exchange::initiate_for_session()` separately.
     pub async fn initiate_unsecured<C: Crypto>(
         matter: &'a Matter<'a>,
         crypto: C,
         peer_addr: network::Address,
     ) -> Result<Self, Error> {
         match matter
-            .transport_mgr
+            .transport
             .initiate_unsecured_now(matter, &crypto, peer_addr)
         {
             Ok(exchange) => Ok(exchange),
             Err(e) if e.code() == ErrorCode::NoSpaceSessions => {
-                matter.transport_mgr.evict_some_session(&crypto).await?;
-
                 matter
-                    .transport_mgr
+                    .transport_runner(&crypto)
+                    .evict_some_session()
+                    .await?;
+                matter
+                    .transport
                     .initiate_unsecured_now(matter, &crypto, peer_addr)
             }
             Err(e) => Err(e),
@@ -936,7 +945,7 @@ impl<'a> Exchange<'a> {
             let epoch = matter.epoch();
 
             loop {
-                let mut accept = pin!(matter.transport_mgr.accept_if(matter, |_, exch, _| {
+                let mut accept = pin!(matter.transport.accept_if(matter, |_, exch, _| {
                     exch.mrp.has_rx_timed_out(received_timeout_ms as _, epoch)
                 }));
 
@@ -949,7 +958,7 @@ impl<'a> Exchange<'a> {
                 }
             }
         } else {
-            matter.transport_mgr.accept_if(matter, |_, _, _| true).await
+            matter.transport.accept_if(matter, |_, _, _| true).await
         }
     }
 
@@ -1196,50 +1205,46 @@ impl<'a> Exchange<'a> {
     }
 
     pub fn is_groupcast(&self) -> Result<bool, Error> {
-        self.with_session(|sess| Ok(matches!(sess.get_session_mode(), SessionMode::Group { .. })))
+        self.with_state(|state| {
+            Ok(matches!(
+                self.id().session(&mut state.sessions).get_session_mode(),
+                SessionMode::Group { .. }
+            ))
+        })
     }
 
-    pub(crate) fn with_session<F, T>(&self, f: F) -> Result<T, Error>
+    pub(crate) fn with_state<F, T>(&self, f: F) -> Result<T, Error>
     where
-        F: FnOnce(&mut Session) -> Result<T, Error>,
+        F: FnOnce(&mut MatterState) -> Result<T, Error>,
     {
-        self.id.with_session(self.matter, f)
-    }
-
-    pub(crate) fn with_ctx<F, T>(&self, f: F) -> Result<T, Error>
-    where
-        F: FnOnce(&mut Session, usize) -> Result<T, Error>,
-    {
-        self.id.with_ctx(self.matter, f)
+        self.id.with_state(self.matter, f)
     }
 }
 
 impl Drop for Exchange<'_> {
     fn drop(&mut self) {
-        let result = self.with_ctx(|sess, exch_index| {
+        let closed = self.with_state(|state| {
+            let sess = self.id().session(&mut state.sessions);
+            let exch_index = self.id.exchange_index();
+
             let closed = sess.remove_exch(exch_index);
-            let remove_session = matches!(sess.get_session_mode(), SessionMode::Group { .. })
-                && sess.exchanges.iter().all(Option::is_none);
-            Ok((closed, remove_session))
+            if closed {
+                if matches!(sess.get_session_mode(), SessionMode::Group { .. })
+                    && sess.exchanges.iter().all(Option::is_none)
+                {
+                    // Group session with no remaining exchanges — remove it
+                    state.sessions.remove(self.id.session_id());
+                    self.matter.session_removed.notify();
+                }
+
+                Ok(true)
+            } else {
+                Ok(false)
+            }
         });
 
-        match result {
-            Ok((true, true)) => {
-                // Group session with no remaining exchanges — remove the ephemeral session
-                let session_id = self.id.session_id();
-                self.matter
-                    .transport_mgr
-                    .session_mgr
-                    .borrow_mut()
-                    .remove(session_id);
-                self.matter.transport_mgr.session_removed.notify();
-            }
-            Ok((true, false)) => {
-                // Exchange closed cleanly, session still has other exchanges or is not a group session
-            }
-            _ => {
-                self.matter.transport_mgr.dropped.notify();
-            }
+        if !matches!(closed, Ok(true)) {
+            self.matter.transport.exchange_dropped.notify();
         }
     }
 }
@@ -1273,16 +1278,15 @@ mod tests {
     }
 
     fn fill_sessions(matter: &Matter<'_>, reserved: bool) {
-        let mut session_mgr = matter.transport_mgr.session_mgr.borrow_mut();
-
-        loop {
-            if session_mgr
+        matter.with_state(|state| loop {
+            if state
+                .sessions
                 .add(0, reserved, network::Address::new(), None)
                 .is_err()
             {
                 break;
             }
-        }
+        });
     }
 
     #[test]
@@ -1294,12 +1298,15 @@ mod tests {
         let exchange = block_on(Exchange::initiate_unsecured(&matter, &crypto, peer)).unwrap();
 
         exchange
-            .with_ctx(|sess, exch_index| {
-                let exch = sess.exchanges[exch_index].as_ref().unwrap();
+            .with_state(|state| {
+                let sess = exchange.id().session(&mut state.sessions);
+                let exch = exchange.id().exch(sess);
+
                 assert!(matches!(exch.role, Role::Initiator(_)));
                 assert_eq!(sess.id, exchange.id().session_id());
                 assert!(!sess.is_encrypted());
                 assert_eq!(*sess.get_session_mode(), SessionMode::PlainText);
+
                 Ok(())
             })
             .unwrap();
@@ -1316,12 +1323,15 @@ mod tests {
         let exchange = block_on(Exchange::initiate_unsecured(&matter, &crypto, peer)).unwrap();
 
         exchange
-            .with_ctx(|sess, exch_index| {
-                let exch = sess.exchanges[exch_index].as_ref().unwrap();
+            .with_state(|state| {
+                let sess = exchange.id().session(&mut state.sessions);
+                let exch = exchange.id().exch(sess);
+
                 assert!(matches!(exch.role, Role::Initiator(_)));
                 assert_eq!(sess.id, exchange.id().session_id());
                 assert!(!sess.is_encrypted());
                 assert_eq!(*sess.get_session_mode(), SessionMode::PlainText);
+
                 Ok(())
             })
             .unwrap();

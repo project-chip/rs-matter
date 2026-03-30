@@ -16,12 +16,13 @@
  */
 
 use crate::crypto::{CanonPkcPublicKeyRef, CanonPkcSecretKeyRef};
+use crate::utils::sync::DynBase;
 
 /// The Device Attestation trait
 ///
 /// Objects that implement this trait allow the Matter subsystem to query the object
 /// for the Device Attestation data that is programmed in the Matter device.
-pub trait DeviceAttestation {
+pub trait DeviceAttestation: DynBase {
     /// Get the Certificate Declaration
     fn cert_declaration(&self) -> &[u8];
 
@@ -46,28 +47,6 @@ impl<T> DeviceAttestation for &T
 where
     T: DeviceAttestation,
 {
-    fn cert_declaration(&self) -> &[u8] {
-        (*self).cert_declaration()
-    }
-
-    fn pai(&self) -> &[u8] {
-        (*self).pai()
-    }
-
-    fn dac(&self) -> &[u8] {
-        (*self).dac()
-    }
-
-    fn dac_pub_key(&self) -> CanonPkcPublicKeyRef<'_> {
-        (*self).dac_pub_key()
-    }
-
-    fn dac_priv_key(&self) -> CanonPkcSecretKeyRef<'_> {
-        (*self).dac_priv_key()
-    }
-}
-
-impl DeviceAttestation for &dyn DeviceAttestation {
     fn cert_declaration(&self) -> &[u8] {
         (*self).cert_declaration()
     }

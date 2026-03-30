@@ -238,7 +238,11 @@ impl ChipBuilder {
             info!("Chip repository already exists");
 
             if force_rebuild || !chip_dir.join(chip_gitref).exists() {
-                info!("Force rebuild requested, cleaning build artifacts...");
+                if force_rebuild {
+                    info!("Force rebuild requested for chip-tool, cleaning previous build artifacts...");
+                } else {
+                    info!("Git reference {chip_gitref} not found, cleaning previous build artifacts...");
+                }
 
                 let out_dir = chip_dir.join("out");
                 if out_dir.exists() {

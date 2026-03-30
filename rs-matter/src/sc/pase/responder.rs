@@ -98,9 +98,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         exchange.acknowledge().await?;
         exchange.matter().notify_persist();
 
-        self.clear_session_timeout(exchange);
-
-        Ok(())
+        self.clear_session_timeout(exchange)
     }
 
     /// Handle a PBKDFParamRequest message
@@ -116,18 +114,18 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         let mut count = 0;
 
         let has_comm_window = {
-            let matter = exchange.matter();
-            let mut pase = matter.pase_mgr.borrow_mut();
-
             let ctx = BasicContextInstance::new(exchange.matter(), &self.crypto, self.notify);
-            if let Some(comm_window) = pase.comm_window(&ctx)? {
-                salt.load(comm_window.verifier.salt.reference());
-                count = comm_window.verifier.count;
 
-                true
-            } else {
-                false
-            }
+            exchange.with_state(|state| {
+                if let Some(comm_window) = state.pase.comm_window(&ctx)? {
+                    salt.load(comm_window.verifier.salt.reference());
+                    count = comm_window.verifier.count;
+
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            })?
         };
 
         if has_comm_window {
@@ -144,12 +142,8 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                 let mut rand = self.crypto.rand()?;
                 rand.fill_bytes(our_random.access_mut());
 
-                let local_sessid = exchange
-                    .matter()
-                    .transport_mgr
-                    .session_mgr
-                    .borrow_mut()
-                    .get_next_sess_id();
+                let local_sessid =
+                    exchange.with_state(|state| Ok(state.sessions.get_next_sess_id()))?;
 
                 initiator_random.load(Spake2pRandomRef::try_new(req.initiator_random.0)?);
 
@@ -207,23 +201,23 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         let mut cb = HMAC_HASH_ZEROED;
 
         let has_comm_window = {
-            let matter = exchange.matter();
-            let mut pase = matter.pase_mgr.borrow_mut();
             let ctx = BasicContextInstance::new(exchange.matter(), &self.crypto, self.notify);
 
-            if let Some(comm_window) = pase.comm_window(&ctx)? {
-                self.spake2p.setup_verifier(
-                    &self.crypto,
-                    &comm_window.verifier,
-                    a_pt,
-                    &mut b_pt,
-                    &mut cb,
-                )?;
+            exchange.with_state(|state| {
+                if let Some(comm_window) = state.pase.comm_window(&ctx)? {
+                    self.spake2p.setup_verifier(
+                        &self.crypto,
+                        &comm_window.verifier,
+                        a_pt,
+                        &mut b_pt,
+                        &mut cb,
+                    )?;
 
-                true
-            } else {
-                false
-            }
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            })?
         };
 
         if has_comm_window {
@@ -269,7 +263,10 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                     .map_err(|_x| ErrorCode::InvalidData)?;
 
                 // Create a session
-                let peer_addr = exchange.with_session(|sess| Ok(sess.get_peer_addr()))?;
+                let peer_addr = exchange.with_state(|state| {
+                    let sess = exchange.id().session(&mut state.sessions);
+                    Ok(sess.get_peer_addr())
+                })?;
 
                 let (dec_key, remaining) = session_keys
                     .reference()
@@ -321,49 +318,52 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         exchange: &mut Exchange<'_>,
         new: bool,
     ) -> Result<bool, Error> {
-        let status = {
-            let mut pase = exchange.matter().pase_mgr.borrow_mut();
-
-            if pase
+        let status = exchange.with_state(|state| {
+            if state
+                .pase
                 .session_timeout
                 .as_ref()
-                .map(|sd| sd.is_sess_expired(pase.epoch))
+                .map(|sd| sd.is_sess_expired(state.pase.epoch))
                 .unwrap_or(false)
             {
-                pase.session_timeout = None;
+                state.pase.session_timeout = None;
             }
 
-            if let Some(sd) = pase.session_timeout.as_mut() {
+            if let Some(sd) = state.pase.session_timeout.as_mut() {
                 if sd.exch_id != exchange.id() {
                     debug!("Another PAKE session in progress");
-                    Some(SCStatusCodes::Busy)
+                    Ok(Some(SCStatusCodes::Busy))
                 } else {
-                    None
+                    state.pase.session_timeout =
+                        Some(super::SessionEstTimeout::new(exchange, state.pase.epoch));
+
+                    Ok(None)
                 }
             } else if new {
-                None
+                state.pase.session_timeout =
+                    Some(super::SessionEstTimeout::new(exchange, state.pase.epoch));
+
+                Ok(None)
             } else {
                 error!("PAKE session not found or expired");
-                Some(SCStatusCodes::SessionNotFound)
+                Ok(Some(SCStatusCodes::SessionNotFound))
             }
-        };
+        })?;
 
         if let Some(status) = status {
             complete_with_status(exchange, status, &[]).await?;
 
             Ok(false)
         } else {
-            let mut pase = exchange.matter().pase_mgr.borrow_mut();
-            pase.session_timeout = Some(super::SessionEstTimeout::new(exchange, pase.epoch));
-
             Ok(true)
         }
     }
 
     /// Clear the PASE session timeout tracker
-    fn clear_session_timeout(&mut self, exchange: &Exchange) {
-        let mut pase = exchange.matter().pase_mgr.borrow_mut();
-
-        pase.session_timeout = None;
+    fn clear_session_timeout(&mut self, exchange: &Exchange) -> Result<(), Error> {
+        exchange.with_state(|state| {
+            state.pase.session_timeout = None;
+            Ok(())
+        })
     }
 }

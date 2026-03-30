@@ -86,11 +86,12 @@ use rs_matter::tlv::Nullable;
 use rs_matter::transport::network::btp::Btp;
 use rs_matter::transport::network::mdns::builtin::{BuiltinMdnsResponder, Host};
 use rs_matter::transport::network::{
-    Address, ChainedNetwork, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend,
+    Address, ChainedNetwork, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend, NoNetwork,
 };
 use rs_matter::utils::epoch::dummy_epoch;
 use rs_matter::utils::init::{init, Init, InitMaybeUninit};
 use rs_matter::utils::storage::pooled::PooledBuffers;
+use rs_matter::utils::sync::DynBase;
 use rs_matter::{clusters, devices, handler_chain_type, Matter, MATTER_PORT};
 
 // Baremetal entry point macro depending on target
@@ -357,7 +358,7 @@ fn main() -> ! {
 
     let mdns = mk_static!(
         BuiltinMdnsResponder<'static, &'static AppCrypto>,
-        BuiltinMdnsResponder::new(&stack.matter, crypto, dm)
+        BuiltinMdnsResponder::new(&stack.matter, crypto, dm.change_notify())
     );
 
     report_size("mDNS responder", size_of_val(&*mdns), &mut aux_total);
@@ -456,9 +457,11 @@ fn main() -> ! {
             .matter
             .print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP));
 
-        unwrap!(stack
-            .matter
-            .open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, crypto, dm));
+        unwrap!(stack.matter.open_basic_comm_window(
+            MAX_COMM_WINDOW_TIMEOUT_SECS,
+            crypto,
+            dm.change_notify()
+        ));
     }
 
     executor.run(|spawner| {
@@ -575,7 +578,7 @@ fn transport_task_fut<'a>(
     transport_send: &'a mut AppTransport<'static>,
     transport_recv: &'a mut AppTransport<'static>,
 ) -> impl Future<Output = Result<(), Error>> + 'a {
-    matter.run_transport(crypto, transport_send, transport_recv)
+    matter.run(crypto, transport_send, transport_recv, NoNetwork)
 }
 
 #[embassy_executor::task]
@@ -692,6 +695,8 @@ impl NetworkSend for FakeUdp {
 
 /// A fake Wifi implemewntation
 struct FakeWifi;
+
+impl DynBase for FakeWifi {}
 
 impl NetCtl for FakeWifi {
     fn net_type(&self) -> NetworkType {

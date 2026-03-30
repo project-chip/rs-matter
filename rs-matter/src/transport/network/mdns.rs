@@ -299,7 +299,7 @@ pub struct DiscoveredDevice<const A: usize> {
     /// Device name from TXT record (optional)
     pub device_name: heapless::String<32>,
     /// Instance name from mDNS
-    pub instance_name: heapless::String<64>,
+    pub instance_name: heapless::String<128>,
 }
 
 impl<const A: usize> Default for DiscoveredDevice<A> {

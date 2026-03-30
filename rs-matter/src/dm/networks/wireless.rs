@@ -32,7 +32,7 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::{Vec, WriteBuf};
 use crate::utils::sync::blocking::{self, Mutex};
-use crate::utils::sync::Notification;
+use crate::utils::sync::{DynBase, Notification};
 
 use super::NetChangeNotif;
 
@@ -58,7 +58,7 @@ pub type OwnedWirelessNetworkId = Vec<u8, MAX_WIRELESS_NETWORK_ID_LEN>;
 /// A trait representing the credentials of a wireless network (Wifi or Thread).
 ///
 /// The trait has only two implementations: `Wifi` and `Thread`.
-pub trait WirelessNetwork: for<'a> FromTLV<'a> + ToTLV {
+pub trait WirelessNetwork: Send + for<'a> FromTLV<'a> + ToTLV {
     /// Return the network ID
     ///
     /// For Wifi networks, this is the SSID
@@ -302,6 +302,8 @@ where
         Self::new()
     }
 }
+
+impl<const N: usize, T> DynBase for WirelessNetworks<N, T> where T: WirelessNetwork {}
 
 impl<const N: usize, T> net_comm::Networks for WirelessNetworks<N, T>
 where
@@ -698,6 +700,8 @@ impl NetChangeNotif for NoopWirelessNetCtl {
     }
 }
 
+impl DynBase for NoopWirelessNetCtl {}
+
 impl wifi_diag::WirelessDiag for NoopWirelessNetCtl {}
 
 impl wifi_diag::WifiDiag for NoopWirelessNetCtl {}
@@ -919,6 +923,12 @@ where
         self.net_ctl.wait_changed().await
     }
 }
+
+#[cfg(feature = "sync-mutex")]
+impl<T> DynBase for NetCtlWithStatusImpl<'_, T> where T: Send + Sync {}
+
+#[cfg(not(feature = "sync-mutex"))]
+impl<T> DynBase for NetCtlWithStatusImpl<'_, T> {}
 
 impl<T> wifi_diag::WirelessDiag for NetCtlWithStatusImpl<'_, T>
 where

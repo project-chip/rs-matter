@@ -167,8 +167,8 @@ impl CommWindow {
     }
 }
 
-/// The PASE manager
-pub struct PaseMgr {
+/// The PASE state
+pub struct Pase {
     /// The opened commissioning window, if any
     comm_window: Maybe<CommWindow>,
     /// The (one and only) PASE session timeout tracker
@@ -178,8 +178,8 @@ pub struct PaseMgr {
     pub(crate) epoch: Epoch,
 }
 
-impl PaseMgr {
-    /// Create a new PASE manager
+impl Pase {
+    /// Create a new PASE state
     ///
     /// # Arguments
     /// - `epoch` - The epoch function
@@ -500,8 +500,3 @@ pub(crate) struct Pake3<'a> {
     /// The cA confirmation (32 bytes HMAC)
     pub ca: OctetStr<'a>,
 }
-
-// Re-export Pase as an alias for PaseResponder for backwards compatibility
-#[doc(hidden)]
-#[deprecated(since = "0.2.0", note = "Use PaseResponder instead")]
-pub type Pase<'a, C> = PaseResponder<'a, C>;

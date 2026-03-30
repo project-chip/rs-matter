@@ -17,12 +17,14 @@
 
 //! This module contains the implementation of the Administrative Commissioning cluster and its handler.
 
-use crate::dm::{Cluster, Context, Dataver, InvokeContext, ReadContext};
+use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::Error;
 use crate::sc::pase::{CommWindowOpener, CommWindowType};
 use crate::tlv::Nullable;
+use crate::MatterState;
 
 pub use crate::dm::clusters::decl::administrator_commissioning::*;
+use crate::transport::exchange::ExchangeId;
 use crate::transport::session::SessionMode;
 
 /// The system implementation of a handler for the Administrative Commissioning Matter cluster.
@@ -47,17 +49,16 @@ impl AdminCommHandler {
     ///
     /// Used when opening a new commissioning window so as to preserve the fabric index and vendor ID
     /// of the admin fabric which opened the current commissioning window.
-    fn current_window_opener(&self, ctx: impl Context) -> Result<Option<CommWindowOpener>, Error> {
-        ctx.exchange().with_session(|session| {
-            Ok(match session.get_session_mode() {
-                SessionMode::Case { fab_idx, .. } => Some(CommWindowOpener {
-                    fab_idx: *fab_idx,
-                    vendor_id: unwrap!(ctx.exchange().matter().fabric_mgr.borrow().get(*fab_idx))
-                        .vendor_id(),
-                }),
-                _ => None,
-            })
-        })
+    fn current_window_opener(state: &mut MatterState, id: &ExchangeId) -> Option<CommWindowOpener> {
+        let session = id.session(&mut state.sessions);
+
+        match session.get_session_mode() {
+            SessionMode::Case { fab_idx, .. } => Some(CommWindowOpener {
+                fab_idx: *fab_idx,
+                vendor_id: unwrap!(state.fabrics.get(*fab_idx)).vendor_id(),
+            }),
+            _ => None,
+        }
     }
 }
 
@@ -73,52 +74,45 @@ impl ClusterHandler for AdminCommHandler {
     }
 
     fn window_status(&self, ctx: impl ReadContext) -> Result<CommissioningWindowStatusEnum, Error> {
-        let matter = ctx.exchange().matter();
-        let mut pase_mgr = matter.pase_mgr.borrow_mut();
-        let comm_window = pase_mgr.comm_window(&ctx)?;
+        ctx.exchange().with_state(|state| {
+            let comm_window = state.pase.comm_window(&ctx)?;
 
-        let window_type = comm_window.map(|comm_window| comm_window.comm_window_type());
+            let window_type = comm_window.map(|comm_window| comm_window.comm_window_type());
 
-        Ok(match window_type {
-            Some(CommWindowType::Basic) => CommissioningWindowStatusEnum::BasicWindowOpen,
-            Some(CommWindowType::Enhanced) => CommissioningWindowStatusEnum::EnhancedWindowOpen,
-            None => CommissioningWindowStatusEnum::WindowNotOpen,
+            Ok(match window_type {
+                Some(CommWindowType::Basic) => CommissioningWindowStatusEnum::BasicWindowOpen,
+                Some(CommWindowType::Enhanced) => CommissioningWindowStatusEnum::EnhancedWindowOpen,
+                None => CommissioningWindowStatusEnum::WindowNotOpen,
+            })
         })
     }
 
     fn admin_fabric_index(&self, ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        let matter = ctx.exchange().matter();
-        let mut pase_mgr = matter.pase_mgr.borrow_mut();
-        let comm_window = pase_mgr.comm_window(&ctx)?;
+        ctx.exchange().with_state(|state| {
+            let comm_window = state.pase.comm_window(&ctx)?;
 
-        if let Some(opener) = comm_window.and_then(|comm_window| comm_window.opener()) {
-            if ctx
-                .exchange()
-                .matter()
-                .fabric_mgr
-                .borrow()
-                .get(opener.fab_idx)
-                .is_some()
-            {
-                // Fabric is still around, return its index
-                // If it is not around - and contrary to vendor ID - we should NOT return it
-                return Ok(Nullable::some(opener.fab_idx.get()));
+            if let Some(opener) = comm_window.and_then(|comm_window| comm_window.opener()) {
+                if state.fabrics.get(opener.fab_idx).is_some() {
+                    // Fabric is still around, return its index
+                    // If it is not around - and contrary to vendor ID - we should NOT return it
+                    return Ok(Nullable::some(opener.fab_idx.get()));
+                }
             }
-        }
 
-        Ok(Nullable::none())
+            Ok(Nullable::none())
+        })
     }
 
     fn admin_vendor_id(&self, ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
-        let matter = ctx.exchange().matter();
-        let mut pase_mgr = matter.pase_mgr.borrow_mut();
-        let comm_window = pase_mgr.comm_window(&ctx)?;
+        ctx.exchange().with_state(|state| {
+            let comm_window = state.pase.comm_window(&ctx)?;
 
-        Ok(Nullable::new(
-            comm_window
-                .and_then(|comm_window| comm_window.opener())
-                .map(|opener| opener.vendor_id),
-        ))
+            Ok(Nullable::new(
+                comm_window
+                    .and_then(|comm_window| comm_window.opener())
+                    .map(|opener| opener.vendor_id),
+            ))
+        })
     }
 
     fn handle_open_commissioning_window(
@@ -126,18 +120,19 @@ impl ClusterHandler for AdminCommHandler {
         ctx: impl InvokeContext,
         request: OpenCommissioningWindowRequest<'_>,
     ) -> Result<(), Error> {
-        let opener = self.current_window_opener(&ctx)?;
-        let matter = ctx.matter();
+        ctx.exchange().with_state(|state| {
+            let opener = Self::current_window_opener(state, &ctx.exchange().id());
 
-        matter.pase_mgr.borrow_mut().open_comm_window(
-            &ctx,
-            request.pake_passcode_verifier()?.0.try_into()?,
-            request.salt()?.0.try_into()?,
-            request.iterations()?,
-            request.discriminator()?,
-            request.commissioning_timeout()?,
-            opener,
-        )
+            state.pase.open_comm_window(
+                &ctx,
+                request.pake_passcode_verifier()?.0.try_into()?,
+                request.salt()?.0.try_into()?,
+                request.iterations()?,
+                request.discriminator()?,
+                request.commissioning_timeout()?,
+                opener,
+            )
+        })
     }
 
     fn handle_open_basic_commissioning_window(
@@ -145,20 +140,23 @@ impl ClusterHandler for AdminCommHandler {
         ctx: impl InvokeContext,
         request: OpenBasicCommissioningWindowRequest<'_>,
     ) -> Result<(), Error> {
-        let opener = self.current_window_opener(&ctx)?;
-        let matter = ctx.matter();
+        ctx.exchange().with_state(|state| {
+            let opener = Self::current_window_opener(state, &ctx.exchange().id());
+            let dev_comm = ctx.exchange().matter().dev_comm();
 
-        matter.pase_mgr.borrow_mut().open_basic_comm_window(
-            &ctx,
-            matter.dev_comm().password.reference(),
-            matter.dev_comm().discriminator,
-            request.commissioning_timeout()?,
-            opener,
-        )
+            state.pase.open_basic_comm_window(
+                &ctx,
+                dev_comm.password.reference(),
+                dev_comm.discriminator,
+                request.commissioning_timeout()?,
+                opener,
+            )
+        })
     }
 
     fn handle_revoke_commissioning(&self, ctx: impl InvokeContext) -> Result<(), Error> {
-        ctx.matter().pase_mgr.borrow_mut().close_comm_window(&ctx)?;
+        ctx.exchange()
+            .with_state(|state| state.pase.close_comm_window(&ctx))?;
 
         // TODO: Send status code if no commissioning window is open?
 

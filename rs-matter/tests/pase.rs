@@ -33,7 +33,7 @@ use rs_matter::respond::Responder;
 use rs_matter::sc::pase::{PaseInitiator, MAX_COMM_WINDOW_TIMEOUT_SECS};
 use rs_matter::sc::SecureChannel;
 use rs_matter::transport::exchange::Exchange;
-use rs_matter::transport::network::Address;
+use rs_matter::transport::network::{Address, NoNetwork};
 use rs_matter::utils::epoch::sys_epoch;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::Matter;
@@ -75,7 +75,7 @@ fn test_pase_handshake() {
 
         let device_fut = async {
             select(
-                device_matter.run_transport(&crypto, &device_socket, &device_socket),
+                device_matter.run(&crypto, &device_socket, &device_socket, NoNetwork),
                 responder.run::<4>(),
             )
             .coalesce()
@@ -84,7 +84,7 @@ fn test_pase_handshake() {
 
         // Controller side: transport + PASE handshake
         let controller_fut = run_with_transport(
-            controller_matter.run_transport(&crypto, &controller_socket, &controller_socket),
+            controller_matter.run(&crypto, &controller_socket, &controller_socket, NoNetwork),
             run_pase_handshake(&controller_matter, &crypto, peer_addr),
         );
 

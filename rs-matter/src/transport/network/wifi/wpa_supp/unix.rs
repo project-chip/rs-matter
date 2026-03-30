@@ -29,7 +29,7 @@ use crate::dm::networks::unix::{UnixNetif, UnixNetifs};
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::wifi::wpa_supp::IpStackCtl;
 use crate::utils::ipv6::create_link_local_ipv6;
-use crate::utils::sync::blocking;
+use crate::utils::sync::{blocking, DynBase};
 
 /// An `IpStackCtl` implementation for the linux `dhclient` command-line utility.
 ///
@@ -109,6 +109,8 @@ impl DhClientCtl {
         })
     }
 }
+
+impl DynBase for DhClientCtl {}
 
 impl IpStackCtl for DhClientCtl {
     async fn connect(&self) -> Result<(), NetCtlError> {

@@ -30,13 +30,12 @@ use crate::dm::clusters::acl::{
 };
 use crate::dm::{Access, ClusterId, EndptId, Privilege};
 use crate::error::{Error, ErrorCode};
-use crate::fabric::FabricMgr;
 use crate::im::GenericPath;
 use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
 use crate::transport::session::{Session, SessionMode, MAX_CAT_IDS_PER_NOC};
-use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::storage::Vec;
+use crate::Matter;
 
 cfg_if! {
     if #[cfg(feature = "max-subjects-per-acl-32")] {
@@ -328,13 +327,13 @@ pub struct Accessor<'a> {
     subjects: AccessorSubjects,
     /// The auth mode of this session. Might be `None` for plain-text sessions
     auth_mode: Option<AuthMode>,
-    // TODO: Is this the right place for this though, or should we just use a global-acl-handle-get
-    fabric_mgr: &'a RefCell<FabricMgr>,
+    // Necessary so as to get access to the fabric manager to perform the access check in AccessReq::allow()
+    matter: &'a Matter<'a>,
 }
 
 impl<'a> Accessor<'a> {
     /// Create a new Accessor object for the given session
-    pub fn for_session(session: &Session, fabric_mgr: &'a RefCell<FabricMgr>) -> Self {
+    pub fn for_session(session: &Session, matter: &'a Matter<'a>) -> Self {
         match session.get_session_mode() {
             SessionMode::Case {
                 fab_idx, cat_ids, ..
@@ -346,21 +345,21 @@ impl<'a> Accessor<'a> {
                         let _ = subject.add_catid(i);
                     }
                 }
-                Accessor::new(fab_idx.get(), subject, Some(AuthMode::Case), fabric_mgr)
+                Accessor::new(fab_idx.get(), subject, Some(AuthMode::Case), matter)
             }
             SessionMode::Pase { fab_idx } => Accessor::new(
                 *fab_idx,
                 AccessorSubjects::new(1),
                 Some(AuthMode::Pase),
-                fabric_mgr,
+                matter,
             ),
             SessionMode::Group { fab_idx, group_id } => Accessor::new(
                 fab_idx.get(),
                 AccessorSubjects::new(*group_id as u64),
                 Some(AuthMode::Group),
-                fabric_mgr,
+                matter,
             ),
-            SessionMode::PlainText => Accessor::new(0, AccessorSubjects::new(1), None, fabric_mgr),
+            SessionMode::PlainText => Accessor::new(0, AccessorSubjects::new(1), None, matter),
         }
     }
 
@@ -370,18 +369,18 @@ impl<'a> Accessor<'a> {
     /// - `fab_idx`: The fabric index of the accessor (0 means no fabric index)
     /// - `subjects`: The subjects of the accessor
     /// - `auth_mode`: The auth mode of the accessor
-    /// - `fabric_mgr`: The fabric manager
+    /// - `matter`: The Matter instance
     pub const fn new(
         fab_idx: u8,
         subjects: AccessorSubjects,
         auth_mode: Option<AuthMode>,
-        fabric_mgr: &'a RefCell<FabricMgr>,
+        matter: &'a Matter<'a>,
     ) -> Self {
         Self {
             fab_idx,
             subjects,
             auth_mode,
-            fabric_mgr,
+            matter,
         }
     }
 
@@ -406,17 +405,19 @@ impl<'a> Accessor<'a> {
 
         let group_id = self.subjects.0[0] as u16;
 
-        let fm = self.fabric_mgr.borrow();
         let Some(fab_idx) = core::num::NonZeroU8::new(self.fab_idx) else {
             return false;
         };
-        let Some(fabric) = fm.get(fab_idx) else {
-            return false;
-        };
 
-        fabric
-            .group_get(group_id)
-            .is_some_and(|e| e.endpoints.contains(&endpoint_id))
+        self.matter.with_state(|state| {
+            let Some(fabric) = state.fabrics.get(fab_idx) else {
+                return false;
+            };
+
+            fabric
+                .group_get(group_id)
+                .is_some_and(|e| e.endpoints.contains(&endpoint_id))
+        })
     }
 }
 
@@ -481,7 +482,9 @@ impl<'a> AccessReq<'a> {
     /// _accessor_ the necessary privileges to access the target as per its
     /// permissions
     pub fn allow(&self) -> bool {
-        self.accessor.fabric_mgr.borrow().allow(self)
+        self.accessor
+            .matter
+            .with_state(|state| state.fabrics.allow(self))
     }
 }
 
@@ -818,9 +821,10 @@ pub(crate) mod tests {
 
     use crate::acl::{gen_noc_cat, AccessorSubjects};
     use crate::dm::{Access, Privilege};
-    use crate::fabric::FabricMgr;
+    use crate::error::Error;
     use crate::im::GenericPath;
-    use crate::utils::cell::RefCell;
+    use crate::test::test_matter;
+    use crate::Matter;
 
     use super::{AccessReq, Accessor, AclEntry, AuthMode, Target};
 
@@ -834,11 +838,32 @@ pub(crate) mod tests {
         None => ::core::unreachable!(),
     };
 
+    fn add_fabric(matter: &Matter<'_>) {
+        matter.with_state(|state| {
+            // Add fabric with ID 1
+            state.fabrics.add_with_post_init(|_| Ok(())).unwrap();
+        })
+    }
+
+    fn add_acl(matter: &Matter<'_>, fab_idx: NonZeroU8, entry: AclEntry) -> Result<usize, Error> {
+        matter.with_state(|state| state.fabrics.acl_add(fab_idx, entry))
+    }
+
+    fn remove_all_acl(matter: &Matter<'_>, fab_idx: NonZeroU8) {
+        matter.with_state(|state| {
+            state.fabrics.acl_remove_all(fab_idx).unwrap();
+        })
+    }
+
     #[test]
     fn test_basic_empty_subject_target() {
-        let fm = RefCell::new(FabricMgr::new());
-
-        let accessor = Accessor::new(0, AccessorSubjects::new(112233), Some(AuthMode::Pase), &fm);
+        let matter = test_matter();
+        let accessor = Accessor::new(
+            0,
+            AccessorSubjects::new(112233),
+            Some(AuthMode::Pase),
+            &matter,
+        );
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req_pase = AccessReq::new(&accessor, path, Access::READ);
         req_pase.set_target_perms(Access::RWVA);
@@ -846,7 +871,12 @@ pub(crate) mod tests {
         // Always allow for PASE sessions
         assert!(req_pase.allow());
 
-        let accessor = Accessor::new(2, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
+        let accessor = Accessor::new(
+            2,
+            AccessorSubjects::new(112233),
+            Some(AuthMode::Case),
+            &matter,
+        );
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -855,37 +885,42 @@ pub(crate) mod tests {
         assert_eq!(req.allow(), false);
 
         // Add fabric with ID 1
-        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
+        add_fabric(&matter);
 
         // Deny adding invalid auth mode (PASE is reserved for future)
         let new = AclEntry::new(None, Privilege::VIEW, AuthMode::Pase);
-        assert!(fm.borrow_mut().acl_add(FAB_1, new).is_err());
+        assert!(add_acl(&matter, FAB_1, new).is_err());
 
         // Deny for fab idx mismatch
         let new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
-        assert_eq!(fm.borrow_mut().acl_add(FAB_1, new).unwrap(), 0);
+        assert_eq!(add_acl(&matter, FAB_1, new).unwrap(), 0);
         assert_eq!(req.allow(), false);
 
         // Always allow for PASE sessions
         assert!(req_pase.allow());
 
         // Add fabric with ID 2
-        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
+        add_fabric(&matter);
 
         // Allow
         let new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
-        assert_eq!(fm.borrow_mut().acl_add(FAB_2, new).unwrap(), 0);
+        assert_eq!(add_acl(&matter, FAB_2, new).unwrap(), 0);
         assert_eq!(req.allow(), true);
     }
 
     #[test]
     fn test_subject() {
-        let fm = RefCell::new(FabricMgr::new());
+        let matter = test_matter();
 
         // Add fabric with ID 1
-        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
+        add_fabric(&matter);
 
-        let accessor = Accessor::new(1, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
+        let accessor = Accessor::new(
+            1,
+            AccessorSubjects::new(112233),
+            Some(AuthMode::Case),
+            &matter,
+        );
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -893,22 +928,22 @@ pub(crate) mod tests {
         // Deny for subject mismatch
         let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject(112232).unwrap();
-        assert_eq!(fm.borrow_mut().acl_add(FAB_1, new).unwrap(), 0);
+        assert_eq!(add_acl(&matter, FAB_1, new).unwrap(), 0);
         assert_eq!(req.allow(), false);
 
         // Allow for subject match - target is wildcard
         let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject(112233).unwrap();
-        assert_eq!(fm.borrow_mut().acl_add(FAB_1, new).unwrap(), 1);
+        assert_eq!(add_acl(&matter, FAB_1, new).unwrap(), 1);
         assert_eq!(req.allow(), true);
     }
 
     #[test]
     fn test_cat() {
-        let fm = RefCell::new(FabricMgr::new());
+        let matter = test_matter();
 
         // Add fabric with ID 1
-        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
+        add_fabric(&matter);
 
         let allow_cat = 0xABCD;
         let disallow_cat = 0xCAFE;
@@ -918,7 +953,7 @@ pub(crate) mod tests {
         let mut subjects = AccessorSubjects::new(112233);
         subjects.add_catid(gen_noc_cat(allow_cat, v2)).unwrap();
 
-        let accessor = Accessor::new(1, subjects, Some(AuthMode::Case), &fm);
+        let accessor = Accessor::new(1, subjects, Some(AuthMode::Case), &matter);
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -927,28 +962,28 @@ pub(crate) mod tests {
         let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject_catid(gen_noc_cat(disallow_cat, v2))
             .unwrap();
-        fm.borrow_mut().acl_add(FAB_1, new).unwrap();
+        add_acl(&matter, FAB_1, new).unwrap();
         assert_eq!(req.allow(), false);
 
         // Deny of CAT version mismatch
         let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject_catid(gen_noc_cat(allow_cat, v3)).unwrap();
-        fm.borrow_mut().acl_add(FAB_1, new).unwrap();
+        add_acl(&matter, FAB_1, new).unwrap();
         assert_eq!(req.allow(), false);
 
         // Allow for CAT match
         let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject_catid(gen_noc_cat(allow_cat, v2)).unwrap();
-        fm.borrow_mut().acl_add(FAB_1, new).unwrap();
+        add_acl(&matter, FAB_1, new).unwrap();
         assert_eq!(req.allow(), true);
     }
 
     #[test]
     fn test_cat_version() {
-        let fm = RefCell::new(FabricMgr::new());
+        let matter = test_matter();
 
         // Add fabric with ID 1
-        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
+        add_fabric(&matter);
 
         let allow_cat = 0xABCD;
         let disallow_cat = 0xCAFE;
@@ -958,7 +993,7 @@ pub(crate) mod tests {
         let mut subjects = AccessorSubjects::new(112233);
         subjects.add_catid(gen_noc_cat(allow_cat, v3)).unwrap();
 
-        let accessor = Accessor::new(1, subjects, Some(AuthMode::Case), &fm);
+        let accessor = Accessor::new(1, subjects, Some(AuthMode::Case), &matter);
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -967,24 +1002,29 @@ pub(crate) mod tests {
         let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject_catid(gen_noc_cat(disallow_cat, v2))
             .unwrap();
-        fm.borrow_mut().acl_add(FAB_1, new).unwrap();
+        add_acl(&matter, FAB_1, new).unwrap();
         assert_eq!(req.allow(), false);
 
         // Allow for CAT match and version more than ACL version
         let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject_catid(gen_noc_cat(allow_cat, v2)).unwrap();
-        fm.borrow_mut().acl_add(FAB_1, new).unwrap();
+        add_acl(&matter, FAB_1, new).unwrap();
         assert_eq!(req.allow(), true);
     }
 
     #[test]
     fn test_target() {
-        let fm = RefCell::new(FabricMgr::new());
+        let matter = test_matter();
 
         // Add fabric with ID 1
-        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
+        add_fabric(&matter);
 
-        let accessor = Accessor::new(1, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
+        let accessor = Accessor::new(
+            1,
+            AccessorSubjects::new(112233),
+            Some(AuthMode::Case),
+            &matter,
+        );
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -997,7 +1037,7 @@ pub(crate) mod tests {
             device_type: None,
         })
         .unwrap();
-        fm.borrow_mut().acl_add(FAB_1, new).unwrap();
+        add_acl(&matter, FAB_1, new).unwrap();
         assert_eq!(req.allow(), false);
 
         // Allow for cluster match - subject wildcard
@@ -1008,11 +1048,11 @@ pub(crate) mod tests {
             device_type: None,
         })
         .unwrap();
-        fm.borrow_mut().acl_add(FAB_1, new).unwrap();
+        add_acl(&matter, FAB_1, new).unwrap();
         assert_eq!(req.allow(), true);
 
         // Clean state
-        fm.borrow_mut().get_mut(FAB_1).unwrap().acl_remove_all();
+        remove_all_acl(&matter, FAB_1);
 
         // Allow for endpoint match - subject wildcard
         let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
@@ -1022,11 +1062,11 @@ pub(crate) mod tests {
             device_type: None,
         })
         .unwrap();
-        fm.borrow_mut().acl_add(FAB_1, new).unwrap();
+        add_acl(&matter, FAB_1, new).unwrap();
         assert_eq!(req.allow(), true);
 
         // Clean state
-        fm.borrow_mut().get_mut(FAB_1).unwrap().acl_remove_all();
+        remove_all_acl(&matter, FAB_1);
 
         // Allow for exact match
         let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
@@ -1037,18 +1077,23 @@ pub(crate) mod tests {
         })
         .unwrap();
         new.add_subject(112233).unwrap();
-        fm.borrow_mut().acl_add(FAB_1, new).unwrap();
+        add_acl(&matter, FAB_1, new).unwrap();
         assert_eq!(req.allow(), true);
     }
 
     #[test]
     fn test_privilege() {
-        let fm = RefCell::new(FabricMgr::new());
+        let matter = test_matter();
 
         // Add fabric with ID 1
-        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
+        add_fabric(&matter);
 
-        let accessor = Accessor::new(1, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
+        let accessor = Accessor::new(
+            1,
+            AccessorSubjects::new(112233),
+            Some(AuthMode::Case),
+            &matter,
+        );
         let path = GenericPath::new(Some(1), Some(1234), None);
 
         // Create an Exact Match ACL with View privilege
@@ -1060,7 +1105,7 @@ pub(crate) mod tests {
         })
         .unwrap();
         new.add_subject(112233).unwrap();
-        fm.borrow_mut().acl_add(FAB_1, new).unwrap();
+        add_acl(&matter, FAB_1, new).unwrap();
 
         // Write on an RWVA without admin access - deny
         let mut req = AccessReq::new(&accessor, path.clone(), Access::WRITE);
@@ -1076,7 +1121,7 @@ pub(crate) mod tests {
         })
         .unwrap();
         new.add_subject(112233).unwrap();
-        fm.borrow_mut().acl_add(FAB_1, new).unwrap();
+        add_acl(&matter, FAB_1, new).unwrap();
 
         // Write on an RWVA with admin access - allow
         let mut req = AccessReq::new(&accessor, path, Access::WRITE);
@@ -1086,36 +1131,46 @@ pub(crate) mod tests {
 
     #[test]
     fn test_delete_for_fabric() {
-        let fm = RefCell::new(FabricMgr::new());
+        let matter = test_matter();
 
         // Add fabric with ID 1
-        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
+        add_fabric(&matter);
 
         // Add fabric with ID 2
-        fm.borrow_mut().add_with_post_init(|_| Ok(())).unwrap();
+        add_fabric(&matter);
 
         let path = GenericPath::new(Some(1), Some(1234), None);
-        let accessor2 = Accessor::new(1, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
+        let accessor2 = Accessor::new(
+            1,
+            AccessorSubjects::new(112233),
+            Some(AuthMode::Case),
+            &matter,
+        );
         let mut req1 = AccessReq::new(&accessor2, path.clone(), Access::READ);
         req1.set_target_perms(Access::RWVA);
-        let accessor3 = Accessor::new(2, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
+        let accessor3 = Accessor::new(
+            2,
+            AccessorSubjects::new(112233),
+            Some(AuthMode::Case),
+            &matter,
+        );
         let mut req2 = AccessReq::new(&accessor3, path, Access::READ);
         req2.set_target_perms(Access::RWVA);
 
         // Allow for subject match - target is wildcard - Fabric idx 2
         let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject(112233).unwrap();
-        assert_eq!(fm.borrow_mut().acl_add(FAB_1, new).unwrap(), 0);
+        assert_eq!(add_acl(&matter, FAB_1, new).unwrap(), 0);
 
         // Allow for subject match - target is wildcard - Fabric idx 3
         let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject(112233).unwrap();
-        assert_eq!(fm.borrow_mut().acl_add(FAB_2, new).unwrap(), 0);
+        assert_eq!(add_acl(&matter, FAB_2, new).unwrap(), 0);
 
         // Req for Fabric idx 1 gets denied, and that for Fabric idx 2 is allowed
         assert_eq!(req1.allow(), true);
         assert_eq!(req2.allow(), true);
-        fm.borrow_mut().acl_remove_all(FAB_1).unwrap();
+        remove_all_acl(&matter, FAB_1);
         assert_eq!(req1.allow(), false);
         assert_eq!(req2.allow(), true);
     }

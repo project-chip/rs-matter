@@ -17,11 +17,13 @@
 
 //! This module contains the implementation of the General Diagnostics cluster and its handler.
 
+use core::fmt::Debug;
 use core::net::{Ipv4Addr, Ipv6Addr};
 
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{Nullable, Octets, TLVBuilder, TLVBuilderParent};
+use crate::utils::sync::DynBase;
 use crate::with;
 
 pub use crate::dm::clusters::decl::general_diagnostics::*;
@@ -90,7 +92,7 @@ impl NetifInfo<'_> {
 
 /// A trait to which the system implementation of the General Diagnostics Matter cluster
 /// delegates for information.
-pub trait GenDiag {
+pub trait GenDiag: DynBase {
     /// Get the reboot count of the node.
     fn reboot_count(&self) -> Result<u16, Error>;
 
@@ -146,7 +148,7 @@ impl GenDiag for () {
     }
 }
 
-pub trait NetifDiag {
+pub trait NetifDiag: DynBase {
     /// Iterate over the network interfaces and call the given function for each of them.
     /// Call the function with `None` at the end.
     fn netifs(&self, f: &mut dyn FnMut(&NetifInfo) -> Result<(), Error>) -> Result<(), Error>;
@@ -282,5 +284,20 @@ impl ClusterHandler for GenDiagHandler<'_> {
         _response: PayloadTestResponseBuilder<P>,
     ) -> Result<P, Error> {
         Err(ErrorCode::CommandNotFound.into())
+    }
+}
+
+impl Debug for GenDiagHandler<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("GenDiagHandler")
+            .field("dataver", &self.dataver)
+            .finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for GenDiagHandler<'_> {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "GenDiagHandler {{ dataver: {} }}", self.dataver);
     }
 }

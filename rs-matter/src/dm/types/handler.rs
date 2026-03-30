@@ -22,13 +22,14 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
 use crate::utils::storage::pooled::{BufferAccess, PooledBuffers};
+use crate::utils::sync::DynBase;
 use crate::Matter;
 
 use super::{AttrDetails, AttrId, ClusterId, CmdDetails, EndptId, InvokeReply, ReadReply};
 
 pub use asynch::*;
 
-pub trait ChangeNotify {
+pub trait ChangeNotify: DynBase {
     fn notify(&self, endpt: EndptId, clust: ClusterId, attr: AttrId);
 }
 
@@ -1100,10 +1101,10 @@ mod asynch {
 
         /// A hook (a scheduling facility) for placing handler-impl-specific code that needs to run
         /// asynchronously - forever and in the "background".
-        fn run(&self, _ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
+        async fn run(&self, _ctx: impl HandlerContext) -> Result<(), Error> {
             // Default implementation pends forever.
             // This is useful for handlers that do not need to run any async operations in the background.
-            core::future::pending::<Result<(), Error>>()
+            core::future::pending::<Result<(), Error>>().await
         }
     }
 

@@ -24,3 +24,19 @@ pub mod blocking;
 mod mutex;
 mod notification;
 mod signal;
+
+/// A trait that all other `rs-matter` `dyn` traits should extend from.
+///
+/// When feature `sync-mutex` is enabled, this trait extends `Send + Sync` so that all `dyn` traits are `Send + Sync`.
+#[cfg(feature = "sync-mutex")]
+pub trait DynBase: Send + Sync {}
+
+/// A trait that all other `rs-matter` `dyn` traits should extend from.
+///
+/// When feature `sync-mutex` is disabled, this trait is empty and does not require `Send + Sync`.
+#[cfg(not(feature = "sync-mutex"))]
+pub trait DynBase {}
+
+impl<T> DynBase for &T where T: DynBase {}
+
+impl DynBase for () {}

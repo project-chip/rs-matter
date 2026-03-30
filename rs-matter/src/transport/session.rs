@@ -24,17 +24,16 @@ use cfg_if::cfg_if;
 use rand_core::RngCore;
 
 use crate::crypto::{canon, CanonAeadKey, CanonAeadKeyRef, Crypto, CryptoSensitive, Kdf};
-use crate::error::*;
-use crate::fabric::FabricMgr;
+use crate::error::{Error, ErrorCode};
+use crate::fabric::Fabrics;
 use crate::group_keys::KeySet;
-
 use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::ReliableMessage;
-use crate::utils::cell::RefCell;
+use crate::transport::TransportRunner;
 use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::storage::{ParseBuf, Vec, WriteBuf};
-use crate::Matter;
+use crate::{Matter, MatterState};
 
 use super::dedup::{GroupCtrStore, RxCtrState};
 use super::exchange::{ExchangeState, MessageMeta, Role};
@@ -512,24 +511,30 @@ impl fmt::Display for Session {
     }
 }
 
+/// A helper struct for reserving a session slot in the session table when we don't have all the necessary information to create a full session yet.
+///
+/// Public for testing purposes, but should not be used outside of the transport module.
 pub struct ReservedSession<'a> {
     id: u32,
-    session_mgr: &'a RefCell<SessionMgr>,
+    matter: &'a Matter<'a>,
     complete: bool,
 }
 
 impl<'a> ReservedSession<'a> {
     pub fn reserve_now<C: Crypto>(matter: &'a Matter<'a>, crypto: C) -> Result<Self, Error> {
-        let mut mgr = matter.transport_mgr.session_mgr.borrow_mut();
+        matter.with_state(|state| {
+            let mut rand = crypto.weak_rand()?;
 
-        let mut rand = crypto.weak_rand()?;
+            let id = state
+                .sessions
+                .add(rand.next_u32(), true, Address::new(), None)?
+                .id;
 
-        let id = mgr.add(rand.next_u32(), true, Address::new(), None)?.id;
-
-        Ok(Self {
-            id,
-            session_mgr: &matter.transport_mgr.session_mgr,
-            complete: false,
+            Ok(Self {
+                id,
+                matter,
+                complete: false,
+            })
         })
     }
 
@@ -542,7 +547,9 @@ impl<'a> ReservedSession<'a> {
         if let Ok(session) = session {
             Ok(session)
         } else {
-            matter.transport_mgr.evict_some_session(&crypto).await?;
+            TransportRunner::new(matter, &crypto)
+                .evict_some_session()
+                .await?;
 
             Self::reserve_now(matter, &crypto)
         }
@@ -561,8 +568,37 @@ impl<'a> ReservedSession<'a> {
         enc_key: Option<CanonAeadKeyRef<'_>>,
         att_challenge: Option<AttChallengeRef<'_>>,
     ) -> Result<(), Error> {
-        let mut mgr = self.session_mgr.borrow_mut();
-        let session = mgr.get(self.id).ok_or(ErrorCode::NoSession)?;
+        self.matter.with_state(|state| {
+            self.update_with_state(
+                state,
+                local_nodeid,
+                peer_nodeid,
+                peer_sessid,
+                local_sessid,
+                peer_addr,
+                mode,
+                dec_key,
+                enc_key,
+                att_challenge,
+            )
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_with_state(
+        &mut self,
+        state: &mut MatterState,
+        local_nodeid: u64,
+        peer_nodeid: u64,
+        peer_sessid: u16,
+        local_sessid: u16,
+        peer_addr: Address,
+        mode: SessionMode,
+        dec_key: Option<CanonAeadKeyRef<'_>>,
+        enc_key: Option<CanonAeadKeyRef<'_>>,
+        att_challenge: Option<AttChallengeRef<'_>>,
+    ) -> Result<(), Error> {
+        let session = state.sessions.get(self.id).ok_or(ErrorCode::NoSession)?;
 
         session.local_nodeid = local_nodeid;
         session.peer_nodeid = Some(peer_nodeid);
@@ -593,13 +629,14 @@ impl<'a> ReservedSession<'a> {
 
 impl Drop for ReservedSession<'_> {
     fn drop(&mut self) {
-        if self.complete {
-            let mut session_mgr = self.session_mgr.borrow_mut();
-            let session = unwrap!(session_mgr.get(self.id));
-            session.reserved = false;
-        } else {
-            self.session_mgr.borrow_mut().remove(self.id);
-        }
+        self.matter.with_state(|state| {
+            if self.complete {
+                let session = unwrap!(state.sessions.get(self.id));
+                session.reserved = false;
+            } else {
+                state.sessions.remove(self.id);
+            }
+        })
     }
 }
 
@@ -667,7 +704,8 @@ cfg_if! {
 
 const MATTER_MSG_CTR_RANGE: u32 = 0x0fffffff;
 
-pub struct SessionMgr {
+/// All sessions
+pub struct Sessions {
     next_sess_unique_id: u32,
     next_sess_id: u16,
     next_exch_id: u16,
@@ -676,8 +714,8 @@ pub struct SessionMgr {
     pub(crate) epoch: Epoch,
 }
 
-impl SessionMgr {
-    /// Create a new session manager.
+impl Sessions {
+    /// Create a new Sessions instance.
     #[inline(always)]
     pub const fn new(epoch: Epoch) -> Self {
         Self {
@@ -690,7 +728,7 @@ impl SessionMgr {
         }
     }
 
-    /// Create an in-place initializer for a new session manager.
+    /// Create an in-place initializer for a new Sessions instance.
     pub fn init(epoch: Epoch) -> impl Init<Self> {
         init!(Self {
             sessions <- Vec::init(),
@@ -721,7 +759,7 @@ impl SessionMgr {
     pub(crate) fn get_or_create_for_group_rx<const N: usize, C: Crypto>(
         &mut self,
         crypto: &C,
-        fabric_mgr: &FabricMgr,
+        fabrics: &Fabrics,
         packet: &mut Packet<N>,
     ) -> Result<(&mut Session, (usize, usize)), Error> {
         let src_nodeid = packet
@@ -758,7 +796,7 @@ impl SessionMgr {
         // Derive keys on-the-fly and try each one
         let mut group_key_found: Option<(NonZeroU8, (usize, usize))> = None;
 
-        'outer: for fabric in fabric_mgr.iter() {
+        'outer: for fabric in fabrics.iter() {
             let fab_idx = fabric.fab_idx();
             let compressed_fabric_id = fabric.compressed_fabric_id();
 
@@ -1141,7 +1179,7 @@ impl SessionMgr {
     }
 }
 
-impl fmt::Display for SessionMgr {
+impl fmt::Display for Sessions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "{{[")?;
         for s in &self.sessions {
@@ -1191,7 +1229,7 @@ mod tests {
 
     #[test]
     fn test_next_sess_id_doesnt_reuse() {
-        let mut sm = SessionMgr::new(dummy_epoch);
+        let mut sm = Sessions::new(dummy_epoch);
         let sess = unwrap!(sm.add(0, false, Address::default(), None));
         sess.set_local_sess_id(1);
         assert_eq!(sm.get_next_sess_id(), 2);
@@ -1203,7 +1241,7 @@ mod tests {
 
     #[test]
     fn test_next_sess_id_overflows() {
-        let mut sm = SessionMgr::new(dummy_epoch);
+        let mut sm = Sessions::new(dummy_epoch);
         let sess = unwrap!(sm.add(0, false, Address::default(), None));
         sess.set_local_sess_id(1);
         assert_eq!(sm.get_next_sess_id(), 2);

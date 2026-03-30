@@ -126,16 +126,14 @@ where
                 ipv4_interface
                     .map(|_| SocketAddr::V4(SocketAddrV4::new(MDNS_IPV4_BROADCAST_ADDR, MDNS_PORT)))
                     .into_iter(),
-                ipv6_interface
-                    .map(|interface| {
-                        SocketAddr::V6(SocketAddrV6::new(
-                            MDNS_IPV6_BROADCAST_ADDR,
-                            MDNS_PORT,
-                            0,
-                            interface,
-                        ))
-                    })
-                    .into_iter(),
+                ipv6_interface.map(|interface| {
+                    SocketAddr::V6(SocketAddrV6::new(
+                        MDNS_IPV6_BROADCAST_ADDR,
+                        MDNS_PORT,
+                        0,
+                        interface,
+                    ))
+                }),
             ) {
                 let buffer = self.matter.transport_tx_buffer();
 
@@ -230,7 +228,9 @@ where
                             debug!("Replying to mDNS query from {} on {}", addr, reply_addr);
                         }
 
-                        send.send_to(&tx[..len], Address::Udp(reply_addr)).await?;
+                        if let Err(e) = send.send_to(&tx[..len], Address::Udp(reply_addr)).await {
+                            warn!("Failed to send mDNS response to {}: {}", reply_addr, e);
+                        }
                     } else {
                         debug!("Cannot reply to mDNS query from {}: no suitable broadcast address found", addr);
                     }

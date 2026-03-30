@@ -53,7 +53,7 @@ impl NetworkReceive for &Async<UdpSocket> {
 }
 
 impl NetworkMulticast for &Async<UdpSocket> {
-    async fn register_multicast(&mut self, addr: IpAddr) -> Result<(), Error> {
+    async fn join(&mut self, addr: IpAddr) -> Result<(), Error> {
         match addr {
             IpAddr::V6(addr) => self.get_ref().join_multicast_v6(&addr, 0)?,
             IpAddr::V4(addr) => self
@@ -64,7 +64,7 @@ impl NetworkMulticast for &Async<UdpSocket> {
         Ok(())
     }
 
-    async fn unregister_multicast(&mut self, addr: IpAddr) -> Result<(), Error> {
+    async fn leave(&mut self, addr: IpAddr) -> Result<(), Error> {
         match addr {
             IpAddr::V6(addr) => self.get_ref().leave_multicast_v6(&addr, 0)?,
             IpAddr::V4(addr) => self

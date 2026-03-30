@@ -67,42 +67,44 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<GroupKeyMapStructArrayBuilder<P>, GroupKeyMapStructBuilder<P>>,
     ) -> Result<P, Error> {
-        let fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow();
         let attr = ctx.attr();
 
-        let mut entries = fabric_mgr
-            .iter()
-            .filter(|fabric| !attr.fab_filter || fabric.fab_idx().get() == attr.fab_idx)
-            .flat_map(|fabric| {
-                fabric
-                    .group_key_map_iter()
-                    .map(move |entry| (fabric.fab_idx(), entry))
-            });
+        ctx.exchange().with_state(|state| {
+            let mut entries = state
+                .fabrics
+                .iter()
+                .filter(|fabric| !attr.fab_filter || fabric.fab_idx().get() == attr.fab_idx)
+                .flat_map(|fabric| {
+                    fabric
+                        .group_key_map_iter()
+                        .map(move |entry| (fabric.fab_idx(), entry))
+                });
 
-        match builder {
-            ArrayAttributeRead::ReadAll(mut builder) => {
-                for (fab_idx, entry) in entries {
-                    builder = builder
-                        .push()?
+            match builder {
+                ArrayAttributeRead::ReadAll(mut builder) => {
+                    for (fab_idx, entry) in entries {
+                        builder = builder
+                            .push()?
+                            .group_id(entry.group_id)?
+                            .group_key_set_id(entry.group_key_set_id)?
+                            .fabric_index(Some(fab_idx.get()))?
+                            .end()?;
+                    }
+                    builder.end()
+                }
+                ArrayAttributeRead::ReadOne(index, builder) => {
+                    let Some((fab_idx, entry)) = entries.nth(index as usize) else {
+                        return Err(ErrorCode::ConstraintError.into());
+                    };
+                    builder
                         .group_id(entry.group_id)?
                         .group_key_set_id(entry.group_key_set_id)?
                         .fabric_index(Some(fab_idx.get()))?
-                        .end()?;
+                        .end()
                 }
-                builder.end()
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
             }
-            ArrayAttributeRead::ReadOne(index, builder) => {
-                let Some((fab_idx, entry)) = entries.nth(index as usize) else {
-                    return Err(ErrorCode::ConstraintError.into());
-                };
-                builder
-                    .group_id(entry.group_id)?
-                    .group_key_set_id(entry.group_key_set_id)?
-                    .fabric_index(Some(fab_idx.get()))?
-                    .end()
-            }
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
+        })
     }
 
     fn group_table<P: TLVBuilderParent>(
@@ -113,70 +115,63 @@ impl ClusterHandler for GrpKeyMgmtHandler {
             GroupInfoMapStructBuilder<P>,
         >,
     ) -> Result<P, Error> {
-        let fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow();
         let attr = ctx.attr();
 
-        let mut entries = fabric_mgr
-            .iter()
-            .filter(|fabric| !attr.fab_filter || fabric.fab_idx().get() == attr.fab_idx)
-            .flat_map(|fabric| {
-                fabric
-                    .group_iter()
-                    .map(move |entry| (fabric.fab_idx(), entry))
-            });
+        ctx.exchange().with_state(|state| {
+            let mut entries = state
+                .fabrics
+                .iter()
+                .filter(|fabric| !attr.fab_filter || fabric.fab_idx().get() == attr.fab_idx)
+                .flat_map(|fabric| {
+                    fabric
+                        .group_iter()
+                        .map(move |entry| (fabric.fab_idx(), entry))
+                });
 
-        match builder {
-            ArrayAttributeRead::ReadAll(mut builder) => {
-                for (fab_idx, entry) in entries {
-                    let mut endpoints_builder =
-                        builder.push()?.group_id(entry.group_id)?.endpoints()?;
+            match builder {
+                ArrayAttributeRead::ReadAll(mut builder) => {
+                    for (fab_idx, entry) in entries {
+                        let mut endpoints_builder =
+                            builder.push()?.group_id(entry.group_id)?.endpoints()?;
+                        for &ep in entry.endpoints.iter() {
+                            endpoints_builder = endpoints_builder.push(&ep)?;
+                        }
+                        builder = endpoints_builder
+                            .end()?
+                            .group_name(Some(entry.group_name.as_str()))?
+                            .fabric_index(Some(fab_idx.get()))?
+                            .end()?;
+                    }
+                    builder.end()
+                }
+                ArrayAttributeRead::ReadOne(index, builder) => {
+                    let Some((fab_idx, entry)) = entries.nth(index as usize) else {
+                        return Err(ErrorCode::ConstraintError.into());
+                    };
+                    let mut endpoints_builder = builder.group_id(entry.group_id)?.endpoints()?;
                     for &ep in entry.endpoints.iter() {
                         endpoints_builder = endpoints_builder.push(&ep)?;
                     }
-                    builder = endpoints_builder
+                    endpoints_builder
                         .end()?
                         .group_name(Some(entry.group_name.as_str()))?
                         .fabric_index(Some(fab_idx.get()))?
-                        .end()?;
+                        .end()
                 }
-                builder.end()
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
             }
-            ArrayAttributeRead::ReadOne(index, builder) => {
-                let Some((fab_idx, entry)) = entries.nth(index as usize) else {
-                    return Err(ErrorCode::ConstraintError.into());
-                };
-                let mut endpoints_builder = builder.group_id(entry.group_id)?.endpoints()?;
-                for &ep in entry.endpoints.iter() {
-                    endpoints_builder = endpoints_builder.push(&ep)?;
-                }
-                endpoints_builder
-                    .end()?
-                    .group_name(Some(entry.group_name.as_str()))?
-                    .fabric_index(Some(fab_idx.get()))?
-                    .end()
-            }
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
+        })
     }
 
     fn max_groups_per_fabric(&self, ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(ctx
-            .exchange()
-            .matter()
-            .fabric_mgr
-            .borrow()
-            .max_groups_per_fabric())
+        ctx.exchange()
+            .with_state(|state| Ok(state.fabrics.max_groups_per_fabric()))
     }
 
     fn max_group_keys_per_fabric(&self, ctx: impl ReadContext) -> Result<u16, Error> {
         // +1 for IPK (key set 0)
-        Ok(ctx
-            .exchange()
-            .matter()
-            .fabric_mgr
-            .borrow()
-            .max_group_keys_per_fabric()
-            + 1)
+        ctx.exchange()
+            .with_state(|state| Ok(state.fabrics.max_group_keys_per_fabric() + 1))
     }
 
     fn set_group_key_map(
@@ -186,59 +181,59 @@ impl ClusterHandler for GrpKeyMgmtHandler {
     ) -> Result<(), Error> {
         let fab_idx = NonZeroU8::new(ctx.attr().fab_idx).ok_or(ErrorCode::Invalid)?;
 
-        let mut fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow_mut();
-
-        match value {
-            ArrayAttributeWrite::Replace(list) => {
-                // First validate all entries
-                let mut count: usize = 0;
-                for entry in &list {
-                    count += 1;
-                    if count > fabric_mgr.max_groups_per_fabric().into() {
-                        return Err(ErrorCode::Failure.into());
+        ctx.exchange().with_state(|state| {
+            match value {
+                ArrayAttributeWrite::Replace(list) => {
+                    // First validate all entries
+                    let mut count: usize = 0;
+                    for entry in &list {
+                        count += 1;
+                        if count > state.fabrics.max_groups_per_fabric().into() {
+                            return Err(ErrorCode::Failure.into());
+                        }
+                        let entry = entry?;
+                        // GroupKeySetID must not be 0
+                        if entry.group_key_set_id()? == 0 {
+                            return Err(ErrorCode::ConstraintError.into());
+                        }
                     }
-                    let entry = entry?;
+
+                    // Now replace all entries
+                    let entries = list.into_iter().filter_map(|entry| {
+                        let entry = entry.ok()?;
+                        Some(GroupKeyMapping {
+                            group_id: entry.group_id().ok()?,
+                            group_key_set_id: entry.group_key_set_id().ok()?,
+                        })
+                    });
+
+                    state.fabrics.group_key_map_replace(fab_idx, entries)?;
+                }
+                ArrayAttributeWrite::Add(entry) => {
                     // GroupKeySetID must not be 0
                     if entry.group_key_set_id()? == 0 {
                         return Err(ErrorCode::ConstraintError.into());
                     }
+
+                    state.fabrics.group_key_map_add(
+                        fab_idx,
+                        GroupKeyMapping {
+                            group_id: entry.group_id().map_err(|_| ErrorCode::InvalidCommand)?,
+                            group_key_set_id: entry
+                                .group_key_set_id()
+                                .map_err(|_| ErrorCode::InvalidCommand)?,
+                        },
+                    )?;
                 }
-
-                // Now replace all entries
-                let entries = list.into_iter().filter_map(|entry| {
-                    let entry = entry.ok()?;
-                    Some(GroupKeyMapping {
-                        group_id: entry.group_id().ok()?,
-                        group_key_set_id: entry.group_key_set_id().ok()?,
-                    })
-                });
-
-                fabric_mgr.group_key_map_replace(fab_idx, entries)?;
-            }
-            ArrayAttributeWrite::Add(entry) => {
-                // GroupKeySetID must not be 0
-                if entry.group_key_set_id()? == 0 {
-                    return Err(ErrorCode::ConstraintError.into());
+                _ => {
+                    return Err(ErrorCode::InvalidAction.into());
                 }
-
-                fabric_mgr.group_key_map_add(
-                    fab_idx,
-                    GroupKeyMapping {
-                        group_id: entry.group_id().map_err(|_| ErrorCode::InvalidCommand)?,
-                        group_key_set_id: entry
-                            .group_key_set_id()
-                            .map_err(|_| ErrorCode::InvalidCommand)?,
-                    },
-                )?;
             }
-            _ => {
-                return Err(ErrorCode::InvalidAction.into());
-            }
-        }
 
-        ctx.exchange().matter().notify_groups_changed();
+            ctx.exchange().matter().notify_groups_changed();
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn handle_key_set_write(
@@ -385,11 +380,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         }
 
         ctx.exchange()
-            .matter()
-            .fabric_mgr
-            .borrow_mut()
-            .group_key_set_add(fab_idx, entry)?;
-
+            .with_state(|state| state.fabrics.group_key_set_add(fab_idx, entry))?;
         ctx.exchange().matter().notify_groups_changed();
 
         Ok(())
@@ -406,41 +397,42 @@ impl ClusterHandler for GrpKeyMgmtHandler {
 
         let group_key_set_id = request.group_key_set_id()?;
 
-        let fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow();
-        let fabric = fabric_mgr.get(fab_idx).ok_or(ErrorCode::NotFound)?;
-        let entry = fabric
-            .group_key_set_get(group_key_set_id)
-            .ok_or(ErrorCode::NotFound)?;
+        ctx.exchange().with_state(|state| {
+            let fabric = state.fabrics.get(fab_idx).ok_or(ErrorCode::NotFound)?;
+            let entry = fabric
+                .group_key_set_get(group_key_set_id)
+                .ok_or(ErrorCode::NotFound)?;
 
-        // Build response: epoch keys are always null, start times are preserved
-        response
-            .group_key_set()?
-            .group_key_set_id(group_key_set_id)?
-            .group_key_security_policy(
-                // SAFETY: group_key_security_policy is validated at write time
-                // and the enum is #[repr(u8)]
-                unsafe {
-                    core::mem::transmute::<u8, GroupKeySecurityPolicyEnum>(
-                        entry.group_key_security_policy,
-                    )
-                },
-            )?
-            .epoch_key_0(Nullable::<Octets<'_>>::none())?
-            .epoch_start_time_0(Nullable::some(entry.epoch_keys[0].epoch_start_time))?
-            .epoch_key_1(Nullable::<Octets<'_>>::none())?
-            .epoch_start_time_1(if let Some(k) = entry.epoch_keys.get(1) {
-                Nullable::some(k.epoch_start_time)
-            } else {
-                Nullable::none()
-            })?
-            .epoch_key_2(Nullable::<Octets<'_>>::none())?
-            .epoch_start_time_2(if let Some(k) = entry.epoch_keys.get(2) {
-                Nullable::some(k.epoch_start_time)
-            } else {
-                Nullable::none()
-            })?
-            .end()?
-            .end()
+            // Build response: epoch keys are always null, start times are preserved
+            response
+                .group_key_set()?
+                .group_key_set_id(group_key_set_id)?
+                .group_key_security_policy(
+                    // SAFETY: group_key_security_policy is validated at write time
+                    // and the enum is #[repr(u8)]
+                    unsafe {
+                        core::mem::transmute::<u8, GroupKeySecurityPolicyEnum>(
+                            entry.group_key_security_policy,
+                        )
+                    },
+                )?
+                .epoch_key_0(Nullable::<Octets<'_>>::none())?
+                .epoch_start_time_0(Nullable::some(entry.epoch_keys[0].epoch_start_time))?
+                .epoch_key_1(Nullable::<Octets<'_>>::none())?
+                .epoch_start_time_1(if let Some(k) = entry.epoch_keys.get(1) {
+                    Nullable::some(k.epoch_start_time)
+                } else {
+                    Nullable::none()
+                })?
+                .epoch_key_2(Nullable::<Octets<'_>>::none())?
+                .epoch_start_time_2(if let Some(k) = entry.epoch_keys.get(2) {
+                    Nullable::some(k.epoch_start_time)
+                } else {
+                    Nullable::none()
+                })?
+                .end()?
+                .end()
+        })
     }
 
     fn handle_key_set_remove(
@@ -458,12 +450,11 @@ impl ClusterHandler for GrpKeyMgmtHandler {
             return Err(ErrorCode::InvalidCommand.into());
         }
 
-        ctx.exchange()
-            .matter()
-            .fabric_mgr
-            .borrow_mut()
-            .group_key_set_remove(fab_idx, group_key_set_id)?;
-
+        ctx.exchange().with_state(|state| {
+            state
+                .fabrics
+                .group_key_set_remove(fab_idx, group_key_set_id)
+        })?;
         ctx.exchange().matter().notify_groups_changed();
 
         Ok(())
@@ -477,15 +468,18 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         let fab_idx =
             NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
-        let fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow();
-        let fabric = fabric_mgr.get(fab_idx).ok_or(ErrorCode::NotFound)?;
+        ctx.exchange().with_state(|state| {
+            let fabric = state.fabrics.get(fab_idx).ok_or(ErrorCode::NotFound)?;
 
-        // Always include IPK (0) plus all stored key set IDs
-        let mut ids = response.group_key_set_i_ds()?;
-        ids = ids.push(&0u16)?;
-        for entry in fabric.group_key_set_iter() {
-            ids = ids.push(&entry.group_key_set_id)?;
-        }
-        ids.end()?.end()
+            // Always include IPK (0) plus all stored key set IDs
+            let mut ids = response.group_key_set_i_ds()?;
+            ids = ids.push(&0u16)?;
+
+            for entry in fabric.group_key_set_iter() {
+                ids = ids.push(&entry.group_key_set_id)?;
+            }
+
+            ids.end()?.end()
+        })
     }
 }
