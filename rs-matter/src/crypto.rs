@@ -17,8 +17,6 @@
 
 //! Cryptographic abstractions and backend.
 
-use embassy_sync::blocking_mutex::raw::RawMutex;
-
 use crate::error::Error;
 
 pub use rand_core::{CryptoRng, CryptoRngCore, RngCore};
