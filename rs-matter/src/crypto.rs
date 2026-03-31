@@ -19,7 +19,7 @@
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use crate::{credentials::trust_store::KeyId, error::Error};
+use crate::error::Error;
 
 pub use rand_core::{CryptoRng, CryptoRngCore, RngCore};
 
@@ -50,6 +50,11 @@ pub trait Crypto {
     ///
     /// As per the Matter spec, the hasher should be SHA-256.
     type Hash<'a>: Digest<HASH_LEN>
+    where
+        Self: 'a;
+
+    /// SHA-1 hasher type returned by `Crypto::hash1`.
+    type Hash1<'a>: Digest<SHA1_HASH_LEN>
     where
         Self: 'a;
 
@@ -171,6 +176,9 @@ pub trait Crypto {
     /// Create a new hasher instance.
     fn hash(&self) -> Result<Self::Hash<'_>, Error>;
 
+    /// Create a new SHA-1 hasher instance.
+    fn hash1(&self) -> Result<Self::Hash1<'_>, Error>;
+
     /// Create a new HMAC hasher instance with the given key.
     fn hmac<const KEY_LEN: usize>(
         &self,
@@ -214,12 +222,6 @@ pub trait Crypto {
 
     /// Get the EC Generator point.
     fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error>;
-
-    /// Compute a key identifier (KeyID) from a public key.
-    ///
-    /// Per RFC 5280 section 4.2.1.2 and the Matter specification,
-    /// the key identifier is the 160-bit SHA-1 hash of the public key.
-    fn compute_key_id(&self, pubkey: &[u8]) -> Result<KeyId, Error>;
 }
 
 impl<T> Crypto for &T
@@ -238,6 +240,11 @@ where
 
     type Hash<'a>
         = T::Hash<'a>
+    where
+        Self: 'a;
+
+    type Hash1<'a>
+        = T::Hash1<'a>
     where
         Self: 'a;
 
@@ -298,6 +305,10 @@ where
         (*self).hash()
     }
 
+    fn hash1(&self) -> Result<Self::Hash1<'_>, Error> {
+        (*self).hash1()
+    }
+
     fn hmac<const KEY_LEN: usize>(
         &self,
         key: CryptoSensitiveRef<'_, KEY_LEN>,
@@ -351,10 +362,6 @@ where
 
     fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
         (*self).ec_generator_point()
-    }
-
-    fn compute_key_id(&self, pubkey: &[u8]) -> Result<KeyId, Error> {
-        (*self).compute_key_id(pubkey)
     }
 }
 

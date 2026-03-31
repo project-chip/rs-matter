@@ -28,6 +28,9 @@ use crate::utils::init::{init, zeroed, Init, IntoFallibleInit};
 /// As per the Matter spec, the hasher should be SHA-256.
 pub const HASH_LEN: usize = 32;
 
+/// Length of the SHA-1 hash returned by `Crypto::hash1` in bytes.
+pub const SHA1_HASH_LEN: usize = 20;
+
 /// Length of the HMAC hash returned by the HMAC hasher (`Crypto::hmac`) in bytes.
 ///
 /// As per the Matter spec, the HMAC hasher should be HMAC-SHA-256.

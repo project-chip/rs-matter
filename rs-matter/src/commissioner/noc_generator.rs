@@ -27,7 +27,8 @@ use crate::cert::builder::{IcacBuilder, IssuerDN, NocBuilder, RcacBuilder};
 use crate::cert::csr::CsrRef;
 use crate::cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN};
 use crate::crypto::{
-    CanonPkcPublicKey, CanonPkcSecretKey, Crypto, PublicKey, RngCore, SecretKey, SigningSecretKey,
+    CanonPkcPublicKey, CanonPkcPublicKeyRef, CanonPkcSecretKey, Crypto, PublicKey, RngCore,
+    SecretKey, SigningSecretKey,
 };
 use crate::error::{Error, ErrorCode};
 
@@ -129,7 +130,7 @@ impl NocGenerator {
             crypto,
             subject,
             validity,
-            root_pubkey.access(),
+            &root_key.pub_key()?,
             &signing_key,
             &serial_bytes,
         )?;
@@ -246,8 +247,8 @@ impl NocGenerator {
             crypto,
             subject,
             validity,
-            icac_pubkey.access(),
-            self.root_pubkey.access(),
+            &icac_key.pub_key()?,
+            &root_signing_key.pub_key()?,
             &root_signing_key,
             serial_bytes,
             issuer,
@@ -336,8 +337,8 @@ impl NocGenerator {
             crypto,
             subject,
             validity,
-            &device_pubkey,
-            issuer_pubkey.access(),
+            &crypto.pub_key(CanonPkcPublicKeyRef::try_new(&device_pubkey)?)?,
+            &crypto.pub_key(issuer_pubkey.reference())?,
             &signing_key,
             serial_bytes,
             issuer,

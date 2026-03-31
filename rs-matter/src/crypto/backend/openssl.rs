@@ -47,9 +47,7 @@ use hmac::{Hmac, Mac};
 
 use rand_core::{CryptoRng, RngCore};
 
-use crate::crypto::{
-    CanonPkcSecretKeyRef, CanonUint320Ref, CryptoSensitive, CryptoSensitiveRef, KeyId,
-};
+use crate::crypto::{CanonPkcSecretKeyRef, CanonUint320Ref, CryptoSensitive, CryptoSensitiveRef};
 use crate::error::{Error, ErrorCode};
 
 macro_rules! openssl_check {
@@ -109,6 +107,11 @@ impl crate::crypto::Crypto for OpenSslCrypto<'_> {
 
     type Hash<'a>
         = Hash<{ crate::crypto::HASH_LEN }>
+    where
+        Self: 'a;
+
+    type Hash1<'a>
+        = Hash1<{ crate::crypto::SHA1_HASH_LEN }>
     where
         Self: 'a;
 
@@ -174,6 +177,10 @@ impl crate::crypto::Crypto for OpenSslCrypto<'_> {
 
     fn hash(&self) -> Result<Self::Hash<'_>, Error> {
         unsafe { Hash::new(MessageDigest::sha256()) }
+    }
+
+    fn hash1(&self) -> Result<Self::Hash1<'_>, Error> {
+        unsafe { Hash1::new(MessageDigest::sha1()) }
     }
 
     fn hmac<const KEY_LEN: usize>(
@@ -288,13 +295,6 @@ impl crate::crypto::Crypto for OpenSslCrypto<'_> {
             point,
         })
     }
-
-    fn compute_key_id(&self, pubkey: &[u8]) -> Result<KeyId, Error> {
-        let digest = openssl_check!(openssl::hash::hash(MessageDigest::sha1(), pubkey))?;
-        let mut key_id: KeyId = [0; 20];
-        key_id.copy_from_slice(digest.as_ref());
-        Ok(key_id)
-    }
 }
 
 /// A cryptographically secure random number generator using OpenSSL
@@ -353,6 +353,43 @@ impl<const HASH_LEN: usize> crate::crypto::Digest<HASH_LEN> for Hash<HASH_LEN> {
     }
 
     fn finish(mut self, hash: &mut CryptoSensitive<HASH_LEN>) -> Result<(), Error> {
+        let digest = openssl_check!(self.0.finish())?;
+        hash.access_mut().copy_from_slice(digest.as_ref());
+
+        Ok(())
+    }
+}
+
+/// A hash implementation
+#[derive(Clone)]
+pub struct Hash1<const SHA1_HASH_LEN: usize>(Hasher);
+
+impl<const SHA1_HASH_LEN: usize> Hash1<SHA1_HASH_LEN> {
+    /// Create a new hash instance
+    ///
+    /// # Arguments
+    /// - `md`: The message digest algorithm to use
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that the
+    /// `md` parameter corresponds to the `HASH_LEN` generic parameter.
+    unsafe fn new(md: MessageDigest) -> Result<Self, Error> {
+        Ok(Self(openssl_check!(Hasher::new(md))?))
+    }
+}
+
+impl<const SHA1_HASH_LEN: usize> crate::crypto::Digest<SHA1_HASH_LEN> for Hash1<SHA1_HASH_LEN> {
+    fn update(&mut self, data: &[u8]) -> Result<(), Error> {
+        openssl_check!(self.0.update(data))
+    }
+
+    fn finish_current(&mut self, hash: &mut CryptoSensitive<SHA1_HASH_LEN>) -> Result<(), Error> {
+        let copy = self.clone();
+
+        copy.finish(hash)
+    }
+
+    fn finish(mut self, hash: &mut CryptoSensitive<SHA1_HASH_LEN>) -> Result<(), Error> {
         let digest = openssl_check!(self.0.finish())?;
         hash.access_mut().copy_from_slice(digest.as_ref());
 

@@ -72,7 +72,6 @@ use x509_cert::name::RdnSequence;
 use x509_cert::request::CertReq;
 use x509_cert::spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned};
 
-use crate::credentials::trust_store::KeyId;
 use crate::crypto::{
     CanonEcPointRef, CanonEcScalarRef, CanonPkcPublicKeyRef, CanonPkcSecretKeyRef, CanonUint320Ref,
     Crypto, CryptoSensitive, CryptoSensitiveRef, SharedRand, EC_CANON_SCALAR_LEN,
@@ -122,6 +121,11 @@ where
 
     type Hash<'a>
         = Digest<{ crate::crypto::HASH_LEN }, sha2::Sha256>
+    where
+        Self: 'a;
+
+    type Hash1<'a>
+        = Digest<{ crate::crypto::SHA1_HASH_LEN }, sha1::Sha1>
     where
         Self: 'a;
 
@@ -209,6 +213,10 @@ where
         Ok(unsafe { Digest::new(sha2::Sha256::new()) })
     }
 
+    fn hash1(&self) -> Result<Self::Hash1<'_>, Error> {
+        Ok(unsafe { Digest::new(sha1::Sha1::new()) })
+    }
+
     fn hmac<const KEY_LEN: usize>(
         &self,
         key: CryptoSensitiveRef<'_, KEY_LEN>,
@@ -284,10 +292,6 @@ where
 
     fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
         Ok(unsafe { ECPoint::generator() })
-    }
-
-    fn compute_key_id(&self, pubkey: &[u8]) -> Result<KeyId, Error> {
-        Ok(sha1::Sha1::digest(pubkey).into())
     }
 }
 

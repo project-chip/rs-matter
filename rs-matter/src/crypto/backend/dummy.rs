@@ -26,7 +26,6 @@
 
 use rand_core::{CryptoRng, RngCore};
 
-use crate::credentials::trust_store::KeyId;
 use crate::crypto::{Crypto, CryptoSensitive, CryptoSensitiveRef};
 use crate::error::Error;
 
@@ -47,6 +46,11 @@ impl Crypto for DummyCrypto {
         Self: 'a;
 
     type Hash<'a>
+        = DummyCrypto
+    where
+        Self: 'a;
+
+    type Hash1<'a>
         = DummyCrypto
     where
         Self: 'a;
@@ -105,6 +109,10 @@ impl Crypto for DummyCrypto {
     }
 
     fn hash(&self) -> Result<Self::Hash<'_>, Error> {
+        unimplemented!()
+    }
+
+    fn hash1(&self) -> Result<Self::Hash<'_>, Error> {
         unimplemented!()
     }
 
@@ -175,10 +183,6 @@ impl Crypto for DummyCrypto {
     }
 
     fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
-        unimplemented!()
-    }
-
-    fn compute_key_id(&self, _pubkey: &[u8]) -> Result<KeyId, Error> {
         unimplemented!()
     }
 }
