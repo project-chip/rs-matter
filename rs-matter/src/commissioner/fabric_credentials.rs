@@ -267,7 +267,7 @@ impl FabricCredentials {
 mod tests {
     use super::*;
     use crate::cert::CertRef;
-    use crate::crypto::test_only_crypto;
+    use crate::crypto::{test_only_crypto, AEAD_KEY_ZEROED};
     use crate::tlv::TLVElement;
 
     /// Valid CSR from C++ test (TestChipCryptoPAL.cpp)
@@ -516,7 +516,7 @@ mod tests {
         let ipk = creds.ipk();
 
         // IPK should not be all zeros
-        assert_ne!(ipk.access(), &crypto::AEAD_KEY_ZEROED);
+        assert_ne!(ipk.access(), AEAD_KEY_ZEROED.access());
         assert_eq!(ipk.access().len(), AEAD_CANON_KEY_LEN);
     }
 
