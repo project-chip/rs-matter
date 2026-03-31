@@ -22,10 +22,9 @@
 //! and node ID assignment.
 
 use crate::cert::MAX_CERT_TLV_LEN;
-use crate::crypto::Crypto;
+use crate::crypto::{CanonAeadKey, CanonAeadKeyRef, Crypto, RngCore, AEAD_CANON_KEY_LEN};
 use crate::error::Error;
 
-use super::ipk::{IpkEpochKey, IPK_LEN};
 use super::noc_generator::NocGenerator;
 
 /// Credentials to provision to a device via AddNOC.
@@ -41,7 +40,7 @@ pub struct DeviceCredentials {
     /// Root CA certificate (TLV encoded)
     pub root_cert: heapless::Vec<u8, MAX_CERT_TLV_LEN>,
     /// IPK value
-    pub ipk: [u8; IPK_LEN],
+    pub ipk: CanonAeadKey,
     /// Assigned node ID
     pub node_id: u64,
 }
@@ -80,7 +79,7 @@ pub struct FabricCredentials {
     /// NOC generator for this fabric
     noc_generator: NocGenerator,
     /// IPK for this fabric
-    ipk: IpkEpochKey,
+    ipk: CanonAeadKey,
     /// Next node ID to assign
     next_node_id: u64,
 }
@@ -93,7 +92,10 @@ impl FabricCredentials {
     /// * `fabric_id` - The fabric identifier
     pub fn new<C: Crypto>(crypto: &C, fabric_id: u64) -> Result<Self, Error> {
         let noc_generator = NocGenerator::new(crypto, fabric_id)?;
-        let ipk = IpkEpochKey::generate(crypto)?;
+        let mut ipk = CanonAeadKey::new();
+        let mut ipk_bytes = [0u8; AEAD_CANON_KEY_LEN];
+        crypto.rand()?.fill_bytes(&mut ipk_bytes);
+        ipk.load_from_array(&ipk_bytes);
 
         Ok(Self {
             noc_generator,
@@ -175,7 +177,7 @@ impl FabricCredentials {
             noc: noc_creds.noc,
             icac,
             root_cert,
-            ipk: *self.ipk.as_bytes(),
+            ipk: CanonAeadKey::new_from_ref(self.ipk.reference()),
             node_id,
         })
     }
@@ -216,7 +218,7 @@ impl FabricCredentials {
             noc: noc_creds.noc,
             icac,
             root_cert,
-            ipk: *self.ipk.as_bytes(),
+            ipk: CanonAeadKey::new_from_ref(self.ipk.reference()),
             node_id,
         })
     }
@@ -232,8 +234,8 @@ impl FabricCredentials {
     }
 
     /// Get the IPK value for AddNOC.
-    pub fn ipk(&self) -> &[u8; IPK_LEN] {
-        self.ipk.as_bytes()
+    pub fn ipk(&self) -> CanonAeadKeyRef<'_> {
+        self.ipk.reference()
     }
 
     /// Get the fabric ID.
@@ -256,8 +258,8 @@ impl FabricCredentials {
     /// Set the IPK to a specific value.
     ///
     /// Use this if you need to use a pre-existing IPK.
-    pub fn set_ipk(&mut self, ipk: [u8; IPK_LEN]) {
-        self.ipk = IpkEpochKey::from_bytes(ipk);
+    pub fn set_ipk(&mut self, ipk: CanonAeadKeyRef<'_>) {
+        self.ipk.load(ipk);
     }
 }
 
@@ -321,7 +323,7 @@ mod tests {
         // Should have root cert
         assert!(creds.root_cert().len() > 0);
         // Should have IPK
-        assert_eq!(creds.ipk().len(), IPK_LEN);
+        assert_eq!(creds.ipk().access().len(), AEAD_CANON_KEY_LEN);
         // Fabric ID should match
         assert_eq!(creds.fabric_id(), fabric_id);
         // Initial node is 1
@@ -415,7 +417,7 @@ mod tests {
         // Root cert should be present and non-empty
         assert!(dev.root_cert.len() > 0);
         // IPK should be 16 bytes
-        assert_eq!(dev.ipk.len(), IPK_LEN);
+        assert_eq!(dev.ipk.access().len(), AEAD_CANON_KEY_LEN);
         // Node ID should be assigned
         assert_eq!(dev.node_id, 1);
         // ICAC none by default
@@ -514,8 +516,8 @@ mod tests {
         let ipk = creds.ipk();
 
         // IPK should not be all zeros
-        assert_ne!(ipk, &[0u8; IPK_LEN]);
-        assert_eq!(ipk.len(), IPK_LEN);
+        assert_ne!(ipk.access(), &crypto::AEAD_KEY_ZEROED);
+        assert_eq!(ipk.access().len(), AEAD_CANON_KEY_LEN);
     }
 
     #[test]
@@ -524,10 +526,10 @@ mod tests {
         let fabric_id = 0x1u64;
         let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
 
-        let custom_ipk = [0x42u8; IPK_LEN];
-        creds.set_ipk(custom_ipk);
+        let custom_ipk = [0x42u8; AEAD_CANON_KEY_LEN];
+        creds.set_ipk(CanonAeadKeyRef::new(&custom_ipk));
 
-        assert_eq!(creds.ipk(), &custom_ipk);
+        assert_eq!(creds.ipk().access(), &custom_ipk);
     }
 
     #[test]

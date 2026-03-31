@@ -46,6 +46,8 @@ pub struct NocCredentials {
 /// The `NocGenerator` holds the CA credentials for a fabric and can generate
 /// NOCs for devices being commissioned.
 ///
+/// TODO: This generator is not memory optimized.
+///
 /// # Example
 ///
 /// ```ignore
