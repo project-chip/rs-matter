@@ -21,6 +21,12 @@
 //! It extracts the public key needed for NOC generation and can verify the CSR's
 //! self-signature.
 
+use crate::cert::x509::AlgorithmIdentifier;
+use crate::cert::x509::SubjectPublicKeyInfo;
+use crate::cert::x509::OID_ECDSA_WITH_SHA256;
+use crate::cert::x509::OID_EC_PUBLIC_KEY;
+use crate::cert::x509::OID_PRIME256V1;
+use crate::cert::x509::P256_PUBLIC_KEY_LEN;
 use der::asn1::{BitStringRef, UintRef};
 use der::oid::ObjectIdentifier;
 use der::{
@@ -30,21 +36,9 @@ use der::{
 
 use crate::cert::der_utils;
 use crate::crypto::{
-    CanonPkcPublicKey, CanonPkcPublicKeyRef, Crypto, PublicKey, PKC_CANON_PUBLIC_KEY_LEN,
-    PKC_SIGNATURE_LEN,
+    CanonPkcPublicKey, CanonPkcPublicKeyRef, Crypto, PublicKey, PKC_SIGNATURE_LEN,
 };
 use crate::error::{Error, ErrorCode};
-
-/// OID for ECDSA-with-SHA256: 1.2.840.10045.4.3.2
-const OID_ECDSA_SHA256: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2");
-/// OID for id-ecPublicKey: 1.2.840.10045.2.1
-const OID_EC_PUBLIC_KEY: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
-/// OID for prime256v1 (secp256r1): 1.2.840.10045.3.1.7
-const OID_PRIME256V1: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.3.1.7");
-
-/// Matter uses the P-256 uncompressed public key length
-/// (0x04 || X || Y = 65 bytes)
-const P256_PUBLIC_KEY_LEN: usize = PKC_CANON_PUBLIC_KEY_LEN;
 
 /// ECDSA signature length (r || s = 64 bytes)
 const ECDSA_SIGNATURE_LEN: usize = PKC_SIGNATURE_LEN;
@@ -56,12 +50,6 @@ struct CertificationRequest<'a> {
     pub signature: BitStringRef<'a>,
 }
 
-#[derive(Sequence)]
-struct AlgorithmIdentifier<'a> {
-    oid: ObjectIdentifier,
-    parameters: Option<AnyRef<'a>>,
-}
-
 impl<'a> DecodeValue<'a> for CertificationRequest<'a> {
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
         // Decode SEQUENCE
@@ -71,7 +59,7 @@ impl<'a> DecodeValue<'a> for CertificationRequest<'a> {
             let signature_algorithm = AlgorithmIdentifier::decode(reader)?;
 
             // Validate it's ECDSA-SHA256
-            if signature_algorithm.oid != OID_ECDSA_SHA256 {
+            if signature_algorithm.algorithm != OID_ECDSA_WITH_SHA256 {
                 return Err(der::Tag::Sequence.value_error());
             }
 
@@ -109,14 +97,8 @@ struct CertificationRequestInfo<'a> {
     pub attributes: AnyRef<'a>,
 }
 
-#[expect(unused)]
-struct SubjectPublicKeyInfo<'a> {
-    /// Algorithm oid verified id-ecPublicKey with prime256v1 curve oid
-    pub algorithm: AlgorithmIdentifier<'a>,
-    /// SubjectPublicKey verified for size
-    pub subject_public_key: BitStringRef<'a>,
-}
-
+/// Algorithm oid verified id-ecPublicKey with prime256v1 curve oid
+/// SubjectPublicKey verified for size
 impl<'a> DecodeValue<'a> for SubjectPublicKeyInfo<'a> {
     fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
         // Decode SEQUENCE
@@ -125,7 +107,7 @@ impl<'a> DecodeValue<'a> for SubjectPublicKeyInfo<'a> {
             let algorithm = AlgorithmIdentifier::decode(reader)?;
 
             // Validate it's id-ecPublicKey
-            if algorithm.oid != OID_EC_PUBLIC_KEY {
+            if algorithm.algorithm != OID_EC_PUBLIC_KEY {
                 return Err(der::Tag::Sequence.value_error());
             }
 
@@ -171,10 +153,6 @@ impl<'a> DecodeValue<'a> for SubjectPublicKeyInfo<'a> {
             })
         })
     }
-}
-
-impl<'a> der::FixedTag for SubjectPublicKeyInfo<'a> {
-    const TAG: Tag = Tag::Sequence;
 }
 
 // TODO Remove when upgrading to der 0.8+ which separates Encode/Decode traits.

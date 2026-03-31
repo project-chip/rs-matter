@@ -24,7 +24,7 @@
 //! - Node Operational Certificate (NOC)
 
 use crate::cert::builder::{IcacBuilder, IssuerDN, NocBuilder, RcacBuilder};
-use crate::cert::csr::CsrRef;
+use crate::cert::x509::csr::CsrRef;
 use crate::cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN};
 use crate::crypto::{
     CanonPkcPublicKey, CanonPkcPublicKeyRef, CanonPkcSecretKey, Crypto, PublicKey, RngCore,

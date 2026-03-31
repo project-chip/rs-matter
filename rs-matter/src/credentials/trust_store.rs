@@ -26,7 +26,7 @@
 //! - [`FileAttestationTrustStore`]: heap-backed, owns DER bytes. Loads PAA certificates
 //!   from a directory of `.der` files at runtime (`std` only).
 
-use crate::cert::x509::PaaCert;
+use crate::cert::x509::cert::PaaCert;
 use crate::crypto::{Crypto, CryptoSensitive, Digest, SHA1_HASH_LEN};
 use crate::error::{Error, ErrorCode};
 
