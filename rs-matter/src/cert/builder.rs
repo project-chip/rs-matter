@@ -72,7 +72,7 @@ pub struct Validity {
 
 impl<'a> CertBuilderCore<'a> {
     /// Create a new certificate builder core with the given buffer.
-    fn new(buf: &'a mut [u8]) -> Self {
+    const fn new(buf: &'a mut [u8]) -> Self {
         Self { buf }
     }
 
@@ -369,7 +369,7 @@ pub struct NocBuilder<'a> {
 
 impl<'a> NocBuilder<'a> {
     /// Create a new NOC builder with the given buffer.
-    pub fn new(buf: &'a mut [u8]) -> Self {
+    pub const fn new(buf: &'a mut [u8]) -> Self {
         Self {
             core: CertBuilderCore::new(buf),
         }
@@ -448,7 +448,7 @@ pub struct IcacBuilder<'a> {
 
 impl<'a> IcacBuilder<'a> {
     /// Create a new ICAC builder with the given buffer.
-    pub fn new(buf: &'a mut [u8]) -> Self {
+    pub const fn new(buf: &'a mut [u8]) -> Self {
         Self {
             core: CertBuilderCore::new(buf),
         }
@@ -517,7 +517,7 @@ pub struct RcacBuilder<'a> {
 
 impl<'a> RcacBuilder<'a> {
     /// Create a new RCAC builder with the given buffer.
-    pub fn new(buf: &'a mut [u8]) -> Self {
+    pub const fn new(buf: &'a mut [u8]) -> Self {
         Self {
             core: CertBuilderCore::new(buf),
         }
