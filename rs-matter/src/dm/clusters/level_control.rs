@@ -29,7 +29,7 @@
 //! - Designed for extensibility and integration with other clusters (e.g., OnOff).
 
 use core::cell::Cell;
-use core::future::{pending, Future};
+use core::future::{pending, ready, Future};
 use core::ops::Mul;
 use core::pin::pin;
 
@@ -45,6 +45,7 @@ use crate::dm::{
 use crate::error::{Error, ErrorCode};
 use crate::tlv::Nullable;
 use crate::utils::cell::RefCell;
+use crate::utils::future::delayed_ready;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Signal;
 
@@ -1275,276 +1276,338 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         self.dataver.changed();
     }
 
-    async fn current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        match self.hooks.current_level() {
+    fn current_level(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<Nullable<u8>, Error>> {
+        delayed_ready(|| match self.hooks.current_level() {
             Some(level) => Ok(Nullable::some(level)),
             None => Ok(Nullable::none()),
-        }
+        })
     }
 
-    async fn on_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        Ok(self.with_state(|state| state.on_level.clone()))
+    fn on_level(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<Nullable<u8>, Error>> {
+        delayed_ready(|| Ok(self.with_state(|state| state.on_level.clone())))
     }
 
-    async fn set_on_level(&self, ctx: impl WriteContext, value: Nullable<u8>) -> Result<(), Error> {
-        if let Some(level) = value.clone().into_option() {
-            if level > H::MAX_LEVEL || level < H::MIN_LEVEL {
-                return Err(ErrorCode::ConstraintError.into());
+    fn set_on_level(
+        &self,
+        ctx: impl WriteContext,
+        value: Nullable<u8>,
+    ) -> impl Future<Output = Result<(), Error>> {
+        delayed_ready(|| {
+            if let Some(level) = value.clone().into_option() {
+                if level > H::MAX_LEVEL || level < H::MIN_LEVEL {
+                    return Err(ErrorCode::ConstraintError.into());
+                }
             }
-        }
 
-        self.with_state_notify(ctx, |state| {
-            state.on_level = value;
-        });
+            self.with_state_notify(ctx, |state| {
+                state.on_level = value;
+            });
 
-        Ok(())
+            Ok(())
+        })
     }
 
-    async fn options(&self, _ctx: impl ReadContext) -> Result<OptionsBitmap, Error> {
-        Ok(self.with_state(|state| state.options))
+    fn options(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<OptionsBitmap, Error>> {
+        delayed_ready(|| Ok(self.with_state(|state| state.options)))
     }
 
-    async fn set_options(&self, ctx: impl WriteContext, value: OptionsBitmap) -> Result<(), Error> {
-        self.with_state_notify(ctx, |state| {
-            state.options = value;
-        });
+    fn set_options(
+        &self,
+        ctx: impl WriteContext,
+        value: OptionsBitmap,
+    ) -> impl Future<Output = Result<(), Error>> {
+        delayed_ready(move || {
+            self.with_state_notify(ctx, |state| {
+                state.options = value;
+            });
 
-        Ok(())
+            Ok(())
+        })
     }
 
-    async fn remaining_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(self.with_state(|state| state.remaining_time))
+    fn remaining_time(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u16, Error>> {
+        delayed_ready(|| Ok(self.with_state(|state| state.remaining_time)))
     }
 
-    async fn max_level(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        Ok(H::MAX_LEVEL)
+    fn max_level(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u8, Error>> {
+        delayed_ready(|| Ok(H::MAX_LEVEL))
     }
 
-    async fn min_level(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        Ok(H::MIN_LEVEL)
+    fn min_level(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u8, Error>> {
+        delayed_ready(|| Ok(H::MIN_LEVEL))
     }
 
-    async fn on_off_transition_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(self.with_state(|state| state.on_off_transition_time))
+    fn on_off_transition_time(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<u16, Error>> {
+        delayed_ready(|| Ok(self.with_state(|state| state.on_off_transition_time)))
     }
 
-    async fn set_on_off_transition_time(
+    fn set_on_off_transition_time(
         &self,
         ctx: impl WriteContext,
         value: u16,
-    ) -> Result<(), Error> {
-        self.with_state_notify(ctx, |state| {
-            state.on_off_transition_time = value;
-        });
+    ) -> impl Future<Output = Result<(), Error>> {
+        delayed_ready(move || {
+            self.with_state_notify(ctx, |state| {
+                state.on_off_transition_time = value;
+            });
 
-        Ok(())
+            Ok(())
+        })
     }
 
-    async fn on_transition_time(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
-        Ok(self.with_state(|state| state.on_transition_time.clone()))
+    fn on_transition_time(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<Nullable<u16>, Error>> {
+        delayed_ready(|| Ok(self.with_state(|state| state.on_transition_time.clone())))
     }
 
-    async fn set_on_transition_time(
+    fn set_on_transition_time(
         &self,
         ctx: impl WriteContext,
         value: Nullable<u16>,
-    ) -> Result<(), Error> {
-        self.with_state_notify(ctx, |state| {
-            state.on_transition_time = value;
-        });
+    ) -> impl Future<Output = Result<(), Error>> {
+        delayed_ready(|| {
+            self.with_state_notify(ctx, |state| {
+                state.on_transition_time = value;
+            });
 
-        Ok(())
+            Ok(())
+        })
     }
 
-    async fn off_transition_time(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
-        Ok(self.with_state(|state| state.off_transition_time.clone()))
+    fn off_transition_time(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<Nullable<u16>, Error>> {
+        delayed_ready(|| Ok(self.with_state(|state| state.off_transition_time.clone())))
     }
 
-    async fn set_off_transition_time(
+    fn set_off_transition_time(
         &self,
         ctx: impl WriteContext,
         value: Nullable<u16>,
-    ) -> Result<(), Error> {
-        self.with_state_notify(ctx, |state| {
-            state.off_transition_time = value;
-        });
+    ) -> impl Future<Output = Result<(), Error>> {
+        delayed_ready(|| {
+            self.with_state_notify(ctx, |state| {
+                state.off_transition_time = value;
+            });
 
-        Ok(())
+            Ok(())
+        })
     }
 
-    async fn default_move_rate(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        Ok(self.with_state(|state| state.default_move_rate.clone()))
+    fn default_move_rate(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<Nullable<u8>, Error>> {
+        delayed_ready(|| Ok(self.with_state(|state| state.default_move_rate.clone())))
     }
 
-    async fn set_default_move_rate(
+    fn set_default_move_rate(
         &self,
         ctx: impl WriteContext,
         value: Nullable<u8>,
-    ) -> Result<(), Error> {
-        // The spec is not explicit about what should be done if this happens.
-        // For now we error out if DefaultMoveRate is equal to 0 as this is invalid
-        // until spec defines a behaviour.
-        if Some(0) == value.clone().into_option() {
-            return Err(ErrorCode::InvalidData.into());
-        }
+    ) -> impl Future<Output = Result<(), Error>> {
+        delayed_ready(move || {
+            // The spec is not explicit about what should be done if this happens.
+            // For now we error out if DefaultMoveRate is equal to 0 as this is invalid
+            // until spec defines a behaviour.
+            if Some(0) == value.clone().into_option() {
+                return Err(ErrorCode::InvalidData.into());
+            }
 
-        self.with_state_notify(ctx, |state| {
-            state.default_move_rate = value;
-        });
+            self.with_state_notify(ctx, |state| {
+                state.default_move_rate = value;
+            });
 
-        Ok(())
+            Ok(())
+        })
     }
 
-    async fn start_up_current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        match self.hooks.start_up_current_level()? {
+    fn start_up_current_level(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<Nullable<u8>, Error>> {
+        delayed_ready(|| match self.hooks.start_up_current_level()? {
             Some(val) => Ok(Nullable::some(val)),
             None => Ok(Nullable::none()),
-        }
+        })
     }
 
-    async fn set_start_up_current_level(
+    fn set_start_up_current_level(
         &self,
         ctx: impl WriteContext,
         value: Nullable<u8>,
-    ) -> Result<(), Error> {
-        // According to the current spec, this attribute does not have any constraints at this stage.
-        // However, it's usage is bounded by min/max hence it makes sense to restrict the settable values to this range.
-        if let Some(level) = value.clone().into_option() {
-            if level > H::MAX_LEVEL || level < H::MIN_LEVEL {
-                return Err(ErrorCode::ConstraintError.into());
+    ) -> impl Future<Output = Result<(), Error>> {
+        delayed_ready(move || {
+            // According to the current spec, this attribute does not have any constraints at this stage.
+            // However, it's usage is bounded by min/max hence it makes sense to restrict the settable values to this range.
+            if let Some(level) = value.clone().into_option() {
+                if level > H::MAX_LEVEL || level < H::MIN_LEVEL {
+                    return Err(ErrorCode::ConstraintError.into());
+                }
             }
-        }
 
-        self.hooks.set_start_up_current_level(value.into_option())?;
-        self.dataver_changed();
-        ctx.notify_changed();
-        Ok(())
+            self.hooks.set_start_up_current_level(value.into_option())?;
+            self.dataver_changed();
+            ctx.notify_changed();
+            Ok(())
+        })
     }
 
-    async fn handle_move_to_level(
+    fn handle_move_to_level(
         &self,
         _ctx: impl InvokeContext,
         request: MoveToLevelRequest<'_>,
-    ) -> Result<(), Error> {
-        self.move_to_level(
-            false,
-            request.level()?,
-            request.transition_time()?.into_option(),
-            request.options_mask()?,
-            request.options_override()?,
-        )
+    ) -> impl Future<Output = Result<(), Error>> {
+        delayed_ready(move || {
+            self.move_to_level(
+                false,
+                request.level()?,
+                request.transition_time()?.into_option(),
+                request.options_mask()?,
+                request.options_override()?,
+            )
+        })
     }
 
-    async fn handle_move(
+    fn handle_move(
         &self,
         _ctx: impl InvokeContext,
         request: MoveRequest<'_>,
-    ) -> Result<(), Error> {
-        self.with_state(|state| {
-            self.move_command(
-                state,
-                false,
-                request.move_mode()?,
-                request.rate()?.into_option(),
-                request.options_mask()?,
-                request.options_override()?,
-            )
+    ) -> impl Future<Output = Result<(), Error>> {
+        delayed_ready(move || {
+            self.with_state(|state| {
+                self.move_command(
+                    state,
+                    false,
+                    request.move_mode()?,
+                    request.rate()?.into_option(),
+                    request.options_mask()?,
+                    request.options_override()?,
+                )
+            })
         })
     }
 
-    async fn handle_step(
+    fn handle_step(
         &self,
         _ctx: impl InvokeContext,
         request: StepRequest<'_>,
-    ) -> Result<(), Error> {
-        self.step(
-            false,
-            request.step_mode()?,
-            request.step_size()?,
-            request.transition_time()?.into_option(),
-            request.options_mask()?,
-            request.options_override()?,
-        )
-    }
-
-    async fn handle_stop(
-        &self,
-        ctx: impl InvokeContext,
-        request: StopRequest<'_>,
-    ) -> Result<(), Error> {
-        self.stop(
-            &ctx,
-            false,
-            request.options_mask()?,
-            request.options_override()?,
-        )
-    }
-
-    async fn handle_move_to_level_with_on_off(
-        &self,
-        _ctx: impl InvokeContext,
-        request: MoveToLevelWithOnOffRequest<'_>,
-    ) -> Result<(), Error> {
-        self.move_to_level(
-            true,
-            request.level()?,
-            request.transition_time()?.into_option(),
-            request.options_mask()?,
-            request.options_override()?,
-        )
-    }
-
-    async fn handle_move_with_on_off(
-        &self,
-        _ctx: impl InvokeContext,
-        request: MoveWithOnOffRequest<'_>,
-    ) -> Result<(), Error> {
-        self.with_state(|state| {
-            self.move_command(
-                state,
-                true,
-                request.move_mode()?,
-                request.rate()?.into_option(),
+    ) -> impl Future<Output = Result<(), Error>> {
+        delayed_ready(move || {
+            self.step(
+                false,
+                request.step_mode()?,
+                request.step_size()?,
+                request.transition_time()?.into_option(),
                 request.options_mask()?,
                 request.options_override()?,
             )
         })
     }
 
-    async fn handle_step_with_on_off(
+    fn handle_stop(
+        &self,
+        ctx: impl InvokeContext,
+        request: StopRequest<'_>,
+    ) -> impl Future<Output = Result<(), Error>> {
+        delayed_ready(move || {
+            self.stop(
+                &ctx,
+                false,
+                request.options_mask()?,
+                request.options_override()?,
+            )
+        })
+    }
+
+    fn handle_move_to_level_with_on_off(
+        &self,
+        _ctx: impl InvokeContext,
+        request: MoveToLevelWithOnOffRequest<'_>,
+    ) -> impl Future<Output = Result<(), Error>> {
+        delayed_ready(move || {
+            self.move_to_level(
+                true,
+                request.level()?,
+                request.transition_time()?.into_option(),
+                request.options_mask()?,
+                request.options_override()?,
+            )
+        })
+    }
+
+    fn handle_move_with_on_off(
+        &self,
+        _ctx: impl InvokeContext,
+        request: MoveWithOnOffRequest<'_>,
+    ) -> impl Future<Output = Result<(), Error>> {
+        delayed_ready(move || {
+            self.with_state(|state| {
+                self.move_command(
+                    state,
+                    true,
+                    request.move_mode()?,
+                    request.rate()?.into_option(),
+                    request.options_mask()?,
+                    request.options_override()?,
+                )
+            })
+        })
+    }
+
+    fn handle_step_with_on_off(
         &self,
         _ctx: impl InvokeContext,
         request: StepWithOnOffRequest<'_>,
-    ) -> Result<(), Error> {
-        self.step(
-            true,
-            request.step_mode()?,
-            request.step_size()?,
-            request.transition_time()?.into_option(),
-            request.options_mask()?,
-            request.options_override()?,
-        )
+    ) -> impl Future<Output = Result<(), Error>> {
+        delayed_ready(move || {
+            self.step(
+                true,
+                request.step_mode()?,
+                request.step_size()?,
+                request.transition_time()?.into_option(),
+                request.options_mask()?,
+                request.options_override()?,
+            )
+        })
     }
 
-    async fn handle_stop_with_on_off(
+    fn handle_stop_with_on_off(
         &self,
         ctx: impl InvokeContext,
         request: StopWithOnOffRequest<'_>,
-    ) -> Result<(), Error> {
-        self.stop(
-            &ctx,
-            true,
-            request.options_mask()?,
-            request.options_override()?,
-        )
+    ) -> impl Future<Output = Result<(), Error>> {
+        delayed_ready(move || {
+            self.stop(
+                &ctx,
+                true,
+                request.options_mask()?,
+                request.options_override()?,
+            )
+        })
     }
 
-    async fn handle_move_to_closest_frequency(
+    fn handle_move_to_closest_frequency(
         &self,
         _ctx: impl InvokeContext,
         _request: MoveToClosestFrequencyRequest<'_>,
-    ) -> Result<(), Error> {
-        Err(ErrorCode::InvalidCommand.into())
+    ) -> impl Future<Output = Result<(), Error>> {
+        ready(Err(ErrorCode::InvalidCommand.into()))
     }
 }
 
@@ -1592,8 +1655,8 @@ pub trait LevelControlHooks {
     ///
     /// # Panics
     /// The SDK will panic if this method returns.
-    async fn run<F: Fn(OutOfBandMessage)>(&self, _notify: F) {
-        pending::<()>().await
+    fn run<F: Fn(OutOfBandMessage)>(&self, _notify: F) -> impl Future<Output = ()> {
+        pending::<()>()
     }
 }
 

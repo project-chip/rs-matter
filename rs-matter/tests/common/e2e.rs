@@ -29,6 +29,7 @@ use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{AsyncHandler, AsyncMetadata, Privilege};
 use rs_matter::dm::{DataModel, IMBuffer};
 use rs_matter::error::Error;
+use rs_matter::persist::DummyKvBlobStoreAccess;
 use rs_matter::respond::Responder;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{
@@ -138,7 +139,9 @@ impl<C: Crypto> E2eRunner<C> {
         self.matter.with_state(|state| {
             state
                 .fabrics
-                .acl_add(NonZeroU8::new(1).unwrap(), default_acl)
+                .fabric_mut(NonZeroU8::new(1).unwrap())
+                .unwrap()
+                .acl_add(default_acl)
                 .unwrap();
         });
     }
@@ -185,6 +188,7 @@ impl<C: Crypto> E2eRunner<C> {
             &self.subscriptions,
             Some(&self.events),
             handler,
+            DummyKvBlobStoreAccess,
         );
 
         let responder = Responder::new_default(&dm);

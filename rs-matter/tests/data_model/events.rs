@@ -24,6 +24,7 @@ use rs_matter::im::GenericPath;
 use rs_matter::im::IMStatusCode;
 use rs_matter::im::StatusResp;
 use rs_matter::im::SubscribeResp;
+use rs_matter::persist::DummyKvBlobStoreAccess;
 use rs_matter::tlv::{TLVTag, TLVWrite};
 use rs_matter::utils::storage::WriteBuf;
 
@@ -332,24 +333,27 @@ fn test_long_read_events() {
         ],
     );
 }
+
 fn push_events<C>(im: &crate::common::e2e::E2eRunner<C>, events: &[TestEventData])
 where
     C: rs_matter::crypto::Crypto,
 {
     for ev in events {
-        block_on(
-            im.events
-                .push(ev.path.clone(), ev.priority, |tw| -> Result<(), Error> {
-                    if let Some(data) = ev.data {
-                        let mut b = [0u8; 2048];
-                        let mut wb = WriteBuf::new(&mut b[0..]);
-                        data.test_to_tlv(&TLVTag::Context(EventDataTag::Data as _), &mut wb)?;
-                        let end = wb.get_tail();
-                        tw.write_raw_data(b[..end].iter().copied())?;
-                    }
-                    Ok(())
-                }),
-        )
+        block_on(im.events.push(
+            ev.path.clone(),
+            ev.priority,
+            DummyKvBlobStoreAccess,
+            |tw| -> Result<(), Error> {
+                if let Some(data) = ev.data {
+                    let mut b = [0u8; 2048];
+                    let mut wb = WriteBuf::new(&mut b[0..]);
+                    data.test_to_tlv(&TLVTag::Context(EventDataTag::Data as _), &mut wb)?;
+                    let end = wb.get_tail();
+                    tw.write_raw_data(b[..end].iter().copied())?;
+                }
+                Ok(())
+            },
+        ))
         .unwrap();
     }
 }

@@ -23,10 +23,9 @@ use crate::crypto::{
     CanonAeadKeyRef, CanonPkcSecretKey, CanonPkcSecretKeyRef, Crypto, SecretKey,
     PKC_SECRET_KEY_ZEROED,
 };
-use crate::dm::BasicContext;
 use crate::error::{Error, ErrorCode};
-use crate::fabric::Fabrics;
-use crate::im::IMStatusCode;
+use crate::fabric::{Fabric, Fabrics};
+use crate::im::{AttrId, ClusterId, EndptId, IMStatusCode};
 use crate::sc::pase::Pase;
 use crate::tlv::TLVElement;
 use crate::transport::session::SessionMode;
@@ -115,7 +114,8 @@ impl FailSafe {
         breadcrumb: u64,
         session_mode: &SessionMode,
         pase: &mut Pase,
-        ctx: impl BasicContext,
+        notify_mdns: impl FnMut(),
+        notify_change: impl FnMut(EndptId, ClusterId, AttrId),
     ) -> Result<(), Error> {
         self.update_state_timeout();
 
@@ -126,7 +126,8 @@ impl FailSafe {
             }
 
             // Cannot arm via CASE while there's an active window
-            if pase.comm_window(&ctx)?.is_some() && matches!(session_mode, SessionMode::Case { .. })
+            if pase.comm_window(notify_mdns, notify_change)?.is_some()
+                && matches!(session_mode, SessionMode::Case { .. })
             {
                 return Err(ErrorCode::Busy)?;
             }
@@ -259,16 +260,16 @@ impl FailSafe {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn update_noc<C: Crypto>(
+    pub fn update_noc<'a, C: Crypto>(
         &mut self,
         crypto: C,
-        fabrics: &mut Fabrics,
+        fabrics: &'a mut Fabrics,
         session_mode: &SessionMode,
         icac: Option<&[u8]>,
         noc: &[u8],
         buf: &mut [u8],
         mdns_notif: &mut dyn FnMut(),
-    ) -> Result<(), Error> {
+    ) -> Result<&'a mut Fabric, Error> {
         self.update_state_timeout();
 
         let fab_idx = Self::get_case_fab_idx(session_mode)?;
@@ -289,7 +290,7 @@ impl FailSafe {
             buf,
         )?;
 
-        fabrics.update(
+        let fabric = fabrics.update(
             &crypto,
             fab_idx,
             self.secret_key.reference(),
@@ -301,14 +302,14 @@ impl FailSafe {
 
         self.add_flags(NocFlags::UPDATE_NOC_RECVD);
 
-        Ok(())
+        Ok(fabric)
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn add_noc<C: Crypto>(
+    pub fn add_noc<'a, C: Crypto>(
         &mut self,
         crypto: C,
-        fabrics: &mut Fabrics,
+        fabrics: &'a mut Fabrics,
         session_mode: &SessionMode,
         vendor_id: u16,
         icac: Option<&[u8]>,
@@ -317,7 +318,7 @@ impl FailSafe {
         case_admin_subject: u64,
         buf: &mut [u8],
         mdns_notif: &mut dyn FnMut(),
-    ) -> Result<NonZeroU8, Error> {
+    ) -> Result<&'a mut Fabric, Error> {
         self.update_state_timeout();
 
         self.check_state(
@@ -339,7 +340,7 @@ impl FailSafe {
         // TODO: Copy functionality from C++ FabricTable::FindExistingFabricByNocChaining
         // i.e. need to check to see if a fabric with these creds are already present
 
-        let fab_idx = fabrics
+        let fabric = fabrics
             .add(
                 &crypto,
                 self.secret_key.reference(),
@@ -357,10 +358,12 @@ impl FailSafe {
                 } else {
                     e
                 }
-            })?
-            .fab_idx();
+            })?;
 
-        info!("Added operational fabric with local index {}", fab_idx);
+        info!(
+            "Added operational fabric with local index {}",
+            fabric.fab_idx()
+        );
 
         let State::Armed(ctx) = &mut self.state else {
             // Impossible to be in any other state because otherwise
@@ -368,10 +371,10 @@ impl FailSafe {
             unreachable!();
         };
 
-        ctx.fab_idx = fab_idx.get();
+        ctx.fab_idx = fabric.fab_idx().get();
         self.add_flags(NocFlags::ADD_NOC_RECVD);
 
-        Ok(fab_idx)
+        Ok(fabric)
     }
 
     pub fn breadcrumb(&mut self) -> u64 {

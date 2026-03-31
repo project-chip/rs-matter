@@ -14,19 +14,20 @@
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
-use core::cell::Cell;
+
 use core::fmt::Debug;
 
 use crate::error::{Error, ErrorCode};
 use crate::im::{EventData, EventDataTag, EventDataTimestamp, EventPath, EventRespTag};
+use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, EVENT_EPOCH_KEY};
 use crate::tlv::{
     FromTLV, TLVElement, TLVSequence, TLVSequenceIter, TLVTag, TLVWrite, TagType, ToTLV,
 };
+use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking;
-use crate::utils::sync::Notification;
 use crate::utils::sync::{IfMutex, IfMutexGuard};
 
 // TODO we currently only have this singular config to set the size, but the events are stored in three "tiered" buffers, and
@@ -64,7 +65,44 @@ pub(crate) struct PersistedState {
     /// emitted without a new flash write. When we approach this boundary
     /// (within `EVENT_ID_COUNTER_PERSIST_AHEAD`), we bump it by another epoch.
     pub(crate) event_epoch_end: u64,
-    pub(crate) changed: bool,
+}
+
+impl PersistedState {
+    const fn new() -> Self {
+        Self {
+            next_event_no: 0,
+            event_epoch_end: 0,
+        }
+    }
+
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            next_event_no: 0,
+            event_epoch_end: 0,
+        })
+    }
+
+    fn reset(&mut self) {
+        self.next_event_no = 0;
+        self.event_epoch_end = 0;
+    }
+
+    /// Restore events from previously persisted state.
+    fn load(&mut self, data: &[u8]) -> Result<(), Error> {
+        let epoch_end = TLVElement::new(data).u64()?;
+
+        self.next_event_no = epoch_end;
+        self.event_epoch_end = epoch_end.saturating_add(EVENT_NO_EPOCH_SIZE);
+
+        Ok(())
+    }
+
+    /// Store events persistence state into a byte slice.
+    fn store(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
+        let mut wb = WriteBuf::new(buf);
+        wb.u64(&TLVTag::Anonymous, self.event_epoch_end)?;
+        Ok(wb.get_tail())
+    }
 }
 
 /// This is the event queue system, it lets you publish Matter Events into a priority queue,
@@ -82,25 +120,17 @@ pub(crate) struct PersistedState {
 /// If your application emits no events you can disable this subsystem using the NO_EVENTS constant.
 pub struct Events<const N: usize = DEFAULT_BYTES_PER_BUF> {
     state: IfMutex<EventsInner<N>>,
+    pub(crate) persisted_state: blocking::Mutex<RefCell<PersistedState>>,
     epoch: Epoch,
-    pub(crate) persisted_state: blocking::Mutex<Cell<PersistedState>>,
-    persist_notification: Notification,
 }
 
 impl<const N: usize> Events<N> {
-    const PERSIST_INIT: PersistedState = PersistedState {
-        next_event_no: 0,
-        event_epoch_end: 0,
-        changed: false,
-    };
-
     #[inline(always)]
     pub const fn new(epoch: Epoch) -> Self {
         Self {
             state: IfMutex::new(EventsInner::new()),
+            persisted_state: blocking::Mutex::new(RefCell::new(PersistedState::new())),
             epoch,
-            persisted_state: blocking::Mutex::new(Cell::new(Self::PERSIST_INIT)),
-            persist_notification: Notification::new(),
         }
     }
 
@@ -114,46 +144,55 @@ impl<const N: usize> Events<N> {
     pub fn init(epoch: Epoch) -> impl Init<Self> {
         init!(Self {
             state <- IfMutex::init(EventsInner::init()),
+            persisted_state <- blocking::Mutex::init(RefCell::init(PersistedState::init())),
             epoch,
-            persisted_state: blocking::Mutex::new(Cell::new(Self::PERSIST_INIT)),
-            persist_notification: Notification::new(),
         })
+    }
+
+    pub fn reset(&mut self) {
+        self.state.get_mut().reset();
+        self.persisted_state.get_mut().get_mut().reset();
     }
 
     /// Push a new event into the event queue, making it visible to any subscribers.
     /// NOTE: This API is unstable and may change, for instance it currently requires knowing the tag number for writing data
     ///
     /// To write event data you use the provided EventQueueWriter and write the tag EventDataTag::Data.
-    pub async fn push(
+    pub async fn push<S>(
         &self,
         path: EventPath,
         priority: u8,
+        kv: S,
         data: impl FnOnce(&mut EventQueueWriter<N>) -> Result<(), Error>,
-    ) -> Result<(), Error> {
-        let (event_no, notify) = self.persisted_state.lock(|cell| {
-            let mut state = cell.get();
-            let event_no = state.next_event_no;
-            state.next_event_no += 1;
+    ) -> Result<(), Error>
+    where
+        S: KvBlobStoreAccess,
+    {
+        let event_no = {
+            let mut persist = Persist::new(kv.get().await);
 
-            let notify = if state.next_event_no
-                >= state
-                    .event_epoch_end
-                    .saturating_sub(EVENT_ID_COUNTER_PERSIST_AHEAD)
-            {
-                state.event_epoch_end = state.next_event_no.saturating_add(EVENT_NO_EPOCH_SIZE);
-                state.changed = true;
-                true
-            } else {
-                false
-            };
+            let event_no = self.persisted_state.lock(|cell| {
+                let mut state = cell.borrow_mut();
+                let event_no = state.next_event_no;
+                state.next_event_no += 1;
 
-            cell.set(state);
-            (event_no, notify)
-        });
+                if state.next_event_no
+                    >= state
+                        .event_epoch_end
+                        .saturating_sub(EVENT_ID_COUNTER_PERSIST_AHEAD)
+                {
+                    state.event_epoch_end = state.next_event_no.saturating_add(EVENT_NO_EPOCH_SIZE);
 
-        if notify {
-            self.persist_notification.notify();
-        }
+                    persist.store(EVENT_EPOCH_KEY, |buf| state.store(buf).map(Some))?;
+                }
+
+                Ok::<_, Error>(event_no)
+            })?;
+
+            persist.run().await?;
+
+            event_no
+        };
 
         let mut internal = self.state.lock().await;
         let timestamp = EventDataTimestamp::EpochTimestamp((self.epoch)().as_millis() as u64);
@@ -172,51 +211,28 @@ impl<const N: usize> Events<N> {
     // TODO(events) we can't do it like this, this will miss events when pushing happens after for_each but before we call this
     //              we need to return the last processed one from for_each or something like that
     pub fn peek_next_event_no(&self) -> u64 {
-        self.persisted_state.lock(|cell| cell.get().next_event_no)
+        self.persisted_state
+            .lock(|cell| cell.borrow().next_event_no)
     }
 
-    /// True if the persisted state has changed since the last time store() was called.
-    pub fn changed(&self) -> bool {
-        self.persisted_state.lock(|cell| cell.get().changed)
+    /// Load persisted state from the given key-value store, so that we can continue emitting events without reusing event numbers.
+    pub async fn load_persist<S>(&mut self, mut kv: S, buf: &mut [u8]) -> Result<(), Error>
+    where
+        S: KvBlobStore,
+    {
+        self.reset();
+
+        if let Some(len) = kv.load(EVENT_EPOCH_KEY, buf).await? {
+            self.load(&buf[..len])
+        } else {
+            Ok(())
+        }
     }
 
     /// Restore events from previously persisted state.
-    pub fn load(&self, data: &[u8]) -> Result<(), Error> {
-        let epoch_end = TLVElement::new(data).u64()?;
-
-        self.persisted_state.lock(|cell| {
-            cell.set(PersistedState {
-                next_event_no: epoch_end,
-                event_epoch_end: epoch_end.saturating_add(EVENT_NO_EPOCH_SIZE),
-                changed: true,
-            });
-        });
-
-        Ok(())
-    }
-
-    /// Store events persistence state into a byte slice.
-    pub fn store(&self, buf: &mut [u8]) -> Result<usize, Error> {
-        let epoch_end = self.persisted_state.lock(|cell| {
-            let mut state = cell.get();
-            state.changed = false;
-            cell.set(state);
-            state.event_epoch_end
-        });
-
-        let mut wb = WriteBuf::new(buf);
-        wb.u64(&TLVTag::Anonymous, epoch_end)?;
-        Ok(wb.get_tail())
-    }
-
-    /// Wait until the persistent state needs re-persisting.
-    pub async fn wait_persist(&self) {
-        loop {
-            if self.persisted_state.lock(|cell| cell.get().changed) {
-                break;
-            }
-            self.persist_notification.wait().await;
-        }
+    pub fn load(&mut self, data: &[u8]) -> Result<(), Error> {
+        let cell = self.persisted_state.get_mut();
+        cell.borrow_mut().load(data)
     }
 }
 
@@ -279,6 +295,12 @@ impl<const N: usize> EventsInner<N> {
             buf_info <- LevelBuf::init(),
             buf_critical <- LevelBuf::init(),
         })
+    }
+
+    pub fn reset(&mut self) {
+        self.buf_debug.reset();
+        self.buf_info.reset();
+        self.buf_critical.reset();
     }
 
     pub fn push<'a>(
@@ -519,6 +541,10 @@ impl<const N: usize> LevelBuf<N> {
             data <- crate::utils::init::zeroed(),
             head: 0,
         })
+    }
+
+    pub fn reset(&mut self) {
+        self.head = 0;
     }
 
     fn write(&mut self, byte: u8) -> Result<(), OverflowError> {

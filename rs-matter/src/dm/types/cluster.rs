@@ -488,14 +488,14 @@ macro_rules! clusters {
     (sys; $($cluster:expr $(,)?)*) => {
         $crate::clusters!(
             <$crate::dm::clusters::desc::DescHandler as $crate::dm::clusters::desc::ClusterHandler>::CLUSTER,
-            <$crate::dm::clusters::acl::AclHandler as $crate::dm::clusters::acl::ClusterHandler>::CLUSTER,
-            <$crate::dm::clusters::basic_info::BasicInfoHandler as $crate::dm::clusters::basic_info::ClusterHandler>::CLUSTER,
-            <$crate::dm::clusters::gen_comm::GenCommHandler as $crate::dm::clusters::gen_comm::ClusterHandler>::CLUSTER,
+            <$crate::dm::clusters::acl::AclHandler as $crate::dm::clusters::acl::ClusterAsyncHandler>::CLUSTER,
+            <$crate::dm::clusters::basic_info::BasicInfoHandler as $crate::dm::clusters::basic_info::ClusterAsyncHandler>::CLUSTER,
+            <$crate::dm::clusters::gen_comm::GenCommHandler as $crate::dm::clusters::gen_comm::ClusterAsyncHandler>::CLUSTER,
             <$crate::dm::clusters::gen_diag::GenDiagHandler as $crate::dm::clusters::gen_diag::ClusterHandler>::CLUSTER,
             <$crate::dm::clusters::adm_comm::AdminCommHandler as $crate::dm::clusters::adm_comm::ClusterHandler>::CLUSTER,
-            <$crate::dm::clusters::noc::NocHandler as $crate::dm::clusters::noc::ClusterHandler>::CLUSTER,
-            <$crate::dm::clusters::grp_key_mgmt::GrpKeyMgmtHandler as $crate::dm::clusters::grp_key_mgmt::ClusterHandler>::CLUSTER,
-            <$crate::dm::clusters::groups::GroupsHandler as $crate::dm::clusters::groups::ClusterHandler>::CLUSTER,
+            <$crate::dm::clusters::noc::NocHandler as $crate::dm::clusters::noc::ClusterAsyncHandler>::CLUSTER,
+            <$crate::dm::clusters::grp_key_mgmt::GrpKeyMgmtHandler as $crate::dm::clusters::grp_key_mgmt::ClusterAsyncHandler>::CLUSTER,
+            <$crate::dm::clusters::groups::GroupsHandler as $crate::dm::clusters::groups::ClusterAsyncHandler>::CLUSTER,
             $($cluster,)*
         )
     };

@@ -17,18 +17,20 @@
 
 //! This module contains the implementation of the Basic Information cluster and its handler.
 
+use core::future::{ready, Future};
 use core::str::FromStr;
 
 use crate::dm::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
-use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, TLVTag, ToTLV, Utf8StrBuilder};
+use crate::persist::{KvBlobStore, Persist, BASIC_INFO_KEY};
+use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, ToTLV, Utf8StrBuilder};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::MAX_SESSIONS;
 use crate::utils::bitflags::bitflags;
+use crate::utils::future::delayed_ready;
 use crate::utils::init::{init, Init};
-use crate::utils::storage::WriteBuf;
 use crate::{except, with};
 
 pub use crate::dm::clusters::decl::basic_information::*;
@@ -305,7 +307,6 @@ pub struct BasicInfoSettings {
     pub location: Option<heapless::String<2>>, // Max location as per the spec
     pub location_type: RegulatoryLocationTypeEnum,
     pub local_config_disabled: bool,
-    pub changed: bool,
 }
 
 impl BasicInfoSettings {
@@ -316,7 +317,6 @@ impl BasicInfoSettings {
             location: None,
             location_type: RegulatoryLocationTypeEnum::IndoorOutdoor,
             local_config_disabled: false,
-            changed: false,
         }
     }
 
@@ -327,7 +327,6 @@ impl BasicInfoSettings {
             location: None,
             location_type: RegulatoryLocationTypeEnum::IndoorOutdoor,
             local_config_disabled: false,
-            changed: false,
         })
     }
 
@@ -335,34 +334,10 @@ impl BasicInfoSettings {
     ///
     /// # Arguments
     /// - `flag_changed`: whether to mark the basic info settings as changed
-    pub fn reset(&mut self, flag_changed: bool) {
+    pub fn reset(&mut self) {
         self.node_label.clear();
         self.location = None;
         self.local_config_disabled = false;
-        self.changed = flag_changed;
-    }
-
-    /// Load the basic info settings from the provided TLV data
-    pub fn load(&mut self, data: &[u8]) -> Result<(), Error> {
-        *self = FromTLV::from_tlv(&TLVElement::new(data))?;
-
-        self.changed = false;
-
-        Ok(())
-    }
-
-    /// Store the basic info settings into the provided buffer as TLV data
-    pub fn store(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
-        let mut wb = WriteBuf::new(buf);
-
-        self.to_tlv(&TLVTag::Anonymous, &mut wb)
-            .map_err(|_| ErrorCode::NoSpace)?;
-
-        self.changed = false;
-
-        let len = wb.get_tail();
-
-        Ok(len)
     }
 
     pub fn set_location(&mut self, location: &str) {
@@ -371,7 +346,30 @@ impl BasicInfoSettings {
         } else {
             self.location = Some(unwrap!(heapless::String::<2>::from_str(location)));
         }
-        self.changed = true;
+    }
+
+    /// Load all fabrics from the provided BLOB store
+    ///
+    /// # Arguments
+    /// - `store`: the BLOB store to load the fabrics from
+    /// - `buf`: a temporary buffer to use for loading the fabrics
+    pub async fn load<S: KvBlobStore>(
+        &mut self,
+        mut store: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        self.reset();
+
+        if let Some(len) = store.load(BASIC_INFO_KEY, buf).await? {
+            let info = Self::from_tlv(&TLVElement::new(&buf[..len]))?;
+
+            self.node_label = info.node_label;
+            self.location = info.location;
+            self.location_type = info.location_type;
+            self.local_config_disabled = info.local_config_disabled;
+        }
+
+        Ok(())
     }
 }
 
@@ -392,9 +390,9 @@ impl BasicInfoHandler {
         Self(dataver)
     }
 
-    /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
-    pub const fn adapt(self) -> HandlerAdaptor<Self> {
-        HandlerAdaptor(self)
+    /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
+    pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
+        HandlerAsyncAdaptor(self)
     }
 
     fn config<'a>(exchange: &'a Exchange) -> &'a BasicInfoConfig<'a> {
@@ -409,7 +407,7 @@ impl BasicInfoHandler {
     }
 }
 
-impl ClusterHandler for BasicInfoHandler {
+impl ClusterAsyncHandler for BasicInfoHandler {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
         .with_attrs(except!(AttributeId::Reachable))
         .with_cmds(with!());
@@ -422,72 +420,79 @@ impl ClusterHandler for BasicInfoHandler {
         self.0.changed();
     }
 
-    fn data_model_revision(&self, ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(Self::config(ctx.exchange()).data_model_revision)
+    fn data_model_revision(
+        &self,
+        ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<u16, Error>> {
+        delayed_ready(move || Ok(Self::config(ctx.exchange()).data_model_revision))
     }
 
-    fn vendor_id(&self, ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(Self::config(ctx.exchange()).vid)
+    fn vendor_id(&self, ctx: impl ReadContext) -> impl Future<Output = Result<u16, Error>> {
+        delayed_ready(move || Ok(Self::config(ctx.exchange()).vid))
     }
 
     fn vendor_name<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
-    ) -> Result<P, Error> {
-        out.set(Self::config(ctx.exchange()).vendor_name)
+    ) -> impl Future<Output = Result<P, Error>> {
+        delayed_ready(move || out.set(Self::config(ctx.exchange()).vendor_name))
     }
 
-    fn product_id(&self, ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(Self::config(ctx.exchange()).pid)
+    fn product_id(&self, ctx: impl ReadContext) -> impl Future<Output = Result<u16, Error>> {
+        delayed_ready(move || Ok(Self::config(ctx.exchange()).pid))
     }
 
     fn product_name<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
-    ) -> Result<P, Error> {
-        out.set(Self::config(ctx.exchange()).product_name)
+    ) -> impl Future<Output = Result<P, Error>> {
+        delayed_ready(move || out.set(Self::config(ctx.exchange()).product_name))
     }
 
-    fn hardware_version(&self, ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(Self::config(ctx.exchange()).hw_ver)
+    fn hardware_version(&self, ctx: impl ReadContext) -> impl Future<Output = Result<u16, Error>> {
+        delayed_ready(move || Ok(Self::config(ctx.exchange()).hw_ver))
     }
 
     fn hardware_version_string<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
-    ) -> Result<P, Error> {
-        out.set(Self::config(ctx.exchange()).hw_ver_str)
+    ) -> impl Future<Output = Result<P, Error>> {
+        delayed_ready(move || out.set(Self::config(ctx.exchange()).hw_ver_str))
     }
 
-    fn software_version(&self, ctx: impl ReadContext) -> Result<u32, Error> {
-        Ok(Self::config(ctx.exchange()).sw_ver)
+    fn software_version(&self, ctx: impl ReadContext) -> impl Future<Output = Result<u32, Error>> {
+        delayed_ready(move || Ok(Self::config(ctx.exchange()).sw_ver))
     }
 
     fn software_version_string<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
-    ) -> Result<P, Error> {
-        out.set(Self::config(ctx.exchange()).sw_ver_str)
+    ) -> impl Future<Output = Result<P, Error>> {
+        delayed_ready(move || out.set(Self::config(ctx.exchange()).sw_ver_str))
     }
 
     fn node_label<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
-    ) -> Result<P, Error> {
-        Self::with_settings(ctx.exchange(), |settings| {
-            out.set(settings.node_label.as_str())
+    ) -> impl Future<Output = Result<P, Error>> {
+        delayed_ready(move || {
+            Self::with_settings(ctx.exchange(), |settings| {
+                out.set(settings.node_label.as_str())
+            })
         })
     }
 
-    fn set_node_label(&self, ctx: impl WriteContext, label: &str) -> Result<(), Error> {
+    async fn set_node_label(&self, ctx: impl WriteContext, label: &str) -> Result<(), Error> {
         if label.len() > 32 {
             return Err(ErrorCode::ConstraintError.into());
         }
+
+        let mut persist = Persist::new(ctx.kv().await);
 
         Self::with_settings(ctx.exchange(), |settings| {
             settings.node_label.clear();
@@ -495,143 +500,172 @@ impl ClusterHandler for BasicInfoHandler {
                 .node_label
                 .push_str(label)
                 .map_err(|_| ErrorCode::ConstraintError)?;
-            settings.changed = true;
 
-            ctx.exchange().matter().notify_persist();
+            persist.store_tlv(BASIC_INFO_KEY, &*settings)
+        })?;
 
-            Ok(())
-        })
+        persist.run().await
     }
 
     fn location<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
-    ) -> Result<P, Error> {
-        Self::with_settings(ctx.exchange(), |settings| {
-            out.set(settings.location.as_ref().map_or("XX", |loc| loc.as_str()))
+    ) -> impl Future<Output = Result<P, Error>> {
+        delayed_ready(move || {
+            Self::with_settings(ctx.exchange(), |settings| {
+                out.set(settings.location.as_ref().map_or("XX", |loc| loc.as_str()))
+            })
         })
     }
 
-    fn set_location(&self, ctx: impl WriteContext, location: &str) -> Result<(), Error> {
+    async fn set_location(&self, ctx: impl WriteContext, location: &str) -> Result<(), Error> {
         if location.len() != 2 {
             return Err(ErrorCode::ConstraintError.into());
         }
 
+        let mut persist = Persist::new(ctx.kv().await);
+
         Self::with_settings(ctx.exchange(), |settings| {
             settings.set_location(location);
 
-            ctx.exchange().matter().notify_persist();
+            persist.store_tlv(BASIC_INFO_KEY, &*settings)
+        })?;
 
-            Ok(())
-        })
+        persist.run().await
     }
 
     fn capability_minima<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: CapabilityMinimaStructBuilder<P>,
-    ) -> Result<P, Error> {
-        let cm = Self::config(ctx.exchange()).capability_minima;
+    ) -> impl Future<Output = Result<P, Error>> {
+        delayed_ready(move || {
+            let cm = Self::config(ctx.exchange()).capability_minima;
 
-        builder
-            .case_sessions_per_fabric(cm.case_sessions_per_fabric)?
-            .subscriptions_per_fabric(cm.subscriptions_per_fabric)?
-            .end()
+            builder
+                .case_sessions_per_fabric(cm.case_sessions_per_fabric)?
+                .subscriptions_per_fabric(cm.subscriptions_per_fabric)?
+                .end()
+        })
     }
 
-    fn specification_version(&self, ctx: impl ReadContext) -> Result<u32, Error> {
-        Ok(Self::config(ctx.exchange()).specification_version)
+    fn specification_version(
+        &self,
+        ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<u32, Error>> {
+        delayed_ready(move || Ok(Self::config(ctx.exchange()).specification_version))
     }
 
-    fn max_paths_per_invoke(&self, ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(Self::config(ctx.exchange()).max_paths_per_invoke)
+    fn max_paths_per_invoke(
+        &self,
+        ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<u16, Error>> {
+        delayed_ready(move || Ok(Self::config(ctx.exchange()).max_paths_per_invoke))
     }
 
-    fn configuration_version(&self, ctx: impl ReadContext) -> Result<u32, Error> {
-        Ok(Self::config(ctx.exchange()).configuration_version)
+    fn configuration_version(
+        &self,
+        ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<u32, Error>> {
+        delayed_ready(move || Ok(Self::config(ctx.exchange()).configuration_version))
     }
 
-    fn handle_mfg_specific_ping(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
-        Err(ErrorCode::InvalidAction.into())
+    fn handle_mfg_specific_ping(
+        &self,
+        _ctx: impl InvokeContext,
+    ) -> impl Future<Output = Result<(), Error>> {
+        ready(Err(ErrorCode::InvalidAction.into()))
     }
 
     fn manufacturing_date<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
-    ) -> Result<P, Error> {
-        builder.set(Self::config(ctx.exchange()).manufacturing_date)
+    ) -> impl Future<Output = Result<P, Error>> {
+        delayed_ready(move || builder.set(Self::config(ctx.exchange()).manufacturing_date))
     }
 
     fn part_number<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
-    ) -> Result<P, Error> {
-        builder.set(Self::config(ctx.exchange()).part_number)
+    ) -> impl Future<Output = Result<P, Error>> {
+        delayed_ready(move || builder.set(Self::config(ctx.exchange()).part_number))
     }
 
     fn product_url<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
-    ) -> Result<P, Error> {
-        builder.set(Self::config(ctx.exchange()).product_url)
+    ) -> impl Future<Output = Result<P, Error>> {
+        delayed_ready(move || builder.set(Self::config(ctx.exchange()).product_url))
     }
 
     fn product_label<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
-    ) -> Result<P, Error> {
-        builder.set(Self::config(ctx.exchange()).product_label)
+    ) -> impl Future<Output = Result<P, Error>> {
+        delayed_ready(move || builder.set(Self::config(ctx.exchange()).product_label))
     }
 
     fn serial_number<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
-    ) -> Result<P, Error> {
-        builder.set(Self::config(ctx.exchange()).serial_no)
+    ) -> impl Future<Output = Result<P, Error>> {
+        delayed_ready(move || builder.set(Self::config(ctx.exchange()).serial_no))
     }
 
-    fn local_config_disabled(&self, ctx: impl ReadContext) -> Result<bool, Error> {
-        Self::with_settings(
-            ctx.exchange(),
-            |settings| Ok(settings.local_config_disabled),
-        )
+    fn local_config_disabled(
+        &self,
+        ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<bool, Error>> {
+        delayed_ready(move || {
+            Self::with_settings(
+                ctx.exchange(),
+                |settings| Ok(settings.local_config_disabled),
+            )
+        })
     }
 
-    fn set_local_config_disabled(&self, ctx: impl WriteContext, value: bool) -> Result<(), Error> {
+    async fn set_local_config_disabled(
+        &self,
+        ctx: impl WriteContext,
+        value: bool,
+    ) -> Result<(), Error> {
+        let mut persist = Persist::new(ctx.kv().await);
+
         Self::with_settings(ctx.exchange(), |settings| {
             settings.local_config_disabled = value;
-            settings.changed = true;
 
-            ctx.exchange().matter().notify_persist();
+            persist.store_tlv(BASIC_INFO_KEY, &*settings)
+        })?;
 
-            Ok(())
-        })
+        persist.run().await
     }
 
     fn unique_id<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
-    ) -> Result<P, Error> {
-        builder.set(Self::config(ctx.exchange()).unique_id)
+    ) -> impl Future<Output = Result<P, Error>> {
+        delayed_ready(move || builder.set(Self::config(ctx.exchange()).unique_id))
     }
 
     fn product_appearance<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: ProductAppearanceStructBuilder<P>,
-    ) -> Result<P, Error> {
-        let appearance = Self::config(ctx.exchange()).product_appearance;
+    ) -> impl Future<Output = Result<P, Error>> {
+        delayed_ready(move || {
+            let appearance = Self::config(ctx.exchange()).product_appearance;
 
-        builder
-            .finish(appearance.finish)?
-            .primary_color(Nullable::new(appearance.color))?
-            .end()
+            builder
+                .finish(appearance.finish)?
+                .primary_color(Nullable::new(appearance.color))?
+                .end()
+        })
     }
 }

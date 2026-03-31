@@ -800,12 +800,12 @@ impl Sessions {
             let fab_idx = fabric.fab_idx();
             let compressed_fabric_id = fabric.compressed_fabric_id();
 
-            for map_entry in fabric.group_key_map_iter() {
+            for map_entry in fabric.groups().key_map_iter() {
                 if map_entry.group_id != group_id {
                     continue;
                 }
 
-                let Some(key_set_entry) = fabric.group_key_set_get(map_entry.group_key_set_id)
+                let Some(key_set_entry) = fabric.groups().key_set_get(map_entry.group_key_set_id)
                 else {
                     continue;
                 };

@@ -26,7 +26,7 @@ use std::io::{Read, Write};
 use std::net::UdpSocket;
 use std::path::PathBuf;
 
-use embassy_futures::select::{select3, select4};
+use embassy_futures::select::select3;
 
 use async_signal::{Signal, Signals};
 use log::{error, info, trace};
@@ -40,7 +40,7 @@ use rs_matter::dm::clusters::decl::level_control::{
 };
 use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::groups::{self, ClusterAsyncHandler as _};
 use rs_matter::dm::clusters::level_control::{self, LevelControlHooks};
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, OnOffHooks, StartUpOnOffEnum};
@@ -58,7 +58,7 @@ use rs_matter::dm::{
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{Psm, NO_NETWORKS};
+use rs_matter::persist::SharedKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
@@ -80,10 +80,7 @@ static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
 static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
 static EVENTS: StaticCell<DefaultEvents> = StaticCell::new();
-static PSM: StaticCell<Psm<4096>> = StaticCell::new();
-
-#[cfg(feature = "chip-test")]
-const PERSIST_FILE_NAME: &str = "/tmp/chip_kvs";
+static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
@@ -135,6 +132,14 @@ fn run() -> Result<(), Error> {
     // Need to call this once
     matter.initialize_transport_buffers()?;
 
+    // Persistence
+    let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
+    #[cfg(feature = "chip-test")]
+    let mut kv = rs_matter::persist::FileKvBlobStore::new_default();
+    #[cfg(not(feature = "chip-test"))]
+    let mut kv = rs_matter::persist::DirKvBlobStore::new_default();
+    futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
+
     // Create the transport buffers
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
 
@@ -181,6 +186,7 @@ fn run() -> Result<(), Error> {
         subscriptions,
         Some(events),
         dm_handler(rand, &on_off_handler, &level_control_handler),
+        SharedKvBlobStore::new(kv, kv_buf),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -211,22 +217,6 @@ fn run() -> Result<(), Error> {
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto, dm.change_notify()));
     let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
-    // Create, load and run the persister
-    let psm = PSM.uninit().init_with(Psm::init());
-    #[cfg(not(feature = "chip-test"))]
-    let path = std::env::temp_dir().join("rs-matter");
-    #[cfg(feature = "chip-test")]
-    let path = PathBuf::from(PERSIST_FILE_NAME);
-
-    info!(
-        "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B, Persist path={}",
-        core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS, Some(events))),
-        path.as_path().to_str().unwrap_or("none")
-    );
-
-    psm.load(&path, matter, NO_NETWORKS, Some(events))?;
-
     // We need to always print the QR text, because the test runner expects it to be printed
     // even if the device is already commissioned
     matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
@@ -240,8 +230,6 @@ fn run() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, dm.change_notify())?;
     }
 
-    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, Some(events)));
-
     // Listen to SIGTERM because at the end of the test we'll receive it
     let mut term_signal = Signals::new([Signal::Term])?;
     let mut term = pin!(async {
@@ -250,10 +238,9 @@ fn run() -> Result<(), Error> {
     });
 
     // Combine all async tasks in a single one
-    let all = select4(
+    let all = select3(
         &mut transport,
         &mut mdns,
-        &mut persist,
         select3(&mut respond, &mut dm_job, &mut term).coalesce(),
     );
 
@@ -304,7 +291,7 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
                         )
                         .chain(
                             EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
-                            Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                            groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt(),
                         )
                         .chain(
                             EpClMatcher::new(Some(1), Some(OnOffDeviceLogic::CLUSTER.id)),

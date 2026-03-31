@@ -31,9 +31,10 @@ use crate::crypto::{
 use crate::dm::Privilege;
 use crate::error::{Error, ErrorCode};
 use crate::group_keys::{GroupKeySet, KeySet};
-use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
+use crate::persist::{KvBlobStore, KvBlobStoreInstance, Persist, FABRIC_KEYS_START};
+use crate::tlv::{FromTLV, TLVElement, ToTLV};
 use crate::utils::init::{init, Init, InitMaybeUninit, IntoFallibleInit};
-use crate::utils::storage::{Vec, WriteBuf};
+use crate::utils::storage::Vec;
 use crate::MatterMdnsService;
 
 const COMPRESSED_FABRIC_ID_LEN: usize = 8;
@@ -132,7 +133,7 @@ pub struct GroupKeyMapping {
 
 #[derive(Debug, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct Groups {
+pub struct Groups {
     /// Group key sets (excluding IPK which is stored in `ipk`)
     key_sets: Vec<GroupKeySet, MAX_GROUP_KEYS_PER_FABRIC>,
     /// Groups keyset mapping
@@ -148,6 +149,153 @@ impl Groups {
             key_map <- Vec::init(),
             endpoint_mapping <- Vec::init(),
         })
+    }
+
+    /// Return an iterator over the group key sets of the fabric
+    pub fn key_set_iter(&self) -> impl Iterator<Item = &GroupKeySet> {
+        self.key_sets.iter()
+    }
+
+    /// Find a group key set by ID
+    pub fn key_set_get(&self, id: u16) -> Option<&GroupKeySet> {
+        self.key_sets.iter().find(|e| e.group_key_set_id == id)
+    }
+
+    /// Add or update a group key set
+    pub fn key_set_add(&mut self, entry: GroupKeySet) -> Result<(), Error> {
+        if let Some(existing) = self
+            .key_sets
+            .iter_mut()
+            .find(|e| e.group_key_set_id == entry.group_key_set_id)
+        {
+            *existing = entry;
+        } else {
+            self.key_sets
+                .push(entry)
+                .map_err(|_| ErrorCode::ResourceExhausted)?;
+        }
+        Ok(())
+    }
+
+    /// Remove a group key set by ID. Returns true if found and removed.
+    pub fn key_set_remove(&mut self, id: u16) -> Result<(), Error> {
+        let before = self.key_sets.len();
+        self.key_sets.retain(|e| e.group_key_set_id != id);
+        let removed = self.key_sets.len() < before;
+
+        self.key_map_remove_by_key_set(id);
+
+        // Check if element was actually removed
+        if removed {
+            Ok(())
+        } else {
+            Err(Error::new(ErrorCode::NotFound))
+        }
+    }
+
+    pub fn key_map_add(&mut self, entry: GroupKeyMapping) -> Result<(), Error> {
+        self.key_map.push(entry).map_err(|_| ErrorCode::Failure)?;
+
+        Ok(())
+    }
+
+    /// Return an iterator over the group key map entries of the fabric
+    pub fn key_map_iter(&self) -> impl Iterator<Item = &GroupKeyMapping> {
+        self.key_map.iter()
+    }
+
+    /// Replace all group key map entries
+    pub fn key_map_replace(
+        &mut self,
+        entries: impl Iterator<Item = GroupKeyMapping>,
+    ) -> Result<(), Error> {
+        self.key_map.clear();
+        for entry in entries {
+            self.key_map
+                .push(entry)
+                .map_err(|_| ErrorCode::ResourceExhausted)?;
+        }
+        Ok(())
+    }
+
+    /// Remove group key map entries that reference a specific key set ID
+    pub fn key_map_remove_by_key_set(&mut self, key_set_id: u16) {
+        self.key_map.retain(|e| e.group_key_set_id != key_set_id);
+    }
+
+    /// Return an iterator over the group table entries
+    pub fn iter(&self) -> impl Iterator<Item = &GroupEndpointMapping> {
+        self.endpoint_mapping.iter()
+    }
+
+    /// Look up a group by ID
+    pub fn get(&self, group_id: u16) -> Option<&GroupEndpointMapping> {
+        self.endpoint_mapping
+            .iter()
+            .find(|e| e.group_id == group_id)
+    }
+
+    /// Add an endpoint to a group.
+    /// Returns true if the endpoint was already a member (name still updated per spec).
+    pub fn add(
+        &mut self,
+        endpoint_id: u16,
+        group_id: u16,
+        group_name: &str,
+    ) -> Result<bool, Error> {
+        let entry = if let Some(entry) = self
+            .endpoint_mapping
+            .iter_mut()
+            .find(|e| e.group_id == group_id)
+        {
+            entry
+        } else {
+            self.endpoint_mapping
+                .push(GroupEndpointMapping {
+                    group_id,
+                    endpoints: Vec::new(),
+                    group_name: unwrap!(String::from_str(group_name)),
+                })
+                .map_err(|_| ErrorCode::ResourceExhausted)?;
+            unwrap!(self.endpoint_mapping.last_mut())
+        };
+
+        // Update group name
+        entry.group_name.clear();
+        unwrap!(entry.group_name.push_str(group_name));
+
+        if entry.endpoints.contains(&endpoint_id) {
+            return Ok(true);
+        }
+
+        entry
+            .endpoints
+            .push(endpoint_id)
+            .map_err(|_| ErrorCode::ResourceExhausted)?;
+
+        Ok(false)
+    }
+
+    /// Remove an endpoint from a group, or from all groups if `group_id` is `None`.
+    /// Returns true if the endpoint was removed from at least one group.
+    pub fn remove(&mut self, endpoint_id: u16, group_id: Option<u16>) -> bool {
+        let mut removed = false;
+
+        for entry in self.endpoint_mapping.iter_mut() {
+            if group_id.is_some_and(|id| id != entry.group_id) {
+                continue;
+            }
+            let before = entry.endpoints.len();
+            entry.endpoints.retain(|&ep| ep != endpoint_id);
+            if entry.endpoints.len() < before {
+                removed = true;
+            }
+        }
+
+        // Remove entries with no endpoints left
+        self.endpoint_mapping.retain(|e| !e.endpoints.is_empty());
+
+        removed
     }
 }
 
@@ -382,6 +530,16 @@ impl Fabric {
         &self.ipk
     }
 
+    /// Return the fabric's groups
+    pub fn groups(&self) -> &Groups {
+        &self.groups
+    }
+
+    /// Return a mutable reference to the fabric's groups
+    pub fn groups_mut(&mut self) -> &mut Groups {
+        &mut self.groups
+    }
+
     /// Return an iterator over the ACL entries of the fabric
     pub fn acl_iter(&self) -> impl Iterator<Item = &AclEntry> {
         self.acl.iter()
@@ -390,7 +548,7 @@ impl Fabric {
     /// Add a new ACL entry to the fabric.
     ///
     /// Return the index of the added entry.
-    fn acl_add(&mut self, mut entry: AclEntry) -> Result<usize, Error> {
+    pub fn acl_add(&mut self, mut entry: AclEntry) -> Result<usize, Error> {
         if entry.auth_mode() == AuthMode::Pase {
             // Reserved for future use
             Err(ErrorCode::ConstraintError)?;
@@ -409,7 +567,7 @@ impl Fabric {
     /// Add a new ACL entry to the fabric using the supplied initializer.
     ///
     /// Return the index of the added entry.
-    fn acl_add_init<I>(&mut self, init: I) -> Result<usize, Error>
+    pub fn acl_add_init<I>(&mut self, init: I) -> Result<usize, Error>
     where
         I: Init<AclEntry, Error>,
     {
@@ -431,7 +589,7 @@ impl Fabric {
     }
 
     /// Update an existing ACL entry in the fabric
-    fn acl_update(&mut self, idx: usize, mut entry: AclEntry) -> Result<(), Error> {
+    pub fn acl_update(&mut self, idx: usize, mut entry: AclEntry) -> Result<(), Error> {
         if self.acl.len() <= idx {
             return Err(ErrorCode::NotFound.into());
         }
@@ -445,7 +603,7 @@ impl Fabric {
     }
 
     /// Update an existing ACL entry in the fabric using the supplied initializer
-    fn acl_update_init<I>(&mut self, idx: usize, init: I) -> Result<(), Error>
+    pub fn acl_update_init<I>(&mut self, idx: usize, init: I) -> Result<(), Error>
     where
         I: Init<AclEntry, Error>,
     {
@@ -466,7 +624,7 @@ impl Fabric {
     }
 
     /// Remove an ACL entry from the fabric
-    fn acl_remove(&mut self, idx: usize) -> Result<(), Error> {
+    pub fn acl_remove(&mut self, idx: usize) -> Result<(), Error> {
         if self.acl.len() <= idx {
             return Err(ErrorCode::NotFound.into());
         }
@@ -499,166 +657,6 @@ impl Fabric {
         );
 
         false
-    }
-
-    /// Return an iterator over the group key sets of the fabric
-    pub fn group_key_set_iter(&self) -> impl Iterator<Item = &GroupKeySet> {
-        self.groups.key_sets.iter()
-    }
-
-    /// Find a group key set by ID
-    pub fn group_key_set_get(&self, id: u16) -> Option<&GroupKeySet> {
-        self.groups
-            .key_sets
-            .iter()
-            .find(|e| e.group_key_set_id == id)
-    }
-
-    /// Add or update a group key set
-    fn group_key_set_add(&mut self, entry: GroupKeySet) -> Result<(), Error> {
-        if let Some(existing) = self
-            .groups
-            .key_sets
-            .iter_mut()
-            .find(|e| e.group_key_set_id == entry.group_key_set_id)
-        {
-            *existing = entry;
-        } else {
-            self.groups
-                .key_sets
-                .push(entry)
-                .map_err(|_| ErrorCode::ResourceExhausted)?;
-        }
-        Ok(())
-    }
-
-    /// Remove a group key set by ID. Returns true if found and removed.
-    fn group_key_set_remove(&mut self, id: u16) -> Result<(), Error> {
-        let before = self.groups.key_sets.len();
-        self.groups.key_sets.retain(|e| e.group_key_set_id != id);
-
-        // Check if element was actually removed
-        // TODO: Should this also remove group entries referencing this key set?
-        match self.groups.key_sets.len() < before {
-            true => Ok(()),
-            false => Err(Error::new(ErrorCode::NotFound)),
-        }
-    }
-
-    fn group_key_map_add(&mut self, entry: GroupKeyMapping) -> Result<(), Error> {
-        self.groups
-            .key_map
-            .push(entry)
-            .map_err(|_| ErrorCode::Failure)?;
-
-        Ok(())
-    }
-
-    /// Return an iterator over the group key map entries of the fabric
-    pub fn group_key_map_iter(&self) -> impl Iterator<Item = &GroupKeyMapping> {
-        self.groups.key_map.iter()
-    }
-
-    /// Replace all group key map entries
-    fn group_key_map_replace(
-        &mut self,
-        entries: impl Iterator<Item = GroupKeyMapping>,
-    ) -> Result<(), Error> {
-        self.groups.key_map.clear();
-        for entry in entries {
-            self.groups
-                .key_map
-                .push(entry)
-                .map_err(|_| ErrorCode::ResourceExhausted)?;
-        }
-        Ok(())
-    }
-
-    /// Remove group key map entries that reference a specific key set ID
-    fn group_key_map_remove_by_key_set(&mut self, key_set_id: u16) {
-        self.groups
-            .key_map
-            .retain(|e| e.group_key_set_id != key_set_id);
-    }
-
-    /// Return an iterator over the group table entries
-    pub fn group_iter(&self) -> impl Iterator<Item = &GroupEndpointMapping> {
-        self.groups.endpoint_mapping.iter()
-    }
-
-    /// Look up a group by ID
-    pub fn group_get(&self, group_id: u16) -> Option<&GroupEndpointMapping> {
-        self.groups
-            .endpoint_mapping
-            .iter()
-            .find(|e| e.group_id == group_id)
-    }
-
-    /// Add an endpoint to a group.
-    /// Returns true if the endpoint was already a member (name still updated per spec).
-    fn group_add(
-        &mut self,
-        endpoint_id: u16,
-        group_id: u16,
-        group_name: &str,
-    ) -> Result<bool, Error> {
-        let entry = if let Some(entry) = self
-            .groups
-            .endpoint_mapping
-            .iter_mut()
-            .find(|e| e.group_id == group_id)
-        {
-            entry
-        } else {
-            self.groups
-                .endpoint_mapping
-                .push(GroupEndpointMapping {
-                    group_id,
-                    endpoints: Vec::new(),
-                    group_name: unwrap!(String::from_str(group_name)),
-                })
-                .map_err(|_| ErrorCode::ResourceExhausted)?;
-            unwrap!(self.groups.endpoint_mapping.last_mut())
-        };
-
-        // Update group name
-        entry.group_name.clear();
-        unwrap!(entry.group_name.push_str(group_name));
-
-        if entry.endpoints.contains(&endpoint_id) {
-            return Ok(true);
-        }
-
-        entry
-            .endpoints
-            .push(endpoint_id)
-            .map_err(|_| ErrorCode::ResourceExhausted)?;
-
-        Ok(false)
-    }
-
-    /// Remove an endpoint from a group, or from all groups if `group_id` is `None`.
-    /// Returns true if the endpoint was removed from at least one group.
-    fn group_remove(&mut self, endpoint_id: u16, group_id: Option<u16>) -> bool {
-        let mut removed = false;
-
-        for entry in self.groups.endpoint_mapping.iter_mut() {
-            if group_id.is_some_and(|id| id != entry.group_id) {
-                continue;
-            }
-            let before = entry.endpoints.len();
-            entry.endpoints.retain(|&ep| ep != endpoint_id);
-            if entry.endpoints.len() < before {
-                removed = true;
-            }
-        }
-
-        // Remove entries with no endpoints left
-        self.groups
-            .endpoint_mapping
-            .retain(|e| !e.endpoints.is_empty());
-
-        removed
     }
 
     /// Compute the compressed fabric ID
@@ -709,7 +707,6 @@ cfg_if! {
 /// All fabrics
 pub struct Fabrics {
     fabrics: Vec<Fabric, MAX_FABRICS>,
-    changed: bool,
 }
 
 impl Default for Fabrics {
@@ -724,7 +721,6 @@ impl Fabrics {
     pub const fn new() -> Self {
         Self {
             fabrics: Vec::new(),
-            changed: false,
         }
     }
 
@@ -732,72 +728,36 @@ impl Fabrics {
     pub fn init() -> impl Init<Self> {
         init!(Self {
             fabrics <- Vec::init(),
-            changed: false,
         })
     }
 
     /// Removes all fabrics
-    ///
-    /// # Arguments
-    /// - `flag_changed`: Whether to mark the fabrics as changed
-    pub fn reset(&mut self, flag_changed: bool) {
+    pub fn reset(&mut self) {
         self.fabrics.clear();
-        self.changed = flag_changed;
     }
 
-    /// Load the fabrics from the provided buffer as TLV data.
+    /// Load all fabrics from the provided BLOB store
     ///
     /// # Arguments
-    /// - `data`: The TLV data to load the fabrics from
-    /// - `mdns_notif`: A callback function to notify about mDNS changes
-    pub fn load(&mut self, data: &[u8], mdns_notif: &mut dyn FnMut()) -> Result<(), Error> {
-        self.fabrics.clear();
+    /// - `store`: the BLOB store to load the fabrics from
+    /// - `buf`: a temporary buffer to use for loading the fabrics
+    pub async fn load<S: KvBlobStore>(
+        &mut self,
+        mut store: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        self.reset();
 
-        mdns_notif();
-
-        for entry in TLVElement::new(data).array()?.iter() {
-            let entry = entry?;
-
-            self.fabrics.push_init(Fabric::init_from_tlv(entry), || {
-                ErrorCode::ResourceExhausted.into()
-            })?;
+        for idx in 1..=255u8 {
+            if let Some(len) = store.load(FABRIC_KEYS_START + idx as u16, buf).await? {
+                self.fabrics
+                    .push_init(Fabric::init_from_tlv(TLVElement::new(&buf[..len])), || {
+                        ErrorCode::ResourceExhausted.into()
+                    })?;
+            }
         }
-
-        mdns_notif();
-        self.changed = false;
 
         Ok(())
-    }
-
-    /// Store the fabrics into the provided buffer as TLV data.
-    ///
-    /// # Arguments
-    /// - `buf`: The byte slice to store the state into
-    ///
-    /// Returns the number of bytes written into the buffer.
-    pub fn store(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
-        let mut wb = WriteBuf::new(buf);
-
-        wb.start_array(&TLVTag::Anonymous)?;
-
-        for fabric in self.iter() {
-            fabric
-                .to_tlv(&TagType::Anonymous, &mut wb)
-                .map_err(|_| ErrorCode::NoSpace)?;
-        }
-
-        wb.end_container()?;
-
-        self.changed = false;
-
-        let len = wb.get_tail();
-
-        Ok(len)
-    }
-
-    /// Check if the fabrics have changed since the last store operation
-    pub fn is_changed(&self) -> bool {
-        self.changed
     }
 
     /// Add a new fabric to the fabrics with the provided data and immediately updates it with the provided post-init updater.
@@ -836,7 +796,6 @@ impl Fabrics {
         )?;
 
         let fabric = unwrap!(self.fabrics.last_mut());
-        self.changed = true;
 
         Ok(fabric)
     }
@@ -900,12 +859,10 @@ impl Fabrics {
             crypto, root_ca, noc, icac, secret_key, None, None, None, mdns_notif,
         )?;
 
-        self.changed = true;
-
         Ok(fabric)
     }
 
-    pub fn update_label(&mut self, fab_idx: NonZeroU8, label: &str) -> Result<(), Error> {
+    pub fn update_label(&mut self, fab_idx: NonZeroU8, label: &str) -> Result<&mut Fabric, Error> {
         if self.iter().any(|fabric| {
             fabric.fab_idx != fab_idx && !fabric.label.is_empty() && fabric.label == label
         }) {
@@ -919,9 +876,7 @@ impl Fabrics {
             .push_str(label)
             .map_err(|_| ErrorCode::ConstraintError)?;
 
-        self.changed = true;
-
-        Ok(())
+        Ok(fabric)
     }
 
     /// Remove a fabric from the fabrics
@@ -937,7 +892,6 @@ impl Fabrics {
         self.fabrics.retain(|fabric| fabric.fab_idx != fab_idx);
 
         mdns_notif();
-        self.changed = true;
 
         Ok(())
     }
@@ -969,6 +923,20 @@ impl Fabrics {
     /// Iterate over the fabrics
     pub fn iter(&self) -> impl Iterator<Item = &Fabric> {
         self.fabrics.iter()
+    }
+
+    /// Get a fabric by its local index
+    ///
+    /// Returns an error if the fabric is not found
+    pub fn fabric(&self, fab_idx: NonZeroU8) -> Result<&Fabric, Error> {
+        self.get(fab_idx).ok_or(ErrorCode::NotFound.into())
+    }
+
+    /// Get a mutable fabric reference by its local index
+    ///
+    /// Returns an error if the fabric is not found
+    pub fn fabric_mut(&mut self, fab_idx: NonZeroU8) -> Result<&mut Fabric, Error> {
+        self.get_mut(fab_idx).ok_or(ErrorCode::NotFound.into())
     }
 
     /// Check if the given access request should be allowed, based on all operational fabrics
@@ -1009,195 +977,38 @@ impl Fabrics {
 
         fabric.allow(req)
     }
+}
 
-    /// Add a new ACL entry to the fabric with the provided local index
-    ///
-    /// Return the index of the added entry.
-    pub fn acl_add(&mut self, fab_idx: NonZeroU8, entry: AclEntry) -> Result<usize, Error> {
-        let index = self
-            .get_mut(fab_idx)
-            .ok_or(ErrorCode::NotFound)?
-            .acl_add(entry)?;
-        self.changed = true;
+/// A utility for persisting a fabric in a `KvBlobStore` instance.
+pub struct FabricPersist<S>(Persist<S>);
 
-        Ok(index)
+impl<S> FabricPersist<S>
+where
+    S: KvBlobStoreInstance,
+{
+    /// Create a new `FabricPersist` with the given key-value store instance.
+    pub const fn new(kvb: S) -> Self {
+        Self(Persist::new(kvb))
     }
 
-    /// Add a new ACL entry to the fabric with the provided local index and initializer
-    ///
-    /// Return the index of the added entry.
-    pub fn acl_add_init<I>(&mut self, fab_idx: NonZeroU8, init: I) -> Result<usize, Error>
-    where
-        I: Init<AclEntry, Error>,
-    {
-        let index = self
-            .get_mut(fab_idx)
-            .ok_or(ErrorCode::NotFound)?
-            .acl_add_init(init)?;
-        self.changed = true;
-
-        Ok(index)
+    /// Reset the state of this `FabricPersist`, so that it can be reused for a new transaction.
+    pub fn reset(&mut self) {
+        self.0.reset();
     }
 
-    /// Update an existing ACL entry in the fabric with the provided local index
-    pub fn acl_update(
-        &mut self,
-        fab_idx: NonZeroU8,
-        idx: usize,
-        entry: AclEntry,
-    ) -> Result<(), Error> {
-        self.get_mut(fab_idx)
-            .ok_or(ErrorCode::NotFound)?
-            .acl_update(idx, entry)?;
-        self.changed = true;
-
-        Ok(())
+    /// Prepare a fabric for persistence by storing it in the transaction's pending state.
+    pub fn store(&mut self, fabric: &Fabric) -> Result<(), Error> {
+        self.0
+            .store_tlv(FABRIC_KEYS_START + fabric.fab_idx().get() as u16, fabric)
     }
 
-    /// Update an existing ACL entry in the fabric with the provided local index and initializer
-    pub fn acl_update_init<I>(
-        &mut self,
-        fab_idx: NonZeroU8,
-        idx: usize,
-        init: I,
-    ) -> Result<(), Error>
-    where
-        I: Init<AclEntry, Error>,
-    {
-        self.get_mut(fab_idx)
-            .ok_or(ErrorCode::NotFound)?
-            .acl_update_init(idx, init)?;
-        self.changed = true;
-
-        Ok(())
+    /// Prepare the removal of a fabric from the persistent storage.
+    pub fn remove(&mut self, fab_idx: NonZeroU8) {
+        self.0.remove(FABRIC_KEYS_START + fab_idx.get() as u16);
     }
 
-    /// Remove an ACL entry from the fabric with the provided local index
-    pub fn acl_remove(&mut self, fab_idx: NonZeroU8, idx: usize) -> Result<(), Error> {
-        self.get_mut(fab_idx)
-            .ok_or(ErrorCode::NotFound)?
-            .acl_remove(idx)?;
-        self.changed = true;
-
-        Ok(())
-    }
-
-    /// Remove all ACL entries from the fabric with the provided local index
-    pub fn acl_remove_all(&mut self, fab_idx: NonZeroU8) -> Result<(), Error> {
-        self.get_mut(fab_idx)
-            .ok_or(ErrorCode::NotFound)?
-            .acl_remove_all();
-        self.changed = true;
-
-        Ok(())
-    }
-
-    /// Add or update a group key set for the fabric with the provided local index
-    pub fn group_key_set_add(
-        &mut self,
-        fab_idx: NonZeroU8,
-        entry: GroupKeySet,
-    ) -> Result<(), Error> {
-        self.get_mut(fab_idx)
-            .ok_or(ErrorCode::NotFound)?
-            .group_key_set_add(entry)?;
-        self.changed = true;
-        Ok(())
-    }
-
-    /// Remove a group key set from the fabric with the provided local index.
-    /// Also removes all group key map entries referencing this key set.
-    /// Returns Ok(()) if the key set was found and removed.
-    pub fn group_key_set_remove(&mut self, fab_idx: NonZeroU8, id: u16) -> Result<(), Error> {
-        let fabric = self.get_mut(fab_idx).ok_or(ErrorCode::NotFound)?;
-        fabric.group_key_set_remove(id)?;
-        fabric.group_key_map_remove_by_key_set(id);
-        self.changed = true;
-        Ok(())
-    }
-
-    /// Replace all group key map entries for the fabric with the provided local index
-    pub fn group_key_map_replace(
-        &mut self,
-        fab_idx: NonZeroU8,
-        entries: impl Iterator<Item = GroupKeyMapping>,
-    ) -> Result<(), Error> {
-        self.get_mut(fab_idx)
-            .ok_or(ErrorCode::NotFound)?
-            .group_key_map_replace(entries)?;
-        self.changed = true;
-        Ok(())
-    }
-
-    /// Replace all group key map entries for the fabric with the provided local index
-    pub fn group_key_map_add(
-        &mut self,
-        fab_idx: NonZeroU8,
-        entry: GroupKeyMapping,
-    ) -> Result<(), Error> {
-        self.get_mut(fab_idx)
-            .ok_or(ErrorCode::NotFound)?
-            .group_key_map_add(entry)?;
-        self.changed = true;
-        Ok(())
-    }
-
-    #[inline(always)]
-    pub fn max_group_keys_per_fabric(&self) -> u16 {
-        // Group key sets + IPK
-        MAX_GROUP_KEYS_PER_FABRIC as u16
-    }
-
-    #[inline(always)]
-    pub fn max_groups_per_fabric(&self) -> u16 {
-        MAX_GROUPS_PER_FABRIC as u16
-    }
-
-    /// Add an endpoint to a group for the given fabric.
-    /// Returns true if the endpoint was already a member (name updated).
-    pub fn group_add(
-        &mut self,
-        endpoint_id: u16,
-        group_id: u16,
-        group_name: &str,
-        fab_idx: NonZeroU8,
-    ) -> Result<bool, Error> {
-        let result = self
-            .get_mut(fab_idx)
-            .ok_or(ErrorCode::NotFound)?
-            .group_add(endpoint_id, group_id, group_name)?;
-        self.changed = true;
-        Ok(result)
-    }
-
-    /// Remove an endpoint from a group for the given fabric.
-    /// Returns true if the endpoint was a member and was removed.
-    pub fn group_remove(
-        &mut self,
-        endpoint_id: u16,
-        group_id: u16,
-        fab_idx: NonZeroU8,
-    ) -> Result<bool, Error> {
-        let removed = self
-            .get_mut(fab_idx)
-            .ok_or(ErrorCode::NotFound)?
-            .group_remove(endpoint_id, Some(group_id));
-        if removed {
-            self.changed = true;
-        }
-        Ok(removed)
-    }
-
-    /// Remove all group memberships for an endpoint on the given fabric.
-    pub fn group_remove_all_for_endpoint(
-        &mut self,
-        endpoint_id: u16,
-        fab_idx: NonZeroU8,
-    ) -> Result<(), Error> {
-        self.get_mut(fab_idx)
-            .ok_or(ErrorCode::NotFound)?
-            .group_remove(endpoint_id, None);
-        self.changed = true;
-        Ok(())
+    /// Run the persistence operation by writing the prepared fabric data to the wrapped `KvBlobStore` instance.
+    pub async fn run(self) -> Result<(), Error> {
+        self.0.run().await
     }
 }

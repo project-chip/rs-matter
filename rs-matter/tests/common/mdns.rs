@@ -38,12 +38,12 @@ pub async fn run_mdns<C: Crypto>(
 ) -> Result<(), Error> {
     #[cfg(feature = "astro-dnssd")]
     rs_matter::transport::network::mdns::astro::AstroMdnsResponder::new(matter)
-        .run(crypto, notify)
+        .run(|endpt_id, clust_id, attr_id| notify.notify(endpt_id, clust_id, attr_id))
         .await?;
 
     #[cfg(all(feature = "zeroconf", not(feature = "astro-dnssd")))]
     rs_matter::transport::network::mdns::zeroconf::ZeroconfMdnsResponder::new(matter)
-        .run(crypto, notify)
+        .run(|endpt_id, clust_id, attr_id| notify.notify(endpt_id, clust_id, attr_id))
         .await?;
 
     // Both `avahi` and `resolve` modules are compiled under the single `zbus`
@@ -57,8 +57,7 @@ pub async fn run_mdns<C: Crypto>(
     rs_matter::transport::network::mdns::avahi::AvahiMdnsResponder::new(matter)
         .run(
             &rs_matter::utils::zbus::Connection::system().await.unwrap(),
-            crypto,
-            notify,
+            |endpt_id, clust_id, attr_id| notify.notify(endpt_id, clust_id, attr_id),
         )
         .await?;
 

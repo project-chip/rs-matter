@@ -24,17 +24,14 @@ use core::num::NonZeroU8;
 use core::ops::Add;
 use core::time::Duration;
 
-use rand_core::RngCore;
 use spake2p::Spake2pVerifierData;
 
-use crate::crypto::Crypto;
 use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
-use crate::dm::BasicContext;
 use crate::error::{Error, ErrorCode};
+use crate::im::{AttrId, ClusterId, EndptId};
 use crate::sc::pase::spake2p::{
     Spake2pVerifierPasswordRef, Spake2pVerifierSaltRef, Spake2pVerifierStrRef,
-    SPAKE2P_VERIFIER_SALT_ZEROED,
 };
 use crate::sc::SessionParameters;
 use crate::tlv::{FromTLV, OctetStr, ToTLV};
@@ -205,10 +202,11 @@ impl Pase {
         })
     }
 
-    pub fn comm_window<C>(&mut self, ctx: C) -> Result<Option<&CommWindow>, Error>
-    where
-        C: BasicContext,
-    {
+    pub fn comm_window(
+        &mut self,
+        notify_mdns: impl FnMut(),
+        notify_change: impl FnMut(EndptId, ClusterId, AttrId),
+    ) -> Result<Option<&CommWindow>, Error> {
         let expired = self
             .comm_window
             .as_opt_ref()
@@ -218,7 +216,7 @@ impl Pase {
         if expired {
             warn!("PASE Commissioning Window expired, closing");
 
-            self.close_comm_window(ctx)?;
+            self.close_comm_window(notify_mdns, notify_change)?;
 
             Ok(None)
         } else {
@@ -240,18 +238,22 @@ impl Pase {
     /// - `Err(Error)` if an error occurred
     ///   (i.e. there is another non-expired commissioning window already opened
     ///   or the timeout is invalid)
-    pub fn open_basic_comm_window<C>(
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_basic_comm_window(
         &mut self,
-        ctx: C,
+        mdns_id: u64,
+        salt: Spake2pVerifierSaltRef<'_>,
         password: Spake2pVerifierPasswordRef<'_>,
         discriminator: u16,
         timeout_secs: u16,
         opener: Option<CommWindowOpener>,
-    ) -> Result<(), Error>
-    where
-        C: BasicContext,
-    {
-        if self.comm_window(&ctx)?.is_some() {
+        mut notify_mdns: impl FnMut(),
+        mut notify_change: impl FnMut(EndptId, ClusterId, AttrId),
+    ) -> Result<(), Error> {
+        if self
+            .comm_window(&mut notify_mdns, &mut notify_change)?
+            .is_some()
+        {
             Err(ErrorCode::Busy)?;
         }
 
@@ -261,27 +263,18 @@ impl Pase {
 
         let window_expiry = (self.epoch)().add(Duration::from_secs(timeout_secs as _));
 
-        let crypto = ctx.crypto();
-        let mut rand = crypto.rand()?;
-
-        let mdns_id = rand.next_u64();
-
-        let mut salt = SPAKE2P_VERIFIER_SALT_ZEROED;
-        rand.fill_bytes(salt.access_mut());
-
         self.comm_window
             .reinit(Maybe::init_some(CommWindow::init_with_pw(
                 mdns_id,
                 password,
-                salt.reference(),
+                salt,
                 discriminator,
                 opener,
                 window_expiry,
             )));
 
-        ctx.matter().notify_mdns();
-
-        ctx.notify_attribute_changed(
+        notify_mdns();
+        notify_change(
             ROOT_ENDPOINT_ID,
             adm_comm::FULL_CLUSTER.id,
             adm_comm::AttributeId::WindowStatus as _,
@@ -309,20 +302,22 @@ impl Pase {
     ///   (i.e. there is another non-expired commissioning window already opened
     ///   or the timeout is invalid)
     #[allow(clippy::too_many_arguments)]
-    pub fn open_comm_window<C>(
+    pub fn open_comm_window(
         &mut self,
-        ctx: C,
+        mdns_id: u64,
         verifier: Spake2pVerifierStrRef<'_>,
         salt: Spake2pVerifierSaltRef<'_>,
         count: u32,
         discriminator: u16,
         timeout_secs: u16,
         opener: Option<CommWindowOpener>,
-    ) -> Result<(), Error>
-    where
-        C: BasicContext,
-    {
-        if self.comm_window(&ctx)?.is_some() {
+        mut notify_mdns: impl FnMut(),
+        mut notify_change: impl FnMut(EndptId, ClusterId, AttrId),
+    ) -> Result<(), Error> {
+        if self
+            .comm_window(&mut notify_mdns, &mut notify_change)?
+            .is_some()
+        {
             Err(ErrorCode::Busy)?;
         }
 
@@ -331,11 +326,6 @@ impl Pase {
         }
 
         let window_expiry = (self.epoch)().add(Duration::from_secs(timeout_secs as _));
-
-        let crypto = ctx.crypto();
-        let mut rand = crypto.rand()?;
-
-        let mdns_id = rand.next_u64();
 
         self.comm_window.reinit(Maybe::init_some(CommWindow::init(
             mdns_id,
@@ -347,9 +337,8 @@ impl Pase {
             window_expiry,
         )));
 
-        ctx.matter().notify_mdns();
-
-        ctx.notify_attribute_changed(
+        notify_mdns();
+        notify_change(
             ROOT_ENDPOINT_ID,
             adm_comm::FULL_CLUSTER.id,
             adm_comm::AttributeId::WindowStatus as _,
@@ -368,15 +357,16 @@ impl Pase {
     /// # Returns
     /// - `Ok(true)` if a commissioning window was closed
     /// - `Ok(false)` if there was no commissioning window to close
-    pub fn close_comm_window<C>(&mut self, ctx: C) -> Result<bool, Error>
-    where
-        C: BasicContext,
-    {
+    pub fn close_comm_window(
+        &mut self,
+        mut notify_mdns: impl FnMut(),
+        mut notify_change: impl FnMut(EndptId, ClusterId, AttrId),
+    ) -> Result<bool, Error> {
         if self.comm_window.is_some() {
             self.comm_window.clear();
-            ctx.matter().notify_mdns();
 
-            ctx.notify_attribute_changed(
+            notify_mdns();
+            notify_change(
                 ROOT_ENDPOINT_ID,
                 adm_comm::FULL_CLUSTER.id,
                 adm_comm::AttributeId::WindowStatus as _,

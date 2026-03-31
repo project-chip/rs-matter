@@ -415,7 +415,8 @@ impl<'a> Accessor<'a> {
             };
 
             fabric
-                .group_get(group_id)
+                .groups()
+                .get(group_id)
                 .is_some_and(|e| e.endpoints.contains(&endpoint_id))
         })
     }
@@ -846,13 +847,11 @@ pub(crate) mod tests {
     }
 
     fn add_acl(matter: &Matter<'_>, fab_idx: NonZeroU8, entry: AclEntry) -> Result<usize, Error> {
-        matter.with_state(|state| state.fabrics.acl_add(fab_idx, entry))
+        matter.with_state(|state| state.fabrics.fabric_mut(fab_idx)?.acl_add(entry))
     }
 
     fn remove_all_acl(matter: &Matter<'_>, fab_idx: NonZeroU8) {
-        matter.with_state(|state| {
-            state.fabrics.acl_remove_all(fab_idx).unwrap();
-        })
+        matter.with_state(|state| state.fabrics.fabric_mut(fab_idx).unwrap().acl_remove_all())
     }
 
     #[test]

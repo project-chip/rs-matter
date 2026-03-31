@@ -28,7 +28,7 @@ max-fabrics-3 = [] # default
 max-fabrics-2 = []
 max-fabrics-1 = []
 
-# Number of fabrics
+# Number of groups per fabrics
 max-groups-per-fabric-32 = []
 max-groups-per-fabric-16 = []
 max-groups-per-fabric-12 = []
@@ -38,11 +38,13 @@ max-groups-per-fabric-6 = []
 max-groups-per-fabric-5 = []
 max-groups-per-fabric-4 = []
 
+# Number of group keys per fabric
 max-group-keys-per-fabric-5 = []
 max-group-keys-per-fabric-4 = []
 max-group-keys-per-fabric-3 = []
 max-group-keys-per-fabric-2 = []
 
+# Number of endpoints that can be members of a group (per fabric)
 max-group-endpoints-per-fabric-5 = []
 max-group-endpoints-per-fabric-4 = []
 max-group-endpoints-per-fabric-3 = []
@@ -114,8 +116,8 @@ max-btp-sessions-1 = [] # default
 # General
 astro-dnssd = ["os", "dep:astro-dnssd"]
 zeroconf = ["os", "dep:zeroconf"]
-zbus = ["dep:zbus", "os", "futures-lite", "libc", "uuid", "async-io", "async-channel"]
-os = ["std", "backtrace", "critical-section/std", "embassy-sync/std", "embassy-time/std"]
+zbus = ["dep:zbus", "os", "futures-lite", "libc", "uuid", "async-channel"]
+os = ["std", "backtrace", "async-io", "critical-section/std", "embassy-sync/std", "embassy-time/std"]
 std = ["alloc", "rand"]
 backtrace = []
 alloc = ["defmt?/alloc"]

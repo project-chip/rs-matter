@@ -25,9 +25,8 @@ use std::collections::{HashMap, HashSet};
 use std::net::ToSocketAddrs;
 use std::time::Duration;
 
-use crate::crypto::Crypto;
-use crate::dm::ChangeNotify;
 use crate::error::{Error, ErrorCode};
+use crate::im::{AttrId, ClusterId, EndptId};
 use crate::transport::network::mdns::Service;
 use crate::{Matter, MatterMdnsService};
 
@@ -57,16 +56,15 @@ impl<'a> AstroMdnsResponder<'a> {
     /// # Arguments
     /// - `crypto`: A crypto provider instance.
     /// - `notify`: A change notification interface.
-    pub async fn run<C: Crypto>(
+    pub async fn run(
         &mut self,
-        crypto: C,
-        notify: &dyn ChangeNotify,
+        mut notify: impl FnMut(EndptId, ClusterId, AttrId),
     ) -> Result<(), Error> {
         loop {
             self.matter.wait_mdns().await;
 
             let mut services = HashSet::new();
-            self.matter.mdns_services(&crypto, notify, |service| {
+            self.matter.mdns_services(&mut notify, |service| {
                 services.insert(service);
 
                 Ok(())
@@ -165,7 +163,7 @@ pub fn discover_commissionable<const A: usize>(
 
     info!("Browsing for mDNS services: {}", service_type);
 
-    let browser = ServiceBrowserBuilder::new(&service_type)
+    let browser = ServiceBrowserBuilder::new(service_type)
         .browse()
         .map_err(|e| {
             error!("Failed to create service browser: {:?}", e);

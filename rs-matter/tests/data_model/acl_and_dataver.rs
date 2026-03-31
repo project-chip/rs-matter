@@ -18,7 +18,7 @@
 use core::num::NonZeroU8;
 
 use rs_matter::acl::{gen_noc_cat, AclEntry, AuthMode, Target};
-use rs_matter::dm::clusters::acl::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::acl::{self, ClusterAsyncHandler as _};
 use rs_matter::dm::Privilege;
 use rs_matter::im::GenericPath;
 use rs_matter::im::IMStatusCode;
@@ -70,7 +70,12 @@ fn wc_read_attribute() {
     acl.add_subject(TEST_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(0), None, None)).unwrap();
     im.matter.with_state(|state| {
-        state.fabrics.acl_add(FAB_1, acl).unwrap();
+        state
+            .fabrics
+            .fabric_mut(FAB_1)
+            .unwrap()
+            .acl_add(acl)
+            .unwrap();
     });
 
     // Test2: Only Single response as only single endpoint is allowed
@@ -85,7 +90,12 @@ fn wc_read_attribute() {
     acl.add_subject(TEST_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(1), None, None)).unwrap();
     im.matter.with_state(|state| {
-        state.fabrics.acl_add(FAB_1, acl).unwrap();
+        state
+            .fabrics
+            .fabric_mut(FAB_1)
+            .unwrap()
+            .acl_add(acl)
+            .unwrap();
     });
 
     // Test3: Both responses are valid
@@ -126,7 +136,12 @@ fn exact_read_attribute() {
     let mut acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
     acl.add_subject(TEST_PEER_ID).unwrap();
     im.matter.with_state(|state| {
-        state.fabrics.acl_add(FAB_1, acl).unwrap();
+        state
+            .fabrics
+            .fabric_mut(FAB_1)
+            .unwrap()
+            .acl_add(acl)
+            .unwrap();
     });
 
     // Test2: Only Single response as only single endpoint is allowed
@@ -186,7 +201,12 @@ fn wc_write_attribute() {
     acl.add_subject(TEST_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(0), None, None)).unwrap();
     im.matter.with_state(|state| {
-        state.fabrics.acl_add(FAB_1, acl).unwrap();
+        state
+            .fabrics
+            .fabric_mut(FAB_1)
+            .unwrap()
+            .acl_add(acl)
+            .unwrap();
     });
 
     // Test 2: Wildcard write to attributes will only return attributes
@@ -207,7 +227,12 @@ fn wc_write_attribute() {
     acl.add_subject(TEST_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(1), None, None)).unwrap();
     im.matter.with_state(|state| {
-        state.fabrics.acl_add(FAB_1, acl).unwrap();
+        state
+            .fabrics
+            .fabric_mut(FAB_1)
+            .unwrap()
+            .acl_add(acl)
+            .unwrap();
     });
 
     // Test 3: Wildcard write to attributes will return multiple attributes
@@ -264,7 +289,12 @@ fn exact_write_attribute() {
     let mut acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
     acl.add_subject(TEST_PEER_ID).unwrap();
     im.matter.with_state(|state| {
-        state.fabrics.acl_add(FAB_1, acl).unwrap();
+        state
+            .fabrics
+            .fabric_mut(FAB_1)
+            .unwrap()
+            .acl_add(acl)
+            .unwrap();
     });
 
     // Test 1: Exact write to an attribute with permission should grant
@@ -318,7 +348,12 @@ fn exact_write_attribute_noc_cat() {
     let mut acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
     acl.add_subject_catid(cat_in_acl).unwrap();
     im.matter.with_state(|state| {
-        state.fabrics.acl_add(FAB_1, acl).unwrap();
+        state
+            .fabrics
+            .fabric_mut(FAB_1)
+            .unwrap()
+            .acl_add(acl)
+            .unwrap();
     });
 
     // Test 1: Exact write to an attribute with permission should grant
@@ -351,7 +386,12 @@ fn insufficient_perms_write() {
     acl.add_subject(TEST_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(0), None, None)).unwrap();
     im.matter.with_state(|state| {
-        state.fabrics.acl_add(FAB_1, acl).unwrap();
+        state
+            .fabrics
+            .fabric_mut(FAB_1)
+            .unwrap()
+            .acl_add(acl)
+            .unwrap();
     });
 
     // Test: Not enough permission should return error
@@ -425,7 +465,12 @@ fn write_with_runtime_acl_add() {
         ))
         .unwrap();
     im.matter.with_state(|state| {
-        state.fabrics.acl_add(FAB_1, basic_acl).unwrap();
+        state
+            .fabrics
+            .fabric_mut(FAB_1)
+            .unwrap()
+            .acl_add(basic_acl)
+            .unwrap();
     });
 
     // Test: deny write (with error), then ACL is added, then allow write
@@ -458,7 +503,12 @@ fn test_read_data_ver() {
     // Add ACL to allow our peer with only OPERATE permission
     let acl = AclEntry::new(None, Privilege::OPERATE, AuthMode::Case);
     im.matter.with_state(|state| {
-        state.fabrics.acl_add(FAB_1, acl).unwrap();
+        state
+            .fabrics
+            .fabric_mut(FAB_1)
+            .unwrap()
+            .acl_add(acl)
+            .unwrap();
     });
 
     let wc_ep_att1 = GenericPath::new(
@@ -553,7 +603,12 @@ fn test_write_data_ver() {
     // Add ACL to allow our peer with only OPERATE permission
     let acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
     im.matter.with_state(|state| {
-        state.fabrics.acl_add(FAB_1, acl).unwrap();
+        state
+            .fabrics
+            .fabric_mut(FAB_1)
+            .unwrap()
+            .acl_add(acl)
+            .unwrap();
     });
 
     let wc_ep_attwrite = GenericPath::new(

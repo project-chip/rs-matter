@@ -59,7 +59,8 @@ use rs_matter::crypto::backend::rustcrypto::RustCrypto;
 use rs_matter::crypto::{Crypto, RngCore, WeakTestOnlyRand};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::clusters::net_comm::{
-    NetCtl, NetCtlError, NetCtlStatus, NetworkScanInfo, NetworkType, Networks, WirelessCreds,
+    NetCtl, NetCtlError, NetCtlStatus, NetworkScanInfo, NetworkType, NetworksAccess,
+    SharedNetworks, WirelessCreds,
 };
 use rs_matter::dm::clusters::on_off::NoLevelControl;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
@@ -80,6 +81,7 @@ use rs_matter::dm::{Async, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatch
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
+use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
@@ -157,7 +159,7 @@ struct MatterStack<'a> {
     buffers: PooledBuffers<10, IMBuffer>,
     subscriptions: Subscriptions<{ DEFAULT_MAX_SUBSCRIPTIONS }>,
     events: Events<DEFAULT_BYTES_PER_BUF>,
-    networks: WifiNetworks<3>,
+    networks: SharedNetworks<WifiNetworks<3>>,
     net_ctl_state: NetCtlStateMutex,
     btp: Btp,
     wireless_mgr_buffer: MaybeUninit<[u8; MAX_CREDS_SIZE]>,
@@ -179,7 +181,7 @@ impl<'a> MatterStack<'a> {
             buffers <- PooledBuffers::init(0),
             subscriptions <- Subscriptions::init(),
             events <- Events::init(dummy_epoch),
-            networks <- WifiNetworks::init(),
+            networks <- SharedNetworks::init(WifiNetworks::init()),
             net_ctl_state <- NetCtlState::init_with_mutex(),
             btp <- Btp::init(),
             wireless_mgr_buffer: MaybeUninit::zeroed(),
@@ -191,8 +193,9 @@ impl<'a> MatterStack<'a> {
 // Fully spelled-out types for everything which is passed down as arguments to `embassy-executor` tasks
 // Necessary, because `embassy-executor` doesn't grok generics
 
+type AppNetworks = SharedNetworks<WifiNetworks<3>>;
 type AppNetCtl<'a> = NetCtlWithStatusImpl<'a, FakeWifi>;
-type AppWirelessMgr<'a> = WirelessMgr<'a, &'a WifiNetworks<3>, &'a AppNetCtl<'a>>;
+type AppWirelessMgr<'a> = WirelessMgr<'a, &'a AppNetworks, &'a AppNetCtl<'a>>;
 type AppTransport<'a> = ChainedNetwork<FakeUdp, &'a Btp, fn(&Address) -> bool>;
 type AppHandler<'a> = handler_chain_type!(
     EpClMatcher => on_off::HandlerAsyncAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>,
@@ -200,7 +203,8 @@ type AppHandler<'a> = handler_chain_type!(
     | EmptyHandler
 );
 type AppCrypto = RustCrypto<'static, WeakTestOnlyRand>;
-type AppDmHandler<'a> = WifiHandler<'a, &'a AppNetCtl<'a>, SysHandler<'a, AppHandler<'a>>>;
+type AppDmHandler<'a> =
+    WifiHandler<'a, &'a AppNetworks, &'a AppNetCtl<'a>, SysHandler<'a, AppHandler<'a>>>;
 type AppDataModel<'a> = DataModel<
     'a,
     DEFAULT_MAX_SUBSCRIPTIONS,
@@ -208,6 +212,7 @@ type AppDataModel<'a> = DataModel<
     &'a AppCrypto,
     PooledBuffers<10, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
+    SharedKvBlobStore<DummyKvBlobStore, &'static mut [u8]>,
 >;
 type AppResponder<'d, 'a> = DefaultResponder<
     'd,
@@ -217,6 +222,7 @@ type AppResponder<'d, 'a> = DefaultResponder<
     &'a AppCrypto,
     PooledBuffers<10, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
+    SharedKvBlobStore<DummyKvBlobStore, &'static mut [u8]>,
 >;
 
 #[cfg_attr(target_os = "none", main)]
@@ -324,6 +330,9 @@ fn main() -> ! {
 
     let mut rand = unwrap!(crypto.weak_rand());
 
+    let kv_buf = unsafe { stack.psm_buffer.assume_init_mut() }.as_mut_slice();
+    let kv = SharedKvBlobStore::new(DummyKvBlobStore, kv_buf);
+
     // A Wireless handler with a sample app cluster (on-off)
     let handler = mk_static!(
         AppDmHandler,
@@ -334,8 +343,8 @@ fn main() -> ! {
                 1,
                 TestOnOffDeviceLogic::new(true),
             ),
-            net_ctl,
             &stack.networks,
+            net_ctl,
         )
     );
 
@@ -351,6 +360,7 @@ fn main() -> ! {
             &stack.subscriptions,
             Some(&stack.events),
             (NODE, handler),
+            kv,
         )
     );
 
@@ -636,20 +646,21 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a, N>(
+fn dm_handler<'a, N, T>(
     mut rand: impl RngCore + Copy,
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
-    net_ctl: &'a N,
-    networks: &'a dyn Networks,
-) -> WifiHandler<'a, &'a N, SysHandler<'a, AppHandler<'a>>>
+    networks: N,
+    net_ctl: &'a T,
+) -> WifiHandler<'a, N, &'a T, SysHandler<'a, AppHandler<'a>>>
 where
-    N: NetCtl + NetCtlStatus + WifiDiag,
+    N: NetworksAccess,
+    T: NetCtl + NetCtlStatus + WifiDiag,
 {
     endpoints::with_wifi(
         &(),
         &(),
-        net_ctl,
         networks,
+        net_ctl,
         rand,
         endpoints::with_sys(
             &true,

@@ -30,9 +30,8 @@ use zeroconf::service::TMdnsService;
 use zeroconf::txt_record::TTxtRecord;
 use zeroconf::{MdnsBrowser, ServiceDiscovery, ServiceType};
 
-use crate::crypto::Crypto;
-use crate::dm::ChangeNotify;
 use crate::error::{Error, ErrorCode};
+use crate::im::{AttrId, ClusterId, EndptId};
 use crate::transport::network::mdns::Service;
 use crate::{Matter, MatterMdnsService};
 
@@ -59,16 +58,15 @@ impl<'a> ZeroconfMdnsResponder<'a> {
     /// # Arguments
     /// - `crypto`: A crypto provider instance.
     /// - `notify`: A change notification interface.
-    pub async fn run<C: Crypto>(
+    pub async fn run(
         &mut self,
-        crypto: C,
-        notify: &dyn ChangeNotify,
+        mut notify: impl FnMut(EndptId, ClusterId, AttrId),
     ) -> Result<(), Error> {
         loop {
             self.matter.wait_mdns().await;
 
             let mut services = HashSet::new();
-            self.matter.mdns_services(&crypto, notify, |service| {
+            self.matter.mdns_services(&mut notify, |service| {
                 services.insert(service);
 
                 Ok(())

@@ -33,9 +33,8 @@ use futures_lite::StreamExt;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use zbus::Connection;
 
-use crate::crypto::Crypto;
-use crate::dm::ChangeNotify;
 use crate::error::Error;
+use crate::im::{AttrId, ClusterId, EndptId};
 use crate::transport::network::mdns::Service;
 use crate::utils::zbus_proxies::avahi::entry_group::EntryGroupProxy;
 use crate::utils::zbus_proxies::avahi::server2::Server2Proxy;
@@ -70,11 +69,10 @@ impl<'a> AvahiMdnsResponder<'a> {
     /// - `connection`: A reference to the DBus system connection to use for communication with Avahi.
     /// - `crypto`: A crypto provider instance.
     /// - `notify`: A change notification interface.
-    pub async fn run<C: Crypto>(
+    pub async fn run(
         &mut self,
         connection: &Connection,
-        crypto: C,
-        notify: &dyn ChangeNotify,
+        mut notify: impl FnMut(EndptId, ClusterId, AttrId),
     ) -> Result<(), Error> {
         {
             let avahi = Server2Proxy::new(connection).await?;
@@ -85,7 +83,7 @@ impl<'a> AvahiMdnsResponder<'a> {
             self.matter.wait_mdns().await;
 
             let mut services = HashSet::new();
-            self.matter.mdns_services(&crypto, notify, |service| {
+            self.matter.mdns_services(&mut notify, |service| {
                 services.insert(service);
 
                 Ok(())

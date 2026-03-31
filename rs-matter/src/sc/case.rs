@@ -108,7 +108,6 @@ impl<'a, C: Crypto> Case<'a, C> {
         self.handle_casesigma3(exchange, session).await?;
 
         exchange.acknowledge().await?;
-        exchange.matter().notify_persist();
 
         Ok(())
     }

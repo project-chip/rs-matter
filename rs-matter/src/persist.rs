@@ -15,248 +15,344 @@
  *    limitations under the License.
  */
 
-//! This module provides a simple persistent storage manager (PSM) for `rs-matter`.
+//! This module provides the key-value BLOB store traits used throughout `rs-matter` for persistence, as well as some implementations for those.
+
+use core::borrow::BorrowMut;
+use core::future::Future;
+
+use crate::error::Error;
+use crate::tlv::{TLVTag, ToTLV};
+use crate::utils::storage::WriteBuf;
+use crate::utils::sync::{IfMutex, IfMutexGuard};
 
 #[cfg(feature = "std")]
 pub use fileio::*;
 
-#[cfg(feature = "std")]
-pub mod fileio {
-    use core::mem::MaybeUninit;
+/// The first key available for the vendor-specific data.
+pub const VENDOR_KEYS_START: u16 = 0x1000;
 
-    use std::fs;
-    use std::io::{Read, Write};
-    use std::path::Path;
+/// The key range reserved for fabrics (256 keys).
+pub const FABRIC_KEYS_START: u16 = 0;
 
-    use embassy_futures::select::{select, select3};
+/// The key used for storing the basic info settings.
+pub const BASIC_INFO_KEY: u16 = FABRIC_KEYS_START + 256;
 
-    use crate::dm::events::Events;
-    use crate::dm::networks::wireless::{Wifi, WirelessNetwork, WirelessNetworks};
-    use crate::error::{Error, ErrorCode};
-    use crate::tlv::{
-        Octets, TLVArray, TLVContainerIter, TLVElement, TLVTag, TLVValueType, TLVWrite,
-    };
-    use crate::utils::init::{init, Init};
-    use crate::utils::storage::WriteBuf;
-    use crate::Matter;
+/// The key used for storing the events epoch number.
+pub const EVENT_EPOCH_KEY: u16 = BASIC_INFO_KEY + 1;
 
-    /// A constant representing the absence of wireless networks.
-    pub const NO_NETWORKS: Option<&'static WirelessNetworks<0, Wifi>> = None;
+/// The key used for storing the wireless networks state.
+pub const NETWORKS_KEY: u16 = BASIC_INFO_KEY + 2;
 
-    /// A constant representing the absence of events.
-    pub const NO_EVENTS: Option<&'static Events<0>> = None;
-
-    /// A simple persistent storage manager (PSM) for `rs-matter`.
+/// A trait representing a key-value BLOB storage.
+pub trait KvBlobStore {
+    /// Load a BLOB with the specified key from the storage.
     ///
-    /// This storage saves everything (fabrics, basic info settings and wireless networks (if any))
-    /// as a single file, which is compatible with the `chip-tool` YAML tests which - at least in V1.3.0.0 -
-    /// do expect a single file for all persistent data.
+    /// # Arguments
+    /// - `key` - the key of the BLOB
+    /// - `buf` - a buffer that the `KvBlobStore` implementation might use for its own purposes
     ///
-    /// Moreover, this storage always persists the whole state, regardless what had changed, which
-    /// requires a large memory buffer, which can keep the TLV data of all fabrics, basic info settings and wireless networks.
+    /// # Returns
+    /// - `Ok(Some(&[u8]))` if the BLOB was successfully loaded,
+    /// - `Ok(None)` if the BLOB with the specified key does not exist,
+    /// - `Err` if an error occurred during loading.
+    async fn load(&mut self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error>;
+
+    /// Store a BLOB with the specified key in the storage.
     ///
-    /// NOTE: Production applications might need a more sophisticated persistent storage where e.g.
-    /// each fabric is stored as a separate item.
-    pub struct Psm<const N: usize = 32768> {
-        buf: MaybeUninit<[u8; N]>,
+    /// # Arguments
+    /// - `key` - the key of the BLOB
+    /// - `data` - the data to store
+    /// - `buf` - a buffer that the `KvBlobStore` implementation might use for its own purposes
+    ///
+    /// # Returns
+    /// - `Ok(())` if the BLOB was successfully stored,
+    /// - `Err` if an error occurred during storing.
+    async fn store(&mut self, key: u16, data: &[u8], buf: &mut [u8]) -> Result<(), Error>;
+
+    /// Remove a BLOB with the specified key from the storage.
+    ///
+    /// # Arguments
+    /// - `key` - the key of the BLOB
+    /// - `buf` - a buffer that the `KvBlobStore` implementation might use for its own purposes
+    ///
+    /// # Returns
+    /// - `Ok(())` if the BLOB was successfully removed or did not exist
+    /// - `Err` if an error occurred during removing.
+    async fn remove(&mut self, key: u16, buf: &mut [u8]) -> Result<(), Error>;
+}
+
+impl<T> KvBlobStore for &mut T
+where
+    T: KvBlobStore,
+{
+    async fn load(&mut self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error> {
+        T::load(self, key, buf).await
     }
 
-    impl<const N: usize> Default for Psm<N> {
-        fn default() -> Self {
-            Self::new()
+    async fn store(&mut self, key: u16, data: &[u8], buf: &mut [u8]) -> Result<(), Error> {
+        T::store(self, key, data, buf).await
+    }
+
+    async fn remove(&mut self, key: u16, buf: &mut [u8]) -> Result<(), Error> {
+        T::remove(self, key, buf).await
+    }
+}
+
+/// A noop implementation of the `KvBlobStore` trait.
+pub struct DummyKvBlobStore;
+
+impl KvBlobStore for DummyKvBlobStore {
+    async fn load(&mut self, _key: u16, _buf: &mut [u8]) -> Result<Option<usize>, Error> {
+        Ok(None)
+    }
+
+    async fn store(&mut self, _key: u16, _data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
+        Ok(())
+    }
+
+    async fn remove(&mut self, _key: u16, _buf: &mut [u8]) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+/// A trait representing access to a `KvBlobStore` instance and a buffer for its use.
+pub trait KvBlobStoreAccess {
+    /// The type of the `KvBlobStore` instance and buffer provided by this access.
+    type Instance<'a>: KvBlobStoreInstance
+    where
+        Self: 'a;
+
+    /// Get the `KvBlobStore` instance and buffer provided by this access.
+    async fn get(&self) -> Self::Instance<'_>;
+}
+
+/// A trait representing an instance that can provide a `KvBlobStore` and a buffer for its use.
+pub trait KvBlobStoreInstance {
+    /// Split this instance into a `KvBlobStore` and a buffer for its use.
+    fn split(&mut self) -> (impl KvBlobStore, &mut [u8]);
+}
+
+impl<T> KvBlobStoreInstance for &mut T
+where
+    T: KvBlobStoreInstance,
+{
+    fn split(&mut self) -> (impl KvBlobStore, &mut [u8]) {
+        T::split(self)
+    }
+}
+
+impl<T> KvBlobStoreAccess for &T
+where
+    T: KvBlobStoreAccess,
+{
+    type Instance<'a>
+        = T::Instance<'a>
+    where
+        Self: 'a;
+
+    fn get(&self) -> impl Future<Output = Self::Instance<'_>> {
+        T::get(self)
+    }
+}
+
+/// A noop implementation of the `KvBlobStoreAccess` trait.
+pub struct DummyKvBlobStoreAccess;
+
+impl KvBlobStoreAccess for DummyKvBlobStoreAccess {
+    type Instance<'a>
+        = DummyKvBlobStore
+    where
+        Self: 'a;
+
+    async fn get(&self) -> Self::Instance<'_> {
+        DummyKvBlobStore
+    }
+}
+
+impl KvBlobStoreInstance for DummyKvBlobStore {
+    fn split(&mut self) -> (impl KvBlobStore, &mut [u8]) {
+        (DummyKvBlobStore, &mut [])
+    }
+}
+
+/// An implementation of the `KvBlobStoreAccess` trait that provides access
+/// to a shared `KvBlobStore` instance and a shared buffer using async mutex.
+pub struct SharedKvBlobStore<S, T>(IfMutex<(S, T)>);
+
+impl<S, T> SharedKvBlobStore<S, T> {
+    /// Create a new `SharedKvBlobStore` instance.
+    ///
+    /// # Arguments
+    /// - `store` - the wrapped `KvBlobStore` instance
+    /// - `buf` - the wrapped buffer
+    pub const fn new(store: S, buf: T) -> Self {
+        Self(IfMutex::new((store, buf)))
+    }
+
+    /// Get the wrapped `KvBlobStore` instance and the wrapped buffer.
+    ///
+    /// If necessary, awaits the buffer to be available.
+    pub async fn get(&self) -> SharedKvBlobStoreInstance<'_, S, T> {
+        SharedKvBlobStoreInstance(self.0.lock().await)
+    }
+}
+
+impl<S, T> KvBlobStoreAccess for SharedKvBlobStore<S, T>
+where
+    S: KvBlobStore,
+    T: BorrowMut<[u8]>,
+{
+    type Instance<'a>
+        = SharedKvBlobStoreInstance<'a, S, T>
+    where
+        Self: 'a;
+
+    async fn get(&self) -> Self::Instance<'_> {
+        self.get().await
+    }
+}
+
+/// A wrapper around a `KvBlobStore` instance and a buffer for its use, providing access to them.
+pub struct SharedKvBlobStoreInstance<'a, S, T>(IfMutexGuard<'a, (S, T)>);
+
+impl<'a, S, T> KvBlobStoreInstance for SharedKvBlobStoreInstance<'a, S, T>
+where
+    S: KvBlobStore,
+    T: BorrowMut<[u8]>,
+{
+    fn split(&mut self) -> (impl KvBlobStore, &mut [u8]) {
+        let (store, buf) = &mut *self.0;
+
+        (store, buf.borrow_mut())
+    }
+}
+
+/// A utility for persisting a value in a `KvBlobStore` instance.
+pub struct Persist<S> {
+    kvb: S,
+    key: Option<u16>,
+    len: usize,
+}
+
+impl<S> Persist<S>
+where
+    S: KvBlobStoreInstance,
+{
+    /// Create a new `Persist` instance with the given key-value store instance.
+    pub const fn new(kvb: S) -> Self {
+        Self {
+            kvb,
+            key: None,
+            len: 0,
         }
     }
 
-    impl<const N: usize> Psm<N> {
-        /// Create a new `Psm` instance.
-        #[inline(always)]
-        pub const fn new() -> Self {
-            Self {
-                buf: MaybeUninit::uninit(),
+    /// Reset the state of this `Persist` instance, so that it can be reused for a new transaction.
+    pub fn reset(&mut self) {
+        self.key = None;
+        self.len = 0;
+    }
+
+    /// Prepare a value for persistence by first serializing it in the provided buffer and then
+    /// storing the serialized state in the transaction's pending state if the serialization was successful.
+    pub fn store<F: FnOnce(&mut [u8]) -> Result<Option<usize>, Error>>(
+        &mut self,
+        key: u16,
+        f: F,
+    ) -> Result<(), Error> {
+        let buf = self.kvb.split().1;
+
+        if !buf.is_empty() {
+            // DummyKvBlobStoreAccess uses an empty buffer
+            if let Some(len) = f(buf)? {
+                self.len = len;
+                self.key = Some(key);
             }
         }
 
-        /// Return an in-place initializer for `Psm`.
-        pub fn init() -> impl Init<Self> {
-            init!(Self {
-                buf <- crate::utils::init::zeroed(),
-            })
-        }
+        Ok(())
+    }
 
-        /// Load the persistent state from the given file path into the provided `Matter` instance
-        ///
-        /// Arguments:
-        /// - `path`: The file path from where to load the persistent state.
-        /// - `matter`: The `Matter` instance to load the state into (for fabrics and basic info settings).
-        /// - `networks`: An optional reference to `WirelessNetworks` to load the wireless networks state into (if provided).
-        /// - `events`: An optional reference to `Events` to load the events state into (if provided).
-        pub fn load<P, const W: usize, T, const NE: usize>(
-            &mut self,
-            path: P,
-            matter: &Matter,
-            networks: Option<&WirelessNetworks<W, T>>,
-            events: Option<&Events<NE>>,
-        ) -> Result<(), Error>
-        where
-            P: AsRef<Path>,
-            T: WirelessNetwork,
-        {
-            let buf = unsafe { self.buf.assume_init_mut() };
-
-            let Some(data) = Self::load_storage(path.as_ref(), buf)? else {
-                return Ok(());
-            };
-
-            let root = TLVElement::new(data);
-
-            if root.control()?.value_type == TLVValueType::Array {
-                // Legacy format: anonymous array with positional octet-strings
-                let mut items: TLVContainerIter<'_, Octets<'_>> = TLVArray::new(root)?.iter();
-
-                matter.load_fabrics(items.next().ok_or(ErrorCode::Invalid)??.0)?;
-                matter.load_basic_info(items.next().ok_or(ErrorCode::Invalid)??.0)?;
-
-                if let Some(networks) = networks {
-                    networks.load(items.next().ok_or(ErrorCode::Invalid)??.0)?;
-                }
-            } else {
-                // New format: struct with context-tagged octet-strings
-                let container = root.container()?;
-
-                matter.load_fabrics(container.find_ctx(0)?.octets()?)?;
-                matter.load_basic_info(container.find_ctx(1)?.octets()?)?;
-
-                if let Some(networks) = networks {
-                    networks.load(container.find_ctx(2)?.octets()?)?;
-                }
-
-                if let Some(events) = events {
-                    events.load(container.find_ctx(3)?.octets()?)?;
-                }
-            }
-
-            Ok(())
-        }
-
-        /// Store the persistent state from the provided `Matter` instance
-        ///
-        /// If the fabrics, basic info settings or wireless networks (if provided) have not changed,
-        /// this method does nothing.
-        ///
-        /// Arguments:
-        /// - `path`: The file path where to store the persistent state.
-        /// - `matter`: The `Matter` instance whose state to store (for fabrics and basic info settings).
-        /// - `networks`: An optional reference to `WirelessNetworks` whose state to store.
-        /// - `events`: An optional reference to `Events` whose state to store.
-        pub fn store<P, const W: usize, T, const NE: usize>(
-            &mut self,
-            path: P,
-            matter: &Matter,
-            networks: Option<&WirelessNetworks<W, T>>,
-            events: Option<&Events<NE>>,
-        ) -> Result<(), Error>
-        where
-            P: AsRef<Path>,
-            T: WirelessNetwork,
-        {
-            if !matter.fabrics_changed()
-                && !matter.basic_info_changed()
-                && !networks.map(|networks| networks.changed()).unwrap_or(false)
-                && !events.map(|events| events.changed()).unwrap_or(false)
-            {
-                return Ok(());
-            }
-
-            let buf = unsafe { self.buf.assume_init_mut() };
-
+    /// Prepare a TLV value for persistence by storing it in the transaction's pending state.
+    pub fn store_tlv<T: ToTLV>(&mut self, key: u16, tlv: T) -> Result<(), Error> {
+        self.store(key, |buf| {
             let mut wb = WriteBuf::new(buf);
 
-            wb.start_struct(&TLVTag::Anonymous)?;
+            tlv.to_tlv(&TLVTag::Anonymous, &mut wb)?;
 
-            wb.str_cb(&TLVTag::Context(0), |buf| matter.store_fabrics(buf))?;
+            Ok(Some(wb.get_tail()))
+        })
+    }
 
-            wb.str_cb(&TLVTag::Context(1), |buf| matter.store_basic_info(buf))?;
+    /// Prepare the removal of a value from the persistent storage.
+    pub fn remove(&mut self, key: u16) {
+        self.key = Some(key);
+        self.len = 0;
+    }
 
-            if let Some(networks) = networks {
-                wb.str_cb(&TLVTag::Context(2), |buf| networks.store(buf))?;
-            }
+    /// Run this persistence operation by writing the prepared value to the wrapped `KvBlobStore` instance.
+    pub async fn run(mut self) -> Result<(), Error> {
+        let (mut kv, buf) = self.kvb.split();
 
-            if let Some(events) = events {
-                wb.str_cb(&TLVTag::Context(3), |buf| events.store(buf))?;
-            }
+        if let Some(key) = self.key {
+            let (data, buf) = buf.split_at_mut(self.len);
 
-            wb.end_container()?;
-
-            Self::save_storage(path.as_ref(), wb.as_slice())?;
-
-            Ok(())
-        }
-
-        /// Run the persistent storage, which waits for changes in the `Matter` instance
-        /// and the optional `WirelessNetworks` instance (if provided) and stores the state
-        /// to the given file path whenever a change occurs.
-        ///
-        /// Arguments:
-        /// - `path`: The file path where to store the persistent state.
-        /// - `matter`: The `Matter` instance to monitor for changes and for state to store (for fabrics and basic info settings).
-        /// - `networks`: An optional reference to `WirelessNetworks` to monitor for changes and for state to store (if provided).
-        /// - `events`: An optional reference to `Events` to monitor for changes and for state to store (if provided).
-        pub async fn run<P, const W: usize, T, const NE: usize>(
-            &mut self,
-            path: P,
-            matter: &Matter<'_>,
-            networks: Option<&WirelessNetworks<W, T>>,
-            events: Option<&Events<NE>>,
-        ) -> Result<(), Error>
-        where
-            P: AsRef<Path>,
-            T: WirelessNetwork,
-        {
-            // NOTE: Calling `load` here does not make sense, because the `Psm::run` future / async method is executed
-            // concurrently with other `rs-matter` futures. Including the future (`Matter::run`) that takes a decision whether
-            // the state of `rs-matter` is such that it is not provisioned yet (no fabrics) and as such
-            // it has to open the basic commissioning window and print the QR code.
-            //
-            // User is supposed to instead explicitly call `load` before calling `Psm::run` and `Matter::run`
-            // self.load_networks(dir, networks)?;
-
-            loop {
-                match (networks, events) {
-                    (Some(networks), Some(events)) => {
-                        select3(
-                            matter.wait_persist(),
-                            networks.wait_persist(),
-                            events.wait_persist(),
-                        )
-                        .await;
-                    }
-                    (Some(networks), None) => {
-                        select(matter.wait_persist(), networks.wait_persist()).await;
-                    }
-                    (None, Some(events)) => {
-                        select(matter.wait_persist(), events.wait_persist()).await;
-                    }
-                    (None, None) => {
-                        matter.wait_persist().await;
-                    }
-                }
-
-                self.store(path.as_ref(), matter, networks, events)?;
+            if self.len > 0 {
+                kv.store(key, data, buf).await?;
+            } else {
+                kv.remove(key, buf).await?;
             }
         }
 
-        /// Loads the data from the provided file path into the given buffer.
-        ///
-        /// Returns `Ok(Some(&[u8]))` if data was successfully loaded,
-        /// `Ok(None)` if the file does not exist, or an `Err` if an error occurred.
-        fn load_storage<'b>(path: &Path, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
-            match fs::File::open(path) {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "std")]
+mod fileio {
+    use std::collections::HashMap;
+    use std::fs::File;
+    use std::io::{Read, Write};
+    use std::path::{Path, PathBuf};
+
+    use crate::error::Error;
+
+    use super::KvBlobStore;
+
+    extern crate std;
+
+    /// An implementation of the `KvBlobStore` trait that stores the BLOBs in a directory.
+    ///
+    /// The BLOBs are stored in files named after the keys in the specified directory.
+    #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct DirKvBlobStore(
+        #[cfg_attr(feature = "defmt", defmt(Debug2Format))] std::path::PathBuf,
+    );
+
+    impl DirKvBlobStore {
+        /// Create a new `DirKvBlobStore` instance, which will persist
+        /// its settings in `<tmp-dir>/rs-matter`.
+        pub fn new_default() -> Self {
+            Self(std::env::temp_dir().join("rs-matter"))
+        }
+
+        /// Create a new `DirKvBlobStore` instance.
+        pub const fn new(path: std::path::PathBuf) -> Self {
+            Self(path)
+        }
+
+        /// Load a BLOB with the specified key from the directory.
+        pub fn load(&self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error> {
+            let path = self.key_path(key);
+
+            match File::open(path) {
                 Ok(mut file) => {
                     let mut offset = 0;
 
                     loop {
                         if offset == buf.len() {
-                            Err(ErrorCode::BufferTooSmall)?;
+                            Err(crate::error::ErrorCode::NoSpace)?;
                         }
 
                         let len = file.read(&mut buf[offset..])?;
@@ -270,162 +366,202 @@ pub mod fileio {
 
                     let data = &buf[..offset];
 
-                    trace!("Loaded {} bytes {:?}", data.len(), data);
+                    debug!("Key {}: loaded {}B ({:?})", key, data.len(), data);
 
-                    Ok(Some(data))
+                    Ok(Some(data.len()))
                 }
                 Err(_) => Ok(None),
             }
         }
 
-        /// Saves the given data to the specified file path.
-        fn save_storage(path: &Path, data: &[u8]) -> Result<(), Error> {
-            let mut file = fs::File::create(path)?;
+        /// Store a BLOB with the specified key in the directory.
+        pub fn store(&self, key: u16, data: &[u8]) -> Result<(), Error> {
+            let path = self.key_path(key);
+
+            std::fs::create_dir_all(unwrap!(path.parent()))?;
+
+            let mut file = File::create(path)?;
 
             file.write_all(data)?;
 
-            trace!("Stored {} bytes {:?}", data.len(), data);
+            debug!("Key {}: stored {}B ({:?})", key, data.len(), data);
+
+            Ok(())
+        }
+
+        /// Remove a BLOB with the specified key from the directory.
+        /// If the BLOB does not exist, this method does nothing.
+        pub fn remove(&self, key: u16) -> Result<(), Error> {
+            let path = self.key_path(key);
+
+            if std::fs::remove_file(path).is_ok() {
+                debug!("Key {}: removed", key);
+            }
+
+            Ok(())
+        }
+
+        fn key_path(&self, key: u16) -> std::path::PathBuf {
+            self.0.join(format!("k_{key:04x}"))
+        }
+    }
+
+    impl Default for DirKvBlobStore {
+        fn default() -> Self {
+            Self::new_default()
+        }
+    }
+
+    impl KvBlobStore for DirKvBlobStore {
+        async fn load(&mut self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error> {
+            Self::load(self, key, buf)
+        }
+
+        async fn store(&mut self, key: u16, data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
+            Self::store(self, key, data)
+        }
+
+        async fn remove(&mut self, key: u16, _buf: &mut [u8]) -> Result<(), Error> {
+            Self::remove(self, key)
+        }
+    }
+
+    /// An implementation of the `KvBlobStore` trait that stores all BLOBs in a single file.
+    ///
+    /// While the implementation is very inefficient, it is necessary when testing with the C++ SDK test harness,
+    /// as it expects all data to be persisted as a single file (`/tmp/chip_kvs`).
+    #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct FileKvBlobStore {
+        #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
+        path: std::path::PathBuf,
+        #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
+        blobs: Option<HashMap<u16, Vec<u8>>>,
+    }
+
+    impl FileKvBlobStore {
+        /// Create a new `FileKvBlobStore` instance, which will persist its settings in `/tmp/chip_kvs`.
+        pub fn new_default() -> Self {
+            Self::new(PathBuf::from("/tmp/chip_kvs"))
+        }
+
+        /// Create a new `FileKvBlobStore` instance.
+        pub const fn new(path: PathBuf) -> Self {
+            Self { path, blobs: None }
+        }
+
+        /// Load a BLOB with the specified key from the file.
+        pub fn load(&mut self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error> {
+            self.initialize()?;
+
+            let blobs = self.blobs.as_ref().unwrap();
+
+            if let Some(blob) = blobs.get(&key) {
+                if blob.len() > buf.len() {
+                    Err(crate::error::ErrorCode::NoSpace)?;
+                }
+
+                buf[..blob.len()].copy_from_slice(blob);
+
+                Ok(Some(blob.len()))
+            } else {
+                Ok(None)
+            }
+        }
+
+        /// Store a BLOB with the specified key in the directory.
+        pub fn store(&mut self, key: u16, data: &[u8]) -> Result<(), Error> {
+            self.initialize()?;
+
+            let blobs = self.blobs.as_mut().unwrap();
+
+            blobs.insert(key, data.to_vec());
+
+            Self::save_all(&self.path, blobs)
+        }
+
+        /// Remove a BLOB with the specified key from the directory.
+        /// If the BLOB does not exist, this method does nothing.
+        pub fn remove(&mut self, key: u16) -> Result<(), Error> {
+            self.initialize()?;
+
+            let blobs = self.blobs.as_mut().unwrap();
+
+            blobs.remove(&key);
+
+            Self::save_all(&self.path, blobs)
+        }
+
+        fn initialize(&mut self) -> Result<(), Error> {
+            if self.blobs.is_none() {
+                let mut blobs = HashMap::new();
+
+                Self::load_all(&self.path, &mut blobs)?;
+
+                self.blobs = Some(blobs);
+            }
+
+            Ok(())
+        }
+
+        fn load_all(path: &Path, blobs: &mut HashMap<u16, Vec<u8>>) -> Result<(), Error> {
+            if let Ok(mut file) = File::open(path) {
+                loop {
+                    let mut key_buf = [0; 2];
+
+                    if file.read_exact(&mut key_buf).is_err() {
+                        break;
+                    }
+
+                    let key = u16::from_le_bytes(key_buf);
+
+                    let mut len_buf = [0; 4];
+
+                    file.read_exact(&mut len_buf)?;
+
+                    let len = u32::from_le_bytes(len_buf) as usize;
+
+                    let mut data = vec![0; len];
+
+                    file.read_exact(&mut data)?;
+
+                    blobs.insert(key, data);
+                }
+            }
+
+            Ok(())
+        }
+
+        fn save_all(path: &Path, blobs: &HashMap<u16, Vec<u8>>) -> Result<(), Error> {
+            let mut file = File::create(path)?;
+
+            for (key, data) in blobs {
+                file.write_all(&key.to_le_bytes())?;
+                file.write_all(&(data.len() as u32).to_le_bytes())?;
+                file.write_all(data)?;
+            }
 
             Ok(())
         }
     }
 
-    #[cfg(test)]
-    mod tests {
-        use crate::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
-        use crate::dm::events::{Events, PersistedState};
-        use crate::utils::epoch::sys_epoch;
-        use crate::MATTER_PORT;
+    impl Default for FileKvBlobStore {
+        fn default() -> Self {
+            Self::new_default()
+        }
+    }
 
-        use super::*;
-
-        fn new_test_matter() -> Matter<'static> {
-            let matter = Matter::new(
-                &TEST_DEV_DET,
-                TEST_DEV_COMM,
-                &TEST_DEV_ATT,
-                sys_epoch,
-                MATTER_PORT,
-            );
-
-            matter.with_state(|state| {
-                state.fabrics.add_with_post_init(|_| Ok(())).unwrap();
-            });
-
-            matter
+    impl KvBlobStore for FileKvBlobStore {
+        async fn load(&mut self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error> {
+            Self::load(self, key, buf)
         }
 
-        #[test]
-        fn test_store_load_roundtrip() {
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("persist.bin");
-
-            // Set up a matter instance with some non-default config
-            let initial_matter = new_test_matter();
-            {
-                initial_matter.with_state(|state| {
-                    let basic = &mut state.basic_info_settings;
-                    basic.node_label = heapless::String::try_from("my-test-node").unwrap();
-                    basic.location = Some(heapless::String::try_from("ab").unwrap());
-                    basic.changed = true;
-                });
-            }
-
-            // Set up events with a recognizable epoch value
-            let events = Events::<64>::new(sys_epoch);
-            events.persisted_state.lock(|cell| {
-                cell.set(PersistedState {
-                    next_event_no: 0,
-                    event_epoch_end: 0xDEADBEEF,
-                    changed: true,
-                });
-            });
-
-            let mut psm = Psm::<32768>::new();
-            psm.store(&path, &initial_matter, NO_NETWORKS, Some(&events))
-                .unwrap();
-
-            assert!(path.exists());
-            assert!(std::fs::metadata(&path).unwrap().len() > 0);
-
-            // Load into fresh instances
-            let roundtripped = Matter::new(
-                &TEST_DEV_DET,
-                TEST_DEV_COMM,
-                &TEST_DEV_ATT,
-                sys_epoch,
-                MATTER_PORT,
-            );
-            let roundtripped_events = Events::<64>::new(sys_epoch);
-
-            let mut psm2 = Psm::<32768>::new();
-            psm2.load(
-                &path,
-                &roundtripped,
-                NO_NETWORKS,
-                Some(&roundtripped_events),
-            )
-            .unwrap();
-
-            // Basic info fields should've been restored
-            roundtripped.with_state(|state| {
-                let basic = &state.basic_info_settings;
-                assert_eq!(basic.node_label, "my-test-node");
-                assert_eq!(basic.location.as_deref(), Some("ab"));
-            });
-
-            // Events epoch should've been restored and bumped by one epoch
-            let events = roundtripped_events.persisted_state.lock(|cell| cell.get());
-            assert_eq!(events.next_event_no, 0xDEADBEEF);
-            assert_eq!(events.event_epoch_end, 0xDEADBEEF + 0x10000);
+        async fn store(&mut self, key: u16, data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
+            Self::store(self, key, data)
         }
 
-        #[test]
-        fn test_load_legacy_format() {
-            // Generate a "legacy" blob using the old array-based format
-            // (anonymous array with positional anonymous octet-strings)
-            let source_matter = new_test_matter();
-            source_matter.with_state(|state| {
-                let basic = &mut state.basic_info_settings;
-                basic.node_label = heapless::String::try_from("my-test-node").unwrap();
-                basic.location = Some(heapless::String::try_from("ab").unwrap());
-            });
-
-            let mut buf = [0u8; 4096];
-            let mut wb = crate::utils::storage::WriteBuf::new(&mut buf);
-            wb.start_array(&crate::tlv::TLVTag::Anonymous).unwrap();
-            wb.str_cb(&crate::tlv::TLVTag::Anonymous, |buf| {
-                source_matter.store_fabrics(buf)
-            })
-            .unwrap();
-            wb.str_cb(&crate::tlv::TLVTag::Anonymous, |buf| {
-                source_matter.store_basic_info(buf)
-            })
-            .unwrap();
-            wb.end_container().unwrap();
-            let tail = wb.get_tail();
-            let legacy_blob = &buf[..tail];
-
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("legacy.bin");
-            std::fs::write(&path, legacy_blob).unwrap();
-
-            let matter = Matter::new(
-                &TEST_DEV_DET,
-                TEST_DEV_COMM,
-                &TEST_DEV_ATT,
-                sys_epoch,
-                MATTER_PORT,
-            );
-
-            let mut psm = Psm::<32768>::new();
-            psm.load(&path, &matter, NO_NETWORKS, NO_EVENTS).unwrap();
-
-            matter.with_state(|state| {
-                let basic = &state.basic_info_settings;
-                assert_eq!(basic.node_label, "my-test-node");
-                assert_eq!(basic.location.as_deref(), Some("ab"));
-            });
+        async fn remove(&mut self, key: u16, _buf: &mut [u8]) -> Result<(), Error> {
+            Self::remove(self, key)
         }
     }
 }

@@ -44,7 +44,7 @@ use rs_matter::dm::{Async, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatch
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{Psm, NO_NETWORKS};
+use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
@@ -70,8 +70,8 @@ type AppDmHandler<'a> = EthHandler<'a, SysHandler<'a, AppHandler<'a>>>;
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
 static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
-static PSM: StaticCell<Psm<4096>> = StaticCell::new();
 static CRYPTO: StaticCell<RustCrypto<'static, FakeRng>> = StaticCell::new();
+static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
@@ -101,7 +101,7 @@ fn run() -> Result<(), Error> {
         core::mem::size_of::<DefaultSubscriptions>()
     );
 
-    let matter = &*MATTER.uninit().init_with(Matter::init(
+    let matter = MATTER.uninit().init_with(Matter::init(
         &TEST_DEV_DET,
         TEST_DEV_COMM,
         &TEST_DEV_ATT,
@@ -111,6 +111,11 @@ fn run() -> Result<(), Error> {
 
     // Need to call this once
     matter.initialize_transport_buffers()?;
+
+    // Persistence
+    let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
+    let mut kv = DirKvBlobStore::new_default();
+    futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
 
     // Create the transport buffers
     let buffers = &*BUFFERS.uninit().init_with(PooledBuffers::init(0));
@@ -140,6 +145,7 @@ fn run() -> Result<(), Error> {
         subscriptions,
         NO_EVENTS,
         (NODE, dm_handler(rand, on_off_handler)),
+        SharedKvBlobStore::new(kv, kv_buf),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -173,18 +179,6 @@ fn run() -> Result<(), Error> {
     let mdns = mdns::run_mdns(matter, crypto, dm.change_notify());
     let transport = matter.run(crypto, &socket, &socket, &socket);
 
-    // Create, load and run the persister
-    let psm = PSM.uninit().init_with(Psm::init());
-    let path = std::env::temp_dir().join("rs-matter");
-
-    info!(
-        "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B",
-        core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS, NO_EVENTS))
-    );
-
-    psm.load(&path, matter, NO_NETWORKS, NO_EVENTS)?;
-
     if !matter.is_commissioned() {
         // If the device is not commissioned yet, print the QR text and code to the console
         // and enable basic commissioning
@@ -195,13 +189,10 @@ fn run() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, crypto, dm.change_notify())?;
     }
 
-    let persist = psm.run(&path, matter, NO_NETWORKS, NO_EVENTS);
-
     let executor = async_executor::Executor::new();
 
     executor.spawn(transport).detach();
     executor.spawn(mdns).detach();
-    executor.spawn(persist).detach();
 
     // NOTE: Commented out because compiling this line blocks forever
     //executor.spawn(dm_job).detach();

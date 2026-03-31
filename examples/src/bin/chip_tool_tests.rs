@@ -21,11 +21,10 @@
 use core::pin::pin;
 
 use std::net::UdpSocket;
-use std::path::PathBuf;
 
 use async_signal::{Signal, Signals};
 
-use embassy_futures::select::{select3, select4};
+use embassy_futures::select::select3;
 
 use futures_lite::StreamExt;
 
@@ -37,7 +36,7 @@ use rs_matter::dm::clusters::basic_info::{
     BasicInfoConfig, ColorEnum, PairingHintFlags, ProductAppearance, ProductFinishEnum,
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::groups::{self, ClusterAsyncHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::test::TestOnOffDeviceLogic;
@@ -58,7 +57,7 @@ use rs_matter::dm::{
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{Psm, NO_NETWORKS};
+use rs_matter::persist::{FileKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
@@ -73,16 +72,6 @@ use static_cell::StaticCell;
 #[path = "../common/mdns.rs"]
 mod mdns;
 
-/// The `chip-tool` tests expect the persistent storage location
-/// to be `/tmp/chip_kvs`.
-///
-/// Moreover, this _must_ be a file rather than a directory.
-///
-/// While there seem to be some facilities to change that in some of the Python scripts,
-/// these facilities are simply not exposed at the top level test suite Python runner.
-/// TODO: Open a bug for that (and for the single-file expectation) in the `connectedhomeip` repo.
-const PERSIST_FILE_NAME: &str = "/tmp/chip_kvs";
-
 // Statically allocate in BSS the bigger objects
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
 // as well as just allocating the objects on-stack or on the heap.
@@ -90,7 +79,7 @@ static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, rs_matter::dm::IMBuffer>> = StaticCell::new();
 static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
 static EVENTS: StaticCell<DefaultEvents> = StaticCell::new();
-static PSM: StaticCell<Psm<32768>> = StaticCell::new();
+static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
@@ -125,6 +114,11 @@ fn main() -> Result<(), Error> {
 
     // Need to call this once
     matter.initialize_transport_buffers()?;
+
+    // Persistence
+    let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
+    let mut kv = FileKvBlobStore::new_default();
+    futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
 
     // Create the transport buffers
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
@@ -176,6 +170,7 @@ fn main() -> Result<(), Error> {
             &on_off_handler_1,
             &on_off_handler_2,
         ),
+        SharedKvBlobStore::new(kv, kv_buf),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -207,18 +202,6 @@ fn main() -> Result<(), Error> {
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto, dm.change_notify()));
     let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
-    // Create, load and run the persister
-    let psm = PSM.uninit().init_with(Psm::init());
-    let path = PathBuf::from(PERSIST_FILE_NAME);
-
-    info!(
-        "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B",
-        core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS, Some(events)))
-    );
-
-    psm.load(&path, matter, NO_NETWORKS, Some(events))?;
-
     // We need to always print the QR text, because the test runner expects it to be printed
     // even if the device is already commissioned
     matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
@@ -232,8 +215,6 @@ fn main() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, dm.change_notify())?;
     }
 
-    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, Some(events)));
-
     // Listen to SIGTERM because at the end of the test we'll receive it
     let mut term_signal = Signals::new([Signal::Term])?;
     let mut term = pin!(async {
@@ -242,10 +223,9 @@ fn main() -> Result<(), Error> {
     });
 
     // Combine all async tasks in a single one
-    let all = select4(
+    let all = select3(
         &mut transport,
         &mut mdns,
-        &mut persist,
         select3(&mut respond, &mut dm_job, &mut term).coalesce(),
     );
 
@@ -321,7 +301,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                         )
                         .chain(
                             EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
-                            Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                            groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt(),
                         )
                         .chain(
                             EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
@@ -344,7 +324,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                         )
                         .chain(
                             EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
-                            Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                            groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt(),
                         )
                         .chain(
                             EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),

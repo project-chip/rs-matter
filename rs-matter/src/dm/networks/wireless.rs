@@ -20,19 +20,20 @@
 use core::fmt::{Debug, Display};
 
 use crate::dm::clusters::net_comm::{
-    self, NetCtlError, NetworkCommissioningStatusEnum, NetworkType, NetworksError,
+    self, NetCtlError, NetworkCommissioningStatusEnum, NetworkType, Networks, NetworksError,
     ThreadCapabilitiesBitmap, WirelessCreds,
 };
 use crate::dm::clusters::{thread_diag, wifi_diag};
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
+use crate::persist::{KvBlobStore, NETWORKS_KEY};
 use crate::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
 use crate::transport::network::btp::Btp;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::{Vec, WriteBuf};
-use crate::utils::sync::blocking::{self, Mutex};
-use crate::utils::sync::{DynBase, Notification};
+use crate::utils::sync::blocking;
+use crate::utils::sync::DynBase;
 
 use super::NetChangeNotif;
 
@@ -102,55 +103,76 @@ pub trait WirelessNetwork: Send + for<'a> FromTLV<'a> + ToTLV {
 }
 
 /// A fixed-size storage for wireless networks credentials.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct WirelessNetworks<const N: usize, T> {
-    state: Mutex<RefCell<WirelessNetworksStore<N, T>>>,
-    state_changed: Notification,
-    persist_state_changed: Notification,
+    networks: crate::utils::storage::Vec<T, N>,
+}
+
+impl<const N: usize, T> Default for WirelessNetworks<N, T>
+where
+    T: WirelessNetwork,
+{
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<const N: usize, T> WirelessNetworks<N, T>
 where
     T: WirelessNetwork,
 {
-    /// Create a new instance.
     pub const fn new() -> Self {
         Self {
-            state: Mutex::new(RefCell::new(WirelessNetworksStore::new())),
-            state_changed: Notification::new(),
-            persist_state_changed: Notification::new(),
+            networks: crate::utils::storage::Vec::new(),
         }
     }
 
-    /// Return an in-place initializer for the struct.
     pub fn init() -> impl Init<Self> {
         init!(Self {
-            state <- Mutex::init(RefCell::init(WirelessNetworksStore::init())),
-            state_changed: Notification::new(),
-            persist_state_changed: Notification::new(),
+            networks <- crate::utils::storage::Vec::init(),
         })
     }
 
     /// Reset the state
-    ///
-    /// # Arguments
-    /// - `flag_changed`: If `true`, the state will be marked as changed
-    pub fn reset(&self, flag_changed: bool) {
-        self.state
-            .lock(|state| state.borrow_mut().reset(flag_changed));
+    pub fn reset(&mut self) {
+        self.networks.clear();
+    }
 
-        self.state_changed.notify();
+    pub async fn load_persist<S: KvBlobStore>(
+        &mut self,
+        mut kv: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        self.reset();
 
-        if flag_changed {
-            self.persist_state_changed.notify();
+        if let Some(len) = kv.load(NETWORKS_KEY, buf).await? {
+            self.load(&buf[..len])?;
         }
+
+        Ok(())
     }
 
     /// Load the state from a byte slice.
     ///
     /// # Arguments
     /// - `data`: The byte slice to load the state from
-    pub fn load(&self, data: &[u8]) -> Result<(), Error> {
-        self.state.lock(|state| state.borrow_mut().load(data))
+    pub fn load(&mut self, data: &[u8]) -> Result<(), Error> {
+        let root = TLVElement::new(data);
+
+        let iter = root.array()?.iter();
+
+        self.networks.clear();
+
+        for network in iter {
+            let network = network?;
+
+            self.networks.push_init(T::init_from_tlv(network), || {
+                ErrorCode::ResourceExhausted.into()
+            })?;
+        }
+
+        Ok(())
     }
 
     /// Store the state into a byte slice.
@@ -160,45 +182,28 @@ where
     ///
     /// Returns the number of bytes written into the buffer.
     pub fn store(&self, buf: &mut [u8]) -> Result<usize, Error> {
-        self.state.lock(|state| state.borrow_mut().store(buf))
-    }
+        let mut wb = WriteBuf::new(buf);
 
-    /// Return `true` if the state has changed.
-    pub fn changed(&self) -> bool {
-        self.state.lock(|state| state.borrow().changed)
-    }
+        self.networks.to_tlv(&TLVTag::Anonymous, &mut wb)?;
 
-    /// Wait for the state to change.
-    pub async fn wait_state_changed(&self) {
-        loop {
-            if self.state.lock(|state| state.borrow().changed) {
-                break;
-            }
+        let tail = wb.get_tail();
 
-            self.state_changed.wait().await;
-        }
-    }
-
-    /// Wait for the state to be changed in a way that requires persisting.
-    pub async fn wait_persist(&self) {
-        loop {
-            if self.state.lock(|state| state.borrow().changed) {
-                break;
-            }
-
-            self.persist_state_changed.wait().await;
-        }
+        Ok(tail)
     }
 
     /// Iterate over the registered network credentials
     ///
     /// # Arguments
     /// - `f`: A closure that will be called for each network registered in the storage
-    pub fn networks<F>(&self, f: F) -> Result<(), Error>
+    pub fn networks<F>(&self, mut f: F) -> Result<(), Error>
     where
         F: FnMut(&T) -> Result<(), Error>,
     {
-        self.state.lock(|state| state.borrow().networks(f))
+        for network in self.networks.iter() {
+            f(network)?;
+        }
+
+        Ok(())
     }
 
     /// Get the credentials of a network by its ID
@@ -212,8 +217,19 @@ where
     where
         F: FnOnce(&T) -> Result<(), Error>,
     {
-        self.state
-            .lock(|state| state.borrow().network(network_id, f))
+        let networks = self
+            .networks
+            .iter()
+            .enumerate()
+            .find(|(_, network)| network.id() == network_id);
+
+        if let Some((index, network)) = networks {
+            f(network)?;
+
+            Ok(index as _)
+        } else {
+            Err(NetworksError::NetworkIdNotFound)
+        }
     }
 
     /// Get the next network credentials after the one with the given ID
@@ -221,12 +237,47 @@ where
     /// # Arguments
     /// - `after_network_id`: The ID of the network to get the next one after.
     ///   If no network with the provided network ID exists, the first network in the storage will be returned.
-    pub fn next_network<F>(&self, after_network_id: Option<&[u8]>, f: F) -> Result<bool, Error>
+    pub fn next_network<F>(&self, last_network_id: Option<&[u8]>, f: F) -> Result<bool, Error>
     where
         F: FnOnce(&T) -> Result<(), Error>,
     {
-        self.state
-            .lock(|state| state.borrow_mut().next_network(after_network_id, f))
+        if let Some(last_network_id) = last_network_id {
+            info!(
+                "Looking for network after the one with ID: {}",
+                T::display_id(last_network_id)
+            );
+
+            // Return the network positioned after the last one used
+
+            let mut networks = self.networks.iter();
+
+            for network in &mut networks {
+                if network.id() == last_network_id {
+                    break;
+                }
+            }
+
+            let network = networks.next();
+            if let Some(network) = network {
+                info!("Trying with next network - ID: {}", network.display());
+
+                f(network)?;
+                return Ok(true);
+            }
+        }
+
+        // Wrap over
+        info!("Wrapping over");
+
+        if let Some(network) = self.networks.first() {
+            info!("Trying with first network - ID: {}", network.display());
+
+            f(network)?;
+            Ok(true)
+        } else {
+            info!("No networks available");
+            Ok(false)
+        }
     }
 
     /// Add or update a network in the storage
@@ -238,7 +289,7 @@ where
     /// - `update`: A closure that will be called with the network to update. The closure will be called only if a network with the provided
     ///   network ID exists in the storage
     pub fn add_or_update<A, U>(
-        &self,
+        &mut self,
         network_id: &[u8],
         add: A,
         update: U,
@@ -247,14 +298,35 @@ where
         A: Init<T, Error>,
         U: FnOnce(&mut T) -> Result<(), Error>,
     {
-        self.state.lock(|state| {
-            let index = state.borrow_mut().add_or_update(network_id, add, update)?;
+        let unetwork = self
+            .networks
+            .iter_mut()
+            .enumerate()
+            .find(|(_, unetwork)| unetwork.id() == network_id);
 
-            self.state_changed.notify();
-            self.persist_state_changed.notify();
+        if let Some((index, unetwork)) = unetwork {
+            // Update
+            update(unetwork)?;
 
-            Ok(index)
-        })
+            info!("Updated network with ID {}", unetwork.display());
+
+            Ok(index as _)
+        } else if self.networks.len() >= N {
+            warn!(
+                "Adding network with ID {} failed: too many",
+                T::display_id(network_id)
+            );
+
+            Err(NetworksError::BoundsExceeded)
+        } else {
+            // Add
+            self.networks
+                .push_init(add, || ErrorCode::ResourceExhausted.into())?;
+
+            info!("Added network with ID {}", T::display_id(network_id));
+
+            Ok((self.networks.len() - 1) as _)
+        }
     }
 
     /// Reorder a network in the storage
@@ -265,15 +337,39 @@ where
     ///
     /// Returns the new index of the network in the storage, if a network with the provided ID exists
     /// or `NetworkError::NetworkIdNotFound` otherwise
-    pub fn reorder(&self, index: u8, network_id: &[u8]) -> Result<u8, NetworksError> {
-        self.state.lock(|state| {
-            let index = state.borrow_mut().reorder(index, network_id)?;
+    pub fn reorder(&mut self, index: u8, network_id: &[u8]) -> Result<u8, NetworksError> {
+        let cur_index = self
+            .networks
+            .iter()
+            .position(|conf| conf.id() == network_id);
 
-            self.state_changed.notify();
-            self.persist_state_changed.notify();
+        if let Some(cur_index) = cur_index {
+            // Found
 
-            Ok(index)
-        })
+            if index < self.networks.len() as u8 {
+                let conf = self.networks.remove(cur_index);
+                unwrap!(self.networks.insert(index as usize, conf).map_err(|_| ()));
+
+                info!(
+                    "Network with ID {} reordered to index {}",
+                    T::display_id(network_id),
+                    index
+                );
+            } else {
+                warn!(
+                    "Reordering network with ID {} to index {} failed: out of range",
+                    T::display_id(network_id),
+                    index
+                );
+
+                Err(NetworksError::OutOfRange)?;
+            }
+        } else {
+            warn!("Network with ID {} not found", T::display_id(network_id));
+            Err(NetworksError::NetworkIdNotFound)?;
+        }
+
+        Ok(index)
     }
 
     /// Remove a network from the storage
@@ -282,30 +378,28 @@ where
     /// - `network_id`: The ID of the network to remove
     ///
     /// Returns the index of the network in the storage if the network exists and was removed, `NetworkError::NetworkIdNotFound` otherwise
-    pub fn remove(&self, network_id: &[u8]) -> Result<u8, NetworksError> {
-        self.state.lock(|state| {
-            let index = state.borrow_mut().remove(network_id)?;
+    pub fn remove(&mut self, network_id: &[u8]) -> Result<u8, NetworksError> {
+        let index = self
+            .networks
+            .iter()
+            .position(|conf| conf.id() == network_id);
 
-            self.state_changed.notify();
-            self.persist_state_changed.notify();
+        if let Some(index) = index {
+            // Found
+            self.networks.remove(index);
 
-            Ok(index)
-        })
+            info!("Removed network with ID {}", T::display_id(network_id));
+
+            Ok(index as _)
+        } else {
+            warn!("Network with ID {} not found", T::display_id(network_id));
+
+            Err(NetworksError::NetworkIdNotFound)
+        }
     }
 }
 
-impl<const N: usize, T> Default for WirelessNetworks<N, T>
-where
-    T: WirelessNetwork + Clone,
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<const N: usize, T> DynBase for WirelessNetworks<N, T> where T: WirelessNetwork {}
-
-impl<const N: usize, T> net_comm::Networks for WirelessNetworks<N, T>
+impl<const N: usize, T> Networks for WirelessNetworks<N, T>
 where
     T: WirelessNetwork,
 {
@@ -349,12 +443,12 @@ where
         Ok(true)
     }
 
-    fn set_enabled(&self, _enabled: bool) -> Result<(), Error> {
+    fn set_enabled(&mut self, _enabled: bool) -> Result<(), Error> {
         Ok(())
     }
 
     fn add_or_update(
-        &self,
+        &mut self,
         creds: &net_comm::WirelessCreds<'_>,
     ) -> Result<u8, net_comm::NetworksError> {
         WirelessNetworks::add_or_update(self, creds.id()?, T::init_from(creds), |network| {
@@ -362,262 +456,16 @@ where
         })
     }
 
-    fn reorder(&self, index: u8, network_id: &[u8]) -> Result<u8, NetworksError> {
+    fn reorder(&mut self, index: u8, network_id: &[u8]) -> Result<u8, NetworksError> {
         WirelessNetworks::reorder(self, index, network_id)
     }
 
-    fn remove(&self, network_id: &[u8]) -> Result<u8, NetworksError> {
+    fn remove(&mut self, network_id: &[u8]) -> Result<u8, NetworksError> {
         WirelessNetworks::remove(self, network_id)
     }
-}
 
-impl<const N: usize, T> NetChangeNotif for WirelessNetworks<N, T>
-where
-    T: WirelessNetwork,
-{
-    async fn wait_changed(&self) {
-        self.state_changed.wait().await;
-    }
-}
-
-/// The internal unsychronized storage for network credentials.
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct WirelessNetworksStore<const N: usize, T> {
-    networks: crate::utils::storage::Vec<T, N>,
-    changed: bool,
-}
-
-impl<const N: usize, T> WirelessNetworksStore<N, T>
-where
-    T: WirelessNetwork,
-{
-    const fn new() -> Self {
-        Self {
-            networks: crate::utils::storage::Vec::new(),
-            changed: false,
-        }
-    }
-
-    fn init() -> impl Init<Self> {
-        init!(Self {
-            networks <- crate::utils::storage::Vec::init(),
-            changed: false,
-        })
-    }
-
-    fn reset(&mut self, flag_changed: bool) {
-        self.networks.clear();
-        self.changed = flag_changed;
-    }
-
-    fn load(&mut self, data: &[u8]) -> Result<(), Error> {
-        let root = TLVElement::new(data);
-
-        let iter = root.array()?.iter();
-
-        self.networks.clear();
-
-        for network in iter {
-            let network = network?;
-
-            self.networks.push_init(T::init_from_tlv(network), || {
-                ErrorCode::ResourceExhausted.into()
-            })?;
-        }
-
-        self.changed = false;
-
-        Ok(())
-    }
-
-    fn store(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
-        let mut wb = WriteBuf::new(buf);
-
-        self.networks.to_tlv(&TLVTag::Anonymous, &mut wb)?;
-
-        self.changed = false;
-
-        let tail = wb.get_tail();
-
-        Ok(tail)
-    }
-
-    fn networks<F>(&self, mut f: F) -> Result<(), Error>
-    where
-        F: FnMut(&T) -> Result<(), Error>,
-    {
-        for network in self.networks.iter() {
-            f(network)?;
-        }
-
-        Ok(())
-    }
-
-    fn network<F>(&self, network_id: &[u8], f: F) -> Result<u8, NetworksError>
-    where
-        F: FnOnce(&T) -> Result<(), Error>,
-    {
-        let networks = self
-            .networks
-            .iter()
-            .enumerate()
-            .find(|(_, network)| network.id() == network_id);
-
-        if let Some((index, network)) = networks {
-            f(network)?;
-
-            Ok(index as _)
-        } else {
-            Err(NetworksError::NetworkIdNotFound)
-        }
-    }
-
-    fn next_network<F>(&mut self, last_network_id: Option<&[u8]>, f: F) -> Result<bool, Error>
-    where
-        F: FnOnce(&T) -> Result<(), Error>,
-    {
-        if let Some(last_network_id) = last_network_id {
-            info!(
-                "Looking for network after the one with ID: {}",
-                T::display_id(last_network_id)
-            );
-
-            // Return the network positioned after the last one used
-
-            let mut networks = self.networks.iter();
-
-            for network in &mut networks {
-                if network.id() == last_network_id {
-                    break;
-                }
-            }
-
-            let network = networks.next();
-            if let Some(network) = network {
-                info!("Trying with next network - ID: {}", network.display());
-
-                f(network)?;
-                return Ok(true);
-            }
-        }
-
-        // Wrap over
-        info!("Wrapping over");
-
-        if let Some(network) = self.networks.first() {
-            info!("Trying with first network - ID: {}", network.display());
-
-            f(network)?;
-            Ok(true)
-        } else {
-            info!("No networks available");
-            Ok(false)
-        }
-    }
-
-    fn add_or_update<A, U>(
-        &mut self,
-        network_id: &[u8],
-        add: A,
-        update: U,
-    ) -> Result<u8, NetworksError>
-    where
-        A: Init<T, Error>,
-        U: FnOnce(&mut T) -> Result<(), Error>,
-    {
-        let unetwork = self
-            .networks
-            .iter_mut()
-            .enumerate()
-            .find(|(_, unetwork)| unetwork.id() == network_id);
-
-        if let Some((index, unetwork)) = unetwork {
-            // Update
-            update(unetwork)?;
-
-            self.changed = true;
-
-            info!("Updated network with ID {}", unetwork.display());
-
-            Ok(index as _)
-        } else if self.networks.len() >= N {
-            warn!(
-                "Adding network with ID {} failed: too many",
-                T::display_id(network_id)
-            );
-
-            Err(NetworksError::BoundsExceeded)
-        } else {
-            // Add
-            self.networks
-                .push_init(add, || ErrorCode::ResourceExhausted.into())?;
-
-            self.changed = true;
-
-            info!("Added network with ID {}", T::display_id(network_id));
-
-            Ok((self.networks.len() - 1) as _)
-        }
-    }
-
-    fn reorder(&mut self, index: u8, network_id: &[u8]) -> Result<u8, NetworksError> {
-        let cur_index = self
-            .networks
-            .iter()
-            .position(|conf| conf.id() == network_id);
-
-        if let Some(cur_index) = cur_index {
-            // Found
-
-            if index < self.networks.len() as u8 {
-                let conf = self.networks.remove(cur_index);
-                unwrap!(self.networks.insert(index as usize, conf).map_err(|_| ()));
-
-                self.changed = true;
-
-                info!(
-                    "Network with ID {} reordered to index {}",
-                    T::display_id(network_id),
-                    index
-                );
-            } else {
-                warn!(
-                    "Reordering network with ID {} to index {} failed: out of range",
-                    T::display_id(network_id),
-                    index
-                );
-
-                Err(NetworksError::OutOfRange)?;
-            }
-        } else {
-            warn!("Network with ID {} not found", T::display_id(network_id));
-            Err(NetworksError::NetworkIdNotFound)?;
-        }
-
-        Ok(index)
-    }
-
-    fn remove(&mut self, network_id: &[u8]) -> Result<u8, NetworksError> {
-        let index = self
-            .networks
-            .iter()
-            .position(|conf| conf.id() == network_id);
-
-        if let Some(index) = index {
-            // Found
-            self.networks.remove(index);
-
-            self.changed = true;
-
-            info!("Removed network with ID {}", T::display_id(network_id));
-
-            Ok(index as _)
-        } else {
-            warn!("Network with ID {} not found", T::display_id(network_id));
-
-            Err(NetworksError::NetworkIdNotFound)
-        }
+    fn persist(&self, buf: &mut [u8]) -> Result<Option<usize>, Error> {
+        WirelessNetworks::store(self, buf).map(Some)
     }
 }
 

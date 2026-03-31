@@ -21,14 +21,15 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::{select, select4};
+use embassy_futures::select::select4;
 
 use log::info;
 
 use rand::RngCore;
+
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::groups::{self, ClusterAsyncHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
@@ -46,7 +47,7 @@ use rs_matter::dm::{
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{Psm, NO_NETWORKS};
+use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
@@ -66,7 +67,7 @@ mod mdns;
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
 static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
-static PSM: StaticCell<Psm<4096>> = StaticCell::new();
+static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
@@ -107,6 +108,11 @@ fn run() -> Result<(), Error> {
     // Need to call this once
     matter.initialize_transport_buffers()?;
 
+    // Persistence
+    let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
+    let mut kv = DirKvBlobStore::new_default();
+    futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
+
     // Create the transport buffers
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
 
@@ -135,6 +141,7 @@ fn run() -> Result<(), Error> {
         subscriptions,
         NO_EVENTS,
         dm_handler(rand, &on_off_handler),
+        SharedKvBlobStore::new(kv, kv_buf),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -166,18 +173,6 @@ fn run() -> Result<(), Error> {
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto, dm.change_notify()));
     let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
-    // Create, load and run the persister
-    let psm = PSM.uninit().init_with(Psm::init());
-    let path = std::env::temp_dir().join("rs-matter");
-
-    info!(
-        "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B",
-        core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS, NO_EVENTS))
-    );
-
-    psm.load(&path, matter, NO_NETWORKS, NO_EVENTS)?;
-
     if !matter.is_commissioned() {
         // If the device is not commissioned yet, print the QR text and code to the console
         // and enable basic commissioning
@@ -188,18 +183,11 @@ fn run() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, dm.change_notify())?;
     }
 
-    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS, NO_EVENTS));
-
     // Combine all async tasks in a single one
-    let all = select4(
-        &mut transport,
-        &mut mdns,
-        &mut persist,
-        select(&mut respond, &mut dm_job).coalesce(),
-    );
+    let all = select4(&mut transport, &mut mdns, &mut respond, &mut dm_job).coalesce();
 
     // Run with a simple `block_on`. Any local executor would do.
-    futures_lite::future::block_on(all.coalesce())
+    futures_lite::future::block_on(all)
 }
 
 /// The Node meta-data describing our Matter device.
@@ -243,7 +231,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                         )
                         .chain(
                             EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
-                            Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                            groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt(),
                         )
                         .chain(
                             EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
