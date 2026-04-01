@@ -104,6 +104,11 @@ where
     where
         Self: 'a;
 
+    type Hash1<'a>
+        = Sha1
+    where
+        Self: 'a;
+
     type Hmac<'a>
         = Hmac<{ crate::crypto::HASH_LEN }>
     where
@@ -188,6 +193,10 @@ where
 
     fn hash(&self) -> Result<Self::Hash<'_>, Error> {
         Ok(Sha256::new())
+    }
+
+    fn hash1(&self) -> Result<Self::Hash1<'_>, Error> {
+        Ok(Sha1::new())
     }
 
     fn hmac<const KEY_LEN: usize>(
@@ -375,6 +384,77 @@ impl crate::crypto::Digest<{ crate::crypto::HASH_LEN }> for Sha256 {
     ) -> Result<(), Error> {
         merr_check!(unsafe {
             mbedtls_rs_sys::mbedtls_sha256_finish(&mut self.raw, out.access_mut().as_mut_ptr())
+        })?;
+
+        Ok(())
+    }
+}
+
+/// SHA-1 hash implementation using MbedTLS.
+pub struct Sha1 {
+    /// Raw MbedTLS SHA-1 context
+    raw: mbedtls_rs_sys::mbedtls_sha1_context,
+}
+
+impl Sha1 {
+    /// Create a new SHA-1 hash instance.
+    fn new() -> Self {
+        let mut raw = Default::default();
+
+        unsafe {
+            mbedtls_rs_sys::mbedtls_sha1_init(&mut raw);
+            mbedtls_rs_sys::mbedtls_sha1_starts(&mut raw);
+        }
+
+        Self { raw }
+    }
+}
+
+impl Drop for Sha1 {
+    fn drop(&mut self) {
+        unsafe {
+            mbedtls_rs_sys::mbedtls_sha1_free(&mut self.raw);
+        }
+    }
+}
+
+impl Clone for Sha1 {
+    fn clone(&self) -> Self {
+        let mut raw = Default::default();
+
+        unsafe {
+            mbedtls_rs_sys::mbedtls_sha1_init(&mut raw);
+            mbedtls_rs_sys::mbedtls_sha1_clone(&mut raw, &self.raw);
+        }
+
+        Self { raw }
+    }
+}
+
+impl crate::crypto::Digest<{ crate::crypto::SHA1_HASH_LEN }> for Sha1 {
+    fn update(&mut self, data: &[u8]) -> Result<(), Error> {
+        merr_check!(unsafe {
+            mbedtls_rs_sys::mbedtls_sha1_update(&mut self.raw, data.as_ptr(), data.len())
+        })?;
+
+        Ok(())
+    }
+
+    fn finish_current(
+        &mut self,
+        hash: &mut CryptoSensitive<{ crate::crypto::SHA1_HASH_LEN }>,
+    ) -> Result<(), Error> {
+        let copy = self.clone();
+
+        copy.finish(hash)
+    }
+
+    fn finish(
+        mut self,
+        out: &mut CryptoSensitive<{ crate::crypto::SHA1_HASH_LEN }>,
+    ) -> Result<(), Error> {
+        merr_check!(unsafe {
+            mbedtls_rs_sys::mbedtls_sha1_finish(&mut self.raw, out.access_mut().as_mut_ptr())
         })?;
 
         Ok(())

@@ -51,6 +51,11 @@ pub trait Crypto {
     where
         Self: 'a;
 
+    /// SHA-1 hasher type returned by `Crypto::hash1`.
+    type Hash1<'a>: Digest<SHA1_HASH_LEN>
+    where
+        Self: 'a;
+
     /// HMAC hasher type returned by `Crypto::hmac`.
     ///
     /// As per the Matter spec, the HMAC hasher should be HMAC-SHA-256.
@@ -169,6 +174,9 @@ pub trait Crypto {
     /// Create a new hasher instance.
     fn hash(&self) -> Result<Self::Hash<'_>, Error>;
 
+    /// Create a new SHA-1 hasher instance.
+    fn hash1(&self) -> Result<Self::Hash1<'_>, Error>;
+
     /// Create a new HMAC hasher instance with the given key.
     fn hmac<const KEY_LEN: usize>(
         &self,
@@ -233,6 +241,11 @@ where
     where
         Self: 'a;
 
+    type Hash1<'a>
+        = T::Hash1<'a>
+    where
+        Self: 'a;
+
     type Hmac<'a>
         = T::Hmac<'a>
     where
@@ -288,6 +301,10 @@ where
 
     fn hash(&self) -> Result<Self::Hash<'_>, Error> {
         (*self).hash()
+    }
+
+    fn hash1(&self) -> Result<Self::Hash1<'_>, Error> {
+        (*self).hash1()
     }
 
     fn hmac<const KEY_LEN: usize>(

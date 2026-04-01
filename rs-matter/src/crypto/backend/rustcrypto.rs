@@ -124,6 +124,11 @@ where
     where
         Self: 'a;
 
+    type Hash1<'a>
+        = Digest<{ crate::crypto::SHA1_HASH_LEN }, sha1::Sha1>
+    where
+        Self: 'a;
+
     type Hmac<'a>
         = Digest<{ crate::crypto::HMAC_HASH_LEN }, hmac::Hmac<sha2::Sha256>>
     where
@@ -206,6 +211,10 @@ where
 
     fn hash(&self) -> Result<Self::Hash<'_>, Error> {
         Ok(unsafe { Digest::new(sha2::Sha256::new()) })
+    }
+
+    fn hash1(&self) -> Result<Self::Hash1<'_>, Error> {
+        Ok(unsafe { Digest::new(sha1::Sha1::new()) })
     }
 
     fn hmac<const KEY_LEN: usize>(

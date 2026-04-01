@@ -50,6 +50,11 @@ impl Crypto for DummyCrypto {
     where
         Self: 'a;
 
+    type Hash1<'a>
+        = DummyCrypto
+    where
+        Self: 'a;
+
     type Hmac<'a>
         = DummyCrypto
     where
@@ -104,6 +109,10 @@ impl Crypto for DummyCrypto {
     }
 
     fn hash(&self) -> Result<Self::Hash<'_>, Error> {
+        unimplemented!()
+    }
+
+    fn hash1(&self) -> Result<Self::Hash<'_>, Error> {
         unimplemented!()
     }
 
