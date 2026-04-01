@@ -1079,32 +1079,36 @@ mod asynch {
         }
 
         /// Read from the requested attribute and encode the result using the provided reply type.
-        async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error>;
+        fn read(
+            &self,
+            ctx: impl ReadContext,
+            reply: impl ReadReply,
+        ) -> impl Future<Output = Result<(), Error>>;
 
         /// Write into the requested attribute using the provided data.
         ///
         /// The default implementation errors out with `ErrorCode::AttributeNotFound`.
-        async fn write(&self, _ctx: impl WriteContext) -> Result<(), Error> {
-            Err(ErrorCode::AttributeNotFound.into())
+        fn write(&self, _ctx: impl WriteContext) -> impl Future<Output = Result<(), Error>> {
+            core::future::ready(Err(ErrorCode::AttributeNotFound.into()))
         }
 
         /// Invoke the requested command with the provided data and encode the result using the provided reply type.
         ///
         /// The default implementation errors out with `ErrorCode::CommandNotFound`.
-        async fn invoke(
+        fn invoke(
             &self,
             _ctx: impl InvokeContext,
             _reply: impl InvokeReply,
-        ) -> Result<(), Error> {
-            Err(ErrorCode::CommandNotFound.into())
+        ) -> impl Future<Output = Result<(), Error>> {
+            core::future::ready(Err(ErrorCode::CommandNotFound.into()))
         }
 
         /// A hook (a scheduling facility) for placing handler-impl-specific code that needs to run
         /// asynchronously - forever and in the "background".
-        async fn run(&self, _ctx: impl HandlerContext) -> Result<(), Error> {
+        fn run(&self, _ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
             // Default implementation pends forever.
             // This is useful for handlers that do not need to run any async operations in the background.
-            core::future::pending::<Result<(), Error>>().await
+            core::future::pending::<Result<(), Error>>()
         }
     }
 
@@ -1247,20 +1251,24 @@ mod asynch {
             false
         }
 
-        async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
-            Handler::read(&self.0, ctx, reply)
+        fn read(
+            &self,
+            ctx: impl ReadContext,
+            reply: impl ReadReply,
+        ) -> impl Future<Output = Result<(), Error>> {
+            core::future::ready(Handler::read(&self.0, ctx, reply))
         }
 
-        async fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
-            Handler::write(&self.0, ctx)
+        fn write(&self, ctx: impl WriteContext) -> impl Future<Output = Result<(), Error>> {
+            core::future::ready(Handler::write(&self.0, ctx))
         }
 
-        async fn invoke(
+        fn invoke(
             &self,
             ctx: impl InvokeContext,
             reply: impl InvokeReply,
-        ) -> Result<(), Error> {
-            Handler::invoke(&self.0, ctx, reply)
+        ) -> impl Future<Output = Result<(), Error>> {
+            core::future::ready(Handler::invoke(&self.0, ctx, reply))
         }
     }
 
@@ -1277,8 +1285,12 @@ mod asynch {
             false
         }
 
-        async fn read(&self, _ctx: impl ReadContext, _reply: impl ReadReply) -> Result<(), Error> {
-            Err(ErrorCode::AttributeNotFound.into())
+        fn read(
+            &self,
+            _ctx: impl ReadContext,
+            _reply: impl ReadReply,
+        ) -> impl Future<Output = Result<(), Error>> {
+            core::future::ready(Err(ErrorCode::AttributeNotFound.into()))
         }
     }
 
