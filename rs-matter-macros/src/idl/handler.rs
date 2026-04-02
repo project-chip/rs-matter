@@ -438,37 +438,69 @@ fn handler_attribute(
         }
 
         if !delegate && attr.field.is_optional {
+            if asynch {
+                quote!(
+                    fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> impl core::future::Future<Output = Result<P, #krate::error::Error>> {
+                        core::future::ready(Err(#krate::error::ErrorCode::InvalidAction.into()))
+                    }
+                )
+            } else {
+                quote!(
+                    #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> Result<P, #krate::error::Error> {
+                        Err(#krate::error::ErrorCode::InvalidAction.into())
+                    }
+                )
+            }
+        } else {
+            if delegate && asynch {
+                quote!(
+                    fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> impl core::future::Future<Output = Result<P, #krate::error::Error>> {
+                        T::#attr_name(self, ctx, builder)
+                    }
+                )
+            } else {
+                let stream = quote!(
+                    #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> Result<P, #krate::error::Error>
+                );
+
+                if delegate {
+                    quote!(#stream { T::#attr_name(self, ctx, builder)#sawait })
+                } else {
+                    quote!(#stream;)
+                }
+            }
+        }
+    } else if !delegate && attr.field.is_optional {
+        if asynch {
             quote!(
-                #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> Result<P, #krate::error::Error> {
+                fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> impl core::future::Future<Output = Result<#attr_type, #krate::error::Error>> {
+                    core::future::ready(Err(#krate::error::ErrorCode::InvalidAction.into()))
+                }
+            )
+        } else {
+            quote!(
+                #pasync fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> Result<#attr_type, #krate::error::Error> {
                     Err(#krate::error::ErrorCode::InvalidAction.into())
+                }
+            )
+        }
+    } else {
+        if delegate && asynch {
+            quote!(
+                fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> impl core::future::Future<Output = Result<#attr_type, #krate::error::Error>> {
+                    T::#attr_name(self, ctx)
                 }
             )
         } else {
             let stream = quote!(
-                #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> Result<P, #krate::error::Error>
+                #pasync fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> Result<#attr_type, #krate::error::Error>
             );
 
             if delegate {
-                quote!(#stream { T::#attr_name(self, ctx, builder)#sawait })
+                quote!(#stream { T::#attr_name(self, ctx)#sawait })
             } else {
                 quote!(#stream;)
             }
-        }
-    } else if !delegate && attr.field.is_optional {
-        quote!(
-            #pasync fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> Result<#attr_type, #krate::error::Error> {
-                Err(#krate::error::ErrorCode::InvalidAction.into())
-            }
-        )
-    } else {
-        let stream = quote!(
-            #pasync fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> Result<#attr_type, #krate::error::Error>
-        );
-
-        if delegate {
-            quote!(#stream { T::#attr_name(self, ctx)#sawait })
-        } else {
-            quote!(#stream;)
         }
     }
 }
@@ -525,20 +557,36 @@ fn handler_attribute_write(
     }
 
     if !delegate && attr.field.is_optional {
-        quote!(
-            #pasync fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> Result<(), #krate::error::Error> {
-                Err(#krate::error::ErrorCode::InvalidAction.into())
-            }
-        )
-    } else {
-        let stream = quote!(
-            #pasync fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> Result<(), #krate::error::Error>
-        );
-
-        if delegate {
-            quote!(#stream { T::#attr_name(self, ctx, value)#sawait })
+        if asynch {
+            quote!(
+                fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+                    core::future::ready(Err(#krate::error::ErrorCode::InvalidAction.into()))
+                }
+            )
         } else {
-            quote!(#stream;)
+            quote!(
+                #pasync fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> Result<(), #krate::error::Error> {
+                    Err(#krate::error::ErrorCode::InvalidAction.into())
+                }
+            )
+        }
+    } else {
+        if delegate && asynch {
+            quote!(
+                fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+                    T::#attr_name(self, ctx, value)
+                }
+            )
+        } else {
+            let stream = quote!(
+                #pasync fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> Result<(), #krate::error::Error>
+            );
+
+            if delegate {
+                quote!(#stream { T::#attr_name(self, ctx, value)#sawait })
+            } else {
+                quote!(#stream;)
+            }
         }
     }
 }
@@ -602,27 +650,78 @@ fn handler_command(
     if let Some(field_req) = field_req {
         if let Some((field_resp, field_resp_builder)) = field_resp {
             if field_resp_builder {
-                let stream = quote!(
-                    #pasync fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
+                if delegate && asynch {
+                    quote!(
+                        fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
+                            &self,
+                            ctx: impl #krate::dm::InvokeContext,
+                            request: #field_req,
+                            response: #field_resp,
+                        ) -> impl core::future::Future<Output = Result<P, #krate::error::Error>> {
+                            T::#cmd_name(self, ctx, request, response)
+                        }
+                    )
+                } else {
+                    let stream = quote!(
+                        #pasync fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
+                            &self,
+                            ctx: impl #krate::dm::InvokeContext,
+                            request: #field_req,
+                            response: #field_resp,
+                        ) -> Result<P, #krate::error::Error>
+                    );
+
+                    if delegate {
+                        quote!(#stream { T::#cmd_name(self, ctx, request, response)#sawait })
+                    } else {
+                        quote!(#stream;)
+                    }
+                }
+            } else {
+                if delegate && asynch {
+                    quote!(
+                        fn #cmd_name(
+                            &self,
+                            ctx: impl #krate::dm::InvokeContext,
+                            request: #field_req,
+                        ) -> impl core::future::Future<Output = Result<#field_resp, #krate::error::Error>> {
+                            T::#cmd_name(self, ctx, request)
+                        }
+                    )
+                } else {
+                    let stream = quote!(
+                        #pasync fn #cmd_name(
+                            &self,
+                            ctx: impl #krate::dm::InvokeContext,
+                            request: #field_req,
+                        ) -> Result<#field_resp, #krate::error::Error>
+                    );
+
+                    if delegate {
+                        quote!(#stream { T::#cmd_name(self, ctx, request)#sawait })
+                    } else {
+                        quote!(#stream;)
+                    }
+                }
+            }
+        } else {
+            if delegate && asynch {
+                quote!(
+                    fn #cmd_name(
                         &self,
                         ctx: impl #krate::dm::InvokeContext,
                         request: #field_req,
-                        response: #field_resp,
-                    ) -> Result<P, #krate::error::Error>
-                );
-
-                if delegate {
-                    quote!(#stream { T::#cmd_name(self, ctx, request, response)#sawait })
-                } else {
-                    quote!(#stream;)
-                }
+                    ) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+                        T::#cmd_name(self, ctx, request)
+                    }
+                )
             } else {
                 let stream = quote!(
                     #pasync fn #cmd_name(
                         &self,
                         ctx: impl #krate::dm::InvokeContext,
                         request: #field_req,
-                    ) -> Result<#field_resp, #krate::error::Error>
+                    ) -> Result<(), #krate::error::Error>
                 );
 
                 if delegate {
@@ -631,42 +730,75 @@ fn handler_command(
                     quote!(#stream;)
                 }
             }
-        } else {
-            let stream = quote!(
-                #pasync fn #cmd_name(
-                    &self,
-                    ctx: impl #krate::dm::InvokeContext,
-                    request: #field_req,
-                ) -> Result<(), #krate::error::Error>
-            );
-
-            if delegate {
-                quote!(#stream { T::#cmd_name(self, ctx, request)#sawait })
-            } else {
-                quote!(#stream;)
-            }
         }
     } else if let Some((field_resp, field_resp_builder)) = field_resp {
         if field_resp_builder {
-            let stream = quote!(
-                #pasync fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
+            if delegate && asynch {
+                quote!(
+                    fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
+                        &self,
+                        ctx: impl #krate::dm::InvokeContext,
+                        response: #field_resp,
+                    ) -> impl core::future::Future<Output = Result<P, #krate::error::Error>> {
+                        T::#cmd_name(self, ctx, response)
+                    }
+                )
+            } else {
+                let stream = quote!(
+                    #pasync fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
+                        &self,
+                        ctx: impl #krate::dm::InvokeContext,
+                        response: #field_resp,
+                    ) -> Result<P, #krate::error::Error>
+                );
+
+                if delegate {
+                    quote!(#stream { T::#cmd_name(self, ctx, response)#sawait })
+                } else {
+                    quote!(#stream;)
+                }
+            }
+        } else {
+            if delegate && asynch {
+                quote!(
+                    fn #cmd_name(
+                        &self,
+                        ctx: impl #krate::dm::InvokeContext,
+                    ) -> impl core::future::Future<Output = Result<#field_resp, #krate::error::Error>> {
+                        T::#cmd_name(self, ctx)
+                    }
+                )
+            } else {
+                let stream = quote!(
+                    #pasync fn #cmd_name(
+                        &self,
+                        ctx: impl #krate::dm::InvokeContext,
+                    ) -> Result<#field_resp, #krate::error::Error>
+                );
+
+                if delegate {
+                    quote!(#stream { T::#cmd_name(self, ctx)#sawait })
+                } else {
+                    quote!(#stream;)
+                }
+            }
+        }
+    } else {
+        if delegate && asynch {
+            quote!(
+                fn #cmd_name(
                     &self,
                     ctx: impl #krate::dm::InvokeContext,
-                    response: #field_resp,
-                ) -> Result<P, #krate::error::Error>
-            );
-
-            if delegate {
-                quote!(#stream { T::#cmd_name(self, ctx, response)#sawait })
-            } else {
-                quote!(#stream;)
-            }
+                ) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+                    T::#cmd_name(self, ctx)
+                }
+            )
         } else {
             let stream = quote!(
                 #pasync fn #cmd_name(
                     &self,
                     ctx: impl #krate::dm::InvokeContext,
-                ) -> Result<#field_resp, #krate::error::Error>
+                ) -> Result<(), #krate::error::Error>
             );
 
             if delegate {
@@ -674,19 +806,6 @@ fn handler_command(
             } else {
                 quote!(#stream;)
             }
-        }
-    } else {
-        let stream = quote!(
-            #pasync fn #cmd_name(
-                &self,
-                ctx: impl #krate::dm::InvokeContext,
-            ) -> Result<(), #krate::error::Error>
-        );
-
-        if delegate {
-            quote!(#stream { T::#cmd_name(self, ctx)#sawait })
-        } else {
-            quote!(#stream;)
         }
     }
 }

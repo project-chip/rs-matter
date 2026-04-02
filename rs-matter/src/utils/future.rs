@@ -15,19 +15,22 @@
  *    limitations under the License.
  */
 
-pub mod bitflags;
-pub mod cell;
-pub mod codec;
-pub mod epoch;
-pub mod future;
-pub mod init;
-pub mod ipv6;
-pub mod iter;
-pub mod maybe;
-pub mod select;
-pub mod storage;
-pub mod sync;
-#[cfg(feature = "zbus")]
-pub mod zbus;
-#[cfg(feature = "zbus")]
-pub mod zbus_proxies;
+use core::future::{poll_fn, Future};
+use core::task::Poll;
+
+/// Create a future that will call the provided closure when polled, allowing for delayed computation of the "ready" value.
+#[inline(always)]
+pub fn delayed_ready<F, O>(f: F) -> impl Future<Output = O>
+where
+    F: FnOnce() -> O,
+{
+    let mut f = Some(f);
+
+    poll_fn(move |_| {
+        if let Some(f) = f.take() {
+            Poll::Ready(f())
+        } else {
+            panic!("delayed_ready polled after completion");
+        }
+    })
+}
