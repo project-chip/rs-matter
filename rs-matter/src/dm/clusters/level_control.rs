@@ -406,8 +406,8 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
-    pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
-        HandlerAsyncAdaptor(self)
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
     }
 
     fn with_state<F, R>(&self, f: F) -> R
@@ -1233,7 +1233,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     }
 }
 
-impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlHandler<'_, H, OH> {
+impl<H: LevelControlHooks, OH: OnOffHooks> ClusterHandler for LevelControlHandler<'_, H, OH> {
     const CLUSTER: Cluster<'static> = H::CLUSTER;
 
     // Runs an async task manager for the cluster handler.
@@ -1275,18 +1275,18 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         self.dataver.changed();
     }
 
-    async fn current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
+    fn current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
         match self.hooks.current_level() {
             Some(level) => Ok(Nullable::some(level)),
             None => Ok(Nullable::none()),
         }
     }
 
-    async fn on_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
+    fn on_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
         Ok(self.with_state(|state| state.on_level.clone()))
     }
 
-    async fn set_on_level(&self, ctx: impl WriteContext, value: Nullable<u8>) -> Result<(), Error> {
+    fn set_on_level(&self, ctx: impl WriteContext, value: Nullable<u8>) -> Result<(), Error> {
         if let Some(level) = value.clone().into_option() {
             if level > H::MAX_LEVEL || level < H::MIN_LEVEL {
                 return Err(ErrorCode::ConstraintError.into());
@@ -1300,11 +1300,11 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         Ok(())
     }
 
-    async fn options(&self, _ctx: impl ReadContext) -> Result<OptionsBitmap, Error> {
+    fn options(&self, _ctx: impl ReadContext) -> Result<OptionsBitmap, Error> {
         Ok(self.with_state(|state| state.options))
     }
 
-    async fn set_options(&self, ctx: impl WriteContext, value: OptionsBitmap) -> Result<(), Error> {
+    fn set_options(&self, ctx: impl WriteContext, value: OptionsBitmap) -> Result<(), Error> {
         self.with_state_notify(ctx, |state| {
             state.options = value;
         });
@@ -1312,27 +1312,23 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         Ok(())
     }
 
-    async fn remaining_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+    fn remaining_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(self.with_state(|state| state.remaining_time))
     }
 
-    async fn max_level(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
+    fn max_level(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
         Ok(H::MAX_LEVEL)
     }
 
-    async fn min_level(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
+    fn min_level(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
         Ok(H::MIN_LEVEL)
     }
 
-    async fn on_off_transition_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+    fn on_off_transition_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(self.with_state(|state| state.on_off_transition_time))
     }
 
-    async fn set_on_off_transition_time(
-        &self,
-        ctx: impl WriteContext,
-        value: u16,
-    ) -> Result<(), Error> {
+    fn set_on_off_transition_time(&self, ctx: impl WriteContext, value: u16) -> Result<(), Error> {
         self.with_state_notify(ctx, |state| {
             state.on_off_transition_time = value;
         });
@@ -1340,11 +1336,11 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         Ok(())
     }
 
-    async fn on_transition_time(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
+    fn on_transition_time(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
         Ok(self.with_state(|state| state.on_transition_time.clone()))
     }
 
-    async fn set_on_transition_time(
+    fn set_on_transition_time(
         &self,
         ctx: impl WriteContext,
         value: Nullable<u16>,
@@ -1356,11 +1352,11 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         Ok(())
     }
 
-    async fn off_transition_time(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
+    fn off_transition_time(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
         Ok(self.with_state(|state| state.off_transition_time.clone()))
     }
 
-    async fn set_off_transition_time(
+    fn set_off_transition_time(
         &self,
         ctx: impl WriteContext,
         value: Nullable<u16>,
@@ -1372,11 +1368,11 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         Ok(())
     }
 
-    async fn default_move_rate(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
+    fn default_move_rate(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
         Ok(self.with_state(|state| state.default_move_rate.clone()))
     }
 
-    async fn set_default_move_rate(
+    fn set_default_move_rate(
         &self,
         ctx: impl WriteContext,
         value: Nullable<u8>,
@@ -1395,14 +1391,14 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         Ok(())
     }
 
-    async fn start_up_current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
+    fn start_up_current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
         match self.hooks.start_up_current_level()? {
             Some(val) => Ok(Nullable::some(val)),
             None => Ok(Nullable::none()),
         }
     }
 
-    async fn set_start_up_current_level(
+    fn set_start_up_current_level(
         &self,
         ctx: impl WriteContext,
         value: Nullable<u8>,
@@ -1421,7 +1417,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         Ok(())
     }
 
-    async fn handle_move_to_level(
+    fn handle_move_to_level(
         &self,
         _ctx: impl InvokeContext,
         request: MoveToLevelRequest<'_>,
@@ -1435,11 +1431,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         )
     }
 
-    async fn handle_move(
-        &self,
-        _ctx: impl InvokeContext,
-        request: MoveRequest<'_>,
-    ) -> Result<(), Error> {
+    fn handle_move(&self, _ctx: impl InvokeContext, request: MoveRequest<'_>) -> Result<(), Error> {
         self.with_state(|state| {
             self.move_command(
                 state,
@@ -1452,11 +1444,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         })
     }
 
-    async fn handle_step(
-        &self,
-        _ctx: impl InvokeContext,
-        request: StepRequest<'_>,
-    ) -> Result<(), Error> {
+    fn handle_step(&self, _ctx: impl InvokeContext, request: StepRequest<'_>) -> Result<(), Error> {
         self.step(
             false,
             request.step_mode()?,
@@ -1467,11 +1455,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         )
     }
 
-    async fn handle_stop(
-        &self,
-        ctx: impl InvokeContext,
-        request: StopRequest<'_>,
-    ) -> Result<(), Error> {
+    fn handle_stop(&self, ctx: impl InvokeContext, request: StopRequest<'_>) -> Result<(), Error> {
         self.stop(
             &ctx,
             false,
@@ -1480,7 +1464,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         )
     }
 
-    async fn handle_move_to_level_with_on_off(
+    fn handle_move_to_level_with_on_off(
         &self,
         _ctx: impl InvokeContext,
         request: MoveToLevelWithOnOffRequest<'_>,
@@ -1494,7 +1478,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         )
     }
 
-    async fn handle_move_with_on_off(
+    fn handle_move_with_on_off(
         &self,
         _ctx: impl InvokeContext,
         request: MoveWithOnOffRequest<'_>,
@@ -1511,7 +1495,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         })
     }
 
-    async fn handle_step_with_on_off(
+    fn handle_step_with_on_off(
         &self,
         _ctx: impl InvokeContext,
         request: StepWithOnOffRequest<'_>,
@@ -1526,7 +1510,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         )
     }
 
-    async fn handle_stop_with_on_off(
+    fn handle_stop_with_on_off(
         &self,
         ctx: impl InvokeContext,
         request: StopWithOnOffRequest<'_>,
@@ -1539,7 +1523,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         )
     }
 
-    async fn handle_move_to_closest_frequency(
+    fn handle_move_to_closest_frequency(
         &self,
         _ctx: impl InvokeContext,
         _request: MoveToClosestFrequencyRequest<'_>,

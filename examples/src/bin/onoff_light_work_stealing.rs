@@ -58,7 +58,7 @@ use static_cell::StaticCell;
 mod mdns;
 
 type AppHandler<'a> = handler_chain_type!(
-    EpClMatcher => on_off::HandlerAsyncAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>,
+    EpClMatcher => Async<on_off::HandlerAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>>,
     EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>
     | EmptyHandler
 );
@@ -276,7 +276,7 @@ fn dm_handler<'a>(
                 )
                 .chain(
                     EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                    on_off::HandlerAsyncAdaptor(on_off),
+                    Async(on_off::HandlerAdaptor(on_off)),
                 ),
         ),
     )

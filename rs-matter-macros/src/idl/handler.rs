@@ -78,16 +78,6 @@ pub fn handler(
         .map(|cmd| handler_command(cmd, asynch, delegate, entities, &krate));
 
     if delegate {
-        let run = if asynch {
-            quote!(
-                fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
-                    (**self).run(ctx)
-                }
-            )
-        } else {
-            quote!()
-        };
-
         quote!(
             impl<T> #handler_name for &T
             where
@@ -98,7 +88,9 @@ pub fn handler(
                 fn dataver(&self) -> u32 { T::dataver(self) }
                 fn dataver_changed(&self) { T::dataver_changed(self) }
 
-                #run
+                fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+                    (**self).run(ctx)
+                }
 
                 #(#handler_attribute_methods)*
 
@@ -108,16 +100,6 @@ pub fn handler(
             }
         )
     } else {
-        let run = if asynch {
-            quote!(
-                fn run(&self, _ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
-                    core::future::pending::<Result::<(), #krate::error::Error>>()
-                }
-            )
-        } else {
-            quote!()
-        };
-
         quote!(
             #[doc = "The handler trait for the cluster."]
             pub trait #handler_name {
@@ -128,7 +110,9 @@ pub fn handler(
 
                 fn dataver_changed(&self);
 
-                #run
+                fn run(&self, _ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+                    core::future::pending::<Result::<(), #krate::error::Error>>()
+                }
 
                 #(#handler_attribute_methods)*
 
@@ -272,16 +256,6 @@ pub fn handler_adaptor(
         )
     };
 
-    let run = if asynch {
-        quote!(
-            fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
-                self.0.run(ctx)
-            }
-        )
-    } else {
-        quote!()
-    };
-
     let pasync = if asynch { quote!(async) } else { quote!() };
 
     let stream = quote!(
@@ -342,7 +316,9 @@ pub fn handler_adaptor(
                 Ok(())
             }
 
-            #run
+            fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+                self.0.run(ctx)
+            }
         }
 
         impl<T, Q> core::fmt::Debug for MetadataDebug<(u16, &#handler_adaptor_name<T>, Q)>

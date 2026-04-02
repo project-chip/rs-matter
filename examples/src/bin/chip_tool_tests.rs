@@ -325,7 +325,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                         )
                         .chain(
                             EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                            on_off::HandlerAsyncAdaptor(on_off_1),
+                            Async(on_off::HandlerAdaptor(on_off_1)),
                         )
                         .chain(
                             EpClMatcher::new(Some(1), Some(UnitTestingHandler::CLUSTER.id)),
@@ -348,7 +348,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                         )
                         .chain(
                             EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                            on_off::HandlerAsyncAdaptor(on_off_2),
+                            Async(on_off::HandlerAdaptor(on_off_2)),
                         ),
                 ),
             ),
