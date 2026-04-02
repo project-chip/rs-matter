@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+use core::future::Future;
+
 use crate::crypto::backend::dummy::DummyCrypto;
 use crate::crypto::Crypto;
 use crate::dm::IMBuffer;
@@ -723,6 +725,14 @@ pub trait Handler {
     fn invoke(&self, _ctx: impl InvokeContext, _reply: impl InvokeReply) -> Result<(), Error> {
         Err(ErrorCode::CommandNotFound.into())
     }
+
+    /// A hook (a scheduling facility) for placing handler-impl-specific code that needs to run
+    /// asynchronously - forever and in the "background".
+    fn run(&self, _ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
+        // Default implementation pends forever.
+        // This is useful for handlers that do not need to run any async operations in the background.
+        core::future::pending::<Result<(), Error>>()
+    }
 }
 
 impl<T> Handler for &T
@@ -739,6 +749,10 @@ where
 
     fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
         (**self).invoke(ctx, reply)
+    }
+
+    fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
+        (**self).run(ctx)
     }
 }
 
@@ -1022,6 +1036,7 @@ mod asynch {
 
     use crate::dm::{HandlerContext, InvokeReply, Matcher, ReadReply};
     use crate::error::{Error, ErrorCode};
+    use crate::utils::future::delayed_ready;
     use crate::utils::select::Coalesce;
 
     use super::{
@@ -1256,11 +1271,11 @@ mod asynch {
             ctx: impl ReadContext,
             reply: impl ReadReply,
         ) -> impl Future<Output = Result<(), Error>> {
-            core::future::ready(Handler::read(&self.0, ctx, reply))
+            delayed_ready(|| Handler::read(&self.0, ctx, reply))
         }
 
         fn write(&self, ctx: impl WriteContext) -> impl Future<Output = Result<(), Error>> {
-            core::future::ready(Handler::write(&self.0, ctx))
+            delayed_ready(|| Handler::write(&self.0, ctx))
         }
 
         fn invoke(
@@ -1268,7 +1283,11 @@ mod asynch {
             ctx: impl InvokeContext,
             reply: impl InvokeReply,
         ) -> impl Future<Output = Result<(), Error>> {
-            core::future::ready(Handler::invoke(&self.0, ctx, reply))
+            delayed_ready(|| Handler::invoke(&self.0, ctx, reply))
+        }
+
+        fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
+            Handler::run(&self.0, ctx)
         }
     }
 
