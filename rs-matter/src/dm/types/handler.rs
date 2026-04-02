@@ -16,6 +16,7 @@
  */
 
 use core::future::Future;
+use core::pin::pin;
 
 use crate::crypto::backend::dummy::DummyCrypto;
 use crate::crypto::Crypto;
@@ -23,6 +24,7 @@ use crate::dm::IMBuffer;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
+use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::{BufferAccess, PooledBuffers};
 use crate::utils::sync::DynBase;
 use crate::Matter;
@@ -30,6 +32,7 @@ use crate::Matter;
 use super::{AttrDetails, AttrId, ClusterId, CmdDetails, EndptId, InvokeReply, ReadReply};
 
 pub use asynch::*;
+use embassy_futures::select::select;
 
 pub trait ChangeNotify: DynBase {
     fn notify(&self, endpt: EndptId, clust: ClusterId, attr: AttrId);
@@ -771,6 +774,10 @@ where
     fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
         (**self).invoke(ctx, reply)
     }
+
+    fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
+        (**self).run(ctx)
+    }
 }
 
 /// A marker trait that indicates that the handler is non-blocking.
@@ -795,6 +802,10 @@ where
 
     fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
         self.1.invoke(ctx, reply)
+    }
+
+    fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
+        self.1.run(ctx)
     }
 }
 
@@ -981,6 +992,13 @@ where
         } else {
             self.next.invoke(ctx, reply)
         }
+    }
+
+    async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+        let mut handler = pin!(self.handler.run(&ctx));
+        let mut next = pin!(self.next.run(&ctx));
+
+        select(&mut handler, &mut next).coalesce().await
     }
 }
 
@@ -1404,6 +1422,10 @@ mod asynch {
 
         fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
             self.0.invoke(ctx, reply)
+        }
+
+        fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
+            self.0.run(ctx)
         }
     }
 
