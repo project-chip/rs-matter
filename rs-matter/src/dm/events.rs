@@ -169,7 +169,7 @@ impl<const N: usize> Events<N> {
         S: KvBlobStoreAccess,
     {
         let event_no = {
-            let mut persist = Persist::new(kv.get().await);
+            let mut persist = Persist::new(kv);
 
             let event_no = self.persisted_state.lock(|cell| {
                 let mut state = cell.borrow_mut();
@@ -189,7 +189,7 @@ impl<const N: usize> Events<N> {
                 Ok::<_, Error>(event_no)
             })?;
 
-            persist.run().await?;
+            persist.run()?;
 
             event_no
         };
@@ -222,7 +222,7 @@ impl<const N: usize> Events<N> {
     {
         self.reset();
 
-        if let Some(len) = kv.load(EVENT_EPOCH_KEY, buf).await? {
+        if let Some(len) = kv.load(EVENT_EPOCH_KEY, buf)? {
             self.load(&buf[..len])
         } else {
             Ok(())

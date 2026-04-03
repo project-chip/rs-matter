@@ -17,7 +17,6 @@
 
 //! This module contains the implementation of the Groups cluster and its handler.
 
-use core::future::{ready, Future};
 use core::num::NonZeroU8;
 
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
@@ -25,7 +24,6 @@ use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricPersist;
 use crate::im::IMStatusCode;
 use crate::tlv::{Nullable, TLVBuilderParent};
-use crate::utils::future::delayed_ready;
 use crate::{with, MatterState};
 
 pub use crate::dm::clusters::decl::groups::*;
@@ -48,9 +46,9 @@ impl GroupsHandler {
         Self { dataver }
     }
 
-    /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
-    pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
-        HandlerAsyncAdaptor(self)
+    /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
     }
 
     /// Check if the fabric has security material (a group key map entry) for the given group ID.
@@ -70,7 +68,7 @@ impl GroupsHandler {
     }
 }
 
-impl ClusterAsyncHandler for GroupsHandler {
+impl ClusterHandler for GroupsHandler {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
         .with_features(Feature::GROUP_NAMES.bits())
         .with_attrs(with!(required));
@@ -83,15 +81,12 @@ impl ClusterAsyncHandler for GroupsHandler {
         self.dataver.changed();
     }
 
-    fn name_support(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<NameSupportBitmap, Error>> {
+    fn name_support(&self, _ctx: impl ReadContext) -> Result<NameSupportBitmap, Error> {
         // Bit 7 (GroupNames) = 1 when GN feature is supported
-        ready(Ok(NameSupportBitmap::GROUP_NAMES))
+        Ok(NameSupportBitmap::GROUP_NAMES)
     }
 
-    async fn handle_add_group<P: TLVBuilderParent>(
+    fn handle_add_group<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         request: AddGroupRequest<'_>,
@@ -111,7 +106,7 @@ impl ClusterAsyncHandler for GroupsHandler {
                 .end();
         }
 
-        let mut persist = FabricPersist::new(ctx.kv().await);
+        let mut persist = FabricPersist::new(ctx.kv());
 
         let status = ctx.exchange().with_state(|state| {
             // Check if group security material is available
@@ -137,7 +132,7 @@ impl ClusterAsyncHandler for GroupsHandler {
             }
         })?;
 
-        persist.run().await?;
+        persist.run()?;
 
         response.status(status as u8)?.group_id(group_id)?.end()
     }
@@ -147,43 +142,41 @@ impl ClusterAsyncHandler for GroupsHandler {
         ctx: impl InvokeContext,
         request: ViewGroupRequest<'_>,
         response: ViewGroupResponseBuilder<P>,
-    ) -> impl Future<Output = Result<P, Error>> {
-        delayed_ready(move || {
-            let fab_idx =
-                NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
+    ) -> Result<P, Error> {
+        let fab_idx =
+            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
-            let group_id = request.group_id()?;
+        let group_id = request.group_id()?;
 
-            // Validate constraints
-            if group_id == 0 {
-                return response
-                    .status(IMStatusCode::ConstraintError as u8)?
-                    .group_id(group_id)?
-                    .group_name("")?
-                    .end();
+        // Validate constraints
+        if group_id == 0 {
+            return response
+                .status(IMStatusCode::ConstraintError as u8)?
+                .group_id(group_id)?
+                .group_name("")?
+                .end();
+        }
+
+        ctx.exchange().with_state(|state| {
+            // Check membership for group_id
+            let fabric = state.fabrics.get(fab_idx).ok_or(ErrorCode::NotFound)?;
+
+            let endpoint_id = ctx.cmd().endpoint_id;
+            if let Some(entry) = fabric.groups().get(group_id) {
+                if entry.endpoints.contains(&endpoint_id) {
+                    return response
+                        .status(IMStatusCode::Success as u8)?
+                        .group_id(group_id)?
+                        .group_name(entry.group_name.as_str())?
+                        .end();
+                }
             }
 
-            ctx.exchange().with_state(|state| {
-                // Check membership for group_id
-                let fabric = state.fabrics.get(fab_idx).ok_or(ErrorCode::NotFound)?;
-
-                let endpoint_id = ctx.cmd().endpoint_id;
-                if let Some(entry) = fabric.groups().get(group_id) {
-                    if entry.endpoints.contains(&endpoint_id) {
-                        return response
-                            .status(IMStatusCode::Success as u8)?
-                            .group_id(group_id)?
-                            .group_name(entry.group_name.as_str())?
-                            .end();
-                    }
-                }
-
-                response
-                    .status(IMStatusCode::NotFound as u8)?
-                    .group_id(group_id)?
-                    .group_name("")?
-                    .end()
-            })
+            response
+                .status(IMStatusCode::NotFound as u8)?
+                .group_id(group_id)?
+                .group_name("")?
+                .end()
         })
     }
 
@@ -192,46 +185,44 @@ impl ClusterAsyncHandler for GroupsHandler {
         ctx: impl InvokeContext,
         request: GetGroupMembershipRequest<'_>,
         response: GetGroupMembershipResponseBuilder<P>,
-    ) -> impl Future<Output = Result<P, Error>> {
-        delayed_ready(move || {
-            let fab_idx =
-                NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
+    ) -> Result<P, Error> {
+        let fab_idx =
+            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
 
-            let request_group_list = request.group_list()?;
+        let request_group_list = request.group_list()?;
 
-            ctx.exchange().with_state(|state| {
-                let fabric = state.fabrics.fabric(fab_idx)?;
+        ctx.exchange().with_state(|state| {
+            let fabric = state.fabrics.fabric(fab_idx)?;
 
-                // Capacity is nullable - return null to indicate unknown capacity
-                let capacity = Nullable::<u8>::none();
+            // Capacity is nullable - return null to indicate unknown capacity
+            let capacity = Nullable::<u8>::none();
 
-                let endpoint_id = ctx.cmd().endpoint_id;
-                let mut group_list = response.capacity(capacity)?.group_list()?;
+            let endpoint_id = ctx.cmd().endpoint_id;
+            let mut group_list = response.capacity(capacity)?.group_list()?;
 
-                if request_group_list.iter().count() == 0 {
-                    // Return all groups this endpoint is a member of
-                    for entry in fabric.groups().iter() {
-                        if entry.endpoints.contains(&endpoint_id) {
-                            group_list = group_list.push(&entry.group_id)?;
-                        }
+            if request_group_list.iter().count() == 0 {
+                // Return all groups this endpoint is a member of
+                for entry in fabric.groups().iter() {
+                    if entry.endpoints.contains(&endpoint_id) {
+                        group_list = group_list.push(&entry.group_id)?;
                     }
-                } else {
-                    // Return intersection: only requested groups that this endpoint is a member of
-                    for gid in request_group_list.into_iter().flatten() {
-                        if let Some(entry) = fabric.groups().get(gid) {
-                            if entry.endpoints.contains(&endpoint_id) {
-                                group_list = group_list.push(&gid)?;
-                            }
+                }
+            } else {
+                // Return intersection: only requested groups that this endpoint is a member of
+                for gid in request_group_list.into_iter().flatten() {
+                    if let Some(entry) = fabric.groups().get(gid) {
+                        if entry.endpoints.contains(&endpoint_id) {
+                            group_list = group_list.push(&gid)?;
                         }
                     }
                 }
+            }
 
-                group_list.end()?.end()
-            })
+            group_list.end()?.end()
         })
     }
 
-    async fn handle_remove_group<P: TLVBuilderParent>(
+    fn handle_remove_group<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         request: RemoveGroupRequest<'_>,
@@ -242,7 +233,7 @@ impl ClusterAsyncHandler for GroupsHandler {
         let group_id = request.group_id()?;
         let endpoint_id = ctx.cmd().endpoint_id;
 
-        let mut persist = FabricPersist::new(ctx.kv().await);
+        let mut persist = FabricPersist::new(ctx.kv());
 
         let status = ctx.exchange().with_state(|state| {
             // Step 1: Validate constraints
@@ -263,17 +254,17 @@ impl ClusterAsyncHandler for GroupsHandler {
             }
         })?;
 
-        persist.run().await?;
+        persist.run()?;
 
         response.status(status as u8)?.group_id(group_id)?.end()
     }
 
-    async fn handle_remove_all_groups(&self, ctx: impl InvokeContext) -> Result<(), Error> {
+    fn handle_remove_all_groups(&self, ctx: impl InvokeContext) -> Result<(), Error> {
         let fab_idx =
             NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
         let endpoint_id = ctx.cmd().endpoint_id;
 
-        let mut persist = FabricPersist::new(ctx.kv().await);
+        let mut persist = FabricPersist::new(ctx.kv());
 
         ctx.exchange().with_state(|state| {
             let fabric = state.fabrics.fabric_mut(fab_idx)?;
@@ -286,7 +277,7 @@ impl ClusterAsyncHandler for GroupsHandler {
             Ok(())
         })?;
 
-        persist.run().await?;
+        persist.run()?;
 
         Ok(())
     }
@@ -295,8 +286,8 @@ impl ClusterAsyncHandler for GroupsHandler {
         &self,
         _ctx: impl InvokeContext,
         _request: AddGroupIfIdentifyingRequest<'_>,
-    ) -> impl Future<Output = Result<(), Error>> {
+    ) -> Result<(), Error> {
         // TODO: implement with Identity Cluster
-        delayed_ready(move || todo!())
+        todo!()
     }
 }

@@ -22,7 +22,7 @@ use crate::crypto::backend::dummy::DummyCrypto;
 use crate::crypto::Crypto;
 use crate::dm::IMBuffer;
 use crate::error::{Error, ErrorCode};
-use crate::persist::{DummyKvBlobStoreAccess, KvBlobStoreAccess, KvBlobStoreInstance};
+use crate::persist::{DummyKvBlobStoreAccess, KvBlobStoreAccess};
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
 use crate::utils::select::Coalesce;
@@ -65,7 +65,7 @@ pub trait BasicContext {
     fn crypto(&self) -> impl Crypto + '_;
 
     /// Return a blob store that can be used to persist data across reboots.
-    fn kv(&self) -> impl Future<Output = impl KvBlobStoreInstance + '_>;
+    fn kv(&self) -> impl KvBlobStoreAccess + '_;
 
     /// Notify that the state of an attribute has changed.
     ///
@@ -98,7 +98,7 @@ where
         (**self).crypto()
     }
 
-    fn kv(&self) -> impl Future<Output = impl KvBlobStoreInstance + '_> {
+    fn kv(&self) -> impl KvBlobStoreAccess + '_ {
         (**self).kv()
     }
 
@@ -335,8 +335,8 @@ where
         &self.crypto
     }
 
-    fn kv(&self) -> impl Future<Output = impl KvBlobStoreInstance + '_> {
-        self.kv.get()
+    fn kv(&self) -> impl KvBlobStoreAccess + '_ {
+        &self.kv
     }
 
     fn notify_attribute_changed(
@@ -421,8 +421,8 @@ where
         &self.crypto
     }
 
-    fn kv(&self) -> impl Future<Output = impl KvBlobStoreInstance + '_> {
-        self.kv.get()
+    fn kv(&self) -> impl KvBlobStoreAccess + '_ {
+        &self.kv
     }
 
     fn notify_attribute_changed(
@@ -539,8 +539,8 @@ where
         &self.crypto
     }
 
-    fn kv(&self) -> impl Future<Output = impl KvBlobStoreInstance + '_> {
-        self.kv.get()
+    fn kv(&self) -> impl KvBlobStoreAccess + '_ {
+        &self.kv
     }
 
     fn notify_attribute_changed(
@@ -661,8 +661,8 @@ where
         &self.crypto
     }
 
-    fn kv(&self) -> impl Future<Output = impl KvBlobStoreInstance + '_> {
-        self.kv.get()
+    fn kv(&self) -> impl KvBlobStoreAccess + '_ {
+        &self.kv
     }
 
     fn notify_attribute_changed(

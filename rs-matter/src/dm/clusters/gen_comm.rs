@@ -18,13 +18,11 @@
 //! This module contains the implementation of the General Commissioning cluster and its handler.
 
 use core::fmt::Debug;
-use core::future::{ready, Future};
 
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::persist::{Persist, BASIC_INFO_KEY};
 use crate::tlv::TLVBuilderParent;
-use crate::utils::future::delayed_ready;
 use crate::utils::sync::DynBase;
 use crate::with;
 
@@ -128,13 +126,13 @@ impl<'a> GenCommHandler<'a> {
         }
     }
 
-    /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
-    pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
-        HandlerAsyncAdaptor(self)
+    /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
     }
 }
 
-impl ClusterAsyncHandler for GenCommHandler<'_> {
+impl ClusterHandler for GenCommHandler<'_> {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
 
     fn dataver(&self) -> u32 {
@@ -145,24 +143,16 @@ impl ClusterAsyncHandler for GenCommHandler<'_> {
         self.dataver.changed();
     }
 
-    fn breadcrumb(&self, ctx: impl ReadContext) -> impl Future<Output = Result<u64, Error>> {
-        delayed_ready(move || {
-            ctx.exchange()
-                .with_state(|state| Ok(state.failsafe.breadcrumb()))
-        })
+    fn breadcrumb(&self, ctx: impl ReadContext) -> Result<u64, Error> {
+        ctx.exchange()
+            .with_state(|state| Ok(state.failsafe.breadcrumb()))
     }
 
-    fn set_breadcrumb(
-        &self,
-        ctx: impl WriteContext,
-        value: u64,
-    ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
-            ctx.exchange().with_state(|state| {
-                state.failsafe.set_breadcrumb(value);
+    fn set_breadcrumb(&self, ctx: impl WriteContext, value: u64) -> Result<(), Error> {
+        ctx.exchange().with_state(|state| {
+            state.failsafe.set_breadcrumb(value);
 
-                Ok(())
-            })
+            Ok(())
         })
     }
 
@@ -170,36 +160,29 @@ impl ClusterAsyncHandler for GenCommHandler<'_> {
         &self,
         _ctx: impl ReadContext,
         builder: BasicCommissioningInfoBuilder<P>,
-    ) -> impl Future<Output = Result<P, Error>> {
-        delayed_ready(move || {
-            builder
-                .fail_safe_expiry_length_seconds(
-                    self.commissioning_policy.failsafe_expiry_len_secs(),
-                )?
-                .max_cumulative_failsafe_seconds(self.commissioning_policy.failsafe_max_cml_secs())?
-                .end()
-        })
+    ) -> Result<P, Error> {
+        builder
+            .fail_safe_expiry_length_seconds(self.commissioning_policy.failsafe_expiry_len_secs())?
+            .max_cumulative_failsafe_seconds(self.commissioning_policy.failsafe_max_cml_secs())?
+            .end()
     }
 
     fn regulatory_config(
         &self,
         _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<RegulatoryLocationTypeEnum, Error>> {
-        ready(Ok(RegulatoryLocationTypeEnum::IndoorOutdoor))
+    ) -> Result<RegulatoryLocationTypeEnum, Error> {
+        Ok(RegulatoryLocationTypeEnum::IndoorOutdoor)
     }
 
     fn location_capability(
         &self,
         _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<RegulatoryLocationTypeEnum, Error>> {
-        delayed_ready(move || Ok(self.commissioning_policy.location_cap()))
+    ) -> Result<RegulatoryLocationTypeEnum, Error> {
+        Ok(self.commissioning_policy.location_cap())
     }
 
-    fn supports_concurrent_connection(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<bool, Error>> {
-        delayed_ready(move || Ok(self.commissioning_policy.concurrent_connection_supported()))
+    fn supports_concurrent_connection(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
+        Ok(self.commissioning_policy.concurrent_connection_supported())
     }
 
     fn handle_arm_fail_safe<P: TLVBuilderParent>(
@@ -207,31 +190,28 @@ impl ClusterAsyncHandler for GenCommHandler<'_> {
         ctx: impl InvokeContext,
         request: ArmFailSafeRequest<'_>,
         response: ArmFailSafeResponseBuilder<P>,
-    ) -> impl Future<Output = Result<P, Error>> {
-        delayed_ready(move || {
-            let notify_mdns = || ctx.exchange().matter().notify_mdns();
-            let notify_change = |endpt_id, clust_id, attr_id| {
-                ctx.notify_attribute_changed(endpt_id, clust_id, attr_id)
-            };
+    ) -> Result<P, Error> {
+        let notify_mdns = || ctx.exchange().matter().notify_mdns();
+        let notify_change =
+            |endpt_id, clust_id, attr_id| ctx.notify_attribute_changed(endpt_id, clust_id, attr_id);
 
-            ctx.exchange().with_state(|state| {
-                let sess = ctx.exchange().id().session(&mut state.sessions);
+        ctx.exchange().with_state(|state| {
+            let sess = ctx.exchange().id().session(&mut state.sessions);
 
-                let status = CommissioningErrorEnum::map(state.failsafe.arm(
-                    request.expiry_length_seconds()?,
-                    request.breadcrumb()?,
-                    sess.get_session_mode(),
-                    &mut state.pase,
-                    notify_mdns,
-                    notify_change,
-                ))?;
+            let status = CommissioningErrorEnum::map(state.failsafe.arm(
+                request.expiry_length_seconds()?,
+                request.breadcrumb()?,
+                sess.get_session_mode(),
+                &mut state.pase,
+                notify_mdns,
+                notify_change,
+            ))?;
 
-                response.error_code(status)?.debug_text("")?.end()
-            })
+            response.error_code(status)?.debug_text("")?.end()
         })
     }
 
-    async fn handle_set_regulatory_config<P: TLVBuilderParent>(
+    fn handle_set_regulatory_config<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         request: SetRegulatoryConfigRequest<'_>,
@@ -245,7 +225,7 @@ impl ClusterAsyncHandler for GenCommHandler<'_> {
         let location_type = request.new_regulatory_config()?;
         let breadcrumb = request.breadcrumb()?;
 
-        let mut persist = Persist::new(ctx.kv().await);
+        let mut persist = Persist::new(ctx.kv());
 
         ctx.exchange().with_state(|state| {
             state.basic_info_settings.set_location(country_code);
@@ -256,7 +236,7 @@ impl ClusterAsyncHandler for GenCommHandler<'_> {
             persist.store_tlv(BASIC_INFO_KEY, &state.basic_info_settings)
         })?;
 
-        persist.run().await?;
+        persist.run()?;
 
         response
             .error_code(CommissioningErrorEnum::OK)?
@@ -268,36 +248,33 @@ impl ClusterAsyncHandler for GenCommHandler<'_> {
         &self,
         ctx: impl InvokeContext,
         response: CommissioningCompleteResponseBuilder<P>,
-    ) -> impl Future<Output = Result<P, Error>> {
-        delayed_ready(move || {
-            let notify_mdns = || ctx.exchange().matter().notify_mdns();
-            let notify_change = |endpt_id, clust_id, attr_id| {
-                ctx.notify_attribute_changed(endpt_id, clust_id, attr_id)
-            };
+    ) -> Result<P, Error> {
+        let notify_mdns = || ctx.exchange().matter().notify_mdns();
+        let notify_change =
+            |endpt_id, clust_id, attr_id| ctx.notify_attribute_changed(endpt_id, clust_id, attr_id);
 
-            ctx.exchange().with_state(|state| {
-                let sess = ctx.exchange().id().session(&mut state.sessions);
+        ctx.exchange().with_state(|state| {
+            let sess = ctx.exchange().id().session(&mut state.sessions);
 
-                let status = CommissioningErrorEnum::map(
-                    state
-                        .failsafe
-                        .disarm(sess.get_session_mode())
-                        .map_err(|err| match err.code() {
-                            ErrorCode::NocInvalidFabricIndex => {
-                                Error::new(ErrorCode::GennCommInvalidAuthentication)
-                            }
-                            _ => err,
-                        }),
-                )?;
+            let status = CommissioningErrorEnum::map(
+                state
+                    .failsafe
+                    .disarm(sess.get_session_mode())
+                    .map_err(|err| match err.code() {
+                        ErrorCode::NocInvalidFabricIndex => {
+                            Error::new(ErrorCode::GennCommInvalidAuthentication)
+                        }
+                        _ => err,
+                    }),
+            )?;
 
-                if matches!(status, CommissioningErrorEnum::OK) {
-                    // As per section 5.5 of the Matter Core Spec V1.3 we have to terminate the PASE session
-                    // upon completion of commissioning
-                    state.pase.close_comm_window(notify_mdns, notify_change)?;
-                }
+            if matches!(status, CommissioningErrorEnum::OK) {
+                // As per section 5.5 of the Matter Core Spec V1.3 we have to terminate the PASE session
+                // upon completion of commissioning
+                state.pase.close_comm_window(notify_mdns, notify_change)?;
+            }
 
-                response.error_code(status)?.debug_text("")?.end()
-            })
+            response.error_code(status)?.debug_text("")?.end()
         })
     }
 
@@ -306,9 +283,9 @@ impl ClusterAsyncHandler for GenCommHandler<'_> {
         _ctx: impl InvokeContext,
         _request: SetTCAcknowledgementsRequest<'_>,
         response: SetTCAcknowledgementsResponseBuilder<P>,
-    ) -> impl Future<Output = Result<P, Error>> {
+    ) -> Result<P, Error> {
         // TODO
-        delayed_ready(move || response.error_code(CommissioningErrorEnum::OK)?.end())
+        response.error_code(CommissioningErrorEnum::OK)?.end()
     }
 }
 

@@ -29,7 +29,7 @@ use rand::RngCore;
 
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::groups::{self, ClusterAsyncHandler as _};
+use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
@@ -251,7 +251,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                         )
                         .chain(
                             EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
-                            groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+                            Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                         )
                         .chain(
                             EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
@@ -267,7 +267,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                         )
                         .chain(
                             EpClMatcher::new(Some(3), Some(groups::GroupsHandler::CLUSTER.id)),
-                            groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+                            Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                         )
                         .chain(
                             EpClMatcher::new(Some(3), Some(TestOnOffDeviceLogic::CLUSTER.id)),

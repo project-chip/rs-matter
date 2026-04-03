@@ -18,7 +18,6 @@
 //! This module contains the implementation of the Node Operational Credentials cluster and its handler.
 
 use core::cell::Cell;
-use core::future::{ready, Future};
 use core::mem::MaybeUninit;
 use core::num::NonZeroU8;
 
@@ -33,7 +32,6 @@ use crate::tlv::{
     TLVTag, TLVWrite,
 };
 use crate::transport::session::{AttChallengeRef, SessionMode};
-use crate::utils::future::delayed_ready;
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::WriteBuf;
 
@@ -66,9 +64,9 @@ impl NocHandler {
         Self { dataver }
     }
 
-    /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
-    pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
-        HandlerAsyncAdaptor(self)
+    /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
     }
 
     /// Computes the attestation signature using the provided `DeviceAttestation`
@@ -88,7 +86,7 @@ impl NocHandler {
     }
 }
 
-impl ClusterAsyncHandler for NocHandler {
+impl ClusterHandler for NocHandler {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER;
 
     fn dataver(&self) -> u32 {
@@ -103,58 +101,56 @@ impl ClusterAsyncHandler for NocHandler {
         &self,
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<NOCStructArrayBuilder<P>, NOCStructBuilder<P>>,
-    ) -> impl Future<Output = Result<P, Error>> {
-        delayed_ready(move || {
-            fn read_into<P: TLVBuilderParent>(
-                fabric: &Fabric,
-                builder: NOCStructBuilder<P>,
-            ) -> Result<P, Error> {
-                builder
-                    .noc(Octets::new(fabric.noc()))?
-                    .icac(Nullable::new(
-                        (!fabric.icac().is_empty()).then(|| Octets::new(fabric.icac())),
-                    ))?
-                    .vvsc(None)?
-                    .fabric_index(Some(fabric.fab_idx().get()))?
-                    .end()
-            }
+    ) -> Result<P, Error> {
+        fn read_into<P: TLVBuilderParent>(
+            fabric: &Fabric,
+            builder: NOCStructBuilder<P>,
+        ) -> Result<P, Error> {
+            builder
+                .noc(Octets::new(fabric.noc()))?
+                .icac(Nullable::new(
+                    (!fabric.icac().is_empty()).then(|| Octets::new(fabric.icac())),
+                ))?
+                .vvsc(None)?
+                .fabric_index(Some(fabric.fab_idx().get()))?
+                .end()
+        }
 
-            let attr = ctx.attr();
+        let attr = ctx.attr();
 
-            ctx.exchange().with_state(|state| {
-                let mut fabrics = state.fabrics.iter().filter(|fabric| {
-                    (!attr.fab_filter || attr.fab_idx == fabric.fab_idx().get())
-                        && !fabric.root_ca().is_empty()
-                });
+        ctx.exchange().with_state(|state| {
+            let mut fabrics = state.fabrics.iter().filter(|fabric| {
+                (!attr.fab_filter || attr.fab_idx == fabric.fab_idx().get())
+                    && !fabric.root_ca().is_empty()
+            });
 
-                match builder {
-                    ArrayAttributeRead::ReadAll(mut builder) => {
-                        for fabric in fabrics {
-                            if attr.fab_idx != fabric.fab_idx().get() {
-                                continue;
-                            }
-
-                            builder = read_into(fabric, builder.push()?)?;
+            match builder {
+                ArrayAttributeRead::ReadAll(mut builder) => {
+                    for fabric in fabrics {
+                        if attr.fab_idx != fabric.fab_idx().get() {
+                            continue;
                         }
 
-                        builder.end()
+                        builder = read_into(fabric, builder.push()?)?;
                     }
-                    ArrayAttributeRead::ReadOne(index, builder) => {
-                        let fabric = fabrics.nth(index as _);
 
-                        if let Some(fabric) = fabric {
-                            if attr.fab_idx != fabric.fab_idx().get() {
-                                Err(ErrorCode::ConstraintError.into())
-                            } else {
-                                read_into(fabric, builder)
-                            }
-                        } else {
-                            Err(ErrorCode::ConstraintError.into())
-                        }
-                    }
-                    ArrayAttributeRead::ReadNone(builder) => builder.end(),
+                    builder.end()
                 }
-            })
+                ArrayAttributeRead::ReadOne(index, builder) => {
+                    let fabric = fabrics.nth(index as _);
+
+                    if let Some(fabric) = fabric {
+                        if attr.fab_idx != fabric.fab_idx().get() {
+                            Err(ErrorCode::ConstraintError.into())
+                        } else {
+                            read_into(fabric, builder)
+                        }
+                    } else {
+                        Err(ErrorCode::ConstraintError.into())
+                    }
+                }
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
+            }
         })
     }
 
@@ -165,116 +161,102 @@ impl ClusterAsyncHandler for NocHandler {
             FabricDescriptorStructArrayBuilder<P>,
             FabricDescriptorStructBuilder<P>,
         >,
-    ) -> impl Future<Output = Result<P, Error>> {
-        delayed_ready(move || {
-            fn read_into<P: TLVBuilderParent>(
-                fabric: &Fabric,
-                builder: FabricDescriptorStructBuilder<P>,
-            ) -> Result<P, Error> {
-                // Empty `root_ca` might happen in the E2E tests
-                let root_ca_cert = CertRef::new(TLVElement::new(fabric.root_ca()));
+    ) -> Result<P, Error> {
+        fn read_into<P: TLVBuilderParent>(
+            fabric: &Fabric,
+            builder: FabricDescriptorStructBuilder<P>,
+        ) -> Result<P, Error> {
+            // Empty `root_ca` might happen in the E2E tests
+            let root_ca_cert = CertRef::new(TLVElement::new(fabric.root_ca()));
 
-                builder
-                    .root_public_key(Octets::new(root_ca_cert.pubkey()?))?
-                    .vendor_id(fabric.vendor_id())?
-                    .fabric_id(fabric.fabric_id())?
-                    .node_id(fabric.node_id())?
-                    .label(fabric.label())?
-                    .vid_verification_statement(None)?
-                    .fabric_index(Some(fabric.fab_idx().get()))?
-                    .end()
-            }
+            builder
+                .root_public_key(Octets::new(root_ca_cert.pubkey()?))?
+                .vendor_id(fabric.vendor_id())?
+                .fabric_id(fabric.fabric_id())?
+                .node_id(fabric.node_id())?
+                .label(fabric.label())?
+                .vid_verification_statement(None)?
+                .fabric_index(Some(fabric.fab_idx().get()))?
+                .end()
+        }
 
-            let attr = ctx.attr();
+        let attr = ctx.attr();
 
-            ctx.exchange().with_state(|state| {
-                let mut fabrics = state.fabrics.iter().filter(|fabric| {
-                    (!attr.fab_filter || attr.fab_idx == fabric.fab_idx().get())
-                        && !fabric.root_ca().is_empty()
-                });
+        ctx.exchange().with_state(|state| {
+            let mut fabrics = state.fabrics.iter().filter(|fabric| {
+                (!attr.fab_filter || attr.fab_idx == fabric.fab_idx().get())
+                    && !fabric.root_ca().is_empty()
+            });
 
-                match builder {
-                    ArrayAttributeRead::ReadAll(mut builder) => {
-                        for fabric in fabrics {
-                            builder = read_into(fabric, builder.push()?)?;
-                        }
-
-                        builder.end()
+            match builder {
+                ArrayAttributeRead::ReadAll(mut builder) => {
+                    for fabric in fabrics {
+                        builder = read_into(fabric, builder.push()?)?;
                     }
-                    ArrayAttributeRead::ReadOne(index, builder) => {
-                        let fabric = fabrics.nth(index as _);
 
-                        if let Some(fabric) = fabric {
-                            read_into(fabric, builder)
-                        } else {
-                            Err(ErrorCode::ConstraintError.into())
-                        }
-                    }
-                    ArrayAttributeRead::ReadNone(builder) => builder.end(),
+                    builder.end()
                 }
-            })
+                ArrayAttributeRead::ReadOne(index, builder) => {
+                    let fabric = fabrics.nth(index as _);
+
+                    if let Some(fabric) = fabric {
+                        read_into(fabric, builder)
+                    } else {
+                        Err(ErrorCode::ConstraintError.into())
+                    }
+                }
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
+            }
         })
     }
 
-    fn supported_fabrics(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u8, Error>> {
-        ready(Ok(MAX_FABRICS as u8))
+    fn supported_fabrics(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
+        Ok(MAX_FABRICS as u8)
     }
 
-    fn commissioned_fabrics(
-        &self,
-        ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<u8, Error>> {
-        delayed_ready(move || {
-            ctx.exchange()
-                .with_state(|state| Ok(state.fabrics.iter().count() as u8))
-        })
+    fn commissioned_fabrics(&self, ctx: impl ReadContext) -> Result<u8, Error> {
+        ctx.exchange()
+            .with_state(|state| Ok(state.fabrics.iter().count() as u8))
     }
 
     fn trusted_root_certificates<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<OctetsArrayBuilder<P>, OctetsBuilder<P>>,
-    ) -> impl Future<Output = Result<P, Error>> {
-        delayed_ready(move || {
-            let attr = ctx.attr();
+    ) -> Result<P, Error> {
+        let attr = ctx.attr();
 
-            ctx.exchange().with_state(|state| {
-                let mut fabrics = state.fabrics.iter().filter(|fabric| {
-                    (!attr.fab_filter || attr.fab_idx == fabric.fab_idx().get())
-                        && !fabric.root_ca().is_empty()
-                });
+        ctx.exchange().with_state(|state| {
+            let mut fabrics = state.fabrics.iter().filter(|fabric| {
+                (!attr.fab_filter || attr.fab_idx == fabric.fab_idx().get())
+                    && !fabric.root_ca().is_empty()
+            });
 
-                match builder {
-                    ArrayAttributeRead::ReadAll(mut builder) => {
-                        for fabric in fabrics {
-                            builder = builder.push(Octets::new(fabric.root_ca()))?;
-                        }
-
-                        builder.end()
+            match builder {
+                ArrayAttributeRead::ReadAll(mut builder) => {
+                    for fabric in fabrics {
+                        builder = builder.push(Octets::new(fabric.root_ca()))?;
                     }
-                    ArrayAttributeRead::ReadOne(index, builder) => {
-                        let fabric = fabrics.nth(index as _);
 
-                        if let Some(fabric) = fabric {
-                            builder.set(Octets::new(fabric.root_ca()))
-                        } else {
-                            Err(ErrorCode::ConstraintError.into())
-                        }
-                    }
-                    ArrayAttributeRead::ReadNone(builder) => builder.end(),
+                    builder.end()
                 }
-            })
+                ArrayAttributeRead::ReadOne(index, builder) => {
+                    let fabric = fabrics.nth(index as _);
+
+                    if let Some(fabric) = fabric {
+                        builder.set(Octets::new(fabric.root_ca()))
+                    } else {
+                        Err(ErrorCode::ConstraintError.into())
+                    }
+                }
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
+            }
         })
     }
 
-    fn current_fabric_index(
-        &self,
-        ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<u8, Error>> {
-        delayed_ready(move || {
-            let attr = ctx.attr();
-            Ok(attr.fab_idx)
-        })
+    fn current_fabric_index(&self, ctx: impl ReadContext) -> Result<u8, Error> {
+        let attr = ctx.attr();
+        Ok(attr.fab_idx)
     }
 
     fn handle_attestation_request<P: TLVBuilderParent>(
@@ -282,56 +264,54 @@ impl ClusterAsyncHandler for NocHandler {
         ctx: impl InvokeContext,
         request: AttestationRequestRequest<'_>,
         response: AttestationResponseBuilder<P>,
-    ) -> impl Future<Output = Result<P, Error>> {
-        delayed_ready(move || {
-            info!("Got Attestation Request");
+    ) -> Result<P, Error> {
+        info!("Got Attestation Request");
 
-            ctx.exchange().with_state(|state| {
-                let sess = ctx.exchange().id().session(&mut state.sessions);
+        ctx.exchange().with_state(|state| {
+            let sess = ctx.exchange().id().session(&mut state.sessions);
 
-                // Switch to raw writer for the response
-                // Necessary, as we want to take advantage of the `TLVWrite::str_cb` method
-                // to in-place compute and write the attestation response and the signature as an octet string
-                let mut parent = response.unchecked_into_parent();
-                let writer = parent.writer();
+            // Switch to raw writer for the response
+            // Necessary, as we want to take advantage of the `TLVWrite::str_cb` method
+            // to in-place compute and write the attestation response and the signature as an octet string
+            let mut parent = response.unchecked_into_parent();
+            let writer = parent.writer();
 
-                // Struct is already started
-                // writer.start_struct(&CmdDataWriter::TAG)?;
+            // Struct is already started
+            // writer.start_struct(&CmdDataWriter::TAG)?;
 
-                let epoch = (ctx.exchange().matter().epoch())().as_secs() as u32;
+            let epoch = (ctx.exchange().matter().epoch())().as_secs() as u32;
 
-                let mut signature = MaybeUninit::uninit();
-                let signature = signature.init_with(CanonPkcSignature::init()); // TODO MEDIUM BUFFER
+            let mut signature = MaybeUninit::uninit();
+            let signature = signature.init_with(CanonPkcSignature::init()); // TODO MEDIUM BUFFER
 
-                writer.str_cb(&TLVTag::Context(0), |buf| {
-                    let dev_att = ctx.exchange().matter().dev_att();
+            writer.str_cb(&TLVTag::Context(0), |buf| {
+                let dev_att = ctx.exchange().matter().dev_att();
 
-                    let mut wb = WriteBuf::new(buf);
-                    wb.start_struct(&TLVTag::Anonymous)?;
-                    wb.str(&TLVTag::Context(1), dev_att.cert_declaration())?;
-                    wb.str(&TLVTag::Context(2), request.attestation_nonce()?.0)?;
-                    wb.u32(&TLVTag::Context(3), epoch)?;
-                    wb.end_container()?;
+                let mut wb = WriteBuf::new(buf);
+                wb.start_struct(&TLVTag::Anonymous)?;
+                wb.str(&TLVTag::Context(1), dev_att.cert_declaration())?;
+                wb.str(&TLVTag::Context(2), request.attestation_nonce()?.0)?;
+                wb.u32(&TLVTag::Context(3), epoch)?;
+                wb.end_container()?;
 
-                    let len = wb.get_tail();
+                let len = wb.get_tail();
 
-                    Self::compute_attestation_signature(
-                        ctx.crypto(),
-                        dev_att,
-                        &mut wb,
-                        sess.get_att_challenge().ok_or(ErrorCode::InvalidState)?,
-                        signature,
-                    )?;
+                Self::compute_attestation_signature(
+                    ctx.crypto(),
+                    dev_att,
+                    &mut wb,
+                    sess.get_att_challenge().ok_or(ErrorCode::InvalidState)?,
+                    signature,
+                )?;
 
-                    Ok(len)
-                })?;
+                Ok(len)
+            })?;
 
-                writer.str(&TLVTag::Context(1), signature.access())?;
+            writer.str(&TLVTag::Context(1), signature.access())?;
 
-                writer.end_container()?;
+            writer.end_container()?;
 
-                Ok(parent)
-            })
+            Ok(parent)
         })
     }
 
@@ -340,33 +320,31 @@ impl ClusterAsyncHandler for NocHandler {
         ctx: impl InvokeContext,
         request: CertificateChainRequestRequest<'_>,
         response: CertificateChainResponseBuilder<P>,
-    ) -> impl Future<Output = Result<P, Error>> {
-        delayed_ready(move || {
-            info!("Got Cert Chain Request");
+    ) -> Result<P, Error> {
+        info!("Got Cert Chain Request");
 
-            // Switch to raw writer for the response
-            // Necessary, as we want to take advantage of the `TLVWrite::str_cb` method
-            // to emplace the attestation certificate as an octet string
-            let mut parent = response.unchecked_into_parent();
-            let writer = parent.writer();
+        // Switch to raw writer for the response
+        // Necessary, as we want to take advantage of the `TLVWrite::str_cb` method
+        // to emplace the attestation certificate as an octet string
+        let mut parent = response.unchecked_into_parent();
+        let writer = parent.writer();
 
-            // Struct is already started
-            // writer.start_struct(&CmdDataWriter::TAG)?;
+        // Struct is already started
+        // writer.start_struct(&CmdDataWriter::TAG)?;
 
-            let dev_att = ctx.exchange().matter().dev_att();
+        let dev_att = ctx.exchange().matter().dev_att();
 
-            writer.str(
-                &TLVTag::Context(0),
-                match request.certificate_type()? {
-                    CertificateChainTypeEnum::DACCertificate => dev_att.dac(),
-                    CertificateChainTypeEnum::PAICertificate => dev_att.pai(),
-                },
-            )?;
+        writer.str(
+            &TLVTag::Context(0),
+            match request.certificate_type()? {
+                CertificateChainTypeEnum::DACCertificate => dev_att.dac(),
+                CertificateChainTypeEnum::PAICertificate => dev_att.pai(),
+            },
+        )?;
 
-            writer.end_container()?;
+        writer.end_container()?;
 
-            Ok(parent)
-        })
+        Ok(parent)
     }
 
     fn handle_csr_request<P: TLVBuilderParent>(
@@ -374,71 +352,69 @@ impl ClusterAsyncHandler for NocHandler {
         ctx: impl InvokeContext,
         request: CSRRequestRequest<'_>,
         response: CSRResponseBuilder<P>,
-    ) -> impl Future<Output = Result<P, Error>> {
-        delayed_ready(move || {
-            info!("Got CSR Request");
+    ) -> Result<P, Error> {
+        info!("Got CSR Request");
 
-            ctx.exchange().with_state(|state| {
-                let sess = ctx.exchange().id().session(&mut state.sessions);
+        ctx.exchange().with_state(|state| {
+            let sess = ctx.exchange().id().session(&mut state.sessions);
 
-                let secret_key = if request.is_for_update_noc()?.unwrap_or(false) {
-                    state
-                        .failsafe
-                        .update_csr_req(ctx.crypto(), sess.get_session_mode())?
-                } else {
-                    state
-                        .failsafe
-                        .add_csr_req(ctx.crypto(), sess.get_session_mode())?
-                };
+            let secret_key = if request.is_for_update_noc()?.unwrap_or(false) {
+                state
+                    .failsafe
+                    .update_csr_req(ctx.crypto(), sess.get_session_mode())?
+            } else {
+                state
+                    .failsafe
+                    .add_csr_req(ctx.crypto(), sess.get_session_mode())?
+            };
 
-                // Switch to raw writer for the response
-                // Necessary, as we want to take advantage of the `TLVWrite::str_cb` method
-                // to in-place compute and write the CSR response and the signature as an octet string
-                let mut parent = response.unchecked_into_parent();
-                let writer = parent.writer();
+            // Switch to raw writer for the response
+            // Necessary, as we want to take advantage of the `TLVWrite::str_cb` method
+            // to in-place compute and write the CSR response and the signature as an octet string
+            let mut parent = response.unchecked_into_parent();
+            let writer = parent.writer();
 
-                // Struct is already started
-                // writer.start_struct(&CmdDataWriter::TAG)?;
+            // Struct is already started
+            // writer.start_struct(&CmdDataWriter::TAG)?;
 
-                let mut signature = MaybeUninit::uninit();
-                let signature = signature.init_with(CanonPkcSignature::init()); // TODO MEDIUM BUFFER
+            let mut signature = MaybeUninit::uninit();
+            let signature = signature.init_with(CanonPkcSignature::init()); // TODO MEDIUM BUFFER
 
-                writer.str_cb(&TLVTag::Context(0), |buf| {
-                    let mut wb = WriteBuf::new(buf);
+            writer.str_cb(&TLVTag::Context(0), |buf| {
+                let mut wb = WriteBuf::new(buf);
 
-                    wb.start_struct(&TLVTag::Anonymous)?;
-                    wb.str_cb(&TLVTag::Context(1), |buf| {
-                        ctx.crypto()
-                            .secret_key(secret_key)?
-                            .csr(buf)
-                            .map(|slice| slice.len())
-                    })?;
-                    wb.str(&TLVTag::Context(2), request.csr_nonce()?.0)?;
-                    wb.end_container()?;
-
-                    let len = wb.get_tail();
-
-                    Self::compute_attestation_signature(
-                        ctx.crypto(),
-                        ctx.exchange().matter().dev_att(),
-                        &mut wb,
-                        sess.get_att_challenge().ok_or(ErrorCode::InvalidState)?,
-                        signature,
-                    )?;
-
-                    Ok(len)
+                wb.start_struct(&TLVTag::Anonymous)?;
+                wb.str_cb(&TLVTag::Context(1), |buf| {
+                    ctx.crypto()
+                        .secret_key(secret_key)?
+                        .csr(buf)
+                        .map(|slice| slice.len())
                 })?;
+                wb.str(&TLVTag::Context(2), request.csr_nonce()?.0)?;
+                wb.end_container()?;
 
-                writer.str(&TLVTag::Context(1), signature.access())?;
+                let len = wb.get_tail();
 
-                writer.end_container()?;
+                Self::compute_attestation_signature(
+                    ctx.crypto(),
+                    ctx.exchange().matter().dev_att(),
+                    &mut wb,
+                    sess.get_att_challenge().ok_or(ErrorCode::InvalidState)?,
+                    signature,
+                )?;
 
-                Ok(parent)
-            })
+                Ok(len)
+            })?;
+
+            writer.str(&TLVTag::Context(1), signature.access())?;
+
+            writer.end_container()?;
+
+            Ok(parent)
         })
     }
 
-    async fn handle_add_noc<P: TLVBuilderParent>(
+    fn handle_add_noc<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         request: AddNOCRequest<'_>,
@@ -456,7 +432,7 @@ impl ClusterAsyncHandler for NocHandler {
 
         let buf = response.writer().available_space();
 
-        let mut persist = FabricPersist::new(ctx.kv().await);
+        let mut persist = FabricPersist::new(ctx.kv());
 
         let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_state(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
@@ -488,7 +464,7 @@ impl ClusterAsyncHandler for NocHandler {
                         .fabrics
                         .remove(fab_idx, &mut || ctx.exchange().matter().notify_mdns()));
 
-                    persist.reset();
+                    persist.remove(fab_idx).ok(); // Best effort
                 }
             });
 
@@ -502,7 +478,7 @@ impl ClusterAsyncHandler for NocHandler {
             Ok(())
         }))?;
 
-        persist.run().await?;
+        persist.run()?;
 
         response
             .status_code(status)?
@@ -511,7 +487,7 @@ impl ClusterAsyncHandler for NocHandler {
             .end()
     }
 
-    async fn handle_update_noc<P: TLVBuilderParent>(
+    fn handle_update_noc<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         request: UpdateNOCRequest<'_>,
@@ -527,7 +503,7 @@ impl ClusterAsyncHandler for NocHandler {
 
         let buf = response.writer().available_space();
 
-        let mut persist = FabricPersist::new(ctx.kv().await);
+        let mut persist = FabricPersist::new(ctx.kv());
 
         let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_state(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
@@ -547,7 +523,7 @@ impl ClusterAsyncHandler for NocHandler {
             Ok(())
         }))?;
 
-        persist.run().await?;
+        persist.run()?;
 
         response
             .status_code(status)?
@@ -556,7 +532,7 @@ impl ClusterAsyncHandler for NocHandler {
             .end()
     }
 
-    async fn handle_update_fabric_label<P: TLVBuilderParent>(
+    fn handle_update_fabric_label<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         request: UpdateFabricLabelRequest<'_>,
@@ -566,7 +542,7 @@ impl ClusterAsyncHandler for NocHandler {
 
         let mut updated_fab_idx = None;
 
-        let mut persist = FabricPersist::new(ctx.kv().await);
+        let mut persist = FabricPersist::new(ctx.kv());
 
         let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_state(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
@@ -592,7 +568,7 @@ impl ClusterAsyncHandler for NocHandler {
             Ok(())
         }))?;
 
-        persist.run().await?;
+        persist.run()?;
 
         response
             .status_code(status)?
@@ -601,7 +577,7 @@ impl ClusterAsyncHandler for NocHandler {
             .end()
     }
 
-    async fn handle_remove_fabric<P: TLVBuilderParent>(
+    fn handle_remove_fabric<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         request: RemoveFabricRequest<'_>,
@@ -611,7 +587,7 @@ impl ClusterAsyncHandler for NocHandler {
 
         let fab_idx = NonZeroU8::new(request.fabric_index()?).ok_or(ErrorCode::ConstraintError)?;
 
-        let mut persist = FabricPersist::new(ctx.kv().await);
+        let mut persist = FabricPersist::new(ctx.kv());
 
         let status = ctx.exchange().with_state(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
@@ -637,7 +613,7 @@ impl ClusterAsyncHandler for NocHandler {
                 // Note that since we might have removed our own session, the exchange
                 // will terminate with a "NoSession" error, but that's OK and handled properly
 
-                persist.remove(fab_idx);
+                persist.remove(fab_idx)?;
 
                 info!("Removed operational fabric with local index {}", fab_idx);
 
@@ -647,7 +623,7 @@ impl ClusterAsyncHandler for NocHandler {
             }
         })?;
 
-        persist.run().await?;
+        persist.run()?;
 
         response
             .status_code(status)?
@@ -660,18 +636,15 @@ impl ClusterAsyncHandler for NocHandler {
         &self,
         ctx: impl InvokeContext,
         request: AddTrustedRootCertificateRequest<'_>,
-    ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
-            info!("Got Add Trusted Root Cert Request");
+    ) -> Result<(), Error> {
+        info!("Got Add Trusted Root Cert Request");
 
-            ctx.exchange().with_state(|state| {
-                let sess = ctx.exchange().id().session(&mut state.sessions);
+        ctx.exchange().with_state(|state| {
+            let sess = ctx.exchange().id().session(&mut state.sessions);
 
-                state.failsafe.add_trusted_root_cert(
-                    sess.get_session_mode(),
-                    request.root_ca_certificate()?.0,
-                )
-            })
+            state
+                .failsafe
+                .add_trusted_root_cert(sess.get_session_mode(), request.root_ca_certificate()?.0)
         })
     }
 
@@ -679,8 +652,8 @@ impl ClusterAsyncHandler for NocHandler {
         &self,
         _ctx: impl InvokeContext,
         _request: SetVIDVerificationStatementRequest<'_>,
-    ) -> impl Future<Output = Result<(), Error>> {
-        ready(Ok(())) // TODO
+    ) -> Result<(), Error> {
+        Ok(()) // TODO
     }
 
     fn handle_sign_vid_verification_request<P: TLVBuilderParent>(
@@ -688,7 +661,7 @@ impl ClusterAsyncHandler for NocHandler {
         _ctx: impl InvokeContext,
         _request: SignVIDVerificationRequestRequest<'_>,
         _response: SignVIDVerificationResponseBuilder<P>,
-    ) -> impl Future<Output = Result<P, Error>> {
-        delayed_ready(move || todo!())
+    ) -> Result<P, Error> {
+        todo!()
     }
 }

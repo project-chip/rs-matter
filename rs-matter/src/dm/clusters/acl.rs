@@ -17,7 +17,6 @@
 
 //! This module contains the implementation of the Access Control cluster and its handler.
 
-use core::future::{ready, Future};
 use core::num::NonZeroU8;
 
 use crate::acl::{self, AclEntry, MAX_ACL_ENTRIES_PER_FABRIC};
@@ -28,7 +27,6 @@ use crate::dm::{
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, FabricPersist, Fabrics};
 use crate::tlv::{TLVArray, TLVBuilderParent};
-use crate::utils::future::delayed_ready;
 use crate::utils::init::stack_try_pin_init;
 use crate::with;
 
@@ -47,9 +45,9 @@ impl AclHandler {
         Self { dataver }
     }
 
-    /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
-    pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
-        HandlerAsyncAdaptor(self)
+    /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
     }
 
     /// For unit-testing
@@ -137,7 +135,7 @@ impl AclHandler {
     }
 }
 
-impl ClusterAsyncHandler for AclHandler {
+impl ClusterHandler for AclHandler {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required)).with_cmds(with!());
 
     fn dataver(&self) -> u32 {
@@ -155,35 +153,24 @@ impl ClusterAsyncHandler for AclHandler {
             AccessControlEntryStructArrayBuilder<P>,
             AccessControlEntryStructBuilder<P>,
         >,
-    ) -> impl Future<Output = Result<P, Error>> {
-        delayed_ready(move || {
-            ctx.exchange()
-                .with_state(|state| self.acl(&state.fabrics, ctx.attr(), builder))
-        })
+    ) -> Result<P, Error> {
+        ctx.exchange()
+            .with_state(|state| self.acl(&state.fabrics, ctx.attr(), builder))
     }
 
-    fn subjects_per_access_control_entry(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<u16, Error>> {
-        ready(Ok(acl::MAX_SUBJECTS_PER_ACL_ENTRY as _))
+    fn subjects_per_access_control_entry(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(acl::MAX_SUBJECTS_PER_ACL_ENTRY as _)
     }
 
-    fn targets_per_access_control_entry(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<u16, Error>> {
-        ready(Ok(acl::MAX_TARGETS_PER_ACL_ENTRY as _))
+    fn targets_per_access_control_entry(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(acl::MAX_TARGETS_PER_ACL_ENTRY as _)
     }
 
-    fn access_control_entries_per_fabric(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<u16, Error>> {
-        ready(Ok(acl::MAX_ACL_ENTRIES_PER_FABRIC as _))
+    fn access_control_entries_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(acl::MAX_ACL_ENTRIES_PER_FABRIC as _)
     }
 
-    async fn set_acl(
+    fn set_acl(
         &self,
         ctx: impl WriteContext,
         value: ArrayAttributeWrite<
@@ -191,7 +178,7 @@ impl ClusterAsyncHandler for AclHandler {
             AccessControlEntryStruct<'_>,
         >,
     ) -> Result<(), Error> {
-        let mut persist = FabricPersist::new(ctx.kv().await);
+        let mut persist = FabricPersist::new(ctx.kv());
 
         ctx.exchange().with_state(|state| {
             let fab_idx = NonZeroU8::new(ctx.attr().fab_idx).ok_or(ErrorCode::Invalid)?;
@@ -201,7 +188,7 @@ impl ClusterAsyncHandler for AclHandler {
             persist.store(fabric)
         })?;
 
-        persist.run().await
+        persist.run()
     }
 
     fn handle_review_fabric_restrictions<P: TLVBuilderParent>(
@@ -209,9 +196,9 @@ impl ClusterAsyncHandler for AclHandler {
         _ctx: impl InvokeContext,
         _request: ReviewFabricRestrictionsRequest<'_>,
         _response: ReviewFabricRestrictionsResponseBuilder<P>,
-    ) -> impl Future<Output = Result<P, Error>> {
+    ) -> Result<P, Error> {
         // Only necessary with MNGD feature (ManagedDevice)
-        delayed_ready(move || unimplemented!())
+        unimplemented!()
     }
 }
 

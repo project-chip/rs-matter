@@ -18,12 +18,12 @@
 //! This module provides the key-value BLOB store traits used throughout `rs-matter` for persistence, as well as some implementations for those.
 
 use core::borrow::BorrowMut;
-use core::future::Future;
 
 use crate::error::Error;
 use crate::tlv::{TLVTag, ToTLV};
+use crate::utils::cell::RefCell;
 use crate::utils::storage::WriteBuf;
-use crate::utils::sync::{IfMutex, IfMutexGuard};
+use crate::utils::sync::blocking::Mutex;
 
 #[cfg(feature = "std")]
 pub use fileio::*;
@@ -44,6 +44,11 @@ pub const EVENT_EPOCH_KEY: u16 = BASIC_INFO_KEY + 1;
 pub const NETWORKS_KEY: u16 = BASIC_INFO_KEY + 2;
 
 /// A trait representing a key-value BLOB storage.
+///
+/// NOTE: For now, the trait is deliberately modeled as non-async, so that it can be used from
+/// regular `Handler` non-async instances so as to avoid code bloat due to too much async handlers.
+///
+/// However, this might change in future once/if rustc starts to optimize the generated async code a bit better.
 pub trait KvBlobStore {
     /// Load a BLOB with the specified key from the storage.
     ///
@@ -55,7 +60,7 @@ pub trait KvBlobStore {
     /// - `Ok(Some(&[u8]))` if the BLOB was successfully loaded,
     /// - `Ok(None)` if the BLOB with the specified key does not exist,
     /// - `Err` if an error occurred during loading.
-    async fn load(&mut self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error>;
+    fn load(&mut self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error>;
 
     /// Store a BLOB with the specified key in the storage.
     ///
@@ -67,7 +72,7 @@ pub trait KvBlobStore {
     /// # Returns
     /// - `Ok(())` if the BLOB was successfully stored,
     /// - `Err` if an error occurred during storing.
-    async fn store(&mut self, key: u16, data: &[u8], buf: &mut [u8]) -> Result<(), Error>;
+    fn store(&mut self, key: u16, data: &[u8], buf: &mut [u8]) -> Result<(), Error>;
 
     /// Remove a BLOB with the specified key from the storage.
     ///
@@ -78,23 +83,23 @@ pub trait KvBlobStore {
     /// # Returns
     /// - `Ok(())` if the BLOB was successfully removed or did not exist
     /// - `Err` if an error occurred during removing.
-    async fn remove(&mut self, key: u16, buf: &mut [u8]) -> Result<(), Error>;
+    fn remove(&mut self, key: u16, buf: &mut [u8]) -> Result<(), Error>;
 }
 
 impl<T> KvBlobStore for &mut T
 where
     T: KvBlobStore,
 {
-    async fn load(&mut self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error> {
-        T::load(self, key, buf).await
+    fn load(&mut self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error> {
+        T::load(self, key, buf)
     }
 
-    async fn store(&mut self, key: u16, data: &[u8], buf: &mut [u8]) -> Result<(), Error> {
-        T::store(self, key, data, buf).await
+    fn store(&mut self, key: u16, data: &[u8], buf: &mut [u8]) -> Result<(), Error> {
+        T::store(self, key, data, buf)
     }
 
-    async fn remove(&mut self, key: u16, buf: &mut [u8]) -> Result<(), Error> {
-        T::remove(self, key, buf).await
+    fn remove(&mut self, key: u16, buf: &mut [u8]) -> Result<(), Error> {
+        T::remove(self, key, buf)
     }
 }
 
@@ -102,56 +107,36 @@ where
 pub struct DummyKvBlobStore;
 
 impl KvBlobStore for DummyKvBlobStore {
-    async fn load(&mut self, _key: u16, _buf: &mut [u8]) -> Result<Option<usize>, Error> {
+    fn load(&mut self, _key: u16, _buf: &mut [u8]) -> Result<Option<usize>, Error> {
         Ok(None)
     }
 
-    async fn store(&mut self, _key: u16, _data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
+    fn store(&mut self, _key: u16, _data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
         Ok(())
     }
 
-    async fn remove(&mut self, _key: u16, _buf: &mut [u8]) -> Result<(), Error> {
+    fn remove(&mut self, _key: u16, _buf: &mut [u8]) -> Result<(), Error> {
         Ok(())
     }
 }
 
 /// A trait representing access to a `KvBlobStore` instance and a buffer for its use.
 pub trait KvBlobStoreAccess {
-    /// The type of the `KvBlobStore` instance and buffer provided by this access.
-    type Instance<'a>: KvBlobStoreInstance
-    where
-        Self: 'a;
-
     /// Get the `KvBlobStore` instance and buffer provided by this access.
-    async fn get(&self) -> Self::Instance<'_>;
-}
-
-/// A trait representing an instance that can provide a `KvBlobStore` and a buffer for its use.
-pub trait KvBlobStoreInstance {
-    /// Split this instance into a `KvBlobStore` and a buffer for its use.
-    fn split(&mut self) -> (impl KvBlobStore, &mut [u8]);
-}
-
-impl<T> KvBlobStoreInstance for &mut T
-where
-    T: KvBlobStoreInstance,
-{
-    fn split(&mut self) -> (impl KvBlobStore, &mut [u8]) {
-        T::split(self)
-    }
+    fn access<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut dyn KvBlobStore, &mut [u8]) -> R;
 }
 
 impl<T> KvBlobStoreAccess for &T
 where
     T: KvBlobStoreAccess,
 {
-    type Instance<'a>
-        = T::Instance<'a>
+    fn access<F, R>(&self, f: F) -> R
     where
-        Self: 'a;
-
-    fn get(&self) -> impl Future<Output = Self::Instance<'_>> {
-        T::get(self)
+        F: FnOnce(&mut dyn KvBlobStore, &mut [u8]) -> R,
+    {
+        T::access(self, f)
     }
 }
 
@@ -159,25 +144,17 @@ where
 pub struct DummyKvBlobStoreAccess;
 
 impl KvBlobStoreAccess for DummyKvBlobStoreAccess {
-    type Instance<'a>
-        = DummyKvBlobStore
+    fn access<F, R>(&self, f: F) -> R
     where
-        Self: 'a;
-
-    async fn get(&self) -> Self::Instance<'_> {
-        DummyKvBlobStore
-    }
-}
-
-impl KvBlobStoreInstance for DummyKvBlobStore {
-    fn split(&mut self) -> (impl KvBlobStore, &mut [u8]) {
-        (DummyKvBlobStore, &mut [])
+        F: FnOnce(&mut dyn KvBlobStore, &mut [u8]) -> R,
+    {
+        f(&mut DummyKvBlobStore, &mut [])
     }
 }
 
 /// An implementation of the `KvBlobStoreAccess` trait that provides access
 /// to a shared `KvBlobStore` instance and a shared buffer using async mutex.
-pub struct SharedKvBlobStore<S, T>(IfMutex<(S, T)>);
+pub struct SharedKvBlobStore<S, T>(Mutex<RefCell<(S, T)>>);
 
 impl<S, T> SharedKvBlobStore<S, T> {
     /// Create a new `SharedKvBlobStore` instance.
@@ -186,14 +163,7 @@ impl<S, T> SharedKvBlobStore<S, T> {
     /// - `store` - the wrapped `KvBlobStore` instance
     /// - `buf` - the wrapped buffer
     pub const fn new(store: S, buf: T) -> Self {
-        Self(IfMutex::new((store, buf)))
-    }
-
-    /// Get the wrapped `KvBlobStore` instance and the wrapped buffer.
-    ///
-    /// If necessary, awaits the buffer to be available.
-    pub async fn get(&self) -> SharedKvBlobStoreInstance<'_, S, T> {
-        SharedKvBlobStoreInstance(self.0.lock().await)
+        Self(Mutex::new(RefCell::new((store, buf))))
     }
 }
 
@@ -202,78 +172,53 @@ where
     S: KvBlobStore,
     T: BorrowMut<[u8]>,
 {
-    type Instance<'a>
-        = SharedKvBlobStoreInstance<'a, S, T>
+    fn access<F, R>(&self, f: F) -> R
     where
-        Self: 'a;
+        F: FnOnce(&mut dyn KvBlobStore, &mut [u8]) -> R,
+    {
+        self.0.lock(|cell| {
+            let mut kvb = cell.borrow_mut();
+            let kvb = &mut *kvb;
 
-    async fn get(&self) -> Self::Instance<'_> {
-        self.get().await
-    }
-}
-
-/// A wrapper around a `KvBlobStore` instance and a buffer for its use, providing access to them.
-pub struct SharedKvBlobStoreInstance<'a, S, T>(IfMutexGuard<'a, (S, T)>);
-
-impl<'a, S, T> KvBlobStoreInstance for SharedKvBlobStoreInstance<'a, S, T>
-where
-    S: KvBlobStore,
-    T: BorrowMut<[u8]>,
-{
-    fn split(&mut self) -> (impl KvBlobStore, &mut [u8]) {
-        let (store, buf) = &mut *self.0;
-
-        (store, buf.borrow_mut())
+            f(&mut kvb.0, kvb.1.borrow_mut())
+        })
     }
 }
 
 /// A utility for persisting a value in a `KvBlobStore` instance.
 pub struct Persist<S> {
     kvb: S,
-    key: Option<u16>,
-    len: usize,
 }
 
 impl<S> Persist<S>
 where
-    S: KvBlobStoreInstance,
+    S: KvBlobStoreAccess,
 {
     /// Create a new `Persist` instance with the given key-value store instance.
     pub const fn new(kvb: S) -> Self {
-        Self {
-            kvb,
-            key: None,
-            len: 0,
-        }
+        Self { kvb }
     }
 
-    /// Reset the state of this `Persist` instance, so that it can be reused for a new transaction.
-    pub fn reset(&mut self) {
-        self.key = None;
-        self.len = 0;
-    }
-
-    /// Prepare a value for persistence by first serializing it in the provided buffer and then
-    /// storing the serialized state in the transaction's pending state if the serialization was successful.
+    /// Save a value in the storage with the specified key by calling the provided closure to serialize the value into a buffer.
     pub fn store<F: FnOnce(&mut [u8]) -> Result<Option<usize>, Error>>(
         &mut self,
         key: u16,
         f: F,
     ) -> Result<(), Error> {
-        let buf = self.kvb.split().1;
-
-        if !buf.is_empty() {
-            // DummyKvBlobStoreAccess uses an empty buffer
-            if let Some(len) = f(buf)? {
-                self.len = len;
-                self.key = Some(key);
+        self.kvb.access(|kvb, buf| {
+            if !buf.is_empty() {
+                // DummyKvBlobStoreAccess uses an empty buffer
+                if let Some(len) = f(buf)? {
+                    let (data, buf) = buf.split_at_mut(len);
+                    kvb.store(key, data, buf)?;
+                }
             }
-        }
 
-        Ok(())
+            Ok(())
+        })
     }
 
-    /// Prepare a TLV value for persistence by storing it in the transaction's pending state.
+    /// Save a value that implements the `ToTLV` trait in the storage with the specified key.
     pub fn store_tlv<T: ToTLV>(&mut self, key: u16, tlv: T) -> Result<(), Error> {
         self.store(key, |buf| {
             let mut wb = WriteBuf::new(buf);
@@ -284,25 +229,22 @@ where
         })
     }
 
-    /// Prepare the removal of a value from the persistent storage.
-    pub fn remove(&mut self, key: u16) {
-        self.key = Some(key);
-        self.len = 0;
+    /// Remove the value with the specified key from the storage.
+    pub fn remove(&mut self, key: u16) -> Result<(), Error> {
+        self.kvb.access(|kvb, buf| {
+            if !buf.is_empty() {
+                // DummyKvBlobStoreAccess uses an empty buffer
+                kvb.remove(key, buf)?;
+            }
+
+            Ok(())
+        })
     }
 
-    /// Run this persistence operation by writing the prepared value to the wrapped `KvBlobStore` instance.
-    pub async fn run(mut self) -> Result<(), Error> {
-        let (mut kv, buf) = self.kvb.split();
-
-        if let Some(key) = self.key {
-            let (data, buf) = buf.split_at_mut(self.len);
-
-            if self.len > 0 {
-                kv.store(key, data, buf).await?;
-            } else {
-                kv.remove(key, buf).await?;
-            }
-        }
+    /// Call at the end when finished with everything else
+    /// No-op for now
+    pub fn run(self) -> Result<(), Error> {
+        // No-op for now
 
         Ok(())
     }
@@ -413,15 +355,15 @@ mod fileio {
     }
 
     impl KvBlobStore for DirKvBlobStore {
-        async fn load(&mut self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error> {
+        fn load(&mut self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error> {
             Self::load(self, key, buf)
         }
 
-        async fn store(&mut self, key: u16, data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
+        fn store(&mut self, key: u16, data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
             Self::store(self, key, data)
         }
 
-        async fn remove(&mut self, key: u16, _buf: &mut [u8]) -> Result<(), Error> {
+        fn remove(&mut self, key: u16, _buf: &mut [u8]) -> Result<(), Error> {
             Self::remove(self, key)
         }
     }
@@ -552,15 +494,15 @@ mod fileio {
     }
 
     impl KvBlobStore for FileKvBlobStore {
-        async fn load(&mut self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error> {
+        fn load(&mut self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error> {
             Self::load(self, key, buf)
         }
 
-        async fn store(&mut self, key: u16, data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
+        fn store(&mut self, key: u16, data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
             Self::store(self, key, data)
         }
 
-        async fn remove(&mut self, key: u16, _buf: &mut [u8]) -> Result<(), Error> {
+        fn remove(&mut self, key: u16, _buf: &mut [u8]) -> Result<(), Error> {
             Self::remove(self, key)
         }
     }

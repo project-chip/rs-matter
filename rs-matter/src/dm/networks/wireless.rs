@@ -146,7 +146,7 @@ where
     ) -> Result<(), Error> {
         self.reset();
 
-        if let Some(len) = kv.load(NETWORKS_KEY, buf).await? {
+        if let Some(len) = kv.load(NETWORKS_KEY, buf)? {
             self.load(&buf[..len])?;
         }
 

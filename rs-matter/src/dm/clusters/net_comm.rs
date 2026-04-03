@@ -87,11 +87,11 @@ impl NetworkType {
     /// This is same as [Self::root_clusters()] but with the groups cluster added.
     pub const fn root_clusters_with_groups(&self) -> &'static [Cluster<'static>] {
         static ETH: &[Cluster<'static>] =
-            clusters!(eth;<groups::GroupsHandler as groups::ClusterAsyncHandler>::CLUSTER);
+            clusters!(eth;<groups::GroupsHandler as groups::ClusterHandler>::CLUSTER);
         static WIFI: &[Cluster<'static>] =
-            clusters!(wifi;<groups::GroupsHandler as groups::ClusterAsyncHandler>::CLUSTER);
+            clusters!(wifi;<groups::GroupsHandler as groups::ClusterHandler>::CLUSTER);
         static THREAD: &[Cluster<'static>] =
-            clusters!(thread;<groups::GroupsHandler as groups::ClusterAsyncHandler>::CLUSTER);
+            clusters!(thread;<groups::GroupsHandler as groups::ClusterHandler>::CLUSTER);
 
         match self {
             Self::Ethernet => ETH,
@@ -1035,7 +1035,7 @@ where
         ctx: impl WriteContext,
         value: bool,
     ) -> Result<(), Error> {
-        let mut persist = Persist::new(ctx.kv().await);
+        let mut persist = Persist::new(ctx.kv());
 
         self.networks.access(|networks| {
             networks.set_enabled(value)?;
@@ -1043,7 +1043,7 @@ where
             persist.store(NETWORKS_KEY, |buf| networks.persist(buf))
         })?;
 
-        persist.run().await
+        persist.run()
     }
 
     async fn handle_scan_networks<P: TLVBuilderParent>(
@@ -1159,7 +1159,7 @@ where
         request: AddOrUpdateWiFiNetworkRequest<'_>,
         response: NetworkConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let mut persist = Persist::new(ctx.kv().await);
+        let mut persist = Persist::new(ctx.kv());
 
         let (status, _, index) =
             NetworkCommissioningStatusEnum::map(self.networks.access(|networks| {
@@ -1173,7 +1173,7 @@ where
                 Ok(index)
             }))?;
 
-        persist.run().await?;
+        persist.run()?;
 
         status.read_into(index, response)
     }
@@ -1184,7 +1184,7 @@ where
         request: AddOrUpdateThreadNetworkRequest<'_>,
         response: NetworkConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let mut persist = Persist::new(ctx.kv().await);
+        let mut persist = Persist::new(ctx.kv());
 
         let (status, _, index) =
             NetworkCommissioningStatusEnum::map(self.networks.access(|networks| {
@@ -1197,7 +1197,7 @@ where
                 Ok(index)
             }))?;
 
-        persist.run().await?;
+        persist.run()?;
 
         status.read_into(index, response)
     }
@@ -1208,7 +1208,7 @@ where
         request: RemoveNetworkRequest<'_>,
         response: NetworkConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let mut persist = Persist::new(ctx.kv().await);
+        let mut persist = Persist::new(ctx.kv());
 
         let (status, _, index) =
             NetworkCommissioningStatusEnum::map(self.networks.access(|networks| {
@@ -1219,7 +1219,7 @@ where
                 Ok(index)
             }))?;
 
-        persist.run().await?;
+        persist.run()?;
 
         status.read_into(index, response)
     }
@@ -1335,7 +1335,7 @@ where
         request: ReorderNetworkRequest<'_>,
         response: NetworkConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let mut persist = Persist::new(ctx.kv().await);
+        let mut persist = Persist::new(ctx.kv());
 
         let (status, _, index) =
             NetworkCommissioningStatusEnum::map(self.networks.access(|networks| {
@@ -1347,7 +1347,7 @@ where
                 Ok(index)
             }))?;
 
-        persist.run().await?;
+        persist.run()?;
 
         status.read_into(index, response)
     }

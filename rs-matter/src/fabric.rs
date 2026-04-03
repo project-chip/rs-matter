@@ -31,7 +31,7 @@ use crate::crypto::{
 use crate::dm::Privilege;
 use crate::error::{Error, ErrorCode};
 use crate::group_keys::{GroupKeySet, KeySet};
-use crate::persist::{KvBlobStore, KvBlobStoreInstance, Persist, FABRIC_KEYS_START};
+use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, FABRIC_KEYS_START};
 use crate::tlv::{FromTLV, TLVElement, ToTLV};
 use crate::utils::init::{init, Init, InitMaybeUninit, IntoFallibleInit};
 use crate::utils::storage::Vec;
@@ -749,7 +749,7 @@ impl Fabrics {
         self.reset();
 
         for idx in 1..=255u8 {
-            if let Some(len) = store.load(FABRIC_KEYS_START + idx as u16, buf).await? {
+            if let Some(len) = store.load(FABRIC_KEYS_START + idx as u16, buf)? {
                 self.fabrics
                     .push_init(Fabric::init_from_tlv(TLVElement::new(&buf[..len])), || {
                         ErrorCode::ResourceExhausted.into()
@@ -984,31 +984,27 @@ pub struct FabricPersist<S>(Persist<S>);
 
 impl<S> FabricPersist<S>
 where
-    S: KvBlobStoreInstance,
+    S: KvBlobStoreAccess,
 {
     /// Create a new `FabricPersist` with the given key-value store instance.
     pub const fn new(kvb: S) -> Self {
         Self(Persist::new(kvb))
     }
 
-    /// Reset the state of this `FabricPersist`, so that it can be reused for a new transaction.
-    pub fn reset(&mut self) {
-        self.0.reset();
-    }
-
-    /// Prepare a fabric for persistence by storing it in the transaction's pending state.
+    /// Save the provided fabric in the persistent storage.
     pub fn store(&mut self, fabric: &Fabric) -> Result<(), Error> {
         self.0
             .store_tlv(FABRIC_KEYS_START + fabric.fab_idx().get() as u16, fabric)
     }
 
-    /// Prepare the removal of a fabric from the persistent storage.
-    pub fn remove(&mut self, fab_idx: NonZeroU8) {
-        self.0.remove(FABRIC_KEYS_START + fab_idx.get() as u16);
+    /// Remove the fabric with the given index from the persistent storage.
+    pub fn remove(&mut self, fab_idx: NonZeroU8) -> Result<(), Error> {
+        self.0.remove(FABRIC_KEYS_START + fab_idx.get() as u16)
     }
 
-    /// Run the persistence operation by writing the prepared fabric data to the wrapped `KvBlobStore` instance.
-    pub async fn run(self) -> Result<(), Error> {
-        self.0.run().await
+    /// Call at the end when finished with everything else
+    /// No-op for now
+    pub fn run(self) -> Result<(), Error> {
+        self.0.run()
     }
 }

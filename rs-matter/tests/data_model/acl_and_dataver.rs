@@ -18,7 +18,7 @@
 use core::num::NonZeroU8;
 
 use rs_matter::acl::{gen_noc_cat, AclEntry, AuthMode, Target};
-use rs_matter::dm::clusters::acl::{self, ClusterAsyncHandler as _};
+use rs_matter::dm::clusters::acl::{self, ClusterHandler as _};
 use rs_matter::dm::Privilege;
 use rs_matter::im::GenericPath;
 use rs_matter::im::IMStatusCode;
