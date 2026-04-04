@@ -754,6 +754,14 @@ impl Fabrics {
                     .push_init(Fabric::init_from_tlv(TLVElement::new(&buf[..len])), || {
                         ErrorCode::ResourceExhausted.into()
                     })?;
+
+                let fabric = unwrap!(self.fabrics.last());
+
+                info!(
+                    "Loaded fabric {} with ID {:x} from storage",
+                    fabric.fab_idx(),
+                    fabric.compressed_fabric_id()
+                );
             }
         }
 

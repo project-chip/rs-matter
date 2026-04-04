@@ -365,6 +365,8 @@ impl BasicInfoSettings {
             self.location = info.location;
             self.location_type = info.location_type;
             self.local_config_disabled = info.local_config_disabled;
+
+            info!("Loaded basic info settings from storage");
         }
 
         Ok(())

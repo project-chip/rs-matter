@@ -148,6 +148,8 @@ where
 
         if let Some(len) = kv.load(NETWORKS_KEY, buf)? {
             self.load(&buf[..len])?;
+
+            info!("Loaded {} networks from storage", self.networks.len());
         }
 
         Ok(())
