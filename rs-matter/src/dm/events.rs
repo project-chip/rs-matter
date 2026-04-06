@@ -222,8 +222,8 @@ impl<const N: usize> Events<N> {
     {
         self.reset();
 
-        if let Some(len) = kv.load(EVENT_EPOCH_KEY, buf)? {
-            self.load(&buf[..len])
+        if let Some(data) = kv.load(EVENT_EPOCH_KEY, buf)? {
+            self.load(data)
         } else {
             Ok(())
         }

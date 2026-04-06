@@ -358,8 +358,8 @@ impl BasicInfoSettings {
     ) -> Result<(), Error> {
         self.reset();
 
-        if let Some(len) = store.load(BASIC_INFO_KEY, buf)? {
-            let info = Self::from_tlv(&TLVElement::new(&buf[..len]))?;
+        if let Some(data) = store.load(BASIC_INFO_KEY, buf)? {
+            let info = Self::from_tlv(&TLVElement::new(data))?;
 
             self.node_label = info.node_label;
             self.location = info.location;

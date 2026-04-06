@@ -146,8 +146,8 @@ where
     ) -> Result<(), Error> {
         self.reset();
 
-        if let Some(len) = kv.load(NETWORKS_KEY, buf)? {
-            self.load(&buf[..len])?;
+        if let Some(data) = kv.load(NETWORKS_KEY, buf)? {
+            self.load(data)?;
 
             info!("Loaded {} networks from storage", self.networks.len());
         }

@@ -749,9 +749,9 @@ impl Fabrics {
         self.reset();
 
         for idx in 1..=255u8 {
-            if let Some(len) = store.load(FABRIC_KEYS_START + idx as u16, buf)? {
+            if let Some(data) = store.load(FABRIC_KEYS_START + idx as u16, buf)? {
                 self.fabrics
-                    .push_init(Fabric::init_from_tlv(TLVElement::new(&buf[..len])), || {
+                    .push_init(Fabric::init_from_tlv(TLVElement::new(data)), || {
                         ErrorCode::ResourceExhausted.into()
                     })?;
 

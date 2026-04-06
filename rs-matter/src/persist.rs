@@ -60,7 +60,7 @@ pub trait KvBlobStore {
     /// - `Ok(Some(&[u8]))` if the BLOB was successfully loaded,
     /// - `Ok(None)` if the BLOB with the specified key does not exist,
     /// - `Err` if an error occurred during loading.
-    fn load(&mut self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error>;
+    fn load<'a>(&mut self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error>;
 
     /// Store a BLOB with the specified key in the storage.
     ///
@@ -90,7 +90,7 @@ impl<T> KvBlobStore for &mut T
 where
     T: KvBlobStore,
 {
-    fn load(&mut self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error> {
+    fn load<'a>(&mut self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
         T::load(self, key, buf)
     }
 
@@ -107,7 +107,7 @@ where
 pub struct DummyKvBlobStore;
 
 impl KvBlobStore for DummyKvBlobStore {
-    fn load(&mut self, _key: u16, _buf: &mut [u8]) -> Result<Option<usize>, Error> {
+    fn load<'a>(&mut self, _key: u16, _buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
         Ok(None)
     }
 
@@ -355,8 +355,8 @@ mod fileio {
     }
 
     impl KvBlobStore for DirKvBlobStore {
-        fn load(&mut self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error> {
-            Self::load(self, key, buf)
+        fn load<'a>(&mut self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+            Ok(Self::load(self, key, buf)?.map(|len| &buf[..len]))
         }
 
         fn store(&mut self, key: u16, data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
@@ -494,8 +494,8 @@ mod fileio {
     }
 
     impl KvBlobStore for FileKvBlobStore {
-        fn load(&mut self, key: u16, buf: &mut [u8]) -> Result<Option<usize>, Error> {
-            Self::load(self, key, buf)
+        fn load<'a>(&mut self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+            Ok(Self::load(self, key, buf)?.map(|len| &buf[..len]))
         }
 
         fn store(&mut self, key: u16, data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
