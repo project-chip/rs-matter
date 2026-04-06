@@ -190,7 +190,7 @@ where
                 if len > 0 {
                     let ipv4 = addr
                         .udp()
-                        .map(|addr| matches!(addr.ip(), IpAddr::V4(_)))
+                        .map(|addr| matches!(addr.ip().to_canonical(), IpAddr::V4(_)))
                         .unwrap_or(true);
 
                     let reply_addr = if ipv4 {
