@@ -207,11 +207,11 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(TestLevelControlDeviceLogic::CLUSTER.id)),
-                        level_control::HandlerAsyncAdaptor(level_control),
+                        Async(level_control::HandlerAdaptor(level_control)),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                        on_off::HandlerAsyncAdaptor(on_off),
+                        Async(on_off::HandlerAdaptor(on_off)),
                     ),
             ),
         ),

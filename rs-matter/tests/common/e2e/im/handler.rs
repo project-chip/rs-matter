@@ -15,18 +15,20 @@
  *    limitations under the License.
  */
 
+use core::future::Future;
+
 use rs_matter::crypto::{Crypto, RngCore};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::on_off::{
-    self, test::TestOnOffDeviceLogic, ClusterAsyncHandler as _, NoLevelControl, OnOffHandler,
-    OnOffHooks,
+    self, test::TestOnOffDeviceLogic, ClusterHandler as _, NoLevelControl, OnOffHandler, OnOffHooks,
 };
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints::{with_eth, with_sys, EthHandler, SysHandler, ROOT_ENDPOINT_ID};
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, ChainedHandler, Dataver, EmptyHandler, Endpoint,
-    EpClMatcher, InvokeContext, InvokeReply, Node, ReadContext, ReadReply, WriteContext,
+    EpClMatcher, HandlerContext, InvokeContext, InvokeReply, Node, ReadContext, ReadReply,
+    WriteContext,
 };
 use rs_matter::error::Error;
 use rs_matter::{clusters, handler_chain_type};
@@ -38,7 +40,7 @@ use super::echo_cluster::{self, EchoHandler};
 /// A sample handler for E2E IM tests.
 pub struct E2eTestHandler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     handler_chain_type!(
-        EpClMatcher => on_off::HandlerAsyncAdaptor<OnOffHandler<'a, OH, LH>>,
+        EpClMatcher => Async<on_off::HandlerAdaptor<OnOffHandler<'a, OH, LH>>>,
         EpClMatcher => Async<EchoHandler>,
         EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'static>>>,
         EpClMatcher => Async<EchoHandler>
@@ -84,7 +86,7 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
         )
         .chain(
             EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-            on_off::HandlerAsyncAdaptor(on_off),
+            Async(on_off.adapt()),
         );
 
         Self(handler)
@@ -112,16 +114,28 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> AsyncHandler for E2eTestHandler<
         false
     }
 
-    async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
-        self.0.read(ctx, reply).await
+    fn read(
+        &self,
+        ctx: impl ReadContext,
+        reply: impl ReadReply,
+    ) -> impl Future<Output = Result<(), Error>> {
+        self.0.read(ctx, reply)
     }
 
-    async fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
-        self.0.write(ctx).await
+    fn write(&self, ctx: impl WriteContext) -> impl Future<Output = Result<(), Error>> {
+        self.0.write(ctx)
     }
 
-    async fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
-        self.0.invoke(ctx, reply).await
+    fn invoke(
+        &self,
+        ctx: impl InvokeContext,
+        reply: impl InvokeReply,
+    ) -> impl Future<Output = Result<(), Error>> {
+        self.0.invoke(ctx, reply)
+    }
+
+    fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
+        self.0.run(ctx)
     }
 }
 

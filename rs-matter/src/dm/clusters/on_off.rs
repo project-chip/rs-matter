@@ -280,8 +280,8 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
-    pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
-        HandlerAsyncAdaptor(self)
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
     }
 
     /// Request an out-of-band change to the OnOff state.
@@ -701,7 +701,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
     }
 }
 
-impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<'_, H, LH> {
+impl<H: OnOffHooks, LH: LevelControlHooks> ClusterHandler for OnOffHandler<'_, H, LH> {
     #[doc = "The cluster-metadata corresponding to this handler trait."]
     const CLUSTER: Cluster<'static> = H::CLUSTER;
 
@@ -742,30 +742,27 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
     }
 
     // Attribute accessors
-    async fn on_off(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
+    fn on_off(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         Ok(self.hooks.on_off())
     }
 
-    async fn global_scene_control(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
+    fn global_scene_control(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         Ok(self.with_state(|state| state.global_scene_control))
     }
 
-    async fn on_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+    fn on_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(self.with_state(|state| state.on_time))
     }
 
-    async fn off_wait_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+    fn off_wait_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(self.with_state(|state| state.off_wait_time))
     }
 
-    async fn start_up_on_off(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<Nullable<StartUpOnOffEnum>, Error> {
+    fn start_up_on_off(&self, _ctx: impl ReadContext) -> Result<Nullable<StartUpOnOffEnum>, Error> {
         Ok(self.hooks.start_up_on_off())
     }
 
-    async fn set_on_time(&self, ctx: impl WriteContext, value: u16) -> Result<(), Error> {
+    fn set_on_time(&self, ctx: impl WriteContext, value: u16) -> Result<(), Error> {
         self.with_state(|state| {
             state.on_time = value;
             self.dataver_changed();
@@ -774,7 +771,7 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
         })
     }
 
-    async fn set_off_wait_time(&self, ctx: impl WriteContext, value: u16) -> Result<(), Error> {
+    fn set_off_wait_time(&self, ctx: impl WriteContext, value: u16) -> Result<(), Error> {
         self.with_state(|state| {
             state.off_wait_time = value;
             self.dataver_changed();
@@ -783,7 +780,7 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
         })
     }
 
-    async fn set_start_up_on_off(
+    fn set_start_up_on_off(
         &self,
         ctx: impl WriteContext,
         value: Nullable<StartUpOnOffEnum>,
@@ -795,25 +792,25 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
     }
 
     // Commands
-    async fn handle_off(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
+    fn handle_off(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         self.state_change_signal.signal(OnOffCommand::Off);
 
         Ok(())
     }
 
-    async fn handle_on(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
+    fn handle_on(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         self.state_change_signal.signal(OnOffCommand::On);
 
         Ok(())
     }
 
-    async fn handle_toggle(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
+    fn handle_toggle(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         self.state_change_signal.signal(OnOffCommand::Toggle);
 
         Ok(())
     }
 
-    async fn handle_off_with_effect(
+    fn handle_off_with_effect(
         &self,
         _ctx: impl InvokeContext,
         request: OffWithEffectRequest<'_>,
@@ -854,10 +851,7 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
         Ok(())
     }
 
-    async fn handle_on_with_recall_global_scene(
-        &self,
-        _ctx: impl InvokeContext,
-    ) -> Result<(), Error> {
+    fn handle_on_with_recall_global_scene(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         self.with_state(|state| {
             // 1.5.7.5.1. Effect on Receipt
             // On receipt of the OnWithRecallGlobalScene command, if the GlobalSceneControl attribute is equal
@@ -879,7 +873,7 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
         })
     }
 
-    async fn handle_on_with_timed_off(
+    fn handle_on_with_timed_off(
         &self,
         ctx: impl InvokeContext,
         request: OnWithTimedOffRequest<'_>,

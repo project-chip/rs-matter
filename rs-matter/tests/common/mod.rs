@@ -16,6 +16,7 @@
  */
 
 pub mod e2e;
+#[cfg(feature = "async-io")]
 pub mod mdns;
 
 use core::future::Future;
