@@ -215,6 +215,20 @@ impl<const N: usize> Events<N> {
             .lock(|cell| cell.borrow().next_event_no)
     }
 
+    /// Remove persisted state from the given key-value store.
+    pub async fn reset_persist<S>(&mut self, mut kv: S, buf: &mut [u8]) -> Result<(), Error>
+    where
+        S: KvBlobStore,
+    {
+        self.reset();
+
+        kv.remove(EVENT_EPOCH_KEY, buf)?;
+
+        info!("Removed events counter from storage");
+
+        Ok(())
+    }
+
     /// Load persisted state from the given key-value store, so that we can continue emitting events without reusing event numbers.
     pub async fn load_persist<S>(&mut self, mut kv: S, buf: &mut [u8]) -> Result<(), Error>
     where
@@ -223,10 +237,12 @@ impl<const N: usize> Events<N> {
         self.reset();
 
         if let Some(data) = kv.load(EVENT_EPOCH_KEY, buf)? {
-            self.load(data)
-        } else {
-            Ok(())
+            self.load(data)?;
+
+            info!("Loaded events counter from storage");
         }
+
+        Ok(())
     }
 
     /// Restore events from previously persisted state.

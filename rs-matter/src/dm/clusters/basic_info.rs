@@ -346,12 +346,31 @@ impl BasicInfoSettings {
         }
     }
 
-    /// Load all fabrics from the provided BLOB store
+    /// Remove all basic info settings from the provided BLOB store as well as from memory
+    ///
+    /// # Arguments
+    /// - `store`: the BLOB store to remove the settings from
+    /// - `buf`: a temporary buffer to use for removing the settings
+    pub async fn reset_persist<S: KvBlobStore>(
+        &mut self,
+        mut store: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        self.reset();
+
+        store.remove(BASIC_INFO_KEY, buf)?;
+
+        info!("Removed basic info settings from storage");
+
+        Ok(())
+    }
+
+    /// Load all basic info settings from the provided BLOB store
     ///
     /// # Arguments
     /// - `store`: the BLOB store to load the fabrics from
     /// - `buf`: a temporary buffer to use for loading the fabrics
-    pub async fn load<S: KvBlobStore>(
+    pub async fn load_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
         buf: &mut [u8],

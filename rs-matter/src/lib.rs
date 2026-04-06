@@ -608,15 +608,28 @@ impl<'a> Matter<'a> {
 
     /// Reset the Matter persistable state by removing all fabrics and resetting basic info settings
     ///
-    /// # Arguments
-    /// - `flag_changed`: If true, notifies that fabrics and basic info settings have changed
-    pub fn reset_persist(&self) {
-        self.with_state(|state| {
-            state.basic_info_settings.reset();
-            state.fabrics.reset();
-        });
+    /// Arguments:
+    /// - `kv`: The key-value store to load the fabrics and basic info settings from
+    /// - `buf`: A buffer to use for loading the fabrics and basic info settings
+    pub async fn reset_persist<S: KvBlobStore>(
+        &mut self,
+        mut kv: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        {
+            let state = self.state.get_mut();
+            let mut state = state.borrow_mut();
+
+            state.fabrics.reset_persist(&mut kv, buf).await?;
+            state
+                .basic_info_settings
+                .reset_persist(&mut kv, buf)
+                .await?;
+        }
 
         self.notify_mdns();
+
+        Ok(())
     }
 
     /// Load fabrics from the given data
@@ -633,8 +646,8 @@ impl<'a> Matter<'a> {
             let state = self.state.get_mut();
             let mut state = state.borrow_mut();
 
-            state.fabrics.load(&mut kv, buf).await?;
-            state.basic_info_settings.load(&mut kv, buf).await?;
+            state.fabrics.load_persist(&mut kv, buf).await?;
+            state.basic_info_settings.load_persist(&mut kv, buf).await?;
         }
 
         self.notify_mdns();

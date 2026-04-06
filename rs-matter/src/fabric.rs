@@ -731,9 +731,30 @@ impl Fabrics {
         })
     }
 
-    /// Removes all fabrics
+    /// Remove all fabrics
     pub fn reset(&mut self) {
         self.fabrics.clear();
+    }
+
+    /// Remove all fabrics from the provided BLOB store as well as from memory.
+    ///
+    /// # Arguments
+    /// - `store`: the BLOB store to remove the fabrics from
+    /// - `buf`: a temporary buffer to use for removing the fabrics
+    pub async fn reset_persist<S: KvBlobStore>(
+        &mut self,
+        mut store: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        self.reset();
+
+        for idx in 1..=255u8 {
+            store.remove(FABRIC_KEYS_START + idx as u16, buf)?;
+        }
+
+        info!("Removed all fabrics from storage");
+
+        Ok(())
     }
 
     /// Load all fabrics from the provided BLOB store
@@ -741,7 +762,7 @@ impl Fabrics {
     /// # Arguments
     /// - `store`: the BLOB store to load the fabrics from
     /// - `buf`: a temporary buffer to use for loading the fabrics
-    pub async fn load<S: KvBlobStore>(
+    pub async fn load_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
         buf: &mut [u8],

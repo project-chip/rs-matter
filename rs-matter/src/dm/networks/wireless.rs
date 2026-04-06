@@ -139,6 +139,30 @@ where
         self.networks.clear();
     }
 
+    /// Remove all networks from the provided BLOB store and from memory
+    ///
+    /// # Arguments
+    /// - `store`: the BLOB store to remove the networks from
+    /// - `buf`: a temporary buffer to use for removing the networks
+    pub async fn reset_persist<S: KvBlobStore>(
+        &mut self,
+        mut kv: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        self.reset();
+
+        kv.remove(NETWORKS_KEY, buf)?;
+
+        info!("Removed all wireless networks from storage");
+
+        Ok(())
+    }
+
+    /// Load all networks from the provided BLOB store
+    ///
+    /// # Arguments
+    /// - `store`: the BLOB store to load the networks from
+    /// - `buf`: a temporary buffer to use for loading the networks
     pub async fn load_persist<S: KvBlobStore>(
         &mut self,
         mut kv: S,
@@ -149,7 +173,10 @@ where
         if let Some(data) = kv.load(NETWORKS_KEY, buf)? {
             self.load(data)?;
 
-            info!("Loaded {} networks from storage", self.networks.len());
+            info!(
+                "Loaded {} wireless networks from storage",
+                self.networks.len()
+            );
         }
 
         Ok(())
