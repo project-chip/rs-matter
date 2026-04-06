@@ -21,6 +21,7 @@ use core::fmt::Debug;
 
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
+use crate::persist::{Persist, BASIC_INFO_KEY};
 use crate::tlv::TLVBuilderParent;
 use crate::utils::sync::DynBase;
 use crate::with;
@@ -187,9 +188,13 @@ impl ClusterHandler for GenCommHandler<'_> {
     fn handle_arm_fail_safe<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
-        request: ArmFailSafeRequest,
+        request: ArmFailSafeRequest<'_>,
         response: ArmFailSafeResponseBuilder<P>,
     ) -> Result<P, Error> {
+        let notify_mdns = || ctx.exchange().matter().notify_mdns();
+        let notify_change =
+            |endpt_id, clust_id, attr_id| ctx.notify_attribute_changed(endpt_id, clust_id, attr_id);
+
         ctx.exchange().with_state(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
 
@@ -198,7 +203,8 @@ impl ClusterHandler for GenCommHandler<'_> {
                 request.breadcrumb()?,
                 sess.get_session_mode(),
                 &mut state.pase,
-                &ctx,
+                notify_mdns,
+                notify_change,
             ))?;
 
             response.error_code(status)?.debug_text("")?.end()
@@ -208,7 +214,7 @@ impl ClusterHandler for GenCommHandler<'_> {
     fn handle_set_regulatory_config<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
-        request: SetRegulatoryConfigRequest,
+        request: SetRegulatoryConfigRequest<'_>,
         response: SetRegulatoryConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
         let country_code = request.country_code()?;
@@ -216,19 +222,26 @@ impl ClusterHandler for GenCommHandler<'_> {
             return Err(ErrorCode::ConstraintError.into());
         }
 
+        let location_type = request.new_regulatory_config()?;
+        let breadcrumb = request.breadcrumb()?;
+
+        let mut persist = Persist::new(ctx.kv());
+
         ctx.exchange().with_state(|state| {
             state.basic_info_settings.set_location(country_code);
-            state.basic_info_settings.location_type = request.new_regulatory_config()?;
+            state.basic_info_settings.location_type = location_type;
 
-            ctx.exchange().matter().notify_persist();
+            state.failsafe.set_breadcrumb(breadcrumb);
 
-            state.failsafe.set_breadcrumb(request.breadcrumb()?);
+            persist.store_tlv(BASIC_INFO_KEY, &state.basic_info_settings)
+        })?;
 
-            response
-                .error_code(CommissioningErrorEnum::OK)?
-                .debug_text("")?
-                .end()
-        })
+        persist.run()?;
+
+        response
+            .error_code(CommissioningErrorEnum::OK)?
+            .debug_text("")?
+            .end()
     }
 
     fn handle_commissioning_complete<P: TLVBuilderParent>(
@@ -236,6 +249,10 @@ impl ClusterHandler for GenCommHandler<'_> {
         ctx: impl InvokeContext,
         response: CommissioningCompleteResponseBuilder<P>,
     ) -> Result<P, Error> {
+        let notify_mdns = || ctx.exchange().matter().notify_mdns();
+        let notify_change =
+            |endpt_id, clust_id, attr_id| ctx.notify_attribute_changed(endpt_id, clust_id, attr_id);
+
         ctx.exchange().with_state(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
 
@@ -254,7 +271,7 @@ impl ClusterHandler for GenCommHandler<'_> {
             if matches!(status, CommissioningErrorEnum::OK) {
                 // As per section 5.5 of the Matter Core Spec V1.3 we have to terminate the PASE session
                 // upon completion of commissioning
-                state.pase.close_comm_window(&ctx)?;
+                state.pase.close_comm_window(notify_mdns, notify_change)?;
             }
 
             response.error_code(status)?.debug_text("")?.end()
@@ -264,7 +281,7 @@ impl ClusterHandler for GenCommHandler<'_> {
     fn handle_set_tc_acknowledgements<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
-        _request: SetTCAcknowledgementsRequest,
+        _request: SetTCAcknowledgementsRequest<'_>,
         response: SetTCAcknowledgementsResponseBuilder<P>,
     ) -> Result<P, Error> {
         // TODO

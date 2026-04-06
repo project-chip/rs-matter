@@ -18,15 +18,22 @@
 //! This module contains the implementation of the Network Commissioning cluster and its handler.
 
 use core::fmt::{self, Debug};
+use core::future::{ready, Future};
 
 use crate::dm::networks::wireless::{Thread, ThreadTLV, MAX_WIRELESS_NETWORK_ID_LEN};
+use crate::dm::networks::NetChangeNotif;
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
+use crate::persist::{Persist, NETWORKS_KEY};
 use crate::tlv::{
     Nullable, NullableBuilder, Octets, OctetsBuilder, TLVBuilder, TLVBuilderParent, TLVWrite,
     ToTLVArrayBuilder, ToTLVBuilder,
 };
-use crate::utils::sync::DynBase;
+use crate::utils::cell::RefCell;
+use crate::utils::future::delayed_ready;
+use crate::utils::init::{init, Init};
+use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::{DynBase, Notification};
 use crate::{clusters, with};
 
 pub use crate::dm::clusters::decl::network_commissioning::*;
@@ -408,7 +415,7 @@ impl NetworkCommissioningStatusEnum {
 }
 
 /// Trait for managing networks' credentials storage
-pub trait Networks: DynBase {
+pub trait Networks {
     /// Return the maximum number of networks supported by the implementation
     ///
     /// For `NetworkType::Ethernet` this method should always return 1
@@ -452,7 +459,7 @@ pub trait Networks: DynBase {
     fn enabled(&self) -> Result<bool, Error>;
 
     /// Set the network interface enabled or disabled
-    fn set_enabled(&self, enabled: bool) -> Result<(), Error>;
+    fn set_enabled(&mut self, enabled: bool) -> Result<(), Error>;
 
     /// Add or update the credentials for the given network ID
     ///
@@ -461,7 +468,7 @@ pub trait Networks: DynBase {
     /// The network ID is derived from the credentials.
     ///
     /// Return the index of the network ID if it was added or updated, or an error if the operation failed.
-    fn add_or_update(&self, creds: &WirelessCreds<'_>) -> Result<u8, NetworksError>;
+    fn add_or_update(&mut self, creds: &WirelessCreds<'_>) -> Result<u8, NetworksError>;
 
     /// Reorder the network with the given index
     ///
@@ -470,26 +477,30 @@ pub trait Networks: DynBase {
     /// The index is the new index of the network ID.
     ///
     /// Return the index of the network ID if it was reordered, or an error if the operation failed.
-    fn reorder(&self, index: u8, network_id: &[u8]) -> Result<u8, NetworksError>;
+    fn reorder(&mut self, index: u8, network_id: &[u8]) -> Result<u8, NetworksError>;
 
     /// Remove the network with the given network ID
     ///
     /// For `NetworkType::Ethernet` this method should always fail with an error.
     ///
     /// Return the index of the network ID if it was removed, or an error if the operation failed.
-    fn remove(&self, network_id: &[u8]) -> Result<u8, NetworksError>;
+    fn remove(&mut self, network_id: &[u8]) -> Result<u8, NetworksError>;
+
+    /// Persist the networks' credentials into the given buffer and return the number of bytes written
+    /// or `None` if the networks do not need persistence.
+    fn persist(&self, buf: &mut [u8]) -> Result<Option<usize>, Error>;
 }
 
-impl<T> Networks for &T
+impl<T> Networks for &mut T
 where
     T: Networks,
 {
     fn max_networks(&self) -> Result<u8, Error> {
-        (*self).max_networks()
+        (**self).max_networks()
     }
 
     fn networks(&self, f: &mut dyn FnMut(&NetworkInfo) -> Result<(), Error>) -> Result<(), Error> {
-        (*self).networks(f)
+        (**self).networks(f)
     }
 
     fn creds(
@@ -497,7 +508,7 @@ where
         network_id: &[u8],
         f: &mut dyn FnMut(&WirelessCreds) -> Result<(), Error>,
     ) -> Result<u8, NetworksError> {
-        (*self).creds(network_id, f)
+        (**self).creds(network_id, f)
     }
 
     fn next_creds(
@@ -505,27 +516,44 @@ where
         last_network_id: Option<&[u8]>,
         f: &mut dyn FnMut(&WirelessCreds) -> Result<(), Error>,
     ) -> Result<bool, Error> {
-        (*self).next_creds(last_network_id, f)
+        (**self).next_creds(last_network_id, f)
     }
 
     fn enabled(&self) -> Result<bool, Error> {
-        (*self).enabled()
+        (**self).enabled()
     }
 
-    fn set_enabled(&self, enabled: bool) -> Result<(), Error> {
+    fn set_enabled(&mut self, enabled: bool) -> Result<(), Error> {
         (*self).set_enabled(enabled)
     }
 
-    fn add_or_update(&self, creds: &WirelessCreds<'_>) -> Result<u8, NetworksError> {
+    fn add_or_update(&mut self, creds: &WirelessCreds<'_>) -> Result<u8, NetworksError> {
         (*self).add_or_update(creds)
     }
 
-    fn reorder(&self, index: u8, network_id: &[u8]) -> Result<u8, NetworksError> {
+    fn reorder(&mut self, index: u8, network_id: &[u8]) -> Result<u8, NetworksError> {
         (*self).reorder(index, network_id)
     }
 
-    fn remove(&self, network_id: &[u8]) -> Result<u8, NetworksError> {
+    fn remove(&mut self, network_id: &[u8]) -> Result<u8, NetworksError> {
         (*self).remove(network_id)
+    }
+
+    fn persist(&self, buf: &mut [u8]) -> Result<Option<usize>, Error> {
+        (**self).persist(buf)
+    }
+}
+
+pub trait NetworksAccess {
+    fn access<F: FnOnce(&mut dyn Networks) -> R, R>(&self, f: F) -> R;
+}
+
+impl<T> NetworksAccess for &T
+where
+    T: NetworksAccess,
+{
+    fn access<F: FnOnce(&mut dyn Networks) -> R, R>(&self, f: F) -> R {
+        (*self).access(f)
     }
 }
 
@@ -622,15 +650,15 @@ where
         (*self).thread_version()
     }
 
-    async fn scan<F>(&self, network: Option<&[u8]>, f: F) -> Result<(), NetCtlError>
+    fn scan<F>(&self, network: Option<&[u8]>, f: F) -> impl Future<Output = Result<(), NetCtlError>>
     where
         F: FnMut(&NetworkScanInfo) -> Result<(), Error>,
     {
-        (*self).scan(network, f).await
+        (*self).scan(network, f)
     }
 
-    async fn connect(&self, creds: &WirelessCreds<'_>) -> Result<(), NetCtlError> {
-        (*self).connect(creds).await
+    fn connect(&self, creds: &WirelessCreds<'_>) -> impl Future<Output = Result<(), NetCtlError>> {
+        (*self).connect(creds)
     }
 }
 
@@ -674,17 +702,151 @@ where
     }
 }
 
+/// A type providing shared access to a `Networks` implementation with change notification capabilities.
+pub struct SharedNetworks<N> {
+    state: Mutex<RefCell<N>>,
+    state_changed: Notification,
+}
+
+impl<N> SharedNetworks<N> {
+    /// Create a new instance.
+    pub const fn new(networks: N) -> Self {
+        Self {
+            state: Mutex::new(RefCell::new(networks)),
+            state_changed: Notification::new(),
+        }
+    }
+
+    /// Return an in-place initializer for the struct.
+    pub fn init(networks: impl Init<N>) -> impl Init<Self> {
+        init!(Self {
+            state <- Mutex::init(RefCell::init(networks)),
+            state_changed: Notification::new(),
+        })
+    }
+
+    /// Get a mutable reference to the inner `Networks` implementation.
+    pub fn get_mut(&mut self) -> &mut RefCell<N> {
+        self.state.get_mut()
+    }
+
+    /// Wait for the state to change.
+    pub fn wait_state_changed(&self) -> impl Future<Output = ()> + '_ {
+        self.state_changed.wait()
+    }
+}
+
+impl<N> DynBase for SharedNetworks<N> where N: Send {}
+
+impl<N> NetworksAccess for SharedNetworks<N>
+where
+    N: Networks,
+{
+    fn access<F: FnOnce(&mut dyn Networks) -> R, R>(&self, f: F) -> R {
+        self.state.lock(|state| {
+            let mut networks = state.borrow_mut();
+
+            let mut instance = SharedNetworksInstance {
+                networks: &mut *networks,
+                changed: &self.state_changed,
+            };
+
+            f(&mut instance)
+        })
+    }
+}
+
+impl<N> NetChangeNotif for SharedNetworks<N> {
+    fn wait_changed(&self) -> impl Future<Output = ()> {
+        self.state_changed.wait()
+    }
+}
+
+/// A wrapper around a `Networks` implementation that notifies on changes to the networks state.
+pub struct SharedNetworksInstance<'a> {
+    networks: &'a mut dyn Networks,
+    changed: &'a Notification,
+}
+
+impl Networks for SharedNetworksInstance<'_> {
+    fn max_networks(&self) -> Result<u8, Error> {
+        self.networks.max_networks()
+    }
+
+    fn networks(&self, f: &mut dyn FnMut(&NetworkInfo) -> Result<(), Error>) -> Result<(), Error> {
+        self.networks.networks(f)
+    }
+
+    fn creds(
+        &self,
+        network_id: &[u8],
+        f: &mut dyn FnMut(&WirelessCreds) -> Result<(), Error>,
+    ) -> Result<u8, NetworksError> {
+        self.networks.creds(network_id, f)
+    }
+
+    fn next_creds(
+        &self,
+        last_network_id: Option<&[u8]>,
+        f: &mut dyn FnMut(&WirelessCreds) -> Result<(), Error>,
+    ) -> Result<bool, Error> {
+        self.networks.next_creds(last_network_id, f)
+    }
+
+    fn enabled(&self) -> Result<bool, Error> {
+        self.networks.enabled()
+    }
+
+    fn set_enabled(&mut self, enabled: bool) -> Result<(), Error> {
+        self.networks.set_enabled(enabled)?;
+
+        self.changed.notify();
+
+        Ok(())
+    }
+
+    fn add_or_update(&mut self, creds: &WirelessCreds<'_>) -> Result<u8, NetworksError> {
+        let index = self.networks.add_or_update(creds)?;
+
+        self.changed.notify();
+
+        Ok(index)
+    }
+
+    fn reorder(&mut self, index: u8, network_id: &[u8]) -> Result<u8, NetworksError> {
+        let index = self.networks.reorder(index, network_id)?;
+
+        self.changed.notify();
+
+        Ok(index)
+    }
+
+    fn remove(&mut self, network_id: &[u8]) -> Result<u8, NetworksError> {
+        let index = self.networks.remove(network_id)?;
+
+        self.changed.notify();
+
+        Ok(index)
+    }
+
+    fn persist(&self, buf: &mut [u8]) -> Result<Option<usize>, Error> {
+        let len = self.networks.persist(buf)?;
+
+        Ok(len)
+    }
+}
+
 /// The system implementation of a handler for the Network Commissioning Matter cluster.
 #[derive(Clone)]
-pub struct NetCommHandler<'a, T> {
+pub struct NetCommHandler<N, T> {
     dataver: Dataver,
-    networks: &'a dyn Networks,
+    networks: N,
     net_ctl: T,
 }
 
-impl<'a, T> NetCommHandler<'a, T> {
+impl<N, T> NetCommHandler<N, T> {
     /// Create a new instance of `NetCommHandler` with the given `Dataver`, `Networks` and `NetCtl`.
-    pub const fn new(dataver: Dataver, networks: &'a dyn Networks, net_ctl: T) -> Self {
+    pub const fn new(dataver: Dataver, networks: N, net_ctl: T) -> Self {
         Self {
             dataver,
             networks,
@@ -698,8 +860,9 @@ impl<'a, T> NetCommHandler<'a, T> {
     }
 }
 
-impl<T> ClusterAsyncHandler for NetCommHandler<'_, T>
+impl<N, T> ClusterAsyncHandler for NetCommHandler<N, T>
 where
+    N: NetworksAccess,
     T: NetCtl + NetCtlStatus,
 {
     const CLUSTER: Cluster<'static> = NetworkType::Ethernet.cluster(); // TODO
@@ -712,27 +875,33 @@ where
         self.dataver.changed();
     }
 
-    async fn max_networks(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        self.networks.max_networks()
+    fn max_networks(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u8, Error>> {
+        delayed_ready(move || self.networks.access(|networks| networks.max_networks()))
     }
 
-    async fn connect_max_time_seconds(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        Ok(self.net_ctl.connect_max_time_seconds())
+    fn connect_max_time_seconds(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<u8, Error>> {
+        delayed_ready(move || Ok(self.net_ctl.connect_max_time_seconds()))
     }
 
-    async fn scan_max_time_seconds(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        Ok(self.net_ctl.scan_max_time_seconds())
+    fn scan_max_time_seconds(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<u8, Error>> {
+        delayed_ready(move || Ok(self.net_ctl.scan_max_time_seconds()))
     }
 
-    async fn supported_wi_fi_bands<P: TLVBuilderParent>(
+    fn supported_wi_fi_bands<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
         builder: ArrayAttributeRead<
             ToTLVArrayBuilder<P, WiFiBandEnum>,
             ToTLVBuilder<P, WiFiBandEnum>,
         >,
-    ) -> Result<P, Error> {
-        match builder {
+    ) -> impl Future<Output = Result<P, Error>> {
+        delayed_ready(move || match builder {
             ArrayAttributeRead::ReadAll(builder) => builder.with(|builder| {
                 let mut builder = Some(builder);
 
@@ -766,100 +935,115 @@ where
                 }
             }
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
-    }
-
-    async fn supported_thread_features(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<ThreadCapabilitiesBitmap, Error> {
-        Ok(self.net_ctl.supported_thread_features())
-    }
-
-    async fn thread_version(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(self.net_ctl.thread_version())
-    }
-
-    async fn networks<P: TLVBuilderParent>(
-        &self,
-        _ctx: impl ReadContext,
-        builder: ArrayAttributeRead<NetworkInfoStructArrayBuilder<P>, NetworkInfoStructBuilder<P>>,
-    ) -> Result<P, Error> {
-        match builder {
-            ArrayAttributeRead::ReadAll(builder) => builder.with(|builder| {
-                let mut builder = Some(builder);
-
-                self.networks.networks(&mut |ni| {
-                    builder = Some(ni.read_into(unwrap!(builder.take()).push()?)?);
-
-                    Ok(())
-                })?;
-
-                unwrap!(builder.take()).end()
-            }),
-            ArrayAttributeRead::ReadOne(index, builder) => {
-                let mut current = 0;
-                let mut builder = Some(builder);
-                let mut parent = None;
-
-                self.networks.networks(&mut |ni| {
-                    if current == index {
-                        parent = Some(ni.read_into(unwrap!(builder.take()))?);
-                    }
-
-                    current += 1;
-
-                    Ok(())
-                })?;
-
-                if let Some(parent) = parent {
-                    Ok(parent)
-                } else {
-                    Err(ErrorCode::ConstraintError.into())
-                }
-            }
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
-    }
-
-    async fn interface_enabled(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
-        self.networks.enabled()
-    }
-
-    async fn last_networking_status(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<Nullable<NetworkCommissioningStatusEnum>, Error> {
-        Ok(Nullable::new(self.net_ctl.last_networking_status()?))
-    }
-
-    async fn last_network_id<P: TLVBuilderParent>(
-        &self,
-        _ctx: impl ReadContext,
-        builder: NullableBuilder<P, OctetsBuilder<P>>,
-    ) -> Result<P, Error> {
-        self.net_ctl.last_network_id(|network_id| {
-            if let Some(network_id) = network_id {
-                builder.non_null()?.set(Octets::new(network_id))
-            } else {
-                builder.null()
-            }
         })
     }
 
-    async fn last_connect_error_value(
+    fn supported_thread_features(
         &self,
         _ctx: impl ReadContext,
-    ) -> Result<Nullable<i32>, Error> {
-        Ok(Nullable::new(self.net_ctl.last_connect_error_value()?))
+    ) -> impl Future<Output = Result<ThreadCapabilitiesBitmap, Error>> {
+        delayed_ready(move || Ok(self.net_ctl.supported_thread_features()))
+    }
+
+    fn thread_version(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u16, Error>> {
+        delayed_ready(move || Ok(self.net_ctl.thread_version()))
+    }
+
+    fn networks<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl ReadContext,
+        builder: ArrayAttributeRead<NetworkInfoStructArrayBuilder<P>, NetworkInfoStructBuilder<P>>,
+    ) -> impl Future<Output = Result<P, Error>> {
+        delayed_ready(move || {
+            self.networks.access(|networks| match builder {
+                ArrayAttributeRead::ReadAll(builder) => builder.with(|builder| {
+                    let mut builder = Some(builder);
+
+                    networks.networks(&mut |ni| {
+                        builder = Some(ni.read_into(unwrap!(builder.take()).push()?)?);
+
+                        Ok(())
+                    })?;
+
+                    unwrap!(builder.take()).end()
+                }),
+                ArrayAttributeRead::ReadOne(index, builder) => {
+                    let mut current = 0;
+                    let mut builder = Some(builder);
+                    let mut parent = None;
+
+                    networks.networks(&mut |ni| {
+                        if current == index {
+                            parent = Some(ni.read_into(unwrap!(builder.take()))?);
+                        }
+
+                        current += 1;
+
+                        Ok(())
+                    })?;
+
+                    if let Some(parent) = parent {
+                        Ok(parent)
+                    } else {
+                        Err(ErrorCode::ConstraintError.into())
+                    }
+                }
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
+            })
+        })
+    }
+
+    fn interface_enabled(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<bool, Error>> {
+        delayed_ready(move || self.networks.access(|networks| networks.enabled()))
+    }
+
+    fn last_networking_status(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<Nullable<NetworkCommissioningStatusEnum>, Error>> {
+        delayed_ready(move || Ok(Nullable::new(self.net_ctl.last_networking_status()?)))
+    }
+
+    fn last_network_id<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl ReadContext,
+        builder: NullableBuilder<P, OctetsBuilder<P>>,
+    ) -> impl Future<Output = Result<P, Error>> {
+        delayed_ready(move || {
+            self.net_ctl.last_network_id(|network_id| {
+                if let Some(network_id) = network_id {
+                    builder.non_null()?.set(Octets::new(network_id))
+                } else {
+                    builder.null()
+                }
+            })
+        })
+    }
+
+    fn last_connect_error_value(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<Nullable<i32>, Error>> {
+        delayed_ready(move || Ok(Nullable::new(self.net_ctl.last_connect_error_value()?)))
     }
 
     async fn set_interface_enabled(
         &self,
-        _ctx: impl WriteContext,
+        ctx: impl WriteContext,
         value: bool,
     ) -> Result<(), Error> {
-        self.networks.set_enabled(value)
+        let mut persist = Persist::new(ctx.kv());
+
+        self.networks.access(|networks| {
+            networks.set_enabled(value)?;
+
+            persist.store(NETWORKS_KEY, |buf| networks.persist(buf))
+        })?;
+
+        persist.run()
     }
 
     async fn handle_scan_networks<P: TLVBuilderParent>(
@@ -971,43 +1155,71 @@ where
 
     async fn handle_add_or_update_wi_fi_network<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: AddOrUpdateWiFiNetworkRequest<'_>,
         response: NetworkConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let (status, _, index) = NetworkCommissioningStatusEnum::map(self.networks.add_or_update(
-            &WirelessCreds::Wifi {
-                ssid: request.ssid()?.0,
-                pass: request.credentials()?.0,
-            },
-        ))?;
+        let mut persist = Persist::new(ctx.kv());
+
+        let (status, _, index) =
+            NetworkCommissioningStatusEnum::map(self.networks.access(|networks| {
+                let index = networks.add_or_update(&WirelessCreds::Wifi {
+                    ssid: request.ssid()?.0,
+                    pass: request.credentials()?.0,
+                })?;
+
+                persist.store(NETWORKS_KEY, |buf| networks.persist(buf))?;
+
+                Ok(index)
+            }))?;
+
+        persist.run()?;
 
         status.read_into(index, response)
     }
 
     async fn handle_add_or_update_thread_network<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: AddOrUpdateThreadNetworkRequest<'_>,
         response: NetworkConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let (status, _, index) = NetworkCommissioningStatusEnum::map(self.networks.add_or_update(
-            &WirelessCreds::Thread {
-                dataset_tlv: request.operational_dataset()?.0,
-            },
-        ))?;
+        let mut persist = Persist::new(ctx.kv());
+
+        let (status, _, index) =
+            NetworkCommissioningStatusEnum::map(self.networks.access(|networks| {
+                let index = networks.add_or_update(&WirelessCreds::Thread {
+                    dataset_tlv: request.operational_dataset()?.0,
+                })?;
+
+                persist.store(NETWORKS_KEY, |buf| networks.persist(buf))?;
+
+                Ok(index)
+            }))?;
+
+        persist.run()?;
 
         status.read_into(index, response)
     }
 
     async fn handle_remove_network<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: RemoveNetworkRequest<'_>,
         response: NetworkConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
+        let mut persist = Persist::new(ctx.kv());
+
         let (status, _, index) =
-            NetworkCommissioningStatusEnum::map(self.networks.remove(request.network_id()?.0))?;
+            NetworkCommissioningStatusEnum::map(self.networks.access(|networks| {
+                let index = networks.remove(request.network_id()?.0)?;
+
+                persist.store(NETWORKS_KEY, |buf| networks.persist(buf))?;
+
+                Ok(index)
+            }))?;
+
+        persist.run()?;
 
         status.read_into(index, response)
     }
@@ -1027,24 +1239,25 @@ where
                 let dataset_buf = response.writer().available_space();
                 let mut dataset_len = 0;
 
-                let (mut status, mut err_code, _) = NetworkCommissioningStatusEnum::map(
-                    self.networks.creds(request.network_id()?.0, &mut |creds| {
-                        let WirelessCreds::Thread { dataset_tlv } = creds else {
-                            error!("Thread creds expected");
-                            return Err(ErrorCode::InvalidAction.into());
-                        };
+                let (mut status, mut err_code, _) =
+                    NetworkCommissioningStatusEnum::map(self.networks.access(|networks| {
+                        networks.creds(request.network_id()?.0, &mut |creds| {
+                            let WirelessCreds::Thread { dataset_tlv } = creds else {
+                                error!("Thread creds expected");
+                                return Err(ErrorCode::InvalidAction.into());
+                            };
 
-                        if dataset_tlv.len() > dataset_buf.len() {
-                            error!("Dataset too large");
-                            return Err(ErrorCode::ConstraintError.into());
-                        }
+                            if dataset_tlv.len() > dataset_buf.len() {
+                                error!("Dataset too large");
+                                return Err(ErrorCode::ConstraintError.into());
+                            }
 
-                        dataset_buf[..dataset_tlv.len()].copy_from_slice(dataset_tlv);
-                        dataset_len = dataset_tlv.len();
+                            dataset_buf[..dataset_tlv.len()].copy_from_slice(dataset_tlv);
+                            dataset_len = dataset_tlv.len();
 
-                        Ok(())
-                    }),
-                )?;
+                            Ok(())
+                        })
+                    }))?;
 
                 if matches!(status, NetworkCommissioningStatusEnum::Success) {
                     (status, err_code, _) = NetworkCommissioningStatusEnum::map_ctl(
@@ -1064,31 +1277,32 @@ where
                 let mut ssid_len = 0;
                 let mut pass_len = 0;
 
-                let (mut status, mut err_code, _) = NetworkCommissioningStatusEnum::map(
-                    self.networks.creds(request.network_id()?.0, &mut |creds| {
-                        let WirelessCreds::Wifi { ssid, pass } = creds else {
-                            error!("Wifi creds expected");
-                            return Err(ErrorCode::InvalidAction.into());
-                        };
+                let (mut status, mut err_code, _) =
+                    NetworkCommissioningStatusEnum::map(self.networks.access(|networks| {
+                        networks.creds(request.network_id()?.0, &mut |creds| {
+                            let WirelessCreds::Wifi { ssid, pass } = creds else {
+                                error!("Wifi creds expected");
+                                return Err(ErrorCode::InvalidAction.into());
+                            };
 
-                        if ssid.len() > ssid_buf.len() {
-                            error!("SSID too large");
-                            return Err(ErrorCode::ConstraintError.into());
-                        }
+                            if ssid.len() > ssid_buf.len() {
+                                error!("SSID too large");
+                                return Err(ErrorCode::ConstraintError.into());
+                            }
 
-                        if pass.len() > pass_buf.len() {
-                            error!("Password too large");
-                            return Err(ErrorCode::ConstraintError.into());
-                        }
+                            if pass.len() > pass_buf.len() {
+                                error!("Password too large");
+                                return Err(ErrorCode::ConstraintError.into());
+                            }
 
-                        ssid_buf[..ssid.len()].copy_from_slice(ssid);
-                        ssid_len = ssid.len();
-                        pass_buf[..pass.len()].copy_from_slice(pass);
-                        pass_len = pass.len();
+                            ssid_buf[..ssid.len()].copy_from_slice(ssid);
+                            ssid_len = ssid.len();
+                            pass_buf[..pass.len()].copy_from_slice(pass);
+                            pass_len = pass.len();
 
-                        Ok(())
-                    }),
-                )?;
+                            Ok(())
+                        })
+                    }))?;
 
                 if matches!(status, NetworkCommissioningStatusEnum::Success) {
                     (status, err_code, _) = NetworkCommissioningStatusEnum::map_ctl(
@@ -1117,29 +1331,38 @@ where
 
     async fn handle_reorder_network<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: ReorderNetworkRequest<'_>,
         response: NetworkConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let (status, _, index) = NetworkCommissioningStatusEnum::map(
-            self.networks
-                .reorder(request.network_index()? as _, request.network_id()?.0),
-        )?;
+        let mut persist = Persist::new(ctx.kv());
+
+        let (status, _, index) =
+            NetworkCommissioningStatusEnum::map(self.networks.access(|networks| {
+                let index =
+                    networks.reorder(request.network_index()? as _, request.network_id()?.0)?;
+
+                persist.store(NETWORKS_KEY, |buf| networks.persist(buf))?;
+
+                Ok(index)
+            }))?;
+
+        persist.run()?;
 
         status.read_into(index, response)
     }
 
-    async fn handle_query_identity<P: TLVBuilderParent>(
+    fn handle_query_identity<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: QueryIdentityRequest<'_>,
         _response: QueryIdentityResponseBuilder<P>,
-    ) -> Result<P, Error> {
-        Err(ErrorCode::InvalidAction.into())
+    ) -> impl Future<Output = Result<P, Error>> {
+        ready(Err(ErrorCode::InvalidAction.into()))
     }
 }
 
-impl Debug for NetCommHandler<'_, ()> {
+impl<N> Debug for NetCommHandler<N, ()> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NetCommHandler")
             .field("dataver", &self.dataver.get())
@@ -1148,7 +1371,7 @@ impl Debug for NetCommHandler<'_, ()> {
 }
 
 #[cfg(feature = "defmt")]
-impl defmt::Format for NetCommHandler<'_, ()> {
+impl<N> defmt::Format for NetCommHandler<N, ()> {
     fn format(&self, f: defmt::Formatter) {
         defmt::write!(f, "NetCommHandler {{ dataver: {} }}", self.dataver.get());
     }

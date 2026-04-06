@@ -31,6 +31,7 @@ use crate::im::{
     StatusResp, SubscribeReq, SubscribeResp, TimedReq, WriteReq, WriteRespTag,
     PROTO_ID_INTERACTION_MODEL,
 };
+use crate::persist::KvBlobStoreAccess;
 use crate::respond::ExchangeHandler;
 use crate::tlv::{get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite};
 use crate::transport::exchange::{Exchange, MAX_EXCHANGE_RX_BUF_SIZE, MAX_EXCHANGE_TX_BUF_SIZE};
@@ -73,24 +74,26 @@ struct SubscriptionBuffer<B> {
 
 /// An `ExchangeHandler` implementation capable of handling responder exchanges for the Interaction Model protocol.
 /// The implementation needs a `DataModelHandler` instance to interact with the underlying clusters of the data model.
-pub struct DataModel<'a, const NS: usize, const NE: usize, C, B, T>
+pub struct DataModel<'a, const NS: usize, const NE: usize, C, B, T, S>
 where
     B: BufferAccess<IMBuffer>,
 {
     matter: &'a Matter<'a>,
     crypto: C,
     buffers: &'a B,
+    kv: S,
     subscriptions: &'a Subscriptions<NS>,
     subscriptions_buffers: Mutex<RefCell<Vec<SubscriptionBuffer<B::Buffer<'a>>, NS>>>,
     events: Option<&'a Events<NE>>,
     handler: T,
 }
 
-impl<'a, const NS: usize, const NE: usize, C, B, T> DataModel<'a, NS, NE, C, B, T>
+impl<'a, const NS: usize, const NE: usize, C, B, T, S> DataModel<'a, NS, NE, C, B, T, S>
 where
     C: Crypto,
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
+    S: KvBlobStoreAccess,
 {
     /// Create the data model.
     ///
@@ -99,9 +102,11 @@ where
     /// - `buffers` - a reference to an implementation of `BufferAccess<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
     /// - `subscriptions` - a reference to a `Subscriptions<N>` struct which is used for managing subscriptions. `N` designates the maximum
     ///   number of subscriptions that can be managed by this handler.
+    /// - `events` - an optional reference to an `Events<N>` struct which is used for managing events in the data model. `N` designates the maximum number of events that can be buffered in the event management system.
     /// - `handler` - an instance of type `T` which implements the `DataModelHandler` trait. This instance is used for interacting with the underlying
     ///   clusters of the data model. Note that the expectations is for the user to provide a handler that handles the Matter system clusters
     ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods
+    /// - `kv` - an instance of type `S` which implements the `KvBlobStoreAccess` trait. This instance is used for interacting with the key-value blob store.
     #[inline(always)]
     pub const fn new(
         matter: &'a Matter<'a>,
@@ -110,6 +115,7 @@ where
         subscriptions: &'a Subscriptions<NS>,
         events: Option<&'a Events<NE>>,
         handler: T,
+        kv: S,
     ) -> Self {
         Self {
             matter,
@@ -119,6 +125,7 @@ where
             subscriptions_buffers: Mutex::new(RefCell::new(Vec::new())),
             events,
             handler,
+            kv,
         }
     }
 
@@ -129,6 +136,11 @@ where
 
     pub const fn crypto(&self) -> &C {
         &self.crypto
+    }
+
+    /// Return a reference to the `KvBlobStoreAccess` instance used by this data model for interacting with the key-value blob store.
+    pub const fn kv(&self) -> &S {
+        &self.kv
     }
 
     /// Return a reference to the `ChangeNotify` instance used by this data model for tracking changes in the data model
@@ -144,6 +156,7 @@ where
             &self.crypto,
             &self.handler,
             self.buffers,
+            &self.kv,
             self.change_notify(),
         );
 
@@ -209,7 +222,6 @@ where
         if !is_groupcast {
             exchange.acknowledge().await?;
         }
-        exchange.matter().notify_persist();
 
         Ok(())
     }
@@ -234,7 +246,13 @@ where
             &req,
             &node,
             None,
-            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
+            HandlerInvoker::new(
+                exchange,
+                &self.crypto,
+                &self.handler,
+                &self.buffers,
+                &self.kv,
+            ),
             EventReader::new(0),
             self.events,
         );
@@ -279,7 +297,13 @@ where
             let mut resp = WriteResponder::new(
                 &req,
                 &node,
-                HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
+                HandlerInvoker::new(
+                    exchange,
+                    &self.crypto,
+                    &self.handler,
+                    &self.buffers,
+                    &self.kv,
+                ),
             );
 
             resp.respond(self.change_notify(), &mut wb, is_groupcast)
@@ -327,7 +351,13 @@ where
         let mut resp = InvokeResponder::new(
             &req,
             &node,
-            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
+            HandlerInvoker::new(
+                exchange,
+                &self.crypto,
+                &self.handler,
+                &self.buffers,
+                &self.kv,
+            ),
         );
 
         resp.respond(self.change_notify(), &mut wb, is_groupcast)
@@ -711,7 +741,13 @@ where
             &req,
             &node,
             Some(id),
-            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
+            HandlerInvoker::new(
+                exchange,
+                &self.crypto,
+                &self.handler,
+                &self.buffers,
+                &self.kv,
+            ),
             EventReader::new(min_event_number),
             self.events,
         );
@@ -834,11 +870,13 @@ where
     }
 }
 
-impl<const NS: usize, const NE: usize, C, B, T> ExchangeHandler for DataModel<'_, NS, NE, C, B, T>
+impl<const NS: usize, const NE: usize, C, B, T, S> ExchangeHandler
+    for DataModel<'_, NS, NE, C, B, T, S>
 where
     C: Crypto,
-    T: DataModelHandler,
     B: BufferAccess<IMBuffer>,
+    T: DataModelHandler,
+    S: KvBlobStoreAccess,
 {
     fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
         DataModel::handle(self, exchange)
@@ -853,20 +891,21 @@ where
 /// The responder handles chunking as needed. I.e. if reported data is too large to fit into a single
 /// Matter message, it will send the data in multiple chunks (i.e. with multiple Matter messages), waiting for
 /// a `Success` response from the peer after each chunk, and then continuing to send the next chunk until all data is sent.
-struct ReportDataResponder<'a, 'b, 'c, C, D, B, const NE: usize> {
+struct ReportDataResponder<'a, 'b, 'c, const NE: usize, C, D, B, S> {
     req: &'a ReportDataReq<'a>,
     node: &'a Node<'a>,
     subscription_id: Option<u32>,
-    invoker: HandlerInvoker<'b, 'c, C, D, B>,
+    invoker: HandlerInvoker<'b, 'c, C, D, B, S>,
     event_reader: EventReader,
     events: Option<&'a Events<NE>>,
 }
 
-impl<'a, 'b, 'c, C, D, B, const NE: usize> ReportDataResponder<'a, 'b, 'c, C, D, B, NE>
+impl<'a, 'b, 'c, const NE: usize, C, D, B, S> ReportDataResponder<'a, 'b, 'c, NE, C, D, B, S>
 where
     C: Crypto,
     D: AsyncHandler,
     B: BufferAccess<IMBuffer>,
+    S: KvBlobStoreAccess,
 {
     // This is the amount of space we reserve for the structure/array closing TLVs
     // to be attached towards the end of long reads
@@ -877,7 +916,7 @@ where
         req: &'a ReportDataReq<'a>,
         node: &'a Node<'a>,
         subscription_id: Option<u32>,
-        invoker: HandlerInvoker<'b, 'c, C, D, B>,
+        invoker: HandlerInvoker<'b, 'c, C, D, B, S>,
         event_reader: EventReader,
         events: Option<&'a Events<NE>>,
     ) -> Self {
@@ -1220,23 +1259,24 @@ enum ReportDataChunkState {
 /// the other peers is sending, but processing all of those chunks is not done here,
 /// but is rather - a responsibility of the caller who should call in a loop `WriteResponder::respond`
 /// for all the chunks of the write request, until the `WriteReq::more_chunks()` returns `false`.
-struct WriteResponder<'a, 'b, 'c, C, D, B> {
+struct WriteResponder<'a, 'b, 'c, C, D, B, S> {
     req: &'a WriteReq<'a>,
     node: &'a Node<'a>,
-    invoker: HandlerInvoker<'b, 'c, C, D, B>,
+    invoker: HandlerInvoker<'b, 'c, C, D, B, S>,
 }
 
-impl<'a, 'b, 'c, C, D, B> WriteResponder<'a, 'b, 'c, C, D, B>
+impl<'a, 'b, 'c, C, D, B, S> WriteResponder<'a, 'b, 'c, C, D, B, S>
 where
     C: Crypto,
     D: AsyncHandler,
     B: BufferAccess<IMBuffer>,
+    S: KvBlobStoreAccess,
 {
     /// Create a new `WriteResponder`.
     const fn new(
         req: &'a WriteReq<'a>,
         node: &'a Node<'a>,
-        invoker: HandlerInvoker<'b, 'c, C, D, B>,
+        invoker: HandlerInvoker<'b, 'c, C, D, B, S>,
     ) -> Self {
         Self { req, node, invoker }
     }
@@ -1297,23 +1337,24 @@ where
 /// The simplest strategy for chunking would be to simply - and unconditionally - send each individual
 /// command response in a separate Matter message, i.e. if the invoke request contains 3 commands,
 /// the responder will send 3 Matter messages, each containing a single command response.
-struct InvokeResponder<'a, 'b, 'c, C, D, B> {
+struct InvokeResponder<'a, 'b, 'c, C, D, B, S> {
     req: &'a InvReq<'a>,
     node: &'a Node<'a>,
-    invoker: HandlerInvoker<'b, 'c, C, D, B>,
+    invoker: HandlerInvoker<'b, 'c, C, D, B, S>,
 }
 
-impl<'a, 'b, 'c, C, D, B> InvokeResponder<'a, 'b, 'c, C, D, B>
+impl<'a, 'b, 'c, C, D, B, S> InvokeResponder<'a, 'b, 'c, C, D, B, S>
 where
     C: Crypto,
     D: AsyncHandler,
     B: BufferAccess<IMBuffer>,
+    S: KvBlobStoreAccess,
 {
     /// Create a new `InvokeResponder`.
     const fn new(
         req: &'a InvReq<'a>,
         node: &'a Node<'a>,
-        invoker: HandlerInvoker<'b, 'c, C, D, B>,
+        invoker: HandlerInvoker<'b, 'c, C, D, B, S>,
     ) -> Self {
         Self { req, node, invoker }
     }

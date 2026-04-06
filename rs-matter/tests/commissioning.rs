@@ -49,6 +49,7 @@ use log::{debug, info, warn};
 
 use rand_core::RngCore;
 
+use rs_matter::persist::DummyKvBlobStoreAccess;
 use socket2::{Domain, Protocol, Socket, Type};
 
 use static_cell::StaticCell;
@@ -196,6 +197,7 @@ async fn run_test() -> Result<(), Error> {
         device_subscriptions,
         NO_EVENTS,
         dm_handler(rand, &on_off_handler),
+        DummyKvBlobStoreAccess,
     );
 
     // Open commissioning window before starting the mDNS responder so the

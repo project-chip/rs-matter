@@ -17,8 +17,12 @@
 
 //! This module contains the implementation of the Administrative Commissioning cluster and its handler.
 
+use rand_core::RngCore;
+
+use crate::crypto::Crypto;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::Error;
+use crate::sc::pase::spake2p::SPAKE2P_VERIFIER_SALT_ZEROED;
 use crate::sc::pase::{CommWindowOpener, CommWindowType};
 use crate::tlv::Nullable;
 use crate::MatterState;
@@ -74,8 +78,12 @@ impl ClusterHandler for AdminCommHandler {
     }
 
     fn window_status(&self, ctx: impl ReadContext) -> Result<CommissioningWindowStatusEnum, Error> {
+        let notify_mdns = || ctx.exchange().matter().notify_mdns();
+        let notify_change =
+            |endpt_id, clust_id, attr_id| ctx.notify_attribute_changed(endpt_id, clust_id, attr_id);
+
         ctx.exchange().with_state(|state| {
-            let comm_window = state.pase.comm_window(&ctx)?;
+            let comm_window = state.pase.comm_window(notify_mdns, notify_change)?;
 
             let window_type = comm_window.map(|comm_window| comm_window.comm_window_type());
 
@@ -88,8 +96,12 @@ impl ClusterHandler for AdminCommHandler {
     }
 
     fn admin_fabric_index(&self, ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
+        let notify_mdns = || ctx.exchange().matter().notify_mdns();
+        let notify_change =
+            |endpt_id, clust_id, attr_id| ctx.notify_attribute_changed(endpt_id, clust_id, attr_id);
+
         ctx.exchange().with_state(|state| {
-            let comm_window = state.pase.comm_window(&ctx)?;
+            let comm_window = state.pase.comm_window(notify_mdns, notify_change)?;
 
             if let Some(opener) = comm_window.and_then(|comm_window| comm_window.opener()) {
                 if state.fabrics.get(opener.fab_idx).is_some() {
@@ -104,8 +116,12 @@ impl ClusterHandler for AdminCommHandler {
     }
 
     fn admin_vendor_id(&self, ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
+        let notify_mdns = || ctx.exchange().matter().notify_mdns();
+        let notify_change =
+            |endpt_id, clust_id, attr_id| ctx.notify_attribute_changed(endpt_id, clust_id, attr_id);
+
         ctx.exchange().with_state(|state| {
-            let comm_window = state.pase.comm_window(&ctx)?;
+            let comm_window = state.pase.comm_window(notify_mdns, notify_change)?;
 
             Ok(Nullable::new(
                 comm_window
@@ -120,17 +136,25 @@ impl ClusterHandler for AdminCommHandler {
         ctx: impl InvokeContext,
         request: OpenCommissioningWindowRequest<'_>,
     ) -> Result<(), Error> {
+        let notify_mdns = || ctx.exchange().matter().notify_mdns();
+        let notify_change =
+            |endpt_id, clust_id, attr_id| ctx.notify_attribute_changed(endpt_id, clust_id, attr_id);
+
         ctx.exchange().with_state(|state| {
             let opener = Self::current_window_opener(state, &ctx.exchange().id());
 
+            let mdns_id = ctx.crypto().rand()?.next_u64();
+
             state.pase.open_comm_window(
-                &ctx,
+                mdns_id,
                 request.pake_passcode_verifier()?.0.try_into()?,
                 request.salt()?.0.try_into()?,
                 request.iterations()?,
                 request.discriminator()?,
                 request.commissioning_timeout()?,
                 opener,
+                notify_mdns,
+                notify_change,
             )
         })
     }
@@ -140,23 +164,42 @@ impl ClusterHandler for AdminCommHandler {
         ctx: impl InvokeContext,
         request: OpenBasicCommissioningWindowRequest<'_>,
     ) -> Result<(), Error> {
+        let notify_mdns = || ctx.exchange().matter().notify_mdns();
+        let notify_change =
+            |endpt_id, clust_id, attr_id| ctx.notify_attribute_changed(endpt_id, clust_id, attr_id);
+
         ctx.exchange().with_state(|state| {
             let opener = Self::current_window_opener(state, &ctx.exchange().id());
             let dev_comm = ctx.exchange().matter().dev_comm();
 
+            let crypto = ctx.crypto();
+            let mut rand = crypto.rand()?;
+
+            let mdns_id = rand.next_u64();
+
+            let mut salt = SPAKE2P_VERIFIER_SALT_ZEROED;
+            rand.fill_bytes(salt.access_mut());
+
             state.pase.open_basic_comm_window(
-                &ctx,
+                mdns_id,
+                salt.reference(),
                 dev_comm.password.reference(),
                 dev_comm.discriminator,
                 request.commissioning_timeout()?,
                 opener,
+                notify_mdns,
+                notify_change,
             )
         })
     }
 
     fn handle_revoke_commissioning(&self, ctx: impl InvokeContext) -> Result<(), Error> {
+        let notify_mdns = || ctx.exchange().matter().notify_mdns();
+        let notify_change =
+            |endpt_id, clust_id, attr_id| ctx.notify_attribute_changed(endpt_id, clust_id, attr_id);
+
         ctx.exchange()
-            .with_state(|state| state.pase.close_comm_window(&ctx))?;
+            .with_state(|state| state.pase.close_comm_window(notify_mdns, notify_change))?;
 
         // TODO: Send status code if no commissioning window is open?
 

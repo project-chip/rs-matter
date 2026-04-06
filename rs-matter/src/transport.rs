@@ -410,7 +410,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
             let addr_op = self.matter.with_state(|state| {
                 let group_addrs = || {
                     state.fabrics.iter().flat_map(|fabric| {
-                        fabric.group_iter().map(|group| {
+                        fabric.groups().iter().map(|group| {
                             compute_group_multicast_addr(fabric.fabric_id(), group.group_id)
                         })
                     })

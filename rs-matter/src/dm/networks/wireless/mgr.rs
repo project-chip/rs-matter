@@ -40,7 +40,7 @@ pub struct WirelessMgr<'a, W, T> {
 
 impl<'a, W, T> WirelessMgr<'a, W, T>
 where
-    W: net_comm::Networks + NetChangeNotif,
+    W: net_comm::NetworksAccess + NetChangeNotif,
     T: net_comm::NetCtl + wifi_diag::WirelessDiag + NetChangeNotif,
 {
     /// Creates a new `WirelessMgr` instance.
@@ -76,36 +76,38 @@ where
 
             let mut c = None;
 
-            networks.next_creds(
-                (!network_id.is_empty()).then_some(&network_id),
-                &mut |creds| {
-                    match creds {
-                        WirelessCreds::Wifi { ssid, pass } => {
-                            if ssid.len() + pass.len() > buf.len() {
-                                error!("SSID and password too large");
-                                return Err(ErrorCode::InvalidData.into());
+            networks.access(|networks| {
+                networks.next_creds(
+                    (!network_id.is_empty()).then_some(&network_id),
+                    &mut |creds| {
+                        match creds {
+                            WirelessCreds::Wifi { ssid, pass } => {
+                                if ssid.len() + pass.len() > buf.len() {
+                                    error!("SSID and password too large");
+                                    return Err(ErrorCode::InvalidData.into());
+                                }
+
+                                buf[..ssid.len()].copy_from_slice(ssid);
+                                buf[ssid.len()..][..pass.len()].copy_from_slice(pass);
+
+                                c = Some((ssid.len(), Some(pass.len())))
                             }
+                            WirelessCreds::Thread { dataset_tlv } => {
+                                if dataset_tlv.len() > buf.len() {
+                                    error!("Dataset TLV too large");
+                                    return Err(ErrorCode::InvalidData.into());
+                                }
 
-                            buf[..ssid.len()].copy_from_slice(ssid);
-                            buf[ssid.len()..][..pass.len()].copy_from_slice(pass);
+                                buf[..dataset_tlv.len()].copy_from_slice(dataset_tlv);
 
-                            c = Some((ssid.len(), Some(pass.len())))
-                        }
-                        WirelessCreds::Thread { dataset_tlv } => {
-                            if dataset_tlv.len() > buf.len() {
-                                error!("Dataset TLV too large");
-                                return Err(ErrorCode::InvalidData.into());
+                                c = Some((dataset_tlv.len(), None))
                             }
-
-                            buf[..dataset_tlv.len()].copy_from_slice(dataset_tlv);
-
-                            c = Some((dataset_tlv.len(), None))
                         }
-                    }
 
-                    Ok(())
-                },
-            )?;
+                        Ok(())
+                    },
+                )
+            })?;
 
             if let Some((len1, len2)) = c {
                 let creds = if let Some(len2) = len2 {

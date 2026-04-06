@@ -34,15 +34,17 @@ use core::future::Future;
 use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::{BasicInfoConfig, BasicInfoSettings};
 use crate::dm::clusters::dev_att::DeviceAttestation;
-use crate::dm::{BasicContextInstance, ChangeNotify};
+use crate::dm::ChangeNotify;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::Fabrics;
 use crate::failsafe::FailSafe;
+use crate::im::{AttrId, ClusterId, EndptId};
 use crate::pairing::qr::{
     no_optional_data, CommFlowType, NoOptionalData, Qr, QrPayload, QrTextType,
 };
 use crate::pairing::DiscoveryCapabilities;
-use crate::sc::pase::spake2p::Spake2pVerifierPassword;
+use crate::persist::KvBlobStore;
+use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
 use crate::sc::pase::Pase;
 use crate::transport::network::{NetworkMulticast, NetworkReceive, NetworkSend};
 use crate::transport::session::Sessions;
@@ -56,6 +58,8 @@ use crate::utils::storage::pooled::BufferAccess;
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
+
+use rand_core::RngCore;
 
 /// Re-export the `rs_matter_macros::import` proc-macro
 pub use rs_matter_macros::import;
@@ -212,8 +216,6 @@ pub struct Matter<'a> {
     ///
     /// Public for unit tests
     pub transport: Transport,
-    /// A notification that the Matter state had changed in a way that might require persistence
-    state_changed: Notification,
     /// A notification that the Matter mDNS services might have changed
     mdns_changed: Notification,
     /// A notification that a session had been removed
@@ -279,7 +281,6 @@ impl<'a> Matter<'a> {
         Self {
             state: Mutex::new(RefCell::new(MatterState::new(epoch))),
             transport: Transport::new(dev_det),
-            state_changed: Notification::new(),
             mdns_changed: Notification::new(),
             session_removed: Notification::new(),
             groups_modified: Notification::new(),
@@ -337,7 +338,6 @@ impl<'a> Matter<'a> {
             Self {
                 state <- Mutex::init(RefCell::init(MatterState::init(epoch))),
                 transport <- Transport::init(dev_det),
-                state_changed: Notification::new(),
                 mdns_changed: Notification::new(),
                 session_removed: Notification::new(),
                 groups_modified: Notification::new(),
@@ -512,15 +512,27 @@ impl<'a> Matter<'a> {
         crypto: C,
         notify: &dyn ChangeNotify,
     ) -> Result<(), Error> {
-        let ctx = BasicContextInstance::new(self, crypto, notify);
+        let notify_mdns = || self.notify_mdns();
+        let notify_change =
+            |endpt_id, clust_id, attr_id| notify.notify(endpt_id, clust_id, attr_id);
 
         self.with_state(|state| {
+            let mut rand = crypto.rand()?;
+
+            let mdns_id = rand.next_u64();
+
+            let mut salt = SPAKE2P_VERIFIER_SALT_ZEROED;
+            rand.fill_bytes(salt.access_mut());
+
             state.pase.open_basic_comm_window(
-                ctx,
+                mdns_id,
+                salt.reference(),
                 self.dev_comm.password.reference(),
                 self.dev_comm.discriminator,
                 timeout_secs,
                 None,
+                notify_mdns,
+                notify_change,
             )
         })
     }
@@ -528,14 +540,12 @@ impl<'a> Matter<'a> {
     /// Close the basic commissioning window
     ///
     /// The method will return Ok(false) if there is no active PASE commissioning window to close.
-    pub fn close_comm_window<C: Crypto>(
-        &self,
-        crypto: C,
-        notify: &dyn ChangeNotify,
-    ) -> Result<bool, Error> {
-        let ctx = BasicContextInstance::new(self, crypto, notify);
+    pub fn close_comm_window(&self, notify: &dyn ChangeNotify) -> Result<bool, Error> {
+        let notify_mdns = || self.notify_mdns();
+        let notify_change =
+            |endpt_id, clust_id, attr_id| notify.notify(endpt_id, clust_id, attr_id);
 
-        self.with_state(|state| state.pase.close_comm_window(ctx))
+        self.with_state(|state| state.pase.close_comm_window(notify_mdns, notify_change))
     }
 
     /// Create a new transport runner instance
@@ -598,104 +608,65 @@ impl<'a> Matter<'a> {
 
     /// Reset the Matter persistable state by removing all fabrics and resetting basic info settings
     ///
-    /// # Arguments
-    /// - `flag_changed`: If true, notifies that fabrics and basic info settings have changed
-    pub fn reset_persist(&self, flag_changed: bool) {
-        self.with_state(|state| {
-            state.basic_info_settings.reset(flag_changed);
-            state.fabrics.reset(flag_changed);
-        });
+    /// Arguments:
+    /// - `kv`: The key-value store to load the fabrics and basic info settings from
+    /// - `buf`: A buffer to use for loading the fabrics and basic info settings
+    pub async fn reset_persist<S: KvBlobStore>(
+        &mut self,
+        mut kv: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        {
+            let state = self.state.get_mut();
+            let mut state = state.borrow_mut();
+
+            state.fabrics.reset_persist(&mut kv, buf).await?;
+            state
+                .basic_info_settings
+                .reset_persist(&mut kv, buf)
+                .await?;
+        }
 
         self.notify_mdns();
 
-        if flag_changed {
-            self.notify_persist();
-        }
-    }
-
-    /// Notify that the ACLs, Fabrics or Basic Info _might_ have changed
-    /// This method is supposed to be called after processing SC and IM messages that might affect the ACLs, Fabrics or Basic Info.
-    ///
-    /// The default IM and SC handlers (`DataModel` and `SecureChannel`) do call this method after processing the messages.
-    ///
-    /// TODO: Fix the method name as it is not clear enough. Potentially revamp the whole persistence notification logic
-    pub fn notify_persist(&self) {
-        self.state_changed.notify();
+        Ok(())
     }
 
     /// Load fabrics from the given data
     ///
     /// Arguments:
-    /// - `data`: The data to load the fabrics from
-    pub fn load_fabrics(&self, data: &[u8]) -> Result<(), Error> {
-        self.with_state(|state| state.fabrics.load(data, &mut || self.notify_mdns()))
-    }
+    /// - `kv`: The key-value store to load the fabrics and basic info settings from
+    /// - `buf`: A buffer to use for loading the fabrics and basic info settings
+    pub async fn load_persist<S: KvBlobStore>(
+        &mut self,
+        mut kv: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        {
+            let state = self.state.get_mut();
+            let mut state = state.borrow_mut();
 
-    /// Store fabrics into the given buffer
-    ///
-    /// Arguments:
-    /// - `buf`: The buffer to store the fabrics into
-    ///
-    /// Returns the number of bytes written into the buffer.
-    pub fn store_fabrics(&self, buf: &mut [u8]) -> Result<usize, Error> {
-        self.with_state(|state| state.fabrics.store(buf))
-    }
+            state.fabrics.load_persist(&mut kv, buf).await?;
+            state.basic_info_settings.load_persist(&mut kv, buf).await?;
+        }
 
-    /// Return true if the fabrics have changed since the last call to `store_fabrics`
-    pub fn fabrics_changed(&self) -> bool {
-        self.with_state(|state| state.fabrics.is_changed())
-    }
+        self.notify_mdns();
 
-    /// Load basic info settings from the given data
-    ///
-    /// Arguments:
-    /// - `data`: The data to load the basic info settings from
-    pub fn load_basic_info(&self, data: &[u8]) -> Result<(), Error> {
-        self.with_state(|state| state.basic_info_settings.load(data))
-    }
-
-    /// Store basic info settings into the given buffer
-    ///
-    /// Arguments:
-    /// - `buf`: The buffer to store the basic info settings into
-    ///
-    /// Returns the number of bytes written into the buffer.
-    pub fn store_basic_info(&self, buf: &mut [u8]) -> Result<usize, Error> {
-        self.with_state(|state| state.basic_info_settings.store(buf))
-    }
-
-    /// Return true if the basic info settings have changed since the last call to `store_basic_info`
-    pub fn basic_info_changed(&self) -> bool {
-        self.with_state(|state| state.basic_info_settings.changed)
-    }
-
-    /// A hook for user persistence code to wait for potential changes in ACLs, Fabrics or basic info.
-    ///
-    /// Once this future resolves, user code is supposed to inspect ACLs, Fabrics and basic info for changes, and
-    /// if there are changes, persist them.
-    ///
-    /// TODO: Fix the method name as it is not clear enough. Potentially revamp the whole persistence notification logic
-    pub fn wait_persist(&self) -> impl Future<Output = ()> + '_ {
-        self.state_changed.wait()
+        Ok(())
     }
 
     /// Invoke the given closure for each currently published Matter mDNS service.
-    pub fn mdns_services<C, F>(
-        &self,
-        crypto: C,
-        notify: &dyn ChangeNotify,
-        mut f: F,
-    ) -> Result<(), Error>
+    pub fn mdns_services<C, F>(&self, notify_change: C, mut f: F) -> Result<(), Error>
     where
-        C: Crypto,
+        C: FnMut(EndptId, ClusterId, AttrId),
         F: FnMut(MatterMdnsService) -> Result<(), Error>,
     {
-        let ctx = BasicContextInstance::new(self, crypto, notify);
-
         debug!("=== Currently published mDNS services");
 
+        let notify_mdns = || self.notify_mdns();
+
         self.with_state(|state| {
-            if let Some(comm_window) = state.pase.comm_window(ctx)? {
+            if let Some(comm_window) = state.pase.comm_window(notify_mdns, notify_change)? {
                 // Do not remove this logging line or change its formatting.
                 // C++ E2E tests rely on this log line to determine when the mDNS service is published
                 debug!("mDNS service published: {:?}", comm_window.mdns_service());

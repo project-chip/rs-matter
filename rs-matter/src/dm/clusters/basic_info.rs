@@ -23,12 +23,12 @@ use crate::dm::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
-use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, TLVTag, ToTLV, Utf8StrBuilder};
+use crate::persist::{KvBlobStore, Persist, BASIC_INFO_KEY};
+use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, ToTLV, Utf8StrBuilder};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::MAX_SESSIONS;
 use crate::utils::bitflags::bitflags;
 use crate::utils::init::{init, Init};
-use crate::utils::storage::WriteBuf;
 use crate::{except, with};
 
 pub use crate::dm::clusters::decl::basic_information::*;
@@ -305,7 +305,6 @@ pub struct BasicInfoSettings {
     pub location: Option<heapless::String<2>>, // Max location as per the spec
     pub location_type: RegulatoryLocationTypeEnum,
     pub local_config_disabled: bool,
-    pub changed: bool,
 }
 
 impl BasicInfoSettings {
@@ -316,7 +315,6 @@ impl BasicInfoSettings {
             location: None,
             location_type: RegulatoryLocationTypeEnum::IndoorOutdoor,
             local_config_disabled: false,
-            changed: false,
         }
     }
 
@@ -327,7 +325,6 @@ impl BasicInfoSettings {
             location: None,
             location_type: RegulatoryLocationTypeEnum::IndoorOutdoor,
             local_config_disabled: false,
-            changed: false,
         })
     }
 
@@ -335,34 +332,10 @@ impl BasicInfoSettings {
     ///
     /// # Arguments
     /// - `flag_changed`: whether to mark the basic info settings as changed
-    pub fn reset(&mut self, flag_changed: bool) {
+    pub fn reset(&mut self) {
         self.node_label.clear();
         self.location = None;
         self.local_config_disabled = false;
-        self.changed = flag_changed;
-    }
-
-    /// Load the basic info settings from the provided TLV data
-    pub fn load(&mut self, data: &[u8]) -> Result<(), Error> {
-        *self = FromTLV::from_tlv(&TLVElement::new(data))?;
-
-        self.changed = false;
-
-        Ok(())
-    }
-
-    /// Store the basic info settings into the provided buffer as TLV data
-    pub fn store(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
-        let mut wb = WriteBuf::new(buf);
-
-        self.to_tlv(&TLVTag::Anonymous, &mut wb)
-            .map_err(|_| ErrorCode::NoSpace)?;
-
-        self.changed = false;
-
-        let len = wb.get_tail();
-
-        Ok(len)
     }
 
     pub fn set_location(&mut self, location: &str) {
@@ -371,7 +344,51 @@ impl BasicInfoSettings {
         } else {
             self.location = Some(unwrap!(heapless::String::<2>::from_str(location)));
         }
-        self.changed = true;
+    }
+
+    /// Remove all basic info settings from the provided BLOB store as well as from memory
+    ///
+    /// # Arguments
+    /// - `store`: the BLOB store to remove the settings from
+    /// - `buf`: a temporary buffer to use for removing the settings
+    pub async fn reset_persist<S: KvBlobStore>(
+        &mut self,
+        mut store: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        self.reset();
+
+        store.remove(BASIC_INFO_KEY, buf)?;
+
+        info!("Removed basic info settings from storage");
+
+        Ok(())
+    }
+
+    /// Load all basic info settings from the provided BLOB store
+    ///
+    /// # Arguments
+    /// - `store`: the BLOB store to load the fabrics from
+    /// - `buf`: a temporary buffer to use for loading the fabrics
+    pub async fn load_persist<S: KvBlobStore>(
+        &mut self,
+        mut store: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        self.reset();
+
+        if let Some(data) = store.load(BASIC_INFO_KEY, buf)? {
+            let info = Self::from_tlv(&TLVElement::new(data))?;
+
+            self.node_label = info.node_label;
+            self.location = info.location;
+            self.location_type = info.location_type;
+            self.local_config_disabled = info.local_config_disabled;
+
+            info!("Loaded basic info settings from storage");
+        }
+
+        Ok(())
     }
 }
 
@@ -489,18 +506,19 @@ impl ClusterHandler for BasicInfoHandler {
             return Err(ErrorCode::ConstraintError.into());
         }
 
+        let mut persist = Persist::new(ctx.kv());
+
         Self::with_settings(ctx.exchange(), |settings| {
             settings.node_label.clear();
             settings
                 .node_label
                 .push_str(label)
                 .map_err(|_| ErrorCode::ConstraintError)?;
-            settings.changed = true;
 
-            ctx.exchange().matter().notify_persist();
+            persist.store_tlv(BASIC_INFO_KEY, &*settings)
+        })?;
 
-            Ok(())
-        })
+        persist.run()
     }
 
     fn location<P: TLVBuilderParent>(
@@ -518,13 +536,15 @@ impl ClusterHandler for BasicInfoHandler {
             return Err(ErrorCode::ConstraintError.into());
         }
 
+        let mut persist = Persist::new(ctx.kv());
+
         Self::with_settings(ctx.exchange(), |settings| {
             settings.set_location(location);
 
-            ctx.exchange().matter().notify_persist();
+            persist.store_tlv(BASIC_INFO_KEY, &*settings)
+        })?;
 
-            Ok(())
-        })
+        persist.run()
     }
 
     fn capability_minima<P: TLVBuilderParent>(
@@ -604,14 +624,15 @@ impl ClusterHandler for BasicInfoHandler {
     }
 
     fn set_local_config_disabled(&self, ctx: impl WriteContext, value: bool) -> Result<(), Error> {
+        let mut persist = Persist::new(ctx.kv());
+
         Self::with_settings(ctx.exchange(), |settings| {
             settings.local_config_disabled = value;
-            settings.changed = true;
 
-            ctx.exchange().matter().notify_persist();
+            persist.store_tlv(BASIC_INFO_KEY, &*settings)
+        })?;
 
-            Ok(())
-        })
+        persist.run()
     }
 
     fn unique_id<P: TLVBuilderParent>(

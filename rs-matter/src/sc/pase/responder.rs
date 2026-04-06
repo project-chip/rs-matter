@@ -26,7 +26,7 @@ use crate::crypto::{
     CanonEcPointRef, Crypto, HmacHashRef, Kdf, AEAD_CANON_KEY_LEN, EC_POINT_ZEROED,
     HMAC_HASH_ZEROED,
 };
-use crate::dm::{BasicContextInstance, ChangeNotify};
+use crate::dm::ChangeNotify;
 use crate::error::{Error, ErrorCode};
 use crate::sc::pase::spake2p::{Spake2P, Spake2pRandom, Spake2pRandomRef, Spake2pSessionKeys};
 use crate::sc::{check_opcode, complete_with_status, OpCode, SCStatusCodes};
@@ -96,7 +96,6 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         self.handle_pasepake3(exchange, session).await?;
 
         exchange.acknowledge().await?;
-        exchange.matter().notify_persist();
 
         self.clear_session_timeout(exchange)
     }
@@ -113,11 +112,13 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         let mut salt = super::spake2p::SPAKE2P_VERIFIER_SALT_ZEROED;
         let mut count = 0;
 
-        let has_comm_window = {
-            let ctx = BasicContextInstance::new(exchange.matter(), &self.crypto, self.notify);
+        let notify_mdns = || exchange.matter().notify_mdns();
+        let notify_change =
+            |endpt_id, cluster_id, attr_id| self.notify.notify(endpt_id, cluster_id, attr_id);
 
+        let has_comm_window = {
             exchange.with_state(|state| {
-                if let Some(comm_window) = state.pase.comm_window(&ctx)? {
+                if let Some(comm_window) = state.pase.comm_window(notify_mdns, notify_change)? {
                     salt.load(comm_window.verifier.salt.reference());
                     count = comm_window.verifier.count;
 
@@ -200,11 +201,13 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         let mut b_pt = EC_POINT_ZEROED;
         let mut cb = HMAC_HASH_ZEROED;
 
-        let has_comm_window = {
-            let ctx = BasicContextInstance::new(exchange.matter(), &self.crypto, self.notify);
+        let notify_mdns = || exchange.matter().notify_mdns();
+        let notify_change =
+            |endpt_id, cluster_id, attr_id| self.notify.notify(endpt_id, cluster_id, attr_id);
 
+        let has_comm_window = {
             exchange.with_state(|state| {
-                if let Some(comm_window) = state.pase.comm_window(&ctx)? {
+                if let Some(comm_window) = state.pase.comm_window(notify_mdns, notify_change)? {
                     self.spake2p.setup_verifier(
                         &self.crypto,
                         &comm_window.verifier,

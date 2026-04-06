@@ -24,6 +24,7 @@ use crate::im::{
     AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
     CmdRespTag, CmdStatus, EventData, EventFilter, EventPath, EventRespTag, IMStatusCode,
 };
+use crate::persist::KvBlobStoreAccess;
 use crate::tlv::{TLVArray, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::utils::storage::pooled::BufferAccess;
@@ -71,25 +72,34 @@ pub trait InvokeReply {
     fn with_command(self, cmd: u32) -> Result<impl Reply, Error>;
 }
 
-pub struct HandlerInvoker<'a, 'b, C, D, B> {
+pub struct HandlerInvoker<'a, 'b, C, D, B, S> {
     exchange: &'b mut Exchange<'a>,
     crypto: C,
     handler: D,
     buffers: B,
+    kv: S,
 }
 
-impl<'a, 'b, C, D, B> HandlerInvoker<'a, 'b, C, D, B>
+impl<'a, 'b, C, D, B, S> HandlerInvoker<'a, 'b, C, D, B, S>
 where
     C: Crypto,
     D: AsyncHandler,
     B: BufferAccess<IMBuffer>,
+    S: KvBlobStoreAccess,
 {
-    pub const fn new(exchange: &'b mut Exchange<'a>, crypto: C, handler: D, buffers: B) -> Self {
+    pub const fn new(
+        exchange: &'b mut Exchange<'a>,
+        crypto: C,
+        handler: D,
+        buffers: B,
+        kv: S,
+    ) -> Self {
         Self {
             exchange,
             crypto,
             handler,
             buffers,
+            kv,
         }
     }
 
@@ -164,6 +174,7 @@ where
                 &self.crypto,
                 &self.handler,
                 &self.buffers,
+                &self.kv,
                 attr,
                 notify,
             ),
@@ -237,6 +248,7 @@ where
             &self.crypto,
             &self.handler,
             &self.buffers,
+            &self.kv,
             attr,
             data,
             notify,
@@ -317,6 +329,7 @@ where
                 &self.crypto,
                 &self.handler,
                 &self.buffers,
+                &self.kv,
                 cmd,
                 data,
                 notify,

@@ -22,7 +22,6 @@ use crate::dm::clusters::net_comm::{
     NetworkType, NetworksError, WirelessCreds,
 };
 use crate::error::{Error, ErrorCode};
-use crate::utils::sync::DynBase;
 
 /// A fixed `Networks` trait implementation for Ethernet.
 ///
@@ -38,8 +37,6 @@ impl<'a> EthNetwork<'a> {
         Self { network_id }
     }
 }
-
-impl DynBase for EthNetwork<'_> {}
 
 impl net_comm::Networks for EthNetwork<'_> {
     fn max_networks(&self) -> Result<u8, Error> {
@@ -76,20 +73,24 @@ impl net_comm::Networks for EthNetwork<'_> {
         Ok(true)
     }
 
-    fn set_enabled(&self, _enabled: bool) -> Result<(), Error> {
+    fn set_enabled(&mut self, _enabled: bool) -> Result<(), Error> {
         Ok(())
     }
 
-    fn add_or_update(&self, _creds: &WirelessCreds<'_>) -> Result<u8, NetworksError> {
+    fn add_or_update(&mut self, _creds: &WirelessCreds<'_>) -> Result<u8, NetworksError> {
         Err(NetworksError::Other(ErrorCode::InvalidAction.into()))
     }
 
-    fn reorder(&self, _index: u8, _network_id: &[u8]) -> Result<u8, NetworksError> {
+    fn reorder(&mut self, _index: u8, _network_id: &[u8]) -> Result<u8, NetworksError> {
         Err(NetworksError::Other(ErrorCode::InvalidAction.into()))
     }
 
-    fn remove(&self, _network_id: &[u8]) -> Result<u8, NetworksError> {
+    fn remove(&mut self, _network_id: &[u8]) -> Result<u8, NetworksError> {
         Err(NetworksError::Other(ErrorCode::InvalidAction.into()))
+    }
+
+    fn persist(&self, _buf: &mut [u8]) -> Result<Option<usize>, Error> {
+        Ok(None)
     }
 }
 

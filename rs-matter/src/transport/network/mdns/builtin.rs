@@ -248,14 +248,16 @@ where
     where
         F: FnMut(&Service) -> Result<(), Error>,
     {
-        self.matter
-            .mdns_services(&self.crypto, self.notify, |service| {
-                Service::call_with(
-                    &service,
-                    self.matter.dev_det(),
-                    self.matter.port(),
-                    &mut callback,
-                )
-            })
+        let notify_change =
+            |endpt_id, clust_id, attr_id| self.notify.notify(endpt_id, clust_id, attr_id);
+
+        self.matter.mdns_services(notify_change, |service| {
+            Service::call_with(
+                &service,
+                self.matter.dev_det(),
+                self.matter.port(),
+                &mut callback,
+            )
+        })
     }
 }
