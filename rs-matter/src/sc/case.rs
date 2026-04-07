@@ -30,7 +30,9 @@ use crate::transport::exchange::Exchange;
 use crate::transport::session::{NocCatIds, ReservedSession, SessionMode};
 use crate::utils::init::{init, Init, InitMaybeUninit};
 
-mod casep;
+pub(crate) mod casep;
+#[cfg(feature = "case-initiator")]
+pub mod initiator;
 
 // Two certificates (NOC and ICAC), plus ECDSA etc -> approx 950b, doing 1024 to be safe
 const CASE_LARGE_BUF_SIZE: usize = MAX_CERT_TLV_LEN * 2 + 224;
