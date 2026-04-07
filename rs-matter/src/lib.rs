@@ -38,7 +38,6 @@ use crate::dm::ChangeNotify;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::Fabrics;
 use crate::failsafe::FailSafe;
-use crate::im::{AttrId, ClusterId, EndptId};
 use crate::pairing::qr::{
     no_optional_data, CommFlowType, NoOptionalData, Qr, QrPayload, QrTextType,
 };
@@ -653,17 +652,14 @@ impl<'a> Matter<'a> {
     }
 
     /// Invoke the given closure for each currently published Matter mDNS service.
-    pub fn mdns_services<C, F>(&self, notify_change: C, mut f: F) -> Result<(), Error>
+    pub fn mdns_services<F>(&self, mut f: F) -> Result<(), Error>
     where
-        C: FnMut(EndptId, ClusterId, AttrId),
         F: FnMut(MatterMdnsService) -> Result<(), Error>,
     {
         debug!("=== Currently published mDNS services");
 
-        let notify_mdns = || self.notify_mdns();
-
         self.with_state(|state| {
-            if let Some(comm_window) = state.pase.comm_window(notify_mdns, notify_change)? {
+            if let Some(comm_window) = state.pase.comm_window() {
                 // Do not remove this logging line or change its formatting.
                 // C++ E2E tests rely on this log line to determine when the mDNS service is published
                 debug!("mDNS service published: {:?}", comm_window.mdns_service());

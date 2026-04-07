@@ -202,11 +202,15 @@ impl Pase {
         })
     }
 
-    pub fn comm_window(
+    /// Check if the opened commissioning window has expired, and close it if so.
+    ///
+    /// This should be called periodically to ensure that the commissioning window state is updated in a timely manner.
+    /// Ideally, it should also be called at the beginning of any API that requires the commissioning window to be opened to ensure that the state is up to date.
+    pub fn check_comm_window_timeout(
         &mut self,
         notify_mdns: impl FnMut(),
         notify_change: impl FnMut(EndptId, ClusterId, AttrId),
-    ) -> Result<Option<&CommWindow>, Error> {
+    ) -> Result<bool, Error> {
         let expired = self
             .comm_window
             .as_opt_ref()
@@ -218,10 +222,15 @@ impl Pase {
 
             self.close_comm_window(notify_mdns, notify_change)?;
 
-            Ok(None)
+            Ok(true)
         } else {
-            Ok(self.comm_window.as_opt_ref())
+            Ok(false)
         }
+    }
+
+    /// Get the opened commissioning window, if any
+    pub fn comm_window(&self) -> Option<&CommWindow> {
+        self.comm_window.as_opt_ref()
     }
 
     /// Open a basic commissioning window using a passcode
@@ -250,10 +259,7 @@ impl Pase {
         mut notify_mdns: impl FnMut(),
         mut notify_change: impl FnMut(EndptId, ClusterId, AttrId),
     ) -> Result<(), Error> {
-        if self
-            .comm_window(&mut notify_mdns, &mut notify_change)?
-            .is_some()
-        {
+        if self.comm_window.is_some() {
             Err(ErrorCode::Busy)?;
         }
 
@@ -314,10 +320,7 @@ impl Pase {
         mut notify_mdns: impl FnMut(),
         mut notify_change: impl FnMut(EndptId, ClusterId, AttrId),
     ) -> Result<(), Error> {
-        if self
-            .comm_window(&mut notify_mdns, &mut notify_change)?
-            .is_some()
-        {
+        if self.comm_window.is_some() {
             Err(ErrorCode::Busy)?;
         }
 

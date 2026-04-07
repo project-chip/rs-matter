@@ -232,12 +232,20 @@ impl ExchangeId {
     where
         F: FnOnce(&mut MatterState) -> Result<T, Error>,
     {
+        self.with_state_ex(matter, f)
+    }
+
+    fn with_state_ex<'a, F, T, E>(&self, matter: &'a Matter<'a>, f: F) -> Result<T, E>
+    where
+        F: FnOnce(&mut MatterState) -> Result<T, E>,
+        E: From<Error>,
+    {
         matter.with_state(|state| {
             if state.sessions.get(self.session_id()).is_some() {
                 f(state)
             } else {
                 warn!("Exchange {}: No session", self);
-                Err(ErrorCode::NoSession.into())
+                Err(Error::from(ErrorCode::NoSession).into())
             }
         })
     }
@@ -1218,6 +1226,14 @@ impl<'a> Exchange<'a> {
         F: FnOnce(&mut MatterState) -> Result<T, Error>,
     {
         self.id.with_state(self.matter, f)
+    }
+
+    pub(crate) fn with_state_ex<F, T, E>(&self, f: F) -> Result<T, E>
+    where
+        F: FnOnce(&mut MatterState) -> Result<T, E>,
+        E: From<Error>,
+    {
+        self.id.with_state_ex(self.matter, f)
     }
 }
 

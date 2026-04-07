@@ -59,8 +59,7 @@ use rs_matter::crypto::backend::rustcrypto::RustCrypto;
 use rs_matter::crypto::{Crypto, RngCore, WeakTestOnlyRand};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::clusters::net_comm::{
-    NetCtl, NetCtlError, NetCtlStatus, NetworkScanInfo, NetworkType, NetworksAccess,
-    SharedNetworks, WirelessCreds,
+    DummyNetworkAccess, NetCtl, NetCtlError, NetCtlStatus, NetworkScanInfo, NetworkType, NetworksAccess, SharedNetworks, WirelessCreds
 };
 use rs_matter::dm::clusters::on_off::NoLevelControl;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
@@ -213,6 +212,7 @@ type AppDataModel<'a> = DataModel<
     PooledBuffers<10, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
     SharedKvBlobStore<DummyKvBlobStore, &'static mut [u8]>,
+    DummyNetworkAccess,
 >;
 type AppResponder<'d, 'a> = DefaultResponder<
     'd,
@@ -223,6 +223,7 @@ type AppResponder<'d, 'a> = DefaultResponder<
     PooledBuffers<10, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
     SharedKvBlobStore<DummyKvBlobStore, &'static mut [u8]>,
+    DummyNetworkAccess,
 >;
 
 #[cfg_attr(target_os = "none", main)]
@@ -361,6 +362,7 @@ fn main() -> ! {
             Some(&stack.events),
             (NODE, handler),
             kv,
+            DummyNetworkAccess,
         )
     );
 
@@ -368,7 +370,7 @@ fn main() -> ! {
 
     let mdns = mk_static!(
         BuiltinMdnsResponder<'static, &'static AppCrypto>,
-        BuiltinMdnsResponder::new(&stack.matter, crypto, dm.change_notify())
+        BuiltinMdnsResponder::new(&stack.matter, crypto)
     );
 
     report_size("mDNS responder", size_of_val(&*mdns), &mut aux_total);

@@ -89,7 +89,15 @@ impl net_comm::Networks for EthNetwork<'_> {
         Err(NetworksError::Other(ErrorCode::InvalidAction.into()))
     }
 
-    fn persist(&self, _buf: &mut [u8]) -> Result<Option<usize>, Error> {
+    fn reset(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn load(&mut self, _data: &[u8]) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn save(&self, _buf: &mut [u8]) -> Result<Option<usize>, Error> {
         Ok(None)
     }
 }

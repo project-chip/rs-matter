@@ -185,7 +185,14 @@ impl ClusterHandler for AclHandler {
             let fabric = state.fabrics.fabric_mut(fab_idx)?;
             self.set_acl(fabric, value)?;
 
-            persist.store(fabric)
+            // NOTE: Not sure this is a spec-compliant behavor:
+            // If the failsafe is armed for our fabric, we'll NOT persist the groups changes until commissioning is complete.
+            // And we'll LOSE those changes if the failsafe times out before commissioning completes.
+            if !state.failsafe.is_armed_for(fab_idx.get()) {
+                persist.store(fabric)?;
+            }
+
+            Ok(())
         })?;
 
         persist.run()

@@ -22,6 +22,7 @@ use core::pin::pin;
 use embassy_futures::select::{select3, select_slice};
 
 use crate::crypto::Crypto;
+use crate::dm::clusters::net_comm;
 use crate::dm::DataModelHandler;
 use crate::dm::{DataModel, IMBuffer};
 use crate::error::Error;
@@ -238,22 +239,23 @@ where
 }
 
 /// A type alias for the "default" responder handler, which is a chained handler of the `DataModel` and `SecureChannel` handlers.
-pub type DefaultExchangeHandler<'d, 'a, const NS: usize, const NE: usize, C, B, T, S> =
-    ChainedExchangeHandler<&'d DataModel<'a, NS, NE, C, B, T, S>, SecureChannel<'d, &'d C>>;
+pub type DefaultExchangeHandler<'d, 'a, const NS: usize, const NE: usize, C, B, T, S, N> =
+    ChainedExchangeHandler<&'d DataModel<'a, NS, NE, C, B, T, S, N>, SecureChannel<'d, &'d C>>;
 
-impl<'d, 'a, const NS: usize, const NE: usize, C, B, T, S>
-    Responder<'a, DefaultExchangeHandler<'d, 'a, NS, NE, C, B, T, S>>
+impl<'d, 'a, const NS: usize, const NE: usize, C, B, T, S, N>
+    Responder<'a, DefaultExchangeHandler<'d, 'a, NS, NE, C, B, T, S, N>>
 where
     B: BufferAccess<IMBuffer>,
 {
     /// Creates a "default" responder. This is a responder that composes and uses the `rs-matter`-provided `ExchangeHandler` implementations
     /// (`SecureChannel` and `DataModel`) for handling the Secure Channel protocol and the Interaction Model protocol.
     #[inline(always)]
-    pub const fn new_default(data_model: &'d DataModel<'a, NS, NE, C, B, T, S>) -> Self
+    pub const fn new_default(data_model: &'d DataModel<'a, NS, NE, C, B, T, S, N>) -> Self
     where
         C: Crypto,
         T: DataModelHandler,
         S: KvBlobStoreAccess,
+        N: net_comm::NetworksAccess,
     {
         Self::new(
             "Responder",
@@ -294,25 +296,26 @@ impl<'a> Responder<'a, BusyExchangeHandler> {
 }
 
 /// A composition of the `Responder::new_default` and `Responder::new_busy` responders.
-pub struct DefaultResponder<'d, 'a, const NS: usize, const NE: usize, C, B, T, S>
+pub struct DefaultResponder<'d, 'a, const NS: usize, const NE: usize, C, B, T, S, N>
 where
     B: BufferAccess<IMBuffer>,
 {
-    responder: Responder<'a, DefaultExchangeHandler<'d, 'a, NS, NE, C, B, T, S>>,
+    responder: Responder<'a, DefaultExchangeHandler<'d, 'a, NS, NE, C, B, T, S, N>>,
     busy_responder: Responder<'a, BusyExchangeHandler>,
 }
 
-impl<'d, 'a, const NS: usize, const NE: usize, C, B, T, S>
-    DefaultResponder<'d, 'a, NS, NE, C, B, T, S>
+impl<'d, 'a, const NS: usize, const NE: usize, C, B, T, S, N>
+    DefaultResponder<'d, 'a, NS, NE, C, B, T, S, N>
 where
     C: Crypto,
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStoreAccess,
+    N: net_comm::NetworksAccess,
 {
     /// Creates the responder composition.
     #[inline(always)]
-    pub const fn new(data_model: &'d DataModel<'a, NS, NE, C, B, T, S>) -> Self {
+    pub const fn new(data_model: &'d DataModel<'a, NS, NE, C, B, T, S, N>) -> Self {
         Self {
             responder: Responder::new_default(data_model),
             busy_responder: Responder::new_busy(data_model.matter(), RESPOND_BUSY_MS),
@@ -336,7 +339,7 @@ where
         &self,
     ) -> &Responder<
         'a,
-        ChainedExchangeHandler<&'d DataModel<'a, NS, NE, C, B, T, S>, SecureChannel<'d, &'d C>>,
+        ChainedExchangeHandler<&'d DataModel<'a, NS, NE, C, B, T, S, N>, SecureChannel<'d, &'d C>>,
     > {
         &self.responder
     }

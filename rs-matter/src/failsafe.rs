@@ -23,9 +23,11 @@ use crate::crypto::{
     CanonAeadKeyRef, CanonPkcSecretKey, CanonPkcSecretKeyRef, Crypto, SecretKey,
     PKC_SECRET_KEY_ZEROED,
 };
+use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, Fabrics};
-use crate::im::{AttrId, ClusterId, EndptId, IMStatusCode};
+use crate::im::IMStatusCode;
+use crate::persist::{KvBlobStoreAccess, NETWORKS_KEY};
 use crate::sc::pase::Pase;
 use crate::tlv::TLVElement;
 use crate::transport::session::SessionMode;
@@ -108,29 +110,81 @@ impl FailSafe {
         })
     }
 
+    /// Check if the fail-safe timer has expired and if so disarms and restores the state of the fabric as well as
+    /// the basic info settings.
+    ///
+    /// This should be called periodically to ensure that the fail-safe state is updated in a timely manner.
+    /// Ideally, it should also be called at the beginning of any API that requires the fail-safe to be armed to ensure that the state is up to date.
+    pub fn check_failsafe_timeout<S, N>(
+        &mut self,
+        fabrics: &mut Fabrics,
+        networks: N,
+        kv: S,
+        mut mdns_notif: impl FnMut(),
+    ) -> Result<bool, Error>
+    where
+        S: KvBlobStoreAccess,
+        N: NetworksAccess,
+    {
+        if let State::Armed(ctx) = &mut self.state {
+            let now = (self.epoch)();
+            if now >= ctx.armed_at + Duration::from_secs(ctx.timeout_secs as u64) {
+                info!(
+                    "Fail-Safe timeout expired for fabric {}, disarming",
+                    ctx.fab_idx
+                );
+
+                kv.access(|mut kv, buf| {
+                    if let Some(fab_idx) = NonZeroU8::new(ctx.fab_idx) {
+                        fabrics.remove(fab_idx)?;
+                        fabrics.add_load(fab_idx.get(), &mut kv, buf)?;
+                    }
+
+                    networks.access(|networks| {
+                        let data = kv.load(NETWORKS_KEY, buf)?;
+
+                        if let Some(data) = data {
+                            networks.load(data)
+                        } else {
+                            networks.reset()
+                        }
+                    })
+                })?;
+
+                self.state = State::Idle;
+                self.breadcrumb = 0;
+
+                mdns_notif();
+
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
     pub fn arm(
         &mut self,
         timeout_secs: u16,
         breadcrumb: u64,
         session_mode: &SessionMode,
         pase: &mut Pase,
-        notify_mdns: impl FnMut(),
-        notify_change: impl FnMut(EndptId, ClusterId, AttrId),
     ) -> Result<(), Error> {
-        self.update_state_timeout();
-
         if matches!(self.state, State::Idle) {
             if matches!(session_mode, SessionMode::PlainText) {
                 // Only PASE and CASE sessions supported
                 return Err(ErrorCode::GennCommInvalidAuthentication)?;
             }
 
-            // Cannot arm via CASE while there's an active window
-            if pase.comm_window(notify_mdns, notify_change)?.is_some()
-                && matches!(session_mode, SessionMode::Case { .. })
-            {
+            if pase.comm_window().is_some() && matches!(session_mode, SessionMode::Case { .. }) {
+                // Cannot arm via CASE while there's an active window
                 return Err(ErrorCode::Busy)?;
             }
+
+            // if pase.comm_window().is_none() && !matches!(session_mode, SessionMode::Case { .. }) {
+            //     // Cannot arm via PASE if there is no active commissioning window
+            //     return Err(ErrorCode::GennCommInvalidAuthentication)?;
+            // }
 
             self.state = State::Armed(ArmedCtx {
                 armed_at: (self.epoch)(),
@@ -164,16 +218,18 @@ impl FailSafe {
         Ok(())
     }
 
-    pub fn disarm(&mut self, session_mode: &SessionMode) -> Result<(), Error> {
-        self.update_state_timeout();
-
+    pub fn disarm<'a>(
+        &mut self,
+        session_mode: &SessionMode,
+        fabrics: &'a mut Fabrics,
+    ) -> Result<&'a mut Fabric, Error> {
         if matches!(self.state, State::Idle) {
             error!("Received Fail-Safe Disarm without it being armed");
             return Err(ErrorCode::FailSafeRequired)?;
         }
 
         // Has to be a CASE session
-        Self::get_case_fab_idx(session_mode)?;
+        let fab_idx = Self::get_case_fab_idx(session_mode)?;
 
         self.check_state(
             session_mode,
@@ -181,10 +237,29 @@ impl FailSafe {
             NocFlags::empty(),
             NocFlags::empty(),
         )?;
+
+        let fabric = fabrics.fabric_mut(fab_idx)?;
+
         self.state = State::Idle;
         self.breadcrumb = 0;
 
-        Ok(())
+        Ok(fabric)
+    }
+
+    pub fn is_armed_for(&self, caller_fab_idx: u8) -> bool {
+        match self.state {
+            State::Idle => false,
+            State::Armed(ArmedCtx { fab_idx, .. }) => fab_idx == caller_fab_idx,
+        }
+    }
+
+    pub fn check_armed(&self, session_mode: &SessionMode) -> Result<(), Error> {
+        self.check_state(
+            session_mode,
+            NocFlags::empty(),
+            NocFlags::empty(),
+            NocFlags::empty(),
+        )
     }
 
     pub fn add_trusted_root_cert(
@@ -192,8 +267,6 @@ impl FailSafe {
         session_mode: &SessionMode,
         root_ca: &[u8],
     ) -> Result<(), Error> {
-        self.update_state_timeout();
-
         self.check_state(
             session_mode,
             NocFlags::empty(),
@@ -216,8 +289,6 @@ impl FailSafe {
         crypto: C,
         session_mode: &SessionMode,
     ) -> Result<CanonPkcSecretKeyRef<'_>, Error> {
-        self.update_state_timeout();
-
         self.check_state(
             session_mode,
             NocFlags::empty(),
@@ -238,8 +309,6 @@ impl FailSafe {
         crypto: C,
         session_mode: &SessionMode,
     ) -> Result<CanonPkcSecretKeyRef<'_>, Error> {
-        self.update_state_timeout();
-
         // Must be a CASE session
         Self::get_case_fab_idx(session_mode)?;
 
@@ -268,10 +337,8 @@ impl FailSafe {
         icac: Option<&[u8]>,
         noc: &[u8],
         buf: &mut [u8],
-        mdns_notif: &mut dyn FnMut(),
+        mut mdns_notif: impl FnMut(),
     ) -> Result<&'a mut Fabric, Error> {
-        self.update_state_timeout();
-
         let fab_idx = Self::get_case_fab_idx(session_mode)?;
 
         self.check_state(
@@ -297,10 +364,18 @@ impl FailSafe {
             &self.root_ca,
             noc,
             icac.unwrap_or(&[]),
-            mdns_notif,
         )?;
 
+        let State::Armed(ctx) = &mut self.state else {
+            // Impossible to be in any other state because otherwise
+            // check_state would have failed
+            unreachable!();
+        };
+
+        ctx.fab_idx = fabric.fab_idx().get();
         self.add_flags(NocFlags::UPDATE_NOC_RECVD);
+
+        mdns_notif();
 
         Ok(fabric)
     }
@@ -317,10 +392,8 @@ impl FailSafe {
         ipk: &[u8],
         case_admin_subject: u64,
         buf: &mut [u8],
-        mdns_notif: &mut dyn FnMut(),
+        mut mdns_notif: impl FnMut(),
     ) -> Result<&'a mut Fabric, Error> {
-        self.update_state_timeout();
-
         self.check_state(
             session_mode,
             NocFlags::ADD_ROOT_CERT_RECVD | NocFlags::ADD_CSR_REQ_RECVD,
@@ -350,7 +423,6 @@ impl FailSafe {
                 Some(CanonAeadKeyRef::try_new(ipk)?),
                 vendor_id,
                 case_admin_subject,
-                mdns_notif,
             )
             .map_err(|e| {
                 if e.code() == ErrorCode::ResourceExhausted {
@@ -374,11 +446,12 @@ impl FailSafe {
         ctx.fab_idx = fabric.fab_idx().get();
         self.add_flags(NocFlags::ADD_NOC_RECVD);
 
+        mdns_notif();
+
         Ok(fabric)
     }
 
-    pub fn breadcrumb(&mut self) -> u64 {
-        self.update_state_timeout();
+    pub fn breadcrumb(&self) -> u64 {
         self.breadcrumb
     }
 
@@ -477,16 +550,6 @@ impl FailSafe {
         match &mut self.state {
             State::Armed(ctx) => ctx.flags |= flags,
             _ => panic!("Not armed"),
-        }
-    }
-
-    fn update_state_timeout(&mut self) {
-        if let State::Armed(ctx) = &mut self.state {
-            let now = (self.epoch)();
-            if now >= ctx.armed_at + Duration::from_secs(ctx.timeout_secs as u64) {
-                self.state = State::Idle;
-                self.breadcrumb = 0;
-            }
         }
     }
 }
