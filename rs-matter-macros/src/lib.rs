@@ -23,10 +23,10 @@ use proc_macro2::{Ident, Punct};
 use quote::quote;
 
 use rs_matter_macros_impl::{
-    cluster, globals, IdlGenerateContext, CSA_STANDARD_CLUSTERS_IDL_V1_0_0_2,
+    cluster, globals, Idl, IdlGenerateContext, CSA_STANDARD_CLUSTERS_IDL_V1_0_0_2,
     CSA_STANDARD_CLUSTERS_IDL_V1_1_0_2, CSA_STANDARD_CLUSTERS_IDL_V1_2_0_1,
     CSA_STANDARD_CLUSTERS_IDL_V1_3_0_0, CSA_STANDARD_CLUSTERS_IDL_V1_4_0_0,
-    CSA_STANDARD_CLUSTERS_IDL_V1_4_2_0, Idl,
+    CSA_STANDARD_CLUSTERS_IDL_V1_4_2_0,
 };
 
 use syn::{parse::Parse, parse_macro_input, DeriveInput, Token};
