@@ -15,92 +15,13 @@
  *    limitations under the License.
  */
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 
-use quote::quote;
-use rs_matter_codegen::{
-    cluster, globals, Idl, IdlGenerateContext, CSA_STANDARD_CLUSTERS_IDL_V1_4_2_0,
-};
-
-/// Clusters to generate code for.
-/// This list matches the previous `import!()` invocation in `src/dm/clusters.rs`.
-const CLUSTERS: &[&str] = &[
-    "AdministratorCommissioning",
-    "AccessControl",
-    "BasicInformation",
-    "BridgedDeviceBasicInformation",
-    "ContentLauncher",
-    "Descriptor",
-    "EthernetNetworkDiagnostics",
-    "GeneralDiagnostics",
-    "GeneralCommissioning",
-    "GroupKeyManagement",
-    "Groups",
-    "KeypadInput",
-    "LevelControl",
-    "MediaPlayback",
-    "NetworkCommissioning",
-    "OnOff",
-    "OperationalCredentials",
-    "WakeOnLan",
-    "ThreadNetworkDiagnostics",
-    "UnitTesting",
-    "WiFiNetworkDiagnostics",
-];
-
 fn main() {
-    // Tell cargo to rerun if the IDL files change
-    println!(
-        "cargo:rerun-if-changed={}",
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../rs-matter-codegen/src/idl/parser")
-            .display()
-    );
-
-    let idl_file = CSA_STANDARD_CLUSTERS_IDL_V1_4_2_0;
-
-    let idl = match Idl::parse(idl_file.into()) {
-        Ok(result) => result,
-        Err(e) => {
-            let span_bytes = &idl_file.as_bytes()[e.error_location.offset()..];
-            panic!(
-                "Parser failed with {:?}, at\n===\n{}\n===\n",
-                e,
-                String::from_utf8_lossy(&span_bytes[..span_bytes.len().min(256)])
-            );
-        }
-    };
-
-    // When building inside rs-matter itself, the crate name is "crate"
-    let context = IdlGenerateContext::new("crate");
-
-    let cluster_filter: HashSet<&str> = CLUSTERS.iter().copied().collect();
-
-    for name in &cluster_filter {
-        if !idl.clusters.iter().any(|c| c.id == *name) {
-            panic!("Cluster {name} not found in the IDL");
-        }
-    }
-
-    let clusters = idl
-        .clusters
-        .iter()
-        .filter(|c| cluster_filter.contains(c.id.as_str()))
-        .map(|c| cluster(c, &idl.globals, &context));
-    let globals_code = globals(&idl.globals, &context);
-
-    let result = quote!(
-        // IDL-generated code (via build.rs):
-        #globals_code
-
-        #(#clusters)*
-    );
-
-    // Format with prettyplease for readable output
-    let file = syn::parse2(result).expect("Generated code is not valid Rust");
-    let formatted = prettyplease::unparse(&file);
+    // Only re-run when build.rs itself changes.
+    // Changes to the rs-matter-codegen build-dependency are tracked automatically by Cargo.
+    println!("cargo:rerun-if-changed=build.rs");
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    std::fs::write(out_dir.join("clusters_generated.rs"), formatted).unwrap();
+    rs_matter_codegen::generate("crate", &out_dir);
 }

@@ -123,11 +123,19 @@ pub fn idl_attribute_name_to_enum_variant_name(s: &str) -> String {
     }
 }
 
+/// Rust keywords that require raw identifier syntax (`r#name`) when used as identifiers.
+const RUST_KEYWORDS: &[&str] = &[
+    "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern",
+    "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub",
+    "ref", "return", "self", "Self", "static", "struct", "super", "trait", "true", "type",
+    "unsafe", "use", "where", "while", "yield",
+];
+
 /// Create a new proc-macro identifier from a string, with `call_site` span.
 pub fn ident(name: &str) -> Ident {
-    match name {
-        "type" => Ident::new_raw(name, Span::call_site()), // TODO: Enhance with more Rust keywords
-        "match" => Ident::new_raw(name, Span::call_site()), // TODO: Enhance with more Rust keywords
-        _ => Ident::new(name, Span::call_site()),
+    if RUST_KEYWORDS.contains(&name) {
+        Ident::new_raw(name, Span::call_site())
+    } else {
+        Ident::new(name, Span::call_site())
     }
 }

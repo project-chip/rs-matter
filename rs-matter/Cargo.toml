@@ -208,10 +208,6 @@ tokio-stream = { version = "0.1" }
 
 [build-dependencies]
 rs-matter-codegen = { version = "0.1", path = "../rs-matter-codegen" }
-prettyplease = "0.2"
-syn = { version = "2", features = ["full"] }
-quote = "1"
-proc-macro2 = "1"
 
 [dev-dependencies]
 log = "0.4"

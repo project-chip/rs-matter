@@ -61,9 +61,6 @@ use crate::utils::sync::Notification;
 
 use rand_core::RngCore;
 
-/// Re-export the `rs_matter_macros::import` proc-macro
-pub use rs_matter_macros::import;
-
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
