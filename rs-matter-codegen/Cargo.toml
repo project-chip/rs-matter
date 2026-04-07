@@ -1,5 +1,5 @@
 [package]
-name = "rs-matter-macros-impl"
+name = "rs-matter-codegen"
 version = "0.1.0"
 edition = "2021"
 authors = [
@@ -7,7 +7,7 @@ authors = [
         "Ivan Markov",
         "Project CHIP Authors",
 ]
-description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - IDL codegen library"
+description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - IDL parser and code generation"
 repository = "https://github.com/project-chip/matter-rs"
 readme = "README.md"
 keywords = ["matter", "smart", "smart-home", "IoT", "ESP32"]
@@ -25,8 +25,8 @@ nom_locate = "4.2"
 convert_case = "0.6"
 thiserror = "1"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["regex", "json"] }
 
 [dev-dependencies]
 assert-tokenstreams-eq = "0.1.0"
 rstest = "0.18.2"
+tracing-subscriber = { version = "0.3", features = ["regex", "json"] }

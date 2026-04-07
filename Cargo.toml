@@ -3,7 +3,7 @@ resolver = "2"
 members = [
         "rs-matter",
         "rs-matter-macros",
-        "rs-matter-macros-impl",
+        "rs-matter-codegen",
         "examples",
 ]
 

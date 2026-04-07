@@ -19,7 +19,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use quote::quote;
-use rs_matter_macros_impl::{
+use rs_matter_codegen::{
     cluster, globals, Idl, IdlGenerateContext, CSA_STANDARD_CLUSTERS_IDL_V1_4_2_0,
 };
 
@@ -54,7 +54,7 @@ fn main() {
     println!(
         "cargo:rerun-if-changed={}",
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../rs-matter-macros-impl/src/idl/parser")
+            .join("../rs-matter-codegen/src/idl/parser")
             .display()
     );
 
@@ -67,7 +67,7 @@ fn main() {
             panic!(
                 "Parser failed with {:?}, at\n===\n{}\n===\n",
                 e,
-                core::str::from_utf8(&span_bytes[..span_bytes.len().min(256)]).unwrap()
+                String::from_utf8_lossy(&span_bytes[..span_bytes.len().min(256)])
             );
         }
     };

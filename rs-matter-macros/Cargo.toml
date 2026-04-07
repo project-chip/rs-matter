@@ -14,17 +14,24 @@ keywords = ["matter", "smart", "smart-home", "IoT", "ESP32"]
 categories = ["embedded", "network-programming"]
 license = "Apache-2.0"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 proc-macro = true
 
 [dependencies]
-rs-matter-macros-impl = { version = "0.1", path = "../rs-matter-macros-impl" }
 syn = { version = "2", features = ["extra-traits", "parsing"] }
 quote = "1"
 proc-macro2 = "1"
 proc-macro-crate = "3"
+miette = { version = "7", features = ["fancy"] }
+nom = "7"
+nom-greedyerror = "0.5"
+nom-supreme = "0.8"
+nom_locate = "4.2"
+convert_case = "0.6"
+thiserror = "1"
+tracing = "0.1"
 
 [dev-dependencies]
 assert-tokenstreams-eq = "0.1.0"
 rstest = "0.18.2"
+tracing-subscriber = { version = "0.3", features = ["regex", "json"] }

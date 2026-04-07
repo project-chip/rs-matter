@@ -22,8 +22,8 @@ use proc_macro2::{Ident, Punct};
 
 use quote::quote;
 
-use rs_matter_macros_impl::{
-    cluster, globals, Idl, IdlGenerateContext, CSA_STANDARD_CLUSTERS_IDL_V1_0_0_2,
+use crate::idl::{
+    cluster, globals, IdlGenerateContext, CSA_STANDARD_CLUSTERS_IDL_V1_0_0_2,
     CSA_STANDARD_CLUSTERS_IDL_V1_1_0_2, CSA_STANDARD_CLUSTERS_IDL_V1_2_0_1,
     CSA_STANDARD_CLUSTERS_IDL_V1_3_0_0, CSA_STANDARD_CLUSTERS_IDL_V1_4_0_0,
     CSA_STANDARD_CLUSTERS_IDL_V1_4_2_0,
@@ -31,6 +31,7 @@ use rs_matter_macros_impl::{
 
 use syn::{parse::Parse, parse_macro_input, DeriveInput, Token};
 
+mod idl;
 mod tlv;
 
 /// Generate code that derives `FromTLV` for the provided Rust type.
@@ -77,7 +78,7 @@ pub fn import(item: TokenStream) -> TokenStream {
         Some(other) => panic!("Unknown Matter specification version: {other}"),
     };
 
-    let idl = match Idl::parse(idl_file.into()) {
+    let idl = match crate::idl::Idl::parse(idl_file.into()) {
         Ok(result) => result,
         Err(e) => {
             let span_bytes = &idl_file.as_bytes()[e.error_location.offset()..];
@@ -147,6 +148,11 @@ pub fn import(item: TokenStream) -> TokenStream {
             );
         }
     }
+
+    // Print the output before returning it
+    // println!("--- Generated Code Output ---");
+    // println!("{}", result.to_string()); // Print as a String for easy reading
+    // println!("-----------------------------");
 
     result.into()
 }

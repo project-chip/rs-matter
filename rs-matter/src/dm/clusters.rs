@@ -40,6 +40,14 @@ pub mod unit_testing;
 pub mod wifi_diag;
 
 /// Generated cluster declarations from Matter IDL (via build.rs).
+#[allow(
+    clippy::all,
+    unused_variables,
+    unused_mut,
+    unreachable_patterns,
+    noop_method_call,
+    mismatched_lifetime_syntaxes
+)]
 pub mod decl {
     include!(concat!(env!("OUT_DIR"), "/clusters_generated.rs"));
 }
