@@ -206,6 +206,13 @@ bluer = { version = "0.17", features = ["bluetoothd"] }
 tokio = { version = "1", features = ["sync"] }
 tokio-stream = { version = "0.1" }
 
+[build-dependencies]
+rs-matter-macros-impl = { version = "0.1", path = "../rs-matter-macros-impl" }
+prettyplease = "0.2"
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
+
 [dev-dependencies]
 log = "0.4"
 env_logger = "0.11"

@@ -39,30 +39,7 @@ pub mod thread_diag;
 pub mod unit_testing;
 pub mod wifi_diag;
 
-/// This module imports all system clusters that are used by the `rs-matter` itself.
+/// Generated cluster declarations from Matter IDL (via build.rs).
 pub mod decl {
-
-    crate::import!(
-        AdministratorCommissioning,
-        AccessControl,
-        BasicInformation,
-        BridgedDeviceBasicInformation, // TODO: Fix with #342
-        ContentLauncher,               // TODO: Fix with #342
-        Descriptor,
-        EthernetNetworkDiagnostics,
-        GeneralDiagnostics,
-        GeneralCommissioning,
-        GroupKeyManagement,
-        Groups,
-        KeypadInput,   // TODO: Fix with #342
-        LevelControl,  // TODO: Fix with #342
-        MediaPlayback, // TODO: Fix with #342
-        NetworkCommissioning,
-        OnOff, // TODO: Fix with #342
-        OperationalCredentials,
-        WakeOnLan,
-        ThreadNetworkDiagnostics,
-        UnitTesting, // TODO: Fix with #342
-        WiFiNetworkDiagnostics,
-    );
+    include!(concat!(env!("OUT_DIR"), "/clusters_generated.rs"));
 }
