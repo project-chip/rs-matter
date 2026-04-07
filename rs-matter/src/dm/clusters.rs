@@ -42,6 +42,7 @@ pub mod wifi_diag;
 /// Generated cluster declarations from Matter IDL (via build.rs).
 #[allow(
     clippy::all,
+    dead_code,
     unused_variables,
     unused_mut,
     unreachable_patterns,
