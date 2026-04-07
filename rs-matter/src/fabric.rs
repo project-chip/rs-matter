@@ -380,7 +380,6 @@ impl Fabric {
         epoch_key: Option<CanonAeadKeyRef<'_>>,
         vendor_id: Option<u16>,
         case_admin_subject: Option<u64>,
-        mdns_notif: &mut dyn FnMut(),
     ) -> Result<(), Error> {
         self.root_ca
             .extend_from_slice(root_ca)
@@ -426,8 +425,6 @@ impl Fabric {
         }
 
         self.secret_key.load(secret_key);
-
-        mdns_notif();
 
         Ok(())
     }
@@ -795,21 +792,32 @@ impl Fabrics {
     ) -> Result<(), Error> {
         self.reset();
 
-        for idx in 1..=255u8 {
-            if let Some(data) = store.load(FABRIC_KEYS_START + idx as u16, buf)? {
-                self.fabrics
-                    .push_init(Fabric::init_from_tlv(TLVElement::new(data)), || {
-                        ErrorCode::ResourceExhausted.into()
-                    })?;
+        for fab_idx in 1..=255u8 {
+            self.add_load(fab_idx, &mut store, buf)?;
+        }
 
-                let fabric = unwrap!(self.fabrics.last());
+        Ok(())
+    }
 
-                info!(
-                    "Loaded fabric {} with ID {:x} from storage",
-                    fabric.fab_idx(),
-                    fabric.compressed_fabric_id()
-                );
-            }
+    pub(crate) fn add_load<S: KvBlobStore>(
+        &mut self,
+        fab_idx: u8,
+        mut store: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        if let Some(data) = store.load(FABRIC_KEYS_START + fab_idx as u16, buf)? {
+            self.fabrics
+                .push_init(Fabric::init_from_tlv(TLVElement::new(data)), || {
+                    ErrorCode::ResourceExhausted.into()
+                })?;
+
+            let fabric = unwrap!(self.fabrics.last());
+
+            info!(
+                "Loaded fabric {} with ID {:x} from storage",
+                fabric.fab_idx(),
+                fabric.compressed_fabric_id()
+            );
         }
 
         Ok(())
@@ -869,7 +877,6 @@ impl Fabrics {
         epoch_key: Option<CanonAeadKeyRef<'_>>,
         vendor_id: u16,
         case_admin_subject: u64,
-        mdns_notif: &mut dyn FnMut(),
     ) -> Result<&mut Fabric, Error> {
         self.add_with_post_init(|fabric| {
             fabric.update(
@@ -881,7 +888,6 @@ impl Fabrics {
                 epoch_key,
                 Some(vendor_id),
                 Some(case_admin_subject),
-                mdns_notif,
             )
         })
     }
@@ -900,7 +906,6 @@ impl Fabrics {
         root_ca: &[u8],
         noc: &[u8],
         icac: &[u8],
-        mdns_notif: &mut dyn FnMut(),
     ) -> Result<&mut Fabric, Error> {
         let Some(fabric) = self
             .fabrics
@@ -910,9 +915,7 @@ impl Fabrics {
             return Err(ErrorCode::NotFound.into());
         };
 
-        fabric.update(
-            crypto, root_ca, noc, icac, secret_key, None, None, None, mdns_notif,
-        )?;
+        fabric.update(crypto, root_ca, noc, icac, secret_key, None, None, None)?;
 
         Ok(fabric)
     }
@@ -935,18 +938,12 @@ impl Fabrics {
     }
 
     /// Remove a fabric from the fabrics
-    pub fn remove(
-        &mut self,
-        fab_idx: NonZeroU8,
-        mdns_notif: &mut dyn FnMut(),
-    ) -> Result<(), Error> {
+    pub fn remove(&mut self, fab_idx: NonZeroU8) -> Result<(), Error> {
         if self.get(fab_idx).is_none() {
             return Err(ErrorCode::NotFound.into());
         }
 
         self.fabrics.retain(|fabric| fabric.fab_idx != fab_idx);
-
-        mdns_notif();
 
         Ok(())
     }

@@ -26,24 +26,19 @@
 //!   multicast packets sent by the device are received by the controller on the
 //!   same host.
 
-use rs_matter::dm::ChangeNotify;
 use rs_matter::Matter;
 use rs_matter::{crypto::Crypto, error::Error};
 
 #[allow(unused)]
-pub async fn run_mdns<C: Crypto>(
-    matter: &Matter<'_>,
-    crypto: C,
-    notify: &dyn ChangeNotify,
-) -> Result<(), Error> {
+pub async fn run_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(), Error> {
     #[cfg(feature = "astro-dnssd")]
     rs_matter::transport::network::mdns::astro::AstroMdnsResponder::new(matter)
-        .run(|endpt_id, clust_id, attr_id| notify.notify(endpt_id, clust_id, attr_id))
+        .run()
         .await?;
 
     #[cfg(all(feature = "zeroconf", not(feature = "astro-dnssd")))]
     rs_matter::transport::network::mdns::zeroconf::ZeroconfMdnsResponder::new(matter)
-        .run(|endpt_id, clust_id, attr_id| notify.notify(endpt_id, clust_id, attr_id))
+        .run()
         .await?;
 
     // Both `avahi` and `resolve` modules are compiled under the single `zbus`
@@ -55,24 +50,17 @@ pub async fn run_mdns<C: Crypto>(
         not(any(feature = "zeroconf", feature = "astro-dnssd"))
     ))]
     rs_matter::transport::network::mdns::avahi::AvahiMdnsResponder::new(matter)
-        .run(
-            &rs_matter::utils::zbus::Connection::system().await.unwrap(),
-            |endpt_id, clust_id, attr_id| notify.notify(endpt_id, clust_id, attr_id),
-        )
+        .run(&rs_matter::utils::zbus::Connection::system().await.unwrap())
         .await?;
 
     #[cfg(not(any(feature = "zbus", feature = "zeroconf", feature = "astro-dnssd")))]
-    run_builtin_mdns(matter, crypto, notify).await?;
+    run_builtin_mdns(matter, crypto).await?;
 
     Ok(())
 }
 
 #[allow(unused)]
-async fn run_builtin_mdns<C: Crypto>(
-    matter: &Matter<'_>,
-    crypto: C,
-    notify: &dyn ChangeNotify,
-) -> Result<(), Error> {
+async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(), Error> {
     use std::net::UdpSocket;
 
     use log::info;
@@ -150,7 +138,7 @@ async fn run_builtin_mdns<C: Crypto>(
         .get_ref()
         .join_multicast_v4(&MDNS_IPV4_BROADCAST_ADDR, &ipv4_addr)?;
 
-    BuiltinMdnsResponder::new(matter, crypto, notify)
+    BuiltinMdnsResponder::new(matter, crypto)
         .run(
             &socket,
             &socket,

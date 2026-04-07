@@ -30,7 +30,7 @@ use rand::{CryptoRng, RngCore};
 use rs_matter::crypto::backend::rustcrypto::RustCrypto;
 use rs_matter::crypto::Crypto;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
-use rs_matter::dm::clusters::net_comm::NetworkType;
+use rs_matter::dm::clusters::net_comm::{DummyNetworkAccess, NetworkType};
 use rs_matter::dm::clusters::on_off::NoLevelControl;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
@@ -146,6 +146,7 @@ fn run() -> Result<(), Error> {
         NO_EVENTS,
         (NODE, dm_handler(rand, on_off_handler)),
         SharedKvBlobStore::new(kv, kv_buf),
+        DummyNetworkAccess,
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -172,11 +173,11 @@ fn run() -> Result<(), Error> {
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
         core::mem::size_of_val(&matter.run(crypto, &socket, &socket, &socket)),
-        core::mem::size_of_val(&mdns::run_mdns(matter, crypto, dm.change_notify()))
+        core::mem::size_of_val(&mdns::run_mdns(matter, crypto))
     );
 
     // Run the Matter and mDNS transports
-    let mdns = mdns::run_mdns(matter, crypto, dm.change_notify());
+    let mdns = mdns::run_mdns(matter, crypto);
     let transport = matter.run(crypto, &socket, &socket, &socket);
 
     if !matter.is_commissioned() {

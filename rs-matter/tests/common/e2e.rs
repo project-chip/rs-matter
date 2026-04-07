@@ -23,6 +23,7 @@ use embassy_sync::zerocopy_channel::{Channel, Receiver, Sender};
 
 use rs_matter::acl::{AclEntry, AuthMode};
 use rs_matter::crypto::{test_only_crypto, Crypto};
+use rs_matter::dm::clusters::net_comm::DummyNetworkAccess;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::events::Events;
 use rs_matter::dm::subscriptions::Subscriptions;
@@ -189,6 +190,7 @@ impl<C: Crypto> E2eRunner<C> {
             Some(&self.events),
             handler,
             DummyKvBlobStoreAccess,
+            DummyNetworkAccess,
         );
 
         let responder = Responder::new_default(&dm);

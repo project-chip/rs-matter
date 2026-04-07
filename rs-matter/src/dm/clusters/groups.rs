@@ -120,7 +120,13 @@ impl ClusterHandler for GroupsHandler {
 
             match fabric.groups_mut().add(endpoint_id, group_id, group_name) {
                 Ok(_) => {
-                    persist.store(fabric)?;
+                    // NOTE: Not sure this is a spec-compliant behavor:
+                    // If the failsafe is armed for our fabric, we'll NOT persist the group changes until commissioning is complete.
+                    // And we'll LOSE those changes if the failsafe times out before commissioning completes.
+                    if !state.failsafe.is_armed_for(fab_idx.get()) {
+                        persist.store(fabric)?;
+                    }
+
                     ctx.exchange().matter().notify_groups_changed();
 
                     Ok(IMStatusCode::Success)
@@ -245,7 +251,13 @@ impl ClusterHandler for GroupsHandler {
 
             // Steps 2-3: Remove membership
             if fabric.groups_mut().remove(endpoint_id, Some(group_id)) {
-                persist.store(fabric)?;
+                // NOTE: Not sure this is a spec-compliant behavor:
+                // If the failsafe is armed for our fabric, we'll NOT persist the group changes until commissioning is complete.
+                // And we'll LOSE those changes if the failsafe times out before commissioning completes.
+                if !state.failsafe.is_armed_for(fab_idx.get()) {
+                    persist.store(fabric)?;
+                }
+
                 ctx.exchange().matter().notify_groups_changed();
 
                 Ok(IMStatusCode::Success)
@@ -271,7 +283,13 @@ impl ClusterHandler for GroupsHandler {
 
             fabric.groups_mut().remove(endpoint_id, None);
 
-            persist.store(fabric)?;
+            // NOTE: Not sure this is a spec-compliant behavor:
+            // If the failsafe is armed for our fabric, we'll NOT persist the group changes until commissioning is complete.
+            // And we'll LOSE those changes if the failsafe times out before commissioning completes.
+            if !state.failsafe.is_armed_for(fab_idx.get()) {
+                persist.store(fabric)?;
+            }
+
             ctx.exchange().matter().notify_groups_changed();
 
             Ok(())

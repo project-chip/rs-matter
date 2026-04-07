@@ -138,6 +138,8 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     futures_lite::future::block_on(matter.load_persist(&mut kv, &mut kv_buf))?;
     futures_lite::future::block_on(networks.load_persist(&mut kv, &mut kv_buf))?;
 
+    let networks = SharedNetworks::new(networks);
+
     // Create the transport buffers
     let buffers = PooledBuffers::<10, _>::new(0);
 
@@ -171,13 +173,9 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         &buffers,
         &subscriptions,
         Some(&events),
-        dm_handler(
-            rand,
-            &on_off_handler,
-            SharedNetworks::new(networks),
-            &net_ctl,
-        ),
+        dm_handler(rand, &on_off_handler, &networks, &net_ctl),
         SharedKvBlobStore::new(kv, kv_buf.as_mut_slice()),
+        &networks,
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -192,7 +190,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     let mut dm_job = pin!(dm.run());
 
     // Create and run the mDNS responder
-    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, dm.change_notify()));
+    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto));
 
     if !matter.is_commissioned() {
         // Not commissioned yet, start commissioning first

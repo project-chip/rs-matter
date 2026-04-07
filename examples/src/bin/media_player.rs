@@ -54,7 +54,7 @@ use rs_matter::dm::clusters::decl::media_playback::{
 
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
-use rs_matter::dm::clusters::net_comm::NetworkType;
+use rs_matter::dm::clusters::net_comm::{DummyNetworkAccess, NetworkType};
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_CASTING_VIDEO_PLAYER;
@@ -127,6 +127,7 @@ fn main() -> Result<(), Error> {
         Some(&events),
         dm_handler(rand, &on_off_handler),
         SharedKvBlobStore::new(kv, kv_buf.as_mut_slice()),
+        DummyNetworkAccess,
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -144,7 +145,7 @@ fn main() -> Result<(), Error> {
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
     // Run the Matter and mDNS transports
-    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, dm.change_notify()));
+    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto));
     let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
     if !matter.is_commissioned() {

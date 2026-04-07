@@ -21,10 +21,11 @@ use core::num::NonZeroU8;
 use core::pin::pin;
 use core::time::Duration;
 
-use embassy_futures::select::select3;
+use embassy_futures::select::{select, select3};
 use embassy_time::{Instant, Timer};
 
 use crate::crypto::Crypto;
+use crate::dm::clusters::net_comm;
 use crate::error::{Error, ErrorCode};
 use crate::im::{
     IMStatusCode, InvReq, InvRespTag, OpCode, ReadReq, ReportDataReq, ReportDataRespTag,
@@ -35,6 +36,7 @@ use crate::persist::KvBlobStoreAccess;
 use crate::respond::ExchangeHandler;
 use crate::tlv::{get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite};
 use crate::transport::exchange::{Exchange, MAX_EXCHANGE_RX_BUF_SIZE, MAX_EXCHANGE_TX_BUF_SIZE};
+use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::BufferAccess;
 use crate::utils::storage::{Vec, WriteBuf};
 use crate::utils::sync::blocking::raw::MatterRawMutex;
@@ -74,7 +76,7 @@ struct SubscriptionBuffer<B> {
 
 /// An `ExchangeHandler` implementation capable of handling responder exchanges for the Interaction Model protocol.
 /// The implementation needs a `DataModelHandler` instance to interact with the underlying clusters of the data model.
-pub struct DataModel<'a, const NS: usize, const NE: usize, C, B, T, S>
+pub struct DataModel<'a, const NS: usize, const NE: usize, C, B, T, S, N>
 where
     B: BufferAccess<IMBuffer>,
 {
@@ -85,15 +87,17 @@ where
     subscriptions: &'a Subscriptions<NS>,
     subscriptions_buffers: Mutex<RefCell<Vec<SubscriptionBuffer<B::Buffer<'a>>, NS>>>,
     events: Option<&'a Events<NE>>,
+    wireless_networks: N,
     handler: T,
 }
 
-impl<'a, const NS: usize, const NE: usize, C, B, T, S> DataModel<'a, NS, NE, C, B, T, S>
+impl<'a, const NS: usize, const NE: usize, C, B, T, S, N> DataModel<'a, NS, NE, C, B, T, S, N>
 where
     C: Crypto,
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStoreAccess,
+    N: net_comm::NetworksAccess,
 {
     /// Create the data model.
     ///
@@ -107,7 +111,9 @@ where
     ///   clusters of the data model. Note that the expectations is for the user to provide a handler that handles the Matter system clusters
     ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods
     /// - `kv` - an instance of type `S` which implements the `KvBlobStoreAccess` trait. This instance is used for interacting with the key-value blob store.
+    /// - `wireless_networks` - an instance of type `N` which implements the `net_comm::NetworksAccess` trait. This instance is used for interacting with the network management cluster.
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         matter: &'a Matter<'a>,
         crypto: C,
@@ -116,6 +122,7 @@ where
         events: Option<&'a Events<NE>>,
         handler: T,
         kv: S,
+        wireless_networks: N,
     ) -> Self {
         Self {
             matter,
@@ -126,6 +133,7 @@ where
             events,
             handler,
             kv,
+            wireless_networks,
         }
     }
 
@@ -160,7 +168,43 @@ where
             self.change_notify(),
         );
 
-        self.handler.run(&ctx).await
+        let mut timeouts = pin!(self.run_timeout_checks());
+        let mut handler = pin!(self.handler.run(&ctx));
+
+        select(&mut timeouts, &mut handler).coalesce().await
+    }
+
+    async fn run_timeout_checks(&self) -> Result<(), Error> {
+        const CHECK_INTERVAL_SECS: u64 = 1;
+
+        loop {
+            Timer::after_secs(CHECK_INTERVAL_SECS).await;
+
+            self.timeout_checks()?;
+        }
+    }
+
+    fn timeout_checks(&self) -> Result<(), Error> {
+        let mut notify_mdns = || self.matter.notify_mdns();
+        let mut notify_change =
+            |endpt_id, clust_id, attr_id| self.change_notify().notify(endpt_id, clust_id, attr_id);
+
+        self.matter.with_state(|state| {
+            // Disarm the failsafe on timeout
+            state.failsafe.check_failsafe_timeout(
+                &mut state.fabrics,
+                &self.wireless_networks,
+                &self.kv,
+                &mut notify_mdns,
+            )?;
+
+            // Close the commissioning window on timeout
+            state
+                .pase
+                .check_comm_window_timeout(&mut notify_mdns, &mut notify_change)?;
+
+            Ok(())
+        })
     }
 
     /// Answer a responding exchange using the `DataModelHandler` instance wrapped by this exchange handler.
@@ -192,6 +236,8 @@ where
         } else {
             None
         };
+
+        self.timeout_checks()?;
 
         // TODO: Handle the cases where we receive a timeout request
         // before read and subscribe. This is probably not allowed.
@@ -870,13 +916,14 @@ where
     }
 }
 
-impl<const NS: usize, const NE: usize, C, B, T, S> ExchangeHandler
-    for DataModel<'_, NS, NE, C, B, T, S>
+impl<const NS: usize, const NE: usize, C, B, T, S, N> ExchangeHandler
+    for DataModel<'_, NS, NE, C, B, T, S, N>
 where
     C: Crypto,
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStoreAccess,
+    N: net_comm::NetworksAccess,
 {
     fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
         DataModel::handle(self, exchange)

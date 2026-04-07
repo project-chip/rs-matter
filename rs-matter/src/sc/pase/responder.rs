@@ -118,7 +118,11 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
 
         let has_comm_window = {
             exchange.with_state(|state| {
-                if let Some(comm_window) = state.pase.comm_window(notify_mdns, notify_change)? {
+                state
+                    .pase
+                    .check_comm_window_timeout(notify_mdns, notify_change)?;
+
+                if let Some(comm_window) = state.pase.comm_window() {
                     salt.load(comm_window.verifier.salt.reference());
                     count = comm_window.verifier.count;
 
@@ -207,7 +211,11 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
 
         let has_comm_window = {
             exchange.with_state(|state| {
-                if let Some(comm_window) = state.pase.comm_window(notify_mdns, notify_change)? {
+                state
+                    .pase
+                    .check_comm_window_timeout(notify_mdns, notify_change)?;
+
+                if let Some(comm_window) = state.pase.comm_window() {
                     self.spake2p.setup_verifier(
                         &self.crypto,
                         &comm_window.verifier,

@@ -365,6 +365,18 @@ impl BasicInfoSettings {
         Ok(())
     }
 
+    /// Load basic info settings from the provided byte slice
+    pub fn load(&mut self, data: &[u8]) -> Result<(), Error> {
+        let info = Self::from_tlv(&TLVElement::new(data))?;
+
+        self.node_label = info.node_label;
+        self.location = info.location;
+        self.location_type = info.location_type;
+        self.local_config_disabled = info.local_config_disabled;
+
+        Ok(())
+    }
+
     /// Load all basic info settings from the provided BLOB store
     ///
     /// # Arguments
@@ -378,12 +390,7 @@ impl BasicInfoSettings {
         self.reset();
 
         if let Some(data) = store.load(BASIC_INFO_KEY, buf)? {
-            let info = Self::from_tlv(&TLVElement::new(data))?;
-
-            self.node_label = info.node_label;
-            self.location = info.location;
-            self.location_type = info.location_type;
-            self.local_config_disabled = info.local_config_disabled;
+            self.load(data)?;
 
             info!("Loaded basic info settings from storage");
         }

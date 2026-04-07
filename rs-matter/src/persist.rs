@@ -103,6 +103,20 @@ where
     }
 }
 
+impl KvBlobStore for &mut dyn KvBlobStore {
+    fn load<'a>(&mut self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+        (**self).load(key, buf)
+    }
+
+    fn store(&mut self, key: u16, data: &[u8], buf: &mut [u8]) -> Result<(), Error> {
+        (**self).store(key, data, buf)
+    }
+
+    fn remove(&mut self, key: u16, buf: &mut [u8]) -> Result<(), Error> {
+        (**self).remove(key, buf)
+    }
+}
+
 /// A noop implementation of the `KvBlobStore` trait.
 pub struct DummyKvBlobStore;
 
