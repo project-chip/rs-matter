@@ -73,22 +73,24 @@ pub fn cluster(cluster: &Cluster, globals: &Entities, context: &IdlGenerateConte
     cluster_internal(cluster, globals, true, context)
 }
 
-fn cluster_internal(
+/// Return the module name and inner content for a cluster, without the outer `pub mod` wrapper.
+/// Useful for generating per-cluster files.
+pub fn cluster_content(
+    cluster: &Cluster,
+    globals: &Entities,
+    context: &IdlGenerateContext,
+) -> (String, TokenStream) {
+    let module_name = id::idl_field_name_to_rs_name(&cluster.id);
+    let content = cluster_content_internal(cluster, globals, true, context);
+    (module_name, content)
+}
+
+fn cluster_content_internal(
     cluster: &Cluster,
     globals: &Entities,
     with_async: bool,
     context: &IdlGenerateContext,
 ) -> TokenStream {
-    let cluster_module_name = Ident::new(
-        &id::idl_field_name_to_rs_name(&cluster.id),
-        Span::call_site(),
-    );
-
-    let cluster_module_doc = Literal::string(&format!(
-        "This module contains generated Rust types for the \"{}\" cluster",
-        cluster.id
-    ));
-
     let entities = &EntityContext::new(Some(&cluster.entities), globals);
     let bitmaps = bitmap::bitmaps(&cluster.entities.bitmaps, context);
     let enums = enumeration::enums(&cluster.entities.enums, context);
@@ -131,7 +133,7 @@ fn cluster_internal(
         #handler_adaptor
     );
 
-    let quote = if with_async {
+    if with_async {
         let async_handler = handler::handler(true, false, cluster, globals, context);
         let async_handler_inherent_impl = handler::handler(true, true, cluster, globals, context);
         let async_handler_adaptor = handler::handler_adaptor(true, cluster, globals, context);
@@ -147,7 +149,26 @@ fn cluster_internal(
         )
     } else {
         quote
-    };
+    }
+}
+
+fn cluster_internal(
+    cluster: &Cluster,
+    globals: &Entities,
+    with_async: bool,
+    context: &IdlGenerateContext,
+) -> TokenStream {
+    let cluster_module_name = Ident::new(
+        &id::idl_field_name_to_rs_name(&cluster.id),
+        Span::call_site(),
+    );
+
+    let cluster_module_doc = Literal::string(&format!(
+        "This module contains generated Rust types for the \"{}\" cluster",
+        cluster.id
+    ));
+
+    let quote = cluster_content_internal(cluster, globals, with_async, context);
 
     quote!(
         #[doc = #cluster_module_doc]

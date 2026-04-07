@@ -206,6 +206,9 @@ bluer = { version = "0.17", features = ["bluetoothd"] }
 tokio = { version = "1", features = ["sync"] }
 tokio-stream = { version = "0.1" }
 
+[build-dependencies]
+rs-matter-codegen = { version = "0.1", path = "../rs-matter-codegen" }
+
 [dev-dependencies]
 log = "0.4"
 env_logger = "0.11"

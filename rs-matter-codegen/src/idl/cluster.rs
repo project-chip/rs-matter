@@ -22,9 +22,70 @@
 use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
+use std::collections::HashSet;
+
 use super::id::{ident, idl_attribute_name_to_enum_variant_name};
 use super::parser::{AccessPrivilege, Cluster, Entities, EntityContext, StructType};
 use super::IdlGenerateContext;
+
+/// Check whether a given cluster references any types defined in globals.
+///
+/// Collects all type names referenced in the cluster's struct fields, attribute fields,
+/// event fields, and command input/output types, then checks if any of those names
+/// correspond to a global type (struct, enum, or bitmap) that is not also defined
+/// locally in the cluster.
+fn cluster_uses_globals(cluster: &Cluster, globals: &Entities) -> bool {
+    let global_names: HashSet<&str> = globals
+        .structs
+        .iter()
+        .map(|s| s.id.as_str())
+        .chain(globals.enums.iter().map(|e| e.id.as_str()))
+        .chain(globals.bitmaps.iter().map(|b| b.id.as_str()))
+        .collect();
+
+    if global_names.is_empty() {
+        return false;
+    }
+
+    let local_names: HashSet<&str> = cluster
+        .entities
+        .structs
+        .iter()
+        .map(|s| s.id.as_str())
+        .chain(cluster.entities.enums.iter().map(|e| e.id.as_str()))
+        .chain(cluster.entities.bitmaps.iter().map(|b| b.id.as_str()))
+        .collect();
+
+    // Collect all type names referenced in fields across structs, attributes, events
+    let struct_field_types = cluster
+        .entities
+        .structs
+        .iter()
+        .flat_map(|s| s.fields.iter().map(|f| f.field.data_type.name.as_str()));
+
+    let attr_field_types = cluster
+        .attributes
+        .iter()
+        .map(|a| a.field.field.data_type.name.as_str());
+
+    let event_field_types = cluster
+        .events
+        .iter()
+        .flat_map(|e| e.fields.iter().map(|f| f.field.data_type.name.as_str()));
+
+    let command_types = cluster.commands.iter().flat_map(|c| {
+        c.input
+            .iter()
+            .map(|s| s.as_str())
+            .chain(core::iter::once(c.output.as_str()))
+    });
+
+    struct_field_types
+        .chain(attr_field_types)
+        .chain(event_field_types)
+        .chain(command_types)
+        .any(|name| global_names.contains(name) && !local_names.contains(name))
+}
 
 pub(crate) const NO_RESPONSE: &str = "DefaultSuccess";
 pub(crate) const GLOBAL_ATTR: core::ops::Range<u64> = 0xfff8..0xfffe;
@@ -445,10 +506,7 @@ pub fn cluster(cluster: &Cluster, globals: &Entities, context: &IdlGenerateConte
 
     let cluster_id = Literal::u32_unsuffixed(cluster.code as u32);
     let cluster_revision = Literal::u16_unsuffixed(cluster.revision as u16);
-    let import_globals = if !globals.enums.is_empty()
-        || !globals.structs.is_empty()
-        || !globals.bitmaps.is_empty()
-    {
+    let import_globals = if cluster_uses_globals(cluster, globals) {
         quote!(
             use #krate::dm::clusters::decl::globals::*;
         )
