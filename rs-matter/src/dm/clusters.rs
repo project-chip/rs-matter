@@ -60,6 +60,7 @@ pub mod decl {
         NetworkCommissioning,
         OnOff, // TODO: Fix with #342
         OperationalCredentials,
+        WakeOnLan,
         ThreadNetworkDiagnostics,
         UnitTesting, // TODO: Fix with #342
         WiFiNetworkDiagnostics,
