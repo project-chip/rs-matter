@@ -534,25 +534,29 @@ impl Service<'_> {
         match matter_service {
             MatterMdnsService::Commissioned { .. } => {
                 // Matter Core Spec Section 4.3.1 — Operational Discovery TXT records
-                let mut sai_str = heapless::String::<5>::new();
-                let mut sii_str = heapless::String::<5>::new();
+                // Use a plain array to avoid heapless::Vec monomorphization cost.
+                let mut sai_str = heapless::String::<10>::new();
+                let mut sii_str = heapless::String::<10>::new();
 
-                let mut txt_kvs = heapless::Vec::<_, 3>::new();
+                let mut txt_kvs: [(&str, &str); 3] = [("", ""); 3];
+                let mut txt_count = 0;
 
                 if let Some(sai) = dev_det.sai {
                     write_unwrap!(sai_str, "{}", sai);
-                    unwrap!(txt_kvs.push(("SAI", sai_str.as_str())));
+                    txt_kvs[txt_count] = ("SAI", sai_str.as_str());
+                    txt_count += 1;
                 }
 
                 if let Some(sii) = dev_det.sii {
                     write_unwrap!(sii_str, "{}", sii);
-                    unwrap!(txt_kvs.push(("SII", sii_str.as_str())));
+                    txt_kvs[txt_count] = ("SII", sii_str.as_str());
+                    txt_count += 1;
                 }
 
-                // If no TXT records configured, use dummy to satisfy mDNS
-                // responders that reject empty TXT records
-                if txt_kvs.is_empty() {
-                    unwrap!(txt_kvs.push(("dummy", "dummy")));
+                // Some mDNS responders do not accept empty TXT records
+                if txt_count == 0 {
+                    txt_kvs[0] = ("dummy", "dummy");
+                    txt_count = 1;
                 }
 
                 f(&Service {
@@ -562,7 +566,7 @@ impl Service<'_> {
                     service_protocol: "_matter._tcp",
                     port: matter_port,
                     service_subtypes: &[],
-                    txt_kvs: txt_kvs.as_slice(),
+                    txt_kvs: &txt_kvs[..txt_count],
                 })
                 .await
             }
