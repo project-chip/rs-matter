@@ -17,7 +17,7 @@
 
 use rand_core::RngCore;
 
-use crate::dm::clusters::net_comm::{NetworksAccess, SharedNetworks};
+use crate::dm::networks::eth::EthNetCtl;
 use crate::{devices, handler_chain_type};
 
 use super::clusters::acl::{self, AclHandler, ClusterHandler as _};
@@ -35,7 +35,6 @@ use super::clusters::net_comm::{
 use super::clusters::noc::{self, ClusterHandler as _, NocHandler};
 use super::clusters::thread_diag::{self, ClusterHandler as _, ThreadDiag, ThreadDiagHandler};
 use super::clusters::wifi_diag::{self, ClusterHandler as _, WifiDiag, WifiDiagHandler};
-use super::networks::eth::{EthNetCtl, EthNetwork};
 use super::types::{Async, ChainedHandler, Dataver, Endpoint, EndptId, EpClMatcher};
 
 /// A utility function to create a root (Endpoint 0) object using the requested operational network type.
@@ -47,217 +46,105 @@ pub const fn root_endpoint(net_type: NetworkType) -> Endpoint<'static> {
     }
 }
 
-/// A utility function to create a root (Endpoint 0) object using the requested operational network type and the groups cluster.
-pub const fn root_endpoint_with_groups(net_type: NetworkType) -> Endpoint<'static> {
-    Endpoint {
-        id: ROOT_ENDPOINT_ID,
-        device_types: devices!(super::devices::DEV_TYPE_ROOT_NODE),
-        clusters: net_type.root_clusters_with_groups(),
-    }
-}
-
 /// A type alias for the handler chain returned by `with_eth()`.
-pub type EthHandler<'a, H> = NetHandler<
-    'a,
-    net_comm::HandlerAsyncAdaptor<NetCommHandler<SharedNetworks<EthNetwork<'a>>, EthNetCtl>>,
-    Async<eth_diag::HandlerAdaptor<EthDiagHandler>>,
-    H,
->;
-
-/// A type alias for the handler chain returned by `with_wifi()`.
-pub type WifiHandler<'a, N, T, H> = NetHandler<
-    'a,
-    net_comm::HandlerAsyncAdaptor<NetCommHandler<N, T>>,
-    Async<wifi_diag::HandlerAdaptor<WifiDiagHandler<'a>>>,
-    H,
->;
-
-/// A type alias for the handler chain returned by `with_thread()`.
-pub type ThreadHandler<'a, N, T, H> = NetHandler<
-    'a,
-    net_comm::HandlerAsyncAdaptor<NetCommHandler<N, T>>,
-    Async<thread_diag::HandlerAdaptor<ThreadDiagHandler<'a>>>,
-    H,
->;
-
-pub type NetHandler<'a, NETCOMM, NETDIAG, H> = handler_chain_type!(
-    EpClMatcher => NETCOMM,
-    EpClMatcher => NETDIAG,
-    EpClMatcher => Async<gen_diag::HandlerAdaptor<GenDiagHandler<'a>>>
-    | H
-);
+pub type EthHandler<'a, H> = SysHandler<'a, EthNetCtl, H>;
 
 /// A type alias for the handler chain returned by `with_sys()`.
-pub type SysHandler<'a, H> = handler_chain_type!(
+pub type SysHandler<'a, T, H> = handler_chain_type!(
     EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>,
     EpClMatcher => Async<basic_info::HandlerAdaptor<BasicInfoHandler>>,
     EpClMatcher => Async<gen_comm::HandlerAdaptor<GenCommHandler<'a>>>,
     EpClMatcher => Async<adm_comm::HandlerAdaptor<AdminCommHandler>>,
     EpClMatcher => Async<noc::HandlerAdaptor<NocHandler>>,
     EpClMatcher => Async<acl::HandlerAdaptor<acl::AclHandler>>,
-    EpClMatcher => Async<grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>
-    | H
-);
-
-/// A type alias for the handler chain returned by `with_groups()`.
-pub type GroupsDmHandler<'a, H> = handler_chain_type!(
-    EpClMatcher => Async<groups::HandlerAdaptor<GroupsHandler>>
+    EpClMatcher => Async<grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>,
+    EpClMatcher => Async<groups::HandlerAdaptor<GroupsHandler>>,
+    EpClMatcher => Async<gen_diag::HandlerAdaptor<GenDiagHandler<'a>>>,
+    EpClMatcher => Async<eth_diag::HandlerAdaptor<EthDiagHandler>>,
+    EpClMatcher => Async<wifi_diag::HandlerAdaptor<WifiDiagHandler<'a>>>,
+    EpClMatcher => Async<thread_diag::HandlerAdaptor<ThreadDiagHandler<'a>>>,
+    EpClMatcher => net_comm::HandlerAsyncAdaptor<NetCommHandler<T>>
     | H
 );
 
 /// The ID of the root endpoint (Endpoint 0)
 pub const ROOT_ENDPOINT_ID: EndptId = 0;
 
-/// Decorates the provided `handler` with the system model networking handlers necessary for operating
-/// with Ethernet networks, installed on the root endpoint (0).
-///
-/// The following handlers are added:
-/// - `GenDiagHandler`
-/// - `EthDiagHandler`
-/// - `NetCommHandler`
-///
-/// # Arguments:
-/// - `gen_diag`: The `GenDiag` implementation.
-/// - `netif_diag`: The `NetifDiag` implementation.
-/// - `net_ctl`: The `NetCtl` implementation.
-/// - `rand`: A random number generator.
-/// - `handler`: The handler to be decorated.
+/// A shortcut for `with_sys` for Ethernet-based devices.
 pub fn with_eth<'a, R: RngCore, H>(
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
-    mut rand: R,
+    rand: R,
     handler: H,
 ) -> EthHandler<'a, H> {
-    ChainedHandler::new(
-        EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GenDiagHandler::CLUSTER.id)),
-        Async(GenDiagHandler::new(Dataver::new_rand(&mut rand), gen_diag, netif_diag).adapt()),
+    with_sys(
+        &false,
+        gen_diag,
+        netif_diag,
+        &(), // No Wifi diagnostics
+        &(), // No Thread diagnostics
+        EthNetCtl,
+        rand,
         handler,
+    )
+}
+
+/// Decorate the provided `handler` with the system model networking handlers installed on the root endpoint (0).
+///
+/// # Arguments:
+/// - `comm_policy`: The `CommPolicy` implementation.
+/// - `gen_diag`: The `GenDiag` implementation.
+/// - `netif_diag`: The `NetifDiag` implementation.
+/// - `wifi_diag`: The `WifiDiag` implementation. Not necessary (provide `&()`) if not operating with Wifi networks.
+/// - `thread_diag`: The `ThreadDiag` implementation. Not necessary (provide `&()`) if not operating with Thread networks.
+/// - `networks`: The `Networks` implementation.
+/// - `net_ctl`: The `NetCtl` implementation.
+/// - `rand`: A random number generator.
+#[allow(clippy::too_many_arguments)]
+pub fn with_sys<'a, R: RngCore, T, H>(
+    comm_policy: &'a dyn CommPolicy,
+    gen_diag: &'a dyn GenDiag,
+    netif_diag: &'a dyn NetifDiag,
+    wifi_diag: &'a dyn WifiDiag,
+    thread_diag: &'a dyn ThreadDiag,
+    net_ctl: T,
+    mut rand: R,
+    handler: H,
+) -> SysHandler<'a, T, H>
+where
+    T: NetCtl + NetCtlStatus,
+{
+    ChainedHandler::new(
+        EpClMatcher::new(
+            Some(ROOT_ENDPOINT_ID),
+            Some(NetCommHandler::<T>::CLUSTER.id),
+        ),
+        NetCommHandler::new(Dataver::new_rand(&mut rand), net_ctl).adapt(),
+        handler,
+    )
+    .chain(
+        EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(ThreadDiagHandler::CLUSTER.id)),
+        Async(ThreadDiagHandler::new(Dataver::new_rand(&mut rand), thread_diag).adapt()),
+    )
+    .chain(
+        EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(WifiDiagHandler::CLUSTER.id)),
+        Async(WifiDiagHandler::new(Dataver::new_rand(&mut rand), wifi_diag).adapt()),
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(EthDiagHandler::CLUSTER.id)),
         Async(EthDiagHandler::new(Dataver::new_rand(&mut rand)).adapt()),
     )
     .chain(
-        EpClMatcher::new(
-            Some(ROOT_ENDPOINT_ID),
-            Some(NetCommHandler::<SharedNetworks<EthNetwork<'static>>, EthNetCtl>::CLUSTER.id),
-        ),
-        NetCommHandler::new(
-            Dataver::new_rand(&mut rand),
-            SharedNetworks::new(EthNetwork::new("eth")),
-            EthNetCtl,
-        )
-        .adapt(),
-    )
-}
-
-/// Decorates the provided `handler` with the system model networking handlers necessary for operating
-/// with Wifi networks, installed on the root endpoint (0).
-///
-/// The following handlers are added:
-/// - `GenDiagHandler`
-/// - `WifiDiagHandler`
-/// - `NetCommHandler`
-///
-/// # Arguments:
-/// - `gen_diag`: The `GenDiag` implementation.
-/// - `net_ctl`: The `NetCtl` implementation.
-/// - `networks`: The `Networks` implementation.
-/// - `rand`: A random number generator.
-/// - `handler`: The handler to be decorated.
-pub fn with_wifi<'a, R: RngCore, N, T, H>(
-    gen_diag: &'a dyn GenDiag,
-    netif_diag: &'a dyn NetifDiag,
-    networks: N,
-    net_ctl: &'a T,
-    mut rand: R,
-    handler: H,
-) -> WifiHandler<'a, N, &'a T, H>
-where
-    N: NetworksAccess,
-    T: NetCtl + NetCtlStatus + WifiDiag,
-{
-    ChainedHandler::new(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GenDiagHandler::CLUSTER.id)),
         Async(GenDiagHandler::new(Dataver::new_rand(&mut rand), gen_diag, netif_diag).adapt()),
-        handler,
     )
     .chain(
-        EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(WifiDiagHandler::CLUSTER.id)),
-        Async(WifiDiagHandler::new(Dataver::new_rand(&mut rand), net_ctl).adapt()),
+        EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GroupsHandler::CLUSTER.id)),
+        Async(GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
     )
     .chain(
-        EpClMatcher::new(
-            Some(ROOT_ENDPOINT_ID),
-            Some(NetCommHandler::<N, T>::CLUSTER.id),
-        ),
-        NetCommHandler::new(Dataver::new_rand(&mut rand), networks, net_ctl).adapt(),
-    )
-}
-
-/// Decorates the provided `handler` with the system model networking handlers necessary for operating
-/// with Thread networks, installed on the root endpoint (0).
-///
-/// The following handlers are added:
-/// - `GenDiagHandler`
-/// - `ThreadDiagHandler`
-/// - `NetCommHandler`
-///
-/// # Arguments:
-/// - `gen_diag`: The `GenDiag` implementation.
-/// - `net_ctl`: The `NetCtl` implementation.
-/// - `networks`: The `Networks` implementation.
-/// - `rand`: A random number generator.
-pub fn with_thread<'a, R: RngCore, N, T, H>(
-    gen_diag: &'a dyn GenDiag,
-    netif_diag: &'a dyn NetifDiag,
-    networks: N,
-    net_ctl: &'a T,
-    mut rand: R,
-    handler: H,
-) -> ThreadHandler<'a, N, &'a T, H>
-where
-    N: NetworksAccess,
-    T: NetCtl + NetCtlStatus + ThreadDiag,
-{
-    ChainedHandler::new(
-        EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GenDiagHandler::CLUSTER.id)),
-        Async(GenDiagHandler::new(Dataver::new_rand(&mut rand), gen_diag, netif_diag).adapt()),
-        handler,
-    )
-    .chain(
-        EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(ThreadDiagHandler::CLUSTER.id)),
-        Async(ThreadDiagHandler::new(Dataver::new_rand(&mut rand), net_ctl).adapt()),
-    )
-    .chain(
-        EpClMatcher::new(
-            Some(ROOT_ENDPOINT_ID),
-            Some(NetCommHandler::<N, T>::CLUSTER.id),
-        ),
-        NetCommHandler::new(Dataver::new_rand(&mut rand), networks, net_ctl).adapt(),
-    )
-}
-
-/// Decorates the provided `handler` with the system model handlers installed on the root endpoint (0).
-///
-/// All system model handlers are added except for the following ones, which are network-specific:
-/// - `GenDiagHandler`
-/// - `EthDiagHandler`/`WifiDiagHandler`/`ThreadDiagHandler`
-/// - `NetCommHandler`
-///
-/// # Arguments:
-/// - `comm_policy`: The commissioning policy to be used for the `GenCommHandler`.
-/// - `rand`: A random number generator.
-/// - `handler`: The handler to be decorated.
-pub fn with_sys<'a, R: RngCore, H>(
-    comm_policy: &'a dyn CommPolicy,
-    mut rand: R,
-    handler: H,
-) -> SysHandler<'a, H> {
-    ChainedHandler::new(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GrpKeyMgmtHandler::CLUSTER.id)),
         Async(GrpKeyMgmtHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-        handler,
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(AclHandler::CLUSTER.id)),
@@ -282,18 +169,5 @@ pub fn with_sys<'a, R: RngCore, H>(
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(DescHandler::CLUSTER.id)),
         Async(DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-    )
-}
-
-/// Decorates the provided `handler` with the group model handlers installed on the root endpoint (0).
-///
-/// # Arguments:
-/// - `rand`: A random number generator.
-/// - `handler`: The handler to be decorated.
-pub fn with_groups<'a, R: RngCore, H>(mut rand: R, handler: H) -> GroupsDmHandler<'a, H> {
-    ChainedHandler::new(
-        EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GroupsHandler::CLUSTER.id)),
-        Async(GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-        handler,
     )
 }

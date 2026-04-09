@@ -49,20 +49,16 @@ use log::{debug, info, warn};
 
 use rand_core::RngCore;
 
-use rs_matter::persist::DummyKvBlobStoreAccess;
-use socket2::{Domain, Protocol, Socket, Type};
-
-use static_cell::StaticCell;
-
 use rs_matter::crypto::{test_only_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
-use rs_matter::dm::clusters::net_comm::NetworkType;
+use rs_matter::dm::clusters::net_comm::{DummyNetworkAccess, NetworkType, SharedNetworks};
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::events::NO_EVENTS;
+use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::IMBuffer;
@@ -73,6 +69,7 @@ use rs_matter::dm::{
 use rs_matter::error::Error;
 use rs_matter::im::client::ImClient;
 use rs_matter::im::{AttrResp, CmdResp, IMStatusCode};
+use rs_matter::persist::DummyKvBlobStoreAccess;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::{PaseInitiator, MAX_COMM_WINDOW_TIMEOUT_SECS};
 use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
@@ -86,6 +83,10 @@ use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::storage::WriteBuf;
 use rs_matter::{clusters, devices, Matter, MATTER_PORT};
+
+use socket2::{Domain, Protocol, Socket, Type};
+
+use static_cell::StaticCell;
 
 use crate::common::{init_env_logger, run_device_controller, run_with_transport};
 
@@ -138,19 +139,15 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             &(),
             &UnixNetifs,
             rand,
-            endpoints::with_sys(
-                &false,
-                rand,
-                EmptyHandler
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                        on_off::HandlerAsyncAdaptor(on_off),
-                    ),
-            ),
+            EmptyHandler
+                .chain(
+                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                    on_off::HandlerAsyncAdaptor(on_off),
+                ),
         ),
     )
 }
@@ -198,6 +195,7 @@ async fn run_test() -> Result<(), Error> {
         NO_EVENTS,
         dm_handler(rand, &on_off_handler),
         DummyKvBlobStoreAccess,
+        DummyNetworkAccess,
     );
 
     // Open commissioning window before starting the mDNS responder so the
@@ -225,7 +223,7 @@ async fn run_test() -> Result<(), Error> {
             device_matter.run(&device_crypto, &device_socket, &device_socket, NoNetwork),
             // `run_mdns` dispatches to the right backend for the current platform:
             // builtin multicast on Linux, AstroMdnsResponder (Bonjour) on macOS.
-            common::mdns::run_mdns(device_matter, test_only_crypto(), dm.change_notify()),
+            common::mdns::run_mdns(device_matter, test_only_crypto()),
             responder.run::<4, 4>(),
             dm.run(),
         )

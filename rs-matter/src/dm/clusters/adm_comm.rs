@@ -83,7 +83,11 @@ impl ClusterHandler for AdminCommHandler {
             |endpt_id, clust_id, attr_id| ctx.notify_attribute_changed(endpt_id, clust_id, attr_id);
 
         ctx.exchange().with_state(|state| {
-            let comm_window = state.pase.comm_window(notify_mdns, notify_change)?;
+            state
+                .pase
+                .check_comm_window_timeout(notify_mdns, notify_change)?;
+
+            let comm_window = state.pase.comm_window();
 
             let window_type = comm_window.map(|comm_window| comm_window.comm_window_type());
 
@@ -101,7 +105,11 @@ impl ClusterHandler for AdminCommHandler {
             |endpt_id, clust_id, attr_id| ctx.notify_attribute_changed(endpt_id, clust_id, attr_id);
 
         ctx.exchange().with_state(|state| {
-            let comm_window = state.pase.comm_window(notify_mdns, notify_change)?;
+            state
+                .pase
+                .check_comm_window_timeout(notify_mdns, notify_change)?;
+
+            let comm_window = state.pase.comm_window();
 
             if let Some(opener) = comm_window.and_then(|comm_window| comm_window.opener()) {
                 if state.fabrics.get(opener.fab_idx).is_some() {
@@ -121,7 +129,11 @@ impl ClusterHandler for AdminCommHandler {
             |endpt_id, clust_id, attr_id| ctx.notify_attribute_changed(endpt_id, clust_id, attr_id);
 
         ctx.exchange().with_state(|state| {
-            let comm_window = state.pase.comm_window(notify_mdns, notify_change)?;
+            state
+                .pase
+                .check_comm_window_timeout(notify_mdns, notify_change)?;
+
+            let comm_window = state.pase.comm_window();
 
             Ok(Nullable::new(
                 comm_window
@@ -141,6 +153,10 @@ impl ClusterHandler for AdminCommHandler {
             |endpt_id, clust_id, attr_id| ctx.notify_attribute_changed(endpt_id, clust_id, attr_id);
 
         ctx.exchange().with_state(|state| {
+            state
+                .pase
+                .check_comm_window_timeout(notify_mdns, notify_change)?;
+
             let opener = Self::current_window_opener(state, &ctx.exchange().id());
 
             let mdns_id = ctx.crypto().rand()?.next_u64();
@@ -169,6 +185,10 @@ impl ClusterHandler for AdminCommHandler {
             |endpt_id, clust_id, attr_id| ctx.notify_attribute_changed(endpt_id, clust_id, attr_id);
 
         ctx.exchange().with_state(|state| {
+            state
+                .pase
+                .check_comm_window_timeout(notify_mdns, notify_change)?;
+
             let opener = Self::current_window_opener(state, &ctx.exchange().id());
             let dev_comm = ctx.exchange().matter().dev_comm();
 

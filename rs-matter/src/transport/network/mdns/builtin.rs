@@ -29,7 +29,6 @@ use embassy_time::{Duration, Timer};
 use rand_core::RngCore;
 
 use crate::crypto::Crypto;
-use crate::dm::ChangeNotify;
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::mdns::{
     MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_PORT,
@@ -57,7 +56,6 @@ pub mod querier;
 pub struct BuiltinMdnsResponder<'a, C> {
     matter: &'a Matter<'a>,
     crypto: C,
-    notify: &'a dyn ChangeNotify,
 }
 
 impl<'a, C> BuiltinMdnsResponder<'a, C>
@@ -68,12 +66,8 @@ where
     ///
     /// # Arguments
     /// * `matter` - A reference to the Matter instance that this responder will use.
-    pub const fn new(matter: &'a Matter<'a>, crypto: C, notify: &'a dyn ChangeNotify) -> Self {
-        Self {
-            matter,
-            crypto,
-            notify,
-        }
+    pub const fn new(matter: &'a Matter<'a>, crypto: C) -> Self {
+        Self { matter, crypto }
     }
 
     /// Run the mDNS responder.
@@ -248,10 +242,7 @@ where
     where
         F: FnMut(&Service) -> Result<(), Error>,
     {
-        let notify_change =
-            |endpt_id, clust_id, attr_id| self.notify.notify(endpt_id, clust_id, attr_id);
-
-        self.matter.mdns_services(notify_change, |service| {
+        self.matter.mdns_services(|service| {
             Service::call_with(
                 &service,
                 self.matter.dev_det(),

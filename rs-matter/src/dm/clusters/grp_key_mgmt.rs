@@ -233,7 +233,13 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                 }
             }
 
-            persist.store(fabric)?;
+            // NOTE: Not sure this is a spec-compliant behavor:
+            // If the failsafe is armed for our fabric, we'll NOT persist the group key changes until commissioning is complete.
+            // And we'll LOSE those changes if the failsafe times out before commissioning completes.
+            if !state.failsafe.is_armed_for(fab_idx.get()) {
+                persist.store(fabric)?;
+            }
+
             ctx.exchange().matter().notify_groups_changed();
 
             Ok(())
@@ -391,7 +397,14 @@ impl ClusterHandler for GrpKeyMgmtHandler {
             let fabric = state.fabrics.fabric_mut(fab_idx)?;
 
             fabric.groups_mut().key_set_add(entry)?;
-            persist.store(fabric)?;
+
+            // NOTE: Not sure this is a spec-compliant behavor:
+            // If the failsafe is armed for our fabric, we'll NOT persist the group key changes until commissioning is complete.
+            // And we'll LOSE those changes if the failsafe times out before commissioning completes.
+            if !state.failsafe.is_armed_for(fab_idx.get()) {
+                persist.store(fabric)?;
+            }
+
             ctx.exchange().matter().notify_groups_changed();
 
             Ok(())
@@ -471,7 +484,14 @@ impl ClusterHandler for GrpKeyMgmtHandler {
             let fabric = state.fabrics.fabric_mut(fab_idx)?;
 
             fabric.groups_mut().key_set_remove(group_key_set_id)?;
-            persist.store(fabric)?;
+
+            // NOTE: Not sure this is a spec-compliant behavor:
+            // If the failsafe is armed for our fabric, we'll NOT persist the group key changes until commissioning is complete.
+            // And we'll LOSE those changes if the failsafe times out before commissioning completes.
+            if !state.failsafe.is_armed_for(fab_idx.get()) {
+                persist.store(fabric)?;
+            }
+
             ctx.exchange().matter().notify_groups_changed();
 
             Ok(())

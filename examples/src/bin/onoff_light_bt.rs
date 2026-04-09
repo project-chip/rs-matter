@@ -138,6 +138,8 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     futures_lite::future::block_on(matter.load_persist(&mut kv, &mut kv_buf))?;
     futures_lite::future::block_on(networks.load_persist(&mut kv, &mut kv_buf))?;
 
+    let networks = SharedNetworks::new(networks);
+
     // Create the transport buffers
     let buffers = PooledBuffers::<10, _>::new(0);
 
@@ -171,13 +173,9 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         &buffers,
         &subscriptions,
         Some(&events),
-        dm_handler(
-            rand,
-            &on_off_handler,
-            SharedNetworks::new(networks),
-            &net_ctl,
-        ),
+        dm_handler(rand, &on_off_handler, &net_ctl),
         SharedKvBlobStore::new(kv, kv_buf.as_mut_slice()),
+        &networks,
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -192,7 +190,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     let mut dm_job = pin!(dm.run());
 
     // Create and run the mDNS responder
-    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, dm.change_notify()));
+    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto));
 
     if !matter.is_commissioned() {
         // Not commissioned yet, start commissioning first
@@ -264,7 +262,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        endpoints::root_endpoint_with_groups(NetworkType::Wifi),
+        endpoints::root_endpoint(NetworkType::Wifi),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
@@ -279,44 +277,37 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks, N, T>(
+fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
     mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
-    networks: N,
     net_ctl: &'a T,
 ) -> impl AsyncMetadata + AsyncHandler + 'a
 where
-    N: NetworksAccess + 'a,
     T: NetCtl + NetCtlStatus + WifiDiag,
 {
     (
         NODE,
-        endpoints::with_wifi(
+        endpoints::with_sys(
+            &true,
             &(),
             &UnixNetifs,
-            networks,
+            net_ctl,
+            &(),
             net_ctl,
             rand,
-            endpoints::with_sys(
-                &true,
-                rand,
-                endpoints::with_groups(
-                    rand,
-                    EmptyHandler
-                        .chain(
-                            EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                            Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                        )
-                        .chain(
-                            EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
-                            Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                        )
-                        .chain(
-                            EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                            on_off::HandlerAsyncAdaptor(on_off),
-                        ),
+            EmptyHandler
+                .chain(
+                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                    Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                    on_off::HandlerAsyncAdaptor(on_off),
                 ),
-            ),
         ),
     )
 }

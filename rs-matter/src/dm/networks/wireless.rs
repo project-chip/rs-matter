@@ -493,7 +493,17 @@ where
         WirelessNetworks::remove(self, network_id)
     }
 
-    fn persist(&self, buf: &mut [u8]) -> Result<Option<usize>, Error> {
+    fn reset(&mut self) -> Result<(), Error> {
+        WirelessNetworks::reset(self);
+
+        Ok(())
+    }
+
+    fn load(&mut self, data: &[u8]) -> Result<(), Error> {
+        WirelessNetworks::load(self, data)
+    }
+
+    fn save(&self, buf: &mut [u8]) -> Result<Option<usize>, Error> {
         WirelessNetworks::store(self, buf).map(Some)
     }
 }
