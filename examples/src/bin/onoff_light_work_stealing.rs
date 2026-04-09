@@ -30,13 +30,14 @@ use rand::{CryptoRng, RngCore};
 use rs_matter::crypto::backend::rustcrypto::RustCrypto;
 use rs_matter::crypto::Crypto;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
-use rs_matter::dm::clusters::net_comm::{DummyNetworkAccess, NetworkType};
+use rs_matter::dm::clusters::net_comm::{DummyNetworkAccess, NetworkType, SharedNetworks};
 use rs_matter::dm::clusters::on_off::NoLevelControl;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::{self, EthHandler};
 use rs_matter::dm::events::NO_EVENTS;
+use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::IMBuffer;
@@ -146,7 +147,7 @@ fn run() -> Result<(), Error> {
         NO_EVENTS,
         (NODE, dm_handler(rand, on_off_handler)),
         SharedKvBlobStore::new(kv, kv_buf),
-        DummyNetworkAccess,
+        SharedNetworks::new(EthNetwork::new_default()),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions

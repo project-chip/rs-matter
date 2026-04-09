@@ -25,7 +25,7 @@ use embassy_futures::select::{select, select3};
 use embassy_time::{Instant, Timer};
 
 use crate::crypto::Crypto;
-use crate::dm::clusters::net_comm;
+use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::error::{Error, ErrorCode};
 use crate::im::{
     IMStatusCode, InvReq, InvRespTag, OpCode, ReadReq, ReportDataReq, ReportDataRespTag,
@@ -87,7 +87,7 @@ where
     subscriptions: &'a Subscriptions<NS>,
     subscriptions_buffers: Mutex<RefCell<Vec<SubscriptionBuffer<B::Buffer<'a>>, NS>>>,
     events: Option<&'a Events<NE>>,
-    wireless_networks: N,
+    networks: N,
     handler: T,
 }
 
@@ -97,7 +97,7 @@ where
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStoreAccess,
-    N: net_comm::NetworksAccess,
+    N: NetworksAccess,
 {
     /// Create the data model.
     ///
@@ -111,7 +111,7 @@ where
     ///   clusters of the data model. Note that the expectations is for the user to provide a handler that handles the Matter system clusters
     ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods
     /// - `kv` - an instance of type `S` which implements the `KvBlobStoreAccess` trait. This instance is used for interacting with the key-value blob store.
-    /// - `wireless_networks` - an instance of type `N` which implements the `net_comm::NetworksAccess` trait. This instance is used for interacting with the network management cluster.
+    /// - `networks` - an instance of type `N` which implements the `NetworksAccess` trait. This instance is used for interacting with the network management cluster.
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
     pub const fn new(
@@ -122,7 +122,7 @@ where
         events: Option<&'a Events<NE>>,
         handler: T,
         kv: S,
-        wireless_networks: N,
+        networks: N,
     ) -> Self {
         Self {
             matter,
@@ -133,7 +133,7 @@ where
             events,
             handler,
             kv,
-            wireless_networks,
+            networks,
         }
     }
 
@@ -184,7 +184,7 @@ where
             // Disarm the failsafe on timeout
             state.failsafe.check_failsafe_timeout(
                 &mut state.fabrics,
-                &self.wireless_networks,
+                &self.networks,
                 &self.kv,
                 &mut notify_mdns,
             )?;
@@ -880,7 +880,7 @@ where
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStoreAccess,
-    N: net_comm::NetworksAccess,
+    N: NetworksAccess,
 {
     fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
         DataModel::handle(self, exchange)
@@ -894,7 +894,7 @@ where
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStoreAccess,
-    N: net_comm::NetworksAccess,
+    N: NetworksAccess,
 {
     fn matter(&self) -> &Matter<'_> {
         self.matter
@@ -906,6 +906,10 @@ where
 
     fn kv(&self) -> impl KvBlobStoreAccess + '_ {
         &self.kv
+    }
+
+    fn networks(&self) -> impl NetworksAccess + '_ {
+        &self.networks
     }
 
     fn notify_attribute_changed(
@@ -926,7 +930,7 @@ where
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStoreAccess,
-    N: net_comm::NetworksAccess,
+    N: NetworksAccess,
 {
     fn handler(&self) -> impl AsyncHandler + '_ {
         &self.handler

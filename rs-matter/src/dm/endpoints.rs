@@ -17,8 +17,7 @@
 
 use rand_core::RngCore;
 
-use crate::dm::clusters::net_comm::SharedNetworks;
-use crate::dm::networks::eth::{EthNetCtl, EthNetwork};
+use crate::dm::networks::eth::EthNetCtl;
 use crate::{devices, handler_chain_type};
 
 use super::clusters::acl::{self, AclHandler, ClusterHandler as _};
@@ -32,7 +31,6 @@ use super::clusters::groups::{self, ClusterHandler as _, GroupsHandler};
 use super::clusters::grp_key_mgmt::{self, ClusterHandler as _, GrpKeyMgmtHandler};
 use super::clusters::net_comm::{
     self, ClusterAsyncHandler as _, NetCommHandler, NetCtl, NetCtlStatus, NetworkType,
-    NetworksAccess,
 };
 use super::clusters::noc::{self, ClusterHandler as _, NocHandler};
 use super::clusters::thread_diag::{self, ClusterHandler as _, ThreadDiag, ThreadDiagHandler};
@@ -49,10 +47,10 @@ pub const fn root_endpoint(net_type: NetworkType) -> Endpoint<'static> {
 }
 
 /// A type alias for the handler chain returned by `with_eth()`.
-pub type EthHandler<'a, H> = SysHandler<'a, SharedNetworks<EthNetwork<'static>>, EthNetCtl, H>;
+pub type EthHandler<'a, H> = SysHandler<'a, EthNetCtl, H>;
 
 /// A type alias for the handler chain returned by `with_sys()`.
-pub type SysHandler<'a, N, T, H> = handler_chain_type!(
+pub type SysHandler<'a, T, H> = handler_chain_type!(
     EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>,
     EpClMatcher => Async<basic_info::HandlerAdaptor<BasicInfoHandler>>,
     EpClMatcher => Async<gen_comm::HandlerAdaptor<GenCommHandler<'a>>>,
@@ -65,7 +63,7 @@ pub type SysHandler<'a, N, T, H> = handler_chain_type!(
     EpClMatcher => Async<eth_diag::HandlerAdaptor<EthDiagHandler>>,
     EpClMatcher => Async<wifi_diag::HandlerAdaptor<WifiDiagHandler<'a>>>,
     EpClMatcher => Async<thread_diag::HandlerAdaptor<ThreadDiagHandler<'a>>>,
-    EpClMatcher => net_comm::HandlerAsyncAdaptor<NetCommHandler<N, T>>
+    EpClMatcher => net_comm::HandlerAsyncAdaptor<NetCommHandler<T>>
     | H
 );
 
@@ -85,7 +83,6 @@ pub fn with_eth<'a, R: RngCore, H>(
         netif_diag,
         &(), // No Wifi diagnostics
         &(), // No Thread diagnostics
-        SharedNetworks::new(EthNetwork::new_default()),
         EthNetCtl,
         rand,
         handler,
@@ -104,27 +101,25 @@ pub fn with_eth<'a, R: RngCore, H>(
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `rand`: A random number generator.
 #[allow(clippy::too_many_arguments)]
-pub fn with_sys<'a, R: RngCore, N, T, H>(
+pub fn with_sys<'a, R: RngCore, T, H>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
     wifi_diag: &'a dyn WifiDiag,
     thread_diag: &'a dyn ThreadDiag,
-    networks: N,
     net_ctl: T,
     mut rand: R,
     handler: H,
-) -> SysHandler<'a, N, T, H>
+) -> SysHandler<'a, T, H>
 where
-    N: NetworksAccess,
     T: NetCtl + NetCtlStatus,
 {
     ChainedHandler::new(
         EpClMatcher::new(
             Some(ROOT_ENDPOINT_ID),
-            Some(NetCommHandler::<N, T>::CLUSTER.id),
+            Some(NetCommHandler::<T>::CLUSTER.id),
         ),
-        NetCommHandler::new(Dataver::new_rand(&mut rand), networks, net_ctl).adapt(),
+        NetCommHandler::new(Dataver::new_rand(&mut rand), net_ctl).adapt(),
         handler,
     )
     .chain(

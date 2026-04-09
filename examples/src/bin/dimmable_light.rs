@@ -42,12 +42,13 @@ use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::{self, LevelControlHooks};
-use rs_matter::dm::clusters::net_comm::{DummyNetworkAccess, NetworkType};
+use rs_matter::dm::clusters::net_comm::{NetworkType, SharedNetworks};
 use rs_matter::dm::clusters::on_off::{self, OnOffHooks, StartUpOnOffEnum};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::events::DefaultEvents;
+use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::IMBuffer;
@@ -187,7 +188,7 @@ fn run() -> Result<(), Error> {
         Some(events),
         dm_handler(rand, &on_off_handler, &level_control_handler),
         SharedKvBlobStore::new(kv, kv_buf),
-        DummyNetworkAccess,
+        SharedNetworks::new(EthNetwork::new_default()),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions

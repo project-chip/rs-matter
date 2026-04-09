@@ -173,7 +173,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         &buffers,
         &subscriptions,
         Some(&events),
-        dm_handler(rand, &on_off_handler, &networks, &net_ctl),
+        dm_handler(rand, &on_off_handler, &net_ctl),
         SharedKvBlobStore::new(kv, kv_buf.as_mut_slice()),
         &networks,
     );
@@ -277,14 +277,12 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks, N, T>(
+fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
     mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
-    networks: N,
     net_ctl: &'a T,
 ) -> impl AsyncMetadata + AsyncHandler + 'a
 where
-    N: NetworksAccess + 'a,
     T: NetCtl + NetCtlStatus + WifiDiag,
 {
     (
@@ -295,7 +293,6 @@ where
             &UnixNetifs,
             net_ctl,
             &(),
-            networks,
             net_ctl,
             rand,
             EmptyHandler

@@ -968,26 +968,23 @@ impl Networks for SharedNetworksInstance<'_> {
     fn save(&self, buf: &mut [u8]) -> Result<Option<usize>, Error> {
         let len = self.networks.save(buf)?;
 
+        self.changed.notify();
+
         Ok(len)
     }
 }
 
 /// The system implementation of a handler for the Network Commissioning Matter cluster.
 #[derive(Clone)]
-pub struct NetCommHandler<N, T> {
+pub struct NetCommHandler<T> {
     dataver: Dataver,
-    networks: N,
     net_ctl: T,
 }
 
-impl<N, T> NetCommHandler<N, T> {
-    /// Create a new instance of `NetCommHandler` with the given `Dataver`, `Networks` and `NetCtl`.
-    pub const fn new(dataver: Dataver, networks: N, net_ctl: T) -> Self {
-        Self {
-            dataver,
-            networks,
-            net_ctl,
-        }
+impl<T> NetCommHandler<T> {
+    /// Create a new instance of `NetCommHandler` with the given `Dataver` and `NetCtl`.
+    pub const fn new(dataver: Dataver, net_ctl: T) -> Self {
+        Self { dataver, net_ctl }
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
@@ -996,9 +993,8 @@ impl<N, T> NetCommHandler<N, T> {
     }
 }
 
-impl<N, T> ClusterAsyncHandler for NetCommHandler<N, T>
+impl<T> ClusterAsyncHandler for NetCommHandler<T>
 where
-    N: NetworksAccess,
     T: NetCtl + NetCtlStatus,
 {
     const CLUSTER: Cluster<'static> = NetworkType::Ethernet.cluster(); // TODO
@@ -1011,8 +1007,8 @@ where
         self.dataver.changed();
     }
 
-    fn max_networks(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u8, Error>> {
-        delayed_ready(move || self.networks.access(|networks| networks.max_networks()))
+    fn max_networks(&self, ctx: impl ReadContext) -> impl Future<Output = Result<u8, Error>> {
+        delayed_ready(move || ctx.networks().access(|networks| networks.max_networks()))
     }
 
     fn connect_max_time_seconds(
@@ -1087,11 +1083,11 @@ where
 
     fn networks<P: TLVBuilderParent>(
         &self,
-        _ctx: impl ReadContext,
+        ctx: impl ReadContext,
         builder: ArrayAttributeRead<NetworkInfoStructArrayBuilder<P>, NetworkInfoStructBuilder<P>>,
     ) -> impl Future<Output = Result<P, Error>> {
         delayed_ready(move || {
-            self.networks.access(|networks| match builder {
+            ctx.networks().access(|networks| match builder {
                 ArrayAttributeRead::ReadAll(builder) => builder.with(|builder| {
                     let mut builder = Some(builder);
 
@@ -1131,9 +1127,9 @@ where
 
     fn interface_enabled(
         &self,
-        _ctx: impl ReadContext,
+        ctx: impl ReadContext,
     ) -> impl Future<Output = Result<bool, Error>> {
-        delayed_ready(move || self.networks.access(|networks| networks.enabled()))
+        delayed_ready(move || ctx.networks().access(|networks| networks.enabled()))
     }
 
     fn last_networking_status(
@@ -1174,7 +1170,7 @@ where
         let mut persist = Persist::new(ctx.kv());
 
         ctx.exchange().with_state(|state| {
-            self.networks.access(|networks| {
+            ctx.networks().access(|networks| {
                 networks.set_enabled(value)?;
 
                 // NOTE: Not sure this is a spec-compliant behavor:
@@ -1306,7 +1302,7 @@ where
     ) -> Result<P, Error> {
         let (status, _, index) = NetworkCommissioningStatusEnum::map(
             GenCommHandler::with_armed_failsafe_ex(&ctx, |_, _| {
-                self.networks.access(|networks| {
+                ctx.networks().access(|networks| {
                     let index = networks.add_or_update(&WirelessCreds::Wifi {
                         ssid: request.ssid()?.0,
                         pass: request.credentials()?.0,
@@ -1328,7 +1324,7 @@ where
     ) -> Result<P, Error> {
         let (status, _, index) = NetworkCommissioningStatusEnum::map(
             GenCommHandler::with_armed_failsafe_ex(&ctx, |_, _| {
-                self.networks.access(|networks| {
+                ctx.networks().access(|networks| {
                     let index = networks.add_or_update(&WirelessCreds::Thread {
                         dataset_tlv: request.operational_dataset()?.0,
                     })?;
@@ -1349,7 +1345,7 @@ where
     ) -> Result<P, Error> {
         let (status, _, index) = NetworkCommissioningStatusEnum::map(
             GenCommHandler::with_armed_failsafe_ex(&ctx, |_, _| {
-                self.networks.access(|networks| {
+                ctx.networks().access(|networks| {
                     let index = networks.remove(request.network_id()?.0)?;
 
                     Ok(index)
@@ -1377,7 +1373,7 @@ where
 
                 let (mut status, mut err_code, _) = NetworkCommissioningStatusEnum::map(
                     GenCommHandler::with_armed_failsafe_ex(&ctx, |_, _| {
-                        self.networks.access(|networks| {
+                        ctx.networks().access(|networks| {
                             networks.creds(request.network_id()?.0, &mut |creds| {
                                 let WirelessCreds::Thread { dataset_tlv } = creds else {
                                     error!("Thread creds expected");
@@ -1418,7 +1414,7 @@ where
 
                 let (mut status, mut err_code, _) = NetworkCommissioningStatusEnum::map(
                     GenCommHandler::with_armed_failsafe_ex(&ctx, |_, _| {
-                        self.networks.access(|networks| {
+                        ctx.networks().access(|networks| {
                             networks.creds(request.network_id()?.0, &mut |creds| {
                                 let WirelessCreds::Wifi { ssid, pass } = creds else {
                                     error!("Wifi creds expected");
@@ -1479,7 +1475,7 @@ where
     ) -> Result<P, Error> {
         let (status, _, index) = NetworkCommissioningStatusEnum::map(
             GenCommHandler::with_armed_failsafe_ex(&ctx, |_, _| {
-                self.networks.access(|networks| {
+                ctx.networks().access(|networks| {
                     let index =
                         networks.reorder(request.network_index()? as _, request.network_id()?.0)?;
 
@@ -1501,7 +1497,7 @@ where
     }
 }
 
-impl<N> Debug for NetCommHandler<N, ()> {
+impl<T> Debug for NetCommHandler<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NetCommHandler")
             .field("dataver", &self.dataver.get())
@@ -1510,7 +1506,7 @@ impl<N> Debug for NetCommHandler<N, ()> {
 }
 
 #[cfg(feature = "defmt")]
-impl<N> defmt::Format for NetCommHandler<N, ()> {
+impl<T> defmt::Format for NetCommHandler<T> {
     fn format(&self, f: defmt::Formatter) {
         defmt::write!(f, "NetCommHandler {{ dataver: {} }}", self.dataver.get());
     }

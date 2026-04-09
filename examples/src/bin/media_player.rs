@@ -54,12 +54,13 @@ use rs_matter::dm::clusters::decl::media_playback::{
 
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
-use rs_matter::dm::clusters::net_comm::{DummyNetworkAccess, NetworkType};
+use rs_matter::dm::clusters::net_comm::{NetworkType, SharedNetworks};
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_CASTING_VIDEO_PLAYER;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::events::DefaultEvents;
+use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
@@ -127,7 +128,7 @@ fn main() -> Result<(), Error> {
         Some(&events),
         dm_handler(rand, &on_off_handler),
         SharedKvBlobStore::new(kv, kv_buf.as_mut_slice()),
-        DummyNetworkAccess,
+        SharedNetworks::new(EthNetwork::new_default()),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
