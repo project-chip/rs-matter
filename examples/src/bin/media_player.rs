@@ -196,31 +196,27 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             &(),
             &UnixNetifs,
             rand,
-            endpoints::with_sys(
-                &false,
-                rand,
-                EmptyHandler
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(MediaHandler::CLUSTER.id)),
-                        MediaHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(ContentHandler::CLUSTER.id)),
-                        ContentHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(KeypadInputHandler::CLUSTER.id)),
-                        KeypadInputHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                        on_off::HandlerAsyncAdaptor(on_off),
-                    ),
-            ),
+            EmptyHandler
+                .chain(
+                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(MediaHandler::CLUSTER.id)),
+                    MediaHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(ContentHandler::CLUSTER.id)),
+                    ContentHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(KeypadInputHandler::CLUSTER.id)),
+                    KeypadInputHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                    on_off::HandlerAsyncAdaptor(on_off),
+                ),
         ),
     )
 }

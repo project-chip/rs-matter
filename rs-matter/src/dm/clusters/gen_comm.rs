@@ -317,10 +317,10 @@ impl ClusterHandler for GenCommHandler<'_> {
                 // upon completion of commissioning
                 state.pase.close_comm_window(notify_mdns, notify_change)?;
 
-                // Finally, persist the fabric and the basic info settings, prior to sending the other party a "success" status
+                // Finally, persist the fabric and the network settings, prior to sending the other party a "success" status
                 persist.store(fabric)?;
 
-                info!("Commissioning complete, fabric and basic info settings persisted");
+                info!("Commissioning complete, fabric and network settings persisted");
 
                 Ok(())
             }))?;

@@ -35,7 +35,7 @@ use rs_matter::dm::clusters::on_off::NoLevelControl;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::dm::endpoints::{self, EthHandler, SysHandler};
+use rs_matter::dm::endpoints::{self, EthHandler};
 use rs_matter::dm::events::NO_EVENTS;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
@@ -62,7 +62,7 @@ type AppHandler<'a> = handler_chain_type!(
     EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>
     | EmptyHandler
 );
-type AppDmHandler<'a> = EthHandler<'a, SysHandler<'a, AppHandler<'a>>>;
+type AppDmHandler<'a> = EthHandler<'a, AppHandler<'a>>;
 
 // Statically allocate in BSS the bigger objects
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
@@ -258,19 +258,15 @@ fn dm_handler<'a>(
         &(),
         &UnixNetifs,
         rand,
-        endpoints::with_sys(
-            &false,
-            rand,
-            EmptyHandler
-                .chain(
-                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                    on_off::HandlerAsyncAdaptor(on_off),
-                ),
-        ),
+        EmptyHandler
+            .chain(
+                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                on_off::HandlerAsyncAdaptor(on_off),
+            ),
     )
 }
 

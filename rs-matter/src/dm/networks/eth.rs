@@ -32,7 +32,12 @@ pub struct EthNetwork<'a> {
 }
 
 impl<'a> EthNetwork<'a> {
-    /// Creates a new `EthNetwork` instance.
+    /// Create a new `EthNetwork` instance with a default network ID.
+    pub const fn new_default() -> Self {
+        Self::new("eth")
+    }
+
+    /// Create a new `EthNetwork` instance.
     pub const fn new(network_id: &'a str) -> Self {
         Self { network_id }
     }

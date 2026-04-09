@@ -68,7 +68,7 @@ use rs_matter::dm::clusters::wifi_diag::{
 };
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::dm::endpoints::{SysHandler, WifiHandler};
+use rs_matter::dm::endpoints::SysHandler;
 use rs_matter::dm::events::{Events, DEFAULT_BYTES_PER_BUF};
 use rs_matter::dm::networks::wireless::{
     NetCtlState, NetCtlStateMutex, NetCtlWithStatusImpl, WifiNetworks, WirelessMgr, MAX_CREDS_SIZE,
@@ -202,8 +202,7 @@ type AppHandler<'a> = handler_chain_type!(
     | EmptyHandler
 );
 type AppCrypto = RustCrypto<'static, WeakTestOnlyRand>;
-type AppDmHandler<'a> =
-    WifiHandler<'a, &'a AppNetworks, &'a AppNetCtl<'a>, SysHandler<'a, AppHandler<'a>>>;
+type AppDmHandler<'a> = SysHandler<'a, &'a AppNetworks, &'a AppNetCtl<'a>, AppHandler<'a>>;
 type AppDataModel<'a> = DataModel<
     'a,
     DEFAULT_MAX_SUBSCRIPTIONS,
@@ -653,30 +652,29 @@ fn dm_handler<'a, N, T>(
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
     networks: N,
     net_ctl: &'a T,
-) -> WifiHandler<'a, N, &'a T, SysHandler<'a, AppHandler<'a>>>
+) -> SysHandler<'a, N, &'a T, AppHandler<'a>>
 where
     N: NetworksAccess,
     T: NetCtl + NetCtlStatus + WifiDiag,
 {
-    endpoints::with_wifi(
+    endpoints::with_sys(
+        &true,
         &(),
+        &(),
+        net_ctl,
         &(),
         networks,
         net_ctl,
         rand,
-        endpoints::with_sys(
-            &true,
-            rand,
-            EmptyHandler
-                .chain(
-                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                    on_off::HandlerAsyncAdaptor(on_off),
-                ),
-        ),
+        EmptyHandler
+            .chain(
+                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                on_off::HandlerAsyncAdaptor(on_off),
+            ),
     )
 }
 

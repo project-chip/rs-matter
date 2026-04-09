@@ -83,23 +83,6 @@ impl NetworkType {
             Self::Thread => THREAD,
         }
     }
-
-    /// Return the root clusters necessary for the given network type and the groups cluster.
-    /// This is same as [Self::root_clusters()] but with the groups cluster added.
-    pub const fn root_clusters_with_groups(&self) -> &'static [Cluster<'static>] {
-        static ETH: &[Cluster<'static>] =
-            clusters!(eth;<groups::GroupsHandler as groups::ClusterHandler>::CLUSTER);
-        static WIFI: &[Cluster<'static>] =
-            clusters!(wifi;<groups::GroupsHandler as groups::ClusterHandler>::CLUSTER);
-        static THREAD: &[Cluster<'static>] =
-            clusters!(thread;<groups::GroupsHandler as groups::ClusterHandler>::CLUSTER);
-
-        match self {
-            Self::Ethernet => ETH,
-            Self::Wifi => WIFI,
-            Self::Thread => THREAD,
-        }
-    }
 }
 
 /// Network information as returned by the `Networks` trait
@@ -544,6 +527,64 @@ where
 
     fn remove(&mut self, network_id: &[u8]) -> Result<u8, NetworksError> {
         (*self).remove(network_id)
+    }
+
+    fn reset(&mut self) -> Result<(), Error> {
+        (**self).reset()
+    }
+
+    fn load(&mut self, data: &[u8]) -> Result<(), Error> {
+        (**self).load(data)
+    }
+
+    fn save(&self, buf: &mut [u8]) -> Result<Option<usize>, Error> {
+        (**self).save(buf)
+    }
+}
+
+impl Networks for &mut dyn Networks {
+    fn max_networks(&self) -> Result<u8, Error> {
+        (**self).max_networks()
+    }
+
+    fn networks(&self, f: &mut dyn FnMut(&NetworkInfo) -> Result<(), Error>) -> Result<(), Error> {
+        (**self).networks(f)
+    }
+
+    fn creds(
+        &self,
+        network_id: &[u8],
+        f: &mut dyn FnMut(&WirelessCreds) -> Result<(), Error>,
+    ) -> Result<u8, NetworksError> {
+        (**self).creds(network_id, f)
+    }
+
+    fn next_creds(
+        &self,
+        last_network_id: Option<&[u8]>,
+        f: &mut dyn FnMut(&WirelessCreds) -> Result<(), Error>,
+    ) -> Result<bool, Error> {
+        (**self).next_creds(last_network_id, f)
+    }
+
+    fn enabled(&self) -> Result<bool, Error> {
+        (**self).enabled()
+    }
+
+    fn set_enabled(&mut self, enabled: bool) -> Result<(), Error> {
+        (**self).set_enabled(enabled)
+    }
+
+    fn add_or_update(&mut self, creds: &WirelessCreds<'_>) -> Result<u8, NetworksError> {
+        (**self).add_or_update(creds)
+    }
+
+    fn reorder(&mut self, index: u8, network_id: &[u8]) -> Result<u8, NetworksError> {
+        (**self).reorder(index, network_id)
+    }
+
+    fn remove(&mut self, network_id: &[u8]) -> Result<u8, NetworksError> {
+        (**self).remove(network_id)
     }
 
     fn reset(&mut self) -> Result<(), Error> {
@@ -1132,10 +1173,19 @@ where
     ) -> Result<(), Error> {
         let mut persist = Persist::new(ctx.kv());
 
-        self.networks.access(|networks| {
-            networks.set_enabled(value)?;
+        ctx.exchange().with_state(|state| {
+            self.networks.access(|networks| {
+                networks.set_enabled(value)?;
 
-            persist.store(NETWORKS_KEY, |buf| networks.save(buf))
+                // NOTE: Not sure this is a spec-compliant behavor:
+                // If the failsafe is armed for _any_ fabric, we'll NOT persist the network changes until commissioning is complete.
+                // And we'll LOSE those changes if the failsafe times out before commissioning completes.
+                if !state.failsafe.is_armed() {
+                    persist.store(NETWORKS_KEY, |buf| networks.save(buf))?;
+                }
+
+                Ok(())
+            })
         })?;
 
         persist.run()
