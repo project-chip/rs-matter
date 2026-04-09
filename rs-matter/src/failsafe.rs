@@ -246,6 +246,10 @@ impl FailSafe {
         Ok(fabric)
     }
 
+    pub fn is_armed(&self) -> bool {
+        matches!(self.state, State::Armed(_))
+    }
+
     pub fn is_armed_for(&self, caller_fab_idx: u8) -> bool {
         match self.state {
             State::Idle => false,

@@ -27,7 +27,6 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use zbus::Connection;
 
 use crate::error::Error;
-use crate::im::{AttrId, ClusterId, EndptId};
 use crate::transport::network::mdns::Service;
 use crate::utils::zbus_proxies::resolve::manager::ManagerProxy;
 use crate::{Matter, MatterMdnsService};

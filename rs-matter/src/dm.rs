@@ -159,17 +159,8 @@ where
 
     /// Run the Data Model instance.
     pub async fn run(&self) -> Result<(), Error> {
-        let ctx = HandlerContextInstance::new(
-            self.matter,
-            &self.crypto,
-            &self.handler,
-            self.buffers,
-            &self.kv,
-            self.change_notify(),
-        );
-
         let mut timeouts = pin!(self.run_timeout_checks());
-        let mut handler = pin!(self.handler.run(&ctx));
+        let mut handler = pin!(self.handler.run(self));
 
         select(&mut timeouts, &mut handler).coalesce().await
     }
@@ -292,18 +283,12 @@ where
             &req,
             &node,
             None,
-            HandlerInvoker::new(
-                exchange,
-                &self.crypto,
-                &self.handler,
-                &self.buffers,
-                &self.kv,
-            ),
+            HandlerInvoker::new(exchange, self),
             EventReader::new(0),
             self.events,
         );
 
-        resp.respond(self.change_notify(), &mut wb, true).await?;
+        resp.respond(&mut wb, true).await?;
 
         Ok(())
     }
@@ -340,20 +325,9 @@ where
             let metadata = self.handler.lock().await;
             let node = metadata.node();
 
-            let mut resp = WriteResponder::new(
-                &req,
-                &node,
-                HandlerInvoker::new(
-                    exchange,
-                    &self.crypto,
-                    &self.handler,
-                    &self.buffers,
-                    &self.kv,
-                ),
-            );
+            let mut resp = WriteResponder::new(&req, &node, HandlerInvoker::new(exchange, self));
 
-            resp.respond(self.change_notify(), &mut wb, is_groupcast)
-                .await?;
+            resp.respond(&mut wb, is_groupcast).await?;
 
             if req.more_chunks()? {
                 // This write request is just one of the chunks, so we need to wait and process
@@ -394,20 +368,9 @@ where
         let metadata = self.handler.lock().await;
         let node = metadata.node();
 
-        let mut resp = InvokeResponder::new(
-            &req,
-            &node,
-            HandlerInvoker::new(
-                exchange,
-                &self.crypto,
-                &self.handler,
-                &self.buffers,
-                &self.kv,
-            ),
-        );
+        let mut resp = InvokeResponder::new(&req, &node, HandlerInvoker::new(exchange, self));
 
-        resp.respond(self.change_notify(), &mut wb, is_groupcast)
-            .await
+        resp.respond(&mut wb, is_groupcast).await
     }
 
     /// Respond to a `SubscribeReq` request by priming the subscription (i.e. doing an initial data report)
@@ -787,18 +750,12 @@ where
             &req,
             &node,
             Some(id),
-            HandlerInvoker::new(
-                exchange,
-                &self.crypto,
-                &self.handler,
-                &self.buffers,
-                &self.kv,
-            ),
+            HandlerInvoker::new(exchange, self),
             EventReader::new(min_event_number),
             self.events,
         );
 
-        let sub_valid = resp.respond(self.change_notify(), &mut wb, false).await?;
+        let sub_valid = resp.respond(&mut wb, false).await?;
         if !sub_valid {
             debug!(
                 "Subscription [F:{:x},P:{:x}]::{} removed during reporting",
@@ -930,6 +887,56 @@ where
     }
 }
 
+impl<const NS: usize, const NE: usize, C, B, T, S, N> BasicContext
+    for DataModel<'_, NS, NE, C, B, T, S, N>
+where
+    C: Crypto,
+    B: BufferAccess<IMBuffer>,
+    T: DataModelHandler,
+    S: KvBlobStoreAccess,
+    N: net_comm::NetworksAccess,
+{
+    fn matter(&self) -> &Matter<'_> {
+        self.matter
+    }
+
+    fn crypto(&self) -> impl Crypto + '_ {
+        &self.crypto
+    }
+
+    fn kv(&self) -> impl KvBlobStoreAccess + '_ {
+        &self.kv
+    }
+
+    fn notify_attribute_changed(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        attr_id: AttrId,
+    ) {
+        self.change_notify()
+            .notify(endpoint_id, cluster_id, attr_id)
+    }
+}
+
+impl<const NS: usize, const NE: usize, C, B, T, S, N> HandlerContext
+    for DataModel<'_, NS, NE, C, B, T, S, N>
+where
+    C: Crypto,
+    B: BufferAccess<IMBuffer>,
+    T: DataModelHandler,
+    S: KvBlobStoreAccess,
+    N: net_comm::NetworksAccess,
+{
+    fn handler(&self) -> impl AsyncHandler + '_ {
+        &self.handler
+    }
+
+    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+        self.buffers
+    }
+}
+
 /// This type responds with a `ReportData` response to all of:
 /// - A `ReadReq`
 /// - A `SubscribeReq`
@@ -938,21 +945,18 @@ where
 /// The responder handles chunking as needed. I.e. if reported data is too large to fit into a single
 /// Matter message, it will send the data in multiple chunks (i.e. with multiple Matter messages), waiting for
 /// a `Success` response from the peer after each chunk, and then continuing to send the next chunk until all data is sent.
-struct ReportDataResponder<'a, 'b, 'c, const NE: usize, C, D, B, S> {
+struct ReportDataResponder<'a, 'b, 'c, const NE: usize, C> {
     req: &'a ReportDataReq<'a>,
     node: &'a Node<'a>,
     subscription_id: Option<u32>,
-    invoker: HandlerInvoker<'b, 'c, C, D, B, S>,
+    invoker: HandlerInvoker<'b, 'c, C>,
     event_reader: EventReader,
     events: Option<&'a Events<NE>>,
 }
 
-impl<'a, 'b, 'c, const NE: usize, C, D, B, S> ReportDataResponder<'a, 'b, 'c, NE, C, D, B, S>
+impl<'a, 'b, 'c, const NE: usize, C> ReportDataResponder<'a, 'b, 'c, NE, C>
 where
-    C: Crypto,
-    D: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
+    C: HandlerContext,
 {
     // This is the amount of space we reserve for the structure/array closing TLVs
     // to be attached towards the end of long reads
@@ -963,7 +967,7 @@ where
         req: &'a ReportDataReq<'a>,
         node: &'a Node<'a>,
         subscription_id: Option<u32>,
-        invoker: HandlerInvoker<'b, 'c, C, D, B, S>,
+        invoker: HandlerInvoker<'b, 'c, C>,
         event_reader: EventReader,
         events: Option<&'a Events<NE>>,
     ) -> Self {
@@ -981,14 +985,12 @@ where
     /// chunk if the data is too large to fit into a single Matter message.
     ///
     /// Arguments:
-    /// - `notify` - the `ChangeNotify` instance to use while processing the read requests
     /// - `wb` - the buffer to use while sending the response
     /// - `suppress_last_resp` - whether to suppress the response from the peer. When multiple Matter messages are
     ///   being sent due to chunking, this is valid for the last chunk only, as the others - by necessity need to have a
     ///   status response by the other peer
     async fn respond(
         &mut self,
-        notify: &dyn ChangeNotify,
         wb: &mut WriteBuf<'_>,
         suppress_last_resp: bool,
     ) -> Result<bool, Error> {
@@ -1006,7 +1008,7 @@ where
             let item = item?;
 
             loop {
-                let result = self.invoker.process_read(&item, &mut *wb, notify).await;
+                let result = self.invoker.process_read(&item, &mut *wb).await;
 
                 match result {
                     Ok(()) => break,
@@ -1025,7 +1027,7 @@ where
                         });
 
                         if let Some(array_attr) = array_attr {
-                            if self.send_array_items(array_attr, wb, notify).await? {
+                            if self.send_array_items(array_attr, wb).await? {
                                 break;
                             } else {
                                 return Ok(false);
@@ -1091,12 +1093,10 @@ where
     /// Arguments:
     /// - `attr` - the array attribute to send the items of
     /// - `wb` - the buffer to use while sending the items
-    /// - `notify` - the `ChangeNotify` instance to use while processing the read requests
     async fn send_array_items(
         &mut self,
         attr: &AttrDetails<'_>,
         wb: &mut WriteBuf<'_>,
-        notify: &dyn ChangeNotify,
     ) -> Result<bool, Error> {
         let mut attr = attr.clone();
 
@@ -1108,7 +1108,7 @@ where
         loop {
             let pos = wb.get_tail();
 
-            let result = self.invoker.read(&attr, &mut *wb, notify).await;
+            let result = self.invoker.read(&attr, &mut *wb).await;
 
             if result.is_err() {
                 // If we got an error, we rewind to the position before the read
@@ -1306,36 +1306,28 @@ enum ReportDataChunkState {
 /// the other peers is sending, but processing all of those chunks is not done here,
 /// but is rather - a responsibility of the caller who should call in a loop `WriteResponder::respond`
 /// for all the chunks of the write request, until the `WriteReq::more_chunks()` returns `false`.
-struct WriteResponder<'a, 'b, 'c, C, D, B, S> {
+struct WriteResponder<'a, 'b, 'c, C> {
     req: &'a WriteReq<'a>,
     node: &'a Node<'a>,
-    invoker: HandlerInvoker<'b, 'c, C, D, B, S>,
+    invoker: HandlerInvoker<'b, 'c, C>,
 }
 
-impl<'a, 'b, 'c, C, D, B, S> WriteResponder<'a, 'b, 'c, C, D, B, S>
+impl<'a, 'b, 'c, C> WriteResponder<'a, 'b, 'c, C>
 where
-    C: Crypto,
-    D: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
+    C: HandlerContext,
 {
     /// Create a new `WriteResponder`.
     const fn new(
         req: &'a WriteReq<'a>,
         node: &'a Node<'a>,
-        invoker: HandlerInvoker<'b, 'c, C, D, B, S>,
+        invoker: HandlerInvoker<'b, 'c, C>,
     ) -> Self {
         Self { req, node, invoker }
     }
 
     /// Respond to the write request by processing each write attribute in the request
     /// and sending a response back.
-    async fn respond(
-        &mut self,
-        notify: &dyn ChangeNotify,
-        wb: &mut WriteBuf<'_>,
-        suppress_resp: bool,
-    ) -> Result<(), Error> {
+    async fn respond(&mut self, wb: &mut WriteBuf<'_>, suppress_resp: bool) -> Result<(), Error> {
         let accessor = self.invoker.exchange().accessor()?;
 
         wb.reset();
@@ -1357,7 +1349,7 @@ where
             self.node.write(self.req, &accessor)?.collect();
 
         for item in write_attrs {
-            self.invoker.process_write(&item?, &mut *wb, notify).await?;
+            self.invoker.process_write(&item?, &mut *wb).await?;
         }
 
         if suppress_resp {
@@ -1384,36 +1376,28 @@ where
 /// The simplest strategy for chunking would be to simply - and unconditionally - send each individual
 /// command response in a separate Matter message, i.e. if the invoke request contains 3 commands,
 /// the responder will send 3 Matter messages, each containing a single command response.
-struct InvokeResponder<'a, 'b, 'c, C, D, B, S> {
+struct InvokeResponder<'a, 'b, 'c, C> {
     req: &'a InvReq<'a>,
     node: &'a Node<'a>,
-    invoker: HandlerInvoker<'b, 'c, C, D, B, S>,
+    invoker: HandlerInvoker<'b, 'c, C>,
 }
 
-impl<'a, 'b, 'c, C, D, B, S> InvokeResponder<'a, 'b, 'c, C, D, B, S>
+impl<'a, 'b, 'c, C> InvokeResponder<'a, 'b, 'c, C>
 where
-    C: Crypto,
-    D: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
+    C: HandlerContext,
 {
     /// Create a new `InvokeResponder`.
     const fn new(
         req: &'a InvReq<'a>,
         node: &'a Node<'a>,
-        invoker: HandlerInvoker<'b, 'c, C, D, B, S>,
+        invoker: HandlerInvoker<'b, 'c, C>,
     ) -> Self {
         Self { req, node, invoker }
     }
 
     /// Respond to the invoke request by processing each command in the request
     /// and sending one or more reponses back.
-    async fn respond(
-        &mut self,
-        notify: &dyn ChangeNotify,
-        wb: &mut WriteBuf<'_>,
-        suppress_resp: bool,
-    ) -> Result<(), Error> {
+    async fn respond(&mut self, wb: &mut WriteBuf<'_>, suppress_resp: bool) -> Result<(), Error> {
         wb.reset();
 
         wb.start_struct(&TLVTag::Anonymous)?;
@@ -1433,9 +1417,7 @@ where
         let accessor = self.invoker.exchange().accessor()?;
 
         for item in self.node.invoke(self.req, &accessor)? {
-            self.invoker
-                .process_invoke(&item?, &mut *wb, notify)
-                .await?;
+            self.invoker.process_invoke(&item?, &mut *wb).await?;
         }
 
         if suppress_resp {

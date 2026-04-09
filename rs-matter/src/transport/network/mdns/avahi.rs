@@ -34,7 +34,6 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use zbus::Connection;
 
 use crate::error::Error;
-use crate::im::{AttrId, ClusterId, EndptId};
 use crate::transport::network::mdns::Service;
 use crate::utils::zbus_proxies::avahi::entry_group::EntryGroupProxy;
 use crate::utils::zbus_proxies::avahi::server2::Server2Proxy;

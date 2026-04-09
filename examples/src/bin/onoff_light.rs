@@ -195,7 +195,7 @@ fn run() -> Result<(), Error> {
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        endpoints::root_endpoint_with_groups(NetworkType::Ethernet),
+        endpoints::root_endpoint(NetworkType::Ethernet),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
@@ -220,26 +220,19 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             &(),
             &UnixNetifs,
             rand,
-            endpoints::with_sys(
-                &false,
-                rand,
-                endpoints::with_groups(
-                    rand,
-                    EmptyHandler
-                        .chain(
-                            EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                            Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                        )
-                        .chain(
-                            EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
-                            Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                        )
-                        .chain(
-                            EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                            on_off::HandlerAsyncAdaptor(on_off),
-                        ),
+            EmptyHandler
+                .chain(
+                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                    Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                    on_off::HandlerAsyncAdaptor(on_off),
                 ),
-            ),
         ),
     )
 }

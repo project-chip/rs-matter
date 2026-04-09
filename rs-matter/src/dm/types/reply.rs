@@ -15,23 +15,17 @@
  *    limitations under the License.
  */
 
-use core::future::Future;
-
-use crate::crypto::Crypto;
-use crate::dm::{AsyncHandler, IMBuffer};
+use crate::dm::{AsyncHandler, HandlerContext};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
     AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
     CmdRespTag, CmdStatus, EventData, EventFilter, EventPath, EventRespTag, IMStatusCode,
 };
-use crate::persist::KvBlobStoreAccess;
 use crate::tlv::{TLVArray, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
-use crate::utils::storage::pooled::BufferAccess;
 
 use super::{
-    AttrDetails, ChangeNotify, CmdDetails, InvokeContextInstance, ReadContextInstance,
-    WriteContextInstance,
+    AttrDetails, CmdDetails, InvokeContextInstance, ReadContextInstance, WriteContextInstance,
 };
 
 // A type for writing the outcome of an attribute-read or command-invoke operation.
@@ -72,35 +66,17 @@ pub trait InvokeReply {
     fn with_command(self, cmd: u32) -> Result<impl Reply, Error>;
 }
 
-pub struct HandlerInvoker<'a, 'b, C, D, B, S> {
+pub struct HandlerInvoker<'a, 'b, C> {
     exchange: &'b mut Exchange<'a>,
-    crypto: C,
-    handler: D,
-    buffers: B,
-    kv: S,
+    context: C,
 }
 
-impl<'a, 'b, C, D, B, S> HandlerInvoker<'a, 'b, C, D, B, S>
+impl<'a, 'b, C> HandlerInvoker<'a, 'b, C>
 where
-    C: Crypto,
-    D: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
+    C: HandlerContext,
 {
-    pub const fn new(
-        exchange: &'b mut Exchange<'a>,
-        crypto: C,
-        handler: D,
-        buffers: B,
-        kv: S,
-    ) -> Self {
-        Self {
-            exchange,
-            crypto,
-            handler,
-            buffers,
-            kv,
-        }
+    pub const fn new(exchange: &'b mut Exchange<'a>, context: C) -> Self {
+        Self { exchange, context }
     }
 
     pub fn exchange(&mut self) -> &mut Exchange<'a> {
@@ -111,11 +87,10 @@ where
         &mut self,
         item: &Result<AttrDetails<'_>, AttrStatus>,
         mut tw: T,
-        notify: &dyn ChangeNotify,
     ) -> Result<(), Error> {
         let tail = tw.get_tail();
 
-        let result = self.do_process_read(item, &mut tw, notify).await;
+        let result = self.do_process_read(item, &mut tw).await;
 
         if result.is_err() {
             // If there was an error, rewind to the tail so we don't write any data.
@@ -129,13 +104,12 @@ where
         &mut self,
         item: &Result<AttrDetails<'_>, AttrStatus>,
         mut tw: T,
-        notify: &dyn ChangeNotify,
     ) -> Result<(), Error> {
         let result = match item {
             Ok(attr) => {
                 let pos = tw.get_tail();
 
-                let result = self.read(attr, &mut tw, notify).await;
+                let result = self.read(attr, &mut tw).await;
 
                 match result {
                     Ok(()) => Ok(None),
@@ -162,35 +136,28 @@ where
         }
     }
 
-    pub fn read<'t, T: TLVWrite + Send + 't>(
-        &'t mut self,
-        attr: &'t AttrDetails<'_>,
+    pub async fn read<T: TLVWrite + Send>(
+        &mut self,
+        attr: &AttrDetails<'_>,
         tw: T,
-        notify: &'t dyn ChangeNotify,
-    ) -> impl Future<Output = Result<(), Error>> + 't {
-        self.handler.read(
-            ReadContextInstance::new(
-                self.exchange,
-                &self.crypto,
-                &self.handler,
-                &self.buffers,
-                &self.kv,
-                attr,
-                notify,
-            ),
-            ReadReplyInstance::new(attr, tw),
-        )
+    ) -> Result<(), Error> {
+        self.context
+            .handler()
+            .read(
+                ReadContextInstance::new(self.exchange, &self.context, attr),
+                ReadReplyInstance::new(attr, tw),
+            )
+            .await
     }
 
     pub async fn process_write<T: TLVWrite>(
         &mut self,
         item: &Result<(AttrDetails<'_>, TLVElement<'_>), AttrStatus>,
         mut tw: T,
-        notify: &dyn ChangeNotify,
     ) -> Result<(), Error> {
         let tail = tw.get_tail();
 
-        let result = self.do_process_write(item, &mut tw, notify).await;
+        let result = self.do_process_write(item, &mut tw).await;
 
         if result.is_err() {
             // If there was an error, rewind to the tail so we don't write any data.
@@ -204,13 +171,12 @@ where
         &mut self,
         item: &Result<(AttrDetails<'_>, TLVElement<'_>), AttrStatus>,
         mut tw: T,
-        notify: &dyn ChangeNotify,
     ) -> Result<(), Error> {
         let result = match item {
             Ok((attr, data)) => {
                 let pos = tw.get_tail();
 
-                let result = self.write(attr, data, notify).await;
+                let result = self.write(attr, data).await;
 
                 match result {
                     Ok(()) => Ok(attr.status(IMStatusCode::Success)),
@@ -237,33 +203,30 @@ where
         }
     }
 
-    pub fn write<'t>(
-        &'t mut self,
-        attr: &'t AttrDetails<'_>,
-        data: &'t TLVElement<'_>,
-        notify: &'t dyn ChangeNotify,
-    ) -> impl Future<Output = Result<(), Error>> + 't {
-        self.handler.write(WriteContextInstance::new(
-            self.exchange,
-            &self.crypto,
-            &self.handler,
-            &self.buffers,
-            &self.kv,
-            attr,
-            data,
-            notify,
-        ))
+    pub async fn write(
+        &mut self,
+        attr: &AttrDetails<'_>,
+        data: &TLVElement<'_>,
+    ) -> Result<(), Error> {
+        self.context
+            .handler()
+            .write(WriteContextInstance::new(
+                self.exchange,
+                &self.context,
+                attr,
+                data,
+            ))
+            .await
     }
 
     pub async fn process_invoke<T: TLVWrite + Send>(
         &mut self,
         item: &Result<(CmdDetails<'_>, TLVElement<'_>), CmdStatus>,
         mut tw: T,
-        notify: &dyn ChangeNotify,
     ) -> Result<(), Error> {
         let tail = tw.get_tail();
 
-        let result = self.do_process_invoke(item, &mut tw, notify).await;
+        let result = self.do_process_invoke(item, &mut tw).await;
 
         if result.is_err() {
             // If there was an error, rewind to the tail so we don't write any data.
@@ -277,13 +240,12 @@ where
         &mut self,
         item: &Result<(CmdDetails<'_>, TLVElement<'_>), CmdStatus>,
         mut tw: T,
-        notify: &dyn ChangeNotify,
     ) -> Result<(), Error> {
         let result = match item {
             Ok((cmd, data)) => {
                 let pos = tw.get_tail();
 
-                let result = self.invoke(cmd, data, &mut tw, notify).await;
+                let result = self.invoke(cmd, data, &mut tw).await;
 
                 match result {
                     Ok(()) => {
@@ -316,26 +278,19 @@ where
         }
     }
 
-    pub fn invoke<'t, T: TLVWrite + Send + 't>(
-        &'t mut self,
-        cmd: &'t CmdDetails<'_>,
-        data: &'t TLVElement<'_>,
+    pub async fn invoke<T: TLVWrite + Send>(
+        &mut self,
+        cmd: &CmdDetails<'_>,
+        data: &TLVElement<'_>,
         tw: T,
-        notify: &'t dyn ChangeNotify,
-    ) -> impl Future<Output = Result<(), Error>> + 't {
-        self.handler.invoke(
-            InvokeContextInstance::new(
-                self.exchange,
-                &self.crypto,
-                &self.handler,
-                &self.buffers,
-                &self.kv,
-                cmd,
-                data,
-                notify,
-            ),
-            InvokeReplyInstance::new(cmd, tw),
-        )
+    ) -> Result<(), Error> {
+        self.context
+            .handler()
+            .invoke(
+                InvokeContextInstance::new(self.exchange, &self.context, cmd, data),
+                InvokeReplyInstance::new(cmd, tw),
+            )
+            .await
     }
 }
 
