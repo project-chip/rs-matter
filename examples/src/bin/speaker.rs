@@ -31,12 +31,13 @@ use rs_matter::dm::clusters::level_control::{
     self, test::TestLevelControlDeviceLogic, AttributeDefaults, LevelControlHandler,
     LevelControlHooks, OptionsBitmap,
 };
-use rs_matter::dm::clusters::net_comm::{DummyNetworkAccess, NetworkType};
+use rs_matter::dm::clusters::net_comm::{NetworkType, SharedNetworks};
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHandler, OnOffHooks};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_SMART_SPEAKER;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::events::DefaultEvents;
+use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
@@ -123,7 +124,7 @@ fn main() -> Result<(), Error> {
         Some(&events),
         dm_handler(rand, &on_off_handler, &level_control_handler),
         SharedKvBlobStore::new(kv, kv_buf.as_mut_slice()),
-        DummyNetworkAccess,
+        SharedNetworks::new(EthNetwork::new_default()),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions

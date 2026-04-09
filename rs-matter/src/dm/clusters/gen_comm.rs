@@ -21,10 +21,11 @@ use core::fmt::Debug;
 
 use either::Either;
 
+use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::dm::{Cluster, Context, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricPersist;
-use crate::persist::{Persist, BASIC_INFO_KEY};
+use crate::persist::{Persist, BASIC_INFO_KEY, NETWORKS_KEY};
 use crate::tlv::TLVBuilderParent;
 use crate::utils::sync::DynBase;
 use crate::{with, MatterState};
@@ -319,6 +320,11 @@ impl ClusterHandler for GenCommHandler<'_> {
 
                 // Finally, persist the fabric and the network settings, prior to sending the other party a "success" status
                 persist.store(fabric)?;
+                ctx.networks().access(|networks| {
+                    persist
+                        .persist_mut()
+                        .store(NETWORKS_KEY, |buf| networks.save(buf))
+                })?;
 
                 info!("Commissioning complete, fabric and network settings persisted");
 

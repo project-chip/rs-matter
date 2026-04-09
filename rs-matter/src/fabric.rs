@@ -1043,6 +1043,11 @@ where
         Self(Persist::new(kvb))
     }
 
+    /// Return a reference to the underlying `Persist` instance.
+    pub fn persist_mut(&mut self) -> &mut Persist<S> {
+        &mut self.0
+    }
+
     /// Save the provided fabric in the persistent storage.
     pub fn store(&mut self, fabric: &Fabric) -> Result<(), Error> {
         self.0

@@ -20,6 +20,7 @@ use core::pin::pin;
 
 use crate::crypto::backend::dummy::DummyCrypto;
 use crate::crypto::Crypto;
+use crate::dm::clusters::net_comm::{DummyNetworkAccess, NetworksAccess};
 use crate::dm::IMBuffer;
 use crate::error::{Error, ErrorCode};
 use crate::persist::{DummyKvBlobStoreAccess, KvBlobStoreAccess};
@@ -67,6 +68,9 @@ pub trait BasicContext {
     /// Return a blob store that can be used to persist data across reboots.
     fn kv(&self) -> impl KvBlobStoreAccess + '_;
 
+    /// Return the networks access object.
+    fn networks(&self) -> impl NetworksAccess + '_;
+
     /// Notify that the state of an attribute has changed.
     ///
     /// # Arguments
@@ -100,6 +104,10 @@ where
 
     fn kv(&self) -> impl KvBlobStoreAccess + '_ {
         (**self).kv()
+    }
+
+    fn networks(&self) -> impl NetworksAccess + '_ {
+        (**self).networks()
     }
 
     fn notify_attribute_changed(
@@ -156,6 +164,10 @@ impl BasicContext for DummyContext {
 
     fn kv(&self) -> impl KvBlobStoreAccess + '_ {
         DummyKvBlobStoreAccess
+    }
+
+    fn networks(&self) -> impl NetworksAccess + '_ {
+        DummyNetworkAccess
     }
 
     fn notify_attribute_changed(
@@ -370,6 +382,10 @@ where
         self.context.kv()
     }
 
+    fn networks(&self) -> impl NetworksAccess + '_ {
+        self.context.networks()
+    }
+
     fn notify_attribute_changed(
         &self,
         endpoint_id: EndptId,
@@ -460,6 +476,10 @@ where
 
     fn kv(&self) -> impl KvBlobStoreAccess + '_ {
         self.context.kv()
+    }
+
+    fn networks(&self) -> impl NetworksAccess + '_ {
+        self.context.networks()
     }
 
     fn notify_attribute_changed(
@@ -556,6 +576,10 @@ where
 
     fn kv(&self) -> impl KvBlobStoreAccess + '_ {
         self.context.kv()
+    }
+
+    fn networks(&self) -> impl NetworksAccess + '_ {
+        self.context.networks()
     }
 
     fn notify_attribute_changed(

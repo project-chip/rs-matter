@@ -59,7 +59,7 @@ use rs_matter::crypto::backend::rustcrypto::RustCrypto;
 use rs_matter::crypto::{Crypto, RngCore, WeakTestOnlyRand};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::clusters::net_comm::{
-    DummyNetworkAccess, NetCtl, NetCtlError, NetCtlStatus, NetworkScanInfo, NetworkType, NetworksAccess, SharedNetworks, WirelessCreds
+    NetCtl, NetCtlError, NetCtlStatus, NetworkScanInfo, NetworkType, SharedNetworks, WirelessCreds
 };
 use rs_matter::dm::clusters::on_off::NoLevelControl;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
@@ -202,7 +202,7 @@ type AppHandler<'a> = handler_chain_type!(
     | EmptyHandler
 );
 type AppCrypto = RustCrypto<'static, WeakTestOnlyRand>;
-type AppDmHandler<'a> = SysHandler<'a, &'a AppNetworks, &'a AppNetCtl<'a>, AppHandler<'a>>;
+type AppDmHandler<'a> = SysHandler<'a, &'a AppNetCtl<'a>, AppHandler<'a>>;
 type AppDataModel<'a> = DataModel<
     'a,
     DEFAULT_MAX_SUBSCRIPTIONS,
@@ -211,7 +211,7 @@ type AppDataModel<'a> = DataModel<
     PooledBuffers<10, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
     SharedKvBlobStore<DummyKvBlobStore, &'static mut [u8]>,
-    DummyNetworkAccess,
+    &'a AppNetworks,
 >;
 type AppResponder<'d, 'a> = DefaultResponder<
     'd,
@@ -222,7 +222,7 @@ type AppResponder<'d, 'a> = DefaultResponder<
     PooledBuffers<10, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
     SharedKvBlobStore<DummyKvBlobStore, &'static mut [u8]>,
-    DummyNetworkAccess,
+    &'a AppNetworks,
 >;
 
 #[cfg_attr(target_os = "none", main)]
@@ -343,7 +343,6 @@ fn main() -> ! {
                 1,
                 TestOnOffDeviceLogic::new(true),
             ),
-            &stack.networks,
             net_ctl,
         )
     );
@@ -361,7 +360,7 @@ fn main() -> ! {
             Some(&stack.events),
             (NODE, handler),
             kv,
-            DummyNetworkAccess,
+            &stack.networks,
         )
     );
 
@@ -647,14 +646,12 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a, N, T>(
+fn dm_handler<'a, T>(
     mut rand: impl RngCore + Copy,
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
-    networks: N,
     net_ctl: &'a T,
-) -> SysHandler<'a, N, &'a T, AppHandler<'a>>
+) -> SysHandler<'a, &'a T, AppHandler<'a>>
 where
-    N: NetworksAccess,
     T: NetCtl + NetCtlStatus + WifiDiag,
 {
     endpoints::with_sys(
@@ -663,7 +660,6 @@ where
         &(),
         net_ctl,
         &(),
-        networks,
         net_ctl,
         rand,
         EmptyHandler
