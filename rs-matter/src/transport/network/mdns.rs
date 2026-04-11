@@ -533,6 +533,32 @@ impl Service<'_> {
 
         match matter_service {
             MatterMdnsService::Commissioned { .. } => {
+                // Matter Core Spec Section 4.3.1 — Operational Discovery TXT records
+                // Use a plain array to avoid heapless::Vec monomorphization cost.
+                let mut sai_str = heapless::String::<10>::new();
+                let mut sii_str = heapless::String::<10>::new();
+
+                let mut txt_kvs: [(&str, &str); 3] = [("", ""); 3];
+                let mut txt_count = 0;
+
+                if let Some(sai) = dev_det.sai {
+                    write_unwrap!(sai_str, "{}", sai);
+                    txt_kvs[txt_count] = ("SAI", sai_str.as_str());
+                    txt_count += 1;
+                }
+
+                if let Some(sii) = dev_det.sii {
+                    write_unwrap!(sii_str, "{}", sii);
+                    txt_kvs[txt_count] = ("SII", sii_str.as_str());
+                    txt_count += 1;
+                }
+
+                // Some mDNS responders do not accept empty TXT records
+                if txt_count == 0 {
+                    txt_kvs[0] = ("dummy", "dummy");
+                    txt_count = 1;
+                }
+
                 f(&Service {
                     name: matter_service.name(&mut name_buf),
                     service: "_matter",
@@ -540,8 +566,7 @@ impl Service<'_> {
                     service_protocol: "_matter._tcp",
                     port: matter_port,
                     service_subtypes: &[],
-                    // Some mDNS responders do not accept empty TXT records
-                    txt_kvs: &[("dummy", "dummy")],
+                    txt_kvs: &txt_kvs[..txt_count],
                 })
                 .await
             }
