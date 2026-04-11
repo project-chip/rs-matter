@@ -14,6 +14,9 @@ rust-version = "1.87"
 [features]
 default = ["os", "rustcrypto", "log"]
 
+# Optional protocol features
+case-initiator = []  # CASE session initiator (client-side Sigma1/Sigma2/Sigma3)
+
 # Sizing
 
 # Number of fabrics
