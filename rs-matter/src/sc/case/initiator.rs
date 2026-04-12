@@ -29,11 +29,11 @@ use rand_core::RngCore;
 use crate::alloc;
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
 use crate::crypto::{
-    Aead, AeadNonceRef, CanonAeadKey, CanonAeadKeyRef, CanonPkcPublicKeyRef,
-    CanonPkcSecretKeyRef, CanonPkcSignature, CanonPkcSignatureRef, Crypto, CryptoSensitive,
-    Digest, Kdf, PublicKey, SecretKey, SigningSecretKey, AEAD_CANON_KEY_LEN, AEAD_KEY_ZEROED,
-    AEAD_TAG_LEN, AEAD_TAG_ZEROED, HASH_LEN, HASH_ZEROED, PKC_CANON_PUBLIC_KEY_LEN,
-    PKC_PUBLIC_KEY_ZEROED, PKC_SHARED_SECRET_ZEROED,
+    Aead, AeadNonceRef, CanonAeadKey, CanonAeadKeyRef, CanonPkcPublicKeyRef, CanonPkcSecretKeyRef,
+    CanonPkcSignature, CanonPkcSignatureRef, Crypto, CryptoSensitive, Digest, Kdf, PublicKey,
+    SecretKey, SigningSecretKey, AEAD_CANON_KEY_LEN, AEAD_KEY_ZEROED, AEAD_TAG_LEN,
+    AEAD_TAG_ZEROED, HASH_LEN, HASH_ZEROED, PKC_CANON_PUBLIC_KEY_LEN, PKC_PUBLIC_KEY_ZEROED,
+    PKC_SHARED_SECRET_ZEROED,
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::Fabric;
