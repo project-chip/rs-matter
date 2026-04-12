@@ -29,13 +29,14 @@ use rand_core::RngCore;
 use crate::alloc;
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
 use crate::crypto::{
-    Aead, AeadNonceRef, CanonAeadKeyRef, CanonPkcPublicKeyRef, CanonPkcSecretKeyRef,
-    CanonPkcSignature, CanonPkcSignatureRef, Crypto, CryptoSensitive, Digest, Kdf, PublicKey,
-    SecretKey, SigningSecretKey, AEAD_CANON_KEY_LEN, AEAD_KEY_ZEROED, AEAD_TAG_LEN,
-    AEAD_TAG_ZEROED, HASH_LEN, HASH_ZEROED, PKC_CANON_PUBLIC_KEY_LEN, PKC_PUBLIC_KEY_ZEROED,
-    PKC_SHARED_SECRET_ZEROED,
+    Aead, AeadNonceRef, CanonAeadKey, CanonAeadKeyRef, CanonPkcPublicKeyRef,
+    CanonPkcSecretKeyRef, CanonPkcSignature, CanonPkcSignatureRef, Crypto, CryptoSensitive,
+    Digest, Kdf, PublicKey, SecretKey, SigningSecretKey, AEAD_CANON_KEY_LEN, AEAD_KEY_ZEROED,
+    AEAD_TAG_LEN, AEAD_TAG_ZEROED, HASH_LEN, HASH_ZEROED, PKC_CANON_PUBLIC_KEY_LEN,
+    PKC_PUBLIC_KEY_ZEROED, PKC_SHARED_SECRET_ZEROED,
 };
 use crate::error::{Error, ErrorCode};
+use crate::fabric::Fabric;
 use crate::sc::{complete_with_status, GeneralCode, OpCode, SCStatusCodes, StatusReport};
 use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite};
 use crate::transport::exchange::Exchange;
@@ -167,6 +168,30 @@ impl CaseInitiator {
 
         let local_sessid = exchange.with_state(|state| Ok(state.sessions.get_next_sess_id()))?;
 
+        // Derive the IPK operational key from epoch key + compressed fabric ID.
+        // The responder uses the operational key (not the raw epoch key) for
+        // dest_id verification and all CASE key derivations (S2K, S3K, session keys).
+        let root_tlv = TLVElement::new(creds.root_ca);
+        let root_cert = CertRef::new(root_tlv);
+        let root_pubkey: CanonPkcPublicKeyRef<'_> = root_cert.pubkey()?.try_into()?;
+        let compressed_fabric_id =
+            Fabric::compute_compressed_fabric_id(crypto, root_pubkey, creds.fabric_id);
+
+        const GRP_KEY_INFO: &[u8] = &[
+            0x47, 0x72, 0x6f, 0x75, 0x70, 0x4b, 0x65, 0x79, 0x20, 0x76, 0x31, 0x2e, 0x30,
+        ];
+        let mut op_key = MaybeUninit::<CanonAeadKey>::uninit();
+        let op_key = op_key.init_with(CanonAeadKey::init());
+        crypto
+            .kdf()?
+            .expand(
+                &compressed_fabric_id.to_be_bytes(),
+                creds.ipk,
+                GRP_KEY_INFO,
+                op_key,
+            )
+            .map_err(|_| ErrorCode::InvalidData)?;
+
         // Generate ephemeral keypair
         let ephemeral_key = crypto.generate_secret_key()?;
         let mut our_pub_key = PKC_PUBLIC_KEY_ZEROED;
@@ -176,12 +201,12 @@ impl CaseInitiator {
         let mut initiator_random = [0u8; CASE_RANDOM_LEN];
         crypto.rand()?.fill_bytes(&mut initiator_random);
 
-        // Compute destination ID: HMAC(IPK, random || root_pubkey || fabric_id || peer_node_id)
+        // Compute destination ID: HMAC(IPK_op_key, random || root_pubkey || fabric_id || peer_node_id)
         let mut dest_id = HASH_ZEROED;
         {
-            let mut mac = crypto.hmac(creds.ipk)?;
+            let mut mac = crypto.hmac(op_key.reference())?;
             mac.update(&initiator_random)?;
-            mac.update(CertRef::new(TLVElement::new(creds.root_ca)).pubkey()?)?;
+            mac.update(root_pubkey.access())?;
             mac.update(&creds.fabric_id.to_le_bytes())?;
             mac.update(&peer_node_id.to_le_bytes())?;
             mac.finish(&mut dest_id)?;
@@ -256,7 +281,7 @@ impl CaseInitiator {
             >::new();
             let s = salt.access_mut();
             let mut off = 0;
-            s[off..off + AEAD_CANON_KEY_LEN].copy_from_slice(creds.ipk.access());
+            s[off..off + AEAD_CANON_KEY_LEN].copy_from_slice(op_key.access());
             off += AEAD_CANON_KEY_LEN;
             s[off..off + resp.responder_random.0.len()].copy_from_slice(resp.responder_random.0);
             off += CASE_RANDOM_LEN;
@@ -367,7 +392,7 @@ impl CaseInitiator {
 
             let mut salt = CryptoSensitive::<{ AEAD_CANON_KEY_LEN + HASH_LEN }>::new();
             let s = salt.access_mut();
-            s[..AEAD_CANON_KEY_LEN].copy_from_slice(creds.ipk.access());
+            s[..AEAD_CANON_KEY_LEN].copy_from_slice(op_key.access());
             s[AEAD_CANON_KEY_LEN..].copy_from_slice(tt_hash.access());
 
             crypto
@@ -480,7 +505,7 @@ impl CaseInitiator {
 
             let mut salt = CryptoSensitive::<{ AEAD_CANON_KEY_LEN + HASH_LEN }>::new();
             let s = salt.access_mut();
-            s[..AEAD_CANON_KEY_LEN].copy_from_slice(creds.ipk.access());
+            s[..AEAD_CANON_KEY_LEN].copy_from_slice(op_key.access());
             s[AEAD_CANON_KEY_LEN..].copy_from_slice(tt_hash.access());
 
             crypto
