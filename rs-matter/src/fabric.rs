@@ -660,7 +660,7 @@ impl Fabric {
     }
 
     /// Compute the compressed fabric ID
-    pub(crate) fn compute_compressed_fabric_id<C: Crypto>(
+    pub fn compute_compressed_fabric_id<C: Crypto>(
         crypto: C,
         root_pubkey: CanonPkcPublicKeyRef<'_>,
         fabric_id: u64,
