@@ -474,7 +474,10 @@ impl Session {
     }
 
     pub(crate) fn remove_exch(&mut self, index: usize) -> bool {
-        let exchange = unwrap!(self.exchanges[index].as_mut());
+        let Some(exchange) = self.exchanges[index].as_mut() else {
+            // Already removed (e.g. evicted by stale-exchange handling before Drop ran)
+            return true;
+        };
         let exchange_id = ExchangeId::new(self.id, index);
 
         if exchange.mrp.is_retrans_pending() {
