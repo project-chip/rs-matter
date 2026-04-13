@@ -18,16 +18,15 @@
 use core::future::Future;
 use core::pin::pin;
 
-use crate::crypto::backend::dummy::DummyCrypto;
 use crate::crypto::Crypto;
-use crate::dm::clusters::net_comm::{DummyNetworkAccess, NetworksAccess};
+use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::dm::IMBuffer;
 use crate::error::{Error, ErrorCode};
-use crate::persist::{DummyKvBlobStoreAccess, KvBlobStoreAccess};
+use crate::persist::KvBlobStoreAccess;
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
 use crate::utils::select::Coalesce;
-use crate::utils::storage::pooled::{BufferAccess, PooledBuffers};
+use crate::utils::storage::pooled::BufferAccess;
 use crate::utils::sync::DynBase;
 use crate::Matter;
 
@@ -151,110 +150,16 @@ where
     }
 }
 
-struct DummyContext;
-
-impl BasicContext for DummyContext {
-    fn matter(&self) -> &Matter<'_> {
-        unreachable!()
-    }
-
-    fn crypto(&self) -> impl Crypto + '_ {
-        DummyCrypto
-    }
-
-    fn kv(&self) -> impl KvBlobStoreAccess + '_ {
-        DummyKvBlobStoreAccess
-    }
-
-    fn networks(&self) -> impl NetworksAccess + '_ {
-        DummyNetworkAccess
-    }
-
-    fn notify_attribute_changed(
-        &self,
-        _endpoint_id: EndptId,
-        _cluster_id: ClusterId,
-        _attr_id: AttrId,
-    ) {
-        unreachable!()
-    }
-}
-
-impl HandlerContext for DummyContext {
-    fn handler(&self) -> impl AsyncHandler + '_ {
-        EmptyHandler
-    }
-
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
-        PooledBuffers::<0, IMBuffer>::new(0)
-    }
-}
-
-impl Context for DummyContext {
-    fn exchange(&self) -> &Exchange<'_> {
-        unreachable!()
-    }
-}
-
-impl ReadContext for DummyContext {
-    fn attr(&self) -> &AttrDetails<'_> {
-        unreachable!()
-    }
-}
-
-impl WriteContext for DummyContext {
-    fn attr(&self) -> &AttrDetails<'_> {
-        unreachable!()
-    }
-
-    fn data(&self) -> &TLVElement<'_> {
-        unreachable!()
-    }
-}
-
-impl InvokeContext for DummyContext {
-    fn cmd(&self) -> &CmdDetails<'_> {
-        unreachable!()
-    }
-
-    fn data(&self) -> &TLVElement<'_> {
-        unreachable!()
-    }
-}
-
 /// A context super-type that is passed to the handler when processing an attribute read/write or a command invoke operation.
 pub trait Context: HandlerContext {
     /// Return the exchange object that is associated with this operation.
     fn exchange(&self) -> &Exchange<'_>;
 
-    /// Notify that the state of the attribute whose read/write/invoke operation is processed has changed.
-    fn notify_changed(&self) {
-        if let Some(ctx) = self.as_read_ctx() {
-            self.notify_attribute_path_changed(ctx.attr());
-        } else if let Some(ctx) = self.as_write_ctx() {
-            self.notify_attribute_path_changed(ctx.attr());
-        } else {
-            unreachable!()
-        }
-    }
+    /// Return the endpoint ID that is associated with this operation.
+    fn endpt(&self) -> EndptId;
 
-    /// Try to upcast the context to a read context.
-    /// The operation will return `Some` only if the underlying context represents a read operation.
-    fn as_read_ctx(&self) -> Option<impl ReadContext> {
-        Option::<DummyContext>::None
-    }
-
-    /// Try to upcast the context to a write context.
-    /// The operation will return `Some` only if the underlying context represents a write operation.
-    fn as_write_ctx(&self) -> Option<impl WriteContext> {
-        Option::<DummyContext>::None
-    }
-
-    /// Try to upcast the context to an invoke context.
-    /// The operation will return `Some` only if the underlying context represents an invoke operation.
-    fn as_invoke_ctx(&self) -> Option<impl InvokeContext> {
-        Option::<DummyContext>::None
-    }
+    /// Return the cluster ID that is associated with this operation.
+    fn cluster(&self) -> ClusterId;
 }
 
 impl<T> Context for &T
@@ -265,20 +170,12 @@ where
         (**self).exchange()
     }
 
-    fn notify_changed(&self) {
-        (**self).notify_changed();
+    fn endpt(&self) -> EndptId {
+        (**self).endpt()
     }
 
-    fn as_read_ctx(&self) -> Option<impl ReadContext> {
-        (**self).as_read_ctx()
-    }
-
-    fn as_write_ctx(&self) -> Option<impl WriteContext> {
-        (**self).as_write_ctx()
-    }
-
-    fn as_invoke_ctx(&self) -> Option<impl InvokeContext> {
-        (**self).as_invoke_ctx()
+    fn cluster(&self) -> ClusterId {
+        (**self).cluster()
     }
 }
 
@@ -299,11 +196,16 @@ where
 
 /// A context type that is passed to the handler when processing an attribute Write operation.
 pub trait WriteContext: Context {
-    /// Return the attribute object that is associated with this read operation.
+    /// Return the attribute object that is associated with this write operation.
     fn attr(&self) -> &AttrDetails<'_>;
 
     /// Return the attribute data that is associated with this write operation.
     fn data(&self) -> &TLVElement<'_>;
+
+    /// Notify that the state of the attribute whose write operation is processed has changed.
+    fn notify_changed(&self) {
+        self.notify_attribute_path_changed(self.attr());
+    }
 }
 
 impl<T> WriteContext for &T
@@ -316,6 +218,10 @@ where
 
     fn data(&self) -> &TLVElement<'_> {
         (**self).data()
+    }
+
+    fn notify_changed(&self) {
+        (**self).notify_changed()
     }
 }
 
@@ -418,8 +324,12 @@ where
         self.exchange
     }
 
-    fn as_read_ctx(&self) -> Option<impl ReadContext> {
-        Some(self)
+    fn endpt(&self) -> EndptId {
+        self.attr.endpoint_id
+    }
+
+    fn cluster(&self) -> ClusterId {
+        self.attr.cluster_id
     }
 }
 
@@ -514,8 +424,12 @@ where
         self.exchange
     }
 
-    fn as_write_ctx(&self) -> Option<impl WriteContext> {
-        Some(self)
+    fn endpt(&self) -> EndptId {
+        self.attr.endpoint_id
+    }
+
+    fn cluster(&self) -> ClusterId {
+        self.attr.cluster_id
     }
 }
 
@@ -614,8 +528,12 @@ where
         self.exchange
     }
 
-    fn as_invoke_ctx(&self) -> Option<impl InvokeContext> {
-        Some(self)
+    fn endpt(&self) -> EndptId {
+        self.cmd.endpoint_id
+    }
+
+    fn cluster(&self) -> ClusterId {
+        self.cmd.cluster_id
     }
 }
 
@@ -775,35 +693,16 @@ impl EpClMatcher {
 
 impl Matcher for EpClMatcher {
     fn matches(&self, ctx: impl Context) -> bool {
-        if let Some(ctx) = ctx.as_read_ctx() {
-            self.endpoint_id
-                .map(|endpoint_id| ctx.attr().endpoint_id == endpoint_id)
-                .unwrap_or(true)
-                && self
-                    .cluster_id
-                    .map(|cluster_id| cluster_id == ctx.attr().cluster_id)
-                    .unwrap_or(true)
-        } else if let Some(ctx) = ctx.as_write_ctx() {
-            self.endpoint_id
-                .map(|endpoint_id| ctx.attr().endpoint_id == endpoint_id)
-                .unwrap_or(true)
-                && self
-                    .cluster_id
-                    .map(|cluster_id| cluster_id == ctx.attr().cluster_id)
-                    .unwrap_or(true)
-        } else {
-            let Some(ctx) = ctx.as_invoke_ctx() else {
-                unreachable!()
-            };
+        let ctx_endpoint_id = ctx.endpt();
+        let ctx_cluster_id = ctx.cluster();
 
-            self.endpoint_id
-                .map(|endpoint_id| ctx.cmd().endpoint_id == endpoint_id)
+        self.endpoint_id
+            .map(|endpoint_id| ctx_endpoint_id == endpoint_id)
+            .unwrap_or(true)
+            && self
+                .cluster_id
+                .map(|cluster_id| ctx_cluster_id == cluster_id)
                 .unwrap_or(true)
-                && self
-                    .cluster_id
-                    .map(|cluster_id| cluster_id == ctx.cmd().cluster_id)
-                    .unwrap_or(true)
-        }
     }
 }
 

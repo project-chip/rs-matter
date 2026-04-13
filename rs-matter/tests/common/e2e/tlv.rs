@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+#![allow(unused)]
+
 use core::fmt::Debug;
 
 use rs_matter::error::Error;

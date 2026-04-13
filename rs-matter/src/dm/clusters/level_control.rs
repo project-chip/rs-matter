@@ -40,7 +40,7 @@ pub use crate::dm::clusters::decl::level_control::*;
 use crate::dm::clusters::on_off::{OnOffHooks, FULL_CLUSTER as ON_OFF_FULL_CLUSTER};
 use crate::dm::clusters::{level_control, on_off::OnOffHandler};
 use crate::dm::{
-    Cluster, Context, Dataver, EndptId, HandlerContext, InvokeContext, ReadContext, WriteContext,
+    Cluster, Dataver, EndptId, HandlerContext, InvokeContext, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::Nullable;
@@ -422,7 +422,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         })
     }
 
-    fn with_state_notify<F, R>(&self, ctx: impl Context, f: F) -> R
+    fn with_state_notify<F, R>(&self, ctx: impl WriteContext, f: F) -> R
     where
         F: FnOnce(&mut LevelControlState) -> R,
     {

@@ -243,13 +243,13 @@ impl MediaHandler {
     }
 
     /// Update the state of the handler
-    fn set_state(&self, state: PlaybackStateEnum, ctx: impl InvokeContext) {
+    fn set_state(&self, state: PlaybackStateEnum, _ctx: impl InvokeContext) {
         let old_state = self.state.replace(state);
 
         if old_state != state {
             // Update the cluster data version and notify potential subscribers
             self.dataver.changed();
-            ctx.notify_changed();
+            // TODO ctx.notify_changed();
         }
     }
 }

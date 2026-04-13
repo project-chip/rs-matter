@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+#![allow(unused)]
+
 use bitflags::bitflags;
 
 use rs_matter::error::Error;
@@ -42,6 +44,7 @@ pub mod handler;
 ///
 /// Unlike `ReadReq`, `TestReadReq` uses regular Rust slices where
 /// `ReadReq` uses `TLVArray` instances.
+#[allow(unused)]
 #[derive(Debug, Default, Clone, ToTLV)]
 pub struct TestReadReq<'a> {
     pub attr_requests: Option<&'a [AttrPath]>,
@@ -85,6 +88,7 @@ impl<'a> TestReadReq<'a> {
 /// Unlike `ReadResp`, `TestReadResp` uses regular Rust slices where
 /// `ReadResp` uses `TLVArray` instances. Also, it utilizes `TestReadData`
 /// for the write requests, where `ReadResp` uses `AttrData` instances.
+#[allow(unused)]
 #[derive(Debug, Default, Clone)]
 pub struct TestWriteReq<'a> {
     pub suppress_response: Option<bool>,
@@ -155,6 +159,7 @@ impl TestToTLV for TestWriteReq<'_> {
 ///
 /// Unlike `WriteResp`, `TestWriteResp` uses regular Rust slices where
 /// `WriteResp` uses `TLVArray` instances.
+#[allow(unused)]
 #[derive(ToTLV, Debug, Default, Clone)]
 #[tlvargs(lifetime = "'a")]
 pub struct TestWriteResp<'a> {
@@ -172,6 +177,7 @@ impl<'a> TestWriteResp<'a> {
 ///
 /// Unlike `SubscribeResp`, `TestSubscribeResp` uses regular Rust slices where
 /// `SubscribeResp` uses `TLVArray` instances.
+#[allow(unused)]
 #[derive(Debug, Default, Clone, ToTLV)]
 pub struct TestSubscribeReq<'a> {
     pub keep_subs: bool,
@@ -224,6 +230,7 @@ impl<'a> TestSubscribeReq<'a> {
 /// Unlike `ReportDataMsg`, `TestReportDataMsg` uses regular Rust slices where
 /// `ReportDataMsg` uses `TLVArray` instances. Also, it utilizes `TestAttrResp`
 /// for the attribute reports, where `ReportDataMsg` uses `AttrResp` instances.
+#[allow(unused)]
 #[derive(Debug, Default, Clone)]
 pub struct TestReportDataMsg<'a> {
     pub subscription_id: Option<u32>,
@@ -306,6 +313,7 @@ impl TestToTLV for TestReportDataMsg<'_> {
 /// Unlike `InvReq`, `TestInvReq` uses regular Rust slices where
 /// `InvReq` uses `TLVArray` instances. Also, it utilizes `TestCmdData`
 /// for the invocation requests, where `InvReq` uses `CmdData` instances.
+#[allow(unused)]
 #[derive(Debug, Default, Clone)]
 pub struct TestInvReq<'a> {
     pub suppress_response: Option<bool>,
@@ -363,12 +371,14 @@ impl TestToTLV for TestInvReq<'_> {
 /// Unlike `InvResp`, `TestInvResp` uses regular Rust slices where
 /// `InvResp` uses `TLVArray` instances. Also, it utilizes `TestCmdResp`
 /// for the invocation responses, where `InvResp` uses `CmdResp` instances.
+#[allow(unused)]
 #[derive(Debug, Default, Clone)]
 pub struct TestInvResp<'a> {
     pub suppress_response: Option<bool>,
     pub inv_responses: Option<&'a [TestCmdResp<'a>]>,
 }
 
+#[allow(unused)]
 impl<'a> TestInvResp<'a> {
     /// Create a new `TestInvResp` instance with the provided command responses.
     pub const fn resp(inv_responses: &'a [TestCmdResp<'a>]) -> Self {
@@ -409,6 +419,7 @@ bitflags! {
     ///
     /// Currently, only trimming IM `ReportData` payloads is supported,
     /// but if the end-to-end tests grow, this could be expanded to other IM messages.
+    #[allow(unused)]
     #[repr(transparent)]
     #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct ReplyProcessor: u8 {
@@ -417,6 +428,7 @@ bitflags! {
     }
 }
 
+#[allow(unused)]
 impl ReplyProcessor {
     /// Remove the dataver and/or the data value from the `AttrData` payload, if so requested
     pub fn process(&self, element: &TLVElement, buf: &mut [u8]) -> Result<usize, Error> {
@@ -497,14 +509,17 @@ impl ReplyProcessor {
     }
 }
 
+#[allow(unused)]
 pub struct Setup {}
 
+#[allow(unused)]
 impl Setup {
     pub fn none() -> Result<(), Error> {
         Ok(())
     }
 }
 
+#[allow(unused)]
 impl<I, E, F> TLVTest<I, E, F, fn() -> Result<(), Error>>
 where
     F: Fn(&TLVElement, &mut [u8]) -> Result<usize, Error>,
@@ -671,6 +686,7 @@ where
     }
 }
 
+#[allow(unused)]
 impl<I, E, F, S> TLVTest<I, E, F, S>
 where
     F: Fn(&TLVElement, &mut [u8]) -> Result<usize, Error>,
@@ -706,6 +722,7 @@ where
     }
 }
 
+#[allow(unused)]
 impl<'a>
     TLVTest<
         TestReadReq<'a>,
