@@ -82,6 +82,15 @@ pub struct CaseInitiator<'a, C: Crypto + 'a> {
 }
 
 impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
+    /// Create a new CASE initiator
+    const fn new(peer_node_id: u64) -> Self {
+        Self {
+            casep: CaseP::new(),
+            peer_node_id,
+            secret_key: None,
+        }
+    }
+
     /// Initiate a CASE handshake with a Matter device.
     ///
     /// This performs the complete CASE handshake:
@@ -106,11 +115,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
         // Step 1: Reserve a session slot
         let mut session = ReservedSession::reserve(exchange.matter(), crypto).await?;
 
-        let mut initiator = CaseInitiator {
-            casep: CaseP::new(),
-            peer_node_id,
-            secret_key: None,
-        };
+        let mut initiator = Self::new(peer_node_id);
 
         let mut random = MaybeUninit::<CaseRandom>::uninit();
         let random = random.init_with(CaseRandom::init());
@@ -193,10 +198,10 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
 
             let sigma2 = Sigma2Resp::from_tlv(&get_root_node_struct(raw_sigma2_payload)?)?;
 
-            // Copy encrypted2 to a mutable stack buffer for in-place decryption
-            let mut encrypted2_buf = alloc!([0u8; CASE_LARGE_BUF_SIZE]); // TODO LARGE BUFFER
-
             let result = exchange.with_state(|state| {
+                // Copy encrypted2 to a mutable stack buffer for in-place decryption
+                let mut encrypted2_buf = alloc!([0u8; CASE_LARGE_BUF_SIZE]); // TODO LARGE BUFFER
+
                 if sigma2.encrypted2.0.len() > encrypted2_buf.len() {
                     error!("Sigma2 encrypted data too large");
                     return Err(ErrorCode::BufferTooSmall.into());

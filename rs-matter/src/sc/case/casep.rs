@@ -467,10 +467,10 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
     /// Validate the Sigma3 signature
     ///
     /// # Arguments
-    /// - `initiator_noc` - The initiator's Node Operational Certificate
-    /// - `initiator_icac` - The initiator's Intermediate Certificate Authority Certificate (optional)
-    /// - `initiator_noc_cert` - The initiator's Node Operational Certificate reference
-    /// - `sign` - The signature to validate
+    /// - `noc` - The Node Operational Certificate as raw bytes
+    /// - `icac` - The Intermediate Certificate Authority Certificate as raw bytes (optional)
+    /// - `noc_cert` - The Node Operational Certificate reference
+    /// - `signature` - The signature to validate
     /// - `tmp_buf` - A temporary buffer for signature validation
     ///
     /// # Returns
@@ -479,25 +479,24 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
     pub fn validate_peer_tbs_signature(
         &self,
         crypto: &C,
-        initiator_noc: &[u8],
-        initiator_icac: Option<&[u8]>,
-        initiator_noc_cert: &CertRef,
+        noc: &[u8],
+        icac: Option<&[u8]>,
+        noc_cert: &CertRef,
         signature: CanonPkcSignatureRef<'_>,
         tmp_buf: &mut [u8],
     ) -> Result<(), Error> {
         let mut tw = WriteBuf::new(tmp_buf);
 
         tw.start_struct(&TLVTag::Anonymous)?;
-        tw.str(&TLVTag::Context(1), initiator_noc)?;
-        if let Some(icac) = initiator_icac {
+        tw.str(&TLVTag::Context(1), noc)?;
+        if let Some(icac) = icac {
             tw.str(&TLVTag::Context(2), icac)?;
         }
         tw.str(&TLVTag::Context(3), self.peer_pub_key.access())?;
         tw.str(&TLVTag::Context(4), self.our_pub_key.access())?;
         tw.end_container()?;
 
-        let pub_key =
-            crypto.pub_key(CanonPkcPublicKeyRef::try_new(initiator_noc_cert.pubkey()?)?)?;
+        let pub_key = crypto.pub_key(CanonPkcPublicKeyRef::try_new(noc_cert.pubkey()?)?)?;
         if !pub_key.verify(tw.as_slice(), signature)? {
             Err(ErrorCode::Invalid)?;
         }
