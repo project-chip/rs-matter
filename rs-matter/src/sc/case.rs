@@ -22,12 +22,12 @@
 
 use crate::cert::MAX_CERT_TLV_LEN;
 
+pub use initiator::CaseInitiator;
+pub use responder::CaseResponder;
+
 pub(crate) mod casep;
 mod initiator;
 mod responder;
 
 // Two certificates (NOC and ICAC), plus ECDSA etc -> approx 950b, doing 1024 to be safe
 const CASE_LARGE_BUF_SIZE: usize = MAX_CERT_TLV_LEN * 2 + 224;
-
-pub use initiator::CaseInitiator;
-pub use responder::Case;

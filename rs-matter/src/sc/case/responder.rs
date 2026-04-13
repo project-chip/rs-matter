@@ -65,15 +65,15 @@ struct Sigma3Decrypt<'a> {
     signature: OctetStr<'a>,
 }
 
-/// The CASE protocol handler
-pub struct Case<'a, C: Crypto> {
+/// The CASE Responder (device side) handler
+pub struct CaseResponder<'a, C: Crypto> {
     crypto: &'a C,
     /// The CASE session state
     casep: CaseP<'a, C>,
 }
 
-impl<'a, C: Crypto> Case<'a, C> {
-    /// Create a new `Case` instance
+impl<'a, C: Crypto> CaseResponder<'a, C> {
+    /// Create a new `CaseResponder` instance
     #[inline(always)]
     pub const fn new(crypto: &'a C) -> Self {
         Self {
@@ -82,7 +82,7 @@ impl<'a, C: Crypto> Case<'a, C> {
         }
     }
 
-    /// Return an in-place initializer for `Case`
+    /// Return an in-place initializer for `CaseResponder`
     pub fn init(crypto: &'a C) -> impl Init<Self> {
         init!(Self {
             crypto,

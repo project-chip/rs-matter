@@ -41,12 +41,12 @@ use crate::utils::init::{init, Init};
 use crate::utils::maybe::Maybe;
 use crate::MatterMdnsService;
 
+pub use initiator::PaseInitiator;
+pub use responder::PaseResponder;
+
 mod initiator;
 mod responder;
 pub(crate) mod spake2p;
-
-pub use initiator::PaseInitiator;
-pub use responder::PaseResponder;
 
 /// Minimal commissioning window timeout in seconds, as per the Matter Core Spec
 pub const MIN_COMM_WINDOW_TIMEOUT_SECS: u16 = 3 * 60;
