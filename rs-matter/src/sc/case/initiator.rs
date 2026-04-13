@@ -112,23 +112,17 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
             secret_key: None,
         };
 
-        // Step 2: Prepare Sigma1 parameters
-        let local_sessid = exchange
-            .matter()
-            .transport_mgr
-            .session_mgr
-            .borrow_mut()
-            .get_next_sess_id();
-
         let mut random = MaybeUninit::<CaseRandom>::uninit();
         let random = random.init_with(CaseRandom::init());
 
         let mut dest_id = MaybeUninit::<Hash>::uninit();
         let dest_id = dest_id.init_with(Hash::init());
 
-        {
-            let fabric_mgr = exchange.matter().fabric_mgr.borrow();
-            let fabric = fabric_mgr.get(fab_idx).ok_or(ErrorCode::NotFound)?;
+        // Step 2: Prepare Sigma1 parameters
+        let local_sessid = exchange.with_state(|state| {
+            let local_sessid = state.sessions.get_next_sess_id();
+
+            let fabric = state.fabrics.fabric(fab_idx)?;
 
             let secret_key = initiator.casep.start_initiator(
                 crypto,
@@ -138,8 +132,11 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
                 random,
                 dest_id,
             )?;
+
             initiator.secret_key = Some(secret_key);
-        }
+
+            Ok(local_sessid)
+        })?;
 
         // Step 3: Build and send Sigma1
         let mut tt_updated = false;
@@ -198,146 +195,154 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
 
             // Copy encrypted2 to a mutable stack buffer for in-place decryption
             let mut encrypted2_buf = alloc!([0u8; CASE_LARGE_BUF_SIZE]);
-            if sigma2.encrypted2.0.len() > encrypted2_buf.len() {
-                error!("Sigma2 encrypted data too large");
-                return Err(ErrorCode::BufferTooSmall.into());
-            }
-            let encrypted2 = &mut encrypted2_buf[..sigma2.encrypted2.0.len()];
-            encrypted2.copy_from_slice(sigma2.encrypted2.0);
 
-            let peer_random = CaseRandomRef::try_new(sigma2.responder_random.0)?;
-            let peer_sessid = sigma2.responder_sessid;
-            let peer_eph_pub_key = CanonPkcPublicKeyRef::try_new(sigma2.responder_eph_pub_key.0)?;
-
-            let fabric_mgr = exchange.matter().fabric_mgr.borrow();
-            let fabric = fabric_mgr.get(fab_idx).ok_or(ErrorCode::NotFound)?;
-
-            let secret_key = initiator
-                .secret_key
-                .as_ref()
-                .ok_or(ErrorCode::InvalidState)?;
-
-            // Decrypt TBE2 (symmetric with sigma3_decrypt on the responder side)
-            let len = match initiator.casep.sigma2_decrypt(
-                crypto,
-                fabric,
-                secret_key,
-                raw_sigma2_payload,
-                peer_random,
-                peer_sessid,
-                peer_eph_pub_key,
-                encrypted2,
-            ) {
-                Ok(len) => len,
-                Err(e) => {
-                    drop(fabric_mgr);
-                    let _ =
-                        complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await;
-                    return Err(e);
+            let result = exchange.with_state(|state| {
+                if sigma2.encrypted2.0.len() > encrypted2_buf.len() {
+                    error!("Sigma2 encrypted data too large");
+                    return Err(ErrorCode::BufferTooSmall.into());
                 }
-            };
 
-            // Clear the secret key after ECDH
-            initiator.secret_key = None;
+                let encrypted2 = &mut encrypted2_buf[..sigma2.encrypted2.0.len()];
+                encrypted2.copy_from_slice(sigma2.encrypted2.0);
 
-            let decrypted = &encrypted2[..len];
-            let decrypted_data = TBEData2Decrypt::from_tlv(&get_root_node_struct(decrypted)?)?;
+                let peer_random = CaseRandomRef::try_new(sigma2.responder_random.0)?;
+                let peer_sessid = sigma2.responder_sessid;
+                let peer_eph_pub_key =
+                    CanonPkcPublicKeyRef::try_new(sigma2.responder_eph_pub_key.0)?;
 
-            // Validate certificate chain
-            let responder_noc = CertRef::new(TLVElement::new(decrypted_data.responder_noc.0));
-            let icac_cert = decrypted_data
-                .responder_icac
-                .as_ref()
-                .map(|icac| CertRef::new(TLVElement::new(icac.0)));
+                let fabric = state.fabrics.fabric(fab_idx)?;
 
-            let mut tmp_buf = alloc!([0u8; CASE_LARGE_BUF_SIZE]);
-            if let Err(e) = initiator.casep.validate_certs(
-                crypto,
-                fabric,
-                &responder_noc,
-                icac_cert.as_ref(),
-                &mut tmp_buf[..],
-            ) {
-                error!("Certificate chain doesn't match: {}", e);
-                drop(fabric_mgr);
-                let _ = complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await;
-                return Err(e);
+                let secret_key = initiator
+                    .secret_key
+                    .as_ref()
+                    .ok_or(ErrorCode::InvalidState)?;
+
+                // Decrypt TBE2 (symmetric with sigma3_decrypt on the responder side)
+                let len = initiator
+                    .casep
+                    .sigma2_decrypt(
+                        crypto,
+                        fabric,
+                        secret_key,
+                        raw_sigma2_payload,
+                        peer_random,
+                        peer_sessid,
+                        peer_eph_pub_key,
+                        encrypted2,
+                    )
+                    .inspect_err(|e| {
+                        error!("Failed to decrypt Sigma2 TBE: {}", e);
+                    })?;
+
+                // Clear the secret key after ECDH
+                initiator.secret_key = None;
+
+                let decrypted = &encrypted2[..len];
+                let decrypted_data = TBEData2Decrypt::from_tlv(&get_root_node_struct(decrypted)?)?;
+
+                // Validate certificate chain
+                let responder_noc = CertRef::new(TLVElement::new(decrypted_data.responder_noc.0));
+                let icac_cert = decrypted_data
+                    .responder_icac
+                    .as_ref()
+                    .map(|icac| CertRef::new(TLVElement::new(icac.0)));
+
+                let mut tmp_buf = alloc!([0u8; CASE_LARGE_BUF_SIZE]);
+                initiator
+                    .casep
+                    .validate_certs(
+                        crypto,
+                        fabric,
+                        &responder_noc,
+                        icac_cert.as_ref(),
+                        &mut tmp_buf[..],
+                    )
+                    .inspect_err(|e| {
+                        error!("Certificate chain doesn't match: {}", e);
+                    })?;
+
+                // Verify the responder's node ID matches the expected peer
+                if responder_noc.get_node_id()? != initiator.peer_node_id {
+                    error!(
+                        "Responder node ID doesn't match expected peer: expected {}, got {}",
+                        initiator.peer_node_id,
+                        responder_noc.get_node_id()?
+                    );
+
+                    Err(ErrorCode::Invalid)?;
+                }
+
+                // Verify signature
+                initiator
+                    .casep
+                    .validate_peer_tbs_signature(
+                        crypto,
+                        decrypted_data.responder_noc.0,
+                        decrypted_data.responder_icac.map(|a| a.0),
+                        &responder_noc,
+                        CanonPkcSignatureRef::try_new(decrypted_data.signature.0)?,
+                        &mut tmp_buf[..],
+                    )
+                    .inspect_err(|e| {
+                        error!("Sigma2 signature doesn't match: {}", e);
+                    })?;
+
+                // Extract CAT IDs
+                let mut peer_catids: NocCatIds = Default::default();
+                responder_noc.get_cat_ids(&mut peer_catids)?;
+
+                // Capture resumption ID
+                let mut resumption_id = CASE_RESUMPTION_ID_ZEROED;
+                resumption_id
+                    .access_mut()
+                    .copy_from_slice(decrypted_data.resumption_id.0);
+
+                Ok((peer_catids, resumption_id))
+            });
+
+            if result.is_err() {
+                complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await?;
             }
 
-            // Verify the responder's node ID matches the expected peer
-            if responder_noc.get_node_id()? != initiator.peer_node_id {
-                drop(fabric_mgr);
-                let _ = complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await;
-                return Err(ErrorCode::Invalid.into());
-            }
-
-            // Verify signature
-            if let Err(e) = initiator.casep.validate_peer_tbs_signature(
-                crypto,
-                decrypted_data.responder_noc.0,
-                decrypted_data.responder_icac.map(|a| a.0),
-                &responder_noc,
-                CanonPkcSignatureRef::try_new(decrypted_data.signature.0)?,
-                &mut tmp_buf[..],
-            ) {
-                error!("Sigma2 signature doesn't match: {}", e);
-                drop(fabric_mgr);
-                let _ = complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await;
-                return Err(e);
-            }
-
-            // Extract CAT IDs
-            let mut peer_catids: NocCatIds = Default::default();
-            responder_noc.get_cat_ids(&mut peer_catids)?;
-
-            // Capture resumption ID
-            let mut resumption_id = CASE_RESUMPTION_ID_ZEROED;
-            resumption_id
-                .access_mut()
-                .copy_from_slice(decrypted_data.resumption_id.0);
-
-            (peer_catids, resumption_id)
-        };
+            result
+        }?;
 
         // Step 6: Compute Sigma3 signature (needs fabric borrow, must drop before await)
         let mut signature = MaybeUninit::<CanonPkcSignature>::uninit();
         let signature = signature.init_with(CanonPkcSignature::init());
 
-        {
-            let fabric_mgr = exchange.matter().fabric_mgr.borrow();
-            let fabric = fabric_mgr.get(fab_idx).ok_or(ErrorCode::NotFound)?;
+        exchange.with_state(|state| {
+            let fabric = state.fabrics.fabric(fab_idx)?;
 
             // Use a temporary buffer for the TBS data
             let mut tmp_buf = alloc!([0u8; CASE_LARGE_BUF_SIZE]);
-            initiator.casep.compute_sigma3_signature(
-                crypto,
-                fabric,
-                &mut tmp_buf[..],
-                signature,
-            )?;
-        }
+            initiator
+                .casep
+                .compute_sigma3_signature(crypto, fabric, &mut tmp_buf[..], signature)
+        })?;
 
         // Step 7: Build and send Sigma3
         let mut tt_updated = false;
         exchange
             .send_with(|exchange_ref, tw| {
-                let fabric_mgr = exchange_ref.matter().fabric_mgr.borrow();
-                let fabric = fabric_mgr.get(fab_idx).ok_or(ErrorCode::NotFound)?;
+                exchange_ref.with_state(|state| {
+                    let fabric = state.fabrics.fabric(fab_idx)?;
 
-                tw.start_struct(&TLVTag::Anonymous)?;
-                tw.str_cb(&TLVTag::Context(1), |buf| {
-                    initiator
-                        .casep
-                        .sigma3_encrypt(crypto, fabric, signature.reference(), buf)
-                })?;
-                tw.end_container()?;
+                    tw.start_struct(&TLVTag::Anonymous)?;
+                    tw.str_cb(&TLVTag::Context(1), |buf| {
+                        initiator
+                            .casep
+                            .sigma3_encrypt(crypto, fabric, signature.reference(), buf)
+                    })?;
+                    tw.end_container()?;
 
-                if !tt_updated {
-                    initiator.casep.update_tt(tw.as_slice())?;
-                    tt_updated = true;
-                }
+                    if !tt_updated {
+                        initiator.casep.update_tt(tw.as_slice())?;
+                        tt_updated = true;
+                    }
 
-                Ok(Some(OpCode::CASESigma3.into()))
+                    Ok(Some(OpCode::CASESigma3.into()))
+                })
             })
             .await?;
 
@@ -375,14 +380,19 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
             let mut session_keys = MaybeUninit::<CaseSessionKeys>::uninit();
             let session_keys = session_keys.init_with(CaseSessionKeys::init());
 
-            let fabric_mgr = exchange.matter().fabric_mgr.borrow();
-            let fabric = fabric_mgr.get(fab_idx).ok_or(ErrorCode::NotFound)?;
+            let (peer_addr, local_node_id) = exchange.with_state(|state| {
+                let sess = exchange.id().session(&mut state.sessions);
 
-            initiator
-                .casep
-                .compute_session_keys(crypto, fabric.ipk().op_key(), session_keys)?;
+                let fabric = state.fabrics.fabric(fab_idx)?;
 
-            let peer_addr = exchange.with_session(|sess| Ok(sess.get_peer_addr()))?;
+                initiator.casep.compute_session_keys(
+                    crypto,
+                    fabric.ipk().op_key(),
+                    session_keys,
+                )?;
+
+                Ok((sess.get_peer_addr(), fabric.node_id()))
+            })?;
 
             // For initiator: first key = I2R (enc_key), second = R2I (dec_key)
             let (enc_key, remaining) = session_keys
@@ -392,7 +402,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
                 remaining.split::<AEAD_CANON_KEY_LEN, AEAD_CANON_KEY_LEN>();
 
             session.update(
-                fabric.node_id(),
+                local_node_id,
                 peer_node_id,
                 initiator.casep.peer_sessid(),
                 initiator.casep.local_sessid(),

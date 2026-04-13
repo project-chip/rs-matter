@@ -104,7 +104,6 @@ impl<'a, C: Crypto> Case<'a, C> {
         self.handle_casesigma3(exchange, session).await?;
 
         exchange.acknowledge().await?;
-        exchange.matter().notify_persist();
 
         Ok(())
     }
@@ -118,12 +117,13 @@ impl<'a, C: Crypto> Case<'a, C> {
 
         let req = Sigma1Req::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
 
-        let local_fabric_idx = exchange
-            .matter()
-            .fabric_mgr
-            .borrow()
-            .get_by_dest_id(self.crypto, req.initiator_random.0, req.dest_id.0)
-            .map(|fabric| fabric.fab_idx());
+        let local_fabric_idx = exchange.with_state(|state| {
+            Ok(state
+                .fabrics
+                .get_by_dest_id(self.crypto, req.initiator_random.0, req.dest_id.0)
+                .map(|fabric| fabric.fab_idx()))
+        })?;
+
         if local_fabric_idx.is_none() {
             error!("Fabric Index mismatch");
             complete_with_status(exchange, SCStatusCodes::NoSharedTrustRoots, &[]).await?;
@@ -131,12 +131,7 @@ impl<'a, C: Crypto> Case<'a, C> {
             return Ok(());
         }
 
-        let local_sessid = exchange
-            .matter()
-            .transport_mgr
-            .session_mgr
-            .borrow_mut()
-            .get_next_sess_id();
+        let local_sessid = exchange.with_state(|state| Ok(state.sessions.get_next_sess_id()))?;
 
         let mut our_random = MaybeUninit::<CaseRandom>::uninit(); // TODO MEDIUM BUFFER
         let our_random = our_random.init_with(CaseRandom::init());
@@ -167,48 +162,52 @@ impl<'a, C: Crypto> Case<'a, C> {
         let mut tt_updated = false;
         exchange
             .send_with(|exchange, tw| {
-                let fabric_mgr = exchange.matter().fabric_mgr.borrow();
+                exchange.with_state(|state| {
+                    let fabric = NonZeroU8::new(self.casep.local_fabric_idx())
+                        .and_then(|fabric_idx| state.fabrics.get(fabric_idx));
 
-                let fabric = NonZeroU8::new(self.casep.local_fabric_idx())
-                    .and_then(|fabric_idx| fabric_mgr.get(fabric_idx));
+                    let Some(fabric) = fabric else {
+                        return sc_write(tw, SCStatusCodes::NoSharedTrustRoots, &[]);
+                    };
 
-                let Some(fabric) = fabric else {
-                    return sc_write(tw, SCStatusCodes::NoSharedTrustRoots, &[]);
-                };
+                    let mut signature = MaybeUninit::<CanonPkcSignature>::uninit(); // TODO MEDIUM BUFFER
+                    let signature = signature.init_with(CanonPkcSignature::init());
 
-                let mut signature = MaybeUninit::<CanonPkcSignature>::uninit(); // TODO MEDIUM BUFFER
-                let signature = signature.init_with(CanonPkcSignature::init());
+                    // Use the remainder of the TX buffer as scratch space for computing the signature
+                    let sign_buf = tw.empty_as_mut_slice();
 
-                // Use the remainder of the TX buffer as scratch space for computing the signature
-                let sign_buf = tw.empty_as_mut_slice();
-
-                self.casep
-                    .compute_sigma2_signature(self.crypto, fabric, sign_buf, signature)?;
-
-                tw.start_struct(&TLVTag::Anonymous)?;
-                tw.str(&TLVTag::Context(1), our_random.access())?;
-                tw.u16(&TLVTag::Context(2), local_sessid)?;
-                tw.str(&TLVTag::Context(3), self.casep.our_pub_key().access())?;
-
-                tw.str_cb(&TLVTag::Context(4), |buf| {
-                    self.casep.sigma2_encrypt(
+                    self.casep.compute_sigma2_signature(
                         self.crypto,
                         fabric,
-                        our_random.reference(),
-                        tt_hash.reference(),
-                        signature.reference(),
-                        resumption_id.reference(),
-                        buf,
-                    )
-                })?;
-                tw.end_container()?;
+                        sign_buf,
+                        signature,
+                    )?;
 
-                if !tt_updated {
-                    self.casep.update_tt(tw.as_slice())?;
-                    tt_updated = true;
-                }
+                    tw.start_struct(&TLVTag::Anonymous)?;
+                    tw.str(&TLVTag::Context(1), our_random.access())?;
+                    tw.u16(&TLVTag::Context(2), local_sessid)?;
+                    tw.str(&TLVTag::Context(3), self.casep.our_pub_key().access())?;
 
-                Ok(Some(OpCode::CASESigma2.into()))
+                    tw.str_cb(&TLVTag::Context(4), |buf| {
+                        self.casep.sigma2_encrypt(
+                            self.crypto,
+                            fabric,
+                            our_random.reference(),
+                            tt_hash.reference(),
+                            signature.reference(),
+                            resumption_id.reference(),
+                            buf,
+                        )
+                    })?;
+                    tw.end_container()?;
+
+                    if !tt_updated {
+                        self.casep.update_tt(tw.as_slice())?;
+                        tt_updated = true;
+                    }
+
+                    Ok(Some(OpCode::CASESigma2.into()))
+                })
             })
             .await
     }
@@ -225,11 +224,11 @@ impl<'a, C: Crypto> Case<'a, C> {
     ) -> Result<(), Error> {
         check_opcode(exchange, OpCode::CASESigma3)?;
 
-        let status = {
-            let fabric_mgr = exchange.matter().fabric_mgr.borrow();
+        let status = exchange.with_state(|state| {
+            let sess = exchange.id().session(&mut state.sessions);
 
             let fabric = NonZeroU8::new(self.casep.local_fabric_idx())
-                .and_then(|fabric_idx| fabric_mgr.get(fabric_idx));
+                .and_then(|fabric_idx| state.fabrics.get(fabric_idx));
             if let Some(fabric) = fabric {
                 let req = get_root_node_struct(exchange.rx()?.payload())?;
                 let encrypted = req.structure()?.ctx(1)?.str()?;
@@ -265,7 +264,7 @@ impl<'a, C: Crypto> Case<'a, C> {
                     buf,
                 ) {
                     error!("Certificate Chain doesn't match: {}", e);
-                    SCStatusCodes::InvalidParameter
+                    Ok(SCStatusCodes::InvalidParameter)
                 } else if let Err(e) = self.casep.validate_peer_tbs_signature(
                     self.crypto,
                     decrypted_req.initiator_noc.0,
@@ -275,7 +274,7 @@ impl<'a, C: Crypto> Case<'a, C> {
                     buf,
                 ) {
                     error!("Sigma3 Signature doesn't match: {}", e);
-                    SCStatusCodes::InvalidParameter
+                    Ok(SCStatusCodes::InvalidParameter)
                 } else {
                     // Only now do we add this message to the TT Hash
                     let mut peer_catids: NocCatIds = Default::default();
@@ -290,7 +289,7 @@ impl<'a, C: Crypto> Case<'a, C> {
                         session_keys,
                     )?;
 
-                    let peer_addr = exchange.with_session(|sess| Ok(sess.get_peer_addr()))?;
+                    let peer_addr = sess.get_peer_addr();
 
                     let (dec_key, remaining) = session_keys
                         .reference()
@@ -298,7 +297,8 @@ impl<'a, C: Crypto> Case<'a, C> {
                     let (enc_key, att_challenge) =
                         remaining.split::<AEAD_CANON_KEY_LEN, AEAD_CANON_KEY_LEN>();
 
-                    session.update(
+                    session.update_with_state(
+                        state,
                         fabric.node_id(),
                         initiator_noc.get_node_id()?,
                         self.casep.peer_sessid(),
@@ -314,21 +314,23 @@ impl<'a, C: Crypto> Case<'a, C> {
                         Some(att_challenge),
                     )?;
 
-                    // Complete the reserved session and thus make the `Session` instance
-                    // immediately available for use by the system.
-                    //
-                    // We need to do this _before_ we send the response to the peer, or else we risk missing
-                    // (dropping) the first messages the peer would send us on the newly-established session,
-                    // as it might start using it right after it receives the response, while it is still marked
-                    // as reserved.
-                    session.complete();
-
-                    SCStatusCodes::SessionEstablishmentSuccess
+                    Ok(SCStatusCodes::SessionEstablishmentSuccess)
                 }
             } else {
-                SCStatusCodes::NoSharedTrustRoots
+                Ok(SCStatusCodes::NoSharedTrustRoots)
             }
-        };
+        })?;
+
+        if matches!(status, SCStatusCodes::SessionEstablishmentSuccess) {
+            // Complete the reserved session and thus make the `Session` instance
+            // immediately available for use by the system.
+            //
+            // We need to do this _before_ we send the response to the peer, or else we risk missing
+            // (dropping) the first messages the peer would send us on the newly-established session,
+            // as it might start using it right after it receives the response, while it is still marked
+            // as reserved.
+            session.complete();
+        }
 
         complete_with_status(exchange, status, &[]).await
     }

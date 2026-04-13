@@ -27,16 +27,14 @@ use embassy_time::{Duration, Timer};
 use log::info;
 
 use rs_matter::commissioner::fabric_credentials::FabricCredentials;
-use rs_matter::crypto::{
-    test_only_crypto, CanonAeadKeyRef, CanonPkcSecretKey, Crypto, SecretKey, SigningSecretKey,
-};
+use rs_matter::crypto::{test_only_crypto, CanonPkcSecretKey, Crypto, SecretKey, SigningSecretKey};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::error::Error;
 use rs_matter::respond::Responder;
 use rs_matter::sc::case::CaseInitiator;
 use rs_matter::sc::SecureChannel;
 use rs_matter::transport::exchange::Exchange;
-use rs_matter::transport::network::Address;
+use rs_matter::transport::network::{Address, NoNetwork};
 use rs_matter::utils::epoch::sys_epoch;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::Matter;
@@ -108,46 +106,48 @@ fn test_case_handshake() {
 
         // ---- 3. Populate both FabricMgrs with matching fabric ----
 
-        let controller_fab_idx = controller_matter
-            .fabric_mgr
-            .borrow_mut()
-            .add(
-                &crypto,
-                controller_secret_key_canon.reference(),
-                &controller_creds.root_cert,
-                &controller_creds.noc,
-                controller_creds
-                    .icac
-                    .as_ref()
-                    .map(|v| v.as_slice())
-                    .unwrap_or(&[]),
-                Some(CanonAeadKeyRef::new(&controller_creds.ipk)),
-                0xFFF1,
-                CONTROLLER_NODE_ID,
-                &mut || {},
-            )
-            .unwrap()
-            .fab_idx();
+        let controller_fab_idx = controller_matter.with_state(|state| {
+            state
+                .fabrics
+                .add(
+                    &crypto,
+                    controller_secret_key_canon.reference(),
+                    &controller_creds.root_cert,
+                    &controller_creds.noc,
+                    controller_creds
+                        .icac
+                        .as_ref()
+                        .map(|v| v.as_slice())
+                        .unwrap_or(&[]),
+                    Some(controller_creds.ipk.reference()),
+                    0xFFF1,
+                    CONTROLLER_NODE_ID,
+                    &mut || {},
+                )
+                .unwrap()
+                .fab_idx()
+        });
 
-        device_matter
-            .fabric_mgr
-            .borrow_mut()
-            .add(
-                &crypto,
-                device_secret_key_canon.reference(),
-                &device_creds.root_cert,
-                &device_creds.noc,
-                device_creds
-                    .icac
-                    .as_ref()
-                    .map(|v| v.as_slice())
-                    .unwrap_or(&[]),
-                Some(CanonAeadKeyRef::new(&device_creds.ipk)),
-                0xFFF1,
-                CONTROLLER_NODE_ID,
-                &mut || {},
-            )
-            .unwrap();
+        device_matter.with_state(|state| {
+            state
+                .fabrics
+                .add(
+                    &crypto,
+                    device_secret_key_canon.reference(),
+                    &device_creds.root_cert,
+                    &device_creds.noc,
+                    device_creds
+                        .icac
+                        .as_ref()
+                        .map(|v| v.as_slice())
+                        .unwrap_or(&[]),
+                    Some(device_creds.ipk.reference()),
+                    0xFFF1,
+                    CONTROLLER_NODE_ID,
+                    &mut || {},
+                )
+                .unwrap();
+        });
 
         // ---- 4. Bind UDP sockets ----
 
@@ -162,7 +162,7 @@ fn test_case_handshake() {
 
         let device_fut = async {
             select(
-                device_matter.run_transport(&crypto, &device_socket, &device_socket),
+                device_matter.run(&crypto, &device_socket, &device_socket, NoNetwork),
                 responder.run::<4>(),
             )
             .coalesce()
@@ -172,10 +172,11 @@ fn test_case_handshake() {
         // ---- 6. Controller side: transport + CASE handshake ----
 
         let controller_fut = async {
-            let mut transport = pin!(controller_matter.run_transport(
+            let mut transport = pin!(controller_matter.run(
                 &crypto,
                 &controller_socket,
                 &controller_socket,
+                NoNetwork,
             ));
             let mut test = pin!(run_case_handshake(
                 &controller_matter,

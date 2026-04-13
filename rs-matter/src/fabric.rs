@@ -1068,16 +1068,16 @@ where
 mod tests {
     use core::mem::MaybeUninit;
 
-    use crate::cert::builder::{IssuerRDN, NocBuilder, RcacBuilder, SubjectDN, Validity};
-    use crate::cert::MAX_CERT_TLV_LEN;
+    use crate::cert::builder::{IssuerDN, NocBuilder, RcacBuilder, SubjectDN, Validity};
+    use crate::cert::MAX_CERT_TLV_AND_ASN1_LEN;
     use crate::crypto::test_only_crypto;
     use crate::crypto::{
-        CanonAeadKeyRef, CanonPkcPublicKey, CanonPkcSecretKey, Crypto, Hash, PublicKey, SecretKey,
-        SigningSecretKey, AEAD_CANON_KEY_LEN,
+        CanonAeadKeyRef, CanonPkcSecretKey, Crypto, Hash, SecretKey, SigningSecretKey,
+        AEAD_CANON_KEY_LEN,
     };
     use crate::utils::init::InitMaybeUninit;
 
-    use super::FabricMgr;
+    use super::Fabrics;
 
     /// Verify that `compute_dest_id` and `is_dest_id` agree: the hash output by
     /// `compute_dest_id` must be accepted by `is_dest_id` on the same fabric with
@@ -1095,19 +1095,14 @@ mod tests {
 
         // Generate RCAC keypair and build self-signed RCAC
         let rcac_secret_key = crypto.generate_secret_key().unwrap();
-        let mut rcac_pubkey = CanonPkcPublicKey::new();
-        rcac_secret_key
-            .pub_key()
-            .unwrap()
-            .write_canon(&mut rcac_pubkey)
-            .unwrap();
+        let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
 
         let validity = Validity {
             not_before: 0,
             not_after: 0,
         };
 
-        let mut rcac_buf = [0u8; MAX_CERT_TLV_LEN];
+        let mut rcac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
         let rcac_len = RcacBuilder::new(&mut rcac_buf)
             .build(
                 &crypto,
@@ -1118,7 +1113,7 @@ mod tests {
                     ca_id: Some(rcac_id),
                 },
                 validity,
-                rcac_pubkey.access(),
+                &rcac_pubkey,
                 &rcac_secret_key,
                 &[0x01],
             )
@@ -1126,19 +1121,14 @@ mod tests {
 
         // Generate NOC keypair and build NOC signed by RCAC
         let noc_secret_key = crypto.generate_secret_key().unwrap();
-        let mut noc_pubkey = CanonPkcPublicKey::new();
-        noc_secret_key
-            .pub_key()
-            .unwrap()
-            .write_canon(&mut noc_pubkey)
-            .unwrap();
+        let noc_pubkey = noc_secret_key.pub_key().unwrap();
 
         let mut noc_secret_key_canon = CanonPkcSecretKey::new();
         noc_secret_key
             .write_canon(&mut noc_secret_key_canon)
             .unwrap();
 
-        let mut noc_buf = [0u8; MAX_CERT_TLV_LEN];
+        let mut noc_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
         let noc_len = NocBuilder::new(&mut noc_buf)
             .build(
                 &crypto,
@@ -1149,11 +1139,11 @@ mod tests {
                     ca_id: None,
                 },
                 validity,
-                noc_pubkey.access(),
-                rcac_pubkey.access(),
+                &noc_pubkey,
+                &rcac_pubkey,
                 &rcac_secret_key,
                 &[0x02],
-                IssuerRDN {
+                IssuerDN {
                     ca_id: Some(rcac_id),
                     fabric_id: Some(fabric_id),
                     is_rcac: true,
@@ -1163,22 +1153,25 @@ mod tests {
 
         // Build fabric with real certs and matching secret key
         let epoch_key = [0x5a_u8; AEAD_CANON_KEY_LEN];
-        let mut mgr = FabricMgr::new();
-        mgr.add(
-            &crypto,
-            noc_secret_key_canon.reference(),
-            &rcac_buf[..rcac_len],
-            &noc_buf[..noc_len],
-            &[], // no ICAC
-            Some(CanonAeadKeyRef::new(&epoch_key)),
-            0x8000,
-            node_id,
-            &mut || {},
-        )
-        .expect("FabricMgr::add should succeed");
+        let mut fabrics = Fabrics::new();
+        fabrics
+            .add(
+                &crypto,
+                noc_secret_key_canon.reference(),
+                &rcac_buf[..rcac_len],
+                &noc_buf[..noc_len],
+                &[], // no ICAC
+                Some(CanonAeadKeyRef::new(&epoch_key)),
+                0x8000,
+                node_id,
+                &mut || {},
+            )
+            .expect("Fabrics::add should succeed");
 
         let fab_idx = core::num::NonZeroU8::new(1).unwrap();
-        let fabric = mgr.get(fab_idx).expect("fabric at index 1 should exist");
+        let fabric = fabrics
+            .get(fab_idx)
+            .expect("fabric at index 1 should exist");
 
         let random = [0xABu8; 32];
 
