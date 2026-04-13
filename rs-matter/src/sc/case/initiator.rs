@@ -194,7 +194,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
             let sigma2 = Sigma2Resp::from_tlv(&get_root_node_struct(raw_sigma2_payload)?)?;
 
             // Copy encrypted2 to a mutable stack buffer for in-place decryption
-            let mut encrypted2_buf = alloc!([0u8; CASE_LARGE_BUF_SIZE]);
+            let mut encrypted2_buf = alloc!([0u8; CASE_LARGE_BUF_SIZE]); // TODO LARGE BUFFER
 
             let result = exchange.with_state(|state| {
                 if sigma2.encrypted2.0.len() > encrypted2_buf.len() {
@@ -247,7 +247,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
                     .as_ref()
                     .map(|icac| CertRef::new(TLVElement::new(icac.0)));
 
-                let mut tmp_buf = alloc!([0u8; CASE_LARGE_BUF_SIZE]);
+                let mut tmp_buf = alloc!([0u8; CASE_LARGE_BUF_SIZE]); // TODO LARGE BUFFER
                 initiator
                     .casep
                     .validate_certs(
