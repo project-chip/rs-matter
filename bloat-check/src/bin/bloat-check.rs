@@ -631,7 +631,7 @@ fn report_total_size(total_size: usize) {
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        root_endpoint!(gwifi),
+        root_endpoint!(wifi),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),

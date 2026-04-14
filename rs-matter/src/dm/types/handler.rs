@@ -18,6 +18,8 @@
 use core::future::Future;
 use core::pin::pin;
 
+use embassy_futures::select::select;
+
 use crate::crypto::Crypto;
 use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::dm::IMBuffer;
@@ -33,7 +35,6 @@ use crate::Matter;
 use super::{AttrDetails, AttrId, ClusterId, CmdDetails, EndptId, InvokeReply, ReadReply};
 
 pub use asynch::*;
-use embassy_futures::select::select;
 
 pub trait ChangeNotify: DynBase {
     fn notify(&self, endpt: EndptId, clust: ClusterId, attr: AttrId);
@@ -54,10 +55,11 @@ impl ChangeNotify for () {
     }
 }
 
-/// A HandlerContext super-type that is used to access core Matter functionality.
+/// A context super-type that is also passed to the `(Async)Handler::run` method.
 ///
-/// It provides access to the Matter instance and attribute changed notifications.
-pub trait BasicContext {
+/// It provides access to the Matter instance and to Data Model-related objects,
+/// which could be useful in the context of executing background tasks specific for the concrete handler.
+pub trait HandlerContext {
     /// Return the Matter object that is associated with this handler
     fn matter(&self) -> &Matter<'_>;
 
@@ -69,6 +71,18 @@ pub trait BasicContext {
 
     /// Return the networks access object.
     fn networks(&self) -> impl NetworksAccess + '_;
+
+    /// Return the global handler that this handler is part of.
+    ///
+    /// Useful in case a concrete cluster handler (say, the Scenes one) needs to
+    /// access the global handler so as to invoke read/write/invoke operations on other clusters.
+    fn handler(&self) -> impl AsyncHandler + '_;
+
+    /// Return the buffer pool of the Data Model.
+    ///
+    /// Useful in case e.g. a concrete cluster handler needs to invoke read/write/invoke operations on
+    /// other clusters, and the TLV input/output data for those operations is non-trivial in size.
+    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_;
 
     /// Notify that the state of an attribute has changed.
     ///
@@ -89,9 +103,9 @@ pub trait BasicContext {
     }
 }
 
-impl<T> BasicContext for &T
+impl<T> HandlerContext for &T
 where
-    T: BasicContext,
+    T: HandlerContext,
 {
     fn matter(&self) -> &Matter<'_> {
         (**self).matter()
@@ -109,6 +123,14 @@ where
         (**self).networks()
     }
 
+    fn handler(&self) -> impl AsyncHandler + '_ {
+        (**self).handler()
+    }
+
+    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+        (**self).buffers()
+    }
+
     fn notify_attribute_changed(
         &self,
         endpoint_id: EndptId,
@@ -117,41 +139,14 @@ where
     ) {
         (**self).notify_attribute_changed(endpoint_id, cluster_id, attr_id);
     }
-}
 
-/// A context super-type that is passed to the `AsyncHandler::run` method.
-///
-/// It provides access to the Matter instance and to Data Model-related objects,
-/// which could be useful in the context of executing background tasks specific for the concrete handler.
-pub trait HandlerContext: BasicContext {
-    /// Return the global handler that this handler is part of.
-    ///
-    /// Useful in case a concrete cluster handler (say, the Scenes one) needs to
-    /// access the global handler so as to invoke read/write/invoke operations on other clusters.
-    fn handler(&self) -> impl AsyncHandler + '_;
-
-    /// Return the buffer pool of the Data Model.
-    ///
-    /// Useful in case e.g. a concrete cluster handler needs to invoke read/write/invoke operations on
-    /// other clusters, and the TLV input/output data for those operations is non-trivial in size.
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_;
-}
-
-impl<T> HandlerContext for &T
-where
-    T: HandlerContext,
-{
-    fn handler(&self) -> impl AsyncHandler + '_ {
-        (**self).handler()
-    }
-
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
-        (**self).buffers()
+    fn notify_attribute_path_changed(&self, attr: &AttrDetails) {
+        (**self).notify_attribute_path_changed(attr)
     }
 }
 
 /// A context super-type that is passed to the handler when processing an attribute read/write or a command invoke operation.
-pub trait Context: HandlerContext {
+pub trait OperationContext: HandlerContext {
     /// Return the exchange object that is associated with this operation.
     fn exchange(&self) -> &Exchange<'_>;
 
@@ -162,9 +157,9 @@ pub trait Context: HandlerContext {
     fn cluster(&self) -> ClusterId;
 }
 
-impl<T> Context for &T
+impl<T> OperationContext for &T
 where
-    T: Context,
+    T: OperationContext,
 {
     fn exchange(&self) -> &Exchange<'_> {
         (**self).exchange()
@@ -180,7 +175,7 @@ where
 }
 
 /// A context type that is passed to the handler when processing an attribute Read operation.
-pub trait ReadContext: Context {
+pub trait ReadContext: OperationContext {
     /// Return the attribute object that is associated with this read operation.
     fn attr(&self) -> &AttrDetails<'_>;
 }
@@ -195,7 +190,7 @@ where
 }
 
 /// A context type that is passed to the handler when processing an attribute Write operation.
-pub trait WriteContext: Context {
+pub trait WriteContext: OperationContext {
     /// Return the attribute object that is associated with this write operation.
     fn attr(&self) -> &AttrDetails<'_>;
 
@@ -225,7 +220,7 @@ where
     }
 }
 
-pub trait InvokeContext: Context {
+pub trait InvokeContext: OperationContext {
     /// Return the command object that is associated with this invoke operation.
     fn cmd(&self) -> &CmdDetails<'_>;
 
@@ -272,7 +267,7 @@ where
     }
 }
 
-impl<C> BasicContext for ReadContextInstance<'_, C>
+impl<C> HandlerContext for ReadContextInstance<'_, C>
 where
     C: HandlerContext,
 {
@@ -292,6 +287,14 @@ where
         self.context.networks()
     }
 
+    fn handler(&self) -> impl AsyncHandler + '_ {
+        self.context.handler()
+    }
+
+    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+        self.context.buffers()
+    }
+
     fn notify_attribute_changed(
         &self,
         endpoint_id: EndptId,
@@ -303,20 +306,7 @@ where
     }
 }
 
-impl<C> HandlerContext for ReadContextInstance<'_, C>
-where
-    C: HandlerContext,
-{
-    fn handler(&self) -> impl AsyncHandler + '_ {
-        self.context.handler()
-    }
-
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
-        self.context.buffers()
-    }
-}
-
-impl<C> Context for ReadContextInstance<'_, C>
+impl<C> OperationContext for ReadContextInstance<'_, C>
 where
     C: HandlerContext,
 {
@@ -372,7 +362,7 @@ where
     }
 }
 
-impl<C> BasicContext for WriteContextInstance<'_, C>
+impl<C> HandlerContext for WriteContextInstance<'_, C>
 where
     C: HandlerContext,
 {
@@ -392,6 +382,14 @@ where
         self.context.networks()
     }
 
+    fn handler(&self) -> impl AsyncHandler + '_ {
+        self.context.handler()
+    }
+
+    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+        self.context.buffers()
+    }
+
     fn notify_attribute_changed(
         &self,
         endpoint_id: EndptId,
@@ -403,20 +401,7 @@ where
     }
 }
 
-impl<C> HandlerContext for WriteContextInstance<'_, C>
-where
-    C: HandlerContext,
-{
-    fn handler(&self) -> impl AsyncHandler + '_ {
-        self.context.handler()
-    }
-
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
-        self.context.buffers()
-    }
-}
-
-impl<C> Context for WriteContextInstance<'_, C>
+impl<C> OperationContext for WriteContextInstance<'_, C>
 where
     C: HandlerContext,
 {
@@ -476,7 +461,7 @@ where
     }
 }
 
-impl<C> BasicContext for InvokeContextInstance<'_, C>
+impl<C> HandlerContext for InvokeContextInstance<'_, C>
 where
     C: HandlerContext,
 {
@@ -496,6 +481,14 @@ where
         self.context.networks()
     }
 
+    fn handler(&self) -> impl AsyncHandler + '_ {
+        self.context.handler()
+    }
+
+    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+        self.context.buffers()
+    }
+
     fn notify_attribute_changed(
         &self,
         endpoint_id: EndptId,
@@ -507,20 +500,7 @@ where
     }
 }
 
-impl<C> HandlerContext for InvokeContextInstance<'_, C>
-where
-    C: HandlerContext,
-{
-    fn handler(&self) -> impl AsyncHandler + '_ {
-        self.context.handler()
-    }
-
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
-        self.context.buffers()
-    }
-}
-
-impl<C> Context for InvokeContextInstance<'_, C>
+impl<C> OperationContext for InvokeContextInstance<'_, C>
 where
     C: HandlerContext,
 {
@@ -657,14 +637,14 @@ impl<M, H> NonBlockingHandler for (M, H) where H: NonBlockingHandler {}
 /// should be invoked for a specific operation.
 pub trait Matcher {
     /// Return `true` if the corresponding handler should be invoked for the provided context.
-    fn matches(&self, ctx: impl Context) -> bool;
+    fn matches(&self, ctx: impl OperationContext) -> bool;
 }
 
 impl<T> Matcher for &T
 where
     T: Matcher,
 {
-    fn matches(&self, ctx: impl Context) -> bool {
+    fn matches(&self, ctx: impl OperationContext) -> bool {
         T::matches(self, ctx)
     }
 }
@@ -692,7 +672,7 @@ impl EpClMatcher {
 }
 
 impl Matcher for EpClMatcher {
-    fn matches(&self, ctx: impl Context) -> bool {
+    fn matches(&self, ctx: impl OperationContext) -> bool {
         let ctx_endpoint_id = ctx.endpt();
         let ctx_cluster_id = ctx.cluster();
 

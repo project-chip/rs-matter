@@ -887,7 +887,7 @@ where
     }
 }
 
-impl<const NS: usize, const NE: usize, C, B, T, S, N> BasicContext
+impl<const NS: usize, const NE: usize, C, B, T, S, N> HandlerContext
     for DataModel<'_, NS, NE, C, B, T, S, N>
 where
     C: Crypto,
@@ -912,6 +912,14 @@ where
         &self.networks
     }
 
+    fn handler(&self) -> impl AsyncHandler + '_ {
+        &self.handler
+    }
+
+    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+        self.buffers
+    }
+
     fn notify_attribute_changed(
         &self,
         endpoint_id: EndptId,
@@ -920,24 +928,6 @@ where
     ) {
         self.change_notify()
             .notify(endpoint_id, cluster_id, attr_id)
-    }
-}
-
-impl<const NS: usize, const NE: usize, C, B, T, S, N> HandlerContext
-    for DataModel<'_, NS, NE, C, B, T, S, N>
-where
-    C: Crypto,
-    B: BufferAccess<IMBuffer>,
-    T: DataModelHandler,
-    S: KvBlobStoreAccess,
-    N: NetworksAccess,
-{
-    fn handler(&self) -> impl AsyncHandler + '_ {
-        &self.handler
-    }
-
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
-        self.buffers
     }
 }
 

@@ -22,7 +22,7 @@ use core::fmt::Debug;
 use either::Either;
 
 use crate::dm::clusters::net_comm::NetworksAccess;
-use crate::dm::{Cluster, Context, Dataver, InvokeContext, ReadContext, WriteContext};
+use crate::dm::{Cluster, Dataver, InvokeContext, OperationContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricPersist;
 use crate::persist::{Persist, BASIC_INFO_KEY, NETWORKS_KEY};
@@ -154,7 +154,7 @@ impl<'a> GenCommHandler<'a> {
     /// fabric of this session.
     ///
     /// If the check fail, an appropriate error is returned.
-    pub(crate) fn with_armed_failsafe<F, T>(ctx: impl Context, f: F) -> Result<T, Error>
+    pub(crate) fn with_armed_failsafe<F, T>(ctx: impl OperationContext, f: F) -> Result<T, Error>
     where
         F: FnOnce(&mut MatterState, &mut dyn FnMut()) -> Result<T, Error>,
     {
@@ -165,7 +165,7 @@ impl<'a> GenCommHandler<'a> {
     /// fabric of this session.
     ///
     /// If the check fail, an appropriate error is returned.
-    pub(crate) fn with_armed_failsafe_ex<F, T, E>(ctx: impl Context, f: F) -> Result<T, E>
+    pub(crate) fn with_armed_failsafe_ex<F, T, E>(ctx: impl OperationContext, f: F) -> Result<T, E>
     where
         F: FnOnce(&mut MatterState, &mut dyn FnMut()) -> Result<T, E>,
         E: From<Error>,

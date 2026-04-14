@@ -44,7 +44,7 @@ use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
-use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, NetworksAccess, SharedNetworks};
+use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, SharedNetworks};
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::wifi_diag::WifiDiag;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
@@ -280,9 +280,9 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     wifi_diag: &'a dyn WifiDiag,
     net_ctl: T,
-) -> impl AsyncMetadata + AsyncHandler
+) -> impl AsyncMetadata + AsyncHandler + 'a
 where
-    T: NetCtl + NetCtlStatus,
+    T: NetCtl + NetCtlStatus + 'a,
 {
     (
         NODE,

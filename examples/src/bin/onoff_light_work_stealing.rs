@@ -30,7 +30,7 @@ use rand::{CryptoRng, RngCore};
 use rs_matter::crypto::backend::rustcrypto::RustCrypto;
 use rs_matter::crypto::Crypto;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
-use rs_matter::dm::clusters::net_comm::{DummyNetworkAccess, SharedNetworks};
+use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::clusters::on_off::NoLevelControl;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
