@@ -35,7 +35,7 @@ use crate::utils::future::delayed_ready;
 use crate::utils::init::{init, Init};
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{DynBase, Notification};
-use crate::{clusters, with};
+use crate::with;
 
 pub use crate::dm::clusters::decl::network_commissioning::*;
 pub use crate::dm::clusters::groups;
@@ -65,22 +65,6 @@ impl NetworkType {
                 .with_features(Feature::THREAD_NETWORK_INTERFACE.bits())
                 .with_attrs(with!(required; AttributeId::ScanMaxTimeSeconds | AttributeId::ConnectMaxTimeSeconds | AttributeId::ThreadVersion | AttributeId::SupportedThreadFeatures))
                 .with_cmds(with!(CommandId::AddOrUpdateThreadNetwork | CommandId::ScanNetworks | CommandId::RemoveNetwork | CommandId::ConnectNetwork | CommandId::ReorderNetwork)),
-        }
-    }
-
-    /// Return the root clusters necessary for the given network type
-    /// These are the Network Commissioning cluster tailored with attributes suitable for the
-    /// concrete nework type as well as one of the Ethernet Network Diagnostics, WiFi Network
-    /// Diagnostics or Thread Network Diagnostics clusters.
-    pub const fn root_clusters(&self) -> &'static [Cluster<'static>] {
-        static ETH: &[Cluster<'static>] = clusters!(eth;);
-        static WIFI: &[Cluster<'static>] = clusters!(wifi;);
-        static THREAD: &[Cluster<'static>] = clusters!(thread;);
-
-        match self {
-            Self::Ethernet => ETH,
-            Self::Wifi => WIFI,
-            Self::Thread => THREAD,
         }
     }
 }

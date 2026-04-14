@@ -44,9 +44,7 @@ use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
-use rs_matter::dm::clusters::net_comm::{
-    NetCtl, NetCtlStatus, NetworkType, NetworksAccess, SharedNetworks,
-};
+use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, NetworksAccess, SharedNetworks};
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::wifi_diag::WifiDiag;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
@@ -76,7 +74,7 @@ use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::zbus::Connection;
-use rs_matter::{clusters, devices, Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
 #[path = "../common/mdns.rs"]
 mod mdns;
@@ -173,7 +171,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         &buffers,
         &subscriptions,
         Some(&events),
-        dm_handler(rand, &on_off_handler, &net_ctl),
+        dm_handler(rand, &on_off_handler, &net_ctl, &net_ctl),
         SharedKvBlobStore::new(kv, kv_buf.as_mut_slice()),
         &networks,
     );
@@ -262,7 +260,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        endpoints::root_endpoint(NetworkType::Wifi),
+        root_endpoint!(gwifi),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
@@ -280,19 +278,19 @@ const NODE: Node<'static> = Node {
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
     mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
-    net_ctl: &'a T,
-) -> impl AsyncMetadata + AsyncHandler + 'a
+    wifi_diag: &'a dyn WifiDiag,
+    net_ctl: T,
+) -> impl AsyncMetadata + AsyncHandler
 where
-    T: NetCtl + NetCtlStatus + WifiDiag,
+    T: NetCtl + NetCtlStatus,
 {
     (
         NODE,
-        endpoints::with_sys(
+        endpoints::with_wifi_sys(
             &true,
             &(),
             &UnixNetifs,
-            net_ctl,
-            &(),
+            wifi_diag,
             net_ctl,
             rand,
             EmptyHandler

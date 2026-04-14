@@ -42,7 +42,7 @@ use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::{self, LevelControlHooks};
-use rs_matter::dm::clusters::net_comm::{NetworkType, SharedNetworks};
+use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::clusters::on_off::{self, OnOffHooks, StartUpOnOffEnum};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
@@ -67,7 +67,7 @@ use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{clusters, devices, with, Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, root_endpoint, with, Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
 
@@ -254,7 +254,7 @@ fn run() -> Result<(), Error> {
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        endpoints::root_endpoint(NetworkType::Ethernet),
+        root_endpoint!(geth),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_DIMMABLE_LIGHT),
@@ -277,7 +277,7 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
-        endpoints::with_eth(
+        endpoints::with_eth_sys(
             &(),
             &UnixNetifs,
             rand,

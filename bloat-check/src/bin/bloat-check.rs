@@ -63,12 +63,10 @@ use rs_matter::dm::clusters::net_comm::{
 };
 use rs_matter::dm::clusters::on_off::NoLevelControl;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
-use rs_matter::dm::clusters::wifi_diag::{
-    SecurityTypeEnum, WiFiVersionEnum, WifiDiag, WirelessDiag,
-};
+use rs_matter::dm::clusters::wifi_diag::{SecurityTypeEnum, WiFiVersionEnum, WifiDiag, WirelessDiag};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::dm::endpoints::SysHandler;
+use rs_matter::dm::endpoints::WifiSysHandler;
 use rs_matter::dm::events::{Events, DEFAULT_BYTES_PER_BUF};
 use rs_matter::dm::networks::wireless::{
     NetCtlState, NetCtlStateMutex, NetCtlWithStatusImpl, WifiNetworks, WirelessMgr, MAX_CREDS_SIZE,
@@ -93,7 +91,7 @@ use rs_matter::utils::epoch::dummy_epoch;
 use rs_matter::utils::init::{init, Init, InitMaybeUninit};
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::sync::DynBase;
-use rs_matter::{clusters, devices, handler_chain_type, Matter, MATTER_PORT};
+use rs_matter::{MATTER_PORT, Matter, clusters, devices, handler_chain_type, root_endpoint};
 
 // Baremetal entry point macro depending on target
 #[cfg(all(target_arch = "arm", target_os = "none"))]
@@ -202,7 +200,7 @@ type AppHandler<'a> = handler_chain_type!(
     | EmptyHandler
 );
 type AppCrypto = RustCrypto<'static, WeakTestOnlyRand>;
-type AppDmHandler<'a> = SysHandler<'a, &'a AppNetCtl<'a>, AppHandler<'a>>;
+type AppDmHandler<'a> = WifiSysHandler<'a, &'a AppNetCtl<'a>, AppHandler<'a>>;
 type AppDataModel<'a> = DataModel<
     'a,
     DEFAULT_MAX_SUBSCRIPTIONS,
@@ -343,6 +341,7 @@ fn main() -> ! {
                 1,
                 TestOnOffDeviceLogic::new(true),
             ),
+            net_ctl,
             net_ctl,
         )
     );
@@ -632,7 +631,7 @@ fn report_total_size(total_size: usize) {
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        endpoints::root_endpoint(NetworkType::Wifi),
+        root_endpoint!(gwifi),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
@@ -649,17 +648,17 @@ const NODE: Node<'static> = Node {
 fn dm_handler<'a, T>(
     mut rand: impl RngCore + Copy,
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
-    net_ctl: &'a T,
-) -> SysHandler<'a, &'a T, AppHandler<'a>>
+    wifi_diag: &'a dyn WifiDiag,
+    net_ctl: T,
+) -> WifiSysHandler<'a, T, AppHandler<'a>>
 where
     T: NetCtl + NetCtlStatus + WifiDiag,
 {
-    endpoints::with_sys(
+    endpoints::with_wifi_sys(
         &true,
         &(),
         &(),
-        net_ctl,
-        &(),
+        wifi_diag,
         net_ctl,
         rand,
         EmptyHandler
