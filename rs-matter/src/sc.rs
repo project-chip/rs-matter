@@ -30,7 +30,7 @@ use crate::transport::exchange::{Exchange, MessageMeta};
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::{ReadBuf, WriteBuf};
 
-use case::Case;
+use case::CaseResponder;
 use pase::PaseResponder;
 
 pub mod busy;
@@ -252,7 +252,7 @@ impl<'a, C: Crypto> SecureChannel<'a, C> {
             }
             OpCode::CASESigma1 => {
                 let mut case = MaybeUninit::uninit(); // TODO LARGE BUFFER
-                case.init_with(Case::init(&self.crypto))
+                case.init_with(CaseResponder::init(&self.crypto))
                     .handle(exchange)
                     .await
             }

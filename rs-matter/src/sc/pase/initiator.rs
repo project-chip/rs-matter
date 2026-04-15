@@ -59,8 +59,8 @@ pub struct PaseInitiator<C: Crypto> {
 
 impl<C: Crypto> PaseInitiator<C> {
     /// Create a new PASE initiator
-    fn new(crypto: C) -> Result<Self, Error> {
-        Ok(Self {
+    const fn new(crypto: C) -> Self {
+        Self {
             crypto,
             spake2p: Spake2P::new(),
             initiator_random: Spake2pRandom::new(),
@@ -68,7 +68,7 @@ impl<C: Crypto> PaseInitiator<C> {
             peer_sessid: 0,
             prover_context: None,
             ca: HMAC_HASH_ZEROED,
-        })
+        }
     }
 
     /// Initiate a PASE handshake with a Matter device.
@@ -98,7 +98,7 @@ impl<C: Crypto> PaseInitiator<C> {
     ) -> Result<(), Error> {
         let session = ReservedSession::reserve(exchange.matter(), &crypto).await?;
 
-        let mut initiator = Self::new(crypto)?;
+        let mut initiator = Self::new(crypto);
 
         // Step 1: Send PBKDFParamRequest, receive PBKDFParamResponse
         let (salt, iterations) = match initiator.exchange_pbkdf_params(exchange).await {

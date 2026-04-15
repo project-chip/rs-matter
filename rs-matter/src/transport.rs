@@ -303,6 +303,17 @@ impl Transport {
                 .sessions
                 .add(rand.next_u32(), false, peer_addr, None)?;
 
+            // Generate ephemeral initiator node ID per spec 4.13.2.1:
+            // "Randomly selected for each session by the initiator from the Operational Node ID range"
+            // Operational Node ID range is 0x0000_0000_0000_0001 to 0xFFFF_FFEF_FFFF_FFFF
+            // (spec Table 4, Section 2.5.5).
+            const MAX_OPERATIONAL_NODE_ID: u64 = 0xFFFF_FFEF_FFFF_FFFF;
+            let mut ephemeral_id = rand.next_u64();
+            while ephemeral_id == 0 || ephemeral_id > MAX_OPERATIONAL_NODE_ID {
+                ephemeral_id = rand.next_u64();
+            }
+            session.set_local_nodeid(ephemeral_id);
+
             let session_id = session.id;
 
             debug!(

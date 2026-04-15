@@ -468,6 +468,32 @@ impl Fabric {
         }
     }
 
+    /// Compute the destination identifier for a target node on this fabric.
+    ///
+    /// Used by the CASE initiator to build Sigma1 (spec 4.14.2.4).
+    /// destinationMessage = initiatorRandom || rootPublicKey || fabricId(LE) || nodeId(LE)
+    /// destinationIdentifier = Crypto_HMAC(key=IPK, message=destinationMessage)
+    ///
+    /// # Arguments
+    /// - `target_node_id`: The node ID of the destination (peer) node, NOT the local node.
+    pub fn compute_dest_id<C: Crypto>(
+        &self,
+        crypto: C,
+        random: &[u8],
+        target_node_id: u64,
+        out: &mut Hash,
+    ) -> Result<(), Error> {
+        let mut mac = crypto.hmac(self.ipk.op_key())?;
+
+        mac.update(random)?;
+        mac.update(CertRef::new(TLVElement::new(self.root_ca())).pubkey()?)?;
+        mac.update(&self.fabric_id.to_le_bytes())?;
+        mac.update(&target_node_id.to_le_bytes())?;
+
+        mac.finish(out)?;
+        Ok(())
+    }
+
     /// Return the secret key of the fabric
     pub fn secret_key(&self) -> CanonPkcSecretKeyRef<'_> {
         self.secret_key.reference()
@@ -1035,5 +1061,130 @@ where
     /// No-op for now
     pub fn run(self) -> Result<(), Error> {
         self.0.run()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::mem::MaybeUninit;
+
+    use crate::cert::builder::{IssuerDN, NocBuilder, RcacBuilder, SubjectDN, Validity};
+    use crate::cert::MAX_CERT_TLV_AND_ASN1_LEN;
+    use crate::crypto::test_only_crypto;
+    use crate::crypto::{
+        CanonAeadKeyRef, CanonPkcSecretKey, Crypto, Hash, SecretKey, SigningSecretKey,
+        AEAD_CANON_KEY_LEN,
+    };
+    use crate::utils::init::InitMaybeUninit;
+
+    use super::Fabrics;
+
+    /// Verify that `compute_dest_id` and `is_dest_id` agree: the hash output by
+    /// `compute_dest_id` must be accepted by `is_dest_id` on the same fabric with
+    /// the same random nonce.
+    ///
+    /// Uses runtime-generated certs (RcacBuilder + NocBuilder) with a real keypair
+    /// so the fabric is in a valid state — the secret key matches the NOC's public key.
+    #[test]
+    fn test_compute_dest_id_matches_is_dest_id() {
+        let crypto = test_only_crypto();
+
+        let fabric_id: u64 = 1;
+        let rcac_id: u64 = 1;
+        let node_id: u64 = 100;
+
+        // Generate RCAC keypair and build self-signed RCAC
+        let rcac_secret_key = crypto.generate_secret_key().unwrap();
+        let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
+
+        let validity = Validity {
+            not_before: 0,
+            not_after: 0,
+        };
+
+        let mut rcac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+        let rcac_len = RcacBuilder::new(&mut rcac_buf)
+            .build(
+                &crypto,
+                SubjectDN {
+                    node_id: None,
+                    fabric_id: Some(fabric_id),
+                    cat_ids: &[],
+                    ca_id: Some(rcac_id),
+                },
+                validity,
+                &rcac_pubkey,
+                &rcac_secret_key,
+                &[0x01],
+            )
+            .unwrap();
+
+        // Generate NOC keypair and build NOC signed by RCAC
+        let noc_secret_key = crypto.generate_secret_key().unwrap();
+        let noc_pubkey = noc_secret_key.pub_key().unwrap();
+
+        let mut noc_secret_key_canon = CanonPkcSecretKey::new();
+        noc_secret_key
+            .write_canon(&mut noc_secret_key_canon)
+            .unwrap();
+
+        let mut noc_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+        let noc_len = NocBuilder::new(&mut noc_buf)
+            .build(
+                &crypto,
+                SubjectDN {
+                    node_id: Some(node_id),
+                    fabric_id: Some(fabric_id),
+                    cat_ids: &[],
+                    ca_id: None,
+                },
+                validity,
+                &noc_pubkey,
+                &rcac_pubkey,
+                &rcac_secret_key,
+                &[0x02],
+                IssuerDN {
+                    ca_id: Some(rcac_id),
+                    fabric_id: Some(fabric_id),
+                    is_rcac: true,
+                },
+            )
+            .unwrap();
+
+        // Build fabric with real certs and matching secret key
+        let epoch_key = [0x5a_u8; AEAD_CANON_KEY_LEN];
+        let mut fabrics = Fabrics::new();
+        fabrics
+            .add(
+                &crypto,
+                noc_secret_key_canon.reference(),
+                &rcac_buf[..rcac_len],
+                &noc_buf[..noc_len],
+                &[], // no ICAC
+                Some(CanonAeadKeyRef::new(&epoch_key)),
+                0x8000,
+                node_id,
+                &mut || {},
+            )
+            .expect("Fabrics::add should succeed");
+
+        let fab_idx = core::num::NonZeroU8::new(1).unwrap();
+        let fabric = fabrics
+            .get(fab_idx)
+            .expect("fabric at index 1 should exist");
+
+        let random = [0xABu8; 32];
+
+        // Compute the destination ID (targeting this fabric's own node).
+        let mut dest_id = MaybeUninit::<Hash>::uninit();
+        let dest_id = dest_id.init_with(Hash::init());
+        fabric
+            .compute_dest_id(&crypto, &random, fabric.node_id(), dest_id)
+            .expect("compute_dest_id should not fail");
+
+        // is_dest_id must accept the computed value.
+        fabric
+            .is_dest_id(&crypto, &random, dest_id.access())
+            .expect("is_dest_id should accept hash produced by compute_dest_id");
     }
 }
