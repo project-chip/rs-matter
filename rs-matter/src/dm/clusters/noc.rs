@@ -268,7 +268,7 @@ impl ClusterHandler for NocHandler {
     ) -> Result<P, Error> {
         info!("Got Attestation Request");
 
-        GenCommHandler::with_armed_failsafe(&ctx, |state, _| {
+        ctx.exchange().with_state(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
 
             // Switch to raw writer for the response
@@ -324,30 +324,28 @@ impl ClusterHandler for NocHandler {
     ) -> Result<P, Error> {
         info!("Got Cert Chain Request");
 
-        GenCommHandler::with_armed_failsafe(&ctx, |_, _| {
-            // Switch to raw writer for the response
-            // Necessary, as we want to take advantage of the `TLVWrite::str_cb` method
-            // to emplace the attestation certificate as an octet string
-            let mut parent = response.unchecked_into_parent();
-            let writer = parent.writer();
+        // Switch to raw writer for the response
+        // Necessary, as we want to take advantage of the `TLVWrite::str_cb` method
+        // to emplace the attestation certificate as an octet string
+        let mut parent = response.unchecked_into_parent();
+        let writer = parent.writer();
 
-            // Struct is already started
-            // writer.start_struct(&CmdDataWriter::TAG)?;
+        // Struct is already started
+        // writer.start_struct(&CmdDataWriter::TAG)?;
 
-            let dev_att = ctx.exchange().matter().dev_att();
+        let dev_att = ctx.exchange().matter().dev_att();
 
-            writer.str(
-                &TLVTag::Context(0),
-                match request.certificate_type()? {
-                    CertificateChainTypeEnum::DACCertificate => dev_att.dac(),
-                    CertificateChainTypeEnum::PAICertificate => dev_att.pai(),
-                },
-            )?;
+        writer.str(
+            &TLVTag::Context(0),
+            match request.certificate_type()? {
+                CertificateChainTypeEnum::DACCertificate => dev_att.dac(),
+                CertificateChainTypeEnum::PAICertificate => dev_att.pai(),
+            },
+        )?;
 
-            writer.end_container()?;
+        writer.end_container()?;
 
-            Ok(parent)
-        })
+        Ok(parent)
     }
 
     fn handle_csr_request<P: TLVBuilderParent>(

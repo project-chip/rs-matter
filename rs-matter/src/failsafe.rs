@@ -129,7 +129,7 @@ impl FailSafe {
         if let State::Armed(ctx) = &mut self.state {
             let now = (self.epoch)();
             if now >= ctx.armed_at + Duration::from_secs(ctx.timeout_secs as u64) {
-                info!(
+                warn!(
                     "Fail-Safe timeout expired for fabric {}, disarming",
                     ctx.fab_idx
                 );
@@ -211,9 +211,15 @@ impl FailSafe {
             unreachable!();
         };
 
-        ctx.armed_at = (self.epoch)();
-        ctx.timeout_secs = timeout_secs;
-        self.breadcrumb = breadcrumb;
+        if timeout_secs > 0 {
+            ctx.armed_at = (self.epoch)();
+            ctx.timeout_secs = timeout_secs;
+            self.breadcrumb = breadcrumb;
+        } else {
+            // As per the spec, when timeout seconds is 0, we have to actually disarm
+            self.state = State::Idle;
+            self.breadcrumb = 0;
+        }
 
         Ok(())
     }

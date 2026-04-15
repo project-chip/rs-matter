@@ -250,6 +250,11 @@ impl ClusterHandler for GenCommHandler<'_> {
         request: ArmFailSafeRequest<'_>,
         response: ArmFailSafeResponseBuilder<P>,
     ) -> Result<P, Error> {
+        info!(
+            "Got Arm Fail Safe Request, expiry {}s",
+            request.expiry_length_seconds()?
+        );
+
         let status = CommissioningErrorEnum::map(ctx.exchange().with_state(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
 
@@ -270,6 +275,8 @@ impl ClusterHandler for GenCommHandler<'_> {
         request: SetRegulatoryConfigRequest<'_>,
         response: SetRegulatoryConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
+        info!("Got Set Regulatory Config Request");
+
         let country_code = request.country_code()?;
         if country_code.len() != 2 {
             return Err(ErrorCode::ConstraintError.into());
@@ -301,6 +308,8 @@ impl ClusterHandler for GenCommHandler<'_> {
         ctx: impl InvokeContext,
         response: CommissioningCompleteResponseBuilder<P>,
     ) -> Result<P, Error> {
+        info!("Got Commissioning Complete Request");
+
         let notify_change =
             |endpt_id, clust_id, attr_id| ctx.notify_attribute_changed(endpt_id, clust_id, attr_id);
 
