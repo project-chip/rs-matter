@@ -330,6 +330,8 @@ impl ClusterHandler for GenCommHandler<'_> {
                 // Finally, persist the fabric and the network settings, prior to sending the other party a "success" status
                 persist.store(fabric)?;
                 ctx.networks().access(|networks| {
+                    networks.set_commissioned(true)?;
+
                     persist
                         .persist_mut()
                         .store(NETWORKS_KEY, |buf| networks.save(buf))
