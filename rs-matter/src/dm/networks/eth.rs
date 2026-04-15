@@ -94,6 +94,14 @@ impl net_comm::Networks for EthNetwork<'_> {
         Err(NetworksError::Other(ErrorCode::InvalidAction.into()))
     }
 
+    fn commissioned(&self) -> Result<bool, Error> {
+        Ok(true)
+    }
+
+    fn set_commissioned(&mut self, _commissioned: bool) -> Result<(), Error> {
+        Ok(())
+    }
+
     fn reset(&mut self) -> Result<(), Error> {
         Ok(())
     }

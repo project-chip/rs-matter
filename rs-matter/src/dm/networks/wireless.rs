@@ -27,7 +27,7 @@ use crate::dm::clusters::{thread_diag, wifi_diag};
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
 use crate::persist::{KvBlobStore, NETWORKS_KEY};
-use crate::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
+use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::network::btp::Btp;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -107,6 +107,7 @@ pub trait WirelessNetwork: Send + for<'a> FromTLV<'a> + ToTLV {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct WirelessNetworks<const N: usize, T> {
     networks: crate::utils::storage::Vec<T, N>,
+    commissioned: bool,
 }
 
 impl<const N: usize, T> Default for WirelessNetworks<N, T>
@@ -125,18 +126,21 @@ where
     pub const fn new() -> Self {
         Self {
             networks: crate::utils::storage::Vec::new(),
+            commissioned: false,
         }
     }
 
     pub fn init() -> impl Init<Self> {
         init!(Self {
             networks <- crate::utils::storage::Vec::init(),
+            commissioned: false,
         })
     }
 
     /// Reset the state
     pub fn reset(&mut self) {
         self.networks.clear();
+        self.commissioned = false;
     }
 
     /// Remove all networks from the provided BLOB store and from memory
@@ -189,16 +193,30 @@ where
     pub fn load(&mut self, data: &[u8]) -> Result<(), Error> {
         let root = TLVElement::new(data);
 
-        let iter = root.array()?.iter();
-
         self.networks.clear();
 
-        for network in iter {
-            let network = network?;
+        // Try new format: struct { ctx(0): networks array, ctx(1): commissioned bool }
+        // Fall back to old format: bare TLV array (with commissioned defaulting to false)
+        if let Ok(structure) = root.structure() {
+            for network in structure.ctx(0)?.array()?.iter() {
+                let network = network?;
 
-            self.networks.push_init(T::init_from_tlv(network), || {
-                ErrorCode::ResourceExhausted.into()
-            })?;
+                self.networks.push_init(T::init_from_tlv(network), || {
+                    ErrorCode::ResourceExhausted.into()
+                })?;
+            }
+
+            self.commissioned = structure.ctx(1)?.bool()?;
+        } else {
+            for network in root.array()?.iter() {
+                let network = network?;
+
+                self.networks.push_init(T::init_from_tlv(network), || {
+                    ErrorCode::ResourceExhausted.into()
+                })?;
+            }
+
+            self.commissioned = false;
         }
 
         Ok(())
@@ -213,7 +231,12 @@ where
     pub fn store(&self, buf: &mut [u8]) -> Result<usize, Error> {
         let mut wb = WriteBuf::new(buf);
 
-        self.networks.to_tlv(&TLVTag::Anonymous, &mut wb)?;
+        wb.start_struct(&TLVTag::Anonymous)?;
+
+        self.networks.to_tlv(&TLVTag::Context(0), &mut wb)?;
+        self.commissioned.to_tlv(&TLVTag::Context(1), &mut wb)?;
+
+        wb.end_container()?;
 
         let tail = wb.get_tail();
 
@@ -426,6 +449,14 @@ where
             Err(NetworksError::NetworkIdNotFound)
         }
     }
+
+    pub fn commissioned(&self) -> bool {
+        self.commissioned
+    }
+
+    pub fn set_commissioned(&mut self, commissioned: bool) {
+        self.commissioned = commissioned;
+    }
 }
 
 impl<const N: usize, T> Networks for WirelessNetworks<N, T>
@@ -491,6 +522,16 @@ where
 
     fn remove(&mut self, network_id: &[u8]) -> Result<u8, NetworksError> {
         WirelessNetworks::remove(self, network_id)
+    }
+
+    fn commissioned(&self) -> Result<bool, Error> {
+        Ok(self.commissioned())
+    }
+
+    fn set_commissioned(&mut self, commissioned: bool) -> Result<(), Error> {
+        WirelessNetworks::set_commissioned(self, commissioned);
+
+        Ok(())
     }
 
     fn reset(&mut self) -> Result<(), Error> {
@@ -942,5 +983,423 @@ where
         f: &mut dyn FnMut(thread_diag::NetworkFaultEnum) -> Result<(), Error>,
     ) -> Result<(), Error> {
         self.net_ctl.active_network_faults_list(f)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::dm::clusters::net_comm::{
+        NetworksAccess, NetworksError, SharedNetworks, WirelessCreds,
+    };
+
+    use super::wifi::{Wifi, WifiNetworks};
+    use super::WirelessNetwork;
+
+    // ── Helper ──
+
+    fn wifi_creds<'a>(ssid: &'a [u8], pass: &'a [u8]) -> WirelessCreds<'a> {
+        WirelessCreds::Wifi { ssid, pass }
+    }
+
+    fn collect_ssids(nets: &WifiNetworks<4>) -> Vec<Vec<u8>> {
+        let mut ids = Vec::new();
+        nets.networks(|n| {
+            ids.push(n.id().to_vec());
+            Ok(())
+        })
+        .unwrap();
+        ids
+    }
+
+    // ── WirelessNetworks: add / update / remove ──
+
+    #[test]
+    fn add_networks() {
+        let mut nets = WifiNetworks::<4>::new();
+
+        let idx = nets
+            .add_or_update(b"A", Wifi::init_from(&wifi_creds(b"A", b"PassA")), |_| {
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(idx, 0);
+
+        let idx = nets
+            .add_or_update(b"B", Wifi::init_from(&wifi_creds(b"B", b"PassB")), |_| {
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(idx, 1);
+
+        assert_eq!(collect_ssids(&nets), vec![b"A".to_vec(), b"B".to_vec()]);
+    }
+
+    #[test]
+    fn update_existing_network() {
+        let mut nets = WifiNetworks::<4>::new();
+        nets.add_or_update(b"A", Wifi::init_from(&wifi_creds(b"A", b"Old")), |_| Ok(()))
+            .unwrap();
+
+        // Update: same SSID, new password
+        nets.add_or_update(b"A", Wifi::init_from(&wifi_creds(b"A", b"New")), |wifi| {
+            wifi.update(&wifi_creds(b"A", b"New"))
+        })
+        .unwrap();
+
+        // Still one network
+        assert_eq!(collect_ssids(&nets).len(), 1);
+
+        // Verify updated password via creds
+        let mut pass = Vec::new();
+        nets.network(b"A", |w| {
+            if let WirelessCreds::Wifi { pass: p, .. } = w.creds() {
+                pass.extend_from_slice(p);
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(pass, b"New");
+    }
+
+    #[test]
+    fn add_exceeds_capacity() {
+        let mut nets = WifiNetworks::<2>::new();
+        nets.add_or_update(b"A", Wifi::init_from(&wifi_creds(b"A", b"p")), |_| Ok(()))
+            .unwrap();
+        nets.add_or_update(b"B", Wifi::init_from(&wifi_creds(b"B", b"p")), |_| Ok(()))
+            .unwrap();
+
+        let err = nets.add_or_update(b"C", Wifi::init_from(&wifi_creds(b"C", b"p")), |_| Ok(()));
+        assert!(matches!(err, Err(NetworksError::BoundsExceeded)));
+    }
+
+    #[test]
+    fn remove_network() {
+        let mut nets = WifiNetworks::<4>::new();
+        nets.add_or_update(b"A", Wifi::init_from(&wifi_creds(b"A", b"p")), |_| Ok(()))
+            .unwrap();
+        nets.add_or_update(b"B", Wifi::init_from(&wifi_creds(b"B", b"p")), |_| Ok(()))
+            .unwrap();
+
+        let idx = nets.remove(b"A").unwrap();
+        assert_eq!(idx, 0);
+        assert_eq!(collect_ssids(&nets), vec![b"B".to_vec()]);
+    }
+
+    #[test]
+    fn remove_nonexistent() {
+        let mut nets = WifiNetworks::<4>::new();
+        assert!(matches!(
+            nets.remove(b"X"),
+            Err(NetworksError::NetworkIdNotFound)
+        ));
+    }
+
+    // ── WirelessNetworks: reorder ──
+
+    #[test]
+    fn reorder_moves_to_front() {
+        let mut nets = WifiNetworks::<4>::new();
+        for id in [b"A", b"B", b"C"] {
+            nets.add_or_update(
+                id.as_slice(),
+                Wifi::init_from(&wifi_creds(id, b"p")),
+                |_| Ok(()),
+            )
+            .unwrap();
+        }
+
+        // Move C (index 2) to index 0
+        nets.reorder(0, b"C").unwrap();
+        assert_eq!(
+            collect_ssids(&nets),
+            vec![b"C".to_vec(), b"A".to_vec(), b"B".to_vec()]
+        );
+    }
+
+    #[test]
+    fn reorder_out_of_range() {
+        let mut nets = WifiNetworks::<4>::new();
+        nets.add_or_update(b"A", Wifi::init_from(&wifi_creds(b"A", b"p")), |_| Ok(()))
+            .unwrap();
+
+        assert!(matches!(
+            nets.reorder(5, b"A"),
+            Err(NetworksError::OutOfRange)
+        ));
+    }
+
+    #[test]
+    fn reorder_nonexistent() {
+        let mut nets = WifiNetworks::<4>::new();
+        assert!(matches!(
+            nets.reorder(0, b"X"),
+            Err(NetworksError::NetworkIdNotFound)
+        ));
+    }
+
+    // ── WirelessNetworks: next_network round-robin ──
+
+    #[test]
+    fn next_network_iterates_and_wraps() {
+        let mut nets = WifiNetworks::<4>::new();
+        for id in [b"A", b"B", b"C"] {
+            nets.add_or_update(
+                id.as_slice(),
+                Wifi::init_from(&wifi_creds(id, b"p")),
+                |_| Ok(()),
+            )
+            .unwrap();
+        }
+
+        let get_next = |last: Option<&[u8]>| -> Option<Vec<u8>> {
+            let mut result = None;
+            let found = nets
+                .next_network(last, |w| {
+                    result = Some(w.id().to_vec());
+                    Ok(())
+                })
+                .unwrap();
+            if found {
+                result
+            } else {
+                None
+            }
+        };
+
+        assert_eq!(get_next(None), Some(b"A".to_vec()));
+        assert_eq!(get_next(Some(b"A")), Some(b"B".to_vec()));
+        assert_eq!(get_next(Some(b"B")), Some(b"C".to_vec()));
+        // After last → wraps to first
+        assert_eq!(get_next(Some(b"C")), Some(b"A".to_vec()));
+        // Unknown ID → first
+        assert_eq!(get_next(Some(b"Z")), Some(b"A".to_vec()));
+    }
+
+    #[test]
+    fn next_network_empty_returns_false() {
+        let nets = WifiNetworks::<4>::new();
+        let found = nets.next_network(None, |_| Ok(())).unwrap();
+        assert!(!found);
+    }
+
+    // ── WirelessNetworks: store / load round-trip ──
+
+    #[test]
+    fn store_load_round_trip() {
+        let mut nets = WifiNetworks::<4>::new();
+        nets.add_or_update(
+            b"Net1",
+            Wifi::init_from(&wifi_creds(b"Net1", b"P1")),
+            |_| Ok(()),
+        )
+        .unwrap();
+        nets.add_or_update(
+            b"Net2",
+            Wifi::init_from(&wifi_creds(b"Net2", b"P2")),
+            |_| Ok(()),
+        )
+        .unwrap();
+        nets.set_commissioned(true);
+
+        let mut buf = [0u8; 512];
+        let len = nets.store(&mut buf).unwrap();
+
+        let mut loaded = WifiNetworks::<4>::new();
+        loaded.load(&buf[..len]).unwrap();
+
+        assert_eq!(collect_ssids(&loaded), collect_ssids(&nets));
+        assert!(loaded.commissioned());
+    }
+
+    // ── WirelessNetworks: commissioned state ──
+
+    #[test]
+    fn commissioned_default_false() {
+        let nets = WifiNetworks::<4>::new();
+        assert!(!nets.commissioned());
+    }
+
+    #[test]
+    fn set_commissioned() {
+        let mut nets = WifiNetworks::<4>::new();
+        nets.set_commissioned(true);
+        assert!(nets.commissioned());
+        nets.set_commissioned(false);
+        assert!(!nets.commissioned());
+    }
+
+    // ── WirelessNetworks: reset ──
+
+    #[test]
+    fn reset_clears_all() {
+        let mut nets = WifiNetworks::<4>::new();
+        nets.add_or_update(b"A", Wifi::init_from(&wifi_creds(b"A", b"p")), |_| Ok(()))
+            .unwrap();
+        nets.set_commissioned(true);
+
+        nets.reset();
+        assert!(collect_ssids(&nets).is_empty());
+        assert!(!nets.commissioned());
+    }
+
+    // ── SharedNetworks: delegates to inner WifiNetworks correctly ──
+
+    #[test]
+    fn shared_networks_access_add_and_read() {
+        let shared = SharedNetworks::new(WifiNetworks::<4>::new());
+
+        shared.access(|networks| {
+            networks
+                .add_or_update(&wifi_creds(b"SSID1", b"pass1"))
+                .unwrap();
+            networks
+                .add_or_update(&wifi_creds(b"SSID2", b"pass2"))
+                .unwrap();
+        });
+
+        // Read back via Networks trait
+        let count = shared.access(|networks| {
+            let mut count = 0u8;
+            networks
+                .networks(&mut |_info| {
+                    count += 1;
+                    Ok(())
+                })
+                .unwrap();
+            count
+        });
+
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn shared_networks_commissioned_via_access() {
+        let shared = SharedNetworks::new(WifiNetworks::<4>::new());
+
+        let commissioned = shared.access(|networks| networks.commissioned().unwrap());
+        assert!(!commissioned);
+
+        shared.access(|networks| networks.set_commissioned(true).unwrap());
+
+        let commissioned = shared.access(|networks| networks.commissioned().unwrap());
+        assert!(commissioned);
+    }
+
+    #[test]
+    fn shared_networks_next_creds_round_robin() {
+        let shared = SharedNetworks::new(WifiNetworks::<4>::new());
+
+        shared.access(|networks| {
+            for (ssid, pass) in [(b"A", b"pA"), (b"B", b"pB"), (b"C", b"pC")] {
+                networks
+                    .add_or_update(&wifi_creds(ssid.as_slice(), pass.as_slice()))
+                    .unwrap();
+            }
+        });
+
+        let get_next_ssid = |last: Option<&[u8]>| -> Option<Vec<u8>> {
+            shared.access(|networks| {
+                let mut result = None;
+                let found = networks
+                    .next_creds(last, &mut |creds| {
+                        if let WirelessCreds::Wifi { ssid, .. } = creds {
+                            result = Some(ssid.to_vec());
+                        }
+                        Ok(())
+                    })
+                    .unwrap();
+                if found {
+                    result
+                } else {
+                    None
+                }
+            })
+        };
+
+        assert_eq!(get_next_ssid(None), Some(b"A".to_vec()));
+        assert_eq!(get_next_ssid(Some(b"A")), Some(b"B".to_vec()));
+        assert_eq!(get_next_ssid(Some(b"C")), Some(b"A".to_vec()));
+    }
+
+    // ── Regression: load old-format (bare TLV array, no commissioned field) ──
+
+    #[test]
+    fn load_old_format_bare_array() {
+        use crate::tlv::{TLVTag, TLVWrite};
+        use crate::utils::storage::WriteBuf;
+
+        // Build old-format TLV data: bare anonymous array of Wifi structs.
+        // Before the `commissioned` field was added, `store` just serialized the
+        // networks Vec directly (without wrapping in a struct).
+        let mut buf = [0u8; 512];
+        let mut wb = WriteBuf::new(&mut buf);
+
+        wb.start_array(&TLVTag::Anonymous).unwrap();
+
+        // Wifi entry "A" with password "pA"
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        wb.str(&TLVTag::Context(0), b"A").unwrap();
+        wb.str(&TLVTag::Context(1), b"pA").unwrap();
+        wb.end_container().unwrap();
+
+        // Wifi entry "B" with password "pB"
+        wb.start_struct(&TLVTag::Anonymous).unwrap();
+        wb.str(&TLVTag::Context(0), b"B").unwrap();
+        wb.str(&TLVTag::Context(1), b"pB").unwrap();
+        wb.end_container().unwrap();
+
+        wb.end_container().unwrap();
+        let len = wb.get_tail();
+
+        // Load using new code (should handle old format gracefully)
+        let mut nets = WifiNetworks::<4>::new();
+        nets.load(&buf[..len]).unwrap();
+
+        assert_eq!(collect_ssids(&nets), vec![b"A".to_vec(), b"B".to_vec()]);
+        assert!(
+            !nets.commissioned(),
+            "Old format should default commissioned to false"
+        );
+    }
+
+    // ── Regression: save() must not trigger a change notification ──
+
+    #[test]
+    fn shared_networks_save_does_not_trigger_change() {
+        use core::pin::pin;
+        use embassy_futures::select::{select, Either};
+
+        let shared = SharedNetworks::new(WifiNetworks::<4>::new());
+
+        // Add a network → triggers notification
+        shared.access(|n| n.add_or_update(&wifi_creds(b"A", b"p")).unwrap());
+
+        // Consume the notification
+        embassy_futures::block_on(shared.wait_state_changed());
+
+        // Save (should NOT trigger notification)
+        shared.access(|n| {
+            let mut buf = [0u8; 512];
+            n.save(&mut buf).unwrap();
+        });
+
+        // Check: wait_state_changed should NOT be ready.
+        // `select` is biased towards the first future, so if the notification was
+        // triggered, it would resolve first. `ready(())` resolves immediately so
+        // if the notification was NOT triggered, the second branch wins.
+        let notified = embassy_futures::block_on(async {
+            match select(
+                pin!(shared.wait_state_changed()),
+                pin!(core::future::ready(())),
+            )
+            .await
+            {
+                Either::First(_) => true,
+                Either::Second(_) => false,
+            }
+        });
+
+        assert!(!notified, "save() must not trigger change notification");
     }
 }

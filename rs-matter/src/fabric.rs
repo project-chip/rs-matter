@@ -1166,7 +1166,6 @@ mod tests {
                 Some(CanonAeadKeyRef::new(&epoch_key)),
                 0x8000,
                 node_id,
-                &mut || {},
             )
             .expect("Fabrics::add should succeed");
 

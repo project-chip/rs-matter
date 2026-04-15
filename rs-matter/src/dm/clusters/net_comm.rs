@@ -454,6 +454,12 @@ pub trait Networks {
     /// Return the index of the network ID if it was removed, or an error if the operation failed.
     fn remove(&mut self, network_id: &[u8]) -> Result<u8, NetworksError>;
 
+    /// Return whether the network interface is commissioned
+    fn commissioned(&self) -> Result<bool, Error>;
+
+    /// Set the commissioned state of the network interface
+    fn set_commissioned(&mut self, commissioned: bool) -> Result<(), Error>;
+
     /// Reset the networks to the initial state, removing all recorded network credentials
     fn reset(&mut self) -> Result<(), Error>;
 
@@ -513,6 +519,14 @@ where
         (*self).remove(network_id)
     }
 
+    fn commissioned(&self) -> Result<bool, Error> {
+        (**self).commissioned()
+    }
+
+    fn set_commissioned(&mut self, commissioned: bool) -> Result<(), Error> {
+        (**self).set_commissioned(commissioned)
+    }
+
     fn reset(&mut self) -> Result<(), Error> {
         (**self).reset()
     }
@@ -569,6 +583,14 @@ impl Networks for &mut dyn Networks {
 
     fn remove(&mut self, network_id: &[u8]) -> Result<u8, NetworksError> {
         (**self).remove(network_id)
+    }
+
+    fn commissioned(&self) -> Result<bool, Error> {
+        (**self).commissioned()
+    }
+
+    fn set_commissioned(&mut self, commissioned: bool) -> Result<(), Error> {
+        (**self).set_commissioned(commissioned)
     }
 
     fn reset(&mut self) -> Result<(), Error> {
@@ -650,6 +672,14 @@ impl Networks for DummyNetworks {
 
     fn remove(&mut self, _network_id: &[u8]) -> Result<u8, NetworksError> {
         Err(NetworksError::Other(ErrorCode::InvalidAction.into()))
+    }
+
+    fn commissioned(&self) -> Result<bool, Error> {
+        Ok(false)
+    }
+
+    fn set_commissioned(&mut self, _commissioned: bool) -> Result<(), Error> {
+        Ok(())
     }
 
     fn reset(&mut self) -> Result<(), Error> {
@@ -937,6 +967,18 @@ impl Networks for SharedNetworksInstance<'_> {
         Ok(index)
     }
 
+    fn commissioned(&self) -> Result<bool, Error> {
+        self.networks.commissioned()
+    }
+
+    fn set_commissioned(&mut self, commissioned: bool) -> Result<(), Error> {
+        self.networks.set_commissioned(commissioned)?;
+
+        self.changed.notify();
+
+        Ok(())
+    }
+
     fn reset(&mut self) -> Result<(), Error> {
         self.networks.reset()?;
 
@@ -951,8 +993,6 @@ impl Networks for SharedNetworksInstance<'_> {
 
     fn save(&self, buf: &mut [u8]) -> Result<Option<usize>, Error> {
         let len = self.networks.save(buf)?;
-
-        self.changed.notify();
 
         Ok(len)
     }
