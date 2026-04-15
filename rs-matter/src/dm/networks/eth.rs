@@ -32,7 +32,12 @@ pub struct EthNetwork<'a> {
 }
 
 impl<'a> EthNetwork<'a> {
-    /// Creates a new `EthNetwork` instance.
+    /// Create a new `EthNetwork` instance with a default network ID.
+    pub const fn new_default() -> Self {
+        Self::new("eth")
+    }
+
+    /// Create a new `EthNetwork` instance.
     pub const fn new(network_id: &'a str) -> Self {
         Self { network_id }
     }
@@ -89,7 +94,23 @@ impl net_comm::Networks for EthNetwork<'_> {
         Err(NetworksError::Other(ErrorCode::InvalidAction.into()))
     }
 
-    fn persist(&self, _buf: &mut [u8]) -> Result<Option<usize>, Error> {
+    fn commissioned(&self) -> Result<bool, Error> {
+        Ok(true)
+    }
+
+    fn set_commissioned(&mut self, _commissioned: bool) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn reset(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn load(&mut self, _data: &[u8]) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn save(&self, _buf: &mut [u8]) -> Result<Option<usize>, Error> {
         Ok(None)
     }
 }

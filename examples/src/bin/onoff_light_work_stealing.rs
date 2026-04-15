@@ -30,13 +30,14 @@ use rand::{CryptoRng, RngCore};
 use rs_matter::crypto::backend::rustcrypto::RustCrypto;
 use rs_matter::crypto::Crypto;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
-use rs_matter::dm::clusters::net_comm::NetworkType;
+use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::clusters::on_off::NoLevelControl;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::dm::endpoints::{self, EthHandler, SysHandler};
+use rs_matter::dm::endpoints::{self, EthSysHandler};
 use rs_matter::dm::events::NO_EVENTS;
+use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::IMBuffer;
@@ -50,7 +51,7 @@ use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{clusters, devices, handler_chain_type, Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, handler_chain_type, root_endpoint, Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
 
@@ -62,7 +63,7 @@ type AppHandler<'a> = handler_chain_type!(
     EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>
     | EmptyHandler
 );
-type AppDmHandler<'a> = EthHandler<'a, SysHandler<'a, AppHandler<'a>>>;
+type AppDmHandler<'a> = EthSysHandler<'a, AppHandler<'a>>;
 
 // Statically allocate in BSS the bigger objects
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
@@ -146,6 +147,7 @@ fn run() -> Result<(), Error> {
         NO_EVENTS,
         (NODE, dm_handler(rand, on_off_handler)),
         SharedKvBlobStore::new(kv, kv_buf),
+        SharedNetworks::new(EthNetwork::new_default()),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -172,11 +174,11 @@ fn run() -> Result<(), Error> {
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
         core::mem::size_of_val(&matter.run(crypto, &socket, &socket, &socket)),
-        core::mem::size_of_val(&mdns::run_mdns(matter, crypto, dm.change_notify()))
+        core::mem::size_of_val(&mdns::run_mdns(matter, crypto))
     );
 
     // Run the Matter and mDNS transports
-    let mdns = mdns::run_mdns(matter, crypto, dm.change_notify());
+    let mdns = mdns::run_mdns(matter, crypto);
     let transport = matter.run(crypto, &socket, &socket, &socket);
 
     if !matter.is_commissioned() {
@@ -238,7 +240,7 @@ fn run() -> Result<(), Error> {
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        endpoints::root_endpoint(NetworkType::Ethernet),
+        root_endpoint!(eth),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
@@ -253,23 +255,20 @@ fn dm_handler<'a>(
     mut rand: impl RngCore + Copy,
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
 ) -> AppDmHandler<'a> {
-    endpoints::with_eth(
+    endpoints::with_eth_sys(
+        &false,
         &(),
         &UnixNetifs,
         rand,
-        endpoints::with_sys(
-            &false,
-            rand,
-            EmptyHandler
-                .chain(
-                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                    on_off::HandlerAsyncAdaptor(on_off),
-                ),
-        ),
+        EmptyHandler
+            .chain(
+                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                on_off::HandlerAsyncAdaptor(on_off),
+            ),
     )
 }
 

@@ -52,19 +52,12 @@ impl<'a> AstroMdnsResponder<'a> {
     }
 
     /// Run the mDNS responder
-    ///
-    /// # Arguments
-    /// - `crypto`: A crypto provider instance.
-    /// - `notify`: A change notification interface.
-    pub async fn run(
-        &mut self,
-        mut notify: impl FnMut(EndptId, ClusterId, AttrId),
-    ) -> Result<(), Error> {
+    pub async fn run(&mut self) -> Result<(), Error> {
         loop {
             self.matter.wait_mdns().await;
 
             let mut services = HashSet::new();
-            self.matter.mdns_services(&mut notify, |service| {
+            self.matter.mdns_services(|service| {
                 services.insert(service);
 
                 Ok(())

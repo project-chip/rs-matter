@@ -54,12 +54,13 @@ use rs_matter::dm::clusters::decl::media_playback::{
 
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
-use rs_matter::dm::clusters::net_comm::NetworkType;
+use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_CASTING_VIDEO_PLAYER;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::events::DefaultEvents;
+use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
@@ -76,7 +77,7 @@ use rs_matter::tlv::{TLVBuilderParent, Utf8StrArrayBuilder, Utf8StrBuilder};
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{clusters, devices, with, Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, root_endpoint, with, Matter, MATTER_PORT};
 
 #[path = "../common/mdns.rs"]
 mod mdns;
@@ -127,6 +128,7 @@ fn main() -> Result<(), Error> {
         Some(&events),
         dm_handler(rand, &on_off_handler),
         SharedKvBlobStore::new(kv, kv_buf.as_mut_slice()),
+        SharedNetworks::new(EthNetwork::new_default()),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -144,7 +146,7 @@ fn main() -> Result<(), Error> {
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
     // Run the Matter and mDNS transports
-    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto, dm.change_notify()));
+    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto));
     let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
     if !matter.is_commissioned() {
@@ -168,7 +170,7 @@ fn main() -> Result<(), Error> {
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        endpoints::root_endpoint(NetworkType::Ethernet),
+        root_endpoint!(eth),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_CASTING_VIDEO_PLAYER),
@@ -191,35 +193,32 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
-        endpoints::with_eth(
+        endpoints::with_eth_sys(
+            &false,
             &(),
             &UnixNetifs,
             rand,
-            endpoints::with_sys(
-                &false,
-                rand,
-                EmptyHandler
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(MediaHandler::CLUSTER.id)),
-                        MediaHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(ContentHandler::CLUSTER.id)),
-                        ContentHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(KeypadInputHandler::CLUSTER.id)),
-                        KeypadInputHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                        on_off::HandlerAsyncAdaptor(on_off),
-                    ),
-            ),
+            EmptyHandler
+                .chain(
+                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(MediaHandler::CLUSTER.id)),
+                    MediaHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(ContentHandler::CLUSTER.id)),
+                    ContentHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(KeypadInputHandler::CLUSTER.id)),
+                    KeypadInputHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                    on_off::HandlerAsyncAdaptor(on_off),
+                ),
         ),
     )
 }
@@ -245,13 +244,13 @@ impl MediaHandler {
     }
 
     /// Update the state of the handler
-    fn set_state(&self, state: PlaybackStateEnum, ctx: impl InvokeContext) {
+    fn set_state(&self, state: PlaybackStateEnum, _ctx: impl InvokeContext) {
         let old_state = self.state.replace(state);
 
         if old_state != state {
             // Update the cluster data version and notify potential subscribers
             self.dataver.changed();
-            ctx.notify_changed();
+            // TODO ctx.notify_changed();
         }
     }
 }

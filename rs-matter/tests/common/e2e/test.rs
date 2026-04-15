@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+#![allow(unused)]
+
 use embassy_futures::block_on;
 use embassy_futures::select::select;
 

@@ -42,12 +42,13 @@ use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::{self, LevelControlHooks};
-use rs_matter::dm::clusters::net_comm::NetworkType;
+use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::clusters::on_off::{self, OnOffHooks, StartUpOnOffEnum};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::events::DefaultEvents;
+use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::IMBuffer;
@@ -66,7 +67,7 @@ use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{clusters, devices, with, Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, root_endpoint, with, Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
 
@@ -187,6 +188,7 @@ fn run() -> Result<(), Error> {
         Some(events),
         dm_handler(rand, &on_off_handler, &level_control_handler),
         SharedKvBlobStore::new(kv, kv_buf),
+        SharedNetworks::new(EthNetwork::new_default()),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -210,11 +212,11 @@ fn run() -> Result<(), Error> {
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
         core::mem::size_of_val(&matter.run(&crypto, &socket, &socket, &socket)),
-        core::mem::size_of_val(&mdns::run_mdns(matter, &crypto, dm.change_notify()))
+        core::mem::size_of_val(&mdns::run_mdns(matter, &crypto))
     );
 
     // Run the Matter and mDNS transports
-    let mut mdns = pin!(mdns::run_mdns(matter, &crypto, dm.change_notify()));
+    let mut mdns = pin!(mdns::run_mdns(matter, &crypto));
     let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
     // We need to always print the QR text, because the test runner expects it to be printed
@@ -252,7 +254,7 @@ fn run() -> Result<(), Error> {
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        endpoints::root_endpoint_with_groups(NetworkType::Ethernet),
+        root_endpoint!(geth),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_DIMMABLE_LIGHT),
@@ -275,34 +277,28 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
-        endpoints::with_eth(
+        endpoints::with_eth_sys(
+            &false,
             &(),
             &UnixNetifs,
             rand,
-            endpoints::with_sys(
-                &false,
-                rand,
-                endpoints::with_groups(
-                    rand,
-                    EmptyHandler
-                        .chain(
-                            EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                            Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                        )
-                        .chain(
-                            EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
-                            Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                        )
-                        .chain(
-                            EpClMatcher::new(Some(1), Some(OnOffDeviceLogic::CLUSTER.id)),
-                            on_off::HandlerAsyncAdaptor(on_off),
-                        )
-                        .chain(
-                            EpClMatcher::new(Some(1), Some(LevelControlDeviceLogic::CLUSTER.id)),
-                            level_control::HandlerAsyncAdaptor(level_control),
-                        ),
+            EmptyHandler
+                .chain(
+                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                    Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(OnOffDeviceLogic::CLUSTER.id)),
+                    on_off::HandlerAsyncAdaptor(on_off),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(LevelControlDeviceLogic::CLUSTER.id)),
+                    level_control::HandlerAsyncAdaptor(level_control),
                 ),
-            ),
         ),
     )
 }

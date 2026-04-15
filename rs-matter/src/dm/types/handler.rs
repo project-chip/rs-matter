@@ -18,22 +18,23 @@
 use core::future::Future;
 use core::pin::pin;
 
-use crate::crypto::backend::dummy::DummyCrypto;
+use embassy_futures::select::select;
+
 use crate::crypto::Crypto;
+use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::dm::IMBuffer;
 use crate::error::{Error, ErrorCode};
-use crate::persist::{DummyKvBlobStoreAccess, KvBlobStoreAccess};
+use crate::persist::KvBlobStoreAccess;
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
 use crate::utils::select::Coalesce;
-use crate::utils::storage::pooled::{BufferAccess, PooledBuffers};
+use crate::utils::storage::pooled::BufferAccess;
 use crate::utils::sync::DynBase;
 use crate::Matter;
 
 use super::{AttrDetails, AttrId, ClusterId, CmdDetails, EndptId, InvokeReply, ReadReply};
 
 pub use asynch::*;
-use embassy_futures::select::select;
 
 pub trait ChangeNotify: DynBase {
     fn notify(&self, endpt: EndptId, clust: ClusterId, attr: AttrId);
@@ -54,10 +55,11 @@ impl ChangeNotify for () {
     }
 }
 
-/// A HandlerContext super-type that is used to access core Matter functionality.
+/// A context super-type that is also passed to the `(Async)Handler::run` method.
 ///
-/// It provides access to the Matter instance and attribute changed notifications.
-pub trait BasicContext {
+/// It provides access to the Matter instance and to Data Model-related objects,
+/// which could be useful in the context of executing background tasks specific for the concrete handler.
+pub trait HandlerContext {
     /// Return the Matter object that is associated with this handler
     fn matter(&self) -> &Matter<'_>;
 
@@ -66,6 +68,21 @@ pub trait BasicContext {
 
     /// Return a blob store that can be used to persist data across reboots.
     fn kv(&self) -> impl KvBlobStoreAccess + '_;
+
+    /// Return the networks access object.
+    fn networks(&self) -> impl NetworksAccess + '_;
+
+    /// Return the global handler that this handler is part of.
+    ///
+    /// Useful in case a concrete cluster handler (say, the Scenes one) needs to
+    /// access the global handler so as to invoke read/write/invoke operations on other clusters.
+    fn handler(&self) -> impl AsyncHandler + '_;
+
+    /// Return the buffer pool of the Data Model.
+    ///
+    /// Useful in case e.g. a concrete cluster handler needs to invoke read/write/invoke operations on
+    /// other clusters, and the TLV input/output data for those operations is non-trivial in size.
+    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_;
 
     /// Notify that the state of an attribute has changed.
     ///
@@ -86,9 +103,9 @@ pub trait BasicContext {
     }
 }
 
-impl<T> BasicContext for &T
+impl<T> HandlerContext for &T
 where
-    T: BasicContext,
+    T: HandlerContext,
 {
     fn matter(&self) -> &Matter<'_> {
         (**self).matter()
@@ -102,6 +119,18 @@ where
         (**self).kv()
     }
 
+    fn networks(&self) -> impl NetworksAccess + '_ {
+        (**self).networks()
+    }
+
+    fn handler(&self) -> impl AsyncHandler + '_ {
+        (**self).handler()
+    }
+
+    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+        (**self).buffers()
+    }
+
     fn notify_attribute_changed(
         &self,
         endpoint_id: EndptId,
@@ -110,122 +139,43 @@ where
     ) {
         (**self).notify_attribute_changed(endpoint_id, cluster_id, attr_id);
     }
-}
 
-/// A context super-type that is passed to the `AsyncHandler::run` method.
-///
-/// It provides access to the Matter instance and to Data Model-related objects,
-/// which could be useful in the context of executing background tasks specific for the concrete handler.
-pub trait HandlerContext: BasicContext {
-    /// Return the global handler that this handler is part of.
-    ///
-    /// Useful in case a concrete cluster handler (say, the Scenes one) needs to
-    /// access the global handler so as to invoke read/write/invoke operations on other clusters.
-    fn handler(&self) -> impl AsyncHandler + '_;
-
-    /// Return the buffer pool of the Data Model.
-    ///
-    /// Useful in case e.g. a concrete cluster handler needs to invoke read/write/invoke operations on
-    /// other clusters, and the TLV input/output data for those operations is non-trivial in size.
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_;
-}
-
-impl<T> HandlerContext for &T
-where
-    T: HandlerContext,
-{
-    fn handler(&self) -> impl AsyncHandler + '_ {
-        (**self).handler()
-    }
-
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
-        (**self).buffers()
+    fn notify_attribute_path_changed(&self, attr: &AttrDetails) {
+        (**self).notify_attribute_path_changed(attr)
     }
 }
 
 /// A context super-type that is passed to the handler when processing an attribute read/write or a command invoke operation.
-pub trait Context: HandlerContext {
+pub trait OperationContext: HandlerContext {
     /// Return the exchange object that is associated with this operation.
     fn exchange(&self) -> &Exchange<'_>;
 
-    /// Notify that the state of the attribute whose read/write/invoke operation is processed has changed.
-    fn notify_changed(&self) {
-        if let Some(ctx) = self.as_read_ctx() {
-            self.notify_attribute_path_changed(ctx.attr());
-        } else if let Some(ctx) = self.as_write_ctx() {
-            self.notify_attribute_path_changed(ctx.attr());
-        } else {
-            unreachable!()
-        }
-    }
+    /// Return the endpoint ID that is associated with this operation.
+    fn endpt(&self) -> EndptId;
 
-    /// Try to upcast the context to a read context.
-    /// The operation will return `Some` only if the underlying context represents a read operation.
-    fn as_read_ctx(&self) -> Option<impl ReadContext> {
-        Option::<
-            &'static ReadContextInstance<
-                DummyCrypto,
-                EmptyHandler,
-                PooledBuffers<0, IMBuffer>,
-                DummyKvBlobStoreAccess,
-            >,
-        >::None
-    }
-
-    /// Try to upcast the context to a write context.
-    /// The operation will return `Some` only if the underlying context represents a write operation.
-    fn as_write_ctx(&self) -> Option<impl WriteContext> {
-        Option::<
-            &'static WriteContextInstance<
-                DummyCrypto,
-                EmptyHandler,
-                PooledBuffers<0, IMBuffer>,
-                DummyKvBlobStoreAccess,
-            >,
-        >::None
-    }
-
-    /// Try to upcast the context to an invoke context.
-    /// The operation will return `Some` only if the underlying context represents an invoke operation.
-    fn as_invoke_ctx(&self) -> Option<impl InvokeContext> {
-        Option::<
-            &'static InvokeContextInstance<
-                DummyCrypto,
-                EmptyHandler,
-                PooledBuffers<0, IMBuffer>,
-                DummyKvBlobStoreAccess,
-            >,
-        >::None
-    }
+    /// Return the cluster ID that is associated with this operation.
+    fn cluster(&self) -> ClusterId;
 }
 
-impl<T> Context for &T
+impl<T> OperationContext for &T
 where
-    T: Context,
+    T: OperationContext,
 {
     fn exchange(&self) -> &Exchange<'_> {
         (**self).exchange()
     }
 
-    fn notify_changed(&self) {
-        (**self).notify_changed();
+    fn endpt(&self) -> EndptId {
+        (**self).endpt()
     }
 
-    fn as_read_ctx(&self) -> Option<impl ReadContext> {
-        (**self).as_read_ctx()
-    }
-
-    fn as_write_ctx(&self) -> Option<impl WriteContext> {
-        (**self).as_write_ctx()
-    }
-
-    fn as_invoke_ctx(&self) -> Option<impl InvokeContext> {
-        (**self).as_invoke_ctx()
+    fn cluster(&self) -> ClusterId {
+        (**self).cluster()
     }
 }
 
 /// A context type that is passed to the handler when processing an attribute Read operation.
-pub trait ReadContext: Context {
+pub trait ReadContext: OperationContext {
     /// Return the attribute object that is associated with this read operation.
     fn attr(&self) -> &AttrDetails<'_>;
 }
@@ -240,12 +190,17 @@ where
 }
 
 /// A context type that is passed to the handler when processing an attribute Write operation.
-pub trait WriteContext: Context {
-    /// Return the attribute object that is associated with this read operation.
+pub trait WriteContext: OperationContext {
+    /// Return the attribute object that is associated with this write operation.
     fn attr(&self) -> &AttrDetails<'_>;
 
     /// Return the attribute data that is associated with this write operation.
     fn data(&self) -> &TLVElement<'_>;
+
+    /// Notify that the state of the attribute whose write operation is processed has changed.
+    fn notify_changed(&self) {
+        self.notify_attribute_path_changed(self.attr());
+    }
 }
 
 impl<T> WriteContext for &T
@@ -259,9 +214,13 @@ where
     fn data(&self) -> &TLVElement<'_> {
         (**self).data()
     }
+
+    fn notify_changed(&self) {
+        (**self).notify_changed()
+    }
 }
 
-pub trait InvokeContext: Context {
+pub trait InvokeContext: OperationContext {
     /// Return the command object that is associated with this invoke operation.
     fn cmd(&self) -> &CmdDetails<'_>;
 
@@ -282,147 +241,58 @@ where
     }
 }
 
-/// A concrete implementation of the `HandlerContext` trait
-pub(crate) struct HandlerContextInstance<'a, C, T, B, S> {
-    matter: &'a Matter<'a>,
-    crypto: C,
-    handler: T,
-    buffers: B,
-    kv: S,
-    pub(crate) notify: &'a dyn ChangeNotify,
-}
-
-impl<'a, C, T, B, S> HandlerContextInstance<'a, C, T, B, S>
-where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
-{
-    /// Construct a new instance.
-    #[inline(always)]
-    pub(crate) const fn new(
-        matter: &'a Matter<'a>,
-        crypto: C,
-        handler: T,
-        buffers: B,
-        kv: S,
-        notify: &'a dyn ChangeNotify,
-    ) -> Self {
-        Self {
-            matter,
-            crypto,
-            handler,
-            buffers,
-            kv,
-            notify,
-        }
-    }
-}
-
-impl<C, T, B, S> BasicContext for HandlerContextInstance<'_, C, T, B, S>
-where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
-{
-    fn matter(&self) -> &Matter<'_> {
-        self.matter
-    }
-
-    fn crypto(&self) -> impl Crypto + '_ {
-        &self.crypto
-    }
-
-    fn kv(&self) -> impl KvBlobStoreAccess + '_ {
-        &self.kv
-    }
-
-    fn notify_attribute_changed(
-        &self,
-        endpoint_id: EndptId,
-        cluster_id: ClusterId,
-        attr_id: AttrId,
-    ) {
-        self.notify.notify(endpoint_id, cluster_id, attr_id);
-    }
-}
-
-impl<C, T, B, S> HandlerContext for HandlerContextInstance<'_, C, T, B, S>
-where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
-{
-    fn handler(&self) -> impl AsyncHandler + '_ {
-        &self.handler
-    }
-
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
-        &self.buffers
-    }
-}
-
 /// A concrete implementation of the `ReadContext` trait
-pub(crate) struct ReadContextInstance<'a, C, T, B, S> {
+pub(crate) struct ReadContextInstance<'a, C> {
     exchange: &'a Exchange<'a>,
-    crypto: C,
-    handler: T,
-    buffers: B,
-    kv: S,
+    context: C,
     attr: &'a AttrDetails<'a>,
-    pub(crate) notify: &'a dyn ChangeNotify,
 }
 
-impl<'a, C, T, B, S> ReadContextInstance<'a, C, T, B, S>
+impl<'a, C> ReadContextInstance<'a, C>
 where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
+    C: HandlerContext,
 {
     /// Construct a new instance.
     #[inline(always)]
     pub(crate) const fn new(
         exchange: &'a Exchange<'a>,
-        crypto: C,
-        handler: T,
-        buffers: B,
-        kv: S,
+        context: C,
         attr: &'a AttrDetails<'a>,
-        notify: &'a dyn ChangeNotify,
     ) -> Self {
         Self {
             exchange,
-            crypto,
-            handler,
-            buffers,
-            kv,
+            context,
             attr,
-            notify,
         }
     }
 }
 
-impl<C, T, B, S> BasicContext for ReadContextInstance<'_, C, T, B, S>
+impl<C> HandlerContext for ReadContextInstance<'_, C>
 where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
+    C: HandlerContext,
 {
     fn matter(&self) -> &Matter<'_> {
-        self.exchange().matter()
+        self.context.matter()
     }
 
     fn crypto(&self) -> impl Crypto + '_ {
-        &self.crypto
+        self.context.crypto()
     }
 
     fn kv(&self) -> impl KvBlobStoreAccess + '_ {
-        &self.kv
+        self.context.kv()
+    }
+
+    fn networks(&self) -> impl NetworksAccess + '_ {
+        self.context.networks()
+    }
+
+    fn handler(&self) -> impl AsyncHandler + '_ {
+        self.context.handler()
+    }
+
+    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+        self.context.buffers()
     }
 
     fn notify_attribute_changed(
@@ -431,48 +301,31 @@ where
         cluster_id: ClusterId,
         attr_id: AttrId,
     ) {
-        self.notify.notify(endpoint_id, cluster_id, attr_id);
+        self.context
+            .notify_attribute_changed(endpoint_id, cluster_id, attr_id);
     }
 }
 
-impl<C, T, B, S> HandlerContext for ReadContextInstance<'_, C, T, B, S>
+impl<C> OperationContext for ReadContextInstance<'_, C>
 where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
-{
-    fn handler(&self) -> impl AsyncHandler + '_ {
-        &self.handler
-    }
-
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
-        &self.buffers
-    }
-}
-
-impl<C, T, B, S> Context for ReadContextInstance<'_, C, T, B, S>
-where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
+    C: HandlerContext,
 {
     fn exchange(&self) -> &Exchange<'_> {
         self.exchange
     }
 
-    fn as_read_ctx(&self) -> Option<impl ReadContext> {
-        Some(self)
+    fn endpt(&self) -> EndptId {
+        self.attr.endpoint_id
+    }
+
+    fn cluster(&self) -> ClusterId {
+        self.attr.cluster_id
     }
 }
 
-impl<C, T, B, S> ReadContext for ReadContextInstance<'_, C, T, B, S>
+impl<C> ReadContext for ReadContextInstance<'_, C>
 where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
+    C: HandlerContext,
 {
     fn attr(&self) -> &AttrDetails<'_> {
         self.attr
@@ -480,67 +333,61 @@ where
 }
 
 /// A context implementation of the `WriteContext` trait
-pub(crate) struct WriteContextInstance<'a, C, T, B, S> {
+pub(crate) struct WriteContextInstance<'a, C> {
     exchange: &'a Exchange<'a>,
-    crypto: C,
-    handler: T,
-    buffers: B,
-    kv: S,
+    context: C,
     attr: &'a AttrDetails<'a>,
     data: &'a TLVElement<'a>,
-    pub(crate) notify: &'a dyn ChangeNotify,
 }
 
-impl<'a, C, T, B, S> WriteContextInstance<'a, C, T, B, S>
+impl<'a, C> WriteContextInstance<'a, C>
 where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
+    C: HandlerContext,
 {
     /// Create a new instance.
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) const fn new(
         exchange: &'a Exchange<'a>,
-        crypto: C,
-        handler: T,
-        buffers: B,
-        kv: S,
+        context: C,
         attr: &'a AttrDetails<'a>,
         data: &'a TLVElement<'a>,
-        notify: &'a dyn ChangeNotify,
     ) -> Self {
         Self {
             exchange,
-            crypto,
-            handler,
-            buffers,
-            kv,
+            context,
             attr,
             data,
-            notify,
         }
     }
 }
 
-impl<C, T, B, S> BasicContext for WriteContextInstance<'_, C, T, B, S>
+impl<C> HandlerContext for WriteContextInstance<'_, C>
 where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
+    C: HandlerContext,
 {
     fn matter(&self) -> &Matter<'_> {
         self.exchange().matter()
     }
 
     fn crypto(&self) -> impl Crypto + '_ {
-        &self.crypto
+        self.context.crypto()
     }
 
     fn kv(&self) -> impl KvBlobStoreAccess + '_ {
-        &self.kv
+        self.context.kv()
+    }
+
+    fn networks(&self) -> impl NetworksAccess + '_ {
+        self.context.networks()
+    }
+
+    fn handler(&self) -> impl AsyncHandler + '_ {
+        self.context.handler()
+    }
+
+    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+        self.context.buffers()
     }
 
     fn notify_attribute_changed(
@@ -549,48 +396,31 @@ where
         cluster_id: ClusterId,
         attr_id: AttrId,
     ) {
-        self.notify.notify(endpoint_id, cluster_id, attr_id);
+        self.context
+            .notify_attribute_changed(endpoint_id, cluster_id, attr_id);
     }
 }
 
-impl<C, T, B, S> HandlerContext for WriteContextInstance<'_, C, T, B, S>
+impl<C> OperationContext for WriteContextInstance<'_, C>
 where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
-{
-    fn handler(&self) -> impl AsyncHandler + '_ {
-        &self.handler
-    }
-
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
-        &self.buffers
-    }
-}
-
-impl<C, T, B, S> Context for WriteContextInstance<'_, C, T, B, S>
-where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
+    C: HandlerContext,
 {
     fn exchange(&self) -> &Exchange<'_> {
         self.exchange
     }
 
-    fn as_write_ctx(&self) -> Option<impl WriteContext> {
-        Some(self)
+    fn endpt(&self) -> EndptId {
+        self.attr.endpoint_id
+    }
+
+    fn cluster(&self) -> ClusterId {
+        self.attr.cluster_id
     }
 }
 
-impl<C, T, B, S> WriteContext for WriteContextInstance<'_, C, T, B, S>
+impl<C> WriteContext for WriteContextInstance<'_, C>
 where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
+    C: HandlerContext,
 {
     fn attr(&self) -> &AttrDetails<'_> {
         self.attr
@@ -602,67 +432,61 @@ where
 }
 
 /// A concrete implementation of the `InvokeContext` trait
-pub(crate) struct InvokeContextInstance<'a, C, T, B, S> {
+pub(crate) struct InvokeContextInstance<'a, C> {
     exchange: &'a Exchange<'a>,
-    crypto: C,
-    handler: T,
-    buffers: B,
-    kv: S,
+    context: C,
     cmd: &'a CmdDetails<'a>,
     data: &'a TLVElement<'a>,
-    notify: &'a dyn ChangeNotify,
 }
 
-impl<'a, C, T, B, S> InvokeContextInstance<'a, C, T, B, S>
+impl<'a, C> InvokeContextInstance<'a, C>
 where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
+    C: HandlerContext,
 {
     /// Construct a new instance.
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) const fn new(
         exchange: &'a Exchange<'a>,
-        crypto: C,
-        handler: T,
-        buffers: B,
-        kv: S,
+        context: C,
         cmd: &'a CmdDetails<'a>,
         data: &'a TLVElement<'a>,
-        notify: &'a dyn ChangeNotify,
     ) -> Self {
         Self {
             exchange,
-            crypto,
-            handler,
-            buffers,
-            kv,
+            context,
             cmd,
             data,
-            notify,
         }
     }
 }
 
-impl<C, T, B, S> BasicContext for InvokeContextInstance<'_, C, T, B, S>
+impl<C> HandlerContext for InvokeContextInstance<'_, C>
 where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
+    C: HandlerContext,
 {
     fn matter(&self) -> &Matter<'_> {
         self.exchange().matter()
     }
 
     fn crypto(&self) -> impl Crypto + '_ {
-        &self.crypto
+        self.context.crypto()
     }
 
     fn kv(&self) -> impl KvBlobStoreAccess + '_ {
-        &self.kv
+        self.context.kv()
+    }
+
+    fn networks(&self) -> impl NetworksAccess + '_ {
+        self.context.networks()
+    }
+
+    fn handler(&self) -> impl AsyncHandler + '_ {
+        self.context.handler()
+    }
+
+    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+        self.context.buffers()
     }
 
     fn notify_attribute_changed(
@@ -671,48 +495,31 @@ where
         cluster_id: ClusterId,
         attr_id: AttrId,
     ) {
-        self.notify.notify(endpoint_id, cluster_id, attr_id);
+        self.context
+            .notify_attribute_changed(endpoint_id, cluster_id, attr_id);
     }
 }
 
-impl<C, T, B, S> HandlerContext for InvokeContextInstance<'_, C, T, B, S>
+impl<C> OperationContext for InvokeContextInstance<'_, C>
 where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
-{
-    fn handler(&self) -> impl AsyncHandler + '_ {
-        &self.handler
-    }
-
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
-        &self.buffers
-    }
-}
-
-impl<C, T, B, S> Context for InvokeContextInstance<'_, C, T, B, S>
-where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
+    C: HandlerContext,
 {
     fn exchange(&self) -> &Exchange<'_> {
         self.exchange
     }
 
-    fn as_invoke_ctx(&self) -> Option<impl InvokeContext> {
-        Some(self)
+    fn endpt(&self) -> EndptId {
+        self.cmd.endpoint_id
+    }
+
+    fn cluster(&self) -> ClusterId {
+        self.cmd.cluster_id
     }
 }
 
-impl<C, T, B, S> InvokeContext for InvokeContextInstance<'_, C, T, B, S>
+impl<C> InvokeContext for InvokeContextInstance<'_, C>
 where
-    C: Crypto,
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-    S: KvBlobStoreAccess,
+    C: HandlerContext,
 {
     fn cmd(&self) -> &CmdDetails<'_> {
         self.cmd
@@ -830,14 +637,14 @@ impl<M, H> NonBlockingHandler for (M, H) where H: NonBlockingHandler {}
 /// should be invoked for a specific operation.
 pub trait Matcher {
     /// Return `true` if the corresponding handler should be invoked for the provided context.
-    fn matches(&self, ctx: impl Context) -> bool;
+    fn matches(&self, ctx: impl OperationContext) -> bool;
 }
 
 impl<T> Matcher for &T
 where
     T: Matcher,
 {
-    fn matches(&self, ctx: impl Context) -> bool {
+    fn matches(&self, ctx: impl OperationContext) -> bool {
         T::matches(self, ctx)
     }
 }
@@ -865,36 +672,17 @@ impl EpClMatcher {
 }
 
 impl Matcher for EpClMatcher {
-    fn matches(&self, ctx: impl Context) -> bool {
-        if let Some(ctx) = ctx.as_read_ctx() {
-            self.endpoint_id
-                .map(|endpoint_id| ctx.attr().endpoint_id == endpoint_id)
-                .unwrap_or(true)
-                && self
-                    .cluster_id
-                    .map(|cluster_id| cluster_id == ctx.attr().cluster_id)
-                    .unwrap_or(true)
-        } else if let Some(ctx) = ctx.as_write_ctx() {
-            self.endpoint_id
-                .map(|endpoint_id| ctx.attr().endpoint_id == endpoint_id)
-                .unwrap_or(true)
-                && self
-                    .cluster_id
-                    .map(|cluster_id| cluster_id == ctx.attr().cluster_id)
-                    .unwrap_or(true)
-        } else {
-            let Some(ctx) = ctx.as_invoke_ctx() else {
-                unreachable!()
-            };
+    fn matches(&self, ctx: impl OperationContext) -> bool {
+        let ctx_endpoint_id = ctx.endpt();
+        let ctx_cluster_id = ctx.cluster();
 
-            self.endpoint_id
-                .map(|endpoint_id| ctx.cmd().endpoint_id == endpoint_id)
+        self.endpoint_id
+            .map(|endpoint_id| ctx_endpoint_id == endpoint_id)
+            .unwrap_or(true)
+            && self
+                .cluster_id
+                .map(|cluster_id| ctx_cluster_id == cluster_id)
                 .unwrap_or(true)
-                && self
-                    .cluster_id
-                    .map(|cluster_id| cluster_id == ctx.cmd().cluster_id)
-                    .unwrap_or(true)
-        }
     }
 }
 

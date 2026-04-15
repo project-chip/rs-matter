@@ -23,7 +23,7 @@ use rs_matter::dm::clusters::on_off::{
     OnOffHooks,
 };
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
-use rs_matter::dm::endpoints::{with_eth, with_sys, EthHandler, SysHandler, ROOT_ENDPOINT_ID};
+use rs_matter::dm::endpoints::{with_eth_sys, EthSysHandler, ROOT_ENDPOINT_ID};
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, ChainedHandler, Dataver, EmptyHandler, Endpoint,
     EpClMatcher, InvokeContext, InvokeReply, Node, ReadContext, ReadReply, WriteContext,
@@ -42,7 +42,7 @@ pub struct E2eTestHandler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
         EpClMatcher => Async<EchoHandler>,
         EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'static>>>,
         EpClMatcher => Async<EchoHandler>
-        | EthHandler<'a, SysHandler<'a, EmptyHandler>>),
+        | EthSysHandler<'a, EmptyHandler>),
 );
 
 impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
@@ -67,7 +67,7 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
     };
 
     pub fn new(mut rand: impl RngCore + Copy, on_off: on_off::OnOffHandler<'a, OH, LH>) -> Self {
-        let handler = with_eth(&(), &(), rand, with_sys(&false, rand, EmptyHandler));
+        let handler = with_eth_sys(&false, &(), &(), rand, EmptyHandler);
 
         let handler = ChainedHandler::new(
             EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(echo_cluster::ID)),

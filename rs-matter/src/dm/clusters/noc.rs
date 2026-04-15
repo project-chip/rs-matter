@@ -24,6 +24,7 @@ use core::num::NonZeroU8;
 use crate::cert::CertRef;
 use crate::crypto::{CanonPkcSignature, Crypto, SigningSecretKey};
 use crate::dm::clusters::dev_att::DeviceAttestation;
+use crate::dm::clusters::gen_comm::GenCommHandler;
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, FabricPersist, MAX_FABRICS};
@@ -355,7 +356,7 @@ impl ClusterHandler for NocHandler {
     ) -> Result<P, Error> {
         info!("Got CSR Request");
 
-        ctx.exchange().with_state(|state| {
+        GenCommHandler::with_armed_failsafe(&ctx, |state, _| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
 
             let secret_key = if request.is_for_update_noc()?.unwrap_or(false) {
@@ -432,53 +433,48 @@ impl ClusterHandler for NocHandler {
 
         let buf = response.writer().available_space();
 
-        let mut persist = FabricPersist::new(ctx.kv());
+        let status = NodeOperationalCertStatusEnum::map(GenCommHandler::with_armed_failsafe(
+            &ctx,
+            |state, mut notify_mdns| {
+                let sess = ctx.exchange().id().session(&mut state.sessions);
 
-        let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_state(|state| {
-            let sess = ctx.exchange().id().session(&mut state.sessions);
+                let fabric = state.failsafe.add_noc(
+                    ctx.crypto(),
+                    &mut state.fabrics,
+                    sess.get_session_mode(),
+                    request.admin_vendor_id()?,
+                    icac,
+                    request.noc_value()?.0,
+                    request.ipk_value()?.0,
+                    request.case_admin_subject()?,
+                    buf,
+                    &mut notify_mdns,
+                )?;
 
-            let fabric = state.failsafe.add_noc(
-                ctx.crypto(),
-                &mut state.fabrics,
-                sess.get_session_mode(),
-                request.admin_vendor_id()?,
-                icac,
-                request.noc_value()?.0,
-                request.ipk_value()?.0,
-                request.case_admin_subject()?,
-                buf,
-                &mut || ctx.exchange().matter().notify_mdns(),
-            )?;
+                let fab_idx = fabric.fab_idx();
+                let succeeded = Cell::new(false);
 
-            persist.store(fabric)?;
+                let _fab_guard = scopeguard::guard(fab_idx, |fab_idx| {
+                    if !succeeded.get() {
+                        // Remove the fabric if we fail further down this function
+                        warn!("Removing fabric {} due to failure", fab_idx.get());
 
-            let fab_idx = fabric.fab_idx();
-            let succeeded = Cell::new(false);
+                        unwrap!(state.fabrics.remove(fab_idx));
 
-            let _fab_guard = scopeguard::guard(fab_idx, |fab_idx| {
-                if !succeeded.get() {
-                    // Remove the fabric if we fail further down this function
-                    warn!("Removing fabric {} due to failure", fab_idx.get());
+                        notify_mdns();
+                    }
+                });
 
-                    unwrap!(state
-                        .fabrics
-                        .remove(fab_idx, &mut || ctx.exchange().matter().notify_mdns()));
-
-                    persist.remove(fab_idx).ok(); // Best effort
+                if matches!(sess.get_session_mode(), SessionMode::Pase { .. }) {
+                    sess.upgrade_fabric_idx(fab_idx)?;
                 }
-            });
 
-            if matches!(sess.get_session_mode(), SessionMode::Pase { .. }) {
-                sess.upgrade_fabric_idx(fab_idx)?;
-            }
+                succeeded.set(true);
+                added_fab_idx = Some(fab_idx.get());
 
-            succeeded.set(true);
-            added_fab_idx = Some(fab_idx.get());
-
-            Ok(())
-        }))?;
-
-        persist.run()?;
+                Ok(())
+            },
+        ))?;
 
         response
             .status_code(status)?
@@ -503,27 +499,24 @@ impl ClusterHandler for NocHandler {
 
         let buf = response.writer().available_space();
 
-        let mut persist = FabricPersist::new(ctx.kv());
+        let status = NodeOperationalCertStatusEnum::map(GenCommHandler::with_armed_failsafe(
+            &ctx,
+            |state, notify_mdns| {
+                let sess = ctx.exchange().id().session(&mut state.sessions);
 
-        let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_state(|state| {
-            let sess = ctx.exchange().id().session(&mut state.sessions);
+                state.failsafe.update_noc(
+                    ctx.crypto(),
+                    &mut state.fabrics,
+                    sess.get_session_mode(),
+                    icac,
+                    request.noc_value()?.0,
+                    buf,
+                    notify_mdns,
+                )?;
 
-            let fabric = state.failsafe.update_noc(
-                ctx.crypto(),
-                &mut state.fabrics,
-                sess.get_session_mode(),
-                icac,
-                request.noc_value()?.0,
-                buf,
-                &mut || ctx.exchange().matter().notify_mdns(),
-            )?;
-
-            persist.store(fabric)?;
-
-            Ok(())
-        }))?;
-
-        persist.run()?;
+                Ok(())
+            },
+        ))?;
 
         response
             .status_code(status)?
@@ -541,8 +534,6 @@ impl ClusterHandler for NocHandler {
         info!("Got Update Fabric Label Request: {:?}", request.label());
 
         let mut updated_fab_idx = None;
-
-        let mut persist = FabricPersist::new(ctx.kv());
 
         let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_state(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
@@ -562,13 +553,10 @@ impl ClusterHandler for NocHandler {
                     }
                 })?;
 
-            persist.store(fabric)?;
             updated_fab_idx = Some(fabric.fab_idx().get());
 
             Ok(())
         }))?;
-
-        persist.run()?;
 
         response
             .status_code(status)?
@@ -587,16 +575,14 @@ impl ClusterHandler for NocHandler {
 
         let fab_idx = NonZeroU8::new(request.fabric_index()?).ok_or(ErrorCode::ConstraintError)?;
 
+        let notify_mdns = || ctx.exchange().matter().notify_mdns();
+
         let mut persist = FabricPersist::new(ctx.kv());
 
         let status = ctx.exchange().with_state(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
 
-            if state
-                .fabrics
-                .remove(fab_idx, &mut || ctx.exchange().matter().notify_mdns())
-                .is_ok()
-            {
+            if state.fabrics.remove(fab_idx).is_ok() {
                 // If our own session is running on the fabric being removed,
                 // we need to expire it rather than immediately remove it, so that
                 // the response can be sent back properly
@@ -609,6 +595,9 @@ impl ClusterHandler for NocHandler {
 
                 // Notify that a session was removed
                 ctx.exchange().matter().session_removed.notify();
+
+                // Notify that our mDNS records might have changed
+                notify_mdns();
 
                 // Note that since we might have removed our own session, the exchange
                 // will terminate with a "NoSession" error, but that's OK and handled properly
@@ -639,7 +628,7 @@ impl ClusterHandler for NocHandler {
     ) -> Result<(), Error> {
         info!("Got Add Trusted Root Cert Request");
 
-        ctx.exchange().with_state(|state| {
+        GenCommHandler::with_armed_failsafe(&ctx, |state, _| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
 
             state

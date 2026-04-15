@@ -122,7 +122,6 @@ fn test_case_handshake() {
                     Some(controller_creds.ipk.reference()),
                     0xFFF1,
                     CONTROLLER_NODE_ID,
-                    &mut || {},
                 )
                 .unwrap()
                 .fab_idx()
@@ -144,7 +143,6 @@ fn test_case_handshake() {
                     Some(device_creds.ipk.reference()),
                     0xFFF1,
                     CONTROLLER_NODE_ID,
-                    &mut || {},
                 )
                 .unwrap();
         });
