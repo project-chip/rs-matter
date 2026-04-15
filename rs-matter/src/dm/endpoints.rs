@@ -104,11 +104,13 @@ pub const ROOT_ENDPOINT_ID: EndptId = 0;
 /// Use this decorator for devices that use Ethernet as the Matter Operational Network.
 ///
 /// # Arguments:
+/// - `comm_policy`: The `CommPolicy` implementation.
 /// - `gen_diag`: The `GenDiag` implementation.
 /// - `netif_diag`: The `NetifDiag` implementation.
 /// - `rand`: A random number generator.
 /// - `handler`: The handler to be decorated with the system model and Ethernet Network Diagnostics handlers
 pub fn with_eth_sys<'a, R: RngCore, H>(
+    comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
     mut rand: R,
@@ -117,7 +119,7 @@ pub fn with_eth_sys<'a, R: RngCore, H>(
     ChainedHandler::new(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(EthDiagHandler::CLUSTER.id)),
         Async(EthDiagHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-        with_sys(&false, gen_diag, netif_diag, EthNetCtl, rand, handler),
+        with_sys(comm_policy, gen_diag, netif_diag, EthNetCtl, rand, handler),
     )
 }
 

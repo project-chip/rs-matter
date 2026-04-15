@@ -67,7 +67,7 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
     };
 
     pub fn new(mut rand: impl RngCore + Copy, on_off: on_off::OnOffHandler<'a, OH, LH>) -> Self {
-        let handler = with_eth_sys(&(), &(), rand, EmptyHandler);
+        let handler = with_eth_sys(&false, &(), &(), rand, EmptyHandler);
 
         let handler = ChainedHandler::new(
             EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(echo_cluster::ID)),

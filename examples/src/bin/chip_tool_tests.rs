@@ -287,6 +287,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     (
         NODE,
         endpoints::with_eth_sys(
+            &false,
             &(),
             &UnixNetifs,
             rand,

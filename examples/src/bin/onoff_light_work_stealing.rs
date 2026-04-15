@@ -256,6 +256,7 @@ fn dm_handler<'a>(
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
 ) -> AppDmHandler<'a> {
     endpoints::with_eth_sys(
+        &false,
         &(),
         &UnixNetifs,
         rand,
