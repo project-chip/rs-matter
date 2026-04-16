@@ -907,13 +907,7 @@ impl Fabrics {
         noc: &[u8],
         icac: &[u8],
     ) -> Result<&mut Fabric, Error> {
-        let Some(fabric) = self
-            .fabrics
-            .iter_mut()
-            .find(|fabric| fabric.fab_idx == fab_idx)
-        else {
-            return Err(ErrorCode::NotFound.into());
-        };
+        let fabric = self.fabric_mut(fab_idx)?;
 
         fabric.update(crypto, root_ca, noc, icac, secret_key, None, None, None)?;
 
@@ -927,7 +921,7 @@ impl Fabrics {
             return Err(ErrorCode::Invalid.into());
         }
 
-        let fabric = self.get_mut(fab_idx).ok_or(ErrorCode::NotFound)?;
+        let fabric = self.fabric_mut(fab_idx)?;
         fabric.label.clear();
         fabric
             .label
@@ -939,9 +933,7 @@ impl Fabrics {
 
     /// Remove a fabric from the fabrics
     pub fn remove(&mut self, fab_idx: NonZeroU8) -> Result<(), Error> {
-        if self.get(fab_idx).is_none() {
-            return Err(ErrorCode::NotFound.into());
-        }
+        let _ = self.fabric(fab_idx)?;
 
         self.fabrics.retain(|fabric| fabric.fab_idx != fab_idx);
 

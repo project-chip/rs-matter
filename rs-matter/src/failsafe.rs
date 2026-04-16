@@ -358,14 +358,33 @@ impl FailSafe {
             NocFlags::UPDATE_NOC_RECVD,
         )?;
 
-        Self::validate_certs(
-            &crypto,
-            &CertRef::new(TLVElement::new(noc)),
-            icac.map(|icac| CertRef::new(TLVElement::new(icac)))
-                .as_ref(),
-            &CertRef::new(TLVElement::new(&self.root_ca)),
-            buf,
-        )?;
+        {
+            let noc_ref = CertRef::new(TLVElement::new(noc));
+            let icac_ref = icac.map(|icac| CertRef::new(TLVElement::new(icac)));
+            let root_ref = CertRef::new(TLVElement::new(&self.root_ca));
+
+            // Validate the certs first
+            Self::validate_certs(&crypto, &noc_ref, icac_ref.as_ref(), &root_ref, buf)?;
+
+            // Check that the fabric ID and root cert pubkey in the NOC
+            // match the ones of the fabric which is being updated
+
+            let fabric_id = noc_ref.get_fabric_id()?;
+            let root_cert_pubkey = root_ref.pubkey()?;
+
+            let fabric = fabrics.fabric(fab_idx)?;
+
+            if fabric_id != fabric.fabric_id() {
+                Err(ErrorCode::NocFabricConflict)?;
+            }
+
+            let f_root_ref = CertRef::new(TLVElement::new(fabric.root_ca()));
+            let f_root_pubkey = f_root_ref.pubkey()?;
+
+            if root_cert_pubkey != f_root_pubkey {
+                Err(ErrorCode::NocFabricConflict)?;
+            }
+        }
 
         let fabric = fabrics.update(
             &crypto,
@@ -411,17 +430,33 @@ impl FailSafe {
             NocFlags::ADD_NOC_RECVD,
         )?;
 
-        Self::validate_certs(
-            &crypto,
-            &CertRef::new(TLVElement::new(noc)),
-            icac.map(|icac| CertRef::new(TLVElement::new(icac)))
-                .as_ref(),
-            &CertRef::new(TLVElement::new(&self.root_ca)),
-            buf,
-        )?;
+        {
+            let noc_ref = CertRef::new(TLVElement::new(noc));
+            let icac_ref = icac.map(|icac| CertRef::new(TLVElement::new(icac)));
+            let root_ref = CertRef::new(TLVElement::new(&self.root_ca));
 
-        // TODO: Copy functionality from C++ FabricTable::FindExistingFabricByNocChaining
-        // i.e. need to check to see if a fabric with these creds are already present
+            // Validate the certs first
+            Self::validate_certs(&crypto, &noc_ref, icac_ref.as_ref(), &root_ref, buf)?;
+
+            // Check that there is no fabric with the same fabric ID and root cert pubkey
+            // as the one in the NOC, to avoid adding duplicate fabrics
+
+            let fabric_id = noc_ref.get_fabric_id()?;
+            let root_cert_pubkey = root_ref.pubkey()?;
+
+            for fabric in fabrics.iter() {
+                if fabric_id == fabric.fabric_id() {
+                    let f_root_ref = CertRef::new(TLVElement::new(fabric.root_ca()));
+                    let f_root_pubkey = f_root_ref.pubkey()?;
+
+                    if root_cert_pubkey == f_root_pubkey {
+                        // A fabric with the same ID and root cert pubkey already exists,
+                        // which means that this NOC cannot be accepted
+                        Err(ErrorCode::NocFabricConflict)?;
+                    }
+                }
+            }
+        }
 
         let fabric = fabrics
             .add(

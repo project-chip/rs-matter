@@ -425,7 +425,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         let group_key_set_id = request.group_key_set_id()?;
 
         ctx.exchange().with_state(|state| {
-            let fabric = state.fabrics.get(fab_idx).ok_or(ErrorCode::NotFound)?;
+            let fabric = state.fabrics.fabric(fab_idx)?;
             let entry = fabric
                 .groups()
                 .key_set_get(group_key_set_id)

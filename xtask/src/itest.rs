@@ -58,7 +58,7 @@ const DEFAULT_TESTS: &[&str] = &[
     "TestGroupKeyManagementCluster",
     // "TestIdentifyCluster", // TODO: specific cluster, to be implemented with all others
     "TestLogCommands",
-    // "TestMultiAdmin", // TODO: Involved fix to not add duplicate NOC, see failsafe.rs & FabricTable::FindExistingFabricByNocChaining
+    "TestMultiAdmin",
     "TestOperationalCredentialsCluster",
     // "TestOperationalState", // TODO: specific cluster, to be implemented with all others
     "TestSelfFabricRemoval",

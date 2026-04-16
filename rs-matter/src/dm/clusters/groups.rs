@@ -57,7 +57,7 @@ impl GroupsHandler {
         fab_idx: NonZeroU8,
         group_id: u16,
     ) -> Result<bool, Error> {
-        let fabric = state.fabrics.get(fab_idx).ok_or(ErrorCode::NotFound)?;
+        let fabric = state.fabrics.fabric(fab_idx)?;
 
         let result = fabric
             .groups()
@@ -165,7 +165,7 @@ impl ClusterHandler for GroupsHandler {
 
         ctx.exchange().with_state(|state| {
             // Check membership for group_id
-            let fabric = state.fabrics.get(fab_idx).ok_or(ErrorCode::NotFound)?;
+            let fabric = state.fabrics.fabric(fab_idx)?;
 
             let endpoint_id = ctx.cmd().endpoint_id;
             if let Some(entry) = fabric.groups().get(group_id) {
