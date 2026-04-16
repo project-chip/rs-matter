@@ -47,10 +47,10 @@ use rs_matter::dm::clusters::on_off::{self, OnOffHooks, StartUpOnOffEnum};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::endpoints;
-use rs_matter::dm::events::DefaultEvents;
+use rs_matter::dm::events::Events;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::subscriptions::DefaultSubscriptions;
+use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver, EmptyHandler, Endpoint,
@@ -79,8 +79,8 @@ mod mdns;
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
-static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
-static EVENTS: StaticCell<DefaultEvents> = StaticCell::new();
+static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
+static EVENTS: StaticCell<Events> = StaticCell::new();
 static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
@@ -119,7 +119,7 @@ fn run() -> Result<(), Error> {
         "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
         core::mem::size_of::<Matter>(),
         core::mem::size_of::<PooledBuffers<10, IMBuffer>>(),
-        core::mem::size_of::<DefaultSubscriptions>()
+        core::mem::size_of::<Subscriptions>()
     );
 
     let matter = MATTER.uninit().init_with(Matter::init(
@@ -133,6 +133,9 @@ fn run() -> Result<(), Error> {
     // Need to call this once
     matter.initialize_transport_buffers()?;
 
+    // Create the event queue
+    let events = EVENTS.uninit().init_with(Events::init_default());
+
     // Persistence
     let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
     #[cfg(feature = "chip-test")]
@@ -140,24 +143,18 @@ fn run() -> Result<(), Error> {
     #[cfg(not(feature = "chip-test"))]
     let mut kv = rs_matter::persist::DirKvBlobStore::new_default();
     futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
+    futures_lite::future::block_on(events.load_persist(&mut kv, kv_buf))?;
 
     // Create the transport buffers
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
 
     // Create the subscriptions
-    let subscriptions = SUBSCRIPTIONS
-        .uninit()
-        .init_with(DefaultSubscriptions::init());
+    let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
 
     let mut rand = crypto.rand()?;
-
-    // Create the event queue
-    let events = EVENTS
-        .uninit()
-        .init_with(DefaultEvents::init(rs_matter::utils::epoch::sys_epoch));
 
     // OnOff cluster setup
     let on_off_handler =
@@ -185,7 +182,7 @@ fn run() -> Result<(), Error> {
         &crypto,
         buffers,
         subscriptions,
-        Some(events),
+        events,
         dm_handler(rand, &on_off_handler, &level_control_handler),
         SharedKvBlobStore::new(kv, kv_buf),
         SharedNetworks::new(EthNetwork::new_default()),

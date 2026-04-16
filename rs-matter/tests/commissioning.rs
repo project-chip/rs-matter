@@ -57,9 +57,9 @@ use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHoo
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
-use rs_matter::dm::events::NO_EVENTS;
+use rs_matter::dm::events::NoEvents;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::subscriptions::DefaultSubscriptions;
+use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher,
@@ -109,7 +109,7 @@ const MAX_DISCOVERED_DEVICES: usize = 8;
 
 static DEVICE_MATTER: StaticCell<Matter> = StaticCell::new();
 static DEVICE_BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
-static DEVICE_SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
+static DEVICE_SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
 static CTRL_MATTER: StaticCell<Matter> = StaticCell::new();
 
 // ============================================================================
@@ -179,7 +179,7 @@ async fn run_test() -> Result<(), Error> {
     let device_buffers = DEVICE_BUFFERS.uninit().init_with(PooledBuffers::init(0));
     let device_subscriptions = DEVICE_SUBSCRIPTIONS
         .uninit()
-        .init_with(DefaultSubscriptions::init());
+        .init_with(Subscriptions::init());
 
     let on_off_handler = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(&mut rand),
@@ -187,12 +187,14 @@ async fn run_test() -> Result<(), Error> {
         TestOnOffDeviceLogic::new(false),
     );
 
+    let events = NoEvents::new_default();
+
     let dm = DataModel::new(
         device_matter,
         &device_crypto,
         device_buffers,
         device_subscriptions,
-        NO_EVENTS,
+        &events,
         dm_handler(rand, &on_off_handler),
         DummyKvBlobStoreAccess,
         DummyNetworkAccess,

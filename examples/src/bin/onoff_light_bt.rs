@@ -50,10 +50,10 @@ use rs_matter::dm::clusters::wifi_diag::WifiDiag;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
-use rs_matter::dm::events::DefaultEvents;
+use rs_matter::dm::events::Events;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, WifiNetworks};
-use rs_matter::dm::subscriptions::DefaultSubscriptions;
+use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher,
     Node,
@@ -130,11 +130,15 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     // A storage for the Wifi networks
     let mut networks = WifiNetworks::<3>::new();
 
+    // Create the event queue
+    let mut events: Events = Events::new_default();
+
     // Persistence
     let mut kv_buf = [0; 4096];
     let mut kv = DirKvBlobStore::new_default();
     futures_lite::future::block_on(matter.load_persist(&mut kv, &mut kv_buf))?;
     futures_lite::future::block_on(networks.load_persist(&mut kv, &mut kv_buf))?;
+    futures_lite::future::block_on(events.load_persist(&mut kv, &mut kv_buf))?;
 
     let networks = SharedNetworks::new(networks);
 
@@ -142,15 +146,12 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     let buffers = PooledBuffers::<10, _>::new(0);
 
     // Create the subscriptions
-    let subscriptions = DefaultSubscriptions::new();
+    let subscriptions: Subscriptions = Subscriptions::new();
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
 
     let mut rand = crypto.rand()?;
-
-    // Create the event queue
-    let events = DefaultEvents::new_default();
 
     // Our on-off cluster
     let on_off_handler = on_off::OnOffHandler::new_standalone(
@@ -170,7 +171,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         &crypto,
         &buffers,
         &subscriptions,
-        Some(&events),
+        &events,
         dm_handler(rand, &on_off_handler, &net_ctl, &net_ctl),
         SharedKvBlobStore::new(kv, kv_buf.as_mut_slice()),
         &networks,

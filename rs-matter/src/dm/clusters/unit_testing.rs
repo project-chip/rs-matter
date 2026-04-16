@@ -19,11 +19,13 @@
 
 use core::num::NonZeroU8;
 
+use crate::dm::events::EVENT_DATA_TAG;
 use crate::dm::{
     ArrayAttributeRead, ArrayAttributeWrite, Cluster, Dataver, InvokeContext, ReadContext,
     WriteContext,
 };
 use crate::error::{Error, ErrorCode};
+use crate::im::EventPriority;
 use crate::tlv::{
     Nullable, NullableBuilder, OctetStr, Octets, OctetsArrayBuilder, OctetsBuilder, TLVArray,
     TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite, ToTLVArrayBuilder, ToTLVBuilder, Utf8Str,
@@ -2899,11 +2901,25 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_emit_test_event_request<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
-        _request: TestEmitTestEventRequestRequest<'_>,
-        _response: TestEmitTestEventResponseBuilder<P>,
+        ctx: impl InvokeContext,
+        request: TestEmitTestEventRequestRequest<'_>,
+        response: TestEmitTestEventResponseBuilder<P>,
     ) -> Result<P, Error> {
-        todo!()
+        let arg1 = request.arg_1()?;
+        let arg2 = request.arg_2()? as u8;
+        let arg3 = request.arg_3()?;
+
+        let event_no = ctx.emit_own_event(1, EventPriority::Info, |mut tw| {
+            tw.start_struct(&EVENT_DATA_TAG)?;
+
+            tw.u8(&TLVTag::Context(1), arg1)?;
+            tw.u8(&TLVTag::Context(2), arg2)?;
+            tw.bool(&TLVTag::Context(3), arg3)?;
+
+            tw.end_container()
+        })?;
+
+        response.value(event_no)?.end()
     }
 
     fn handle_test_emit_test_fabric_scoped_event_request<P: TLVBuilderParent>(

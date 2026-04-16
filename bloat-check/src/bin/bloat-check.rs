@@ -67,7 +67,7 @@ use rs_matter::dm::clusters::wifi_diag::{SecurityTypeEnum, WiFiVersionEnum, Wifi
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::WifiSysHandler;
-use rs_matter::dm::events::{Events, DEFAULT_BYTES_PER_BUF};
+use rs_matter::dm::events::{Events, DEFAULT_MAX_EVENTS_BUF_SIZE};
 use rs_matter::dm::networks::wireless::{
     NetCtlState, NetCtlStateMutex, NetCtlWithStatusImpl, WifiNetworks, WirelessMgr, MAX_CREDS_SIZE,
 };
@@ -154,8 +154,8 @@ macro_rules! unwrap {
 struct MatterStack<'a> {
     matter: Matter<'a>,
     buffers: PooledBuffers<10, IMBuffer>,
-    subscriptions: Subscriptions<{ DEFAULT_MAX_SUBSCRIPTIONS }>,
-    events: Events<DEFAULT_BYTES_PER_BUF>,
+    subscriptions: Subscriptions,
+    events: Events,
     networks: SharedNetworks<WifiNetworks<3>>,
     net_ctl_state: NetCtlStateMutex,
     btp: Btp,
@@ -204,7 +204,7 @@ type AppDmHandler<'a> = WifiSysHandler<'a, &'a AppNetCtl<'a>, AppHandler<'a>>;
 type AppDataModel<'a> = DataModel<
     'a,
     DEFAULT_MAX_SUBSCRIPTIONS,
-    DEFAULT_BYTES_PER_BUF,
+    DEFAULT_MAX_EVENTS_BUF_SIZE,
     &'a AppCrypto,
     PooledBuffers<10, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
@@ -215,7 +215,7 @@ type AppResponder<'d, 'a> = DefaultResponder<
     'd,
     'a,
     DEFAULT_MAX_SUBSCRIPTIONS,
-    DEFAULT_BYTES_PER_BUF,
+    DEFAULT_MAX_EVENTS_BUF_SIZE,
     &'a AppCrypto,
     PooledBuffers<10, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
@@ -356,7 +356,7 @@ fn main() -> ! {
             crypto,
             &stack.buffers,
             &stack.subscriptions,
-            Some(&stack.events),
+            &stack.events,
             (NODE, handler),
             kv,
             &stack.networks,
