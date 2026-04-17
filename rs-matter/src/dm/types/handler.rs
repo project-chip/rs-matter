@@ -25,7 +25,7 @@ use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::dm::events::EventTLVWrite;
 use crate::dm::{EventId, IMBuffer};
 use crate::error::{Error, ErrorCode};
-use crate::im::EventPriority;
+use crate::im::{EventNumber, EventPriority};
 use crate::persist::KvBlobStoreAccess;
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
@@ -38,22 +38,119 @@ use super::{AttrDetails, AttrId, ClusterId, CmdDetails, EndptId, InvokeReply, Re
 
 pub use asynch::*;
 
-pub trait ChangeNotify: DynBase {
-    fn notify(&self, endpt: EndptId, clust: ClusterId, attr: AttrId);
+pub trait DynAttrChangeNotifier: DynBase + AttrChangeNotifier {}
+
+impl<T> DynAttrChangeNotifier for T where T: DynBase + AttrChangeNotifier {}
+
+/// A trait for notifying the data model that the state of an attribute has changed.
+pub trait AttrChangeNotifier {
+    /// Notify that the state of an attribute has changed.
+    ///
+    /// # Arguments
+    /// - `endpoint_id`: The endpoint ID of the cluster that has changed.
+    /// - `cluster_id`: The cluster ID of the cluster that has changed.
+    /// - `attr_id`: The attribute ID of the attribute that has changed.
+    fn notify_attr_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId, attr_id: AttrId);
 }
 
-impl<T> ChangeNotify for &T
+impl<T> AttrChangeNotifier for &T
 where
-    T: ChangeNotify,
+    T: AttrChangeNotifier,
 {
-    fn notify(&self, endpt: EndptId, clust: ClusterId, attr: AttrId) {
-        (**self).notify(endpt, clust, attr)
+    fn notify_attr_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId, attr_id: AttrId) {
+        (**self).notify_attr_changed(endpoint_id, cluster_id, attr_id)
     }
 }
 
-impl ChangeNotify for () {
-    fn notify(&self, _endpt: EndptId, _clust: ClusterId, _attr: AttrId) {
+impl AttrChangeNotifier for () {
+    fn notify_attr_changed(&self, _endpt: EndptId, _clust: ClusterId, _attr: AttrId) {
         // No-op
+    }
+}
+
+/// A trait for emitting events.
+pub trait EventEmitter {
+    /// Emit an event.
+    ///
+    /// # Arguments
+    /// - `endpoint_id`: The endpoint ID of the cluster that emits the event.
+    /// - `cluster_id`: The cluster ID of the cluster that emits the event.
+    /// - `event_id`: The event ID of the event being emitted.
+    /// - `priority`: The priority of the event.
+    /// - `f`: A closure that takes an `EventTLVWrite` and writes the event data into it using TLV encoding.
+    ///
+    /// # Returns
+    /// - `Ok(EventNumber)`: The sequence number of the emitted event, if the event was successfully emitted.
+    /// - `Err(Error)`: An error if the event could not be emitted.
+    fn emit_event<F>(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        f: F,
+    ) -> Result<EventNumber, Error>
+    where
+        F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>;
+}
+
+impl<T> EventEmitter for &T
+where
+    T: EventEmitter,
+{
+    fn emit_event<F>(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        f: F,
+    ) -> Result<EventNumber, Error>
+    where
+        F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
+    {
+        (**self).emit_event(endpoint_id, cluster_id, event_id, priority, f)
+    }
+}
+
+/// A trait for emitting events typically implemented on types that have a notion of a "current" endpoint and a "current" cluster.
+pub trait OwnEventEmitter {
+    /// Emit an event with the same endpoint ID and cluster ID as the current operation.
+    ///
+    /// This is a convenience method that calls `emit_event` with the endpoint ID and cluster ID of the current operation, so that the caller doesn't have to specify them again.
+    ///
+    /// # Arguments
+    /// - `event_id`: The event ID of the event being emitted.
+    /// - `priority`: The priority of the event.
+    /// - `f`: A closure that takes an `EventTLVWrite` and writes the event data into it using TLV encoding.
+    ///
+    /// # Returns
+    /// - `Ok(EventNumber)`: The sequence number of the emitted event, if the event was successfully emitted.
+    /// - `Err(Error)`: An error if the event could not be emitted.
+    fn emit_own_event<F>(
+        &self,
+        event_id: EventId,
+        priority: EventPriority,
+        f: F,
+    ) -> Result<EventNumber, Error>
+    where
+        F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>;
+}
+
+impl<T> OwnEventEmitter for &T
+where
+    T: OwnEventEmitter,
+{
+    fn emit_own_event<F>(
+        &self,
+        event_id: EventId,
+        priority: EventPriority,
+        f: F,
+    ) -> Result<EventNumber, Error>
+    where
+        F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
+    {
+        (**self).emit_own_event(event_id, priority, f)
     }
 }
 
@@ -61,7 +158,7 @@ impl ChangeNotify for () {
 ///
 /// It provides access to the Matter instance and to Data Model-related objects,
 /// which could be useful in the context of executing background tasks specific for the concrete handler.
-pub trait HandlerContext {
+pub trait HandlerContext: AttrChangeNotifier + EventEmitter {
     /// Return the Matter object that is associated with this handler
     fn matter(&self) -> &Matter<'_>;
 
@@ -85,42 +182,6 @@ pub trait HandlerContext {
     /// Useful in case e.g. a concrete cluster handler needs to invoke read/write/invoke operations on
     /// other clusters, and the TLV input/output data for those operations is non-trivial in size.
     fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_;
-
-    /// Notify that the state of an attribute has changed.
-    ///
-    /// # Arguments
-    /// - `endpoint_id`: The endpoint ID of the cluster that has changed.
-    /// - `cluster_id`: The cluster ID of the cluster that has changed.
-    /// - `attr_id`: The attribute ID of the attribute that has changed.
-    fn notify_attribute_changed(
-        &self,
-        endpoint_id: EndptId,
-        cluster_id: ClusterId,
-        attr_id: AttrId,
-    );
-
-    /// Emit an event.
-    ///
-    /// # Arguments
-    /// - `endpoint_id`: The endpoint ID of the cluster that emits the event.
-    /// - `cluster_id`: The cluster ID of the cluster that emits the event.
-    /// - `event_id`: The event ID of the event being emitted.
-    /// - `priority`: The priority of the event.
-    /// - `f`: A closure that takes an `EventTLVWrite` and writes the event data into it using TLV encoding.
-    ///
-    /// # Returns
-    /// - `Ok(u64)`: The sequence number of the emitted event, if the event was successfully emitted.
-    /// - `Err(Error)`: An error if the event could not be emitted.
-    fn emit_event<F>(
-        &self,
-        endpoint_id: EndptId,
-        cluster_id: ClusterId,
-        event_id: EventId,
-        priority: EventPriority,
-        f: F,
-    ) -> Result<u64, Error>
-    where
-        F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>;
 }
 
 impl<T> HandlerContext for &T
@@ -150,33 +211,10 @@ where
     fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
         (**self).buffers()
     }
-
-    fn notify_attribute_changed(
-        &self,
-        endpoint_id: EndptId,
-        cluster_id: ClusterId,
-        attr_id: AttrId,
-    ) {
-        (**self).notify_attribute_changed(endpoint_id, cluster_id, attr_id);
-    }
-
-    fn emit_event<F>(
-        &self,
-        endpoint_id: EndptId,
-        cluster_id: ClusterId,
-        event_id: EventId,
-        priority: EventPriority,
-        f: F,
-    ) -> Result<u64, Error>
-    where
-        F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
-    {
-        (**self).emit_event(endpoint_id, cluster_id, event_id, priority, f)
-    }
 }
 
 /// A context super-type that is passed to the handler when processing an attribute read/write or a command invoke operation.
-pub trait OperationContext: HandlerContext {
+pub trait OperationContext: HandlerContext + OwnEventEmitter {
     /// Return the exchange object that is associated with this operation.
     fn exchange(&self) -> &Exchange<'_>;
 
@@ -185,30 +223,6 @@ pub trait OperationContext: HandlerContext {
 
     /// Return the cluster ID that is associated with this operation.
     fn cluster(&self) -> ClusterId;
-
-    /// Emit an event with the same endpoint ID and cluster ID as the current operation.
-    ///
-    /// This is a convenience method that calls `emit_event` with the endpoint ID and cluster ID of the current operation, so that the caller doesn't have to specify them again.
-    ///
-    /// # Arguments
-    /// - `event_id`: The event ID of the event being emitted.
-    /// - `priority`: The priority of the event.
-    /// - `f`: A closure that takes an `EventTLVWrite` and writes the event data into it using TLV encoding.
-    ///
-    /// # Returns
-    /// - `Ok(u64)`: The sequence number of the emitted event, if the event was successfully emitted.
-    /// - `Err(Error)`: An error if the event could not be emitted.
-    fn emit_own_event<F>(
-        &self,
-        event_id: EventId,
-        priority: EventPriority,
-        f: F,
-    ) -> Result<u64, Error>
-    where
-        F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
-    {
-        self.emit_event(self.endpt(), self.cluster(), event_id, priority, f)
-    }
 }
 
 impl<T> OperationContext for &T
@@ -225,18 +239,6 @@ where
 
     fn cluster(&self) -> ClusterId {
         (**self).cluster()
-    }
-
-    fn emit_own_event<F>(
-        &self,
-        event_id: EventId,
-        priority: EventPriority,
-        f: F,
-    ) -> Result<u64, Error>
-    where
-        F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
-    {
-        (**self).emit_own_event(event_id, priority, f)
     }
 }
 
@@ -265,7 +267,7 @@ pub trait WriteContext: OperationContext {
 
     /// Notify that the state of the attribute whose write operation is processed has changed.
     fn notify_changed(&self) {
-        self.notify_attribute_changed(
+        self.notify_attr_changed(
             self.attr().endpoint_id,
             self.attr().cluster_id,
             self.attr().attr_id,
@@ -364,17 +366,22 @@ where
     fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
         self.context.buffers()
     }
+}
 
-    fn notify_attribute_changed(
-        &self,
-        endpoint_id: EndptId,
-        cluster_id: ClusterId,
-        attr_id: AttrId,
-    ) {
+impl<C> AttrChangeNotifier for ReadContextInstance<'_, C>
+where
+    C: HandlerContext,
+{
+    fn notify_attr_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId, attr_id: AttrId) {
         self.context
-            .notify_attribute_changed(endpoint_id, cluster_id, attr_id);
+            .notify_attr_changed(endpoint_id, cluster_id, attr_id);
     }
+}
 
+impl<C> EventEmitter for ReadContextInstance<'_, C>
+where
+    C: HandlerContext,
+{
     fn emit_event<F>(
         &self,
         endpoint_id: EndptId,
@@ -382,7 +389,7 @@ where
         event_id: EventId,
         priority: EventPriority,
         f: F,
-    ) -> Result<u64, Error>
+    ) -> Result<EventNumber, Error>
     where
         F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
     {
@@ -406,13 +413,18 @@ where
     fn cluster(&self) -> ClusterId {
         self.attr.cluster_id
     }
+}
 
+impl<C> OwnEventEmitter for ReadContextInstance<'_, C>
+where
+    C: HandlerContext,
+{
     fn emit_own_event<F>(
         &self,
         event_id: EventId,
         priority: EventPriority,
         f: F,
-    ) -> Result<u64, Error>
+    ) -> Result<EventNumber, Error>
     where
         F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
     {
@@ -487,17 +499,22 @@ where
     fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
         self.context.buffers()
     }
+}
 
-    fn notify_attribute_changed(
-        &self,
-        endpoint_id: EndptId,
-        cluster_id: ClusterId,
-        attr_id: AttrId,
-    ) {
+impl<C> AttrChangeNotifier for WriteContextInstance<'_, C>
+where
+    C: HandlerContext,
+{
+    fn notify_attr_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId, attr_id: AttrId) {
         self.context
-            .notify_attribute_changed(endpoint_id, cluster_id, attr_id);
+            .notify_attr_changed(endpoint_id, cluster_id, attr_id);
     }
+}
 
+impl<C> EventEmitter for WriteContextInstance<'_, C>
+where
+    C: HandlerContext,
+{
     fn emit_event<F>(
         &self,
         endpoint_id: EndptId,
@@ -505,7 +522,7 @@ where
         event_id: EventId,
         priority: EventPriority,
         f: F,
-    ) -> Result<u64, Error>
+    ) -> Result<EventNumber, Error>
     where
         F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
     {
@@ -529,13 +546,18 @@ where
     fn cluster(&self) -> ClusterId {
         self.attr.cluster_id
     }
+}
 
+impl<C> OwnEventEmitter for WriteContextInstance<'_, C>
+where
+    C: HandlerContext,
+{
     fn emit_own_event<F>(
         &self,
         event_id: EventId,
         priority: EventPriority,
         f: F,
-    ) -> Result<u64, Error>
+    ) -> Result<EventNumber, Error>
     where
         F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
     {
@@ -614,17 +636,22 @@ where
     fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
         self.context.buffers()
     }
+}
 
-    fn notify_attribute_changed(
-        &self,
-        endpoint_id: EndptId,
-        cluster_id: ClusterId,
-        attr_id: AttrId,
-    ) {
+impl<C> AttrChangeNotifier for InvokeContextInstance<'_, C>
+where
+    C: HandlerContext,
+{
+    fn notify_attr_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId, attr_id: AttrId) {
         self.context
-            .notify_attribute_changed(endpoint_id, cluster_id, attr_id);
+            .notify_attr_changed(endpoint_id, cluster_id, attr_id);
     }
+}
 
+impl<C> EventEmitter for InvokeContextInstance<'_, C>
+where
+    C: HandlerContext,
+{
     fn emit_event<F>(
         &self,
         endpoint_id: EndptId,
@@ -632,7 +659,7 @@ where
         event_id: EventId,
         priority: EventPriority,
         f: F,
-    ) -> Result<u64, Error>
+    ) -> Result<EventNumber, Error>
     where
         F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
     {
@@ -656,13 +683,18 @@ where
     fn cluster(&self) -> ClusterId {
         self.cmd.cluster_id
     }
+}
 
+impl<C> OwnEventEmitter for InvokeContextInstance<'_, C>
+where
+    C: HandlerContext,
+{
     fn emit_own_event<F>(
         &self,
         event_id: EventId,
         priority: EventPriority,
         f: F,
-    ) -> Result<u64, Error>
+    ) -> Result<EventNumber, Error>
     where
         F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
     {

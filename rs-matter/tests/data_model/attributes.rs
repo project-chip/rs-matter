@@ -193,7 +193,10 @@ fn test_read_wc_endpoint_wc_attribute() {
 
     let acc_cmd_list: &[u32] = &[echo_cluster::Commands::EchoReq as _];
 
-    let event_list: &[u32] = &[];
+    let event_list: &[u32] = &[
+        echo_cluster::Events::Event1 as _,
+        echo_cluster::Events::Event2 as _,
+    ];
 
     let expected = &[
         attr_data!(

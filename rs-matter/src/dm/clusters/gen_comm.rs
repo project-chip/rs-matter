@@ -170,7 +170,7 @@ impl<'a> GenCommHandler<'a> {
         F: FnOnce(&mut MatterState, &mut dyn FnMut()) -> Result<T, E>,
         E: From<Error>,
     {
-        let mut notify_mdns = || ctx.exchange().matter().notify_mdns();
+        let mut notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
 
         ctx.exchange().with_state_ex(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
@@ -311,7 +311,7 @@ impl ClusterHandler for GenCommHandler<'_> {
         info!("Got Commissioning Complete Request");
 
         let notify_change =
-            |endpt_id, clust_id, attr_id| ctx.notify_attribute_changed(endpt_id, clust_id, attr_id);
+            |endpt_id, clust_id, attr_id| ctx.notify_attr_changed(endpt_id, clust_id, attr_id);
 
         let mut persist = FabricPersist::new(ctx.kv());
 

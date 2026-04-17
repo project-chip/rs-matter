@@ -328,7 +328,7 @@ pub struct Accessor<'a> {
     /// The auth mode of this session. Might be `None` for plain-text sessions
     auth_mode: Option<AuthMode>,
     // Necessary so as to get access to the fabric manager to perform the access check in AccessReq::allow()
-    matter: &'a Matter<'a>,
+    pub matter: &'a Matter<'a>,
 }
 
 impl<'a> Accessor<'a> {

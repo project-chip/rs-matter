@@ -15,13 +15,12 @@
  *    limitations under the License.
  */
 
-use crate::{
-    error::{Error, ErrorCode},
-    tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TagType, ToTLV, TLV},
-};
-
-use super::{ClusterId, EndptId, GenericPath, IMStatusCode, Status};
 use num_enum::TryFromPrimitive;
+
+use crate::error::{Error, ErrorCode};
+use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TagType, ToTLV, TLV};
+
+use super::{ClusterId, EndptId, EventId, EventNumber, GenericPath, IMStatusCode, NodeId, Status};
 
 /// Event Filter
 ///
@@ -29,8 +28,8 @@ use num_enum::TryFromPrimitive;
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EventFilter {
-    pub node: Option<u64>,
-    pub event_min: Option<u64>,
+    pub node: Option<NodeId>,
+    pub event_min: Option<EventNumber>,
 }
 
 /// Event Path
@@ -40,10 +39,10 @@ pub struct EventFilter {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(datatype = "list")]
 pub struct EventPath {
-    pub node: Option<u64>,
+    pub node: Option<NodeId>,
     pub endpoint: Option<EndptId>,
     pub cluster: Option<ClusterId>,
-    pub event: Option<u32>,
+    pub event: Option<EventId>,
     pub is_urgent: Option<bool>,
 }
 
@@ -63,6 +62,11 @@ impl EventPath {
     /// Convert this `EventPath` to a `GenericPath`.
     pub const fn to_gp(&self) -> GenericPath {
         GenericPath::new(self.endpoint, self.cluster, self.event)
+    }
+
+    /// Return true, if the path is wildcard
+    pub const fn is_wildcard(&self) -> bool {
+        self.endpoint.is_none() || self.cluster.is_none() || self.event.is_none()
     }
 }
 
@@ -154,7 +158,7 @@ pub struct EventData<'a> {
     /// The event number counter for the node. While the node is running it is
     /// monotonically increasing, but the spec allows for (large) incremental jumps
     /// on node reboot.
-    pub event_number: u64,
+    pub event_number: EventNumber,
     /// Event priority.
     pub priority: EventPriority,
     /// Event timestamp, one of multiple mutually exclusive options.
@@ -167,7 +171,7 @@ impl<'a> EventData<'a> {
     /// Create a new `EventData` with the given data version, path, and data.
     pub const fn new(
         path: EventPath,
-        event_number: u64,
+        event_number: EventNumber,
         priority: EventPriority,
         timestamp: EventDataTimestamp,
         data: TLVElement<'a>,

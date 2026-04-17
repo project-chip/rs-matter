@@ -67,6 +67,7 @@ pub enum IMStatusCode {
     UnsupportedRead = 0x8f,
     DataVersionMismatch = 0x92,
     Timeout = 0x94,
+    UnsupportedNode = 0x9b,
     Busy = 0x9c,
     UnsupportedCluster = 0xc3,
     NoUpstreamSubscription = 0xc5,
@@ -75,15 +76,19 @@ pub enum IMStatusCode {
     PathsExhausted = 0xc8,
     TimedRequestMisMatch = 0xc9,
     FailSafeRequired = 0xca,
+    InvalidInstate = 0xcb,
+    NoCommandResponse = 0xcc,
 }
 
 impl From<ErrorCode> for IMStatusCode {
     fn from(e: ErrorCode) -> Self {
         match e {
+            ErrorCode::NodeNotFound => IMStatusCode::UnsupportedNode,
             ErrorCode::EndpointNotFound => IMStatusCode::UnsupportedEndpoint,
             ErrorCode::ClusterNotFound => IMStatusCode::UnsupportedCluster,
             ErrorCode::AttributeNotFound => IMStatusCode::UnsupportedAttribute,
             ErrorCode::CommandNotFound => IMStatusCode::UnsupportedCommand,
+            ErrorCode::EventNotFound => IMStatusCode::UnsupportedEvent,
             ErrorCode::InvalidAction => IMStatusCode::InvalidAction,
             ErrorCode::InvalidCommand => IMStatusCode::InvalidCommand,
             ErrorCode::InvalidDataType => IMStatusCode::InvalidDataType,
@@ -125,8 +130,10 @@ impl IMStatusCode {
             Self::InvalidDataType => Some(ErrorCode::InvalidDataType),
             Self::DataVersionMismatch => Some(ErrorCode::DataVersionMismatch),
             Self::Busy => Some(ErrorCode::Busy),
+            Self::UnsupportedNode => Some(ErrorCode::NodeNotFound),
             Self::UnsupportedEndpoint => Some(ErrorCode::EndpointNotFound),
             Self::UnsupportedCluster => Some(ErrorCode::ClusterNotFound),
+            Self::UnsupportedEvent => Some(ErrorCode::EventNotFound),
             Self::NeedsTimedInteraction => Some(ErrorCode::NeedsTimedInteraction),
             Self::FailSafeRequired => Some(ErrorCode::FailSafeRequired),
             _ => Some(ErrorCode::Failure),
@@ -195,6 +202,7 @@ impl From<OpCode> for MessageMeta {
 }
 
 // Type aliases for first-class matter types
+pub type NodeId = FabricId;
 pub type EndptId = u16;
 pub type ClusterId = u32;
 pub type AttrId = u32;

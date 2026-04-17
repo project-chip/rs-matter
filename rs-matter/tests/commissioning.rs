@@ -117,7 +117,6 @@ static CTRL_MATTER: StaticCell<Matter> = StaticCell::new();
 // ============================================================================
 
 const NODE: Node<'static> = Node {
-    id: 0,
     endpoints: &[
         root_endpoint!(eth),
         Endpoint {

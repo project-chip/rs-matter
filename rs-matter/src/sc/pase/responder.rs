@@ -26,7 +26,7 @@ use crate::crypto::{
     CanonEcPointRef, Crypto, HmacHashRef, Kdf, AEAD_CANON_KEY_LEN, EC_POINT_ZEROED,
     HMAC_HASH_ZEROED,
 };
-use crate::dm::ChangeNotify;
+use crate::dm::AttrChangeNotifier;
 use crate::error::{Error, ErrorCode};
 use crate::sc::pase::spake2p::{Spake2P, Spake2pRandom, Spake2pRandomRef, Spake2pSessionKeys};
 use crate::sc::{check_opcode, complete_with_status, OpCode, SCStatusCodes};
@@ -43,13 +43,13 @@ use super::{
 /// The PASE Responder (device side) handler
 pub struct PaseResponder<'a, C: Crypto> {
     crypto: C,
-    notify: &'a dyn ChangeNotify,
+    notify: &'a dyn AttrChangeNotifier,
     spake2p: Spake2P,
 }
 
 impl<'a, C: Crypto> PaseResponder<'a, C> {
     /// Create a new PASE Responder handler
-    pub const fn new(crypto: C, notify: &'a dyn ChangeNotify) -> Self {
+    pub const fn new(crypto: C, notify: &'a dyn AttrChangeNotifier) -> Self {
         // TODO: Can any PBKDF2 calculation be pre-computed here
         Self {
             crypto,
@@ -58,7 +58,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         }
     }
 
-    pub fn init(crypto: C, notify: &'a dyn ChangeNotify) -> impl Init<Self> {
+    pub fn init(crypto: C, notify: &'a dyn AttrChangeNotifier) -> impl Init<Self> {
         init!(Self {
             crypto,
             notify,
@@ -112,9 +112,11 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         let mut salt = super::spake2p::SPAKE2P_VERIFIER_SALT_ZEROED;
         let mut count = 0;
 
-        let notify_mdns = || exchange.matter().notify_mdns();
-        let notify_change =
-            |endpt_id, cluster_id, attr_id| self.notify.notify(endpt_id, cluster_id, attr_id);
+        let notify_mdns = || exchange.matter().notify_mdns_changed();
+        let notify_change = |endpt_id, cluster_id, attr_id| {
+            self.notify
+                .notify_attr_changed(endpt_id, cluster_id, attr_id)
+        };
 
         let has_comm_window = {
             exchange.with_state(|state| {
@@ -205,9 +207,11 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         let mut b_pt = EC_POINT_ZEROED;
         let mut cb = HMAC_HASH_ZEROED;
 
-        let notify_mdns = || exchange.matter().notify_mdns();
-        let notify_change =
-            |endpt_id, cluster_id, attr_id| self.notify.notify(endpt_id, cluster_id, attr_id);
+        let notify_mdns = || exchange.matter().notify_mdns_changed();
+        let notify_change = |endpt_id, cluster_id, attr_id| {
+            self.notify
+                .notify_attr_changed(endpt_id, cluster_id, attr_id)
+        };
 
         let has_comm_window = {
             exchange.with_state(|state| {

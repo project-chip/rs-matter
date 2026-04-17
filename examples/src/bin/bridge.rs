@@ -155,7 +155,6 @@ fn main() -> Result<(), Error> {
 
 /// The Node meta-data describing our Matter device.
 const NODE: Node<'static> = Node {
-    id: 0,
     endpoints: &[
         // The root (0) endpoint - as usual.
         root_endpoint!(geth),

@@ -82,7 +82,6 @@ where
 impl MetadataGuard for Node<'_> {
     fn node(&self) -> Node<'_> {
         Node {
-            id: self.id,
             endpoints: self.endpoints,
         }
     }
@@ -96,7 +95,6 @@ impl Metadata for Node<'_> {
 
     fn lock(&self) -> Self::MetadataGuard<'_> {
         Node {
-            id: self.id,
             endpoints: self.endpoints,
         }
     }
@@ -181,7 +179,6 @@ mod asynch {
 
         async fn lock(&self) -> Self::MetadataGuard<'_> {
             Node {
-                id: self.id,
                 endpoints: self.endpoints,
             }
         }

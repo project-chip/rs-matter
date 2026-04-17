@@ -54,7 +54,7 @@ fn test_read_event_filtered() {
     let ep0_event1 = GenericPath::new(Some(0), Some(echo_cluster::ID), Some(1));
     let ep1_event1 = GenericPath::new(Some(1), Some(echo_cluster::ID), Some(1));
     let ep1_event2 = GenericPath::new(Some(1), Some(echo_cluster::ID), Some(2));
-    let cl2_ep0_event1 = GenericPath::new(Some(0), Some(2), Some(1));
+    let cl2_ep0_event1 = GenericPath::new(Some(0), Some(2), Some(1)); // Cluster 2 does not exist - invalid path
 
     // Given events
     push_events(
@@ -81,7 +81,6 @@ fn test_read_event_filtered() {
                 event_data_path!(ep0_event1, 2, EventPriority::Critical, Some(&0x43u8)),
                 event_data_path!(ep1_event1, 3, EventPriority::Critical, Some(&0x44u8)),
                 event_data_path!(ep1_event2, 4, EventPriority::Critical, Some(&0x45u8)),
-                event_data_path!(cl2_ep0_event1, 5, EventPriority::Critical, Some(&0x46u8)),
             ],
         ),
     );
@@ -102,7 +101,6 @@ fn test_read_event_filtered() {
                 event_data_path!(ep0_event1, 2, EventPriority::Critical, Some(&0x43u8)),
                 event_data_path!(ep1_event1, 3, EventPriority::Critical, Some(&0x44u8)),
                 event_data_path!(ep1_event2, 4, EventPriority::Critical, Some(&0x45u8)),
-                event_data_path!(cl2_ep0_event1, 5, EventPriority::Critical, Some(&0x46u8)),
             ]),
             ReplyProcessor::none,
         ),
@@ -126,7 +124,6 @@ fn test_read_event_filtered() {
                 event_data_path!(ep0_event1, 0, EventPriority::Critical, Some(&0x41u8)),
                 event_data_path!(ep0_event1, 1, EventPriority::Critical, Some(&0x42u8)),
                 event_data_path!(ep0_event1, 2, EventPriority::Critical, Some(&0x43u8)),
-                event_data_path!(cl2_ep0_event1, 5, EventPriority::Critical, Some(&0x46u8)),
             ]),
             ReplyProcessor::none,
         ),
@@ -151,7 +148,6 @@ fn test_read_event_filtered() {
                 event_data_path!(ep0_event1, 1, EventPriority::Critical, Some(&0x42u8)),
                 event_data_path!(ep0_event1, 2, EventPriority::Critical, Some(&0x43u8)),
                 event_data_path!(ep1_event1, 3, EventPriority::Critical, Some(&0x44u8)),
-                event_data_path!(cl2_ep0_event1, 5, EventPriority::Critical, Some(&0x46u8)),
             ]),
             ReplyProcessor::none,
         ),
@@ -190,12 +186,7 @@ fn test_read_event_filtered() {
                     is_urgent: None,
                 }])
             },
-            TestReportDataMsg::event_reports(&[event_data_path!(
-                cl2_ep0_event1,
-                5,
-                EventPriority::Critical,
-                Some(&0x46u8)
-            )]),
+            TestReportDataMsg::event_reports(&[]),
             ReplyProcessor::none,
         ),
     );
@@ -379,12 +370,12 @@ where
                 DummyKvBlobStoreAccess,
                 |mut tw| -> Result<(), Error> {
                     if let Some(data) = ev.data {
-                        let mut b = [0u8; 2048];
-                        let mut wb = WriteBuf::new(&mut b[0..]);
+                        let mut buf = [0u8; 2048];
+                        let mut wb = WriteBuf::new(&mut buf);
                         data.test_to_tlv(&TLVTag::Context(EventDataTag::Data as _), &mut wb)?;
                         let end = wb.get_tail();
 
-                        tw.write_raw_data(b[..end].iter().copied())?;
+                        tw.write_raw_data(buf[..end].iter().copied())?;
                     }
                     Ok(())
                 },

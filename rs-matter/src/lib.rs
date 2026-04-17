@@ -34,7 +34,7 @@ use core::future::Future;
 use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::{BasicInfoConfig, BasicInfoSettings};
 use crate::dm::clusters::dev_att::DeviceAttestation;
-use crate::dm::ChangeNotify;
+use crate::dm::DynAttrChangeNotifier;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::Fabrics;
 use crate::failsafe::FailSafe;
@@ -506,11 +506,11 @@ impl<'a> Matter<'a> {
         &self,
         timeout_secs: u16,
         crypto: C,
-        notify: &dyn ChangeNotify,
+        notify: &dyn DynAttrChangeNotifier,
     ) -> Result<(), Error> {
-        let notify_mdns = || self.notify_mdns();
+        let notify_mdns = || self.notify_mdns_changed();
         let notify_change =
-            |endpt_id, clust_id, attr_id| notify.notify(endpt_id, clust_id, attr_id);
+            |endpt_id, clust_id, attr_id| notify.notify_attr_changed(endpt_id, clust_id, attr_id);
 
         self.with_state(|state| {
             let mut rand = crypto.rand()?;
@@ -536,10 +536,10 @@ impl<'a> Matter<'a> {
     /// Close the basic commissioning window
     ///
     /// The method will return Ok(false) if there is no active PASE commissioning window to close.
-    pub fn close_comm_window(&self, notify: &dyn ChangeNotify) -> Result<bool, Error> {
-        let notify_mdns = || self.notify_mdns();
+    pub fn close_comm_window(&self, notify: &dyn DynAttrChangeNotifier) -> Result<bool, Error> {
+        let notify_mdns = || self.notify_mdns_changed();
         let notify_change =
-            |endpt_id, clust_id, attr_id| notify.notify(endpt_id, clust_id, attr_id);
+            |endpt_id, clust_id, attr_id| notify.notify_attr_changed(endpt_id, clust_id, attr_id);
 
         self.with_state(|state| state.pase.close_comm_window(notify_mdns, notify_change))
     }
@@ -623,7 +623,7 @@ impl<'a> Matter<'a> {
                 .await?;
         }
 
-        self.notify_mdns();
+        self.notify_mdns_changed();
 
         Ok(())
     }
@@ -646,7 +646,7 @@ impl<'a> Matter<'a> {
             state.basic_info_settings.load_persist(&mut kv, buf).await?;
         }
 
-        self.notify_mdns();
+        self.notify_mdns_changed();
 
         Ok(())
     }
@@ -684,7 +684,7 @@ impl<'a> Matter<'a> {
     }
 
     /// Notify that the Matter mDNS services _might_ have changed.
-    pub(crate) fn notify_mdns(&self) {
+    pub(crate) fn notify_mdns_changed(&self) {
         self.mdns_changed.notify();
     }
 

@@ -21,6 +21,7 @@ use quote::quote;
 mod bitmap;
 mod cluster;
 mod enumeration;
+mod event;
 mod field;
 mod handler;
 mod id;
@@ -33,7 +34,8 @@ mod parser;
 mod struct_in;
 mod struct_out;
 
-use crate::idl::parser::Entities;
+use crate::idl::parser::{Entities, Event, Struct, StructField};
+
 pub use parser::Idl;
 
 pub const CSA_STANDARD_CLUSTERS_IDL_V1_4_2_0: &str =
@@ -48,6 +50,46 @@ pub const CSA_STANDARD_CLUSTERS_IDL_V1_1_0_2: &str =
     include_str!("idl/parser/controller-clusters-V1.1.0.2.matter");
 pub const CSA_STANDARD_CLUSTERS_IDL_V1_0_0_2: &str =
     include_str!("idl/parser/controller-clusters-V1.0.0.2.matter");
+
+/// A trait implemented by all structure-like entities in the IDL, i.e. `Struct` and `Event`.
+pub(crate) trait StructLike {
+    fn id(&self) -> &str;
+
+    fn fields(&self) -> &[StructField];
+}
+
+impl<T> StructLike for &T
+where
+    T: StructLike,
+{
+    fn id(&self) -> &str {
+        (*self).id()
+    }
+
+    fn fields(&self) -> &[StructField] {
+        (*self).fields()
+    }
+}
+
+impl StructLike for Struct {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn fields(&self) -> &[StructField] {
+        &self.fields
+    }
+}
+
+impl StructLike for Event {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn fields(&self) -> &[StructField] {
+        &self.fields
+    }
+}
 
 /// Some context data for IDL generation
 ///
@@ -91,16 +133,21 @@ fn cluster_content_internal(
     with_async: bool,
     context: &IdlGenerateContext,
 ) -> TokenStream {
-    let entities = &EntityContext::new(Some(&cluster.entities), globals);
+    let entities = &EntityContext::new(Some(cluster), globals);
     let bitmaps = bitmap::bitmaps(&cluster.entities.bitmaps, context);
     let enums = enumeration::enums(&cluster.entities.enums, context);
     let struct_tags = struct_in::struct_tags(&cluster.entities.structs, context);
     let structs = struct_in::structs(&cluster.entities.structs, entities, context);
     let struct_builders = struct_out::struct_builders(&cluster.entities.structs, entities, context);
+    let event_tags = struct_in::struct_tags(&cluster.events, context);
+    let events = struct_in::structs(&cluster.events, entities, context);
+    let event_builders = struct_out::struct_builders(&cluster.events, entities, context);
+    let events_cont = event::events(&cluster.events, entities, context);
 
     let attribute_id = cluster::attribute_id(cluster, context);
     let command_id = cluster::command_id(cluster, context);
     let command_response_id = cluster::command_response_id(entities, context);
+    let event_id = cluster::event_id(cluster, context);
     let cluster_meta = cluster::cluster(cluster, globals, context);
 
     let handler = handler::handler(false, false, cluster, globals, context);
@@ -118,11 +165,21 @@ fn cluster_content_internal(
 
         #struct_builders
 
+        #event_tags
+
+        #events
+
+        #event_builders
+
+        #events_cont
+
         #attribute_id
 
         #command_id
 
         #command_response_id
+
+        #event_id
 
         #cluster_meta
 
@@ -1680,7 +1737,10 @@ pub mod unit_testing {
                 Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
             }
         }
-        pub fn fabric_index(&self) -> Result<Option<rs_matter_crate::im::FabricIndex>, rs_matter_crate::error::Error> {
+        pub fn fabric_index(
+            &self,
+        ) -> Result<Option<rs_matter_crate::im::FabricIndex>, rs_matter_crate::error::Error>
+        {
             let element = self.0.structure()?.find_ctx(254)?;
             if element.is_empty() {
                 Ok(None)
@@ -18703,6 +18763,1181 @@ pub mod unit_testing {
             self.0
         }
     }
+    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+    #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
+    #[repr(u8)]
+    pub enum TestEventTag {
+        Arg1 = 1,
+        Arg2 = 2,
+        Arg3 = 3,
+        Arg4 = 4,
+        Arg5 = 5,
+        Arg6 = 6,
+    }
+    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+    #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
+    #[repr(u8)]
+    pub enum TestFabricScopedEventTag {
+        FabricIndex = 254,
+    }
+    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+    #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
+    #[repr(u8)]
+    pub enum TestDifferentVendorMeiEventTag {
+        Arg1 = 1,
+    }
+    #[derive(PartialEq, Eq, Clone, Hash)]
+    pub struct TestEvent<'a>(rs_matter_crate::tlv::TLVElement<'a>);
+    impl<'a> TestEvent<'a> {
+        #[doc = "Create a new instance"]
+        pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self {
+            Self(element)
+        }
+        #[doc = "Return the underlying TLV element"]
+        pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
+            &self.0
+        }
+        pub fn arg_1(&self) -> Result<u8, rs_matter_crate::error::Error> {
+            rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?)
+        }
+        pub fn arg_2(&self) -> Result<SimpleEnum, rs_matter_crate::error::Error> {
+            rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(2)?)
+        }
+        pub fn arg_3(&self) -> Result<bool, rs_matter_crate::error::Error> {
+            rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(3)?)
+        }
+        pub fn arg_4(&self) -> Result<SimpleStruct<'_>, rs_matter_crate::error::Error> {
+            rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(4)?)
+        }
+        pub fn arg_5(
+            &self,
+        ) -> Result<
+            rs_matter_crate::tlv::TLVArray<'_, SimpleStruct<'_>>,
+            rs_matter_crate::error::Error,
+        > {
+            rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(5)?)
+        }
+        pub fn arg_6(
+            &self,
+        ) -> Result<rs_matter_crate::tlv::TLVArray<'_, SimpleEnum>, rs_matter_crate::error::Error>
+        {
+            rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(6)?)
+        }
+    }
+    impl<'a> rs_matter_crate::tlv::FromTLV<'a> for TestEvent<'a> {
+        fn from_tlv(
+            element: &rs_matter_crate::tlv::TLVElement<'a>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            Ok(Self::new(element.clone()))
+        }
+    }
+    impl rs_matter_crate::tlv::ToTLV for TestEvent<'_> {
+        fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(
+            &self,
+            tag: &rs_matter_crate::tlv::TLVTag,
+            tw: W,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            self.0.to_tlv(tag, tw)
+        }
+        fn tlv_iter(
+            &self,
+            tag: rs_matter_crate::tlv::TLVTag,
+        ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>>
+        {
+            self.0.tlv_iter(tag)
+        }
+    }
+    impl core::fmt::Debug for TestEvent<'_> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{} {{", "TestEvent")?;
+            match self.arg_1() {
+                Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
+            }
+            match self.arg_2() {
+                Ok(value) => write!(f, "{}: {:?},", "arg_2", value)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_2", e.code())?,
+            }
+            match self.arg_3() {
+                Ok(value) => write!(f, "{}: {:?},", "arg_3", value)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_3", e.code())?,
+            }
+            match self.arg_4() {
+                Ok(value) => write!(f, "{}: {:?},", "arg_4", value)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_4", e.code())?,
+            }
+            match self.arg_5() {
+                Ok(value) => write!(f, "{}: {:?},", "arg_5", value)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_5", e.code())?,
+            }
+            match self.arg_6() {
+                Ok(value) => write!(f, "{}: {:?},", "arg_6", value)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_6", e.code())?,
+            }
+            write!(f, "}}")
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl rs_matter_crate::reexport::defmt::Format for TestEvent<'_> {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(f, "{} {{", "TestEvent");
+            match self.arg_1() {
+                Ok(value) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
+                }
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
+            }
+            match self.arg_2() {
+                Ok(value) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_2", value)
+                }
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_2", e.code())
+                }
+            }
+            match self.arg_3() {
+                Ok(value) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_3", value)
+                }
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_3", e.code())
+                }
+            }
+            match self.arg_4() {
+                Ok(value) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_4", value)
+                }
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_4", e.code())
+                }
+            }
+            match self.arg_5() {
+                Ok(value) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_5", value)
+                }
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_5", e.code())
+                }
+            }
+            match self.arg_6() {
+                Ok(value) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_6", value)
+                }
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_6", e.code())
+                }
+            }
+            rs_matter_crate::reexport::defmt::write!(f, "}}")
+        }
+    }
+    #[derive(PartialEq, Eq, Clone, Hash)]
+    pub struct TestFabricScopedEvent<'a>(rs_matter_crate::tlv::TLVElement<'a>);
+    impl<'a> TestFabricScopedEvent<'a> {
+        #[doc = "Create a new instance"]
+        pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self {
+            Self(element)
+        }
+        #[doc = "Return the underlying TLV element"]
+        pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
+            &self.0
+        }
+        pub fn fabric_index(
+            &self,
+        ) -> Result<Option<rs_matter_crate::im::FabricIndex>, rs_matter_crate::error::Error>
+        {
+            let element = self.0.structure()?.find_ctx(254)?;
+            if element.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
+            }
+        }
+    }
+    impl<'a> rs_matter_crate::tlv::FromTLV<'a> for TestFabricScopedEvent<'a> {
+        fn from_tlv(
+            element: &rs_matter_crate::tlv::TLVElement<'a>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            Ok(Self::new(element.clone()))
+        }
+    }
+    impl rs_matter_crate::tlv::ToTLV for TestFabricScopedEvent<'_> {
+        fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(
+            &self,
+            tag: &rs_matter_crate::tlv::TLVTag,
+            tw: W,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            self.0.to_tlv(tag, tw)
+        }
+        fn tlv_iter(
+            &self,
+            tag: rs_matter_crate::tlv::TLVTag,
+        ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>>
+        {
+            self.0.tlv_iter(tag)
+        }
+    }
+    impl core::fmt::Debug for TestFabricScopedEvent<'_> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{} {{", "TestFabricScopedEvent")?;
+            match self.fabric_index() {
+                Ok(Some(value)) => write!(f, "{}: Some({:?}),", "fabric_index", value)?,
+                Ok(None) => write!(f, "{}: None,", "fabric_index")?,
+                Err(e) => write!(f, "{}: ??? {:?},", "fabric_index", e.code())?,
+            }
+            write!(f, "}}")
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl rs_matter_crate::reexport::defmt::Format for TestFabricScopedEvent<'_> {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(f, "{} {{", "TestFabricScopedEvent");
+            match self.fabric_index() {
+                Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: Some({:?}),",
+                    "fabric_index",
+                    value
+                ),
+                Ok(None) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "fabric_index")
+                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "fabric_index",
+                    e.code()
+                ),
+            }
+            rs_matter_crate::reexport::defmt::write!(f, "}}")
+        }
+    }
+    #[derive(PartialEq, Eq, Clone, Hash)]
+    pub struct TestDifferentVendorMeiEvent<'a>(rs_matter_crate::tlv::TLVElement<'a>);
+    impl<'a> TestDifferentVendorMeiEvent<'a> {
+        #[doc = "Create a new instance"]
+        pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self {
+            Self(element)
+        }
+        #[doc = "Return the underlying TLV element"]
+        pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
+            &self.0
+        }
+        pub fn arg_1(&self) -> Result<u8, rs_matter_crate::error::Error> {
+            rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?)
+        }
+    }
+    impl<'a> rs_matter_crate::tlv::FromTLV<'a> for TestDifferentVendorMeiEvent<'a> {
+        fn from_tlv(
+            element: &rs_matter_crate::tlv::TLVElement<'a>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            Ok(Self::new(element.clone()))
+        }
+    }
+    impl rs_matter_crate::tlv::ToTLV for TestDifferentVendorMeiEvent<'_> {
+        fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(
+            &self,
+            tag: &rs_matter_crate::tlv::TLVTag,
+            tw: W,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            self.0.to_tlv(tag, tw)
+        }
+        fn tlv_iter(
+            &self,
+            tag: rs_matter_crate::tlv::TLVTag,
+        ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>>
+        {
+            self.0.tlv_iter(tag)
+        }
+    }
+    impl core::fmt::Debug for TestDifferentVendorMeiEvent<'_> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{} {{", "TestDifferentVendorMeiEvent")?;
+            match self.arg_1() {
+                Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
+            }
+            write!(f, "}}")
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl rs_matter_crate::reexport::defmt::Format for TestDifferentVendorMeiEvent<'_> {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(f, "{} {{", "TestDifferentVendorMeiEvent");
+            match self.arg_1() {
+                Ok(value) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
+                }
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
+            }
+            rs_matter_crate::reexport::defmt::write!(f, "}}")
+        }
+    }
+    pub struct TestEventBuilder<P, const F: usize = 1usize>(P);
+    impl<P> TestEventBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        #[doc = "Create a new instance"]
+        pub fn new(
+            mut parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            parent.writer().start_struct(tag)?;
+            Ok(Self(parent))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> TestEventBuilder<P, 1>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent
+            + core::fmt::Debug
+            + rs_matter_crate::reexport::defmt::Format,
+    {
+        pub fn arg_1(
+            mut self,
+            value: u8,
+        ) -> Result<TestEventBuilder<P, 2usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "defmt")]
+            rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +", self, "arg1", value);
+            #[cfg(feature = "log")]
+            rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +", self, "arg1", value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(
+                &value,
+                &rs_matter_crate::tlv::TLVTag::Context(1),
+                self.0.writer(),
+            )?;
+            Ok(TestEventBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> TestEventBuilder<P, 1>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+    {
+        pub fn arg_1(
+            mut self,
+            value: u8,
+        ) -> Result<TestEventBuilder<P, 2usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "log")]
+            rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +", self, "arg1", value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(
+                &value,
+                &rs_matter_crate::tlv::TLVTag::Context(1),
+                self.0.writer(),
+            )?;
+            Ok(TestEventBuilder(self.0))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> TestEventBuilder<P, 2>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent
+            + core::fmt::Debug
+            + rs_matter_crate::reexport::defmt::Format,
+    {
+        pub fn arg_2(
+            mut self,
+            value: SimpleEnum,
+        ) -> Result<TestEventBuilder<P, 3usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "defmt")]
+            rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +", self, "arg2", value);
+            #[cfg(feature = "log")]
+            rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +", self, "arg2", value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(
+                &value,
+                &rs_matter_crate::tlv::TLVTag::Context(2),
+                self.0.writer(),
+            )?;
+            Ok(TestEventBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> TestEventBuilder<P, 2>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+    {
+        pub fn arg_2(
+            mut self,
+            value: SimpleEnum,
+        ) -> Result<TestEventBuilder<P, 3usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "log")]
+            rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +", self, "arg2", value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(
+                &value,
+                &rs_matter_crate::tlv::TLVTag::Context(2),
+                self.0.writer(),
+            )?;
+            Ok(TestEventBuilder(self.0))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> TestEventBuilder<P, 3>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent
+            + core::fmt::Debug
+            + rs_matter_crate::reexport::defmt::Format,
+    {
+        pub fn arg_3(
+            mut self,
+            value: bool,
+        ) -> Result<TestEventBuilder<P, 4usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "defmt")]
+            rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +", self, "arg3", value);
+            #[cfg(feature = "log")]
+            rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +", self, "arg3", value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(
+                &value,
+                &rs_matter_crate::tlv::TLVTag::Context(3),
+                self.0.writer(),
+            )?;
+            Ok(TestEventBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> TestEventBuilder<P, 3>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+    {
+        pub fn arg_3(
+            mut self,
+            value: bool,
+        ) -> Result<TestEventBuilder<P, 4usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "log")]
+            rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +", self, "arg3", value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(
+                &value,
+                &rs_matter_crate::tlv::TLVTag::Context(3),
+                self.0.writer(),
+            )?;
+            Ok(TestEventBuilder(self.0))
+        }
+    }
+    impl<P> TestEventBuilder<P, 4>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        pub fn arg_4(
+            self,
+        ) -> Result<SimpleStructBuilder<TestEventBuilder<P, 5usize>>, rs_matter_crate::error::Error>
+        {
+            rs_matter_crate::tlv::TLVBuilder::new(
+                TestEventBuilder(self.0),
+                &rs_matter_crate::tlv::TLVTag::Context(4),
+            )
+        }
+    }
+    impl<P> TestEventBuilder<P, 5>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        pub fn arg_5(
+            self,
+        ) -> Result<
+            SimpleStructArrayBuilder<TestEventBuilder<P, 6usize>>,
+            rs_matter_crate::error::Error,
+        > {
+            rs_matter_crate::tlv::TLVBuilder::new(
+                TestEventBuilder(self.0),
+                &rs_matter_crate::tlv::TLVTag::Context(5),
+            )
+        }
+    }
+    impl<P> TestEventBuilder<P, 6>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        pub fn arg_6(
+            self,
+        ) -> Result<
+            rs_matter_crate::tlv::ToTLVArrayBuilder<TestEventBuilder<P, 7usize>, SimpleEnum>,
+            rs_matter_crate::error::Error,
+        > {
+            rs_matter_crate::tlv::TLVBuilder::new(
+                TestEventBuilder(self.0),
+                &rs_matter_crate::tlv::TLVTag::Context(6),
+            )
+        }
+    }
+    impl<P> TestEventBuilder<P, 7usize>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        #[doc = "Finish the struct and return the parent"]
+        pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.0.writer().end_container()?;
+            Ok(self.0)
+        }
+    }
+    impl<P, const F: usize> core::fmt::Debug for TestEventBuilder<P, F>
+    where
+        P: core::fmt::Debug,
+    {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{:?}::{}", self.0, "TestEvent")
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format for TestEventBuilder<P, F>
+    where
+        P: rs_matter_crate::reexport::defmt::Format,
+    {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(f, "{:?}::{}", self.0, "TestEvent")
+        }
+    }
+    impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent for TestEventBuilder<P, F>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        type Write = P::Write;
+        fn writer(&mut self) -> &mut P::Write {
+            self.0.writer()
+        }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilder<P> for TestEventBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn new(
+            parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            Self::new(parent, tag)
+        }
+        fn unchecked_into_parent(self) -> P {
+            self.0
+        }
+    }
+    pub struct TestEventArrayBuilder<P>(P);
+    impl<P> TestEventArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        #[doc = "Create a new instance"]
+        pub fn new(
+            mut parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            parent.writer().start_array(tag)?;
+            Ok(Self(parent))
+        }
+        #[doc = "Push a new element into the array"]
+        pub fn push(
+            self,
+        ) -> Result<TestEventBuilder<TestEventArrayBuilder<P>>, rs_matter_crate::error::Error>
+        {
+            rs_matter_crate::tlv::TLVBuilder::new(
+                TestEventArrayBuilder(self.0),
+                &rs_matter_crate::tlv::TLVTag::Anonymous,
+            )
+        }
+        #[doc = "Finish the array and return the parent"]
+        pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.0.writer().end_container()?;
+            Ok(self.0)
+        }
+    }
+    impl<P> core::fmt::Debug for TestEventArrayBuilder<P>
+    where
+        P: core::fmt::Debug,
+    {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{:?}::{}", self.0, "TestEvent[]")
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> rs_matter_crate::reexport::defmt::Format for TestEventArrayBuilder<P>
+    where
+        P: rs_matter_crate::reexport::defmt::Format,
+    {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(f, "{:?}::{}", self.0, "TestEvent[]")
+        }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilderParent for TestEventArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        type Write = P::Write;
+        fn writer(&mut self) -> &mut P::Write {
+            self.0.writer()
+        }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilder<P> for TestEventArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn new(
+            parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            Self::new(parent, tag)
+        }
+        fn unchecked_into_parent(self) -> P {
+            self.0
+        }
+    }
+    pub struct TestFabricScopedEventBuilder<P, const F: usize = 254usize>(P);
+    impl<P> TestFabricScopedEventBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        #[doc = "Create a new instance"]
+        pub fn new(
+            mut parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            parent.writer().start_struct(tag)?;
+            Ok(Self(parent))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> TestFabricScopedEventBuilder<P, 254>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent
+            + core::fmt::Debug
+            + rs_matter_crate::reexport::defmt::Format,
+    {
+        pub fn fabric_index(
+            mut self,
+            value: Option<rs_matter_crate::im::FabricIndex>,
+        ) -> Result<TestFabricScopedEventBuilder<P, 255usize>, rs_matter_crate::error::Error>
+        {
+            #[cfg(feature = "defmt")]
+            rs_matter_crate::reexport::defmt::debug!(
+                "{:?}::{} -> {:?} +",
+                self,
+                "fabricIndex",
+                value
+            );
+            #[cfg(feature = "log")]
+            rs_matter_crate::reexport::log::debug!(
+                "{:?}::{} -> {:?} +",
+                self,
+                "fabricIndex",
+                value
+            );
+            rs_matter_crate::tlv::ToTLV::to_tlv(
+                &value,
+                &rs_matter_crate::tlv::TLVTag::Context(254),
+                self.0.writer(),
+            )?;
+            Ok(TestFabricScopedEventBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> TestFabricScopedEventBuilder<P, 254>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+    {
+        pub fn fabric_index(
+            mut self,
+            value: Option<rs_matter_crate::im::FabricIndex>,
+        ) -> Result<TestFabricScopedEventBuilder<P, 255usize>, rs_matter_crate::error::Error>
+        {
+            #[cfg(feature = "log")]
+            rs_matter_crate::reexport::log::debug!(
+                "{:?}::{} -> {:?} +",
+                self,
+                "fabricIndex",
+                value
+            );
+            rs_matter_crate::tlv::ToTLV::to_tlv(
+                &value,
+                &rs_matter_crate::tlv::TLVTag::Context(254),
+                self.0.writer(),
+            )?;
+            Ok(TestFabricScopedEventBuilder(self.0))
+        }
+    }
+    impl<P> TestFabricScopedEventBuilder<P, 255usize>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        #[doc = "Finish the struct and return the parent"]
+        pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.0.writer().end_container()?;
+            Ok(self.0)
+        }
+    }
+    impl<P, const F: usize> core::fmt::Debug for TestFabricScopedEventBuilder<P, F>
+    where
+        P: core::fmt::Debug,
+    {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{:?}::{}", self.0, "TestFabricScopedEvent")
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format
+        for TestFabricScopedEventBuilder<P, F>
+    where
+        P: rs_matter_crate::reexport::defmt::Format,
+    {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(f, "{:?}::{}", self.0, "TestFabricScopedEvent")
+        }
+    }
+    impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent
+        for TestFabricScopedEventBuilder<P, F>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        type Write = P::Write;
+        fn writer(&mut self) -> &mut P::Write {
+            self.0.writer()
+        }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilder<P> for TestFabricScopedEventBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn new(
+            parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            Self::new(parent, tag)
+        }
+        fn unchecked_into_parent(self) -> P {
+            self.0
+        }
+    }
+    pub struct TestFabricScopedEventArrayBuilder<P>(P);
+    impl<P> TestFabricScopedEventArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        #[doc = "Create a new instance"]
+        pub fn new(
+            mut parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            parent.writer().start_array(tag)?;
+            Ok(Self(parent))
+        }
+        #[doc = "Push a new element into the array"]
+        pub fn push(
+            self,
+        ) -> Result<
+            TestFabricScopedEventBuilder<TestFabricScopedEventArrayBuilder<P>>,
+            rs_matter_crate::error::Error,
+        > {
+            rs_matter_crate::tlv::TLVBuilder::new(
+                TestFabricScopedEventArrayBuilder(self.0),
+                &rs_matter_crate::tlv::TLVTag::Anonymous,
+            )
+        }
+        #[doc = "Finish the array and return the parent"]
+        pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.0.writer().end_container()?;
+            Ok(self.0)
+        }
+    }
+    impl<P> core::fmt::Debug for TestFabricScopedEventArrayBuilder<P>
+    where
+        P: core::fmt::Debug,
+    {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{:?}::{}", self.0, "TestFabricScopedEvent[]")
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> rs_matter_crate::reexport::defmt::Format for TestFabricScopedEventArrayBuilder<P>
+    where
+        P: rs_matter_crate::reexport::defmt::Format,
+    {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(
+                f,
+                "{:?}::{}",
+                self.0,
+                "TestFabricScopedEvent[]"
+            )
+        }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilderParent for TestFabricScopedEventArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        type Write = P::Write;
+        fn writer(&mut self) -> &mut P::Write {
+            self.0.writer()
+        }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilder<P> for TestFabricScopedEventArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn new(
+            parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            Self::new(parent, tag)
+        }
+        fn unchecked_into_parent(self) -> P {
+            self.0
+        }
+    }
+    pub struct TestDifferentVendorMeiEventBuilder<P, const F: usize = 1usize>(P);
+    impl<P> TestDifferentVendorMeiEventBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        #[doc = "Create a new instance"]
+        pub fn new(
+            mut parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            parent.writer().start_struct(tag)?;
+            Ok(Self(parent))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> TestDifferentVendorMeiEventBuilder<P, 1>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent
+            + core::fmt::Debug
+            + rs_matter_crate::reexport::defmt::Format,
+    {
+        pub fn arg_1(
+            mut self,
+            value: u8,
+        ) -> Result<TestDifferentVendorMeiEventBuilder<P, 2usize>, rs_matter_crate::error::Error>
+        {
+            #[cfg(feature = "defmt")]
+            rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +", self, "arg1", value);
+            #[cfg(feature = "log")]
+            rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +", self, "arg1", value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(
+                &value,
+                &rs_matter_crate::tlv::TLVTag::Context(1),
+                self.0.writer(),
+            )?;
+            Ok(TestDifferentVendorMeiEventBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> TestDifferentVendorMeiEventBuilder<P, 1>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+    {
+        pub fn arg_1(
+            mut self,
+            value: u8,
+        ) -> Result<TestDifferentVendorMeiEventBuilder<P, 2usize>, rs_matter_crate::error::Error>
+        {
+            #[cfg(feature = "log")]
+            rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +", self, "arg1", value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(
+                &value,
+                &rs_matter_crate::tlv::TLVTag::Context(1),
+                self.0.writer(),
+            )?;
+            Ok(TestDifferentVendorMeiEventBuilder(self.0))
+        }
+    }
+    impl<P> TestDifferentVendorMeiEventBuilder<P, 2usize>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        #[doc = "Finish the struct and return the parent"]
+        pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.0.writer().end_container()?;
+            Ok(self.0)
+        }
+    }
+    impl<P, const F: usize> core::fmt::Debug for TestDifferentVendorMeiEventBuilder<P, F>
+    where
+        P: core::fmt::Debug,
+    {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{:?}::{}", self.0, "TestDifferentVendorMeiEvent")
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format
+        for TestDifferentVendorMeiEventBuilder<P, F>
+    where
+        P: rs_matter_crate::reexport::defmt::Format,
+    {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(
+                f,
+                "{:?}::{}",
+                self.0,
+                "TestDifferentVendorMeiEvent"
+            )
+        }
+    }
+    impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent
+        for TestDifferentVendorMeiEventBuilder<P, F>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        type Write = P::Write;
+        fn writer(&mut self) -> &mut P::Write {
+            self.0.writer()
+        }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilder<P> for TestDifferentVendorMeiEventBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn new(
+            parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            Self::new(parent, tag)
+        }
+        fn unchecked_into_parent(self) -> P {
+            self.0
+        }
+    }
+    pub struct TestDifferentVendorMeiEventArrayBuilder<P>(P);
+    impl<P> TestDifferentVendorMeiEventArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        #[doc = "Create a new instance"]
+        pub fn new(
+            mut parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            parent.writer().start_array(tag)?;
+            Ok(Self(parent))
+        }
+        #[doc = "Push a new element into the array"]
+        pub fn push(
+            self,
+        ) -> Result<
+            TestDifferentVendorMeiEventBuilder<TestDifferentVendorMeiEventArrayBuilder<P>>,
+            rs_matter_crate::error::Error,
+        > {
+            rs_matter_crate::tlv::TLVBuilder::new(
+                TestDifferentVendorMeiEventArrayBuilder(self.0),
+                &rs_matter_crate::tlv::TLVTag::Anonymous,
+            )
+        }
+        #[doc = "Finish the array and return the parent"]
+        pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.0.writer().end_container()?;
+            Ok(self.0)
+        }
+    }
+    impl<P> core::fmt::Debug for TestDifferentVendorMeiEventArrayBuilder<P>
+    where
+        P: core::fmt::Debug,
+    {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{:?}::{}", self.0, "TestDifferentVendorMeiEvent[]")
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> rs_matter_crate::reexport::defmt::Format for TestDifferentVendorMeiEventArrayBuilder<P>
+    where
+        P: rs_matter_crate::reexport::defmt::Format,
+    {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(
+                f,
+                "{:?}::{}",
+                self.0,
+                "TestDifferentVendorMeiEvent[]"
+            )
+        }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilderParent for TestDifferentVendorMeiEventArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        type Write = P::Write;
+        fn writer(&mut self) -> &mut P::Write {
+            self.0.writer()
+        }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilder<P> for TestDifferentVendorMeiEventArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn new(
+            parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            Self::new(parent, tag)
+        }
+        fn unchecked_into_parent(self) -> P {
+            self.0
+        }
+    }
+    impl TestEvent<'_> {
+        pub fn emit_for<F>(
+            emitter: impl rs_matter_crate::dm::EventEmitter,
+            endpoint_id: rs_matter_crate::dm::EndptId,
+            priority: rs_matter_crate::im::EventPriority,
+            f: F,
+        ) -> Result<u64, rs_matter_crate::error::Error>
+        where
+            F: FnOnce(
+                TestEventBuilder<rs_matter_crate::dm::events::EventTLVWrite<'_>>,
+            ) -> Result<
+                rs_matter_crate::dm::events::EventTLVWrite<'_>,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            emitter.emit_event(
+                endpoint_id,
+                4294048773,
+                EventId::TestEvent as _,
+                priority,
+                |tw| {
+                    f(TestEventBuilder::new(
+                        tw,
+                        &rs_matter_crate::dm::events::EVENT_DATA_TAG,
+                    )?)?;
+                    Ok(())
+                },
+            )
+        }
+        pub fn emit<F>(
+            emitter: impl rs_matter_crate::dm::OwnEventEmitter,
+            priority: rs_matter_crate::im::EventPriority,
+            f: F,
+        ) -> Result<u64, rs_matter_crate::error::Error>
+        where
+            F: FnOnce(
+                TestEventBuilder<rs_matter_crate::dm::events::EventTLVWrite<'_>>,
+            ) -> Result<
+                rs_matter_crate::dm::events::EventTLVWrite<'_>,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            emitter.emit_own_event(EventId::TestEvent as _, priority, |tw| {
+                f(TestEventBuilder::new(
+                    tw,
+                    &rs_matter_crate::dm::events::EVENT_DATA_TAG,
+                )?)?;
+                Ok(())
+            })
+        }
+    }
+    impl TestFabricScopedEvent<'_> {
+        pub fn emit_for<F>(
+            emitter: impl rs_matter_crate::dm::EventEmitter,
+            endpoint_id: rs_matter_crate::dm::EndptId,
+            priority: rs_matter_crate::im::EventPriority,
+            f: F,
+        ) -> Result<u64, rs_matter_crate::error::Error>
+        where
+            F: FnOnce(
+                TestFabricScopedEventBuilder<rs_matter_crate::dm::events::EventTLVWrite<'_>>,
+            ) -> Result<
+                rs_matter_crate::dm::events::EventTLVWrite<'_>,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            emitter.emit_event(
+                endpoint_id,
+                4294048773,
+                EventId::TestFabricScopedEvent as _,
+                priority,
+                |tw| {
+                    f(TestFabricScopedEventBuilder::new(
+                        tw,
+                        &rs_matter_crate::dm::events::EVENT_DATA_TAG,
+                    )?)?;
+                    Ok(())
+                },
+            )
+        }
+        pub fn emit<F>(
+            emitter: impl rs_matter_crate::dm::OwnEventEmitter,
+            priority: rs_matter_crate::im::EventPriority,
+            f: F,
+        ) -> Result<u64, rs_matter_crate::error::Error>
+        where
+            F: FnOnce(
+                TestFabricScopedEventBuilder<rs_matter_crate::dm::events::EventTLVWrite<'_>>,
+            ) -> Result<
+                rs_matter_crate::dm::events::EventTLVWrite<'_>,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            emitter.emit_own_event(EventId::TestFabricScopedEvent as _, priority, |tw| {
+                f(TestFabricScopedEventBuilder::new(
+                    tw,
+                    &rs_matter_crate::dm::events::EVENT_DATA_TAG,
+                )?)?;
+                Ok(())
+            })
+        }
+    }
+    impl TestDifferentVendorMeiEvent<'_> {
+        pub fn emit_for<F>(
+            emitter: impl rs_matter_crate::dm::EventEmitter,
+            endpoint_id: rs_matter_crate::dm::EndptId,
+            priority: rs_matter_crate::im::EventPriority,
+            f: F,
+        ) -> Result<u64, rs_matter_crate::error::Error>
+        where
+            F: FnOnce(
+                TestDifferentVendorMeiEventBuilder<rs_matter_crate::dm::events::EventTLVWrite<'_>>,
+            ) -> Result<
+                rs_matter_crate::dm::events::EventTLVWrite<'_>,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            emitter.emit_event(
+                endpoint_id,
+                4294048773,
+                EventId::TestDifferentVendorMeiEvent as _,
+                priority,
+                |tw| {
+                    f(TestDifferentVendorMeiEventBuilder::new(
+                        tw,
+                        &rs_matter_crate::dm::events::EVENT_DATA_TAG,
+                    )?)?;
+                    Ok(())
+                },
+            )
+        }
+        pub fn emit<F>(
+            emitter: impl rs_matter_crate::dm::OwnEventEmitter,
+            priority: rs_matter_crate::im::EventPriority,
+            f: F,
+        ) -> Result<u64, rs_matter_crate::error::Error>
+        where
+            F: FnOnce(
+                TestDifferentVendorMeiEventBuilder<rs_matter_crate::dm::events::EventTLVWrite<'_>>,
+            ) -> Result<
+                rs_matter_crate::dm::events::EventTLVWrite<'_>,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            emitter.emit_own_event(EventId::TestDifferentVendorMeiEvent as _, priority, |tw| {
+                f(TestDifferentVendorMeiEventBuilder::new(
+                    tw,
+                    &rs_matter_crate::dm::events::EVENT_DATA_TAG,
+                )?)?;
+                Ok(())
+            })
+        }
+    }
     #[doc = "The attribute IDs for the cluster."]
     #[derive(
         Copy, Clone, Debug, Eq, PartialEq, Hash, rs_matter_crate :: reexport :: strum :: FromRepr,
@@ -20442,7 +21677,77 @@ pub mod unit_testing {
                 .ok_or_else(|| rs_matter_crate::error::ErrorCode::CommandNotFound.into())
         }
     }
-    #[doc = "The cluster metadata. By default, all cluster attributes and commands are allowed, and the revision is the latest one. Use `Cluster::with_*` to reconfigure."]
+    #[doc = "The event IDs for the cluster."]
+    #[derive(
+        Copy, Clone, Debug, Eq, PartialEq, Hash, rs_matter_crate :: reexport :: strum :: FromRepr,
+    )]
+    #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
+    #[repr(u32)]
+    pub enum EventId {
+        TestEvent = 1,
+        TestFabricScopedEvent = 2,
+        TestDifferentVendorMeiEvent = 4294050030,
+    }
+    impl core::convert::TryFrom<rs_matter_crate::dm::EventId> for EventId {
+        type Error = rs_matter_crate::error::Error;
+        fn try_from(id: rs_matter_crate::dm::EventId) -> Result<Self, Self::Error> {
+            EventId::from_repr(id)
+                .ok_or_else(|| rs_matter_crate::error::ErrorCode::EventNotFound.into())
+        }
+    }
+    impl core::fmt::Debug for MetadataDebug<EventId> {
+        #[allow(unreachable_code)]
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "Event::")?;
+            match self.0 {
+                EventId::TestEvent => {
+                    write!(f, "{}(0x{:02x})", "TestEvent", EventId::TestEvent as u32)?
+                }
+                EventId::TestFabricScopedEvent => write!(
+                    f,
+                    "{}(0x{:02x})",
+                    "TestFabricScopedEvent",
+                    EventId::TestFabricScopedEvent as u32
+                )?,
+                EventId::TestDifferentVendorMeiEvent => write!(
+                    f,
+                    "{}(0x{:02x})",
+                    "TestDifferentVendorMeiEvent",
+                    EventId::TestDifferentVendorMeiEvent as u32
+                )?,
+            }
+            write!(f, "::Emit")
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl rs_matter_crate::reexport::defmt::Format for MetadataDebug<EventId> {
+        #[allow(unreachable_code)]
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(f, "Event::");
+            match self.0 {
+                EventId::TestEvent => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}(0x{:02x})",
+                    "TestEvent",
+                    EventId::TestEvent as u32
+                ),
+                EventId::TestFabricScopedEvent => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}(0x{:02x})",
+                    "TestFabricScopedEvent",
+                    EventId::TestFabricScopedEvent as u32
+                ),
+                EventId::TestDifferentVendorMeiEvent => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}(0x{:02x})",
+                    "TestDifferentVendorMeiEvent",
+                    EventId::TestDifferentVendorMeiEvent as u32
+                ),
+            }
+            rs_matter_crate::reexport::defmt::write!(f, "::Emit")
+        }
+    }
+    #[doc = "The cluster metadata. By default, all cluster attributes, commands and events are allowed, and the revision is the latest one. Use `Cluster::with_*` to reconfigure."]
     pub const FULL_CLUSTER: rs_matter_crate::dm::Cluster<'static> =
         rs_matter_crate::dm::Cluster::new(
             4294048773,
@@ -21770,6 +23075,21 @@ pub mod unit_testing {
                     rs_matter_crate::dm::Access::WO,
                 ),
             ],
+            &[
+                rs_matter_crate::dm::Event::new(
+                    EventId::TestEvent as _,
+                    rs_matter_crate::dm::Access::NEED_VIEW,
+                ),
+                rs_matter_crate::dm::Event::new(
+                    EventId::TestFabricScopedEvent as _,
+                    rs_matter_crate::dm::Access::NEED_VIEW,
+                ),
+                rs_matter_crate::dm::Event::new(
+                    EventId::TestDifferentVendorMeiEvent as _,
+                    rs_matter_crate::dm::Access::NEED_VIEW,
+                ),
+            ],
+            |_, _, _| true,
             |_, _, _| true,
             |_, _, _| true,
         );

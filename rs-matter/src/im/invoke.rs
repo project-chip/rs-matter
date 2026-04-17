@@ -66,6 +66,11 @@ impl CmdPath {
     pub const fn to_gp(&self) -> GenericPath {
         GenericPath::new(self.endpoint, self.cluster, self.cmd)
     }
+
+    /// Return true, if the path is wildcard
+    pub const fn is_wildcard(&self) -> bool {
+        self.endpoint.is_none() || self.cluster.is_none() || self.cmd.is_none()
+    }
 }
 
 /// Status of a command invocation.
