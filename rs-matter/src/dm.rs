@@ -24,12 +24,13 @@ use core::time::Duration;
 use embassy_futures::select::{select, select3};
 use embassy_time::{Instant, Timer};
 
+use crate::acl::Accessor;
 use crate::crypto::Crypto;
 use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::dm::events::EventTLVWrite;
 use crate::error::{Error, ErrorCode};
 use crate::im::{
-    EventPriority, EventRespTag, EventStatus, IMStatusCode, InvReq, InvRespTag, OpCode, ReadReq,
+    EventPriority, EventResp, EventStatus, IMStatusCode, InvReq, InvRespTag, OpCode, ReadReq,
     ReportDataReq, ReportDataRespTag, StatusResp, SubscribeReq, SubscribeResp, TimedReq, WriteReq,
     WriteRespTag, PROTO_ID_INTERACTION_MODEL,
 };
@@ -154,7 +155,7 @@ where
 
     /// Return a reference to the `ChangeNotify` instance used by this data model for tracking changes in the data model
     /// and notifying the subscription processing task about them.
-    pub const fn change_notify(&self) -> &dyn ChangeNotify {
+    pub const fn change_notify(&self) -> &dyn DynAttrChangeNotifier {
         self.subscriptions
     }
 
@@ -177,9 +178,11 @@ where
     }
 
     fn timeout_checks(&self) -> Result<(), Error> {
-        let mut notify_mdns = || self.matter.notify_mdns();
-        let mut notify_change =
-            |endpt_id, clust_id, attr_id| self.change_notify().notify(endpt_id, clust_id, attr_id);
+        let mut notify_mdns = || self.matter.notify_mdns_changed();
+        let mut notify_change = |endpt_id, clust_id, attr_id| {
+            self.change_notify()
+                .notify_attr_changed(endpt_id, clust_id, attr_id)
+        };
 
         self.matter.with_state(|state| {
             // Disarm the failsafe on timeout
@@ -387,7 +390,9 @@ where
         let req = SubscribeReq::new(TLVElement::new(&rx));
         debug!("IM: Subscribe request: {:?}", req);
 
-        if let Err(err) = self.validate_subscribe(&req).await {
+        let accessor = exchange.accessor()?;
+
+        if let Err(err) = self.validate_subscribe(&req, &accessor).await {
             error!("Invalid subscribe request: {:?}", err);
             return Self::send_status(exchange, err.code().into()).await;
         }
@@ -484,12 +489,18 @@ where
     }
 
     /// Validates the subscription request
-    async fn validate_subscribe(&self, req: &SubscribeReq<'_>) -> Result<(), Error> {
+    async fn validate_subscribe(
+        &self,
+        req: &SubscribeReq<'_>,
+        accessor: &Accessor<'_>,
+    ) -> Result<(), Error> {
         // As per spec, we need to validate that the subscription request
         // contains existing endpoints, clusters and attributes, and if not
         // we should (a bit surprisingly) return InvalidAction
 
         let metadata = self.handler.lock().await;
+
+        let node = metadata.node();
 
         let mut has_attrs = false;
         let mut has_events = false;
@@ -497,21 +508,12 @@ where
         if let Some(attr_requests) = req.attr_requests()? {
             has_attrs = true;
 
-            let node = metadata.node();
-
             for attr_req in attr_requests {
-                let attr_req = attr_req?;
+                let path = attr_req?;
 
-                if let Some(endpt) = attr_req.endpoint {
-                    let endpoint = node.endpoint(endpt).ok_or(ErrorCode::InvalidAction)?;
-
-                    if let Some(clst) = attr_req.cluster {
-                        let cluster = endpoint.cluster(clst).ok_or(ErrorCode::InvalidAction)?;
-
-                        if let Some(attr) = attr_req.attr {
-                            let _ = cluster.attribute(attr).ok_or(ErrorCode::InvalidAction)?;
-                        }
-                    }
+                if !path.is_wildcard() {
+                    node.validate_attr_path(&path, false, false, accessor)
+                        .map_err(|_| ErrorCode::InvalidAction)?;
                 }
             }
         }
@@ -519,22 +521,12 @@ where
         if let Some(event_reqs) = req.event_requests()? {
             has_events = true;
 
-            let node = metadata.node();
-
             for event_req in event_reqs {
-                let event_req = event_req?;
+                let path = event_req?;
 
-                if let Some(endpt) = event_req.endpoint {
-                    let endpoint = node.endpoint(endpt).ok_or(ErrorCode::InvalidAction)?;
-
-                    if let Some(clst) = event_req.cluster {
-                        let _cluster = endpoint.cluster(clst).ok_or(ErrorCode::InvalidAction)?;
-
-                        // TODO: Validate the event ID
-                        // if let Some(attr) = event_req.attr {
-                        //     let _ = cluster.attribute(attr).ok_or(ErrorCode::InvalidAction)?;
-                        // }
-                    }
+                if !path.is_wildcard() {
+                    node.validate_event_path(&path, accessor)
+                        .map_err(|_| ErrorCode::InvalidAction)?;
                 }
             }
         }
@@ -943,17 +935,32 @@ where
     fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
         self.buffers
     }
+}
 
-    fn notify_attribute_changed(
-        &self,
-        endpoint_id: EndptId,
-        cluster_id: ClusterId,
-        attr_id: AttrId,
-    ) {
-        self.change_notify()
-            .notify(endpoint_id, cluster_id, attr_id)
+impl<const NS: usize, const NE: usize, C, B, T, S, N> AttrChangeNotifier
+    for DataModel<'_, NS, NE, C, B, T, S, N>
+where
+    C: Crypto,
+    B: BufferAccess<IMBuffer>,
+    T: DataModelHandler,
+    S: KvBlobStoreAccess,
+    N: NetworksAccess,
+{
+    fn notify_attr_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId, attr_id: AttrId) {
+        self.subscriptions
+            .notify_attribute_changed(endpoint_id, cluster_id, attr_id)
     }
+}
 
+impl<const NS: usize, const NE: usize, C, B, T, S, N> EventEmitter
+    for DataModel<'_, NS, NE, C, B, T, S, N>
+where
+    C: Crypto,
+    B: BufferAccess<IMBuffer>,
+    T: DataModelHandler,
+    S: KvBlobStoreAccess,
+    N: NetworksAccess,
+{
     fn emit_event<F>(
         &self,
         endpoint_id: EndptId,
@@ -1027,90 +1034,114 @@ where
         wb: &mut WriteBuf<'_>,
         suppress_last_resp: bool,
     ) -> Result<bool, Error> {
-        let accessor = self.invoker.exchange().accessor()?;
-
         self.start_reply(wb)?;
 
-        let has_attr_reqs = self.req.attr_requests()?.is_some();
-
-        if has_attr_reqs {
-            wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))?;
+        if !self.report_attributes(wb).await? {
+            return Ok(false);
         }
 
-        for item in self.node.read(self.req, &accessor)? {
-            let item = item?;
+        if !self.report_events(wb).await? {
+            return Ok(false);
+        }
 
-            loop {
-                let result = self.invoker.process_read(&item, &mut *wb).await;
+        self.send(ReportDataChunkState::Done, suppress_last_resp, wb)
+            .await
+    }
 
-                match result {
-                    Ok(()) => break,
-                    Err(err) if err.code() == ErrorCode::NoSpace => {
-                        let array_attr = item.as_ref().ok().filter(|attr| {
-                            attr.list_index.is_none()
-                                // The whole attribute is requested
-                                // Check if it is an array, and if so, send it as individual items instead
-                                && self
-                                    .node
-                                    .endpoint(attr.endpoint_id)
-                                    .and_then(|e| e.cluster(attr.cluster_id))
-                                    .and_then(|c| c.attribute(attr.attr_id))
-                                    .map(|a| a.quality.contains(Quality::ARRAY))
-                                    .unwrap_or(false)
-                        });
+    async fn report_attributes(&mut self, wb: &mut WriteBuf<'_>) -> Result<bool, Error> {
+        let accessor = self.invoker.exchange().accessor()?;
 
-                        if let Some(array_attr) = array_attr {
-                            if self.send_array_items(array_attr, wb).await? {
-                                break;
+        if self.req.attr_requests()?.is_some() {
+            wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))?;
+
+            for item in self.node.read(self.req, &accessor)? {
+                let item = item?;
+
+                loop {
+                    let result = self.invoker.process_read(&item, &mut *wb).await;
+
+                    match result {
+                        Ok(()) => break,
+                        Err(err) if err.code() == ErrorCode::NoSpace => {
+                            let array_attr = item.as_ref().ok().filter(|attr| {
+                                attr.list_index.is_none()
+                                    // The whole attribute is requested
+                                    // Check if it is an array, and if so, send it as individual items instead
+                                    && self
+                                        .node
+                                        .endpoint(attr.endpoint_id)
+                                        .and_then(|e| e.cluster(attr.cluster_id))
+                                        .and_then(|c| c.attribute(attr.attr_id))
+                                        .map(|a| a.quality.contains(Quality::ARRAY))
+                                        .unwrap_or(false)
+                            });
+
+                            if let Some(array_attr) = array_attr {
+                                if self.send_array_items(array_attr, wb).await? {
+                                    break;
+                                } else {
+                                    return Ok(false);
+                                }
                             } else {
-                                return Ok(false);
-                            }
-                        } else {
-                            debug!("<<< No TX space, chunking >>>");
-                            if !self
-                                .send(ReportDataChunkState::ChunkingAttributes, false, wb)
-                                .await?
-                            {
-                                return Ok(false);
+                                debug!("<<< No TX space, chunking >>>");
+                                if !self
+                                    .send(ReportDataChunkState::ChunkingAttributes, false, wb)
+                                    .await?
+                                {
+                                    return Ok(false);
+                                }
                             }
                         }
+                        Err(err) => Err(err)?,
                     }
-                    Err(err) => Err(err)?,
                 }
             }
-        }
 
-        if has_attr_reqs {
             wb.end_container()?;
         }
+
+        Ok(true)
+    }
+
+    async fn report_events(&mut self, wb: &mut WriteBuf<'_>) -> Result<bool, Error> {
+        let accessor = self.invoker.exchange().accessor()?;
 
         if let Some(event_reqs) = self.req.event_requests()? {
             wb.start_array(&TLVTag::Context(ReportDataRespTag::EventReports as _))?;
 
-            // Validate non-wildcard event paths against node metadata
-            // and emit EventStatusIB for paths that don't match
-            for event_path in event_reqs.iter() {
-                let event_path = event_path?;
+            // Validate concrete event paths against node metadata
+            // and emit EventStatusIB for non-wildcard paths that don't match
+            for event_req in event_reqs.iter() {
+                let path = event_req?;
 
-                if let Some(endpoint_id) = event_path.endpoint {
-                    if let Some(endpoint) = self.node.endpoint(endpoint_id) {
-                        if let Some(cluster_id) = event_path.cluster {
-                            if endpoint.cluster(cluster_id).is_none() {
-                                // Cluster does not exist on this endpoint
-                                Self::write_event_status(
-                                    &event_path,
-                                    IMStatusCode::UnsupportedCluster,
-                                    wb,
-                                )?;
+                if !path.is_wildcard() {
+                    if let Err(status) = self.node.validate_event_path(&path, &accessor) {
+                        if matches!(status, IMStatusCode::UnsupportedEvent) {
+                            // Event does not exist on this endpoint
+                            // TODO: Look at TestEventsById.yaml
+                            // Seems we should not error out in that case?
+                            continue;
+                        }
+
+                        let resp = EventResp::Status(EventStatus::new(path, status, None));
+
+                        let mut result = resp.to_tlv(&TLVTag::Anonymous, &mut *wb);
+
+                        if let Err(e) = &result {
+                            if e.code() == ErrorCode::NoSpace {
+                                debug!("<<< No TX space, chunking >>>");
+                                if !self
+                                    .send(ReportDataChunkState::ChunkingEvents, false, &mut *wb)
+                                    .await?
+                                {
+                                    return Ok(false);
+                                }
+
+                                result = resp.to_tlv(&TLVTag::Anonymous, &mut *wb);
                             }
                         }
-                    } else {
-                        // Endpoint does not exist
-                        Self::write_event_status(
-                            &event_path,
-                            IMStatusCode::UnsupportedEndpoint,
-                            wb,
-                        )?;
+
+                        result?;
                     }
                 }
             }
@@ -1123,7 +1154,9 @@ where
                         let result = self.event_reader.process_read(
                             event,
                             &event_reqs,
-                            event_filters.clone(),
+                            &event_filters,
+                            self.node,
+                            &accessor,
                             &mut *wb,
                         );
 
@@ -1155,23 +1188,7 @@ where
             wb.end_container()?;
         }
 
-        self.send(ReportDataChunkState::Done, suppress_last_resp, wb)
-            .await
-    }
-
-    /// Write an `EventStatusIB` entry inside the `EventReportIBs` array.
-    ///
-    /// This is used when event path validation finds a non-wildcard path
-    /// that does not match any endpoint/cluster in the node metadata.
-    fn write_event_status(
-        event_path: &crate::im::EventPath,
-        status: IMStatusCode,
-        wb: &mut WriteBuf<'_>,
-    ) -> Result<(), Error> {
-        let event_status = EventStatus::new(event_path.clone(), status, None);
-        wb.start_struct(&TLVTag::Anonymous)?;
-        event_status.to_tlv(&TLVTag::Context(EventRespTag::Status as _), &mut *wb)?;
-        wb.end_container()
+        Ok(true)
     }
 
     /// Send the items of an array attribute one by one, until the end of the array is reached.

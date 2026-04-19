@@ -259,7 +259,6 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
 
 /// The Node meta-data describing our Matter device.
 const NODE: Node<'static> = Node {
-    id: 0,
     endpoints: &[
         root_endpoint!(gwifi),
         Endpoint {

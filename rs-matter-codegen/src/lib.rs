@@ -99,7 +99,7 @@ pub fn generate(rs_matter_crate: &str, dest_dir: &Path) {
              #[allow(unknown_lints)]\n\
              #[allow(clippy::uninlined_format_args)]\n\
              #[allow(unexpected_cfgs)]\n\
-             #[path = \"{}\"]\n\
+             #[path = r\"{}\"]\n\
              pub mod {};\n\n",
             file_path, module_name
         ));

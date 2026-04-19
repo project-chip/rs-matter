@@ -28,6 +28,8 @@ use crate::tlv::{TLVTag, TLVWrite};
 pub type WithAttrs = fn(&Attribute, u16, u32) -> bool;
 /// A type alias for the command matching function
 pub type WithCmds = fn(&Command, u16, u32) -> bool;
+/// A type alias for the event matching function
+pub type WithEvents = fn(&Event, u16, u32) -> bool;
 
 /// A struct modeling the cluster meta-data
 /// (i.e. what is the cluster ID, revision, features, attributes and their access, commands and their access)
@@ -52,12 +54,21 @@ pub struct Cluster<'a> {
     /// even if the concrete instantiation of the cluster supports only a subset of these.
     /// See` with_cmds` for more details.
     pub commands: &'a [Command],
+    /// The events of the cluster.
+    ///
+    /// These could be all events as specified in the Matter spec,
+    /// even if the concrete instantiation of the cluster supports only a subset of these.
+    /// See` with_events` for more details.
+    pub events: &'a [Event],
     /// A function that takes an attribute and returns a boolean indicating if the attribute
     /// is supported by the cluster.
     pub with_attrs: WithAttrs,
     /// A function that takes a command and returns a boolean indicating if the command
     /// is supported by the cluster.
     pub with_cmds: WithCmds,
+    /// A function that takes an event and returns a boolean indicating if the event
+    /// is supported by the cluster.
+    pub with_events: WithEvents,
 }
 
 impl<'a> Cluster<'a> {
@@ -71,14 +82,18 @@ impl<'a> Cluster<'a> {
     /// - `commands`: The commands of the cluster
     /// - `with_attrs`: A function that takes an attribute and returns a boolean indicating if the attribute should be included
     /// - `with_cmds`: A function that takes a command and returns a boolean indicating if the command should be included
+    /// - `with_events`: A function that takes an event and returns a boolean indicating if the event should be included
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         id: ClusterId,
         revision: u16,
         feature_map: u32,
         attributes: &'a [Attribute],
         commands: &'a [Command],
+        events: &'a [Event],
         with_attrs: WithAttrs,
         with_cmds: WithCmds,
+        with_events: WithEvents,
     ) -> Self {
         Self {
             id,
@@ -86,8 +101,10 @@ impl<'a> Cluster<'a> {
             feature_map,
             attributes,
             commands,
+            events,
             with_attrs,
             with_cmds,
+            with_events,
         }
     }
 
@@ -112,6 +129,14 @@ impl<'a> Cluster<'a> {
     /// Return a new cluster with a modified commands' matcher
     pub const fn with_cmds(self, with_cmds: WithCmds) -> Self {
         Self { with_cmds, ..self }
+    }
+
+    /// Return a new cluster with a modified events' matcher
+    pub const fn with_events(self, with_events: WithEvents) -> Self {
+        Self {
+            with_events,
+            ..self
+        }
     }
 
     /// Check if the accessor has the required permissions to access the attribute
@@ -189,6 +214,31 @@ impl<'a> Cluster<'a> {
         }
     }
 
+    /// Check if the accessor has the required permissions to access the event
+    /// designated by the provided path.
+    pub(crate) fn check_event_access(
+        &self,
+        accessor: &Accessor,
+        path: GenericPath,
+        event_id: EventId,
+    ) -> Result<(), IMStatusCode> {
+        let mut access_req = AccessReq::new(accessor, path, Access::READ);
+
+        let target_perms = self
+            .events
+            .iter()
+            .find(|event| event.id == event_id)
+            .map(|event| event.access)
+            .unwrap_or(Access::empty());
+
+        access_req.set_target_perms(target_perms);
+        if access_req.allow() {
+            Ok(())
+        } else {
+            Err(IMStatusCode::UnsupportedAccess)
+        }
+    }
+
     /// Return a reference to the attribute with the given ID, if it exists.
     pub fn attribute(&self, id: AttrId) -> Option<&Attribute> {
         self.attributes().find(|attr| attr.id == id)
@@ -197,6 +247,11 @@ impl<'a> Cluster<'a> {
     /// Return a reference to the command with the given ID, if it exists.
     pub fn command(&self, id: CmdId) -> Option<&Command> {
         self.commands().find(|cmd| cmd.id == id)
+    }
+
+    /// Return a reference to the event with the given ID, if it exists.
+    pub fn event(&self, id: EventId) -> Option<&Event> {
+        self.events().find(|event| event.id == id)
     }
 
     /// Return an iterator over the attributes of the cluster which are
@@ -213,6 +268,14 @@ impl<'a> Cluster<'a> {
         self.commands
             .iter()
             .filter(|cmd| (self.with_cmds)(cmd, self.revision, self.feature_map))
+    }
+
+    /// Return an iterator over the events of the cluster which are
+    /// configured to be included based on the provided configuration.
+    pub(crate) fn events(&self) -> impl Iterator<Item = &Event> + '_ {
+        self.events
+            .iter()
+            .filter(|event| (self.with_events)(event, self.revision, self.feature_map))
     }
 
     /// Performs an IM attribute read for the given attribute ID.
@@ -409,12 +472,21 @@ impl<'a> Cluster<'a> {
             self.id, index
         );
 
-        // No events for now
+        if let Some(Some(index)) = index {
+            let event = self.events().nth(index).ok_or(ErrorCode::ConstraintError)?;
 
-        if let Some(Some(_)) = index {
-            Err(ErrorCode::ConstraintError)?;
+            tw.u32(tag, event.id)?;
+            debug!("    Event: 0x{:02x}, ", event.id);
         } else {
             tw.start_array(tag)?;
+
+            if index.is_none() {
+                for event in self.events() {
+                    tw.u32(&TLVTag::Anonymous, event.id)?;
+                    debug!("    Event: 0x{:02x}, ", event.id);
+                }
+            }
+
             tw.end_container()?;
         }
 

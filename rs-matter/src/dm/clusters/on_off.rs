@@ -323,7 +323,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         let _ = Self::update_attr_on(state);
 
         self.dataver_changed();
-        ctx.notify_attribute_changed(self.endpoint_id, Self::CLUSTER.id, AttributeId::OnOff as _);
+        ctx.notify_attr_changed(self.endpoint_id, Self::CLUSTER.id, AttributeId::OnOff as _);
 
         // LevelControl coupling logic defined in section 1.6.4.1.1
         if !level_control_initiated {
@@ -384,7 +384,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
 
                 if attr_updated {
                     self.dataver_changed();
-                    ctx.notify_attribute_changed(
+                    ctx.notify_attr_changed(
                         self.endpoint_id,
                         Self::CLUSTER.id,
                         AttributeId::OnOff as _,
@@ -402,7 +402,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         // On receipt of the Off command, a server SHALL set the OnOff attribute to FALSE.
         self.hooks.set_on_off(false);
         self.dataver_changed();
-        ctx.notify_attribute_changed(self.endpoint_id, Self::CLUSTER.id, AttributeId::OnOff as _);
+        ctx.notify_attr_changed(self.endpoint_id, Self::CLUSTER.id, AttributeId::OnOff as _);
 
         true
     }
@@ -437,7 +437,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                 let _ = Self::update_attr_on(state);
 
                 self.dataver_changed();
-                ctx.notify_attribute_changed(
+                ctx.notify_attr_changed(
                     self.endpoint_id,
                     Self::CLUSTER.id,
                     AttributeId::OnOff as _,
@@ -453,7 +453,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                 let _ = Self::update_attr_off(state);
 
                 self.dataver_changed();
-                ctx.notify_attribute_changed(
+                ctx.notify_attr_changed(
                     self.endpoint_id,
                     Self::CLUSTER.id,
                     AttributeId::OnOff as _,

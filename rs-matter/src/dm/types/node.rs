@@ -18,13 +18,15 @@
 use core::fmt;
 
 use crate::acl::Accessor;
-use crate::dm::Endpoint;
+use crate::dm::{Cluster, Endpoint};
 use crate::error::Error;
 use crate::im::{
-    AttrData, AttrPath, AttrStatus, CmdData, CmdStatus, DataVersionFilter, GenericPath,
-    IMStatusCode, InvReq, ReportDataReq, WriteReq,
+    AttrData, AttrPath, AttrStatus, CmdData, CmdStatus, DataVersionFilter, EventPath, GenericPath,
+    IMStatusCode, InvReq, NodeId, ReportDataReq, WriteReq,
 };
 use crate::tlv::{TLVArray, TLVElement};
+use crate::utils::init::{init, Init};
+use crate::utils::storage::Vec;
 
 use super::{AttrDetails, ClusterId, CmdDetails, EndptId};
 
@@ -32,16 +34,14 @@ use super::{AttrDetails, ClusterId, CmdDetails, EndptId};
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Node<'a> {
-    /// The ID of the node.
-    pub id: u16,
-    /// The endpoints of the node.
+    /// The endpoints of the (one and only) node in the Interaction & Data Model.
     pub endpoints: &'a [Endpoint<'a>],
 }
 
 impl<'a> Node<'a> {
-    /// Create a new node with the given ID and endpoints.
-    pub const fn new(id: u16, endpoints: &'a [Endpoint<'a>]) -> Self {
-        Self { id, endpoints }
+    /// Create a new node with the given endpoints.
+    pub const fn new(endpoints: &'a [Endpoint<'a>]) -> Self {
+        Self { endpoints }
     }
 
     /// Return a reference to the endpoint with the given ID, if it exists.
@@ -126,6 +126,97 @@ impl<'a> Node<'a> {
             req.inv_requests()?.map(move |reqs| reqs.into_iter()),
         ))
     }
+
+    pub(crate) fn validate_attr_path(
+        &self,
+        path: &AttrPath,
+        timed: bool,
+        write: bool,
+        accessor: &Accessor<'_>,
+    ) -> Result<(), IMStatusCode> {
+        if let Some(node_id) = path.node {
+            self.validate_node_id(node_id, accessor)?;
+        }
+
+        let gp = path.to_gp();
+
+        let Some((cluster, attr_id)) = self.validate_cluster_path(&gp)? else {
+            return Ok(());
+        };
+
+        let Some(attr) = cluster.attribute(attr_id) else {
+            return Err(IMStatusCode::UnsupportedAttribute);
+        };
+
+        cluster.check_attr_access(accessor, timed, gp, write, attr.id)
+    }
+
+    pub(crate) fn validate_event_path(
+        &self,
+        path: &EventPath,
+        accessor: &Accessor<'_>,
+    ) -> Result<(), IMStatusCode> {
+        if let Some(node_id) = path.node {
+            self.validate_node_id(node_id, accessor)?;
+        }
+
+        let gp = path.to_gp();
+
+        let Some((cluster, event_id)) = self.validate_cluster_path(&gp)? else {
+            return Ok(());
+        };
+
+        let Some(event) = cluster.event(event_id) else {
+            return Err(IMStatusCode::UnsupportedEvent);
+        };
+
+        cluster.check_event_access(accessor, gp, event.id)
+    }
+
+    fn validate_node_id(
+        &self,
+        node_id: NodeId,
+        accessor: &Accessor<'_>,
+    ) -> Result<(), IMStatusCode> {
+        let Some(accessor_node_id) = accessor.node_id() else {
+            return Err(IMStatusCode::UnsupportedNode);
+        };
+
+        if node_id != accessor_node_id {
+            return Err(IMStatusCode::UnsupportedNode);
+        }
+
+        Ok(())
+    }
+
+    fn validate_cluster_path(
+        &self,
+        path: &GenericPath,
+    ) -> Result<Option<(&Cluster<'_>, u32)>, IMStatusCode> {
+        let Some(endpoint_id) = path.endpoint else {
+            return Ok(None);
+        };
+
+        let Some(endpoint) = self.endpoint(endpoint_id) else {
+            // Endpoint does not exist
+            return Err(IMStatusCode::UnsupportedEndpoint);
+        };
+
+        let Some(cluster_id) = path.cluster else {
+            return Ok(None);
+        };
+
+        let Some(cluster) = endpoint.cluster(cluster_id) else {
+            // Cluster does not exist on this endpoint
+            return Err(IMStatusCode::UnsupportedCluster);
+        };
+
+        let Some(leaf_id) = path.leaf else {
+            return Ok(None);
+        };
+
+        Ok(Some((cluster, leaf_id)))
+    }
 }
 
 impl core::fmt::Display for Node<'_> {
@@ -141,17 +232,22 @@ impl core::fmt::Display for Node<'_> {
 
 /// A dynamic node that can be modified at runtime.
 pub struct DynamicNode<'a, const N: usize> {
-    id: u16,
-    endpoints: heapless::Vec<Endpoint<'a>, N>,
+    endpoints: Vec<Endpoint<'a>, N>,
 }
 
 impl<'a, const N: usize> DynamicNode<'a, N> {
-    /// Create a new dynamic node with the given ID.
-    pub const fn new(id: u16) -> Self {
+    /// Create a new dynamic node.
+    pub const fn new() -> Self {
         Self {
-            id,
-            endpoints: heapless::Vec::new(),
+            endpoints: Vec::new(),
         }
+    }
+
+    /// Return an in-place initializer for `DynamicNode`.
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            endpoints <- Vec::init(),
+        })
     }
 
     /// Return a static node view of the dynamic node.
@@ -159,7 +255,6 @@ impl<'a, const N: usize> DynamicNode<'a, N> {
     /// Necessary, because the `Metadata` trait needs a `Node` type
     pub fn node(&self) -> Node<'_> {
         Node {
-            id: self.id,
             endpoints: &self.endpoints,
         }
     }
@@ -192,6 +287,12 @@ impl<'a, const N: usize> DynamicNode<'a, N> {
 impl<const N: usize> core::fmt::Display for DynamicNode<'_, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.node().fmt(f)
+    }
+}
+
+impl<'a, const N: usize> Default for DynamicNode<'a, N> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -710,7 +811,7 @@ mod test {
 
     #[test]
     fn test_none() {
-        static NODE: Node = Node::new(0, &[]);
+        static NODE: Node = Node::new(&[]);
 
         // Invalid endpoint with wildcard paths should not return anything
         test(&NODE, &[GenericPath::new(Some(0), None, None)], &[]);
@@ -731,22 +832,21 @@ mod test {
 
     #[test]
     fn test_one_all() {
-        static NODE: Node = Node::new(
+        static NODE: Node = Node::new(&[Endpoint::new(
             0,
-            &[Endpoint::new(
+            &[DeviceType { dtype: 0, drev: 0 }],
+            &[Cluster::new(
                 0,
-                &[DeviceType { dtype: 0, drev: 0 }],
-                &[Cluster::new(
-                    0,
-                    1,
-                    0,
-                    &[Attribute::new(0, Access::all(), Quality::all())],
-                    &[Command::new(0, None, Access::all())],
-                    |_, _, _| true,
-                    |_, _, _| true,
-                )],
+                1,
+                0,
+                &[Attribute::new(0, Access::all(), Quality::all())],
+                &[Command::new(0, None, Access::all())],
+                &[],
+                |_, _, _| true,
+                |_, _, _| true,
+                |_, _, _| true,
             )],
-        );
+        )]);
 
         // Happy path, wildcard
         test(
@@ -778,7 +878,7 @@ mod test {
 
         // Multiple wildcard paths with an empty node should not return anything
         test(
-            &Node::new(0, &[]),
+            &Node::new(&[]),
             &[
                 GenericPath::new(None, None, None),
                 GenericPath::new(None, None, None),
@@ -838,65 +938,70 @@ mod test {
 
     #[test]
     fn test_multiple() {
-        static NODE: Node = Node::new(
-            0,
-            &[
-                Endpoint::new(
-                    0,
-                    &[DeviceType { dtype: 0, drev: 0 }],
-                    &[
-                        Cluster::new(
-                            1,
-                            1,
-                            0,
-                            &[Attribute::new(1, Access::all(), Quality::all())],
-                            &[Command::new(1, None, Access::all())],
-                            |_, _, _| true,
-                            |_, _, _| true,
-                        ),
-                        Cluster::new(
-                            10,
-                            1,
-                            0,
-                            &[Attribute::new(1, Access::all(), Quality::all())],
-                            &[Command::new(1, None, Access::all())],
-                            |_, _, _| true,
-                            |_, _, _| true,
-                        ),
-                    ],
-                ),
-                Endpoint::new(
-                    5,
-                    &[DeviceType { dtype: 0, drev: 0 }],
-                    &[
-                        Cluster::new(
-                            1,
-                            1,
-                            0,
-                            &[Attribute::new(1, Access::all(), Quality::all())],
-                            &[Command::new(1, None, Access::all())],
-                            |_, _, _| true,
-                            |_, _, _| true,
-                        ),
-                        Cluster::new(
-                            20,
-                            1,
-                            0,
-                            &[
-                                Attribute::new(20, Access::all(), Quality::all()),
-                                Attribute::new(30, Access::all(), Quality::all()),
-                            ],
-                            &[
-                                Command::new(20, None, Access::all()),
-                                Command::new(30, None, Access::all()),
-                            ],
-                            |_, _, _| true,
-                            |_, _, _| true,
-                        ),
-                    ],
-                ),
-            ],
-        );
+        static NODE: Node = Node::new(&[
+            Endpoint::new(
+                0,
+                &[DeviceType { dtype: 0, drev: 0 }],
+                &[
+                    Cluster::new(
+                        1,
+                        1,
+                        0,
+                        &[Attribute::new(1, Access::all(), Quality::all())],
+                        &[Command::new(1, None, Access::all())],
+                        &[],
+                        |_, _, _| true,
+                        |_, _, _| true,
+                        |_, _, _| true,
+                    ),
+                    Cluster::new(
+                        10,
+                        1,
+                        0,
+                        &[Attribute::new(1, Access::all(), Quality::all())],
+                        &[Command::new(1, None, Access::all())],
+                        &[],
+                        |_, _, _| true,
+                        |_, _, _| true,
+                        |_, _, _| true,
+                    ),
+                ],
+            ),
+            Endpoint::new(
+                5,
+                &[DeviceType { dtype: 0, drev: 0 }],
+                &[
+                    Cluster::new(
+                        1,
+                        1,
+                        0,
+                        &[Attribute::new(1, Access::all(), Quality::all())],
+                        &[Command::new(1, None, Access::all())],
+                        &[],
+                        |_, _, _| true,
+                        |_, _, _| true,
+                        |_, _, _| true,
+                    ),
+                    Cluster::new(
+                        20,
+                        1,
+                        0,
+                        &[
+                            Attribute::new(20, Access::all(), Quality::all()),
+                            Attribute::new(30, Access::all(), Quality::all()),
+                        ],
+                        &[
+                            Command::new(20, None, Access::all()),
+                            Command::new(30, None, Access::all()),
+                        ],
+                        &[],
+                        |_, _, _| true,
+                        |_, _, _| true,
+                        |_, _, _| true,
+                    ),
+                ],
+            ),
+        ]);
 
         // Test with a single, global wildcard
         test(

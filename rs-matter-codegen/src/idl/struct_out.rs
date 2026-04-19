@@ -20,16 +20,18 @@
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::quote;
 
+use crate::idl::StructLike;
+
 use super::field::{field_type_builder, BuilderPolicy};
 use super::id::{ident, idl_field_name_to_rs_name};
-use super::parser::{EntityContext, Struct, StructField};
+use super::parser::{EntityContext, StructField};
 use super::struct_in::struct_field_comment;
 use super::IdlGenerateContext;
 
 /// Return the token stream of all structure builders corresponding
 /// to the structures defined by the provided IDL cluster.
-pub fn struct_builders(
-    structs: &[Struct],
+pub fn struct_builders<S: StructLike>(
+    structs: &[S],
     entities: &EntityContext,
     context: &IdlGenerateContext,
 ) -> TokenStream {
@@ -49,26 +51,26 @@ pub fn struct_builders(
 /// - `s`: The IDL structure.
 /// - `cluster`: The IDL cluster to which the structure belongs.
 /// - `context`: The IDL generation context.
-pub fn struct_builder(
-    s: &Struct,
+pub fn struct_builder<S: StructLike>(
+    s: S,
     entities: &EntityContext,
     context: &IdlGenerateContext,
 ) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
-    let name = ident(&format!("{}Builder", s.id));
-    let name_str = Literal::string(&s.id);
-    let name_array = ident(&format!("{}ArrayBuilder", s.id));
-    let name_array_str = Literal::string(&format!("{}[]", s.id));
+    let name = ident(&format!("{}Builder", s.id()));
+    let name_str = Literal::string(s.id());
+    let name_array = ident(&format!("{}ArrayBuilder", s.id()));
+    let name_array_str = Literal::string(&format!("{}[]", s.id()));
 
     let start_code = s
-        .fields
+        .fields()
         .iter()
         .map(|field| field.field.code as usize)
         .next()
         .unwrap_or(0);
     let finish_code = s
-        .fields
+        .fields()
         .iter()
         .map(|field| field.field.code as usize)
         .max()
@@ -76,10 +78,10 @@ pub fn struct_builder(
         .unwrap_or(0);
 
     let fields = s
-        .fields
+        .fields()
         .iter()
         .zip(
-            s.fields
+            s.fields()
                 .iter()
                 .skip(1)
                 .map(|f| f.field.code as usize)
@@ -394,12 +396,12 @@ mod tests {
         let cluster = get_cluster_named(&idl, "TestForStructs").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
 
-        // panic!("====\n{}\n====", &struct_builders(&EntityContext::new(Some(&cluster.entities), &idl.globals), &context));
+        // panic!("====\n{}\n====", &struct_builders(&EntityContext::new(Some(cluster), &idl.globals), &context));
 
         assert_tokenstreams_eq!(
             &struct_builders(
                 &cluster.entities.structs,
-                &EntityContext::new(Some(&cluster.entities), &idl.globals),
+                &EntityContext::new(Some(cluster), &idl.globals),
                 &context
             ),
             &quote!(
@@ -1712,7 +1714,7 @@ mod tests {
         assert_tokenstreams_eq!(
             &struct_builders(
                 &cluster.entities.structs,
-                &EntityContext::new(Some(&cluster.entities), &idl.globals),
+                &EntityContext::new(Some(cluster), &idl.globals),
                 &context
             ),
             &quote!(
@@ -2351,7 +2353,7 @@ mod tests {
         assert_tokenstreams_eq!(
             &struct_builders(
                 &cluster.entities.structs,
-                &EntityContext::new(Some(&cluster.entities), &idl.globals),
+                &EntityContext::new(Some(cluster), &idl.globals),
                 &context
             ),
             &quote!(
@@ -2771,7 +2773,7 @@ mod tests {
         assert_tokenstreams_eq!(
             &struct_builders(
                 &cluster.entities.structs,
-                &EntityContext::new(Some(&cluster.entities), &idl.globals),
+                &EntityContext::new(Some(cluster), &idl.globals),
                 &context
             ),
             &quote!(

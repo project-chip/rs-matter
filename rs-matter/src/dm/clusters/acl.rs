@@ -386,10 +386,7 @@ mod tests {
         // Test 1, all 3 entries are read in the response without fabric filtering
         {
             let attr = AttrDetails {
-                node: &Node {
-                    id: 0,
-                    endpoints: &[],
-                },
+                node: &Node { endpoints: &[] },
                 endpoint_id: 0,
                 cluster_id: 0,
                 attr_id: 0,
@@ -416,10 +413,7 @@ mod tests {
         // Test 2, only single entry is read in the response with fabric filtering and fabric idx 1
         {
             let attr = AttrDetails {
-                node: &Node {
-                    id: 0,
-                    endpoints: &[],
-                },
+                node: &Node { endpoints: &[] },
                 endpoint_id: 0,
                 cluster_id: 0,
                 attr_id: 0,
@@ -445,10 +439,7 @@ mod tests {
         // Test 3, only single entry is read in the response with fabric filtering and fabric idx 2
         {
             let attr = AttrDetails {
-                node: &Node {
-                    id: 0,
-                    endpoints: &[],
-                },
+                node: &Node { endpoints: &[] },
                 endpoint_id: 0,
                 cluster_id: 0,
                 attr_id: 0,

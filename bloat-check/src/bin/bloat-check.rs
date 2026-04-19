@@ -629,7 +629,6 @@ fn report_total_size(total_size: usize) {
 
 /// The Node meta-data describing our Matter device.
 const NODE: Node<'static> = Node {
-    id: 0,
     endpoints: &[
         root_endpoint!(wifi),
         Endpoint {

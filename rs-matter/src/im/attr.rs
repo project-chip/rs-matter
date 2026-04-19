@@ -16,7 +16,7 @@
  */
 
 use crate::error::Error;
-use crate::im::EventFilter;
+use crate::im::{EventFilter, NodeId};
 use crate::tlv::{FromTLV, Nullable, TLVArray, TLVElement, ToTLV};
 
 use super::{AttrId, ClusterId, EndptId, EventPath, EventResp, GenericPath, IMStatusCode, Status};
@@ -37,7 +37,7 @@ mod write;
 #[tlvargs(datatype = "list")]
 pub struct AttrPath {
     pub tag_compression: Option<bool>,
-    pub node: Option<u64>,
+    pub node: Option<NodeId>,
     pub endpoint: Option<EndptId>,
     pub cluster: Option<ClusterId>,
     pub attr: Option<AttrId>,
@@ -61,6 +61,11 @@ impl AttrPath {
     /// Convert this `AttrPath` to a `GenericPath`.
     pub const fn to_gp(&self) -> GenericPath {
         GenericPath::new(self.endpoint, self.cluster, self.attr)
+    }
+
+    /// Return true, if the path is wildcard
+    pub const fn is_wildcard(&self) -> bool {
+        self.endpoint.is_none() || self.cluster.is_none() || self.attr.is_none()
     }
 }
 

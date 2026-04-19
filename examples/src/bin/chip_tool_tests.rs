@@ -247,7 +247,6 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 
 /// The Node meta-data describing our Matter device.
 const NODE: Node<'static> = Node {
-    id: 0,
     endpoints: &[
         root_endpoint!(geth),
         Endpoint {

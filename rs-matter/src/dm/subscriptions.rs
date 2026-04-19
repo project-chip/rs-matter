@@ -19,7 +19,7 @@ use core::num::NonZeroU8;
 
 use embassy_time::Instant;
 
-use crate::dm::{AttrId, ChangeNotify, ClusterId, EndptId, EventId};
+use crate::dm::{AttrChangeNotifier, AttrId, ClusterId, EndptId, EventId};
 use crate::fabric::MAX_FABRICS;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -291,10 +291,10 @@ impl<const N: usize> Default for Subscriptions<N> {
     }
 }
 
-impl<const N: usize> DynBase for Subscriptions<N> {}
-
-impl<const N: usize> ChangeNotify for Subscriptions<N> {
-    fn notify(&self, endpt: EndptId, clust: ClusterId, attr: AttrId) {
-        self.notify_attribute_changed(endpt, clust, attr);
+impl<const N: usize> AttrChangeNotifier for Subscriptions<N> {
+    fn notify_attr_changed(&self, endpt: EndptId, clust: ClusterId, attr: AttrId) {
+        Subscriptions::<N>::notify_attribute_changed(self, endpt, clust, attr);
     }
 }
+
+impl<const N: usize> DynBase for Subscriptions<N> {}

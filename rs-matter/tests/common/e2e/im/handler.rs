@@ -47,7 +47,6 @@ pub struct E2eTestHandler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 
 impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
     pub const NODE: Node<'static> = Node {
-        id: 0,
         endpoints: &[
             Endpoint {
                 id: 0,

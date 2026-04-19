@@ -396,6 +396,110 @@ pub fn command_response_id(entities: &EntityContext, context: &IdlGenerateContex
     )
 }
 
+/// Return a TokenStream containing a simple enum with variants for each
+/// event in the given IDL cluster.
+pub fn event_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
+    let krate = context.rs_matter_crate.clone();
+
+    let events = cluster
+        .events
+        .iter()
+        .map(|event| {
+            let event_name = ident(&event.id);
+            let event_code = Literal::i64_unsuffixed(event.code as i64);
+
+            quote!(
+                #event_name = #event_code
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let events_debug = cluster.events.iter().map(|event| {
+        let event_name = ident(&event.id);
+        let event_name_str = Literal::string(&event.id);
+
+        quote!(
+            EventId::#event_name => write!(f, "{}(0x{:02x})", #event_name_str, EventId::#event_name as u32)?,
+        )
+    });
+
+    let events_format = cluster.events.iter().map(|event| {
+        let event_name = ident(&event.id);
+        let event_name_str = Literal::string(&event.id);
+
+        quote!(
+            EventId::#event_name => #krate::reexport::defmt::write!(f, "{}(0x{:02x})", #event_name_str, EventId::#event_name as u32),
+        )
+    });
+
+    let repr = if !events.is_empty() {
+        quote!(#[repr(u32)])
+    } else {
+        quote!()
+    };
+
+    let try_from = if !events.is_empty() {
+        quote!(
+            impl core::convert::TryFrom<#krate::dm::EventId> for EventId {
+                type Error = #krate::error::Error;
+
+                fn try_from(id: #krate::dm::EventId) -> Result<Self, Self::Error> {
+                    EventId::from_repr(id).ok_or_else(|| #krate::error::ErrorCode::EventNotFound.into())
+                }
+            }
+        )
+    } else {
+        quote!(
+            impl core::convert::TryFrom<#krate::dm::EventId> for EventId {
+                type Error = #krate::error::Error;
+
+                fn try_from(id: #krate::dm::EventId) -> Result<Self, Self::Error> {
+                    Err(#krate::error::ErrorCode::EventNotFound.into())
+                }
+            }
+        )
+    };
+
+    quote!(
+        #[doc = "The event IDs for the cluster."]
+        #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, #krate::reexport::strum::FromRepr)]
+        #[cfg_attr(feature = "defmt", derive(#krate::reexport::defmt::Format))]
+        #repr
+        pub enum EventId {
+            #(#events),*
+        }
+
+        #try_from
+
+        impl core::fmt::Debug for MetadataDebug<EventId> {
+            #[allow(unreachable_code)]
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                write!(f, "Event::")?;
+
+                match self.0 {
+                    #(#events_debug)*
+                }
+
+                write!(f, "::Emit")
+            }
+        }
+
+        #[cfg(feature = "defmt")]
+        impl #krate::reexport::defmt::Format for MetadataDebug<EventId> {
+            #[allow(unreachable_code)]
+            fn format(&self, f: #krate::reexport::defmt::Formatter<'_>) {
+                #krate::reexport::defmt::write!(f, "Event::");
+
+                match self.0 {
+                    #(#events_format)*
+                }
+
+                #krate::reexport::defmt::write!(f, "::Emit")
+            }
+        }
+    )
+}
+
 /// Return a TokenStream containing a `ClusterConf` enum that allows the user to configure the `Cluster` instance
 /// corresponding to the given IDL cluster.
 ///
@@ -504,6 +608,30 @@ pub fn cluster(cluster: &Cluster, globals: &Entities, context: &IdlGenerateConte
         )
     });
 
+    let events = cluster.events.iter().map(|event| {
+        let event_name = ident(&event.id);
+
+        let access = match event.access {
+            AccessPrivilege::View => quote!(#krate::dm::Access::NEED_VIEW),
+            AccessPrivilege::Operate => quote!(#krate::dm::Access::NEED_OPERATE.union(#krate::dm::Access::NEED_MANAGE.union(#krate::dm::Access::NEED_ADMIN))),
+            AccessPrivilege::Manage => quote!(#krate::dm::Access::NEED_MANAGE.union(#krate::dm::Access::NEED_ADMIN)),
+            AccessPrivilege::Administer => quote!(#krate::dm::Access::NEED_ADMIN),
+        };
+
+        let mut access = quote!(#krate::dm::Access::READ.union(#access));
+
+        if event.is_fabric_sensitive {
+            access = quote!(#access.union(#krate::dm::Access::FAB_SENSITIVE));
+        }
+
+        quote!(
+            #krate::dm::Event::new(
+                EventId::#event_name as _,
+                #access,
+            ),
+        )
+    });
+
     let cluster_id = Literal::u32_unsuffixed(cluster.code as u32);
     let cluster_revision = Literal::u16_unsuffixed(cluster.revision as u16);
     let import_globals = if cluster_uses_globals(cluster, globals) {
@@ -516,13 +644,15 @@ pub fn cluster(cluster: &Cluster, globals: &Entities, context: &IdlGenerateConte
 
     quote!(
         #import_globals
-        #[doc = "The cluster metadata. By default, all cluster attributes and commands are allowed, and the revision is the latest one. Use `Cluster::with_*` to reconfigure."]
+        #[doc = "The cluster metadata. By default, all cluster attributes, commands and events are allowed, and the revision is the latest one. Use `Cluster::with_*` to reconfigure."]
         pub const FULL_CLUSTER: #krate::dm::Cluster<'static> = #krate::dm::Cluster::new(
             #cluster_id,
             #cluster_revision,
             0,
             &[#(#attributes)*],
             &[#(#commands)*],
+            &[#(#events)*],
+            |_, _, _| true,
             |_, _, _| true,
             |_, _, _| true,
         );
@@ -629,7 +759,7 @@ mod tests {
         assert_tokenstreams_eq!(
             &cluster(cluster_meta, &idl.globals, &context),
             &quote!(
-                #[doc = "The cluster metadata. By default, all cluster attributes and commands are allowed, and the revision is the latest one. Use `Cluster::with_*` to reconfigure."]
+                #[doc = "The cluster metadata. By default, all cluster attributes, commands and events are allowed, and the revision is the latest one. Use `Cluster::with_*` to reconfigure."]
                 pub const FULL_CLUSTER: rs_matter_crate::dm::Cluster<'static> =
                     rs_matter_crate::dm::Cluster::new(
                         6,
@@ -756,6 +886,8 @@ mod tests {
                                 rs_matter_crate::dm::Access::WO,
                             ),
                         ],
+                        &[],
+                        |_, _, _| true,
                         |_, _, _| true,
                         |_, _, _| true,
                     );

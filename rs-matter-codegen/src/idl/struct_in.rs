@@ -19,14 +19,16 @@
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::quote;
 
+use crate::idl::StructLike;
+
 use super::field::field_type;
 use super::id::{ident, idl_field_name_to_rs_name, idl_field_name_to_rs_type_name};
-use super::parser::{ApiMaturity, EntityContext, Struct, StructField};
+use super::parser::{ApiMaturity, EntityContext, StructField};
 use super::IdlGenerateContext;
 
 /// Return a token stream containing simple enums with the tag IDs of
 /// all structures in the given IDL entities.
-pub fn struct_tags(structs: &[Struct], context: &IdlGenerateContext) -> TokenStream {
+pub fn struct_tags<S: StructLike>(structs: &[S], context: &IdlGenerateContext) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
     let struct_tags = structs.iter().map(|s| struct_tag(s, &krate));
@@ -38,8 +40,8 @@ pub fn struct_tags(structs: &[Struct], context: &IdlGenerateContext) -> TokenStr
 
 /// Return a token stream containing the structure definitions
 /// for all structures in the given IDL cluster.
-pub fn structs(
-    structs: &[Struct],
+pub fn structs<S: StructLike>(
+    structs: &[S],
     entities: &EntityContext,
     context: &IdlGenerateContext,
 ) -> TokenStream {
@@ -54,15 +56,21 @@ pub fn structs(
 /// tag definition.
 ///
 /// Provide the raw `enum FooTag { }` declaration.
-fn struct_tag(s: &Struct, krate: &Ident) -> TokenStream {
-    let name = ident(&format!("{}Tag", s.id));
+fn struct_tag<S: StructLike>(s: S, krate: &Ident) -> TokenStream {
+    let name = ident(&format!("{}Tag", s.id()));
 
-    let fields = s.fields.iter().map(struct_tag_field);
+    let fields = s.fields().iter().map(struct_tag_field).collect::<Vec<_>>();
+
+    let repr = if fields.is_empty() {
+        quote!()
+    } else {
+        quote!(#[repr(u8)])
+    };
 
     quote!(
         #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
         #[cfg_attr(feature = "defmt", derive(#krate::reexport::defmt::Format))]
-        #[repr(u8)]
+        #repr
         pub enum #name { #(#fields)* }
     )
 }
@@ -71,21 +79,31 @@ fn struct_tag(s: &Struct, krate: &Ident) -> TokenStream {
 /// definition.
 ///
 /// Provide the raw `struct Foo<'a>(TLVElement<'a>); impl<'a> Foo<'a> { ... }` declaration.
-fn structure(s: &Struct, entities: &EntityContext, context: &IdlGenerateContext) -> TokenStream {
+fn structure<S: StructLike>(
+    s: S,
+    entities: &EntityContext,
+    context: &IdlGenerateContext,
+) -> TokenStream {
     // NOTE: s.is_fabric_scoped not directly handled as the IDL
     //       will have fabric_idx with ID 254 automatically added.
 
     let krate = context.rs_matter_crate.clone();
 
-    let name = ident(&s.id);
-    let name_str = Literal::string(&s.id);
+    let name = ident(s.id());
+    let name_str = Literal::string(s.id());
 
-    let fields = s.fields.iter().map(|f| struct_field(f, entities, context));
+    let fields = s
+        .fields()
+        .iter()
+        .map(|f| struct_field(f, entities, context));
     let fields_debug = s
-        .fields
+        .fields()
         .iter()
         .map(|f| struct_field_debug(f, false, &krate));
-    let fields_format = s.fields.iter().map(|f| struct_field_debug(f, true, &krate));
+    let fields_format = s
+        .fields()
+        .iter()
+        .map(|f| struct_field_debug(f, true, &krate));
 
     quote!(
         #[derive(PartialEq, Eq, Clone, Hash)]
@@ -302,12 +320,12 @@ mod tests {
         let cluster = get_cluster_named(&idl, "TestForStructs").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
 
-        // panic!("====\n{}\n====", &structs(&EntityContext::new(Some(&cluster.entities), &idl.globals), &context));
+        // panic!("====\n{}\n====", &structs(&EntityContext::new(Some(cluster), &idl.globals), &context));
 
         assert_tokenstreams_eq!(
             &structs(
                 &cluster.entities.structs,
-                &EntityContext::new(Some(&cluster.entities), &idl.globals),
+                &EntityContext::new(Some(cluster), &idl.globals),
                 &context
             ),
             &quote!(
@@ -787,7 +805,7 @@ mod tests {
         assert_tokenstreams_eq!(
             &structs(
                 &cluster.entities.structs,
-                &EntityContext::new(Some(&cluster.entities), &idl.globals),
+                &EntityContext::new(Some(cluster), &idl.globals),
                 &context
             ),
             &quote!(
@@ -1023,7 +1041,7 @@ mod tests {
         assert_tokenstreams_eq!(
             &structs(
                 &cluster.entities.structs,
-                &EntityContext::new(Some(&cluster.entities), &idl.globals),
+                &EntityContext::new(Some(cluster), &idl.globals),
                 &context
             ),
             &quote!(
@@ -1213,7 +1231,7 @@ mod tests {
         assert_tokenstreams_eq!(
             &structs(
                 &cluster.entities.structs,
-                &EntityContext::new(Some(&cluster.entities), &idl.globals),
+                &EntityContext::new(Some(cluster), &idl.globals),
                 &context
             ),
             &quote!(

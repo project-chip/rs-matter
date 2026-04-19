@@ -17,13 +17,16 @@
 
 use core::fmt::Debug;
 
-use crate::dm::{ClusterId, EndptId, EventId};
+use crate::dm::{ClusterId, EndptId, EventEmitter, EventId};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
-    EventData, EventDataTag, EventDataTimestamp, EventPath, EventPriority, EventRespTag,
+    EventData, EventDataTag, EventDataTimestamp, EventNumber, EventPath, EventPriority,
+    EventRespTag,
 };
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, EVENT_EPOCH_KEY};
-use crate::tlv::{FromTLV, TLVElement, TLVSequence, TLVSequenceIter, TLVTag, TLVWrite};
+use crate::tlv::{
+    FromTLV, TLVBuilderParent, TLVElement, TLVSequence, TLVSequenceIter, TLVTag, TLVWrite,
+};
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
@@ -40,7 +43,7 @@ pub const NO_EVENTS_BUF_SIZE: usize = 0;
 pub type NoEvents = Events<NO_EVENTS_BUF_SIZE>;
 
 /// Only persist every `EVENT_NUMBER_EPOCH_SIZE` event numbers to avoid flash wear.
-const EVENT_NUMBER_EPOCH_SIZE: u64 = 10000;
+const EVENT_NUMBER_EPOCH_SIZE: EventNumber = 10000;
 
 /// Events queue.
 ///
@@ -140,7 +143,7 @@ impl<const N: usize> Events<N> {
     ///   the event data into it using TLV encoding. The closure should return an error if writing the event data fails for any reason, in which case the event will not be pushed into the queue.
     ///
     /// # Returns
-    /// - `Ok(u64)`: The sequence number of the emitted event, if the event was successfully emitted.
+    /// - `Ok(EventNumber)`: The sequence number of the emitted event, if the event was successfully emitted.
     /// - `Err(Error)`: An error if the event could not be emitted.
     pub fn push<S, F>(
         &self,
@@ -150,7 +153,7 @@ impl<const N: usize> Events<N> {
         priority: EventPriority,
         kv: S,
         f: F,
-    ) -> Result<u64, Error>
+    ) -> Result<EventNumber, Error>
     where
         S: KvBlobStoreAccess,
         F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
@@ -183,6 +186,23 @@ impl<const N: usize> Events<N> {
     }
 }
 
+impl<const N: usize, S: KvBlobStoreAccess> EventEmitter for (&Events<N>, S) {
+    fn emit_event<F>(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        f: F,
+    ) -> Result<EventNumber, Error>
+    where
+        F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
+    {
+        self.0
+            .push(endpoint_id, cluster_id, event_id, priority, &self.1, f)
+    }
+}
+
 /// The inner state of the events queue, protected by a mutex in the outer Events struct. This is where all the actual logic lives.
 ///
 /// It's modeled after the tiered ring buffer design used in the C++ matter SDK:
@@ -206,7 +226,7 @@ struct EventsInner<const N: usize> {
     buf_debug: EventsBuf<N>,
     buf_info: EventsBuf<N>,
     buf_critical: EventsBuf<N>,
-    next_event_number: u64,
+    next_event_number: EventNumber,
 }
 
 impl<const N: usize> EventsInner<N> {
@@ -278,7 +298,7 @@ impl<const N: usize> EventsInner<N> {
         endpoint_id: EndptId,
         cluster_id: ClusterId,
         event_id: EventId,
-        event_number: u64,
+        event_number: EventNumber,
         priority: EventPriority,
         timestamp: EventDataTimestamp,
         f: F,
@@ -317,7 +337,7 @@ impl<const N: usize> EventsInner<N> {
         result
     }
 
-    fn next_event_number<S>(&mut self, persist: &mut Persist<S>) -> Result<u64, Error>
+    fn next_event_number<S>(&mut self, persist: &mut Persist<S>) -> Result<EventNumber, Error>
     where
         S: KvBlobStoreAccess,
     {
@@ -541,7 +561,20 @@ impl<'a, const N: usize> DynEventWriter for EventWriter<'a, N> {
 /// allowing it to be used in the closure passed to `Events::push()` and the various `emit_event` handler context methods.
 pub struct EventTLVWrite<'a>(&'a mut dyn DynEventWriter);
 
-impl<'a> TLVWrite for EventTLVWrite<'a> {
+impl core::fmt::Debug for EventTLVWrite<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("EventTLVWrite").finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for EventTLVWrite<'_> {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "EventTLVWrite")
+    }
+}
+
+impl TLVWrite for EventTLVWrite<'_> {
     type Position = usize;
 
     fn write(&mut self, byte: u8) -> Result<(), Error> {
@@ -554,6 +587,14 @@ impl<'a> TLVWrite for EventTLVWrite<'a> {
 
     fn rewind_to(&mut self, pos: Self::Position) {
         self.0.rewind_to(pos)
+    }
+}
+
+impl TLVBuilderParent for EventTLVWrite<'_> {
+    type Write = Self;
+
+    fn writer(&mut self) -> &mut Self::Write {
+        self
     }
 }
 
@@ -741,14 +782,14 @@ mod tests {
         endpoint: EndptId,
         cluster: ClusterId,
         event: EventId,
-        event_number: u64,
+        event_number: EventNumber,
         priority: EventPriority,
         timestamp: EventDataTimestamp,
         data: u64,
     }
 
     impl TestEvent {
-        const fn new(event_number: u64, priority: EventPriority) -> Self {
+        const fn new(event_number: EventNumber, priority: EventPriority) -> Self {
             Self {
                 endpoint: 42,
                 cluster: 1,

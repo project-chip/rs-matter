@@ -15,7 +15,8 @@
  *    limitations under the License.
  */
 
-use crate::dm::{AsyncHandler, HandlerContext};
+use crate::acl::Accessor;
+use crate::dm::{AsyncHandler, HandlerContext, Node};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
     AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
@@ -309,22 +310,26 @@ impl<'a> EventReader<'a> {
         &mut self,
         event: EventData<'_>,
         paths: &TLVArray<'_, EventPath>,
-        event_filters: Option<TLVArray<'_, EventFilter>>,
+        event_filters: &Option<TLVArray<'_, EventFilter>>,
+        node: &Node<'_>,
+        accessor: &Accessor<'_>,
         mut tw: T,
     ) -> Result<(), Error> {
+        let event_number = event.event_number;
+        if event_number < *self.min_event_number {
+            // This event has already been seen by the caller, skip
+            return Ok(());
+        }
+
         let tail = tw.get_tail();
 
-        let event_number = event.event_number;
-
-        let result = self.do_process_read(event, paths, event_filters, &mut tw);
+        let result = self.do_process_read(event, paths, event_filters, node, accessor, &mut tw);
 
         if result.is_err() {
             // If there was an error, rewind to the tail so we don't write any data.
             tw.rewind_to(tail);
         } else {
-            if event_number >= *self.min_event_number {
-                *self.min_event_number = event_number.wrapping_add(1);
-            }
+            *self.min_event_number = event_number.wrapping_add(1);
         }
 
         result
@@ -334,63 +339,92 @@ impl<'a> EventReader<'a> {
         &mut self,
         event: EventData<'_>,
         paths: &TLVArray<'_, EventPath>,
-        event_filters: Option<TLVArray<'_, EventFilter>>,
+        event_filters: &Option<TLVArray<'_, EventFilter>>,
+        node: &Node<'_>,
+        accessor: &Accessor<'_>,
         mut tw: T,
     ) -> Result<(), Error> {
-        if event.event_number < *self.min_event_number {
-            // This event has already been seen by the caller, skip
-            return Ok(());
+        if Self::matches_paths(&event, paths, node, accessor)?
+            && Self::matches_filters(&event, event_filters)?
+            && Self::matches_access(&event, node, accessor)?
+        {
+            EventResp::Data(event).to_tlv(&TagType::Anonymous, &mut tw)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn matches_paths(
+        event: &EventData<'_>,
+        paths: &TLVArray<'_, EventPath>,
+        node: &Node<'_>,
+        accessor: &Accessor<'_>,
+    ) -> Result<bool, Error> {
+        for path in paths {
+            let path = path?;
+
+            if Self::matches_path(event, path, node, accessor) {
+                return Ok(true);
+            }
         }
 
-        // We assume the 99% case is that there is a single filter, on event-no, so just brute force filtering
+        Ok(false)
+    }
+
+    fn matches_path(
+        event: &EventData<'_>,
+        path: EventPath,
+        node: &Node<'_>,
+        accessor: &Accessor<'_>,
+    ) -> bool {
+        if node.validate_event_path(&path, accessor).is_err() {
+            return false;
+        }
+
+        let epath = &event.path;
+
+        epath
+            .node
+            .is_none_or(|node| path.node.is_none_or(|expected_node| expected_node == node))
+            && epath.endpoint.is_none_or(|endpoint| {
+                path.endpoint
+                    .is_none_or(|expected_endpoint| expected_endpoint == endpoint)
+            })
+            && epath.cluster.is_none_or(|cluster| {
+                path.cluster
+                    .is_none_or(|expected_cluster| expected_cluster == cluster)
+            })
+            && epath.event.is_none_or(|event| {
+                path.event
+                    .is_none_or(|expected_event| expected_event == event)
+            })
+    }
+
+    fn matches_filters(
+        event: &EventData<'_>,
+        event_filters: &Option<TLVArray<'_, EventFilter>>,
+    ) -> Result<bool, Error> {
         if let Some(filters) = &event_filters {
+            // Check if the event passes the filters. If it doesn't pass any of them, skip it.
+            // We assume the 99% case is that there is a single filter, on event-no, so just brute force filtering
             for filter in filters {
                 if let Some(event_min) = filter?.event_min {
                     if event.event_number < event_min {
-                        return Ok(());
+                        return Ok(false);
                     }
                 }
             }
         }
 
-        let mut event_matches_path = false;
-        for expected in paths {
-            let expected = expected?;
-            // n.b. suspect this is wrong; *node* level filtering surely should happen earlier, consider restructuring
-            match (expected.node, event.path.node) {
-                (None, _) => (), // match any
-                (Some(expected_node), Some(node)) if expected_node == node => (),
-                // any other combination fails the pattern match
-                _ => continue,
-            }
-            match (expected.cluster, event.path.cluster) {
-                (None, _) => (), // match any
-                (Some(expected_cl), Some(cl)) if expected_cl == cl => (),
-                // any other combination fails the pattern match
-                _ => continue,
-            }
-            match (expected.endpoint, event.path.endpoint) {
-                (None, _) => (), // match any
-                (Some(expected_ep), Some(ep)) if expected_ep == ep => (),
-                // any other combination fails the pattern match
-                _ => continue,
-            }
-            match (expected.event, event.path.event) {
-                (None, _) => (), // match any
-                (Some(expected_ev), Some(ev)) if expected_ev == ev => (),
-                // any other combination fails the pattern match
-                _ => continue,
-            }
+        Ok(true)
+    }
 
-            event_matches_path = true;
-            break;
-        }
-
-        if !event_matches_path {
-            return Ok(());
-        }
-
-        EventResp::Data(event).to_tlv(&TagType::Anonymous, &mut tw)
+    fn matches_access(
+        event: &EventData<'_>,
+        node: &Node<'_>,
+        accessor: &Accessor<'_>,
+    ) -> Result<bool, Error> {
+        Ok(node.validate_event_path(&event.path, accessor).is_ok())
     }
 }
 

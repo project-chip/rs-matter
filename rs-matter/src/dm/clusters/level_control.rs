@@ -602,7 +602,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                         self.set_level(state, H::MIN_LEVEL, false, true)?;
                     if should_notify {
                         self.dataver_changed();
-                        ctx.notify_attribute_changed(
+                        ctx.notify_attr_changed(
                             self.endpoint_id,
                             Self::CLUSTER.id,
                             AttributeId::CurrentLevel as _,
@@ -886,7 +886,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                     })
                 {
                     self.dataver_changed();
-                    ctx.notify_attribute_changed(
+                    ctx.notify_attr_changed(
                         self.endpoint_id,
                         Self::CLUSTER.id,
                         AttributeId::CurrentLevel as _,
@@ -909,7 +909,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                 })
             {
                 self.dataver_changed();
-                ctx.notify_attribute_changed(
+                ctx.notify_attr_changed(
                     self.endpoint_id,
                     Self::CLUSTER.id,
                     AttributeId::CurrentLevel as _,
@@ -1024,7 +1024,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                 .with_state(|state| self.set_level(state, new_level, is_end_of_transition, true))?;
             if should_notify {
                 self.dataver_changed();
-                ctx.notify_attribute_changed(
+                ctx.notify_attr_changed(
                     self.endpoint_id,
                     Self::CLUSTER.id,
                     AttributeId::CurrentLevel as _,
@@ -1126,7 +1126,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             .with_state(|state| state.write_remaining_time_quietly(Duration::from_millis(0), false))
         {
             self.dataver_changed();
-            ctx.notify_attribute_changed(
+            ctx.notify_attr_changed(
                 self.endpoint_id,
                 Self::CLUSTER.id,
                 AttributeId::RemainingTime as _,
@@ -1148,7 +1148,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                                 || state.write_remaining_time_quietly(Duration::from_millis(0), false)
                             {
                                 self.dataver_changed();
-                                ctx.notify_attribute_changed(
+                                ctx.notify_attr_changed(
                                     self.endpoint_id,
                                     Self::CLUSTER.id,
                                     AttributeId::CurrentLevel as _,
@@ -1222,7 +1222,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                     self.task_signal.signal(Task::Stop);
                     if state.write_remaining_time_quietly(Duration::from_millis(0), false) {
                         self.dataver_changed();
-                        ctx.notify_attribute_changed(
+                        ctx.notify_attr_changed(
                             self.endpoint_id,
                             Self::CLUSTER.id,
                             AttributeId::RemainingTime as _,

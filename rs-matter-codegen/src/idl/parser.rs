@@ -1347,19 +1347,24 @@ enum InternalIdlParsedData {
 // Contextual information for entities; for a cluster, will include cluster-defined
 // and global; for global, only includes global
 pub struct EntityContext<'a> {
-    local: Option<&'a Entities>,
+    local: Option<&'a Cluster>,
     global: &'a Entities,
 }
 
 impl<'a> EntityContext<'a> {
-    pub fn new(local: Option<&'a Entities>, global: &'a Entities) -> Self {
+    pub const fn new(local: Option<&'a Cluster>, global: &'a Entities) -> Self {
         Self { local, global }
+    }
+
+    #[allow(unused)]
+    pub fn cluster(&self) -> Option<&Cluster> {
+        self.local
     }
 
     #[allow(unused)]
     pub fn bitmaps(&self) -> impl Iterator<Item = &Bitmap> + '_ {
         self.local
-            .map(|l| l.bitmaps.iter())
+            .map(|l| l.entities.bitmaps.iter())
             .into_iter()
             .flatten()
             .chain(self.global.bitmaps.iter())
@@ -1368,7 +1373,7 @@ impl<'a> EntityContext<'a> {
     #[allow(unused)]
     pub fn enums(&self) -> impl Iterator<Item = &Enum> + '_ {
         self.local
-            .map(|l| l.enums.iter())
+            .map(|l| l.entities.enums.iter())
             .into_iter()
             .flatten()
             .chain(self.global.enums.iter())
@@ -1376,10 +1381,15 @@ impl<'a> EntityContext<'a> {
 
     pub fn structs(&self) -> impl Iterator<Item = &Struct> + '_ {
         self.local
-            .map(|l| l.structs.iter())
+            .map(|l| l.entities.structs.iter())
             .into_iter()
             .flatten()
             .chain(self.global.structs.iter())
+    }
+
+    #[allow(unused)]
+    pub fn events(&self) -> impl Iterator<Item = &Event> + '_ {
+        self.local.map(|l| l.events.iter()).into_iter().flatten()
     }
 }
 

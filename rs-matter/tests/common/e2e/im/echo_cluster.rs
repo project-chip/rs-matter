@@ -26,12 +26,13 @@ use rs_matter::utils::storage::Vec;
 use strum::{EnumDiscriminants, FromRepr};
 
 use rs_matter::dm::{
-    Access, ArrayAttributeWrite, Attribute, Cluster, Command, Dataver, Handler, InvokeContext,
-    InvokeReply, NonBlockingHandler, Quality, ReadContext, ReadReply, Reply, WriteContext,
+    Access, ArrayAttributeWrite, Attribute, Cluster, Command, Dataver, Event, Handler,
+    InvokeContext, InvokeReply, NonBlockingHandler, Quality, ReadContext, ReadReply, Reply,
+    WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::tlv::{TLVArray, TLVElement, TLVTag, TLVWrite};
-use rs_matter::{attribute_enum, attributes, command_enum, commands, with};
+use rs_matter::{attribute_enum, attributes, command_enum, commands, event_enum, events, with};
 
 pub const WRITE_LIST_MAX: usize = 5;
 
@@ -64,6 +65,15 @@ command_enum!(Commands);
 pub enum RespCommands {
     EchoResp = 0x01,
 }
+
+#[derive(FromRepr, EnumDiscriminants)]
+#[repr(u32)]
+pub enum Events {
+    Event1 = 1,
+    Event2 = 2,
+}
+
+event_enum!(Events);
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID,
@@ -101,8 +111,13 @@ pub const CLUSTER: Cluster<'static> = Cluster {
         Some(RespCommands::EchoResp as _),
         Access::WA,
     ),),
+    events: events!(
+        Event::new(Events::Event1 as _, Access::RA,),
+        Event::new(Events::Event2 as _, Access::RA,),
+    ),
     with_attrs: with!(all),
     with_cmds: with!(all),
+    with_events: with!(all),
 };
 
 /// This is used in the tests to validate any settings that may have happened

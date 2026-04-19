@@ -22,7 +22,7 @@ use core::mem::MaybeUninit;
 use num_derive::FromPrimitive;
 
 use crate::crypto::Crypto;
-use crate::dm::ChangeNotify;
+use crate::dm::AttrChangeNotifier;
 use crate::error::{Error, ErrorCode};
 use crate::respond::ExchangeHandler;
 use crate::tlv::{FromTLV, ToTLV};
@@ -224,12 +224,12 @@ impl<'a> StatusReport<'a> {
 /// Handle messages related to the Secure Channel
 pub struct SecureChannel<'a, C> {
     crypto: C,
-    notify: &'a dyn ChangeNotify,
+    notify: &'a dyn AttrChangeNotifier,
 }
 
 impl<'a, C: Crypto> SecureChannel<'a, C> {
     #[inline(always)]
-    pub const fn new(crypto: C, notify: &'a dyn ChangeNotify) -> Self {
+    pub const fn new(crypto: C, notify: &'a dyn AttrChangeNotifier) -> Self {
         Self { crypto, notify }
     }
 
