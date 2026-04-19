@@ -19,7 +19,7 @@ use crate::dm::{AsyncHandler, HandlerContext};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
     AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
-    CmdRespTag, CmdStatus, EventData, EventFilter, EventPath, EventRespTag, IMStatusCode,
+    CmdRespTag, CmdStatus, EventData, EventFilter, EventPath, EventResp, IMStatusCode,
 };
 use crate::tlv::{TLVArray, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
@@ -294,48 +294,51 @@ where
     }
 }
 
-pub struct EventReader {
-    // This is applied in combination with any event number filters that are
-    // inside the request itself; it's the "what's the min event number this subscription should see next"
-    // that's tracked with each active Subscription and updated each time we emit events to the subscriber
-    min_event_number: u64,
+pub struct EventReader<'a> {
+    /// On construction - a reference to the minimum event number that should be emitted to the subscriber. This is updated after each event is emitted, so it always reflects the minimum event number that should be processed / appended to the writer.
+    /// After each successive call to `process_read`, this is updated to the biggest event number seen during the processing.
+    min_event_number: &'a mut u64,
 }
 
-impl EventReader {
-    pub fn new(min_event_number: u64) -> Self {
+impl<'a> EventReader<'a> {
+    pub const fn new(min_event_number: &'a mut u64) -> Self {
         Self { min_event_number }
     }
 
-    pub async fn process_read<T: TLVWrite>(
-        &self,
-        event: &EventData<'_>,
+    pub fn process_read<T: TLVWrite>(
+        &mut self,
+        event: EventData<'_>,
         paths: &TLVArray<'_, EventPath>,
         event_filters: Option<TLVArray<'_, EventFilter>>,
         mut tw: T,
     ) -> Result<(), Error> {
         let tail = tw.get_tail();
 
-        let result = self
-            .do_process_read(event, paths, event_filters, &mut tw)
-            .await;
+        let event_number = event.event_number;
+
+        let result = self.do_process_read(event, paths, event_filters, &mut tw);
 
         if result.is_err() {
             // If there was an error, rewind to the tail so we don't write any data.
             tw.rewind_to(tail);
+        } else {
+            if event_number >= *self.min_event_number {
+                *self.min_event_number = event_number.wrapping_add(1);
+            }
         }
 
         result
     }
 
-    async fn do_process_read<T: TLVWrite>(
-        &self,
-        event: &EventData<'_>,
+    fn do_process_read<T: TLVWrite>(
+        &mut self,
+        event: EventData<'_>,
         paths: &TLVArray<'_, EventPath>,
         event_filters: Option<TLVArray<'_, EventFilter>>,
         mut tw: T,
     ) -> Result<(), Error> {
-        if event.event_number < self.min_event_number {
-            // This event has already been seen by this subscription, skip
+        if event.event_number < *self.min_event_number {
+            // This event has already been seen by the caller, skip
             return Ok(());
         }
 
@@ -387,9 +390,7 @@ impl EventReader {
             return Ok(());
         }
 
-        tw.start_struct(&TLVTag::Anonymous)?;
-        event.to_tlv(&TLVTag::Context(EventRespTag::Data as _), &mut tw)?;
-        tw.end_container()
+        EventResp::Data(event).to_tlv(&TagType::Anonymous, &mut tw)
     }
 }
 

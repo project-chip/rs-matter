@@ -49,8 +49,8 @@ const DEFAULT_TESTS: &[&str] = &[
     // "TestDiagnosticLogs", // TODO: specific cluster, to be implemented with all others
     "TestDiscovery",
     "TestEqualities",
-    // "TestEvents", // TODO: specific cluster, to be implemented with all others
-    // "TestEventsById", // TODO: specific cluster, to be implemented with all others
+    "TestEvents",
+    "TestEventsById",
     "TestFabricRemovalWhileSubscribed",
     "TestGeneralCommissioning",
     "TestGroupMessaging",
@@ -61,6 +61,7 @@ const DEFAULT_TESTS: &[&str] = &[
     "TestMultiAdmin",
     "TestOperationalCredentialsCluster",
     // "TestOperationalState", // TODO: specific cluster, to be implemented with all others
+    "TestReadNoneSubscribeNone",
     "TestSelfFabricRemoval",
     "TestSubscribe_AdministratorCommissioning",
     "TestSubscribe_OnOff",

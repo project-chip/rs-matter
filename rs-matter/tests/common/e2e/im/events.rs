@@ -16,7 +16,9 @@
  */
 
 use rs_matter::error::Error;
-use rs_matter::im::{EventDataTimestamp, EventPath, EventStatus};
+use rs_matter::im::{
+    EventDataTag, EventDataTimestamp, EventPath, EventPriority, EventRespTag, EventStatus,
+};
 use rs_matter::tlv::{TLVTag, TLVWrite};
 use rs_matter::utils::storage::WriteBuf;
 
@@ -97,7 +99,7 @@ pub struct TestEventData<'a> {
     /// The path to the event.
     pub path: EventPath,
     pub event_number: u64,
-    pub priority: u8,
+    pub priority: EventPriority,
     pub timestamp: EventDataTimestamp,
     pub data: Option<&'a dyn TestToTLV>,
 }
@@ -108,18 +110,33 @@ impl TestToTLV for TestEventData<'_> {
 
         self.path.test_to_tlv(&TLVTag::Context(0), tw)?;
 
-        tw.u64(&TLVTag::Context(1), self.event_number)?;
-        tw.u8(&TLVTag::Context(2), self.priority)?;
+        tw.u64(
+            &TLVTag::Context(EventDataTag::EventNumber as _),
+            self.event_number,
+        )?;
+        tw.u8(
+            &TLVTag::Context(EventDataTag::Priority as _),
+            self.priority as u8,
+        )?;
 
         match self.timestamp {
-            EventDataTimestamp::EpochTimestamp(ts) => tw.u64(&TLVTag::Context(3), ts)?,
-            EventDataTimestamp::SystemTimestamp(ts) => tw.u64(&TLVTag::Context(4), ts)?,
-            EventDataTimestamp::DeltaEpochTimestamp(ts) => tw.u64(&TLVTag::Context(5), ts)?,
-            EventDataTimestamp::DeltaSystemTimestamp(ts) => tw.u64(&TLVTag::Context(6), ts)?,
+            EventDataTimestamp::EpochTimestamp(ts) => {
+                tw.u64(&TLVTag::Context(EventDataTag::EpochTimestamp as _), ts)?
+            }
+            EventDataTimestamp::SystemTimestamp(ts) => {
+                tw.u64(&TLVTag::Context(EventDataTag::SystemTimestamp as _), ts)?
+            }
+            EventDataTimestamp::DeltaEpochTimestamp(ts) => {
+                tw.u64(&TLVTag::Context(EventDataTag::DeltaEpochTimestamp as _), ts)?
+            }
+            EventDataTimestamp::DeltaSystemTimestamp(ts) => tw.u64(
+                &TLVTag::Context(EventDataTag::DeltaSystemTimestamp as _),
+                ts,
+            )?,
         }
 
         if let Some(data) = self.data {
-            data.test_to_tlv(&TLVTag::Context(7), tw)?;
+            data.test_to_tlv(&TLVTag::Context(EventDataTag::Data as _), tw)?;
         }
 
         tw.end_container()?;
@@ -142,8 +159,12 @@ impl TestToTLV for TestEventResp<'_> {
         tw.start_struct(tag)?;
 
         match self {
-            TestEventResp::EventStatus(status) => status.test_to_tlv(&TLVTag::Context(0), tw),
-            TestEventResp::EventData(data) => data.test_to_tlv(&TLVTag::Context(1), tw),
+            TestEventResp::EventStatus(status) => {
+                status.test_to_tlv(&TLVTag::Context(EventRespTag::Status as _), tw)
+            }
+            TestEventResp::EventData(data) => {
+                data.test_to_tlv(&TLVTag::Context(EventRespTag::Data as _), tw)
+            }
         }?;
 
         tw.end_container()

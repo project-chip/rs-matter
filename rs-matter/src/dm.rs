@@ -26,15 +26,16 @@ use embassy_time::{Instant, Timer};
 
 use crate::crypto::Crypto;
 use crate::dm::clusters::net_comm::NetworksAccess;
+use crate::dm::events::EventTLVWrite;
 use crate::error::{Error, ErrorCode};
 use crate::im::{
-    IMStatusCode, InvReq, InvRespTag, OpCode, ReadReq, ReportDataReq, ReportDataRespTag,
-    StatusResp, SubscribeReq, SubscribeResp, TimedReq, WriteReq, WriteRespTag,
-    PROTO_ID_INTERACTION_MODEL,
+    EventPriority, EventRespTag, EventStatus, IMStatusCode, InvReq, InvRespTag, OpCode, ReadReq,
+    ReportDataReq, ReportDataRespTag, StatusResp, SubscribeReq, SubscribeResp, TimedReq, WriteReq,
+    WriteRespTag, PROTO_ID_INTERACTION_MODEL,
 };
 use crate::persist::KvBlobStoreAccess;
 use crate::respond::ExchangeHandler;
-use crate::tlv::{get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite};
+use crate::tlv::{get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::exchange::{Exchange, MAX_EXCHANGE_RX_BUF_SIZE, MAX_EXCHANGE_TX_BUF_SIZE};
 use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::BufferAccess;
@@ -86,7 +87,7 @@ where
     kv: S,
     subscriptions: &'a Subscriptions<NS>,
     subscriptions_buffers: Mutex<RefCell<Vec<SubscriptionBuffer<B::Buffer<'a>>, NS>>>,
-    events: Option<&'a Events<NE>>,
+    events: &'a Events<NE>,
     networks: N,
     handler: T,
 }
@@ -106,7 +107,7 @@ where
     /// - `buffers` - a reference to an implementation of `BufferAccess<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
     /// - `subscriptions` - a reference to a `Subscriptions<N>` struct which is used for managing subscriptions. `N` designates the maximum
     ///   number of subscriptions that can be managed by this handler.
-    /// - `events` - an optional reference to an `Events<N>` struct which is used for managing events in the data model. `N` designates the maximum number of events that can be buffered in the event management system.
+    /// - `events` - a reference to an `Events<N>` struct which is used for managing events in the data model. `N` designates the maximum number of events that can be buffered in the event management system.
     /// - `handler` - an instance of type `T` which implements the `DataModelHandler` trait. This instance is used for interacting with the underlying
     ///   clusters of the data model. Note that the expectations is for the user to provide a handler that handles the Matter system clusters
     ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods
@@ -119,7 +120,7 @@ where
         crypto: C,
         buffers: &'a B,
         subscriptions: &'a Subscriptions<NS>,
-        events: Option<&'a Events<NE>>,
+        events: &'a Events<NE>,
         handler: T,
         kv: S,
         networks: N,
@@ -279,12 +280,14 @@ where
         let metadata = self.handler.lock().await;
         let node = metadata.node();
 
+        let mut min_event_number = 0;
+
         let mut resp = ReportDataResponder::new(
             &req,
             &node,
             None,
             HandlerInvoker::new(exchange, self),
-            EventReader::new(0),
+            EventReader::new(&mut min_event_number),
             self.events,
         );
 
@@ -434,20 +437,20 @@ where
             }
         });
 
+        let mut min_event_number = 0;
+
         let primed = self
             .report_data(
                 id,
                 fabric_idx.get(),
                 peer_node_id,
-                0, // min-event-number is zero initially, though the subscription req itself may have separate filters
+                &mut min_event_number,
                 &rx,
                 &mut tx,
                 exchange,
                 true,
             )
             .await?;
-
-        let min_event_number = self.events.map_or(0, |e| e.peek_next_event_no());
 
         if primed {
             exchange
@@ -488,7 +491,12 @@ where
 
         let metadata = self.handler.lock().await;
 
+        let mut has_attrs = false;
+        let mut has_events = false;
+
         if let Some(attr_requests) = req.attr_requests()? {
+            has_attrs = true;
+
             let node = metadata.node();
 
             for attr_req in attr_requests {
@@ -508,7 +516,33 @@ where
             }
         }
 
-        // TODO(events) validate event_reqs
+        if let Some(event_reqs) = req.event_requests()? {
+            has_events = true;
+
+            let node = metadata.node();
+
+            for event_req in event_reqs {
+                let event_req = event_req?;
+
+                if let Some(endpt) = event_req.endpoint {
+                    let endpoint = node.endpoint(endpt).ok_or(ErrorCode::InvalidAction)?;
+
+                    if let Some(clst) = event_req.cluster {
+                        let _cluster = endpoint.cluster(clst).ok_or(ErrorCode::InvalidAction)?;
+
+                        // TODO: Validate the event ID
+                        // if let Some(attr) = event_req.attr {
+                        //     let _ = cluster.attribute(attr).ok_or(ErrorCode::InvalidAction)?;
+                        // }
+                    }
+                }
+            }
+        }
+
+        if !has_attrs && !has_events {
+            // Empty subscribe requests are not allowed either
+            return Err(ErrorCode::InvalidAction.into());
+        }
 
         Ok(())
     }
@@ -561,7 +595,7 @@ where
             loop {
                 let sub = self.subscriptions.find_report_due(now);
 
-                if let Some((fabric_idx, peer_node_id, session_id, id)) = sub {
+                if let Some((_, _, session_id, id)) = sub {
                     let subscribed = Mutex::<_, MatterRawMutex>::new(Cell::new(false));
 
                     let _guard = scopeguard::guard((), |_| {
@@ -571,7 +605,7 @@ where
                     });
 
                     // TODO: Do a more sophisticated check whether something had actually changed w.r.t. this subscription
-                    let sub = self.subscriptions_buffers.lock(|sb| {
+                    let mut sub = self.subscriptions_buffers.lock(|sb| {
                         let mut sb = sb.borrow_mut();
 
                         let index = unwrap!(sb.iter().position(|sb| sb.subscription_id == id));
@@ -580,22 +614,14 @@ where
                     });
 
                     let result = self
-                        .process_subscription(matter, fabric_idx, peer_node_id, session_id, &sub)
+                        .process_subscription(matter, session_id, &mut sub)
                         .await;
-
-                    let min_event_number = self.events.map_or(0, |e| e.peek_next_event_no());
 
                     match result {
                         Ok(primed) => {
                             if primed && self.subscriptions.mark_reported(id) {
                                 self.subscriptions_buffers.lock(|sb| {
-                                    let _ = sb.borrow_mut().push(SubscriptionBuffer {
-                                        fabric_idx,
-                                        peer_node_id,
-                                        subscription_id: id,
-                                        min_event_number,
-                                        buffer: sub.buffer,
-                                    });
+                                    let _ = sb.borrow_mut().push(sub);
 
                                     subscribed.lock(|s| s.set(true));
                                 });
@@ -623,10 +649,8 @@ where
     async fn process_subscription(
         &self,
         matter: &Matter<'_>,
-        fabric_idx: NonZeroU8,
-        peer_node_id: u64,
         session_id: Option<u32>,
-        sub: &SubscriptionBuffer<B::Buffer<'_>>,
+        sub: &mut SubscriptionBuffer<B::Buffer<'_>>,
     ) -> Result<bool, Error> {
         let mut exchange = if let Some(session_id) = session_id {
             Exchange::initiate_for_session(matter, session_id)?
@@ -644,9 +668,9 @@ where
             let primed = self
                 .report_data(
                     sub.subscription_id,
-                    fabric_idx.get(),
-                    peer_node_id,
-                    sub.min_event_number,
+                    sub.fabric_idx.get(),
+                    sub.peer_node_id,
+                    &mut sub.min_event_number,
                     &sub.buffer,
                     &mut tx,
                     &mut exchange,
@@ -660,7 +684,7 @@ where
         } else {
             error!(
                 "No TX buffer available for processing subscription [F:{:x},P:{:x}]::{}",
-                fabric_idx, peer_node_id, sub.subscription_id,
+                sub.fabric_idx, sub.peer_node_id, sub.subscription_id,
             );
 
             Ok(false)
@@ -714,7 +738,7 @@ where
     /// - `id` - the subscription ID
     /// - `fabric_idx` - the fabric index of the peer
     /// - `peer_node_id` - the node ID of the peer
-    /// - `min_event_number` TODO
+    /// - `min_event_number` - the minimum event number to report
     /// - `rx` - the received data for the subscription, when the subscription was primed
     /// - `tx` - the TX buffer to write the response to
     /// - `exchange` - the exchange to respond to
@@ -725,7 +749,7 @@ where
         id: u32,
         fabric_idx: u8,
         peer_node_id: u64,
-        min_event_number: u64,
+        min_event_number: &mut u64,
         rx: &[u8],
         tx: &mut [u8],
         exchange: &mut Exchange<'_>,
@@ -929,6 +953,21 @@ where
         self.change_notify()
             .notify(endpoint_id, cluster_id, attr_id)
     }
+
+    fn emit_event<F>(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        f: F,
+    ) -> Result<u64, Error>
+    where
+        F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
+    {
+        self.events
+            .push(endpoint_id, cluster_id, event_id, priority, &self.kv, f)
+    }
 }
 
 /// This type responds with a `ReportData` response to all of:
@@ -944,8 +983,8 @@ struct ReportDataResponder<'a, 'b, 'c, const NE: usize, C> {
     node: &'a Node<'a>,
     subscription_id: Option<u32>,
     invoker: HandlerInvoker<'b, 'c, C>,
-    event_reader: EventReader,
-    events: Option<&'a Events<NE>>,
+    event_reader: EventReader<'a>,
+    events: &'a Events<NE>,
 }
 
 impl<'a, 'b, 'c, const NE: usize, C> ReportDataResponder<'a, 'b, 'c, NE, C>
@@ -962,8 +1001,8 @@ where
         node: &'a Node<'a>,
         subscription_id: Option<u32>,
         invoker: HandlerInvoker<'b, 'c, C>,
-        event_reader: EventReader,
-        events: Option<&'a Events<NE>>,
+        event_reader: EventReader<'a>,
+        events: &'a Events<NE>,
     ) -> Self {
         Self {
             req,
@@ -1045,39 +1084,94 @@ where
             wb.end_container()?;
         }
 
-        if let Some(events) = self.events {
-            if let Some(event_reqs) = self.req.event_requests()? {
-                wb.start_array(&TLVTag::Context(ReportDataRespTag::EventReports as _))?;
-                let events_guard = events.lock().await;
-                for event in events_guard.iter() {
-                    let event = event?;
-                    loop {
-                        let result = self
-                            .event_reader
-                            .process_read(&event, &event_reqs, self.req.event_filters()?, &mut *wb)
-                            .await;
+        if let Some(event_reqs) = self.req.event_requests()? {
+            wb.start_array(&TLVTag::Context(ReportDataRespTag::EventReports as _))?;
 
-                        match result {
-                            Ok(()) => break,
-                            Err(err) if err.code() == ErrorCode::NoSpace => {
-                                debug!("<<< No TX space, chunking >>>");
-                                if !self
-                                    .send(ReportDataChunkState::ChunkingEvents, false, wb)
-                                    .await?
-                                {
-                                    return Ok(false);
-                                }
+            // Validate non-wildcard event paths against node metadata
+            // and emit EventStatusIB for paths that don't match
+            for event_path in event_reqs.iter() {
+                let event_path = event_path?;
+
+                if let Some(endpoint_id) = event_path.endpoint {
+                    if let Some(endpoint) = self.node.endpoint(endpoint_id) {
+                        if let Some(cluster_id) = event_path.cluster {
+                            if endpoint.cluster(cluster_id).is_none() {
+                                // Cluster does not exist on this endpoint
+                                Self::write_event_status(
+                                    &event_path,
+                                    IMStatusCode::UnsupportedCluster,
+                                    wb,
+                                )?;
                             }
-                            Err(err) => Err(err)?,
                         }
+                    } else {
+                        // Endpoint does not exist
+                        Self::write_event_status(
+                            &event_path,
+                            IMStatusCode::UnsupportedEndpoint,
+                            wb,
+                        )?;
                     }
                 }
-                wb.end_container()?;
             }
+
+            let event_filters = self.req.event_filters()?;
+
+            loop {
+                let finished = self.events.fetch(|events| {
+                    for event in events {
+                        let result = self.event_reader.process_read(
+                            event,
+                            &event_reqs,
+                            event_filters.clone(),
+                            &mut *wb,
+                        );
+
+                        if let Err(e) = &result {
+                            if e.code() == ErrorCode::NoSpace {
+                                return Ok::<_, Error>(false);
+                            }
+                        }
+
+                        result?;
+                    }
+
+                    Ok(true)
+                })?;
+
+                if finished {
+                    break;
+                }
+
+                debug!("<<< No TX space, chunking >>>");
+                if !self
+                    .send(ReportDataChunkState::ChunkingEvents, false, wb)
+                    .await?
+                {
+                    return Ok(false);
+                }
+            }
+
+            wb.end_container()?;
         }
 
         self.send(ReportDataChunkState::Done, suppress_last_resp, wb)
             .await
+    }
+
+    /// Write an `EventStatusIB` entry inside the `EventReportIBs` array.
+    ///
+    /// This is used when event path validation finds a non-wildcard path
+    /// that does not match any endpoint/cluster in the node metadata.
+    fn write_event_status(
+        event_path: &crate::im::EventPath,
+        status: IMStatusCode,
+        wb: &mut WriteBuf<'_>,
+    ) -> Result<(), Error> {
+        let event_status = EventStatus::new(event_path.clone(), status, None);
+        wb.start_struct(&TLVTag::Anonymous)?;
+        event_status.to_tlv(&TLVTag::Context(EventRespTag::Status as _), &mut *wb)?;
+        wb.end_container()
     }
 
     /// Send the items of an array attribute one by one, until the end of the array is reached.

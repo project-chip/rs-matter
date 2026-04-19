@@ -17,110 +17,44 @@
 
 use core::fmt::Debug;
 
+use crate::dm::{ClusterId, EndptId, EventId};
 use crate::error::{Error, ErrorCode};
-use crate::im::{EventData, EventDataTag, EventDataTimestamp, EventPath, EventRespTag};
-use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, EVENT_EPOCH_KEY};
-use crate::tlv::{
-    FromTLV, TLVElement, TLVSequence, TLVSequenceIter, TLVTag, TLVWrite, TagType, ToTLV,
+use crate::im::{
+    EventData, EventDataTag, EventDataTimestamp, EventPath, EventPriority, EventRespTag,
 };
+use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, EVENT_EPOCH_KEY};
+use crate::tlv::{FromTLV, TLVElement, TLVSequence, TLVSequenceIter, TLVTag, TLVWrite};
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
-use crate::utils::storage::WriteBuf;
-use crate::utils::sync::blocking;
-use crate::utils::sync::{IfMutex, IfMutexGuard};
+use crate::utils::sync::blocking::Mutex;
 
-// TODO we currently only have this singular config to set the size, but the events are stored in three "tiered" buffers, and
-//      we probably want to allow configuring them separately. We also should spend some thinking tokens on what a good default here is.
-pub const DEFAULT_BYTES_PER_BUF: usize = 64;
+/// The default size of each event buffer in bytes.
+/// This is a tradeoff between memory use and the risk of evicting events before subscribers have had a chance to read them.
+pub const DEFAULT_MAX_EVENTS_BUF_SIZE: usize = 256;
 
-/// A type alias for `Events` with the default maximum number of subscriptions.
-pub type DefaultEvents = Events<DEFAULT_BYTES_PER_BUF>;
+/// The size when events won't be used
+pub const NO_EVENTS_BUF_SIZE: usize = 0;
 
-/// Convenience constant expression if you want to disable events
-pub const NO_EVENTS: Option<&'static Events<0>> = None;
+/// A type alias for `Events` with zero capacity, for when events need to be disabled.
+pub type NoEvents = Events<NO_EVENTS_BUF_SIZE>;
 
-/// See EventsPersist for details
-const EVENT_NO_EPOCH_SIZE: u64 = 0x10000;
+/// Only persist every `EVENT_NUMBER_EPOCH_SIZE` event numbers to avoid flash wear.
+const EVENT_NUMBER_EPOCH_SIZE: u64 = 10000;
 
-/// How far before the epoch boundary to trigger a persist, so the persistence
-/// system has time to write before we actually reach the boundary.
-/// TODO: While this helps, there's till a proper race condition here; we should update the code to wait if persistence is lagging behind
-const EVENT_ID_COUNTER_PERSIST_AHEAD: u64 = 1000;
-
-/// Persistence state for events.
+/// Events queue.
 ///
-/// We need event numbers to always be incrementing and never be reused.
-/// To handle that we need to persist them, so reboots don't cause event number reuse.
-/// However, we can't persist every event number increment, because of flash wear. Hence
-/// this thing. We store "epoch" increments of 2^16; then we use up that epoch to emit events
-/// and then persist another epoch. The result is that we only write once every ~2h if we're
-/// writing 10 events per second, but we still ensure we don't re-use event numbers.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct PersistedState {
-    /// The next event number to assign; this is actually *not* persisted, ironically, but
-    /// the locking is simpler if we keep this here next to the epoch stuff
-    pub(crate) next_event_no: u64,
-    /// The persisted epoch boundary. Events up to `epoch_end - 1` can be
-    /// emitted without a new flash write. When we approach this boundary
-    /// (within `EVENT_ID_COUNTER_PERSIST_AHEAD`), we bump it by another epoch.
-    pub(crate) event_epoch_end: u64,
-}
-
-impl PersistedState {
-    const fn new() -> Self {
-        Self {
-            next_event_no: 0,
-            event_epoch_end: 0,
-        }
-    }
-
-    fn init() -> impl Init<Self> {
-        init!(Self {
-            next_event_no: 0,
-            event_epoch_end: 0,
-        })
-    }
-
-    fn reset(&mut self) {
-        self.next_event_no = 0;
-        self.event_epoch_end = 0;
-    }
-
-    /// Restore events from previously persisted state.
-    fn load(&mut self, data: &[u8]) -> Result<(), Error> {
-        let epoch_end = TLVElement::new(data).u64()?;
-
-        self.next_event_no = epoch_end;
-        self.event_epoch_end = epoch_end.saturating_add(EVENT_NO_EPOCH_SIZE);
-
-        Ok(())
-    }
-
-    /// Store events persistence state into a byte slice.
-    fn store(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
-        let mut wb = WriteBuf::new(buf);
-        wb.u64(&TLVTag::Anonymous, self.event_epoch_end)?;
-        Ok(wb.get_tail())
-    }
-}
-
-/// This is the event queue system, it lets you publish Matter Events into a priority queue,
-/// and allows subscribers and remote clients to read the data you've published.
-///
-/// If you are in a concurrent environment you need to select an appropriate mutex implementation for M.
-///
-/// NOTE: The API of this is provisional and subject to change
+/// It lets one publish Matter Events into a priority queue,
+/// and allows subscribers and remote clients to read the published events.
 ///
 /// The queue is implemented as three equally sized ring buffers, the size of the buffers is set by N.
-/// Hence the memory use of the buffers will be 3 * N. If you pick a very small N clients that poll may
-/// miss events as they fall out of the queue, but a large N of course uses more memory. You may need
-/// to experiment to pick an appropriate size for your event write load.
+/// Hence the memory use of the buffers will be 3 * N.
+/// If a very small N is picked, then clients that poll may miss events as they fall out of the queue;
+/// but a large N of course uses more memory.
 ///
-/// If your application emits no events you can disable this subsystem using the NO_EVENTS constant.
-pub struct Events<const N: usize = DEFAULT_BYTES_PER_BUF> {
-    state: IfMutex<EventsInner<N>>,
-    pub(crate) persisted_state: blocking::Mutex<RefCell<PersistedState>>,
+/// If the app emits no events, this subsystem can be disabled by using the `NoEvents` type alias.
+pub struct Events<const N: usize = DEFAULT_MAX_EVENTS_BUF_SIZE> {
+    inner: Mutex<RefCell<EventsInner<N>>>,
     epoch: Epoch,
 }
 
@@ -128,8 +62,7 @@ impl<const N: usize> Events<N> {
     #[inline(always)]
     pub const fn new(epoch: Epoch) -> Self {
         Self {
-            state: IfMutex::new(EventsInner::new()),
-            persisted_state: blocking::Mutex::new(RefCell::new(PersistedState::new())),
+            inner: Mutex::new(RefCell::new(EventsInner::new())),
             epoch,
         }
     }
@@ -143,80 +76,167 @@ impl<const N: usize> Events<N> {
 
     pub fn init(epoch: Epoch) -> impl Init<Self> {
         init!(Self {
-            state <- IfMutex::init(EventsInner::init()),
-            persisted_state <- blocking::Mutex::init(RefCell::init(PersistedState::init())),
+            inner <- Mutex::init(RefCell::init(EventsInner::init())),
             epoch,
         })
     }
 
+    #[cfg(feature = "std")]
+    pub fn init_default() -> impl Init<Self> {
+        init!(Self {
+            inner <- Mutex::init(RefCell::init(EventsInner::init())),
+            epoch: crate::utils::epoch::sys_epoch,
+        })
+    }
+
     pub fn reset(&mut self) {
-        self.state.get_mut().reset();
-        self.persisted_state.get_mut().get_mut().reset();
-    }
-
-    /// Push a new event into the event queue, making it visible to any subscribers.
-    /// NOTE: This API is unstable and may change, for instance it currently requires knowing the tag number for writing data
-    ///
-    /// To write event data you use the provided EventQueueWriter and write the tag EventDataTag::Data.
-    pub async fn push<S>(
-        &self,
-        path: EventPath,
-        priority: u8,
-        kv: S,
-        data: impl FnOnce(&mut EventQueueWriter<N>) -> Result<(), Error>,
-    ) -> Result<(), Error>
-    where
-        S: KvBlobStoreAccess,
-    {
-        let event_no = {
-            let mut persist = Persist::new(kv);
-
-            let event_no = self.persisted_state.lock(|cell| {
-                let mut state = cell.borrow_mut();
-                let event_no = state.next_event_no;
-                state.next_event_no += 1;
-
-                if state.next_event_no
-                    >= state
-                        .event_epoch_end
-                        .saturating_sub(EVENT_ID_COUNTER_PERSIST_AHEAD)
-                {
-                    state.event_epoch_end = state.next_event_no.saturating_add(EVENT_NO_EPOCH_SIZE);
-
-                    persist.store(EVENT_EPOCH_KEY, |buf| state.store(buf).map(Some))?;
-                }
-
-                Ok::<_, Error>(event_no)
-            })?;
-
-            persist.run()?;
-
-            event_no
-        };
-
-        let mut internal = self.state.lock().await;
-        let timestamp = EventDataTimestamp::EpochTimestamp((self.epoch)().as_millis() as u64);
-        let mut tw = internal.push(path, event_no, priority, timestamp)?;
-        data(&mut tw)?;
-        tw.end()
-    }
-
-    /// Lock the events queue so you can read it; the returned guard gives you the ability to iterate over stored events.
-    /// TODO: Note that this guard is held across long reads, which will cause writers to be stalled over network waits; we should fix this, see https://github.com/project-chip/rs-matter/pull/361#issuecomment-3906929345
-    pub async fn lock(&'_ self) -> EventsGuard<'_, N> {
-        let internal = self.state.lock().await;
-        EventsGuard::new(internal)
-    }
-
-    // TODO(events) we can't do it like this, this will miss events when pushing happens after for_each but before we call this
-    //              we need to return the last processed one from for_each or something like that
-    pub fn peek_next_event_no(&self) -> u64 {
-        self.persisted_state
-            .lock(|cell| cell.borrow().next_event_no)
+        self.inner.get_mut().borrow_mut().reset();
     }
 
     /// Remove persisted state from the given key-value store.
-    pub async fn reset_persist<S>(&mut self, mut kv: S, buf: &mut [u8]) -> Result<(), Error>
+    pub async fn reset_persist<S>(&mut self, kv: S, buf: &mut [u8]) -> Result<(), Error>
+    where
+        S: KvBlobStore,
+    {
+        self.inner
+            .get_mut()
+            .borrow_mut()
+            .reset_persist(kv, buf)
+            .await
+    }
+
+    /// Load persisted state from the given key-value store, so that we can continue emitting events without reusing event numbers.
+    pub async fn load_persist<S>(&mut self, kv: S, buf: &mut [u8]) -> Result<(), Error>
+    where
+        S: KvBlobStore,
+    {
+        self.inner
+            .get_mut()
+            .borrow_mut()
+            .load_persist(kv, buf)
+            .await
+    }
+
+    pub fn fetch<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(EventsIter<'_, N>) -> R,
+    {
+        self.inner.lock(|state| {
+            let state = state.borrow();
+
+            f(state.iter())
+        })
+    }
+
+    /// Push a new event into the event queue.
+    ///
+    /// # Arguments
+    /// - `endpoint_id`: The endpoint ID of the event source.
+    /// - `cluster_id`: The cluster ID of the event source.
+    /// - `event_id`: The event ID of the event source.
+    /// - `priority`: The priority of the event.
+    /// - `kv`: A key-value store access object for persisting event state as needed.
+    /// - `f`: A closure that takes an `EventTLVWrite` and writes
+    ///   the event data into it using TLV encoding. The closure should return an error if writing the event data fails for any reason, in which case the event will not be pushed into the queue.
+    ///
+    /// # Returns
+    /// - `Ok(u64)`: The sequence number of the emitted event, if the event was successfully emitted.
+    /// - `Err(Error)`: An error if the event could not be emitted.
+    pub fn push<S, F>(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
+        priority: EventPriority,
+        kv: S,
+        f: F,
+    ) -> Result<u64, Error>
+    where
+        S: KvBlobStoreAccess,
+        F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
+    {
+        let mut persist = Persist::new(kv);
+
+        let event_number = self.inner.lock(|state| {
+            let mut state = state.borrow_mut();
+
+            let event_number = state.next_event_number(&mut persist)?;
+
+            let timestamp = EventDataTimestamp::EpochTimestamp((self.epoch)().as_millis() as u64);
+
+            state.push(
+                endpoint_id,
+                cluster_id,
+                event_id,
+                event_number,
+                priority,
+                timestamp,
+                f,
+            )?;
+
+            Ok::<_, Error>(event_number)
+        })?;
+
+        persist.run()?;
+
+        Ok(event_number)
+    }
+}
+
+/// The inner state of the events queue, protected by a mutex in the outer Events struct. This is where all the actual logic lives.
+///
+/// It's modeled after the tiered ring buffer design used in the C++ matter SDK:
+/// - *Every* new event is written to the next slot in the DEBUG buffer.
+/// - If there is no space for the new event, events are FIFO evicted from the first buffer.
+/// - If the evicted event has a priority as high as or higher than the next buffer in the chain,
+///   then the evicted event is promoted to there, surviving to see another day.
+/// - Promotion may in turn require more eviction in the next buffer, and so on up the chain.
+/// - The end result is that critical events get to live in any of the buffers, making their way through
+///   all three until they finally age out. Info lives in one of the first two, and debug only in the first.
+///
+/// N.B: the discussion in PR 361 that introduced this:
+/// We were not able to determine a way to implement a priority queue that both met the specs requirements
+/// (low-prio events must not cause eviction of high-prio events) while also allowing debug and info-prio events
+/// to be emitted at all.
+/// Instead we opted to replicate the approach used in the C++ impl, which we believe is reasonable but also seemingly in violation of the spec.
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+struct EventsInner<const N: usize> {
+    // TODO(events): Allow per-ring const generics, so the rings can be sized independently
+    buf_debug: EventsBuf<N>,
+    buf_info: EventsBuf<N>,
+    buf_critical: EventsBuf<N>,
+    next_event_number: u64,
+}
+
+impl<const N: usize> EventsInner<N> {
+    const fn new() -> Self {
+        Self {
+            buf_debug: EventsBuf::new(),
+            buf_info: EventsBuf::new(),
+            buf_critical: EventsBuf::new(),
+            next_event_number: 0,
+        }
+    }
+
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            buf_debug <- EventsBuf::init(),
+            buf_info <- EventsBuf::init(),
+            buf_critical <- EventsBuf::init(),
+            next_event_number: 0,
+        })
+    }
+
+    fn reset(&mut self) {
+        self.buf_debug.reset();
+        self.buf_info.reset();
+        self.buf_critical.reset();
+        self.next_event_number = 0;
+    }
+
+    /// Remove persisted state from the given key-value store.
+    async fn reset_persist<S>(&mut self, mut kv: S, buf: &mut [u8]) -> Result<(), Error>
     where
         S: KvBlobStore,
     {
@@ -230,7 +250,7 @@ impl<const N: usize> Events<N> {
     }
 
     /// Load persisted state from the given key-value store, so that we can continue emitting events without reusing event numbers.
-    pub async fn load_persist<S>(&mut self, mut kv: S, buf: &mut [u8]) -> Result<(), Error>
+    async fn load_persist<S>(&mut self, mut kv: S, buf: &mut [u8]) -> Result<(), Error>
     where
         S: KvBlobStore,
     {
@@ -246,305 +266,322 @@ impl<const N: usize> Events<N> {
     }
 
     /// Restore events from previously persisted state.
-    pub fn load(&mut self, data: &[u8]) -> Result<(), Error> {
-        let cell = self.persisted_state.get_mut();
-        cell.borrow_mut().load(data)
-    }
-}
+    fn load(&mut self, data: &[u8]) -> Result<(), Error> {
+        self.next_event_number = TLVElement::new(data).u64()?;
 
-/// A thin guard that acts both to keep the event queue stable while we iterate over it, but also
-/// as back-pressure to writers. If writers are faster than we're able to publish events on the network,
-/// events will get dropped, leading to errors. Hence, while we write to the network we force writers to stall.
-///
-/// Most of the time the stalling of writers is very short, just enough to move the events into outbound
-/// network buffers. However if there are a lot of events, such that we need to chunk publishing into multiple packets,
-/// then we will hold this across network calls, forcing writers to slow down until readers have caught up.
-pub struct EventsGuard<'a, const N: usize> {
-    guard: IfMutexGuard<'a, EventsInner<N>>,
-}
-
-impl<'a, const N: usize> EventsGuard<'a, N> {
-    fn new(guard: IfMutexGuard<'a, EventsInner<N>>) -> Self {
-        Self { guard }
+        Ok(())
     }
 
-    pub fn iter(&'_ self) -> EventQueueIter<'_, N> {
-        self.guard.iter()
-    }
-}
-
-/// This is the central event queue storage system. It's modeled after the tiered ring buffer design
-/// used in the C++ matter SDK. *Every* new event is written to the next slot in the DEBUG level buffer.
-/// If there is not space for the new event, events are FIFO evicted from the first level buffer.
-/// If the evicted event has a priority level as high as or higher than the next level buffer in the chain,
-/// then the evicted event is promoted to there, surviving to see another day.
-/// Promotion may in turn require more eviction in the next buffer, and so on up the chain.
-/// The end result is that critical events get to live in any of the level buffers, making their way through
-/// all three until they finally age out. Info lives in one of the first two, and debug only in the first.
-///
-/// n.b. the discussion in PR #361 that introduced this: We were not able to determine a way to
-/// implement a priority queue that both met the specs requirements (low-prio events must not cause
-/// eviction of high-prio events) while also allowing debug and info-prio events to be emitted at all.
-/// Instead we opted to replicate the approach used in the C++ impl, which we believe is reasonable but
-/// also seemingly in violation of the spec.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct EventsInner<const N: usize> {
-    // TODO(events): Allow per-ring const generics, so the rings can be sized independently
-    buf_debug: LevelBuf<N>,
-    buf_info: LevelBuf<N>,
-    buf_critical: LevelBuf<N>,
-}
-
-impl<const N: usize> EventsInner<N> {
-    const fn new() -> Self {
-        Self {
-            buf_debug: LevelBuf::new(),
-            buf_info: LevelBuf::new(),
-            buf_critical: LevelBuf::new(),
-        }
-    }
-
-    pub fn init() -> impl Init<Self> {
-        init!(Self {
-            buf_debug <- LevelBuf::init(),
-            buf_info <- LevelBuf::init(),
-            buf_critical <- LevelBuf::init(),
-        })
-    }
-
-    pub fn reset(&mut self) {
-        self.buf_debug.reset();
-        self.buf_info.reset();
-        self.buf_critical.reset();
-    }
-
-    pub fn push<'a>(
-        &'a mut self,
-        path: EventPath,
+    #[allow(clippy::too_many_arguments)]
+    fn push<F>(
+        &mut self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        event_id: EventId,
         event_number: u64,
-        priority: u8,
+        priority: EventPriority,
         timestamp: EventDataTimestamp,
-    ) -> Result<EventQueueWriter<'a, N>, Error> {
-        let mut tw = EventQueueWriter::new(self, Level::Debug);
-        tw.start_struct(&TLVTag::Context(EventRespTag::Data as _))?;
-        path.to_tlv(&TagType::Context(EventDataTag::Path as _), &mut tw)?;
-        tw.u64(
-            &TagType::Context(EventDataTag::EventNumber as _),
-            event_number,
-        )?;
-        tw.u8(&TagType::Context(EventDataTag::Priority as _), priority)?;
-        match timestamp {
-            EventDataTimestamp::EpochTimestamp(ts) => {
-                tw.u64(&TagType::Context(EventDataTag::EpochTimestamp as _), ts)?
+        f: F,
+    ) -> Result<(), Error>
+    where
+        F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
+    {
+        let mut event_writer = EventWriter::new(self);
+
+        let pos = event_writer.get_tail();
+
+        let result = (|| {
+            EventData {
+                path: EventPath {
+                    endpoint: Some(endpoint_id),
+                    cluster: Some(cluster_id),
+                    event: Some(event_id),
+                    ..Default::default()
+                },
+                event_number,
+                priority,
+                timestamp,
+                data: TLVElement::new(&[]),
             }
-            EventDataTimestamp::SystemTimestamp(ts) => {
-                tw.u64(&TagType::Context(EventDataTag::SystemTimestamp as _), ts)?
-            }
-            EventDataTimestamp::DeltaEpochTimestamp(ts) => tw.u64(
-                &TagType::Context(EventDataTag::DeltaEpochTimestamp as _),
-                ts,
-            )?,
-            EventDataTimestamp::DeltaSystemTimestamp(ts) => tw.u64(
-                &TagType::Context(EventDataTag::DeltaSystemTimestamp as _),
-                ts,
-            )?,
-        };
-        Ok(tw)
+            .write_preamble(&EVENT_TAG, event_writer.tw())?;
+
+            f(event_writer.tw())?;
+
+            event_writer.tw().end_container()
+        })();
+
+        if result.is_err() {
+            event_writer.rewind_to(pos);
+        }
+
+        result
     }
 
-    fn iter<'a>(&'a self) -> EventQueueIter<'a, N> {
-        EventQueueIter {
-            queue: self,
-            buf_ref: Level::Critical,
+    fn next_event_number<S>(&mut self, persist: &mut Persist<S>) -> Result<u64, Error>
+    where
+        S: KvBlobStoreAccess,
+    {
+        let event_number = self.next_event_number;
+
+        if event_number.is_multiple_of(EVENT_NUMBER_EPOCH_SIZE) {
+            // We're at an epoch start boundary. Therefore, we need to persist the new epoch to storage
+            // so we don't lose it on reboot and end up reusing event numbers.
+            persist.store_tlv(
+                EVENT_EPOCH_KEY,
+                event_number.wrapping_add(EVENT_NUMBER_EPOCH_SIZE),
+            )?;
+        }
+
+        self.next_event_number = event_number.wrapping_add(1);
+
+        Ok(event_number)
+    }
+
+    fn iter(&self) -> EventsIter<'_, N> {
+        EventsIter {
+            events: self,
+            buf_ref: EventPriority::Critical,
             buf_iter: self.buf_critical.iter(),
         }
     }
-}
 
-pub struct EventQueueIter<'a, const N: usize> {
-    queue: &'a EventsInner<N>,
-    buf_ref: Level<N>,
-    buf_iter: TLVSequenceIter<'a>,
-}
-
-impl<'a, const N: usize> Iterator for EventQueueIter<'a, N> {
-    type Item = Result<EventData<'a>, Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(res) = self.buf_iter.next() {
-            match res {
-                Ok(tr) => return Some(parse_event(tr)),
-                Err(e) => return Some(Err(e)),
-            }
+    /// Return a reference to the buffer corresponding to the provided priority level
+    fn buf(&self, priority: EventPriority) -> &EventsBuf<N> {
+        match priority {
+            EventPriority::Debug => &self.buf_debug,
+            EventPriority::Info => &self.buf_info,
+            EventPriority::Critical => &self.buf_critical,
         }
+    }
 
-        if let Some(next_buf_ref) = self.buf_ref.prior_level() {
-            self.buf_iter = next_buf_ref.get(self.queue).iter();
-            self.buf_ref = next_buf_ref;
-            return self.next();
+    /// Return a mutable reference to the buffer corresponding to the provided priority level
+    fn buf_mut(&mut self, priority: EventPriority) -> &mut EventsBuf<N> {
+        match priority {
+            EventPriority::Debug => &mut self.buf_debug,
+            EventPriority::Info => &mut self.buf_info,
+            EventPriority::Critical => &mut self.buf_critical,
         }
-        None
+    }
+
+    /// Return a reference to the buffer corresponding to the provided priority level, and a mutable reference to the next buffer in the chain if it exists
+    fn buf_and_next_mut(
+        &mut self,
+        priority: EventPriority,
+    ) -> (&EventsBuf<N>, Option<&mut EventsBuf<N>>) {
+        match priority {
+            EventPriority::Debug => (&self.buf_debug, Some(&mut self.buf_info)),
+            EventPriority::Info => (&self.buf_info, Some(&mut self.buf_critical)),
+            EventPriority::Critical => (&self.buf_critical, None),
+        }
     }
 }
 
-fn parse_event<'a>(tr: TLVElement<'a>) -> Result<EventData<'a>, Error> {
-    let mut path = None;
-    let mut event_number = None;
-    let mut priority = None;
-    let mut timestamp = None;
-    let mut data = None;
-
-    tr.structure()?.scan_map(|elem| {
-        if elem.is_empty() {
-            return Ok(Some(elem));
-        }
-
-        match EventDataTag::try_from(elem.ctx()?)? {
-            EventDataTag::Path => path = Some(EventPath::from_tlv(&elem)?),
-            EventDataTag::EventNumber => event_number = Some(elem.u64()?),
-            EventDataTag::Priority => priority = Some(elem.u8()?),
-            EventDataTag::SystemTimestamp => {
-                timestamp = Some(EventDataTimestamp::SystemTimestamp(elem.u64()?))
-            }
-            EventDataTag::EpochTimestamp => {
-                timestamp = Some(EventDataTimestamp::EpochTimestamp(elem.u64()?))
-            }
-            EventDataTag::DeltaSystemTimestamp => {
-                timestamp = Some(EventDataTimestamp::DeltaSystemTimestamp(elem.u64()?))
-            }
-            EventDataTag::DeltaEpochTimestamp => {
-                timestamp = Some(EventDataTimestamp::DeltaEpochTimestamp(elem.u64()?))
-            }
-            EventDataTag::Data => data = Some(elem.clone()),
-        }
-        Ok(None)
-    })?;
-
-    Ok(EventData::new(
-        path.ok_or(Error::new(ErrorCode::AttributeNotFound))?,
-        event_number.ok_or(Error::new(ErrorCode::AttributeNotFound))?,
-        priority.ok_or(Error::new(ErrorCode::AttributeNotFound))?,
-        timestamp.ok_or(Error::new(ErrorCode::AttributeNotFound))?,
-        data.ok_or(Error::new(ErrorCode::AttributeNotFound))?,
-    ))
+/// An iterator over the events in the queue, starting from the highest priority and oldest event.
+pub struct EventsIter<'a, const N: usize> {
+    events: &'a EventsInner<N>,
+    buf_ref: EventPriority,
+    buf_iter: TLVSequenceIter<'a>,
 }
 
-pub struct EventQueueWriter<'a, const N: usize> {
-    queue: &'a mut EventsInner<N>,
-    buf_ref: Level<N>,
+impl<'a, const N: usize> Iterator for EventsIter<'a, N> {
+    type Item = EventData<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(res) = self.buf_iter.next() {
+            let event = unwrap!(
+                res,
+                "Should not have iter errors as we only put well-formed TLVs in the buffer"
+            );
+            let event = unwrap!(
+                EventData::from_tlv(&event),
+                "Should not have parsing errors as we only put well-formed TLVs in the buffer"
+            );
+
+            return Some(event);
+        }
+
+        if let Some(next_buf_ref) = self.buf_ref.prev() {
+            self.buf_iter = self.events.buf(next_buf_ref).iter();
+            self.buf_ref = next_buf_ref;
+
+            self.next()
+        } else {
+            None
+        }
+    }
+}
+
+/// A helper struct for writing event data into the buffers, handling eviction and promotion as needed to make space for the new event.
+struct EventWriter<'a, const N: usize> {
+    events: &'a mut EventsInner<N>,
     bytes_written: usize,
 }
 
-impl<'a, const N: usize> EventQueueWriter<'a, N> {
-    fn new(queue: &'a mut EventsInner<N>, buf_ref: Level<N>) -> Self {
+impl<'a, const N: usize> EventWriter<'a, N> {
+    // We always write at the end of the debug buffer
+    // Events are flowing to higher-prio buffers by eviction
+    const OPER_BUF: EventPriority = EventPriority::Debug;
+
+    /// Create a new EventWriter for the given EventsInner, starting with zero bytes written.
+    #[inline(always)]
+    const fn new(events: &'a mut EventsInner<N>) -> Self {
         Self {
-            queue,
-            buf_ref,
+            events,
             bytes_written: 0,
         }
     }
 
-    fn end(&mut self) -> Result<(), Error> {
-        self.end_container()?;
+    /// Get a TLVWrite decorator for this EventWriter,
+    /// which handles writing TLV data and rolling back on errors by rewinding the write head to the position before the write started.
+    #[inline(always)]
+    fn tw(&mut self) -> EventTLVWrite<'_> {
+        EventTLVWrite(self)
+    }
+
+    /// Write a byte to the current buffer, evicting and promoting events as needed to make space for the new byte.
+    fn write(&mut self, byte: u8) -> Result<(), Error> {
+        if N == 0 {
+            // Events are disabled, we should never write anything to the buffer and should always succeed.
+            return Ok(());
+        }
+
+        if self.bytes_written == N {
+            // This event is larger than the buffer, the client needs to change the buffer size for this to work
+            return Err(Error::new(ErrorCode::ResourceExhausted));
+        }
+
+        while self.events.buf_mut(Self::OPER_BUF).append(byte).is_err() {
+            // Overflow, need to evict an event to make space.
+            // This may cascade and cause evictions in the higher priority buffers, but that's fine,
+            // as we just want to make space for this new event and the priority guarantees are maintained by the eviction logic.
+            self.evict(Self::OPER_BUF);
+        }
+
+        self.bytes_written += 1;
+
         Ok(())
     }
 
-    // Evict one entry from the given buffer, potentially promoting it to the next buffer if
-    // it meets the priority threshold. If promotion happens the eviction "cascades", until
-    // we either evict an event that doesn't meet the next buffers prio level or we run out of
-    // level buffers and drop the oldest critical event.
-    fn evict(&mut self, buf_ref: Level<N>) -> Result<(), Error> {
-        let (victim_prio, victim_ref) = self.prepare_eviction(buf_ref.get(self.queue))?;
+    /// Rewind the write head to the position before the current event started being written, effectively discarding any bytes written for the current event so far. This is used to roll back writes when an error occurs during event writing.
+    fn rewind_to(&mut self, bytes_written: usize) {
+        assert!(self.bytes_written >= bytes_written);
 
-        if let Some(next_buf_ref) = buf_ref.next_level() {
-            if next_buf_ref.threshold() <= victim_prio {
-                // There is another level and our victim record meets the priority threshold, we should promote it
-                self.promote(buf_ref, next_buf_ref, victim_ref)?;
+        self.events
+            .buf_mut(Self::OPER_BUF)
+            .rewind_by(self.bytes_written - bytes_written);
+        self.bytes_written = bytes_written;
+    }
+
+    /// Evict the first event from the buffer corresponding to the provided priority level,
+    /// promoting it to the next buffer if its priority meets the threshold, and cascading evictions/promotions as needed.
+    fn evict(&mut self, buf_ref: EventPriority) {
+        let event_len = self.events.buf(buf_ref).first_event_len();
+
+        if let Some(next_buf_ref) = buf_ref.next() {
+            let event_prio = self.events.buf(buf_ref).first_event_prio();
+
+            if next_buf_ref as u8 <= event_prio {
+                // There is another level and our event meets the priority threshold, so we should promote it
+                self.promote(buf_ref, next_buf_ref, event_len);
             }
         }
 
-        buf_ref.get_mut(self.queue).evict(victim_ref);
-        Ok(())
+        // Evict the event from the current buffer, whether we promoted it or not
+        self.events.buf_mut(buf_ref).evict_first_event();
     }
 
-    // Work out the size and priority of the next victim in the given buffer
-    fn prepare_eviction(&self, buf: &LevelBuf<N>) -> Result<(u8, VictimRef), Error> {
-        let victim_ref = buf.prepare_eviction()?;
-        let priority = victim_ref
-            .tlv(buf)
-            .structure()?
-            .find_ctx(EventDataTag::Priority as _)?
-            .u8()?;
-        Ok((priority, victim_ref))
-    }
-
-    // Promotes victim_ref from src to dst, making space in dst (potentially cascading) if needed
-    fn promote(
-        &mut self,
-        src_buf: Level<N>,
-        dst_buf: Level<N>,
-        victim_ref: VictimRef,
-    ) -> Result<(), Error> {
-        // Make space (n.b. this assumes the next level is always at least as large as the current level, which is currently always true)
-        while dst_buf.get(self.queue).capacity() < victim_ref.len() {
-            self.evict(dst_buf)?;
+    // Promote the first event from the source buffer to the destination buffer,
+    // evicting events from the destination buffer as needed to make space and potentially
+    // cascading promotion to higher buffers if evicted events meet the priority threshold
+    fn promote(&mut self, src_buf: EventPriority, dst_buf: EventPriority, event_len: usize) {
+        // Make space (n.b. this assumes the next buffer is always at least as large as the current buffer, which is currently always true)
+        while self.events.buf(dst_buf).capacity() < event_len {
+            self.evict(dst_buf);
         }
 
-        let (src, dst) = src_buf.get_mut_and_next(self.queue);
-        let dst = dst.expect("dst buffer should always exist as this is checked in evict()");
-        dst.write_slice(victim_ref.raw(src))
-            .expect("should not overflow as eviction should have cleared space");
-        Ok(())
+        let (src, dst) = self.events.buf_and_next_mut(src_buf);
+
+        let dst = unwrap!(
+            dst,
+            "Dst buffer should always exist as this is checked in evict()"
+        );
+
+        unwrap!(
+            dst.append_slice(src.slice(event_len)),
+            "Should not overflow as eviction should have cleared space"
+        );
     }
 }
 
-impl<'a, const N: usize> TLVWrite for EventQueueWriter<'a, N> {
+/// A dyn-compatible writer for event data
+/// Necessary so that we can implement `EventTLVWrite`, which is a `TLVWrite` with an erased `const N: usize` generic
+trait DynEventWriter {
+    fn write(&mut self, byte: u8) -> Result<(), Error>;
+
+    fn get_tail(&self) -> usize;
+
+    fn rewind_to(&mut self, pos: usize);
+}
+
+impl<'a, const N: usize> DynEventWriter for EventWriter<'a, N> {
+    fn write(&mut self, byte: u8) -> Result<(), Error> {
+        EventWriter::write(self, byte)
+    }
+
+    fn get_tail(&self) -> usize {
+        self.bytes_written
+    }
+
+    fn rewind_to(&mut self, pos: usize) {
+        EventWriter::rewind_to(self, pos)
+    }
+}
+
+/// A `TLVWrite` wrapper around EventWriter that erases the const generic,
+/// allowing it to be used in the closure passed to `Events::push()` and the various `emit_event` handler context methods.
+pub struct EventTLVWrite<'a>(&'a mut dyn DynEventWriter);
+
+impl<'a> TLVWrite for EventTLVWrite<'a> {
     type Position = usize;
 
     fn write(&mut self, byte: u8) -> Result<(), Error> {
-        if self.bytes_written == N {
-            // This event is larger than the buffer, the client needs to change the buffer size for this to work
-            return Err(Error::new(ErrorCode::NoSpace));
-        }
-        while let Err(OverflowError {}) = self.buf_ref.get_mut(self.queue).write(byte) {
-            // Overflow, need to evict an entry
-            self.evict(Level::Debug)?;
-        }
-        self.bytes_written += 1;
-        Ok(())
+        self.0.write(byte)
     }
 
     fn get_tail(&self) -> Self::Position {
-        // n.b. TLVWrite calls the next position to be written "tail", but our level buffer calls that position "head"
-        self.queue.buf_debug.head
+        self.0.get_tail()
     }
 
     fn rewind_to(&mut self, pos: Self::Position) {
-        self.queue.buf_debug.head = pos;
+        self.0.rewind_to(pos)
     }
 }
 
-/// LevelBuf stores one "level" of events, see the doc string on EventsInner for more info on that.
+const EVENT_TAG: TLVTag = TLVTag::Context(EventRespTag::Data as _);
+
+/// The context tag corresponding to the event data field in the Event Response TLV structure.
+pub const EVENT_DATA_TAG: TLVTag = TLVTag::Context(EventDataTag::Data as _);
+
+/// Stores one "priority level" of events, see the doc string on EventsInner for more info on that.
 ///
 /// This behaves very similar to a ring buffer - you can append data at the write head, and eventually
 /// the head will catch up and "eat" the tail, implementing a sort of sliding window of visible data.
 ///
-/// This is a much less efficient variant though - it left-shifts the entire buffer to "evict" old records,
+/// This is a much less efficient variant though - it left-shifts the entire buffer to "evict" old events,
 /// rather than just track head/tail pointers with wrap-around.
 ///
-/// The thing we gain from the less efficient implementation is that records are never "split up", they are
-/// always complete TLVs in contiguous memory, which allows us to use TLVElement to read the records.
+/// The thing we gain from the less efficient implementation is that events are never "split up", they are
+/// always complete TLVs in contiguous memory, which allows to use TLVElement to read/iterate over the events.
 ///
 /// If you feel enthusiastic, it might give some performance gains to replace this with a real ring buffer.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct LevelBuf<const N: usize> {
+struct EventsBuf<const N: usize> {
     data: [u8; N],
     head: usize,
 }
 
-impl<const N: usize> LevelBuf<N> {
+impl<const N: usize> EventsBuf<N> {
     const fn new() -> Self {
         Self {
             data: [0; N],
@@ -552,53 +589,77 @@ impl<const N: usize> LevelBuf<N> {
         }
     }
 
-    pub fn init() -> impl Init<Self> {
+    fn init() -> impl Init<Self> {
         init!(Self {
             data <- crate::utils::init::zeroed(),
             head: 0,
         })
     }
 
-    pub fn reset(&mut self) {
+    fn reset(&mut self) {
         self.head = 0;
     }
 
-    fn write(&mut self, byte: u8) -> Result<(), OverflowError> {
+    fn rewind_by(&mut self, bytes_written: usize) {
+        assert!(self.head >= bytes_written);
+
+        self.head -= bytes_written;
+    }
+
+    fn slice(&self, len: usize) -> &[u8] {
+        assert!(self.head >= len);
+        &self.data[..len]
+    }
+
+    fn append(&mut self, byte: u8) -> Result<(), OverflowError> {
         if self.capacity() == 0 {
-            return Err(OverflowError {});
+            return Err(OverflowError);
         }
+
         self.data[self.head] = byte;
         self.head += 1;
         Ok(())
     }
 
-    fn write_slice(&mut self, data: &[u8]) -> Result<(), OverflowError> {
+    fn append_slice(&mut self, data: &[u8]) -> Result<(), OverflowError> {
         if self.capacity() < data.len() {
-            return Err(OverflowError {});
+            return Err(OverflowError);
         }
+
         self.data[self.head..self.head + data.len()].copy_from_slice(data);
         self.head += data.len();
-        Ok(())
-    }
 
-    // Get the size of the record at the given position; the caller is responsible for ensuring pos is aligned on a record
-    fn record_len(&self, pos: usize) -> Result<usize, Error> {
-        TLVSequence(&self.data[pos..]).container_len()
+        Ok(())
     }
 
     fn capacity(&self) -> usize {
         self.data.len() - self.head
     }
 
-    fn prepare_eviction(&self) -> Result<VictimRef, Error> {
-        Ok(VictimRef {
-            victim_len: self.record_len(0)?,
-        })
+    /// Get the TLV length of the event in the buffer
+    ///
+    /// The method will panic if the buffer is empty or if the buffer contains invalid data
+    fn first_event_len(&self) -> usize {
+        assert!(self.head > 0);
+        unwrap!(TLVSequence(&self.data[..self.head]).container_len())
     }
 
-    fn evict(&mut self, victim: VictimRef) {
-        self.data.copy_within(victim.len()..self.head, 0);
-        self.head -= victim.len();
+    /// Get the priority of the event at the start of the buffer
+    ///
+    /// The method will panic if the buffer is empty or if the buffer contains invalid data
+    fn first_event_prio(&self) -> u8 {
+        unwrap!(unwrap!(
+            unwrap!(TLVElement::new(&self.data[..self.head]).structure())
+                .find_ctx(EventDataTag::Priority as _)
+        )
+        .u8())
+    }
+
+    fn evict_first_event(&mut self) {
+        let tlv_len = self.first_event_len();
+
+        self.data.copy_within(tlv_len..self.head, 0);
+        self.head -= tlv_len;
     }
 
     fn iter(&self) -> TLVSequenceIter<'_> {
@@ -606,114 +667,20 @@ impl<const N: usize> LevelBuf<N> {
     }
 }
 
-/// During eviction we need the size of the record to be evicted several times (for promotion and then for actual moving the tail index)
-/// to avoid reading the whole entry lots of times for this we read it once to get its size and store that in this reference
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct VictimRef {
-    victim_len: usize,
-}
-
-impl VictimRef {
-    fn tlv<'a, const N: usize>(&self, buf: &'a LevelBuf<N>) -> TLVElement<'a> {
-        TLVElement::new(self.raw(buf))
-    }
-
-    fn raw<'a, const N: usize>(&self, buf: &'a LevelBuf<N>) -> &'a [u8] {
-        &buf.data[0..self.victim_len]
-    }
-
-    fn len(&self) -> usize {
-        self.victim_len
-    }
-}
-
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct OverflowError;
-
-// This is how we handle the "levels" of buffers, using this reference we can access the current
-// level and get access to the next level, if there is one
-#[derive(PartialEq, Clone, Copy)]
-enum Level<const N: usize> {
-    Debug,
-    Info,
-    Critical,
-}
-
-impl<const N: usize> Level<N> {
-    fn threshold(&self) -> u8 {
-        // 7.19.2.17
-        match self {
-            Level::Debug => 0,
-            Level::Info => 1,
-            Level::Critical => 2,
-        }
-    }
-
-    fn get_mut<'a>(&self, queue: &'a mut EventsInner<N>) -> &'a mut LevelBuf<N> {
-        match self {
-            Level::Debug => &mut queue.buf_debug,
-            Level::Info => &mut queue.buf_info,
-            Level::Critical => &mut queue.buf_critical,
-        }
-    }
-
-    fn get<'a>(&self, queue: &'a EventsInner<N>) -> &'a LevelBuf<N> {
-        match self {
-            Level::Debug => &queue.buf_debug,
-            Level::Info => &queue.buf_info,
-            Level::Critical => &queue.buf_critical,
-        }
-    }
-
-    /// Used during promotion, when we need both the src and dst buffers at the same time
-    fn get_mut_and_next<'a>(
-        &self,
-        queue: &'a mut EventsInner<N>,
-    ) -> (&'a mut LevelBuf<N>, Option<&'a mut LevelBuf<N>>) {
-        match self {
-            Level::Debug => (&mut queue.buf_debug, Some(&mut queue.buf_info)),
-            Level::Info => (&mut queue.buf_info, Some(&mut queue.buf_critical)),
-            Level::Critical => (&mut queue.buf_critical, None),
-        }
-    }
-
-    fn next_level(&self) -> Option<Level<N>> {
-        match self {
-            Level::Debug => Some(Level::Info),
-            Level::Info => Some(Level::Critical),
-            Level::Critical => None,
-        }
-    }
-
-    /// Used during iteration, note that this goes "backwards" compared to get_mut_and_next;
-    /// when iterating we want to start with the oldest events, so we start with the "highest"
-    /// level where the oldest survivors are and work back
-    fn prior_level(&self) -> Option<Level<N>> {
-        match self {
-            Level::Debug => None,
-            Level::Info => Some(Level::Debug),
-            Level::Critical => Some(Level::Info),
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::tlv::ToTLV;
 
-    const EP1: EventPath = EventPath {
-        node: Some(1337),
-        endpoint: Some(42),
-        cluster: Some(1),
-        event: Some(0xB33F),
-        is_urgent: Some(true),
-    };
+    use super::*;
 
     #[test]
     fn one_entry() {
-        let crit1 = TestEvent::new(1, 2);
-        let mut q: EventsInner<64> = EventsInner::new();
+        let crit1 = TestEvent::new(1, EventPriority::Critical);
+        let mut q: EventsInner<32> = EventsInner::new();
 
         crit1.push_into(&mut q).unwrap();
 
@@ -722,10 +689,10 @@ mod tests {
 
     #[test]
     fn critical_is_promoted() {
-        let crit1 = TestEvent::new(1, 2);
-        let crit2 = TestEvent::new(2, 2);
-        let crit3 = TestEvent::new(3, 2);
-        let mut q: EventsInner<64> = EventsInner::new();
+        let crit1 = TestEvent::new(1, EventPriority::Critical);
+        let crit2 = TestEvent::new(2, EventPriority::Info);
+        let crit3 = TestEvent::new(3, EventPriority::Info);
+        let mut q: EventsInner<32> = EventsInner::new();
 
         crit1.push_into(&mut q).unwrap();
         crit2.push_into(&mut q).unwrap();
@@ -738,10 +705,10 @@ mod tests {
 
     #[test]
     fn debug_is_dropped() {
-        let crit1 = TestEvent::new(1, 2);
-        let dbg2 = TestEvent::new(2, 0);
-        let crit3: TestEvent = TestEvent::new(3, 2);
-        let mut q: EventsInner<64> = EventsInner::new();
+        let crit1 = TestEvent::new(1, EventPriority::Critical);
+        let dbg2 = TestEvent::new(2, EventPriority::Debug);
+        let crit3: TestEvent = TestEvent::new(3, EventPriority::Critical);
+        let mut q: EventsInner<32> = EventsInner::new();
 
         crit1.push_into(&mut q).unwrap();
         dbg2.push_into(&mut q).unwrap();
@@ -758,12 +725,12 @@ mod tests {
 
     #[test]
     fn event_larger_than_buffer() {
-        let crit1 = TestEvent::new(1, 2);
+        let crit1 = TestEvent::new(1, EventPriority::Critical);
         let mut q: EventsInner<8> = EventsInner::new();
 
         assert_eq!(
             crit1.push_into(&mut q).expect_err("").code(),
-            ErrorCode::NoSpace
+            ErrorCode::ResourceExhausted
         );
     }
 
@@ -771,17 +738,21 @@ mod tests {
 
     #[derive(PartialEq, Clone, Debug)]
     struct TestEvent {
-        path: EventPath,
+        endpoint: EndptId,
+        cluster: ClusterId,
+        event: EventId,
         event_number: u64,
-        priority: u8,
+        priority: EventPriority,
         timestamp: EventDataTimestamp,
         data: u64,
     }
 
     impl TestEvent {
-        fn new(event_number: u64, priority: u8) -> Self {
+        const fn new(event_number: u64, priority: EventPriority) -> Self {
             Self {
-                path: EP1.clone(),
+                endpoint: 42,
+                cluster: 1,
+                event: 0xB33F,
                 event_number,
                 priority,
                 timestamp: EventDataTimestamp::EpochTimestamp(10_000 + event_number),
@@ -790,13 +761,15 @@ mod tests {
         }
 
         fn vec_from<const N: usize>(
-            buf: &LevelBuf<N>,
-        ) -> Result<heapless::Vec<TestEvent, 16>, Error> {
+            buf: &EventsBuf<N>,
+        ) -> Result<heapless::Vec<TestEvent, N>, Error> {
             let mut out = heapless::Vec::new();
             for tr in buf.iter() {
-                let e = parse_event(tr?)?;
+                let e = EventData::from_tlv(&tr?)?;
                 out.push(TestEvent {
-                    path: e.path,
+                    endpoint: e.path.endpoint.unwrap(),
+                    cluster: e.path.cluster.unwrap(),
+                    event: e.path.event.unwrap(),
                     event_number: e.event_number,
                     priority: e.priority,
                     timestamp: e.timestamp,
@@ -804,18 +777,20 @@ mod tests {
                 })
                 .unwrap();
             }
+
             Ok(out)
         }
 
         fn push_into<const N: usize>(&self, q: &mut EventsInner<N>) -> Result<(), Error> {
-            let mut tw = q.push(
-                self.path.clone(),
+            q.push(
+                self.endpoint,
+                self.cluster,
+                self.event,
                 self.event_number,
                 self.priority,
                 self.timestamp.clone(),
-            )?;
-            tw.u64(&TLVTag::Context(EventDataTag::Data as _), self.data)?;
-            tw.end()
+                |tw| self.data.to_tlv(&EVENT_DATA_TAG, tw),
+            )
         }
     }
 }

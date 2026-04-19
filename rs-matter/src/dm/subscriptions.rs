@@ -31,9 +31,6 @@ use crate::utils::sync::{DynBase, Notification};
 /// According to the Matter spec, at least 3 subscriptions per fabric should be supported.
 pub const DEFAULT_MAX_SUBSCRIPTIONS: usize = MAX_FABRICS * 3;
 
-/// A type alias for `Subscriptions` with the default maximum number of subscriptions.
-pub type DefaultSubscriptions = Subscriptions<DEFAULT_MAX_SUBSCRIPTIONS>;
-
 struct Subscription {
     fabric_idx: NonZeroU8,
     peer_node_id: u64,

@@ -153,11 +153,11 @@ pub struct EventData<'a> {
     pub path: EventPath,
     /// The event number counter for the node. While the node is running it is
     /// monotonically increasing, but the spec allows for (large) incremental jumps
-    /// on node reboot
+    /// on node reboot.
     pub event_number: u64,
-    // Event priority, lower means higher priority
-    pub priority: u8,
-    // Event timestamp, one of multiple mutually exclusive options
+    /// Event priority.
+    pub priority: EventPriority,
+    /// Event timestamp, one of multiple mutually exclusive options.
     pub timestamp: EventDataTimestamp,
     /// The data for the event, represented as a TLV element.
     pub data: TLVElement<'a>,
@@ -168,7 +168,7 @@ impl<'a> EventData<'a> {
     pub const fn new(
         path: EventPath,
         event_number: u64,
-        priority: u8,
+        priority: EventPriority,
         timestamp: EventDataTimestamp,
         data: TLVElement<'a>,
     ) -> Self {
@@ -180,21 +180,21 @@ impl<'a> EventData<'a> {
             data,
         }
     }
-}
 
-// Manually implemented because of the tagged union used for the timestamp
-impl<'a> ToTLV for EventData<'a> {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    pub fn write_preamble<T: TLVWrite>(&self, tag: &TLVTag, mut tw: T) -> Result<(), Error> {
         tw.start_struct(tag)?;
+
         self.path
             .to_tlv(&TagType::Context(EventDataTag::Path as _), &mut tw)?;
+
         tw.u64(
             &TagType::Context(EventDataTag::EventNumber as _),
             self.event_number,
         )?;
+
         tw.u8(
             &TagType::Context(EventDataTag::Priority as _),
-            self.priority,
+            self.priority as _,
         )?;
 
         match self.timestamp {
@@ -212,7 +212,16 @@ impl<'a> ToTLV for EventData<'a> {
                 &TagType::Context(EventDataTag::DeltaSystemTimestamp as _),
                 ts,
             )?,
-        };
+        }
+
+        Ok(())
+    }
+}
+
+// Manually implemented because of the tagged union used for the timestamp
+impl<'a> ToTLV for EventData<'a> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        self.write_preamble(tag, &mut tw)?;
 
         self.data
             .to_tlv(&TagType::Context(EventDataTag::Data as _), &mut tw)?;
@@ -223,9 +232,11 @@ impl<'a> ToTLV for EventData<'a> {
     fn tlv_iter(&self, tag: crate::tlv::TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
         let (timestamp_tag, timestamp_val) = match self.timestamp {
             EventDataTimestamp::EpochTimestamp(ts) => (EventDataTag::EpochTimestamp, ts),
-            EventDataTimestamp::SystemTimestamp(ts) => (EventDataTag::EpochTimestamp, ts),
-            EventDataTimestamp::DeltaEpochTimestamp(ts) => (EventDataTag::EpochTimestamp, ts),
-            EventDataTimestamp::DeltaSystemTimestamp(ts) => (EventDataTag::EpochTimestamp, ts),
+            EventDataTimestamp::SystemTimestamp(ts) => (EventDataTag::SystemTimestamp, ts),
+            EventDataTimestamp::DeltaEpochTimestamp(ts) => (EventDataTag::DeltaEpochTimestamp, ts),
+            EventDataTimestamp::DeltaSystemTimestamp(ts) => {
+                (EventDataTag::DeltaSystemTimestamp, ts)
+            }
         };
 
         let header = [Ok(TLV::structure(tag))].into_iter();
@@ -236,7 +247,7 @@ impl<'a> ToTLV for EventData<'a> {
             )),
             Ok(TLV::u8(
                 TLVTag::Context(EventDataTag::Priority as _),
-                self.priority,
+                self.priority as _,
             )),
             Ok(TLV::u64(TLVTag::Context(timestamp_tag as _), timestamp_val)),
         ]
@@ -258,13 +269,15 @@ impl<'a> FromTLV<'a> for EventData<'a> {
         let mut priority = None;
         let mut timestamp = None;
         let mut data = None;
+
         for field in element.structure()?.iter() {
             let el = field?;
+
             match el.tag()? {
                 TLVTag::Context(tag) => match EventDataTag::try_from(tag)? {
                     EventDataTag::Path => path = Some(EventPath::from_tlv(&el)?),
                     EventDataTag::EventNumber => event_number = Some(el.u64()?),
-                    EventDataTag::Priority => priority = Some(el.u8()?),
+                    EventDataTag::Priority => priority = Some(EventPriority::from_tlv(&el)?),
                     EventDataTag::EpochTimestamp => {
                         timestamp = Some(EventDataTimestamp::EpochTimestamp(el.u64()?))
                     }
@@ -282,6 +295,7 @@ impl<'a> FromTLV<'a> for EventData<'a> {
                 _ => return Err(Error::new(ErrorCode::Invalid)),
             }
         }
+
         Ok(EventData::new(
             path.ok_or(Error::new(ErrorCode::Invalid))?,
             event_number.ok_or(Error::new(ErrorCode::Invalid))?,
@@ -289,6 +303,37 @@ impl<'a> FromTLV<'a> for EventData<'a> {
             timestamp.ok_or(Error::new(ErrorCode::Invalid))?,
             data.ok_or(Error::new(ErrorCode::Invalid))?,
         ))
+    }
+}
+
+/// An enum type describing the priority each event might have
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[tlvargs(datatype = "u8")]
+#[repr(u8)]
+pub enum EventPriority {
+    Debug = 0,
+    Info = 1,
+    Critical = 2,
+}
+
+impl EventPriority {
+    /// Get the next (higher) priority, if any
+    pub const fn next(&self) -> Option<Self> {
+        match self {
+            Self::Debug => Some(Self::Info),
+            Self::Info => Some(Self::Critical),
+            Self::Critical => None,
+        }
+    }
+
+    /// Get the previous (lower) priority, if any
+    pub const fn prev(&self) -> Option<Self> {
+        match self {
+            Self::Debug => None,
+            Self::Info => Some(Self::Debug),
+            Self::Critical => Some(Self::Info),
+        }
     }
 }
 

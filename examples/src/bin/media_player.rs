@@ -59,10 +59,10 @@ use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHoo
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_CASTING_VIDEO_PLAYER;
 use rs_matter::dm::endpoints;
-use rs_matter::dm::events::DefaultEvents;
+use rs_matter::dm::events::Events;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::subscriptions::DefaultSubscriptions;
+use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
     ArrayAttributeRead, Async, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver,
     EmptyHandler, Endpoint, EpClMatcher, InvokeContext, Node, ReadContext,
@@ -93,24 +93,25 @@ fn main() -> Result<(), Error> {
     // Need to call this once
     matter.initialize_transport_buffers()?;
 
+    // Create the event queue
+    let mut events: Events = Events::new_default();
+
     // Persistence
     let mut kv_buf = [0; 4096];
     let mut kv = DirKvBlobStore::new_default();
     futures_lite::future::block_on(matter.load_persist(&mut kv, &mut kv_buf))?;
+    futures_lite::future::block_on(events.load_persist(&mut kv, &mut kv_buf))?;
 
     // Create the transport buffers
     let buffers = PooledBuffers::<10, _>::new(0);
 
     // Create the subscriptions
-    let subscriptions = DefaultSubscriptions::new();
+    let subscriptions: Subscriptions = Subscriptions::new();
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
 
     let mut rand = crypto.rand()?;
-
-    // Create the event queue
-    let events = DefaultEvents::new_default();
 
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with our custom Speaker handler
     let on_off_handler = on_off::OnOffHandler::new_standalone(
@@ -125,7 +126,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         &buffers,
         &subscriptions,
-        Some(&events),
+        &events,
         dm_handler(rand, &on_off_handler),
         SharedKvBlobStore::new(kv, kv_buf.as_mut_slice()),
         SharedNetworks::new(EthNetwork::new_default()),

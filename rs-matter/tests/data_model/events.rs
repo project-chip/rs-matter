@@ -15,11 +15,11 @@
  *    limitations under the License.
  */
 
-use embassy_futures::block_on;
 use rs_matter::error::Error;
 use rs_matter::im::EventDataTag;
 use rs_matter::im::EventFilter;
 use rs_matter::im::EventPath;
+use rs_matter::im::EventPriority;
 use rs_matter::im::GenericPath;
 use rs_matter::im::IMStatusCode;
 use rs_matter::im::StatusResp;
@@ -61,12 +61,12 @@ fn test_read_event_filtered() {
         &im,
         &[
             // Event no set to 0 on all, because Events will assign these, starting at zero
-            event_data_req!(ep0_event1, 0, 2, Some(&0x41u8)),
-            event_data_req!(ep0_event1, 0, 2, Some(&0x42u8)),
-            event_data_req!(ep0_event1, 0, 2, Some(&0x43u8)),
-            event_data_req!(ep1_event1, 0, 2, Some(&0x44u8)),
-            event_data_req!(ep1_event2, 0, 2, Some(&0x45u8)),
-            event_data_req!(cl2_ep0_event1, 0, 2, Some(&0x46u8)),
+            event_data_req!(ep0_event1, 0, EventPriority::Critical, Some(&0x41u8)),
+            event_data_req!(ep0_event1, 0, EventPriority::Critical, Some(&0x42u8)),
+            event_data_req!(ep0_event1, 0, EventPriority::Critical, Some(&0x43u8)),
+            event_data_req!(ep1_event1, 0, EventPriority::Critical, Some(&0x44u8)),
+            event_data_req!(ep1_event2, 0, EventPriority::Critical, Some(&0x45u8)),
+            event_data_req!(cl2_ep0_event1, 0, EventPriority::Critical, Some(&0x46u8)),
         ],
     );
 
@@ -76,12 +76,12 @@ fn test_read_event_filtered() {
         TLVTest::read_events(
             &[WILDCARD_PATH.clone()],
             &[
-                event_data_path!(ep0_event1, 0, 2, Some(&0x41u8)),
-                event_data_path!(ep0_event1, 1, 2, Some(&0x42u8)),
-                event_data_path!(ep0_event1, 2, 2, Some(&0x43u8)),
-                event_data_path!(ep1_event1, 3, 2, Some(&0x44u8)),
-                event_data_path!(ep1_event2, 4, 2, Some(&0x45u8)),
-                event_data_path!(cl2_ep0_event1, 5, 2, Some(&0x46u8)),
+                event_data_path!(ep0_event1, 0, EventPriority::Critical, Some(&0x41u8)),
+                event_data_path!(ep0_event1, 1, EventPriority::Critical, Some(&0x42u8)),
+                event_data_path!(ep0_event1, 2, EventPriority::Critical, Some(&0x43u8)),
+                event_data_path!(ep1_event1, 3, EventPriority::Critical, Some(&0x44u8)),
+                event_data_path!(ep1_event2, 4, EventPriority::Critical, Some(&0x45u8)),
+                event_data_path!(cl2_ep0_event1, 5, EventPriority::Critical, Some(&0x46u8)),
             ],
         ),
     );
@@ -99,10 +99,10 @@ fn test_read_event_filtered() {
             },
             TestReportDataMsg::event_reports(&[
                 // n.b. first two events excluded
-                event_data_path!(ep0_event1, 2, 2, Some(&0x43u8)),
-                event_data_path!(ep1_event1, 3, 2, Some(&0x44u8)),
-                event_data_path!(ep1_event2, 4, 2, Some(&0x45u8)),
-                event_data_path!(cl2_ep0_event1, 5, 2, Some(&0x46u8)),
+                event_data_path!(ep0_event1, 2, EventPriority::Critical, Some(&0x43u8)),
+                event_data_path!(ep1_event1, 3, EventPriority::Critical, Some(&0x44u8)),
+                event_data_path!(ep1_event2, 4, EventPriority::Critical, Some(&0x45u8)),
+                event_data_path!(cl2_ep0_event1, 5, EventPriority::Critical, Some(&0x46u8)),
             ]),
             ReplyProcessor::none,
         ),
@@ -123,10 +123,10 @@ fn test_read_event_filtered() {
             },
             TestReportDataMsg::event_reports(&[
                 // n.b. events that aren't from endpoint 0 are excluded
-                event_data_path!(ep0_event1, 0, 2, Some(&0x41u8)),
-                event_data_path!(ep0_event1, 1, 2, Some(&0x42u8)),
-                event_data_path!(ep0_event1, 2, 2, Some(&0x43u8)),
-                event_data_path!(cl2_ep0_event1, 5, 2, Some(&0x46u8)),
+                event_data_path!(ep0_event1, 0, EventPriority::Critical, Some(&0x41u8)),
+                event_data_path!(ep0_event1, 1, EventPriority::Critical, Some(&0x42u8)),
+                event_data_path!(ep0_event1, 2, EventPriority::Critical, Some(&0x43u8)),
+                event_data_path!(cl2_ep0_event1, 5, EventPriority::Critical, Some(&0x46u8)),
             ]),
             ReplyProcessor::none,
         ),
@@ -147,11 +147,11 @@ fn test_read_event_filtered() {
             },
             TestReportDataMsg::event_reports(&[
                 // n.b. only events with id 1
-                event_data_path!(ep0_event1, 0, 2, Some(&0x41u8)),
-                event_data_path!(ep0_event1, 1, 2, Some(&0x42u8)),
-                event_data_path!(ep0_event1, 2, 2, Some(&0x43u8)),
-                event_data_path!(ep1_event1, 3, 2, Some(&0x44u8)),
-                event_data_path!(cl2_ep0_event1, 5, 2, Some(&0x46u8)),
+                event_data_path!(ep0_event1, 0, EventPriority::Critical, Some(&0x41u8)),
+                event_data_path!(ep0_event1, 1, EventPriority::Critical, Some(&0x42u8)),
+                event_data_path!(ep0_event1, 2, EventPriority::Critical, Some(&0x43u8)),
+                event_data_path!(ep1_event1, 3, EventPriority::Critical, Some(&0x44u8)),
+                event_data_path!(cl2_ep0_event1, 5, EventPriority::Critical, Some(&0x46u8)),
             ]),
             ReplyProcessor::none,
         ),
@@ -193,7 +193,7 @@ fn test_read_event_filtered() {
             TestReportDataMsg::event_reports(&[event_data_path!(
                 cl2_ep0_event1,
                 5,
-                2,
+                EventPriority::Critical,
                 Some(&0x46u8)
             )]),
             ReplyProcessor::none,
@@ -213,7 +213,15 @@ fn test_subscribe_events() {
     let ep0_event1 = GenericPath::new(Some(0), Some(echo_cluster::ID), Some(1));
 
     // Given there is 1 event published so far
-    push_events(&im, &[event_data_req!(ep0_event1, 0, 2, Some(&0x41u8))]);
+    push_events(
+        &im,
+        &[event_data_req!(
+            ep0_event1,
+            0,
+            EventPriority::Critical,
+            Some(&0x41u8)
+        )],
+    );
 
     im.test_all(
         &handler,
@@ -227,7 +235,12 @@ fn test_subscribe_events() {
                 },
                 TestReportDataMsg {
                     subscription_id: Some(1),
-                    event_reports: Some(&[event_data_path!(ep0_event1, 0, 2, Some(&0x41u8))]),
+                    event_reports: Some(&[event_data_path!(
+                        ep0_event1,
+                        0,
+                        EventPriority::Critical,
+                        Some(&0x41u8)
+                    )]),
                     ..Default::default()
                 },
                 ReplyProcessor::none,
@@ -254,14 +267,22 @@ fn test_subscribe_events() {
                 TestReportDataMsg::event_reports(&[event_data_path!(
                     ep0_event1,
                     0,
-                    2,
+                    EventPriority::Critical,
                     Some(&0x41u8)
                 )]),
                 ReplyProcessor::none,
             ),
             &TLVTest::subscription_report(
                 || -> Result<(), Error> {
-                    push_events(&im, &[event_data_req!(ep0_event1, 0, 2, Some(&0x42u8))]);
+                    push_events(
+                        &im,
+                        &[event_data_req!(
+                            ep0_event1,
+                            0,
+                            EventPriority::Critical,
+                            Some(&0x42u8)
+                        )],
+                    );
                     im.subscriptions
                         .notify_event_emitted(0, echo_cluster::ID, 2);
                     Ok(())
@@ -271,7 +292,12 @@ fn test_subscribe_events() {
                 // payload is 0x42, matching the new event we emitted, vs 0x41 for the first event that we already saw.
                 TestReportDataMsg {
                     subscription_id: Some(1),
-                    event_reports: Some(&[event_data_path!(ep0_event1, 1, 2, Some(&0x42u8))]),
+                    event_reports: Some(&[event_data_path!(
+                        ep0_event1,
+                        1,
+                        EventPriority::Critical,
+                        Some(&0x42u8)
+                    )]),
                     ..Default::default()
                 },
                 ReplyProcessor::none,
@@ -298,9 +324,9 @@ fn test_long_read_events() {
     push_events(
         &im,
         &[
-            event_data_req!(ep0_event1, 0, 2, Some(&[1u8; 256])),
-            event_data_req!(ep0_event1, 0, 2, Some(&[2u8; 256])),
-            event_data_req!(ep0_event1, 0, 2, Some(&[3u8; 256])),
+            event_data_req!(ep0_event1, 0, EventPriority::Critical, Some(&[1u8; 256])),
+            event_data_req!(ep0_event1, 0, EventPriority::Critical, Some(&[2u8; 256])),
+            event_data_req!(ep0_event1, 0, EventPriority::Critical, Some(&[3u8; 256])),
         ],
     );
 
@@ -311,8 +337,8 @@ fn test_long_read_events() {
                 TestReadReq::event_reqs(&[WILDCARD_PATH.clone()]),
                 TestReportDataMsg {
                     event_reports: Some(&[
-                        event_data_path!(ep0_event1, 0, 2, Some(&[1u8; 256])),
-                        event_data_path!(ep0_event1, 1, 2, Some(&[2u8; 256])),
+                        event_data_path!(ep0_event1, 0, EventPriority::Critical, Some(&[1u8; 256])),
+                        event_data_path!(ep0_event1, 1, EventPriority::Critical, Some(&[2u8; 256])),
                     ]),
                     more_chunks: Some(true),
                     ..Default::default()
@@ -324,7 +350,12 @@ fn test_long_read_events() {
                     status: IMStatusCode::Success,
                 },
                 TestReportDataMsg {
-                    event_reports: Some(&[event_data_path!(ep0_event1, 2, 2, Some(&[3u8; 256]))]),
+                    event_reports: Some(&[event_data_path!(
+                        ep0_event1,
+                        2,
+                        EventPriority::Critical,
+                        Some(&[3u8; 256])
+                    )]),
                     suppress_response: Some(true),
                     ..Default::default()
                 },
@@ -339,21 +370,25 @@ where
     C: rs_matter::crypto::Crypto,
 {
     for ev in events {
-        block_on(im.events.push(
-            ev.path.clone(),
-            ev.priority,
-            DummyKvBlobStoreAccess,
-            |tw| -> Result<(), Error> {
-                if let Some(data) = ev.data {
-                    let mut b = [0u8; 2048];
-                    let mut wb = WriteBuf::new(&mut b[0..]);
-                    data.test_to_tlv(&TLVTag::Context(EventDataTag::Data as _), &mut wb)?;
-                    let end = wb.get_tail();
-                    tw.write_raw_data(b[..end].iter().copied())?;
-                }
-                Ok(())
-            },
-        ))
-        .unwrap();
+        im.events
+            .push(
+                ev.path.endpoint.unwrap(),
+                ev.path.cluster.unwrap(),
+                ev.path.event.unwrap(),
+                ev.priority,
+                DummyKvBlobStoreAccess,
+                |mut tw| -> Result<(), Error> {
+                    if let Some(data) = ev.data {
+                        let mut b = [0u8; 2048];
+                        let mut wb = WriteBuf::new(&mut b[0..]);
+                        data.test_to_tlv(&TLVTag::Context(EventDataTag::Data as _), &mut wb)?;
+                        let end = wb.get_tail();
+
+                        tw.write_raw_data(b[..end].iter().copied())?;
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap();
     }
 }

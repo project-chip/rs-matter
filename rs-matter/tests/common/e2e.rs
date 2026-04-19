@@ -187,7 +187,7 @@ impl<C: Crypto> E2eRunner<C> {
             &self.crypto,
             &self.buffers,
             &self.subscriptions,
-            Some(&self.events),
+            &self.events,
             handler,
             DummyKvBlobStoreAccess,
             DummyNetworkAccess,
