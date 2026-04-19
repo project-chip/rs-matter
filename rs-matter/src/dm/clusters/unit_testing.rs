@@ -24,7 +24,6 @@ use crate::dm::{
     WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::im::EventPriority;
 use crate::tlv::{
     Nullable, NullableBuilder, OctetStr, Octets, OctetsArrayBuilder, OctetsBuilder, TLVArray,
     TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite, ToTLVArrayBuilder, ToTLVBuilder, Utf8Str,
@@ -2904,7 +2903,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         request: TestEmitTestEventRequestRequest<'_>,
         response: TestEmitTestEventResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let event_no = TestEvent::emit(&ctx, EventPriority::Info, |tw| {
+        let event_no = TestEvent::emit(&ctx, |tw| {
             tw.arg_1(request.arg_1()?)?
                 .arg_2(request.arg_2()?)?
                 .arg_3(request.arg_3()?)?

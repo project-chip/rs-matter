@@ -19786,12 +19786,13 @@ pub mod unit_testing {
         }
     }
     impl TestEvent<'_> {
+        const PRIORITY: rs_matter_crate::im::EventPriority =
+            rs_matter_crate::im::EventPriority::Info;
         pub fn emit_for<F>(
             emitter: impl rs_matter_crate::dm::EventEmitter,
             endpoint_id: rs_matter_crate::dm::EndptId,
-            priority: rs_matter_crate::im::EventPriority,
             f: F,
-        ) -> Result<u64, rs_matter_crate::error::Error>
+        ) -> Result<rs_matter_crate::dm::EventNumber, rs_matter_crate::error::Error>
         where
             F: FnOnce(
                 TestEventBuilder<rs_matter_crate::dm::events::EventTLVWrite<'_>>,
@@ -19804,7 +19805,7 @@ pub mod unit_testing {
                 endpoint_id,
                 4294048773,
                 EventId::TestEvent as _,
-                priority,
+                Self::PRIORITY,
                 |tw| {
                     f(TestEventBuilder::new(
                         tw,
@@ -19816,9 +19817,8 @@ pub mod unit_testing {
         }
         pub fn emit<F>(
             emitter: impl rs_matter_crate::dm::OwnEventEmitter,
-            priority: rs_matter_crate::im::EventPriority,
             f: F,
-        ) -> Result<u64, rs_matter_crate::error::Error>
+        ) -> Result<rs_matter_crate::dm::EventNumber, rs_matter_crate::error::Error>
         where
             F: FnOnce(
                 TestEventBuilder<rs_matter_crate::dm::events::EventTLVWrite<'_>>,
@@ -19827,7 +19827,7 @@ pub mod unit_testing {
                 rs_matter_crate::error::Error,
             >,
         {
-            emitter.emit_own_event(EventId::TestEvent as _, priority, |tw| {
+            emitter.emit_own_event(EventId::TestEvent as _, Self::PRIORITY, |tw| {
                 f(TestEventBuilder::new(
                     tw,
                     &rs_matter_crate::dm::events::EVENT_DATA_TAG,
@@ -19837,12 +19837,13 @@ pub mod unit_testing {
         }
     }
     impl TestFabricScopedEvent<'_> {
+        const PRIORITY: rs_matter_crate::im::EventPriority =
+            rs_matter_crate::im::EventPriority::Info;
         pub fn emit_for<F>(
             emitter: impl rs_matter_crate::dm::EventEmitter,
             endpoint_id: rs_matter_crate::dm::EndptId,
-            priority: rs_matter_crate::im::EventPriority,
             f: F,
-        ) -> Result<u64, rs_matter_crate::error::Error>
+        ) -> Result<rs_matter_crate::dm::EventNumber, rs_matter_crate::error::Error>
         where
             F: FnOnce(
                 TestFabricScopedEventBuilder<rs_matter_crate::dm::events::EventTLVWrite<'_>>,
@@ -19855,7 +19856,7 @@ pub mod unit_testing {
                 endpoint_id,
                 4294048773,
                 EventId::TestFabricScopedEvent as _,
-                priority,
+                Self::PRIORITY,
                 |tw| {
                     f(TestFabricScopedEventBuilder::new(
                         tw,
@@ -19867,9 +19868,8 @@ pub mod unit_testing {
         }
         pub fn emit<F>(
             emitter: impl rs_matter_crate::dm::OwnEventEmitter,
-            priority: rs_matter_crate::im::EventPriority,
             f: F,
-        ) -> Result<u64, rs_matter_crate::error::Error>
+        ) -> Result<rs_matter_crate::dm::EventNumber, rs_matter_crate::error::Error>
         where
             F: FnOnce(
                 TestFabricScopedEventBuilder<rs_matter_crate::dm::events::EventTLVWrite<'_>>,
@@ -19878,7 +19878,7 @@ pub mod unit_testing {
                 rs_matter_crate::error::Error,
             >,
         {
-            emitter.emit_own_event(EventId::TestFabricScopedEvent as _, priority, |tw| {
+            emitter.emit_own_event(EventId::TestFabricScopedEvent as _, Self::PRIORITY, |tw| {
                 f(TestFabricScopedEventBuilder::new(
                     tw,
                     &rs_matter_crate::dm::events::EVENT_DATA_TAG,
@@ -19888,12 +19888,13 @@ pub mod unit_testing {
         }
     }
     impl TestDifferentVendorMeiEvent<'_> {
+        const PRIORITY: rs_matter_crate::im::EventPriority =
+            rs_matter_crate::im::EventPriority::Info;
         pub fn emit_for<F>(
             emitter: impl rs_matter_crate::dm::EventEmitter,
             endpoint_id: rs_matter_crate::dm::EndptId,
-            priority: rs_matter_crate::im::EventPriority,
             f: F,
-        ) -> Result<u64, rs_matter_crate::error::Error>
+        ) -> Result<rs_matter_crate::dm::EventNumber, rs_matter_crate::error::Error>
         where
             F: FnOnce(
                 TestDifferentVendorMeiEventBuilder<rs_matter_crate::dm::events::EventTLVWrite<'_>>,
@@ -19906,7 +19907,7 @@ pub mod unit_testing {
                 endpoint_id,
                 4294048773,
                 EventId::TestDifferentVendorMeiEvent as _,
-                priority,
+                Self::PRIORITY,
                 |tw| {
                     f(TestDifferentVendorMeiEventBuilder::new(
                         tw,
@@ -19918,9 +19919,8 @@ pub mod unit_testing {
         }
         pub fn emit<F>(
             emitter: impl rs_matter_crate::dm::OwnEventEmitter,
-            priority: rs_matter_crate::im::EventPriority,
             f: F,
-        ) -> Result<u64, rs_matter_crate::error::Error>
+        ) -> Result<rs_matter_crate::dm::EventNumber, rs_matter_crate::error::Error>
         where
             F: FnOnce(
                 TestDifferentVendorMeiEventBuilder<rs_matter_crate::dm::events::EventTLVWrite<'_>>,
@@ -19929,13 +19929,17 @@ pub mod unit_testing {
                 rs_matter_crate::error::Error,
             >,
         {
-            emitter.emit_own_event(EventId::TestDifferentVendorMeiEvent as _, priority, |tw| {
-                f(TestDifferentVendorMeiEventBuilder::new(
-                    tw,
-                    &rs_matter_crate::dm::events::EVENT_DATA_TAG,
-                )?)?;
-                Ok(())
-            })
+            emitter.emit_own_event(
+                EventId::TestDifferentVendorMeiEvent as _,
+                Self::PRIORITY,
+                |tw| {
+                    f(TestDifferentVendorMeiEventBuilder::new(
+                        tw,
+                        &rs_matter_crate::dm::events::EVENT_DATA_TAG,
+                    )?)?;
+                    Ok(())
+                },
+            )
         }
     }
     #[doc = "The attribute IDs for the cluster."]
@@ -23078,15 +23082,17 @@ pub mod unit_testing {
             &[
                 rs_matter_crate::dm::Event::new(
                     EventId::TestEvent as _,
-                    rs_matter_crate::dm::Access::NEED_VIEW,
+                    rs_matter_crate::dm::Access::READ.union(rs_matter_crate::dm::Access::NEED_VIEW),
                 ),
                 rs_matter_crate::dm::Event::new(
                     EventId::TestFabricScopedEvent as _,
-                    rs_matter_crate::dm::Access::NEED_VIEW,
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::NEED_VIEW)
+                        .union(rs_matter_crate::dm::Access::FAB_SENSITIVE),
                 ),
                 rs_matter_crate::dm::Event::new(
                     EventId::TestDifferentVendorMeiEvent as _,
-                    rs_matter_crate::dm::Access::NEED_VIEW,
+                    rs_matter_crate::dm::Access::READ.union(rs_matter_crate::dm::Access::NEED_VIEW),
                 ),
             ],
             |_, _, _| true,

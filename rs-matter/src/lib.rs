@@ -34,7 +34,7 @@ use core::future::Future;
 use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::{BasicInfoConfig, BasicInfoSettings};
 use crate::dm::clusters::dev_att::DeviceAttestation;
-use crate::dm::DynAttrChangeNotifier;
+use crate::dm::AttrChangeNotifier;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::Fabrics;
 use crate::failsafe::FailSafe;
@@ -506,7 +506,7 @@ impl<'a> Matter<'a> {
         &self,
         timeout_secs: u16,
         crypto: C,
-        notify: &dyn DynAttrChangeNotifier,
+        notify: &dyn AttrChangeNotifier,
     ) -> Result<(), Error> {
         let notify_mdns = || self.notify_mdns_changed();
         let notify_change =
@@ -533,10 +533,10 @@ impl<'a> Matter<'a> {
         })
     }
 
-    /// Close the basic commissioning window
+    /// Close the commissioning window (basic or other)
     ///
     /// The method will return Ok(false) if there is no active PASE commissioning window to close.
-    pub fn close_comm_window(&self, notify: &dyn DynAttrChangeNotifier) -> Result<bool, Error> {
+    pub fn close_comm_window(&self, notify: &dyn AttrChangeNotifier) -> Result<bool, Error> {
         let notify_mdns = || self.notify_mdns_changed();
         let notify_change =
             |endpt_id, clust_id, attr_id| notify.notify_attr_changed(endpt_id, clust_id, attr_id);

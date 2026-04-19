@@ -16,7 +16,6 @@
  */
 
 use core::fmt;
-use core::num::NonZeroU8;
 
 use crate::acl::Accessor;
 use crate::dm::{Cluster, Endpoint};
@@ -179,18 +178,9 @@ impl<'a> Node<'a> {
         node_id: NodeId,
         accessor: &Accessor<'_>,
     ) -> Result<(), IMStatusCode> {
-        let Some(fab_idx) = NonZeroU8::new(accessor.fab_idx) else {
+        let Some(accessor_node_id) = accessor.node_id() else {
             return Err(IMStatusCode::UnsupportedNode);
         };
-
-        let accessor_node_id = accessor
-            .matter
-            .with_state(|state| {
-                let fabric = state.fabrics.fabric(fab_idx)?;
-
-                Ok(fabric.node_id())
-            })
-            .map_err(|_: Error| IMStatusCode::UnsupportedNode)?;
 
         if node_id != accessor_node_id {
             return Err(IMStatusCode::UnsupportedNode);

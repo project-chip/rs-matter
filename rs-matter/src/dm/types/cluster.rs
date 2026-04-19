@@ -235,13 +235,7 @@ impl<'a> Cluster<'a> {
         if access_req.allow() {
             Ok(())
         } else {
-            // TODO: TestEvents fails otherwise
-            warn!(
-                "Unsupported access to event {:?} of cluster 0x{:04x}",
-                event_id, self.id
-            );
-            //Err(IMStatusCode::UnsupportedAccess)
-            Ok(())
+            Err(IMStatusCode::UnsupportedAccess)
         }
     }
 

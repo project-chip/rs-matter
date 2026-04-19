@@ -613,10 +613,16 @@ pub fn cluster(cluster: &Cluster, globals: &Entities, context: &IdlGenerateConte
 
         let access = match event.access {
             AccessPrivilege::View => quote!(#krate::dm::Access::NEED_VIEW),
-            AccessPrivilege::Operate => quote!(#krate::dm::Access::WO),
-            AccessPrivilege::Manage => quote!(#krate::dm::Access::WM),
-            AccessPrivilege::Administer => quote!(#krate::dm::Access::WA),
+            AccessPrivilege::Operate => quote!(#krate::dm::Access::NEED_OPERATE.union(#krate::dm::Access::NEED_MANAGE.union(#krate::dm::Access::NEED_ADMIN))),
+            AccessPrivilege::Manage => quote!(#krate::dm::Access::NEED_MANAGE.union(#krate::dm::Access::NEED_ADMIN)),
+            AccessPrivilege::Administer => quote!(#krate::dm::Access::NEED_ADMIN),
         };
+
+        let mut access = quote!(#krate::dm::Access::READ.union(#access));
+
+        if event.is_fabric_sensitive {
+            access = quote!(#access.union(#krate::dm::Access::FAB_SENSITIVE));
+        }
 
         quote!(
             #krate::dm::Event::new(

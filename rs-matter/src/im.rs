@@ -32,6 +32,7 @@ pub use event::*;
 pub use invoke::*;
 pub use status::*;
 pub use timed::*;
+pub use types::*;
 
 pub mod busy;
 pub mod client;
@@ -41,6 +42,7 @@ mod event;
 mod invoke;
 mod status;
 mod timed;
+pub(crate) mod types;
 
 /// Interaction Model ID as per the Matter Core spec
 pub const PROTO_ID_INTERACTION_MODEL: u16 = 0x01;
@@ -76,7 +78,7 @@ pub enum IMStatusCode {
     PathsExhausted = 0xc8,
     TimedRequestMisMatch = 0xc9,
     FailSafeRequired = 0xca,
-    InvalidInstate = 0xcb,
+    InvalidInState = 0xcb,
     NoCommandResponse = 0xcc,
 }
 
@@ -200,43 +202,6 @@ impl From<OpCode> for MessageMeta {
         opcode.meta()
     }
 }
-
-// Type aliases for first-class matter types
-pub type NodeId = FabricId;
-pub type EndptId = u16;
-pub type ClusterId = u32;
-pub type AttrId = u32;
-pub type CmdId = u32;
-pub type ActionId = u8;
-pub type ClusterStatus = u8;
-pub type CommandRef = u16;
-pub type CompressedFabricId = u64;
-pub type DataVersion = u32;
-pub type DeviceTypeId = u32;
-pub type ElapsedS = u32;
-pub type EventId = u32;
-pub type EventNumber = u64;
-pub type FabricId = u64;
-pub type FabricIndex = u8;
-pub type FieldId = u32;
-pub type ListIndex = u16;
-pub type LocalizedStringIdentifier = u16;
-pub type TransactionId = u32;
-pub type KeysetId = u16;
-pub type InteractionModelRevision = u8;
-pub type SubscriptionId = u32;
-pub type SceneId = u8;
-pub type Percent = u8;
-pub type Percent100ths = u16;
-pub type EnergyMilliWh = i64;
-pub type EnergyMilliVAh = i64;
-pub type EnergyMilliVARh = i64;
-pub type AmperageMilliA = i64;
-pub type PowerMilliW = i64;
-pub type PowerMilliVA = i64;
-pub type PowerMilliVAR = i64;
-pub type VoltageMilliV = i64;
-pub type Money = i64;
 
 /// A generic (possibly a wildcard) path with endpoint, clusters, and a leaf
 ///

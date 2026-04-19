@@ -41,12 +41,7 @@ mod node;
 mod privilege;
 mod reply;
 
-pub type EndptId = crate::im::EndptId;
-pub type ClusterId = crate::im::ClusterId;
-pub type AttrId = crate::im::AttrId;
-pub type EventId = crate::im::EventId;
-pub type CmdId = crate::im::CmdId;
-pub type FabricId = crate::im::FabricId;
+pub use crate::im::types::*;
 
 #[derive(Debug, ToTLV, Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

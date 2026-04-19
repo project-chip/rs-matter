@@ -21,7 +21,7 @@ use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
 use crate::idl::id::ident;
-use crate::idl::parser::{EntityContext, Event};
+use crate::idl::parser::{EntityContext, Event, EventPriority};
 use crate::IdlGenerateContext;
 
 /// Return a token stream containing the structure definitions
@@ -48,11 +48,19 @@ fn event(e: &Event, entities: &EntityContext, context: &IdlGenerateContext) -> T
     let name = ident(&e.id);
     let name_builder = ident(&format!("{}Builder", &e.id));
 
+    let priority = ident(match e.priority {
+        EventPriority::Debug => "Debug",
+        EventPriority::Info => "Info",
+        EventPriority::Critical => "Critical",
+    });
+
     let cluster_id = Literal::u64_unsuffixed(entities.cluster().unwrap().code);
 
     quote!(
         impl #name<'_> {
-            pub fn emit_for<F>(emitter: impl #krate::dm::EventEmitter, endpoint_id: #krate::dm::EndptId, priority: #krate::im::EventPriority, f: F) -> Result<u64, #krate::error::Error>
+            const PRIORITY: #krate::im::EventPriority = #krate::im::EventPriority::#priority;
+
+            pub fn emit_for<F>(emitter: impl #krate::dm::EventEmitter, endpoint_id: #krate::dm::EndptId, f: F) -> Result<#krate::dm::EventNumber, #krate::error::Error>
             where
                 F: FnOnce(#name_builder<#krate::dm::events::EventTLVWrite<'_>>) -> Result<#krate::dm::events::EventTLVWrite<'_>, #krate::error::Error>,
             {
@@ -60,7 +68,7 @@ fn event(e: &Event, entities: &EntityContext, context: &IdlGenerateContext) -> T
                     endpoint_id,
                     #cluster_id,
                     EventId::#name as _,
-                    priority,
+                    Self::PRIORITY,
                     |tw| {
                         f(#name_builder::new(tw, &#krate::dm::events::EVENT_DATA_TAG)?)?;
 
@@ -69,13 +77,13 @@ fn event(e: &Event, entities: &EntityContext, context: &IdlGenerateContext) -> T
                 )
             }
 
-            pub fn emit<F>(emitter: impl #krate::dm::OwnEventEmitter, priority: #krate::im::EventPriority, f: F) -> Result<u64, #krate::error::Error>
+            pub fn emit<F>(emitter: impl #krate::dm::OwnEventEmitter, f: F) -> Result<#krate::dm::EventNumber, #krate::error::Error>
             where
                 F: FnOnce(#name_builder<#krate::dm::events::EventTLVWrite<'_>>) -> Result<#krate::dm::events::EventTLVWrite<'_>, #krate::error::Error>,
             {
                 emitter.emit_own_event(
                     EventId::#name as _,
-                    priority,
+                    Self::PRIORITY,
                     |tw| {
                         f(#name_builder::new(tw, &#krate::dm::events::EVENT_DATA_TAG)?)?;
 

@@ -22,13 +22,14 @@ use core::num::NonZeroU8;
 use core::ops::RangeInclusive;
 
 use cfg_if::cfg_if;
+
 use num_derive::FromPrimitive;
 
 use crate::dm::clusters::acl::{
     AccessControlEntryAuthModeEnum, AccessControlEntryPrivilegeEnum, AccessControlEntryStruct,
     AccessControlEntryStructBuilder,
 };
-use crate::dm::{Access, ClusterId, EndptId, Privilege};
+use crate::dm::{Access, ClusterId, EndptId, NodeId, Privilege};
 use crate::error::{Error, ErrorCode};
 use crate::im::GenericPath;
 use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
@@ -328,7 +329,8 @@ pub struct Accessor<'a> {
     /// The auth mode of this session. Might be `None` for plain-text sessions
     auth_mode: Option<AuthMode>,
     // Necessary so as to get access to the fabric manager to perform the access check in AccessReq::allow()
-    pub matter: &'a Matter<'a>,
+    // as well as for a few other ACL related operations.
+    matter: &'a Matter<'a>,
 }
 
 impl<'a> Accessor<'a> {
@@ -419,6 +421,14 @@ impl<'a> Accessor<'a> {
                 .get(group_id)
                 .is_some_and(|e| e.endpoints.contains(&endpoint_id))
         })
+    }
+
+    /// Return the Operational Node ID of the accessor, if any
+    pub fn node_id(&self) -> Option<NodeId> {
+        let fab_idx = NonZeroU8::new(self.fab_idx)?;
+
+        self.matter
+            .with_state(|state| state.fabrics.get(fab_idx).map(|fabric| fabric.node_id()))
     }
 }
 
