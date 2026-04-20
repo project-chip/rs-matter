@@ -393,6 +393,10 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
     {
         info!("Running Matter transport");
 
+        // Do not remove this logging line or change its formatting.
+        // C++ E2E tests rely on this log line to determine when the tested app is ready
+        debug!("APP STATUS: Starting event loop");
+
         let mut joined = self.matter.transport.group_addrs.lock().await;
 
         let send = IfMutex::new(send);

@@ -26,8 +26,8 @@ use cfg_if::cfg_if;
 use num_derive::FromPrimitive;
 
 use crate::dm::clusters::acl::{
-    AccessControlEntryAuthModeEnum, AccessControlEntryPrivilegeEnum, AccessControlEntryStruct,
-    AccessControlEntryStructBuilder,
+    AccessControlAuxiliaryTypeEnum, AccessControlEntryAuthModeEnum,
+    AccessControlEntryPrivilegeEnum, AccessControlEntryStruct, AccessControlEntryStructBuilder,
 };
 use crate::dm::{Access, ClusterId, EndptId, NodeId, Privilege};
 use crate::error::{Error, ErrorCode};
@@ -536,6 +536,8 @@ pub struct AclEntry {
     subjects: Nullable<Vec<u64, MAX_SUBJECTS_PER_ACL_ENTRY>>,
     /// The targets of the entry
     targets: Nullable<Vec<Target, MAX_TARGETS_PER_ACL_ENTRY>>,
+    // TODO: Figure out what this is, document and use
+    auxiliary_type: Option<AccessControlAuxiliaryTypeEnum>,
     // TODO: Instead of the direct value, we should consider GlobalElements::FabricIndex
     // Note that this field will always be `Some(NN)` when the entry is persisted in storage,
     // however, it will be `None` when the entry is coming from the other peer
@@ -556,6 +558,7 @@ impl AclEntry {
             auth_mode,
             subjects: Nullable::none(),
             targets: Nullable::none(),
+            auxiliary_type: None,
         }
     }
 
@@ -572,6 +575,7 @@ impl AclEntry {
             auth_mode,
             subjects <- Nullable::init_none(),
             targets <- Nullable::init_none(),
+            auxiliary_type: None,
         })
     }
 
@@ -588,6 +592,7 @@ impl AclEntry {
                 let privilege = entry.privilege().map_err(|_| ErrorCode::ConstraintError)?.ok_or(ErrorCode::ConstraintError)?;
                 let subjects = entry.subjects().map_err(|_| ErrorCode::ConstraintError)?.ok_or(ErrorCode::ConstraintError)?;
                 let targets = entry.targets().map_err(|_| ErrorCode::ConstraintError)?.ok_or(ErrorCode::ConstraintError)?;
+                let auxiliary_type = entry.auxiliary_type().map_err(|_| ErrorCode::ConstraintError)?;
 
                 if
                     // As per spec, PASE auth mode is reserved for future use
@@ -600,6 +605,7 @@ impl AclEntry {
 
                 e.privilege = privilege.into();
                 e.auth_mode = auth_mode.into();
+                e.auxiliary_type = auxiliary_type;
 
                 // Start with null subjects and targets
                 // so that we can keep those to null if we receive empty subjects' array or empty targets' array
@@ -709,6 +715,7 @@ impl AclEntry {
                     builder.end()
                 })
             })?
+            .auxiliary_type(self.auxiliary_type())?
             .fabric_index(fab_idx)?
             .end()
     }
@@ -748,6 +755,10 @@ impl AclEntry {
     /// Return the targets of the ACL entry
     pub fn targets(&self) -> Nullable<&[Target]> {
         Nullable::new(self.targets.as_opt_ref().map(|v| v.as_slice()))
+    }
+
+    pub fn auxiliary_type(&self) -> Option<AccessControlAuxiliaryTypeEnum> {
+        self.auxiliary_type
     }
 
     /// Check if the ACL entry allows access to the given accessor and object

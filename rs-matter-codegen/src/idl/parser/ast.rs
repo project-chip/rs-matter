@@ -238,6 +238,7 @@ pub struct Attribute {
     pub read_acl: AccessPrivilege,
     pub write_acl: AccessPrivilege,
     pub is_read_only: bool,
+    pub is_write_only: bool,
     pub is_no_subscribe: bool,
     pub is_timed_write: bool,
 }
@@ -252,6 +253,7 @@ impl Default for Attribute {
             read_acl: AccessPrivilege::View,
             write_acl: AccessPrivilege::Operate,
             is_read_only: false,
+            is_write_only: false,
             is_no_subscribe: false,
             is_timed_write: false,
         }

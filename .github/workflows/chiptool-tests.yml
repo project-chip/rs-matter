@@ -15,7 +15,7 @@ on:
         description: 'Chip repository reference (branch/tag/commit)'
         required: false
 #        default: 'master'
-        default: 'v1.4.2-branch'
+        default: 'v1.5-branch'
         type: string
 
 env:
@@ -24,9 +24,7 @@ env:
 
 jobs:
   yaml_integration_tests:
-    # Downgrade to 22.04 so that `activate.sh` does not fail with "ModuleNotFoundError: No module named 'pip'"
-    # runs-on: ubuntu-latest
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
 
     steps:
@@ -60,13 +58,13 @@ jobs:
         with:
           path: .build/itest/connectedhomeip
           key: >-
-            chip-${{ runner.os }}-${{
+            chip0-${{ runner.os }}-${{
             hashFiles('.build/itest/connectedhomeip/**/*.py',
             '.build/itest/connectedhomeip/**/*.sh', '.build/itest/connectedhomeip/**/BUILD.gn') }}
 
       - name: Setup Chip environment
         run: |
-          cargo xtask itest-setup --gitref "${{ inputs.chip_ref || 'v1.4.2-branch' }}"
+          cargo xtask itest-setup --gitref "${{ inputs.chip_ref || 'v1.5-branch' }}"
 
       - name: Run YAML Integration Tests (with RustCrypto by default))
         run: |
