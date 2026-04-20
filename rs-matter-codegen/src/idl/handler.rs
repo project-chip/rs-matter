@@ -63,6 +63,7 @@ pub fn handler(
         .attributes
         .iter()
         .filter(|attr| !GLOBAL_ATTR.contains(&attr.field.field.code))
+        .filter(|attr| !attr.is_write_only)
         .map(|attr| handler_attribute(attr, asynch, delegate, entities, &krate));
 
     let handler_attribute_write_methods = cluster
@@ -180,6 +181,7 @@ pub fn handler_adaptor(
         .attributes
         .iter()
         .filter(|attr| !GLOBAL_ATTR.contains(&attr.field.field.code))
+        .filter(|attr| !attr.is_write_only)
         .map(|attr| handler_adaptor_attribute_match(attr, asynch, entities, &krate))
         .collect::<Vec<_>>();
 

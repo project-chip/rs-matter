@@ -943,8 +943,10 @@ fn parse_attribute_after_doc_maturity<'a>(
     maturity: ApiMaturity,
     span: Span<'a>,
 ) -> IResult<Span<'a>, Attribute, ParseError<'a>> {
-    let (span, qualities) = keywords_set!(span, "readonly", "nosubscribe", "timedwrite");
+    let (span, qualities) =
+        keywords_set!(span, "readonly", "writeonly", "nosubscribe", "timedwrite");
     let is_read_only = qualities.contains("readonly");
+    let is_write_only = qualities.contains("writeonly");
     let is_no_subscribe = qualities.contains("nosubscribe");
     let is_timed_write = qualities.contains("timedwrite");
 
@@ -966,6 +968,7 @@ fn parse_attribute_after_doc_maturity<'a>(
             read_acl,
             write_acl,
             is_read_only,
+            is_write_only,
             is_no_subscribe,
             is_timed_write,
         },
@@ -1809,6 +1812,7 @@ mod tests {
                 read_acl: AccessPrivilege::View,
                 write_acl: AccessPrivilege::Operate,
                 is_read_only: false,
+                is_write_only: false,
                 is_no_subscribe: false,
                 is_timed_write: false,
             },
@@ -1841,6 +1845,7 @@ mod tests {
                 read_acl: AccessPrivilege::Manage,
                 write_acl: AccessPrivilege::Administer,
                 is_read_only: false,
+                is_write_only: false,
                 is_no_subscribe: false,
                 is_timed_write: true,
             },

@@ -27,7 +27,7 @@ use anyhow::{self, Context};
 use log::{debug, info, warn};
 
 /// The default Git reference to use for the Chip repository
-pub const CHIP_DEFAULT_GITREF: &str = "v1.4.2-branch"; //"master";
+pub const CHIP_DEFAULT_GITREF: &str = "v1.5-branch"; //"master";
 
 /// The tooling that is checked for presence in the command line
 const REQUIRED_TOOLING: &[&str] = &[

@@ -36,8 +36,8 @@ pub use crate::dm::clusters::decl::general_commissioning::RegulatoryLocationType
 
 /// The default Matter App Clusters specification version
 ///
-/// Currently set to V1.4.2.0
-pub const DEFAULT_MATTER_SPEC_VERSION: u32 = 0x01040200;
+/// Currently set to V1.5.1.0
+pub const DEFAULT_MATTER_SPEC_VERSION: u32 = 0x01050100;
 
 /// The default Matter Data Model revision
 ///
@@ -435,7 +435,9 @@ impl BasicInfoHandler {
 
 impl ClusterHandler for BasicInfoHandler {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
-        .with_attrs(except!(AttributeId::Reachable))
+        .with_attrs(except!(
+            AttributeId::Reachable | AttributeId::ConfigurationVersion
+        )) // TODO
         .with_cmds(with!());
 
     fn dataver(&self) -> u32 {

@@ -513,20 +513,33 @@ pub fn cluster(cluster: &Cluster, globals: &Entities, context: &IdlGenerateConte
             &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
         );
 
-        let mut rw = quote!(#krate::dm::Access::READ);
-        if !attr.is_read_only {
-            rw = quote!(#rw.union(#krate::dm::Access::WRITE));
+        if attr.is_read_only && attr.is_write_only {
+            panic!("Attribute {} cannot be both read-only and write-only", attr_name);
         }
 
-        let (acl, needs_view) = if !attr.is_read_only {
+        let rw = if !attr.is_read_only && !attr.is_write_only {
+            quote!(#krate::dm::Access::READ.union(#krate::dm::Access::WRITE))
+        } else if attr.is_read_only {
+            quote!(#krate::dm::Access::READ)
+        } else {
+            quote!(#krate::dm::Access::WRITE)
+        };
+
+        let (acl, needs_view) = if !attr.is_read_only && !attr.is_write_only {
             if attr.read_acl != attr.write_acl && !matches!(attr.read_acl, AccessPrivilege::View) || matches!(attr.write_acl, AccessPrivilege::View) {
                 // These cases are not currently supported by the `Access` bitmask
                 panic!("Unsupported access patern: attribute {attr_name} has {:?} read access and {:?} write access", attr.read_acl, attr.write_acl);
             }
 
             (attr.write_acl, attr.read_acl != attr.write_acl)
-        } else {
+        } else if attr.is_read_only {
             (attr.read_acl, false)
+        } else {
+            if matches!(attr.write_acl, AccessPrivilege::View) {
+                panic!("Unsupported access pattern: attribute {attr_name} is write-only but has View write access");
+            }
+
+            (attr.write_acl, false)
         };
 
         let mut acl = match acl {
