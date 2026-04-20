@@ -40,7 +40,7 @@
 ))]
 
 use core::pin::pin;
-use std::net::UdpSocket;
+use std::net::{TcpListener, UdpSocket};
 
 use embassy_futures::select::{select, select4, Either};
 use embassy_time::{Duration, Timer};
@@ -74,6 +74,7 @@ use rs_matter::sc::pase::{PaseInitiator, MAX_COMM_WINDOW_TIMEOUT_SECS};
 use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::mdns::{CommissionableFilter, DiscoveredDevice};
+use rs_matter::transport::network::tcp::TcpNetwork;
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::epoch::sys_epoch;
@@ -111,6 +112,12 @@ static DEVICE_MATTER: StaticCell<Matter> = StaticCell::new();
 static DEVICE_BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
 static DEVICE_SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
 static CTRL_MATTER: StaticCell<Matter> = StaticCell::new();
+
+// Separate statics for the TCP variant (StaticCell is one-shot)
+static TCP_DEVICE_MATTER: StaticCell<Matter> = StaticCell::new();
+static TCP_DEVICE_BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
+static TCP_DEVICE_SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
+static TCP_CTRL_MATTER: StaticCell<Matter> = StaticCell::new();
 
 // ============================================================================
 // Device data model — copied from examples/src/bin/onoff_light.rs
@@ -151,98 +158,155 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     )
 }
 
-#[test]
-fn test_commissioning_onoff_cluster() {
-    let thread = std::thread::spawn(|| {
-        init_env_logger();
-        futures_lite::future::block_on(async {
-            run_test().await.unwrap();
-        });
-    });
-    thread.join().unwrap();
-}
+/// Generates a commissioning test function for a given transport.
+///
+/// Each invocation produces its own async function and `#[test]` entry point,
+/// so that the Rust compiler generates a **separate** future state-machine for
+/// each transport type (keeping the future small enough for the default 2 MiB
+/// thread stack).
+macro_rules! commissioning_test {
+    (
+        test_name: $test_name:ident,
+        run_name: $run_name:ident,
+        device_matter: $dev_matter:expr,
+        device_buffers: $dev_buffers:expr,
+        device_subscriptions: $dev_subs:expr,
+        ctrl_matter: $ctrl_matter:expr,
+        use_tcp: $use_tcp:expr,
+        device_transport: $dev_transport:expr,
+        ctrl_transport: $ctrl_transport:expr $(,)?
+    ) => {
+        #[test]
+        fn $test_name() {
+            let thread = std::thread::spawn(|| {
+                init_env_logger();
+                futures_lite::future::block_on(async {
+                    $run_name().await.unwrap();
+                });
+            });
+            thread.join().unwrap();
+        }
 
-async fn run_test() -> Result<(), Error> {
-    let device_matter = DEVICE_MATTER.uninit().init_with(Matter::init(
-        &TEST_DEV_DET,
-        TEST_DEV_COMM,
-        &TEST_DEV_ATT,
-        sys_epoch,
-        MATTER_PORT,
-    ));
-    device_matter.initialize_transport_buffers()?;
+        async fn $run_name() -> Result<(), Error> {
+            let device_matter = $dev_matter.uninit().init_with(Matter::init(
+                &TEST_DEV_DET,
+                TEST_DEV_COMM,
+                &TEST_DEV_ATT,
+                sys_epoch,
+                MATTER_PORT,
+            ));
+            device_matter.initialize_transport_buffers();
 
-    let device_crypto = test_only_crypto();
-    let mut rand = device_crypto.rand()?;
+            let device_crypto = test_only_crypto();
+            let mut rand = device_crypto.rand()?;
 
-    let device_buffers = DEVICE_BUFFERS.uninit().init_with(PooledBuffers::init(0));
-    let device_subscriptions = DEVICE_SUBSCRIPTIONS
-        .uninit()
-        .init_with(Subscriptions::init());
+            let device_buffers = $dev_buffers.uninit().init_with(PooledBuffers::init(0));
+            let device_subscriptions = $dev_subs.uninit().init_with(Subscriptions::init());
 
-    let on_off_handler = on_off::OnOffHandler::new_standalone(
-        Dataver::new_rand(&mut rand),
-        1,
-        TestOnOffDeviceLogic::new(false),
-    );
+            let on_off_handler = on_off::OnOffHandler::new_standalone(
+                Dataver::new_rand(&mut rand),
+                1,
+                TestOnOffDeviceLogic::new(false),
+            );
 
-    let events = NoEvents::new_default();
+            let events = NoEvents::new_default();
 
-    let dm = DataModel::new(
-        device_matter,
-        &device_crypto,
-        device_buffers,
-        device_subscriptions,
-        &events,
-        dm_handler(rand, &on_off_handler),
-        DummyKvBlobStoreAccess,
-        DummyNetworkAccess,
-    );
+            let dm = DataModel::new(
+                device_matter,
+                &device_crypto,
+                device_buffers,
+                device_subscriptions,
+                &events,
+                dm_handler(rand, &on_off_handler),
+                DummyKvBlobStoreAccess,
+                DummyNetworkAccess,
+            );
 
-    // Open commissioning window before starting the mDNS responder so the
-    // `wait_mdns` signal is already set when the broadcast loop first runs.
-    device_matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &device_crypto, &())?;
+            // Open commissioning window before starting the mDNS responder so the
+            // `wait_mdns` signal is already set when the broadcast loop first runs.
+            device_matter.open_basic_comm_window(
+                MAX_COMM_WINDOW_TIMEOUT_SECS,
+                &device_crypto,
+                &(),
+            )?;
 
-    let device_socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
-    let responder = DefaultResponder::new(&dm);
+            let responder = DefaultResponder::new(&dm);
 
-    let ctrl_matter = CTRL_MATTER.uninit().init_with(Matter::init(
-        &TEST_DEV_DET,
-        TEST_DEV_COMM,
-        &TEST_DEV_ATT,
-        sys_epoch,
-        0,
-    ));
-    ctrl_matter.initialize_transport_buffers()?;
-    let ctrl_crypto = test_only_crypto();
-    let ctrl_socket = create_dual_stack_socket()?;
+            let device_net = $dev_transport;
+            let ctrl_net = $ctrl_transport;
 
-    info!("Device and controller initialized, starting commissioning test...");
+            let ctrl_matter = $ctrl_matter.uninit().init_with(Matter::init(
+                &TEST_DEV_DET,
+                TEST_DEV_COMM,
+                &TEST_DEV_ATT,
+                sys_epoch,
+                0,
+            ));
+            ctrl_matter.initialize_transport_buffers();
+            let ctrl_crypto = test_only_crypto();
 
-    let device_fut = async {
-        select4(
-            device_matter.run(&device_crypto, &device_socket, &device_socket, NoNetwork),
-            // `run_mdns` dispatches to the right backend for the current platform:
-            // builtin multicast on Linux, AstroMdnsResponder (Bonjour) on macOS.
-            common::mdns::run_mdns(device_matter, test_only_crypto()),
-            responder.run::<4, 4>(),
-            dm.run(),
-        )
-        .coalesce()
-        .await
+            let transport_label = if $use_tcp { "TCP" } else { "UDP" };
+            info!(
+                "Device and controller initialized ({transport_label}), \
+                 starting commissioning test..."
+            );
+
+            let device_fut = async {
+                select4(
+                    device_matter.run(&device_crypto, &device_net, &device_net, NoNetwork),
+                    common::mdns::run_mdns(device_matter, test_only_crypto()),
+                    responder.run::<4, 4>(),
+                    dm.run(),
+                )
+                .coalesce()
+                .await
+            };
+
+            let controller_fut = run_with_transport(
+                ctrl_matter.run(&ctrl_crypto, &ctrl_net, &ctrl_net, NoNetwork),
+                run_controller_flow(ctrl_matter, &ctrl_crypto, $use_tcp),
+            );
+
+            run_device_controller(device_fut, controller_fut).await
+        }
     };
-
-    let controller_fut = run_with_transport(
-        ctrl_matter.run(&ctrl_crypto, &ctrl_socket, &ctrl_socket, NoNetwork),
-        run_controller_flow(ctrl_matter, &ctrl_crypto),
-    );
-
-    run_device_controller(device_fut, controller_fut).await
 }
 
-async fn run_controller_flow<C: Crypto>(matter: &Matter<'_>, crypto: &C) -> Result<(), Error> {
+commissioning_test! {
+    test_name: test_commissioning_onoff_cluster,
+    run_name: run_test_udp,
+    device_matter: DEVICE_MATTER,
+    device_buffers: DEVICE_BUFFERS,
+    device_subscriptions: DEVICE_SUBSCRIPTIONS,
+    ctrl_matter: CTRL_MATTER,
+    use_tcp: false,
+    device_transport: async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?,
+    ctrl_transport: create_dual_stack_socket()?,
+}
+
+commissioning_test! {
+    test_name: test_commissioning_onoff_cluster_tcp,
+    run_name: run_test_tcp,
+    device_matter: TCP_DEVICE_MATTER,
+    device_buffers: TCP_DEVICE_BUFFERS,
+    device_subscriptions: TCP_DEVICE_SUBSCRIPTIONS,
+    ctrl_matter: TCP_CTRL_MATTER,
+    use_tcp: true,
+    device_transport: TcpNetwork::<8>::new(
+        async_io::Async::<TcpListener>::bind(MATTER_SOCKET_BIND_ADDR)?,
+    ),
+    ctrl_transport: TcpNetwork::<8>::new(async_io::Async::<TcpListener>::bind(
+        SocketAddr::V6(SocketAddrV6::new(std::net::Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
+    )?),
+}
+
+async fn run_controller_flow<C: Crypto>(
+    matter: &Matter<'_>,
+    crypto: &C,
+    use_tcp: bool,
+) -> Result<(), Error> {
     info!("=== Phase 1: mDNS Discovery ===");
-    let peer_addr = discover_and_resolve_device(DISCOVERY_TIMEOUT_MS).await?;
+    let peer_addr = discover_and_resolve_device(DISCOVERY_TIMEOUT_MS, use_tcp).await?;
 
     info!("=== Phase 2: PASE Session Establishment ===");
     establish_pase_session(matter, crypto, peer_addr, TEST_PASSCODE).await?;
@@ -258,7 +322,7 @@ async fn run_controller_flow<C: Crypto>(matter: &Matter<'_>, crypto: &C) -> Resu
 // Phase 1: mDNS Discovery
 // ============================================================================
 
-async fn discover_and_resolve_device(timeout_ms: u32) -> Result<Address, Error> {
+async fn discover_and_resolve_device(timeout_ms: u32, use_tcp: bool) -> Result<Address, Error> {
     info!("Starting mDNS discovery with discriminator: {TEST_DISCRIMINATOR}");
     let filter = CommissionableFilter {
         discriminator: Some(TEST_DISCRIMINATOR),
@@ -276,7 +340,7 @@ async fn discover_and_resolve_device(timeout_ms: u32) -> Result<Address, Error> 
         info!("  Address: {addr}");
     }
 
-    resolve_device_address(&device)
+    resolve_device_address(&device, use_tcp)
 }
 
 #[cfg(feature = "astro-dnssd")]
@@ -369,7 +433,10 @@ async fn discover_device<const A: usize>(
     })
 }
 
-fn resolve_device_address<const A: usize>(device: &DiscoveredDevice<A>) -> Result<Address, Error> {
+fn resolve_device_address<const A: usize>(
+    device: &DiscoveredDevice<A>,
+    use_tcp: bool,
+) -> Result<Address, Error> {
     let interface_index = get_default_interface_index().unwrap_or(0);
 
     let device_addr = device
@@ -396,10 +463,12 @@ fn resolve_device_address<const A: usize>(device: &DiscoveredDevice<A>) -> Resul
 
     info!("Using address: {}:{}", device_addr, device.port);
 
+    let make_addr = if use_tcp { Address::Tcp } else { Address::Udp };
+
     let peer_addr = match device_addr {
         std::net::IpAddr::V4(v4) => {
             let ipv6 = v4.to_ipv6_mapped();
-            Address::Udp(SocketAddr::V6(SocketAddrV6::new(ipv6, device.port, 0, 0)))
+            make_addr(SocketAddr::V6(SocketAddrV6::new(ipv6, device.port, 0, 0)))
         }
         std::net::IpAddr::V6(v6) => {
             let scope_id = if is_ipv6_link_local(v6) {
@@ -407,7 +476,7 @@ fn resolve_device_address<const A: usize>(device: &DiscoveredDevice<A>) -> Resul
             } else {
                 0
             };
-            Address::Udp(SocketAddr::V6(SocketAddrV6::new(
+            make_addr(SocketAddr::V6(SocketAddrV6::new(
                 *v6,
                 device.port,
                 0,

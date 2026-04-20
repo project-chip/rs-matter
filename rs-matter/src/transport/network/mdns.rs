@@ -533,6 +533,18 @@ impl Service<'_> {
 
         match matter_service {
             MatterMdnsService::Commissioned { .. } => {
+                // Per Matter Core Spec Section 4.3.1.14, T=1 indicates TCP support
+                let txt_kvs: heapless::Vec<(&str, &str), 2> = if dev_det.tcp_supported {
+                    let mut v = heapless::Vec::new();
+                    unwrap!(v.push(("T", "1")));
+                    v
+                } else {
+                    // Some mDNS responders do not accept empty TXT records
+                    let mut v = heapless::Vec::new();
+                    unwrap!(v.push(("dummy", "dummy")));
+                    v
+                };
+
                 f(&Service {
                     name: matter_service.name(&mut name_buf),
                     service: "_matter",
@@ -540,8 +552,7 @@ impl Service<'_> {
                     service_protocol: "_matter._tcp",
                     port: matter_port,
                     service_subtypes: &[],
-                    // Some mDNS responders do not accept empty TXT records
-                    txt_kvs: &[("dummy", "dummy")],
+                    txt_kvs: txt_kvs.as_slice(),
                 })
                 .await
             }
@@ -566,7 +577,7 @@ impl Service<'_> {
                 // "{u32}"
                 let mut ph_str = heapless::String::<12>::new();
 
-                let mut txt_kvs = heapless::Vec::<_, 9>::new();
+                let mut txt_kvs = heapless::Vec::<_, 10>::new();
 
                 write_unwrap!(&mut discr_svc_str, "_L{}", *discriminator);
                 write_unwrap!(
@@ -606,6 +617,11 @@ impl Service<'_> {
 
                 if !dev_det.pairing_instruction.is_empty() {
                     unwrap!(txt_kvs.push(("PI", dev_det.pairing_instruction)));
+                }
+
+                // Per Matter Core Spec Section 4.3.1.14, T=1 indicates TCP support
+                if dev_det.tcp_supported {
+                    unwrap!(txt_kvs.push(("T", "1")));
                 }
 
                 f(&Service {

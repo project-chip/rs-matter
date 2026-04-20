@@ -52,12 +52,13 @@ fn test_unsecured_exchange_over_udp() {
 
     futures_lite::future::block_on(async {
         // Create device-side and controller-side Matter instances
-        let device_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, sys_epoch, 0);
-        device_matter.initialize_transport_buffers().unwrap();
-
-        let controller_matter =
+        let mut device_matter =
             Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, sys_epoch, 0);
-        controller_matter.initialize_transport_buffers().unwrap();
+        device_matter.initialize_transport_buffers();
+
+        let mut controller_matter =
+            Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, sys_epoch, 0);
+        controller_matter.initialize_transport_buffers();
 
         let crypto = test_only_crypto();
 

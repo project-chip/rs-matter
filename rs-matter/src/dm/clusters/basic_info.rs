@@ -202,6 +202,13 @@ pub struct BasicInfoConfig<'a> {
     ///
     /// Not a real attribute, just used to configure the session timeouts
     pub sii: Option<u16>,
+    /// Whether the device supports TCP transport.
+    ///
+    /// Not a real attribute; advertised via the `T` TXT record key in mDNS.
+    /// Per the Matter Core Spec Section 4.3.1.14, `T=1` indicates that the device
+    /// supports TCP for the transport of Matter messages (required for large payloads
+    /// such as WebRTC SDP exchanges and camera snapshots).
+    pub tcp_supported: bool,
 }
 
 impl BasicInfoConfig<'_> {
@@ -233,6 +240,7 @@ impl BasicInfoConfig<'_> {
             pairing_instruction: "",
             sai: None,
             sii: None,
+            tcp_supported: false,
         }
     }
 }
