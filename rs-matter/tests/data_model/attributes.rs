@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use rs_matter::dm::clusters::on_off::{
+use rs_matter::dm::clusters::app::on_off::{
     self, test::TestOnOffDeviceLogic, ClusterAsyncHandler as _, NoLevelControl,
 };
 use rs_matter::dm::GlobalElements;
