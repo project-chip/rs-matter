@@ -26,13 +26,15 @@ use embassy_futures::select::select4;
 
 use rand::RngCore;
 use rs_matter::crypto::{default_crypto, Crypto};
-use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::level_control::{
+use rs_matter::dm::clusters::app::level_control::{
     self, test::TestLevelControlDeviceLogic, AttributeDefaults, LevelControlHandler,
     LevelControlHooks, OptionsBitmap,
 };
+use rs_matter::dm::clusters::app::on_off::{
+    self, test::TestOnOffDeviceLogic, OnOffHandler, OnOffHooks,
+};
+use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::SharedNetworks;
-use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHandler, OnOffHooks};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_SMART_SPEAKER;
 use rs_matter::dm::endpoints;
