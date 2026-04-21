@@ -642,7 +642,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             })?;
 
         self.move_to_level_blocking(
-            ctx,
+            &ctx,
             true,
             target_level,
             Some(transition_time),
@@ -652,11 +652,23 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         .await?;
 
         if !on {
-            self.with_state(|state| {
+            let restored = self.with_state(|state| {
                 if state.on_level.is_none() {
                     self.hooks.set_current_level(temp_current_level);
+                    true
+                } else {
+                    false
                 }
             });
+            if restored {
+                // CurrentLevel was restored to the pre-Off stored value
+                self.dataver_changed();
+                ctx.notify_attr_changed(
+                    self.endpoint_id,
+                    Self::CLUSTER.id,
+                    AttributeId::CurrentLevel as _,
+                );
+            }
         }
 
         Ok(())

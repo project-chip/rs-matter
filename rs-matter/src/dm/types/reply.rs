@@ -16,7 +16,7 @@
  */
 
 use crate::acl::Accessor;
-use crate::dm::{AsyncHandler, HandlerContext, Node};
+use crate::dm::{AsyncHandler, EventNumber, HandlerContext, Node};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
     AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
@@ -180,7 +180,19 @@ where
                 let result = self.write(attr, data).await;
 
                 match result {
-                    Ok(()) => Ok(attr.status(IMStatusCode::Success)),
+                    Ok(()) => {
+                        // A write that was accepted by the cluster handler
+                        // counts as an attribute change for subscription
+                        // reporting purposes. Notify generically here so that
+                        // cluster handlers do not each need to call
+                        // `notify_attr_changed` from every attribute setter.
+                        self.context.notify_attr_changed(
+                            attr.endpoint_id,
+                            attr.cluster_id,
+                            attr.attr_id,
+                        );
+                        Ok(attr.status(IMStatusCode::Success))
+                    }
                     Err(err) if err.code() != ErrorCode::NoSpace => {
                         error!("Error writing attribute: {}", err);
 
@@ -295,15 +307,19 @@ where
     }
 }
 
-pub struct EventReader<'a> {
-    /// On construction - a reference to the minimum event number that should be emitted to the subscriber. This is updated after each event is emitted, so it always reflects the minimum event number that should be processed / appended to the writer.
-    /// After each successive call to `process_read`, this is updated to the biggest event number seen during the processing.
-    min_event_number: &'a mut u64,
+pub struct EventReader {
+    max_seen_event_number: u64,
 }
 
-impl<'a> EventReader<'a> {
-    pub const fn new(min_event_number: &'a mut u64) -> Self {
-        Self { min_event_number }
+impl EventReader {
+    pub const fn new(max_seen_event_number: u64) -> Self {
+        Self {
+            max_seen_event_number,
+        }
+    }
+
+    pub const fn max_seen_event_number(&self) -> EventNumber {
+        self.max_seen_event_number
     }
 
     pub fn process_read<T: TLVWrite>(
@@ -316,7 +332,13 @@ impl<'a> EventReader<'a> {
         mut tw: T,
     ) -> Result<(), Error> {
         let event_number = event.event_number;
-        if event_number < *self.min_event_number {
+        // `max_seen_event_number` is stored as the *next* event number the
+        // caller expects to receive (i.e. one past the largest already
+        // delivered). A fresh reader initialised with `0` must therefore
+        // still deliver event `0`, which is why the comparison is strictly
+        // less than, and the field is advanced to `event_number + 1` after
+        // a successful emit.
+        if event_number < self.max_seen_event_number {
             // This event has already been seen by the caller, skip
             return Ok(());
         }
@@ -329,7 +351,7 @@ impl<'a> EventReader<'a> {
             // If there was an error, rewind to the tail so we don't write any data.
             tw.rewind_to(tail);
         } else {
-            *self.min_event_number = event_number.wrapping_add(1);
+            self.max_seen_event_number = event_number.wrapping_add(1);
         }
 
         result

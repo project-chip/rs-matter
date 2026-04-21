@@ -29,7 +29,7 @@ use spake2p::Spake2pVerifierData;
 use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::error::{Error, ErrorCode};
-use crate::im::{AttrId, ClusterId, EndptId};
+use crate::im::{ClusterId, EndptId};
 use crate::sc::pase::spake2p::{
     Spake2pVerifierPasswordRef, Spake2pVerifierSaltRef, Spake2pVerifierStrRef,
 };
@@ -52,6 +52,15 @@ pub(crate) mod spake2p;
 pub const MIN_COMM_WINDOW_TIMEOUT_SECS: u16 = 3 * 60;
 /// Maximal commissioning window timeout in seconds, as per the Matter Core Spec
 pub const MAX_COMM_WINDOW_TIMEOUT_SECS: u16 = 15 * 60;
+
+/// Notify that the externally-visible attributes of the Administrator
+/// Commissioning cluster may have changed. Called whenever the commissioning
+/// window is opened or closed: `WindowStatus`, `AdminFabricIndex` and
+/// `AdminVendorId` all transition together, so we mark the entire cluster
+/// dirty with a single call.
+fn notify_adm_comm_window_attrs_changed(notify_change: &mut impl FnMut(EndptId, ClusterId)) {
+    notify_change(ROOT_ENDPOINT_ID, adm_comm::FULL_CLUSTER.id);
+}
 
 /// The type of commissioning window
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
@@ -209,7 +218,7 @@ impl Pase {
     pub fn check_comm_window_timeout(
         &mut self,
         notify_mdns: impl FnMut(),
-        notify_change: impl FnMut(EndptId, ClusterId, AttrId),
+        notify_change: impl FnMut(EndptId, ClusterId),
     ) -> Result<bool, Error> {
         let expired = self
             .comm_window
@@ -257,7 +266,7 @@ impl Pase {
         timeout_secs: u16,
         opener: Option<CommWindowOpener>,
         mut notify_mdns: impl FnMut(),
-        mut notify_change: impl FnMut(EndptId, ClusterId, AttrId),
+        mut notify_change: impl FnMut(EndptId, ClusterId),
     ) -> Result<(), Error> {
         if self.comm_window.is_some() {
             Err(ErrorCode::Busy)?;
@@ -280,11 +289,7 @@ impl Pase {
             )));
 
         notify_mdns();
-        notify_change(
-            ROOT_ENDPOINT_ID,
-            adm_comm::FULL_CLUSTER.id,
-            adm_comm::AttributeId::WindowStatus as _,
-        );
+        notify_adm_comm_window_attrs_changed(&mut notify_change);
 
         info!("PASE Basic Commissioning Window opened");
 
@@ -318,7 +323,7 @@ impl Pase {
         timeout_secs: u16,
         opener: Option<CommWindowOpener>,
         mut notify_mdns: impl FnMut(),
-        mut notify_change: impl FnMut(EndptId, ClusterId, AttrId),
+        mut notify_change: impl FnMut(EndptId, ClusterId),
     ) -> Result<(), Error> {
         if self.comm_window.is_some() {
             Err(ErrorCode::Busy)?;
@@ -341,11 +346,7 @@ impl Pase {
         )));
 
         notify_mdns();
-        notify_change(
-            ROOT_ENDPOINT_ID,
-            adm_comm::FULL_CLUSTER.id,
-            adm_comm::AttributeId::WindowStatus as _,
-        );
+        notify_adm_comm_window_attrs_changed(&mut notify_change);
 
         info!("PASE Commissioning Window opened");
 
@@ -363,17 +364,13 @@ impl Pase {
     pub fn close_comm_window(
         &mut self,
         mut notify_mdns: impl FnMut(),
-        mut notify_change: impl FnMut(EndptId, ClusterId, AttrId),
+        mut notify_change: impl FnMut(EndptId, ClusterId),
     ) -> Result<bool, Error> {
         if self.comm_window.is_some() {
             self.comm_window.clear();
 
             notify_mdns();
-            notify_change(
-                ROOT_ENDPOINT_ID,
-                adm_comm::FULL_CLUSTER.id,
-                adm_comm::AttributeId::WindowStatus as _,
-            );
+            notify_adm_comm_window_attrs_changed(&mut notify_change);
 
             info!("PASE Commissioning Window closed");
 

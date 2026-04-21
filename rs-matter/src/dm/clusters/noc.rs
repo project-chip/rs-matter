@@ -476,6 +476,9 @@ impl ClusterHandler for NocHandler {
             },
         ))?;
 
+        // AddNOC mutates NOCs, Fabrics, CommissionedFabrics, TrustedRootCerts, etc.
+        ctx.notify_own_cluster_changed();
+
         response
             .status_code(status)?
             .fabric_index(added_fab_idx)?
@@ -518,6 +521,9 @@ impl ClusterHandler for NocHandler {
             },
         ))?;
 
+        // UpdateNOC mutates the NOCs / Fabrics lists for the calling fabric
+        ctx.notify_own_cluster_changed();
+
         response
             .status_code(status)?
             .fabric_index(Some(ctx.cmd().fab_idx))?
@@ -557,6 +563,9 @@ impl ClusterHandler for NocHandler {
 
             Ok(())
         }))?;
+
+        // UpdateFabricLabel mutates the Fabrics list
+        ctx.notify_own_cluster_changed();
 
         response
             .status_code(status)?
@@ -613,6 +622,9 @@ impl ClusterHandler for NocHandler {
         })?;
 
         persist.run()?;
+
+        // RemoveFabric mutates NOCs, Fabrics, CommissionedFabrics, TrustedRootCerts
+        ctx.notify_own_cluster_changed();
 
         response
             .status_code(status)?

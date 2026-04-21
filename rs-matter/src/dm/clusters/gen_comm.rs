@@ -266,6 +266,9 @@ impl ClusterHandler for GenCommHandler<'_> {
             )
         }))?;
 
+        // Breadcrumb (and possibly failsafe-arm state) may have changed
+        ctx.notify_own_cluster_changed();
+
         response.error_code(status)?.debug_text("")?.end()
     }
 
@@ -300,6 +303,10 @@ impl ClusterHandler for GenCommHandler<'_> {
 
         persist.run()?;
 
+        // Regulatory config mutates both this cluster (RegulatoryConfig, Breadcrumb)
+        // and Basic Information (Location) on the same endpoint
+        ctx.notify_own_endpoint_changed();
+
         response.error_code(status)?.debug_text("")?.end()
     }
 
@@ -310,8 +317,7 @@ impl ClusterHandler for GenCommHandler<'_> {
     ) -> Result<P, Error> {
         info!("Got Commissioning Complete Request");
 
-        let notify_change =
-            |endpt_id, clust_id, attr_id| ctx.notify_attr_changed(endpt_id, clust_id, attr_id);
+        let notify_change = |endpt_id, clust_id| ctx.notify_cluster_changed(endpt_id, clust_id);
 
         let mut persist = FabricPersist::new(ctx.kv());
 
@@ -343,6 +349,11 @@ impl ClusterHandler for GenCommHandler<'_> {
             }))?;
 
         persist.run()?;
+
+        // Commissioning-complete mutates many clusters on the root endpoint:
+        // breadcrumb (this cluster), fabrics (NOC), networks (NetCommissioning).
+        // The closed commissioning window was already notified via `notify_change`.
+        ctx.notify_own_endpoint_changed();
 
         response.error_code(status)?.debug_text("")?.end()
     }
