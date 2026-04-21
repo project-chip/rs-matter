@@ -107,7 +107,7 @@ fn run() -> Result<(), Error> {
     ));
 
     // Need to call this once
-    matter.initialize_transport_buffers()?;
+    matter.initialize_transport_buffers();
 
     // Persistence
     let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();

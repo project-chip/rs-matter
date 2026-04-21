@@ -120,27 +120,30 @@ impl Transport {
         })
     }
 
-    /// Initialize the transport buffers if using large buffers and allocation.
+    /// Initialize the transport buffers if using the `large-buffers` feature flag.
     #[cfg(all(feature = "large-buffers", feature = "alloc"))]
-    pub fn initialize_buffers(&self) -> Result<(), Error> {
-        let mut rx = self.rx.try_lock().map_err(|_| ErrorCode::InvalidState)?;
-        let mut tx = self.tx.try_lock().map_err(|_| ErrorCode::InvalidState)?;
+    pub fn initialize_buffers(&mut self) {
+        use crate::utils::init::InitMaybeUninit;
 
-        if rx.buf.0.is_none() {
-            rx.buf.0 = Some(alloc::boxed::Box::new(crate::utils::storage::Vec::new()));
+        let rx = self.rx.get_mut();
+        let tx = self.tx.get_mut();
+
+        if rx.buf.buffer.is_none() {
+            let mut b = alloc::boxed::Box::new_uninit();
+            b.init_with(crate::utils::storage::Vec::init());
+            rx.buf.buffer = Some(unsafe { b.assume_init() });
         }
 
-        if tx.buf.0.is_none() {
-            tx.buf.0 = Some(alloc::boxed::Box::new(crate::utils::storage::Vec::new()));
+        if tx.buf.buffer.is_none() {
+            let mut b = alloc::boxed::Box::new_uninit();
+            b.init_with(crate::utils::storage::Vec::init());
+            tx.buf.buffer = Some(unsafe { b.assume_init() });
         }
-
-        Ok(())
     }
 
     #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
-    pub fn initialize_buffers(&self) -> Result<(), Error> {
+    pub fn initialize_buffers(&mut self) {
         // No-op, as buffers are allocated inline
-        Ok(())
     }
 
     /// Reset the transport state by clearing the RX buffer and the TX buffer
@@ -1539,9 +1542,9 @@ impl defmt::Format for DetailedPacketInfo<'_> {
 //
 // This type is only known and used by the `transport` and the `exchange` modules
 #[cfg(all(feature = "large-buffers", feature = "alloc"))]
-pub(crate) struct PacketBuffer<const N: usize>(
-    Option<alloc::boxed::Box<crate::utils::storage::Vec<u8, N>>>,
-);
+pub(crate) struct PacketBuffer<const N: usize> {
+    buffer: Option<alloc::boxed::Box<crate::utils::storage::Vec<u8, N>>>,
+}
 
 // The buffer used inside the pair of RX and TX `Packet` instances
 // When the either of the `alloc` and `large-buffers` features is not enabled, the buffer payload is allocated inline
@@ -1565,6 +1568,12 @@ impl<const N: usize> PacketBuffer<N> {
         }
     }
 
+    #[cfg(all(feature = "large-buffers", feature = "alloc"))]
+    pub fn init() -> impl Init<Self> {
+        init!(Self { buffer: None })
+    }
+
+    #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
     pub fn init() -> impl Init<Self> {
         init!(Self {
             buffer <- crate::utils::storage::Vec::init(),
@@ -1574,7 +1583,7 @@ impl<const N: usize> PacketBuffer<N> {
     #[cfg(all(feature = "large-buffers", feature = "alloc"))]
     pub fn buf_mut(&mut self) -> &mut crate::utils::storage::Vec<u8, N> {
         unwrap!(
-            &mut *self.buffer.as_mut(),
+            self.buffer.as_deref_mut(),
             "Buffer is not allocated. Did you forget to call `initialize_buffers`?"
         )
     }
@@ -1585,9 +1594,9 @@ impl<const N: usize> PacketBuffer<N> {
     }
 
     #[cfg(all(feature = "large-buffers", feature = "alloc"))]
-    pub fn buf_ref(&self) -> crate::utils::storage::Vec<u8, N> {
+    pub fn buf_ref(&self) -> &crate::utils::storage::Vec<u8, N> {
         unwrap!(
-            self.buffer.as_ref(),
+            self.buffer.as_deref(),
             "Buffer is not allocated. Did you forget to call `initialize_buffers`?"
         )
     }

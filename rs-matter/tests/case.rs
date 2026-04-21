@@ -97,12 +97,13 @@ fn test_case_handshake() {
 
         // ---- 2. Set up two Matter instances ----
 
-        let device_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, sys_epoch, 0);
-        device_matter.initialize_transport_buffers().unwrap();
-
-        let controller_matter =
+        let mut device_matter =
             Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, sys_epoch, 0);
-        controller_matter.initialize_transport_buffers().unwrap();
+        device_matter.initialize_transport_buffers();
+
+        let mut controller_matter =
+            Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, sys_epoch, 0);
+        controller_matter.initialize_transport_buffers();
 
         // ---- 3. Populate both FabricMgrs with matching fabric ----
 

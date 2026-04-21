@@ -42,6 +42,7 @@ zeroconf = ["rs-matter/zeroconf"]
 avahi = ["rs-matter/zbus"]
 resolve = ["rs-matter/zbus"]
 chip-test = []
+test-tcp = ["rs-matter/large-buffers"]
 # Temporary fix for unexpected cfgs lint
 defmt = []
 

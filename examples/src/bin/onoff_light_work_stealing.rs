@@ -112,7 +112,7 @@ fn run() -> Result<(), Error> {
     ));
 
     // Need to call this once
-    matter.initialize_transport_buffers()?;
+    matter.initialize_transport_buffers();
 
     // Create the events
     let events = EVENTS.uninit().init_with(Events::init_default());

@@ -72,7 +72,7 @@ fn main() -> Result<(), Error> {
     let mut matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
     // Need to call this once
-    matter.initialize_transport_buffers()?;
+    matter.initialize_transport_buffers();
 
     // Create the events
     let mut events: Events = Events::new_default();

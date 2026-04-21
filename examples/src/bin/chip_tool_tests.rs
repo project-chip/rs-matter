@@ -114,7 +114,7 @@ fn main() -> Result<(), Error> {
     ));
 
     // Need to call this once
-    matter.initialize_transport_buffers()?;
+    matter.initialize_transport_buffers();
 
     // Create the event queue
     let events = EVENTS.uninit().init_with(Events::init_default());
@@ -188,18 +188,52 @@ fn main() -> Result<(), Error> {
     // Run the background job of the data model
     let mut dm_job = pin!(dm.run());
 
-    // Create, load and run the persister
-    let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
+    // Bind the UDP socket
+    let udp_socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
+
+    #[allow(unused_mut)]
+    let (mut net_send, mut net_recv, mut net_multicast) = (&udp_socket, &udp_socket, &udp_socket);
+
+    // Optionally bind a TCP listener as well
+    #[cfg(feature = "test-tcp")]
+    let tcp = {
+        use rs_matter::transport::network::tcp::TcpNetwork;
+
+        let tcp_socket = async_io::Async::<std::net::TcpListener>::bind(MATTER_SOCKET_BIND_ADDR)?;
+
+        info!(
+            "TCP transport enabled, listening on {}",
+            MATTER_SOCKET_BIND_ADDR
+        );
+
+        TcpNetwork::<8>::new(tcp_socket)
+    };
+
+    // Optionally create a chained UDP+TCP network
+    #[cfg(feature = "test-tcp")]
+    let (mut net_send, mut net_recv, mut net_multicast) = {
+        use rs_matter::transport::network::{Address, ChainedNetwork};
+
+        let net_send = ChainedNetwork::new(|addr: &Address| addr.is_tcp(), &tcp, net_send);
+        let net_recv = ChainedNetwork::new(|addr: &Address| addr.is_tcp(), &tcp, net_recv);
+
+        (net_send, net_recv, net_multicast)
+    };
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket, &socket)),
+        core::mem::size_of_val(&matter.run(
+            &crypto,
+            &mut net_send,
+            &mut net_recv,
+            &mut net_multicast
+        )),
         core::mem::size_of_val(&mdns::run_mdns(matter, &crypto))
     );
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto));
-    let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
+    let mut transport = pin!(matter.run(&crypto, &mut net_send, &mut net_recv, &mut net_multicast));
 
     // We need to always print the QR text, because the test runner expects it to be printed
     // even if the device is already commissioned
@@ -235,6 +269,7 @@ fn main() -> Result<(), Error> {
 /// Overriden so that:
 /// - We can set the product appearance to what the `TestBasicInformation` tests expect;
 /// - We can set the device type and pairing hint to what the `TestDiscovery` tests expect.
+/// - When the `test-tcp` feature is enabled, we advertise TCP support via mDNS (`T=1`).
 const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     product_appearance: ProductAppearance {
         finish: ProductFinishEnum::Satin,
@@ -242,6 +277,7 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     },
     device_type: Some(0x0101),
     pairing_hint: PairingHintFlags::PRESS_RESET_BUTTON,
+    tcp_supported: cfg!(feature = "test-tcp"),
     ..TEST_DEV_DET
 };
 

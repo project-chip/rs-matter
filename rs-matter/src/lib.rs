@@ -346,7 +346,8 @@ impl<'a> Matter<'a> {
         )
     }
 
-    pub fn initialize_transport_buffers(&self) -> Result<(), Error> {
+    /// Initialize the transport buffers if using the `large-buffers` feature flag.
+    pub fn initialize_transport_buffers(&mut self) {
         self.transport.initialize_buffers()
     }
 
