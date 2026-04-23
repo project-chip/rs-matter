@@ -224,19 +224,6 @@ impl<const N: usize> Subscriptions<N> {
     where
         B: BufferAccess<IMBuffer> + 'a,
     {
-        // REVIEW: `next_max_seen_attr_change_id` is hard-coded to `0` here,
-        // but the matching path in `report()` uses `changed_attrs.watermark()`.
-        // For `add()` the value doesn't actually matter (the subscription is
-        // freshly constructed below with `max_seen_attr_change_id =
-        // changed_attrs.watermark()`, and `set_complete()` is what ultimately
-        // writes this field back via `report_complete`), but the asymmetry is
-        // confusing and means `set_complete()` called from the *priming*
-        // report path will overwrite `max_seen_attr_change_id` with 0,
-        // effectively resetting the subscription's `since` watermark to 0 on
-        // its very first commit.  Changes that occurred *during* the priming
-        // report will then be re-emitted in the next incremental report, but
-        // changes that happened between `add()` and the start of priming will
-        // be replayed twice.
         let (sub, buf, next_max_seen_attr_change_id) = self.with(buffers, |state, buffers| {
             let (sub, buf) = state.add::<B>(
                 fabric_idx,
@@ -411,7 +398,7 @@ struct SubscriptionsInner<const N: usize> {
     next_subscription_id: u32,
     subscriptions_count: usize,
     subscriptions: Vec<Subscription, N>,
-    changed_attrs: ChangedAttributes,
+    changed_attrs: ChangedAttrs,
 }
 
 impl<const N: usize> SubscriptionsInner<N> {
@@ -422,7 +409,7 @@ impl<const N: usize> SubscriptionsInner<N> {
             next_subscription_id: 1,
             subscriptions_count: 0,
             subscriptions: Vec::new(),
-            changed_attrs: ChangedAttributes::new(),
+            changed_attrs: ChangedAttrs::new(),
         }
     }
 
@@ -432,7 +419,7 @@ impl<const N: usize> SubscriptionsInner<N> {
             next_subscription_id: 1,
             subscriptions_count: 0,
             subscriptions <- Vec::init(),
-            changed_attrs <- ChangedAttributes::init(),
+            changed_attrs <- ChangedAttrs::init(),
         })
     }
 
@@ -645,7 +632,7 @@ impl Subscription {
         &self,
         now: Instant,
         rx: &[u8],
-        changed_attrs: &ChangedAttributes,
+        changed_attrs: &ChangedAttrs,
         max_event_number: EventNumber,
     ) -> bool {
         if self.is_expired(now) || !self.is_report_allowed(now) {
@@ -675,7 +662,7 @@ impl Subscription {
             .unwrap_or(true)
     }
 
-    fn is_affected_by_attr_changes(&self, _rx: &[u8], changes: &ChangedAttributes) -> bool {
+    fn is_affected_by_attr_changes(&self, _rx: &[u8], changes: &ChangedAttrs) -> bool {
         changes.any_since(self.max_seen_attr_change_id)
     }
 
@@ -699,7 +686,7 @@ impl Subscription {
 /// affected subscriptions to emit a slightly wider set of attributes on their
 /// next report, but this is a bounded loss of precision that preserves
 /// correctness.
-pub(crate) struct ChangedAttributes {
+pub(crate) struct ChangedAttrs {
     /// Monotonically increasing ID assigned to every recorded change.
     /// The first assigned ID is 1; `0` is reserved as the "no change seen yet"
     /// sentinel used by fresh subscriptions.
@@ -709,7 +696,7 @@ pub(crate) struct ChangedAttributes {
     entries: Vec<ChangedAttr, MAX_CHANGED_ATTRS>,
 }
 
-impl ChangedAttributes {
+impl ChangedAttrs {
     /// Create the instance.
     #[inline(always)]
     const fn new() -> Self {
@@ -1087,7 +1074,7 @@ mod tests {
 
     #[test]
     fn changed_attrs_starts_empty() {
-        let attrs = ChangedAttributes::new();
+        let attrs = ChangedAttrs::new();
         assert_eq!(attrs.watermark(), 0);
         assert!(!attrs.any_since(0));
         assert!(!attrs.contains_since(1, 2, 3, 0));
@@ -1095,7 +1082,7 @@ mod tests {
 
     #[test]
     fn changed_attrs_record_assigns_monotonic_ids() {
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         let id1 = attrs.record(1, 2, 3);
         let id2 = attrs.record(1, 2, 4);
         let id3 = attrs.record(2, 2, 3);
@@ -1107,7 +1094,7 @@ mod tests {
 
     #[test]
     fn changed_attrs_contains_since_and_any_since() {
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         attrs.record(1, 2, 3);
         attrs.record(1, 2, 4);
 
@@ -1125,7 +1112,7 @@ mod tests {
 
     #[test]
     fn changed_attrs_duplicate_refreshes_change_id() {
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         attrs.record(1, 2, 3);
         attrs.record(1, 2, 4);
         // Same triple as first record - should refresh, not add a new entry.
@@ -1141,7 +1128,7 @@ mod tests {
 
     #[test]
     fn changed_attrs_record_wildcard_cluster_covers_every_attr() {
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         let id = attrs.record_wildcard(Some(7), Some(42));
 
         // Any concrete attribute on that (endpoint, cluster) is now covered.
@@ -1156,7 +1143,7 @@ mod tests {
 
     #[test]
     fn changed_attrs_record_wildcard_endpoint_covers_every_cluster() {
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         attrs.record_wildcard(Some(5), None);
 
         assert!(attrs.contains_since(5, 1, 1, 0));
@@ -1166,7 +1153,7 @@ mod tests {
 
     #[test]
     fn changed_attrs_record_wildcard_absorbs_existing_concrete_entries() {
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         // Seed three concrete attrs on (1, 2).
         attrs.record(1, 2, 10);
         attrs.record(1, 2, 11);
@@ -1189,7 +1176,7 @@ mod tests {
 
     #[test]
     fn changed_attrs_record_wildcard_is_refreshed_when_already_covered() {
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         // Endpoint-wide wildcard covers any cluster on that endpoint.
         attrs.record_wildcard(Some(1), None);
         let before_len = attrs.entries.len();
@@ -1204,7 +1191,7 @@ mod tests {
 
     #[test]
     fn changed_attrs_purge_up_to_removes_old_entries() {
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         attrs.record(1, 2, 3); // id 1
         attrs.record(1, 2, 4); // id 2
         attrs.record(2, 2, 3); // id 3
@@ -1222,7 +1209,7 @@ mod tests {
 
     #[test]
     fn changed_attrs_clear_empties_table_but_keeps_watermark() {
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         attrs.record(1, 2, 3);
         attrs.record(1, 2, 4);
         let wm_before = attrs.watermark();
@@ -1236,7 +1223,7 @@ mod tests {
 
     #[test]
     fn changed_attrs_promotion_on_overflow_same_cluster() {
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         // Fill the table with distinct concrete entries on the same (endpoint, cluster).
         for attr in 0..MAX_CHANGED_ATTRS as u32 {
             attrs.record(1, 2, attr);
@@ -1267,7 +1254,7 @@ mod tests {
 
     #[test]
     fn changed_attrs_promotion_to_global_wildcard() {
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         // Entries spread across many endpoints/clusters/attrs to force promotion
         // past the (endpoint, cluster, *) and (endpoint, *, *) levels.
         for i in 0..(MAX_CHANGED_ATTRS as u16 + 5) {
@@ -1289,7 +1276,7 @@ mod tests {
         // (= 15 entries total). One extra record fills the table, then an
         // overflowing record forces exactly ONE level-1 promotion which must
         // collapse the big (1, 1, *) group while leaving singletons concrete.
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         for attr in 0..10u32 {
             attrs.record(1, 1, attr);
         }
@@ -1350,7 +1337,7 @@ mod tests {
     fn promotion_is_minimal_only_one_group_collapsed_per_overflow() {
         // Two big level-1 groups of equal size. A single overflow must collapse
         // only ONE of them, not both (minimal promotion).
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         // Group A: (1, 1, 0..8) = 8 entries
         for attr in 0..8u32 {
             attrs.record(1, 1, attr);
@@ -1400,7 +1387,7 @@ mod tests {
     fn promotion_falls_back_to_level_2_when_no_level_1_group() {
         // All (endpoint, cluster) pairs are unique (level-1 groups are all
         // singletons) but endpoints repeat, so level-2 groups are non-trivial.
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         for cluster in 0..8u32 {
             attrs.record(1, cluster, 0);
         }
@@ -1448,7 +1435,7 @@ mod tests {
         // All-distinct endpoints AND (endpoint, cluster) pairs: no level-1 or
         // level-2 group has >=2 entries. Overflow must collapse everything to
         // a single global wildcard.
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         for i in 0..MAX_CHANGED_ATTRS as u16 {
             attrs.record(i, i as u32, i as u32);
         }
@@ -1470,7 +1457,7 @@ mod tests {
     fn promotion_preserves_max_change_id_in_coarsened_entry() {
         // After collapsing a (1, 1, *) group, the resulting wildcard's
         // change_id must equal the max change_id of the collapsed entries.
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         for attr in 0..MAX_CHANGED_ATTRS as u32 {
             attrs.record(1, 1, attr);
         }
@@ -1494,7 +1481,7 @@ mod tests {
         // Build a state where (1, 1, *) wildcard already exists via a forced
         // promotion. Recording another (1, 1, k) must refresh that wildcard's
         // change_id without producing any new entry.
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         for attr in 0..MAX_CHANGED_ATTRS as u32 {
             attrs.record(1, 1, attr);
         }
@@ -1521,7 +1508,7 @@ mod tests {
         // Sustained mixed churn must never let the table exceed its capacity,
         // and every freshly-recorded triple must remain visible immediately
         // after recording.
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         for i in 0..1000u32 {
             let endpoint = (i % 7) as u16;
             let cluster = i % 13;
@@ -1544,7 +1531,7 @@ mod tests {
     fn promotion_iterated_into_same_existing_wildcard() {
         // Once (1, 1, *) exists, repeated inserts on that group must never
         // grow the table, and never trigger further promotion.
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         for attr in 0..MAX_CHANGED_ATTRS as u32 {
             attrs.record(1, 1, attr);
         }
@@ -1564,7 +1551,7 @@ mod tests {
         // (freeing 1 slot), but the table is still full once the new record
         // tries to be inserted on a fresh singleton location. Subsequent
         // overflows must escalate to level-2 / global.
-        let mut attrs = ChangedAttributes::new();
+        let mut attrs = ChangedAttrs::new();
         // 2 entries sharing (1, 1, *) -- a single level-1 group of size 2.
         attrs.record(1, 1, 0);
         attrs.record(1, 1, 1);
