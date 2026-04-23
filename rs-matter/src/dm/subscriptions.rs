@@ -732,9 +732,9 @@ impl ChangedAttrs {
     /// Returns the newly assigned change ID.
     fn record_wildcard(&mut self, endpoint: Option<EndptId>, cluster: Option<ClusterId>) -> u64 {
         self.record_raw(ChangedAttr {
-            endpoint,
-            cluster,
-            attr: None,
+            endpoint: endpoint.unwrap_or(WILDCARD_ENDPOINT),
+            cluster: cluster.unwrap_or(WILDCARD_CLUSTER),
+            attr: WILDCARD_ATTR,
             change_id: 0,
         })
     }
@@ -842,9 +842,9 @@ impl ChangedAttrs {
                 self.entries.clear();
 
                 unwrap!(self.entries.push(ChangedAttr {
-                    endpoint: None,
-                    cluster: None,
-                    attr: None,
+                    endpoint: WILDCARD_ENDPOINT,
+                    cluster: WILDCARD_CLUSTER,
+                    attr: WILDCARD_ATTR,
                     change_id: new.change_id,
                 }));
 
@@ -902,76 +902,144 @@ impl ChangedAttrs {
     }
 }
 
+/// Sentinel value for "any endpoint" inside a [`ChangedAttr`] entry.
+///
+/// Matter endpoint ids are `u16`; the Matter Core Specification caps practical
+/// endpoint numbering well below `0xFFFF`, and the CHIP reference SDK
+/// (`kInvalidEndpointId` in `src/lib/core/DataModelTypes.h`) adopts the same
+/// convention, so we can repurpose `u16::MAX` as an internal "wildcard" marker.
+const WILDCARD_ENDPOINT: EndptId = EndptId::MAX;
+
+/// Sentinel value for "any cluster" inside a [`ChangedAttr`] entry.
+///
+/// Matter cluster ids are Manufacturer Extensible Identifiers (MEIs, Core Spec
+/// §7.18.2): `(vendor_prefix << 16) | suffix` with `0xFFFF` reserved as an
+/// invalid vendor prefix. `0xFFFF_FFFF` therefore cannot be a legitimate
+/// cluster id and is safe to use as an internal "wildcard" marker. The CHIP
+/// reference SDK uses the same value as `kInvalidClusterId`.
+const WILDCARD_CLUSTER: ClusterId = ClusterId::MAX;
+
+/// Sentinel value for "any attribute" inside a [`ChangedAttr`] entry.
+///
+/// Same MEI argument as [`WILDCARD_CLUSTER`]: `0xFFFF_FFFF` cannot be a
+/// legitimate attribute id and matches CHIP's `kInvalidAttributeId`.
+const WILDCARD_ATTR: AttrId = AttrId::MAX;
+
 /// A record of one recently changed attribute.
 ///
-/// A `None` field acts as a wildcard. Wildcards appear only as a result of
-/// "promotion" when the `changed_attrs` table becomes full and several
-/// concrete entries need to be coalesced into a coarser one.
+/// A field holding its corresponding `WILDCARD_*` sentinel acts as a wildcard
+/// on that axis. Wildcards appear only as a result of "promotion" when the
+/// `changed_attrs` table becomes full and several concrete entries need to be
+/// coalesced into a coarser one.
+///
+/// Rust is free to reorder these fields under the default `repr(Rust)`, and
+/// it does so to minimize size: on 64-bit targets `size_of::<ChangedAttr>()`
+/// is 24 bytes (the `u64` change_id forces 8-byte alignment; the rest packs
+/// into the remaining 16 bytes). The previous `Option<u16> / Option<u32> /
+/// Option<u32>` encoding took 32 bytes per entry because `u16` / `u32` have
+/// no niche for `Option`. See `changed_attr_size_is_compact`.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct ChangedAttr {
-    endpoint: Option<EndptId>,
-    cluster: Option<ClusterId>,
-    attr: Option<AttrId>,
+    endpoint: EndptId,
+    cluster: ClusterId,
+    attr: AttrId,
     change_id: u64,
 }
 
 impl ChangedAttr {
     const fn concrete(endpoint: EndptId, cluster: ClusterId, attr: AttrId, change_id: u64) -> Self {
         Self {
-            endpoint: Some(endpoint),
-            cluster: Some(cluster),
-            attr: Some(attr),
+            endpoint,
+            cluster,
+            attr,
             change_id,
         }
+    }
+
+    #[inline]
+    const fn is_endpoint_wildcard(&self) -> bool {
+        self.endpoint == WILDCARD_ENDPOINT
+    }
+
+    #[inline]
+    const fn is_cluster_wildcard(&self) -> bool {
+        self.cluster == WILDCARD_CLUSTER
+    }
+
+    #[inline]
+    const fn is_attr_wildcard(&self) -> bool {
+        self.attr == WILDCARD_ATTR
     }
 
     /// Whether this record covers the concrete attribute triple
     /// `(endpoint, cluster, attr)`.
     fn matches(&self, endpoint: EndptId, cluster: ClusterId, attr: AttrId) -> bool {
-        self.endpoint.map(|x| x == endpoint).unwrap_or(true)
-            && self.cluster.map(|x| x == cluster).unwrap_or(true)
-            && self.attr.map(|x| x == attr).unwrap_or(true)
+        (self.is_endpoint_wildcard() || self.endpoint == endpoint)
+            && (self.is_cluster_wildcard() || self.cluster == cluster)
+            && (self.is_attr_wildcard() || self.attr == attr)
     }
 
     /// Whether `other` is semantically covered by `self` (i.e. `self` is as
     /// coarse as or coarser than `other` on every axis).
     fn covers(&self, other: &ChangedAttr) -> bool {
-        fn cov<T: Eq>(a: Option<T>, b: Option<T>) -> bool {
-            match (a, b) {
-                (None, _) => true,        // self wildcard covers anything
-                (Some(_), None) => false, // concrete doesn't cover wildcard
-                (Some(a), Some(b)) => a == b,
+        #[inline]
+        fn cov<T: Eq>(a: T, a_wild: bool, b: T, b_wild: bool) -> bool {
+            if a_wild {
+                true // self wildcard covers anything
+            } else if b_wild {
+                false // concrete doesn't cover wildcard
+            } else {
+                a == b
             }
         }
-        cov(self.endpoint, other.endpoint)
-            && cov(self.cluster, other.cluster)
-            && cov(self.attr, other.attr)
+        cov(
+            self.endpoint,
+            self.is_endpoint_wildcard(),
+            other.endpoint,
+            other.is_endpoint_wildcard(),
+        ) && cov(
+            self.cluster,
+            self.is_cluster_wildcard(),
+            other.cluster,
+            other.is_cluster_wildcard(),
+        ) && cov(
+            self.attr,
+            self.is_attr_wildcard(),
+            other.attr,
+            other.is_attr_wildcard(),
+        )
     }
 
     /// Build the coarsened wildcard entry representing `pivot`'s group at the
     /// given level. Returns `None` if `pivot` cannot be promoted at that level
     /// (e.g. its endpoint is already a wildcard for level 1 or 2).
     fn coarsen(&self, level: u8) -> Option<Self> {
-        let (endpoint, cluster) = match level {
-            1 => (self.endpoint?, self.cluster?),
-            2 => {
-                return Some(Self {
-                    endpoint: Some(self.endpoint?),
-                    cluster: None,
-                    attr: None,
+        match level {
+            1 => {
+                if self.is_endpoint_wildcard() || self.is_cluster_wildcard() {
+                    return None;
+                }
+                Some(Self {
                     change_id: 0,
+                    cluster: self.cluster,
+                    attr: WILDCARD_ATTR,
+                    endpoint: self.endpoint,
+                })
+            }
+            2 => {
+                if self.is_endpoint_wildcard() {
+                    return None;
+                }
+                Some(Self {
+                    change_id: 0,
+                    cluster: WILDCARD_CLUSTER,
+                    attr: WILDCARD_ATTR,
+                    endpoint: self.endpoint,
                 })
             }
             _ => unreachable!(),
-        };
-
-        Some(Self {
-            endpoint: Some(endpoint),
-            cluster: Some(cluster),
-            attr: None,
-            change_id: 0,
-        })
+        }
     }
 }
 
@@ -1170,7 +1238,7 @@ mod tests {
         assert!(attrs
             .entries
             .iter()
-            .any(|e| e.endpoint == Some(1) && e.cluster == Some(2) && e.attr.is_none()));
+            .any(|e| e.endpoint == 1 && e.cluster == 2 && e.is_attr_wildcard()));
         assert!(attrs.contains_since(1, 3, 20, 0));
     }
 
@@ -1295,14 +1363,14 @@ mod tests {
         let wild_11 = attrs
             .entries
             .iter()
-            .filter(|e| e.endpoint == Some(1) && e.cluster == Some(1) && e.attr.is_none())
+            .filter(|e| e.endpoint == 1 && e.cluster == 1 && e.is_attr_wildcard())
             .count();
         assert_eq!(wild_11, 1);
         // No concrete (1, 1, _) entries survived.
         let concrete_11 = attrs
             .entries
             .iter()
-            .filter(|e| e.endpoint == Some(1) && e.cluster == Some(1) && e.attr.is_some())
+            .filter(|e| e.endpoint == 1 && e.cluster == 1 && !e.is_attr_wildcard())
             .count();
         assert_eq!(concrete_11, 0);
         // Singletons on (1, k, 0) for k=2..=6 remain concrete.
@@ -1310,9 +1378,7 @@ mod tests {
             let n = attrs
                 .entries
                 .iter()
-                .filter(|e| {
-                    e.endpoint == Some(1) && e.cluster == Some(cluster) && e.attr == Some(0)
-                })
+                .filter(|e| e.endpoint == 1 && e.cluster == cluster && e.attr == 0)
                 .count();
             assert_eq!(n, 1, "singleton (1, {}, 0) should remain concrete", cluster);
         }
@@ -1320,7 +1386,7 @@ mod tests {
         assert!(attrs
             .entries
             .iter()
-            .any(|e| e.endpoint == Some(2) && e.cluster == Some(2) && e.attr == Some(2)));
+            .any(|e| e.endpoint == 2 && e.cluster == 2 && e.attr == 2));
 
         // All original triples still report as changed.
         for attr in 0..10u32 {
@@ -1355,11 +1421,11 @@ mod tests {
         let a_wild = attrs
             .entries
             .iter()
-            .any(|e| e.endpoint == Some(1) && e.cluster == Some(1) && e.attr.is_none());
+            .any(|e| e.endpoint == 1 && e.cluster == 1 && e.is_attr_wildcard());
         let b_wild = attrs
             .entries
             .iter()
-            .any(|e| e.endpoint == Some(2) && e.cluster == Some(2) && e.attr.is_none());
+            .any(|e| e.endpoint == 2 && e.cluster == 2 && e.is_attr_wildcard());
         assert!(
             a_wild ^ b_wild,
             "expected exactly one of the groups to be collapsed (A: {}, B: {})",
@@ -1370,12 +1436,12 @@ mod tests {
         let a_concrete = attrs
             .entries
             .iter()
-            .filter(|e| e.endpoint == Some(1) && e.cluster == Some(1) && e.attr.is_some())
+            .filter(|e| e.endpoint == 1 && e.cluster == 1 && !e.is_attr_wildcard())
             .count();
         let b_concrete = attrs
             .entries
             .iter()
-            .filter(|e| e.endpoint == Some(2) && e.cluster == Some(2) && e.attr.is_some())
+            .filter(|e| e.endpoint == 2 && e.cluster == 2 && !e.is_attr_wildcard())
             .count();
         assert!(
             (a_wild && a_concrete == 0 && b_concrete == 8)
@@ -1403,24 +1469,26 @@ mod tests {
         let lvl1_wild = attrs
             .entries
             .iter()
-            .filter(|e| e.endpoint.is_some() && e.cluster.is_some() && e.attr.is_none())
+            .filter(|e| {
+                !e.is_endpoint_wildcard() && !e.is_cluster_wildcard() && e.is_attr_wildcard()
+            })
             .count();
         assert_eq!(lvl1_wild, 0);
         // Exactly one level-2 wildcard on endpoint 1 or 2 was produced.
         let ep1_wild = attrs
             .entries
             .iter()
-            .any(|e| e.endpoint == Some(1) && e.cluster.is_none() && e.attr.is_none());
+            .any(|e| e.endpoint == 1 && e.is_cluster_wildcard() && e.is_attr_wildcard());
         let ep2_wild = attrs
             .entries
             .iter()
-            .any(|e| e.endpoint == Some(2) && e.cluster.is_none() && e.attr.is_none());
+            .any(|e| e.endpoint == 2 && e.is_cluster_wildcard() && e.is_attr_wildcard());
         assert!(ep1_wild ^ ep2_wild);
         // No global wildcard was produced either.
         assert!(!attrs
             .entries
             .iter()
-            .any(|e| e.endpoint.is_none() && e.cluster.is_none() && e.attr.is_none()));
+            .any(|e| e.is_endpoint_wildcard() && e.is_cluster_wildcard() && e.is_attr_wildcard()));
 
         // All originals still visible.
         for cluster in 0..8u32 {
@@ -1444,7 +1512,9 @@ mod tests {
         attrs.record(100, 200, 300);
         assert_eq!(attrs.entries.len(), 1);
         let only = &attrs.entries[0];
-        assert!(only.endpoint.is_none() && only.cluster.is_none() && only.attr.is_none());
+        assert!(
+            only.is_endpoint_wildcard() && only.is_cluster_wildcard() && only.is_attr_wildcard()
+        );
 
         // Every previously-recorded triple is still covered.
         for i in 0..MAX_CHANGED_ATTRS as u16 {
@@ -1467,7 +1537,7 @@ mod tests {
         let wild = attrs
             .entries
             .iter()
-            .find(|e| e.endpoint == Some(1) && e.cluster == Some(1) && e.attr.is_none())
+            .find(|e| e.endpoint == 1 && e.cluster == 1 && e.is_attr_wildcard())
             .expect("(1, 1, *) wildcard was produced");
         assert_eq!(wild.change_id, max_before);
 
@@ -1498,7 +1568,7 @@ mod tests {
         let wild = attrs
             .entries
             .iter()
-            .find(|e| e.endpoint == Some(1) && e.cluster == Some(1) && e.attr.is_none())
+            .find(|e| e.endpoint == 1 && e.cluster == 1 && e.is_attr_wildcard())
             .unwrap();
         assert_eq!(wild.change_id, new_id);
     }
@@ -1569,7 +1639,7 @@ mod tests {
         assert!(attrs
             .entries
             .iter()
-            .any(|e| e.endpoint == Some(1) && e.cluster == Some(1) && e.attr.is_none()));
+            .any(|e| e.endpoint == 1 && e.cluster == 1 && e.is_attr_wildcard()));
 
         // Keep feeding: eventually we must fall back to level-2 or global
         // without breaking correctness.
@@ -1591,21 +1661,21 @@ mod tests {
     fn changed_attr_covers_wildcards() {
         let concrete = ChangedAttr::concrete(1, 2, 3, 1);
         let any_attr = ChangedAttr {
-            endpoint: Some(1),
-            cluster: Some(2),
-            attr: None,
+            endpoint: 1,
+            cluster: 2,
+            attr: WILDCARD_ATTR,
             change_id: 1,
         };
         let any_cluster = ChangedAttr {
-            endpoint: Some(1),
-            cluster: None,
-            attr: None,
+            endpoint: 1,
+            cluster: WILDCARD_CLUSTER,
+            attr: WILDCARD_ATTR,
             change_id: 1,
         };
         let global = ChangedAttr {
-            endpoint: None,
-            cluster: None,
-            attr: None,
+            endpoint: WILDCARD_ENDPOINT,
+            cluster: WILDCARD_CLUSTER,
+            attr: WILDCARD_ATTR,
             change_id: 1,
         };
 
@@ -1622,6 +1692,16 @@ mod tests {
         assert!(any_attr.matches(1, 2, 99));
         assert!(!any_attr.matches(1, 9, 99));
         assert!(global.matches(99, 99, 99));
+    }
+
+    #[test]
+    fn changed_attr_size_is_compact() {
+        // `ChangedAttr` must stay at 24 bytes on 64-bit targets: `u64` change_id
+        // forces 8-byte alignment, and the `(u32, u32, u16)` path tuple fits in
+        // the remaining 16 bytes (4 + 4 + 2 + 6 padding). Regressing back to an
+        // `Option<u16> / Option<u32> / Option<u32>` encoding would bump this to
+        // 32 bytes per entry, i.e. +128 bytes per `Subscriptions` table.
+        assert_eq!(core::mem::size_of::<ChangedAttr>(), 24);
     }
 
     // ---------- Subscriptions ----------
