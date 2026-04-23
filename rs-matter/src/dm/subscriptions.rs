@@ -254,17 +254,18 @@ impl<const N: usize> Subscriptions<N> {
         })
     }
 
-    // REVIEW: a subscription that is currently being reported on has been
-    // `swap_remove`d from `state.subscriptions` (see `SubscriptionsInner::report`)
-    // and only lives inside its `ReportContext`. `remove` scans
-    // `state.subscriptions` only, so an in-flight subscription is *invisible*
-    // to `remove` and will silently survive any removal request (e.g. a
-    // `keep_subs=false` Subscribe handled by another task, or a session
-    // removal). It is put back verbatim by `Drop` via `report_complete`.
-    // This is a correctness regression vs. the pre-refactor code and probably
-    // deserves either a "pending removal" flag on `ReportContext` or holding
-    // the subscription in place during reporting (e.g. with a `reporting`
-    // marker) so `remove` can still act on it.
+    /// Remove every subscription for which `f` returns `Some(reason)`.
+    ///
+    /// A subscription that is currently being reported on has been moved out
+    /// of `state.subscriptions` into its `ReportContext` (see
+    /// [`SubscriptionsInner::report`]). To keep such an in-flight subscription
+    /// observable, [`SubscriptionsInner::report`] also leaves a clone of it in
+    /// `state.reporting`. If the predicate matches that clone, we flip
+    /// `state.reporting_cancelled` so that [`SubscriptionsInner::report_complete`]
+    /// drops the subscription on `Drop` of its `ReportContext` instead of
+    /// re-inserting it. The count invariant is preserved: either the Vec path
+    /// decrements `subscriptions_count` now, or `report_complete` does it
+    /// later — never both for the same subscription.
     pub(crate) fn remove<B, F>(&self, buffers: &SubscriptionsBuffers<'_, B, N>, mut f: F) -> bool
     where
         B: BufferAccess<IMBuffer>,
@@ -295,6 +296,25 @@ impl<const N: usize> Subscriptions<N> {
                 info!("Removed subscription {:?}, reason: {}", ids, reason);
 
                 removed = true;
+            }
+
+            // Consider the in-flight subscription (if any). It is not in
+            // `state.subscriptions`; only a snapshot clone lives in
+            // `state.reporting`. If the predicate matches and we have not
+            // already flagged it for cancellation, request that
+            // `report_complete` drop it.
+            if state.reporting_cancelled.is_none() {
+                if let Some(sub) = state.reporting.as_ref() {
+                    if let Some(reason) = f(sub) {
+                        info!(
+                            "Marked in-flight subscription {:?} for removal, reason: {}",
+                            sub.ids(),
+                            reason
+                        );
+                        state.reporting_cancelled = Some(reason);
+                        removed = true;
+                    }
+                }
             }
 
             removed
@@ -399,6 +419,19 @@ struct SubscriptionsInner<const N: usize> {
     subscriptions_count: usize,
     subscriptions: Vec<Subscription, N>,
     changed_attrs: ChangedAttrs,
+    /// Snapshot of the subscription currently being reported on (i.e. the
+    /// one that has been `swap_remove`d into a `ReportContext`). `None` when
+    /// no report is in flight. This is a frozen clone captured at `report()`
+    /// time; mutations made by `ReportContext` (e.g. to
+    /// `max_seen_event_number`) are NOT visible here. The slot exists so
+    /// that `Subscriptions::remove` can still observe and cancel an
+    /// in-flight subscription.
+    reporting: Option<Subscription>,
+    /// Set by `Subscriptions::remove` when its predicate matched
+    /// `reporting`. Consumed by `report_complete`, which then drops the
+    /// subscription (and decrements `subscriptions_count`) regardless of the
+    /// `keep` flag on the `ReportContext`.
+    reporting_cancelled: Option<&'static str>,
 }
 
 impl<const N: usize> SubscriptionsInner<N> {
@@ -410,6 +443,8 @@ impl<const N: usize> SubscriptionsInner<N> {
             subscriptions_count: 0,
             subscriptions: Vec::new(),
             changed_attrs: ChangedAttrs::new(),
+            reporting: None,
+            reporting_cancelled: None,
         }
     }
 
@@ -420,12 +455,19 @@ impl<const N: usize> SubscriptionsInner<N> {
             subscriptions_count: 0,
             subscriptions <- Vec::init(),
             changed_attrs <- ChangedAttrs::init(),
+            reporting: None,
+            reporting_cancelled: None,
         })
     }
 
     fn clear(&mut self) {
         self.subscriptions.clear();
         self.subscriptions_count = 0;
+        // If a report is in flight, make sure `report_complete` drops it
+        // rather than pushing it back into an otherwise-empty table.
+        if self.reporting.is_some() {
+            self.reporting_cancelled = Some("subscriptions cleared");
+        }
     }
 
     /// Add a subscription with the given parameters.
@@ -502,11 +544,22 @@ impl<const N: usize> SubscriptionsInner<N> {
     where
         B: BufferAccess<IMBuffer> + 'a,
     {
+        // `reporting` must be vacant: callers only start a new report after
+        // the previous `ReportContext` has been dropped (which clears the
+        // slot via `report_complete`).
+        debug_assert!(self.reporting.is_none());
+        debug_assert!(self.reporting_cancelled.is_none());
+
         if let Some(index) = self.find_reportable::<B>(now, max_event_number, buffers) {
             let sub = self.subscriptions.swap_remove(index);
             let buf = buffers.swap_remove(index);
 
             info!("About to report on subscription {:?}", sub.ids());
+
+            // Leave a snapshot clone behind so that `Subscriptions::remove`
+            // can still match and cancel this subscription while the report
+            // is in flight.
+            self.reporting = Some(sub.clone());
 
             Some((sub, buf))
         } else {
@@ -523,7 +576,18 @@ impl<const N: usize> SubscriptionsInner<N> {
     ) where
         B: BufferAccess<IMBuffer> + 'a,
     {
-        if keep {
+        // Always clear the reporting slot; it was populated in `report()`.
+        self.reporting = None;
+        let cancelled = self.reporting_cancelled.take();
+
+        if let Some(reason) = cancelled {
+            info!(
+                "In-flight subscription {:?} cancelled during reporting: {}",
+                sub.ids(),
+                reason
+            );
+            self.subscriptions_count -= 1;
+        } else if keep {
             unwrap!(self.subscriptions.push(sub));
             unwrap!(buffers.push(buffer).map_err(|_| ()));
         } else {
@@ -2111,6 +2175,98 @@ mod tests {
         let subs: Subscriptions<2> = Subscriptions::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<2>, 2> = SubscriptionsBuffers::new();
         assert!(!subs.remove(&subs_bufs, |_| Some("never called on empty")));
+    }
+
+    #[test]
+    fn remove_cancels_in_flight_subscription() {
+        // A subscription that has been moved into a `ReportContext` is still
+        // observable to `remove` via `SubscriptionsInner::reporting`. Matching
+        // it must cause `report_complete` to drop the subscription on Drop
+        // rather than re-inserting it, even when `set_keep` was called.
+        let subs: Subscriptions<2> = Subscriptions::new();
+        let pool = TestPool::<3>::new(0);
+        let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+
+        // Prime a subscription so it lives in the table.
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 100, 1, 60);
+            rctx.set_keep();
+        }
+        assert_eq!(subs.state.lock(|s| s.borrow().subscriptions_count), 1);
+
+        // Start an incremental report and, while it is "in flight", issue
+        // a `remove` that matches the in-flight subscription. Also flip
+        // `set_keep` to verify the cancel flag wins over `keep`.
+        subs.notify_attribute_changed(1, 2, 3);
+        let later = now + Duration::from_secs(2);
+        {
+            let mut rctx = subs.report(later, 0, &subs_bufs).unwrap();
+
+            // The in-flight sub is currently absent from `state.subscriptions`
+            // but must still be visible to `remove` through the `reporting`
+            // slot.
+            let mut matched_peers: std::vec::Vec<u64> = std::vec::Vec::new();
+            let removed = subs.remove(&subs_bufs, |sub| {
+                matched_peers.push(sub.ids().peer_node_id);
+                (sub.ids().peer_node_id == 100).then_some("test-cancel")
+            });
+            assert!(removed);
+            assert!(matched_peers.contains(&100));
+
+            // Even though we ask to keep, the cancel flag must force a drop.
+            rctx.set_keep();
+        }
+
+        // After `ReportContext::drop` the subscription must be gone and the
+        // slot freed.
+        subs.state.lock(|s| {
+            let s = s.borrow();
+            assert_eq!(s.subscriptions_count, 0);
+            assert!(s.subscriptions.is_empty());
+            assert!(s.reporting.is_none());
+            assert!(s.reporting_cancelled.is_none());
+        });
+
+        // Slot is free: a new sub can be added.
+        let mut r = add_sub(&subs, &subs_bufs, &pool, now, 1, 101, 1, 60);
+        r.set_keep();
+    }
+
+    #[test]
+    fn remove_not_matching_in_flight_leaves_it_intact() {
+        // If `remove`'s predicate matches neither the in-flight subscription
+        // nor anything in the table, the in-flight subscription must still
+        // be re-inserted on `ReportContext::drop` when `set_keep` is called.
+        let subs: Subscriptions<2> = Subscriptions::new();
+        let pool = TestPool::<3>::new(0);
+        let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 100, 1, 60);
+            rctx.set_keep();
+        }
+
+        subs.notify_attribute_changed(1, 2, 3);
+        let later = now + Duration::from_secs(2);
+        {
+            let mut rctx = subs.report(later, 0, &subs_bufs).unwrap();
+            let removed = subs.remove(&subs_bufs, |sub| {
+                (sub.ids().peer_node_id == 999).then_some("no-match")
+            });
+            assert!(!removed);
+            rctx.set_keep();
+        }
+
+        subs.state.lock(|s| {
+            let s = s.borrow();
+            assert_eq!(s.subscriptions_count, 1);
+            assert_eq!(s.subscriptions.len(), 1);
+            assert!(s.reporting.is_none());
+            assert!(s.reporting_cancelled.is_none());
+        });
     }
 
     #[test]
