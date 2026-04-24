@@ -59,11 +59,13 @@ use rs_matter::crypto::backend::rustcrypto::RustCrypto;
 use rs_matter::crypto::{Crypto, RngCore, WeakTestOnlyRand};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::clusters::net_comm::{
-    NetCtl, NetCtlError, NetCtlStatus, NetworkScanInfo, NetworkType, SharedNetworks, WirelessCreds
+    NetCtl, NetCtlError, NetCtlStatus, NetworkScanInfo, NetworkType, SharedNetworks, WirelessCreds,
 };
 use rs_matter::dm::clusters::on_off::NoLevelControl;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
-use rs_matter::dm::clusters::wifi_diag::{SecurityTypeEnum, WiFiVersionEnum, WifiDiag, WirelessDiag};
+use rs_matter::dm::clusters::wifi_diag::{
+    SecurityTypeEnum, WiFiVersionEnum, WifiDiag, WirelessDiag,
+};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::WifiSysHandler;
@@ -91,7 +93,7 @@ use rs_matter::utils::epoch::dummy_epoch;
 use rs_matter::utils::init::{init, Init, InitMaybeUninit};
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::sync::DynBase;
-use rs_matter::{MATTER_PORT, Matter, clusters, devices, handler_chain_type, root_endpoint};
+use rs_matter::{clusters, devices, handler_chain_type, root_endpoint, Matter, MATTER_PORT};
 
 // Baremetal entry point macro depending on target
 #[cfg(all(target_arch = "arm", target_os = "none"))]
@@ -474,17 +476,17 @@ fn main() -> ! {
     }
 
     executor.run(|spawner| {
-        unwrap!(spawner.spawn(respond_busy_task(responder, 1)));
-        unwrap!(spawner.spawn(respond_busy_task(responder, 0)));
-        unwrap!(spawner.spawn(respond_task(responder, 3)));
-        unwrap!(spawner.spawn(respond_task(responder, 2)));
-        unwrap!(spawner.spawn(respond_task(responder, 1)));
-        unwrap!(spawner.spawn(respond_task(responder, 0)));
-        unwrap!(spawner.spawn(dm_task(dm)));
-        unwrap!(spawner.spawn(mdns_task(mdns)));
-        unwrap!(spawner.spawn(btp_task(&stack.btp)));
-        unwrap!(spawner.spawn(wifi_task(wifi_mgr)));
-        unwrap!(spawner.spawn(transport_task(
+        spawner.spawn(unwrap!(respond_busy_task(responder, 1)));
+        spawner.spawn(unwrap!(respond_busy_task(responder, 0)));
+        spawner.spawn(unwrap!(respond_task(responder, 3)));
+        spawner.spawn(unwrap!(respond_task(responder, 2)));
+        spawner.spawn(unwrap!(respond_task(responder, 1)));
+        spawner.spawn(unwrap!(respond_task(responder, 0)));
+        spawner.spawn(unwrap!(dm_task(dm)));
+        spawner.spawn(unwrap!(mdns_task(mdns)));
+        spawner.spawn(unwrap!(btp_task(&stack.btp)));
+        spawner.spawn(unwrap!(wifi_task(wifi_mgr)));
+        spawner.spawn(unwrap!(transport_task(
             &stack.matter,
             crypto,
             transport_send,

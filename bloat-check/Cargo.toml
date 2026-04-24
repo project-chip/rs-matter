@@ -30,7 +30,7 @@ log = []
 embassy-futures = "0.1"
 static_cell = "1"
 critical-section = "1"
-embassy-executor = { version = "0.9", features = ["executor-thread"] }
+embassy-executor = { version = "0.10", features = ["executor-thread"] }
 rs-matter = { path = "../rs-matter", default-features = false, features = ["rustcrypto"] }
 
 [target.'cfg(not(target_os = "none"))'.dependencies]
@@ -38,7 +38,7 @@ log = { version = "0.4", features = ["max_level_info"] }
 simple_logger = "5"
 embassy-sync = { version = "0.7", features = ["log"] }
 embassy-time = { version = "0.5", features = ["std", "log"] }
-embassy-executor = { version = "0.9", features = ["arch-std", "log"] }
+embassy-executor = { version = "0.10", features = ["platform-std", "log"] }
 critical-section = { version = "1", features = ["std"] }
 rs-matter = { path = "../rs-matter", default-features = false, features = ["log"] }
 
@@ -46,25 +46,24 @@ rs-matter = { path = "../rs-matter", default-features = false, features = ["log"
 defmt = "0.3"
 embassy-sync = { version = "0.7", features = ["defmt"] }
 embassy-time = { version = "0.5", features = ["defmt"] }
-embassy-executor = { version = "0.9", features = ["defmt"] }
+embassy-executor = { version = "0.10", features = ["defmt"] }
 embedded-alloc = "0.6"
 rtt-target = { version = "0.6", features = ["defmt"] }
 panic-rtt-target = "0.2"
 rs-matter = { path = "../rs-matter", default-features = false, features = ["defmt"] }
 
 [target.'cfg(all(target_arch = "arm", target_os = "none"))'.dependencies]
-cortex-m = { version = "0.7.6", features = ["critical-section-single-core" ] }
+cortex-m = { version = "0.7.7", features = ["critical-section-single-core" ] }
 cortex-m-rt = "0.7"
-embassy-executor = { version = "0.9", features = ["arch-cortex-m"] }
+embassy-executor = { version = "0.10", features = ["platform-cortex-m"] }
 
 [target.thumbv7em-none-eabi.dependencies]
-hal = { package = "embassy-nrf", version = "0.8", default-features = false, features = ["defmt", "time-driver-rtc1", "time", "nrf52840"] }
+hal = { package = "embassy-nrf", version = "0.10", default-features = false, features = ["defmt", "time-driver-rtc1", "time", "nrf52840"] }
 
 [target.thumbv6m-none-eabi.dependencies]
-hal = { package = "embassy-rp", version = "0.8", features = ["defmt", "unstable-pac", "time-driver", "rp2040"] }
+hal = { package = "embassy-rp", version = "0.10", features = ["defmt", "unstable-pac", "time-driver", "rp2040"] }
 
 [target.riscv32imac-unknown-none-elf.dependencies]
-hal = { package = "esp-hal", version = "1", features = ["defmt", "exception-handler", "unstable", "esp32c6"] }
-esp-rtos = { version = "0.2", features = ["embassy", "esp32c6"] }
-esp-rom-sys = "=0.1.3"
-#embassy-executor = { version = "0.9", features = ["riscv32"] }
+hal = { package = "esp-hal", version = "=1.1", features = ["defmt", "exception-handler", "unstable", "esp32c6"] }
+esp-rtos = { version = "=0.3", features = ["embassy", "esp32c6"] }
+#embassy-executor = { version = "0.10", features = ["platform-riscv32"] }

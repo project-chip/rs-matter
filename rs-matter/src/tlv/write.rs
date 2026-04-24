@@ -488,20 +488,30 @@ impl WriteBuf<'_> {
     /// This method is useful when the data to be written needs to be computed first, and the computation needs a buffer where
     /// to operate.
     ///
-    /// Note that this method always uses a Str16l value type to write the data, which restricts the data length to no more than
-    /// 65535 bytes.
+    /// Note that this method reserves a Str16l header before invoking the callback, restricting
+    /// the data length to no more than 65535 bytes. If the actual length fits in a single byte,
+    /// the header is downgraded in-place to a canonical Str8l encoding (shortest-form length),
+    /// which some strict Matter controllers (e.g. SmartThings) require.
     pub fn str_cb(
         &mut self,
         tag: &TLVTag,
         cb: impl FnOnce(&mut [u8]) -> Result<usize, Error>,
     ) -> Result<(), Error> {
+        let control_offset = self.get_tail();
         self.raw_value(tag, TLVValueType::Str16l, &0_u16.to_le_bytes())?;
 
         let value_offset = self.get_tail();
 
         let len = self.append_with_buf(cb)?;
 
-        self.buf[value_offset - 2..value_offset].copy_from_slice(&(len as u16).to_le_bytes());
+        Self::finalize_len_header(
+            self,
+            control_offset,
+            value_offset,
+            len,
+            tag.tag_type(),
+            TLVValueType::Str8l,
+        );
 
         Ok(())
     }
@@ -514,22 +524,67 @@ impl WriteBuf<'_> {
     /// This method is useful when the data to be written needs to be computed first, and the computation needs a buffer where
     /// to operate.
     ///
-    /// Note that this method always uses a Utf16l value type to write the data, which restricts the data length to no more than
-    /// 65535 bytes.
+    /// Note that this method reserves a Utf16l header before invoking the callback, restricting
+    /// the data length to no more than 65535 bytes. If the actual length fits in a single byte,
+    /// the header is downgraded in-place to a canonical Utf8l encoding (shortest-form length).
     pub fn utf8_cb(
         &mut self,
         tag: &TLVTag,
         cb: impl FnOnce(&mut [u8]) -> Result<usize, Error>,
     ) -> Result<(), Error> {
+        let control_offset = self.get_tail();
         self.raw_value(tag, TLVValueType::Utf16l, &0_u16.to_le_bytes())?;
 
         let value_offset = self.get_tail();
 
         let len = self.append_with_buf(cb)?;
 
-        self.buf[value_offset - 2..value_offset].copy_from_slice(&(len as u16).to_le_bytes());
+        Self::finalize_len_header(
+            self,
+            control_offset,
+            value_offset,
+            len,
+            tag.tag_type(),
+            TLVValueType::Utf8l,
+        );
 
         Ok(())
+    }
+
+    /// Rewrite the length header reserved by `str_cb` / `utf8_cb` so that the shortest
+    /// possible length encoding is used (canonical Matter TLV).
+    ///
+    /// Before the call, the buffer layout is:
+    ///   [... prefix ...][control=<16l>][tag bytes][0x00][0x00][data ...]
+    ///                   ^control_offset           ^value_offset-2      ^value_offset+len
+    ///
+    /// If `len <= u8::MAX`, the header is rewritten to:
+    ///   [... prefix ...][control=<8l>][tag bytes][len][data ...]
+    /// and `end` is decremented by 1.
+    ///
+    /// Otherwise, the 16-bit length is simply patched in place.
+    fn finalize_len_header(
+        this: &mut WriteBuf<'_>,
+        control_offset: usize,
+        value_offset: usize,
+        len: usize,
+        tag_type: TLVTagType,
+        short_value_type: TLVValueType,
+    ) {
+        if len <= u8::MAX as usize {
+            // Canonical: use 1-byte length encoding.
+            this.buf[control_offset] = TLVControl::new(tag_type, short_value_type).as_raw();
+            this.buf[value_offset - 2] = len as u8;
+            this.buf
+                .copy_within(value_offset..value_offset + len, value_offset - 1);
+            this.rewind_tail_to(this.get_tail() - 1);
+        } else if len <= u16::MAX as usize {
+            // Keep 2-byte length encoding and patch the placeholder.
+            this.buf[value_offset - 2..value_offset].copy_from_slice(&(len as u16).to_le_bytes());
+        } else {
+            // This should not happen, as the callback is expected to respect the reserved header size.
+            panic!("Callback wrote more data than the reserved header can encode");
+        }
     }
 }
 
