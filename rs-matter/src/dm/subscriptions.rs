@@ -41,7 +41,8 @@ pub const DEFAULT_MAX_SUBSCRIPTIONS: usize = MAX_FABRICS * 3;
 /// wildcards so that new changes can always be recorded.
 pub const MAX_CHANGED_ATTRS: usize = 16;
 
-// REVIEW: `SubscriptionsBuffers` is a thin wrapper around a second
+/// A struct for the RX buffers containing the read requests of the tracked subscriptions.
+// NOTE: `SubscriptionsBuffers` is a thin wrapper around a second
 // `Mutex<RefCell<Vec<..>>>` that is *always* locked in lockstep with
 // `Subscriptions::state` (see `Subscriptions::with`). As long as that lock
 // order is respected the pair is safe, but the two locks let someone (now or
@@ -58,25 +59,18 @@ where
     buffers: Mutex<RefCell<SubscriptionsBuffersInner<'a, B, N>>>,
 }
 
-impl<'a, B, const N: usize> Default for SubscriptionsBuffers<'a, B, N>
-where
-    B: BufferAccess<IMBuffer> + 'a,
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl<'a, B, const N: usize> SubscriptionsBuffers<'a, B, N>
 where
     B: BufferAccess<IMBuffer> + 'a,
 {
+    /// Create the instance.
     pub const fn new() -> Self {
         Self {
             buffers: Mutex::new(RefCell::new(Vec::new())),
         }
     }
 
+    /// Return an in-place initializer for the instance.
     pub fn init() -> impl Init<Self> {
         init!(Self {
             buffers <- Mutex::init(RefCell::init(Vec::init())),
@@ -91,10 +85,20 @@ where
     }
 }
 
+impl<'a, B, const N: usize> Default for SubscriptionsBuffers<'a, B, N>
+where
+    B: BufferAccess<IMBuffer> + 'a,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A type alias for the inner buffer vector of `SubscriptionsBuffers`.
 type SubscriptionsBuffersInner<'a, B, const N: usize> =
     Vec<<B as BufferAccess<IMBuffer>>::Buffer<'a>, N>;
 
-/// A utility for tracking subscriptions accepted by the data model.
+/// A type for tracking subscriptions accepted by the data model.
 ///
 /// The `N` type parameter specifies the maximum number of subscriptions that can be tracked at the same time.
 /// Additional subscriptions are rejected by the data model with a "resource exhausted" IM status message.
@@ -192,6 +196,10 @@ impl<const N: usize> Subscriptions<N> {
         self.notification.notify();
     }
 
+    /// Notify the instance that a new event has been emitted and that it should
+    /// re-evaluate the subscriptions and report on those that are interested in the new event.
+    ///
+    /// Public for the integration tests.
     pub fn notify_event_emitted(
         &self,
         _endpoint_id: EndptId,
@@ -204,10 +212,14 @@ impl<const N: usize> Subscriptions<N> {
         self.notification.notify();
     }
 
+    /// Clear all subscriptions and pending changes.
+    /// Used when initializing a new data model.
     pub(crate) fn clear(&self) {
         self.state.lock(|state| state.borrow_mut().clear());
     }
 
+    /// Add a new subscription with the given parameters.
+    /// Returns a context for the initial report if successful, or `None` if the subscription table is full.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn add<'a, 's, B>(
         &'s self,
@@ -327,6 +339,9 @@ impl<const N: usize> Subscriptions<N> {
         removed
     }
 
+    /// Begin a report for the subscription with the given parameters.
+    /// Returns a context capturing the subscription's current state if successful, or `None`
+    /// if no subscription is currently reportable.
     pub(crate) fn report<'a, 's, B>(
         &'s self,
         now: Instant,
@@ -359,6 +374,8 @@ impl<const N: usize> Subscriptions<N> {
             .lock(|state| state.borrow_mut().purge_reported_changes())
     }
 
+    /// Complete a report by updating the subscription's watermark and last-reported timestamp,
+    /// and re-inserting it into the table if the `keep` flag is set on the context.
     fn report_complete<'a, B>(&self, report: &mut ReportContext<'a, '_, B, N>)
     where
         B: BufferAccess<IMBuffer> + 'a,
@@ -414,10 +431,22 @@ impl<const N: usize> AttrChangeNotifier for Subscriptions<N> {
 
 impl<const N: usize> DynBase for Subscriptions<N> {}
 
+/// The inner state of `Subscriptions`, protected by a mutex.
+/// See `Subscriptions` for the public API and invariants.
 struct SubscriptionsInner<const N: usize> {
+    /// Monotonically increasing ID assigned to every accepted subscription.
+    /// The first assigned ID is 1; `0` is reserved as the "no subscription" sentinel used by `reporting`.
     next_subscription_id: u32,
+    /// The total number of accepted subscriptions, including any currently
+    /// in-flight one (i.e. one whose `Subscription` has been moved into a
+    /// `ReportContext` and is therefore temporarily not in `subscriptions`).
+    /// Used to enforce the `N` capacity bound in `add`.
     subscriptions_count: usize,
+    /// The active subscriptions. Does NOT include a subscription that is
+    /// currently being reported on; see `reporting` for the snapshot of the
+    /// in-flight one.
     subscriptions: Vec<Subscription, N>,
+    /// The changed attributes that subscriptions are consulting to decide whether and what they need to report.
     changed_attrs: ChangedAttrs,
     /// Snapshot of the subscription currently being reported on (i.e. the
     /// one that has been `swap_remove`d into a `ReportContext`). `None` when
@@ -467,6 +496,10 @@ impl<const N: usize> SubscriptionsInner<N> {
         // rather than pushing it back into an otherwise-empty table.
         if self.reporting.is_some() {
             self.reporting_cancelled = Some("subscriptions cleared");
+            // The in-flight subscription is still counted in
+            // `subscriptions_count` until `report_complete` runs; restore
+            // that so the decrement there balances.
+            self.subscriptions_count = 1;
         }
     }
 
@@ -592,7 +625,6 @@ impl<const N: usize> SubscriptionsInner<N> {
             unwrap!(buffers.push(buffer).map_err(|_| ()));
         } else {
             warn!("Subscription {:?} removed during reporting", sub.ids());
-
             self.subscriptions_count -= 1;
         }
     }
@@ -628,6 +660,7 @@ impl<const N: usize> SubscriptionsInner<N> {
     }
 }
 
+/// The IDs of a subscription, used to identify it across the system and to route reports to it.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SubscriptionIds {
@@ -667,15 +700,17 @@ pub struct Subscription {
 }
 
 impl Subscription {
+    /// Return the IDs of the subscription.
     pub const fn ids(&self) -> &SubscriptionIds {
         &self.ids
     }
 
-    /// The session ID on which this subscription was accepted.
+    /// Return the session ID on which this subscription was accepted.
     pub const fn session_id(&self) -> u32 {
         self.session_id
     }
 
+    /// Return `true` if the subscription is expired and should be removed, or `false` if it is still active.
     pub fn is_expired(&self, now: Instant) -> bool {
         self.reported_at
             .checked_add(embassy_time::Duration::from_secs(self.max_int_secs as _))
@@ -683,15 +718,7 @@ impl Subscription {
             .unwrap_or(false)
     }
 
-    // REVIEW: `is_expired(now)` returning `true` here *prevents* the
-    // subscription from being picked up for reporting. That's a correctness
-    // problem: the expected flow for an expired subscription is to be removed
-    // (by `Subscriptions::remove` with an `is_expired` reason — which is
-    // indeed what `dm.rs` does). But if the reporter task wakes up on the
-    // change notification path and races past the `remove` pass, the expired
-    // subscription will be silently starved instead of being removed or
-    // reported. Consider dropping the `is_expired` check here entirely — the
-    // "remove expired" step in `dm.rs` is the single source of truth.
+    /// Return `true` if the subscription is due for a report based on the given parameters, or `false` if it is not.
     fn is_reportable(
         &self,
         now: Instant,
@@ -699,7 +726,7 @@ impl Subscription {
         changed_attrs: &ChangedAttrs,
         max_event_number: EventNumber,
     ) -> bool {
-        if self.is_expired(now) || !self.is_report_allowed(now) {
+        if !self.is_report_allowed(now) {
             return false;
         }
 
@@ -708,6 +735,7 @@ impl Subscription {
             || self.is_affected_by_new_events(rx, max_event_number)
     }
 
+    /// Return `true` if the subscription is allowed to report based on the min interval, or `false` if it is still in the quiet period since the last report.
     fn is_report_allowed(&self, now: Instant) -> bool {
         self.reported_at
             .checked_add(embassy_time::Duration::from_secs(self.min_int_secs as _))
@@ -715,6 +743,7 @@ impl Subscription {
             .unwrap_or(true)
     }
 
+    /// Return `true` if the subscription is due for a report based on the max interval, or `false` if it is not yet due.
     fn is_report_due(&self, now: Instant) -> bool {
         self.reported_at
             .checked_add(embassy_time::Duration::from_secs(self.max_int_secs as _))
@@ -726,11 +755,23 @@ impl Subscription {
             .unwrap_or(true)
     }
 
+    /// Return `true` if the subscription is affected by changes to the attribute triple `(endpoint, cluster, attr)` based on the subscription's RX and the given table of changed attributes, or `false` if it is not affected.
     fn is_affected_by_attr_changes(&self, _rx: &[u8], changes: &ChangedAttrs) -> bool {
+        // NOTE: we could consult the subscription's RX here to skip the check if the subscription
+        // is not interested in the changed path at all, but that would require parsing the RX at every report check,
+        // which is anyway done later during reporting and the report is canceled if empty
+        //
+        // Therefore and for now do not to this here
         changes.any_since(self.max_seen_attr_change_id)
     }
 
+    /// Return `true` if the subscription is affected by new events based on the subscription's RX and the given max event number, or `false` if it is not affected.
     fn is_affected_by_new_events(&self, _rx: &[u8], max_event_number: EventNumber) -> bool {
+        // NOTE: we could consult the subscription's RX here to skip the check if the subscription
+        // is not interested in events at all, but that would require parsing the RX at every report check,
+        // which is anyway done later during reporting and the report is canceled if empty
+        //
+        // Therefore and for now do not to this here
         self.max_seen_event_number < max_event_number
     }
 }
@@ -1012,6 +1053,7 @@ struct ChangedAttr {
 }
 
 impl ChangedAttr {
+    /// Create a concrete (non-wildcard) entry with the given parameters and change ID.
     const fn concrete(endpoint: EndptId, cluster: ClusterId, attr: AttrId, change_id: u64) -> Self {
         Self {
             endpoint,
@@ -1021,16 +1063,19 @@ impl ChangedAttr {
         }
     }
 
+    /// Return `true` if this entry is a wildcard on the endpoint axis, or `false` if it is concrete.
     #[inline]
     const fn is_endpoint_wildcard(&self) -> bool {
         self.endpoint == WILDCARD_ENDPOINT
     }
 
+    /// Return `true` if this entry is a wildcard on the cluster axis, or `false` if it is concrete.
     #[inline]
     const fn is_cluster_wildcard(&self) -> bool {
         self.cluster == WILDCARD_CLUSTER
     }
 
+    /// Return `true` if this entry is a wildcard on the attribute axis, or `false` if it is concrete.
     #[inline]
     const fn is_attr_wildcard(&self) -> bool {
         self.attr == WILDCARD_ATTR
@@ -1112,12 +1157,30 @@ pub struct ReportContext<'a, 's, B, const N: usize>
 where
     B: BufferAccess<IMBuffer> + 'a,
 {
+    /// A reference to the global subscriptions table, used to return the subscription on
+    /// successful completion of the report
     subscriptions: &'s Subscriptions<N>,
+    /// A reference to the global subscription buffers, used to return the subscription buffer on
+    /// successful completion of the report
     subscriptions_buffers: &'s SubscriptionsBuffers<'a, B, N>,
+    /// The subscription being reported on.
     subscription: Option<Subscription>,
+    /// The RX buffer with report data associated with the subscription being reported on.
     subscription_buffer: Option<B::Buffer<'a>>,
+    /// The next maximum seen attribute change ID for the subscription
+    /// to be updated into it upon returning the subscription to the table.
+    ///
+    /// This is captured here because the subscription's own `max_seen_attr_change_id`
+    /// is not updated until the report completes as it is until then still used.
     next_max_seen_attr_change_id: u64,
+    /// The next reported timestamp for the subscription,
+    /// to be updated into it upon returning the subscription to the table.
+    ///
+    /// This is captured here because the subscription's own `next_reported_at`
+    /// is not updated until the report completes as it is until then still used.
     next_reported_at: Instant,
+    /// Whether the subscription should be kept in the table after the report completes.
+    /// Set by the report handler if the other peer acknowledges the data reported by the subscription.
     keep: bool,
 }
 
@@ -1125,14 +1188,18 @@ impl<'a, 's, B, const N: usize> ReportContext<'a, 's, B, N>
 where
     B: BufferAccess<IMBuffer> + 'a,
 {
+    /// Return a reference to the subscription being reported on.
     pub fn subscription(&self) -> &Subscription {
         unwrap!(self.subscription.as_ref())
     }
 
+    /// Return a reference to the RX buffer associated with the subscription being reported on.
     pub fn rx(&self) -> &[u8] {
         unwrap!(self.subscription_buffer.as_ref()).as_ref()
     }
 
+    /// Return `true` if the report should be sent even if it turns out to be empty
+    /// (i.e. no attributes or events to report), or `false` if it can be skipped in that case.
     pub fn should_send_if_empty(&self) -> bool {
         // A fresh subscription has `reported_at == Instant::MAX`, which makes
         // `is_report_due` return `true` via its overflow-to-`unwrap_or(true)`
@@ -1141,6 +1208,8 @@ where
         unwrap!(self.subscription.as_ref()).is_report_due(self.next_reported_at)
     }
 
+    /// Return `true` if the subscription should report the attribute
+    /// identified by the given triple, or `false` if it can skip it.
     pub fn should_report_attr(
         &self,
         endpoint_id: EndptId,
@@ -1167,10 +1236,12 @@ where
         })
     }
 
+    /// Return the maximum event number the subscription has seen so far.
     pub fn max_seen_event_number(&self) -> EventNumber {
         unwrap!(self.subscription.as_ref()).max_seen_event_number
     }
 
+    /// Update the maximum event number the subscription has seen so far to the given value.
     pub fn update_max_seen_event_number(&mut self, max_seen_event_number: EventNumber) {
         let sub = unwrap!(self.subscription.as_mut());
 
@@ -1178,6 +1249,8 @@ where
         sub.max_seen_event_number = max_seen_event_number;
     }
 
+    /// Mark the subscription to be kept in the table after the report completes,
+    /// meaning the other peer acknowledged our report.
     pub fn set_keep(&mut self) {
         self.keep = true;
     }
