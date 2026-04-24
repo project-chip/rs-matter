@@ -410,6 +410,8 @@ impl ClusterHandler for GrpKeyMgmtHandler {
             Ok(())
         })?;
 
+        ctx.notify_own_cluster_changed();
+
         persist.run()
     }
 
@@ -496,6 +498,8 @@ impl ClusterHandler for GrpKeyMgmtHandler {
 
             Ok(())
         })?;
+
+        ctx.notify_own_cluster_changed();
 
         persist.run()
     }

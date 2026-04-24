@@ -51,6 +51,31 @@ pub trait AttrChangeNotifier {
     /// - `cluster_id`: The cluster ID of the cluster that has changed.
     /// - `attr_id`: The attribute ID of the attribute that has changed.
     fn notify_attr_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId, attr_id: AttrId);
+
+    /// Notify that every attribute of the given cluster may have changed.
+    ///
+    /// Use this when a single operation mutates many attributes of the same
+    /// cluster and enumerating them would be cumbersome or error-prone (e.g.
+    /// commissioning-window transitions, cluster-wide resets).
+    ///
+    /// Subscriptions whose interest paths intersect `(endpoint_id, cluster_id)`
+    /// at any attribute will be re-reported.
+    fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId);
+
+    /// Notify that every attribute on every cluster of the given endpoint may
+    /// have changed.
+    ///
+    /// Typically used when the endpoint's composition changes (dynamic
+    /// endpoints being enabled/disabled, bridge device add/remove, etc.).
+    fn notify_endpoint_changed(&self, endpoint_id: EndptId);
+
+    /// Notify that every attribute on every cluster on every endpoint may
+    /// have changed.
+    ///
+    /// This is the coarsest possible notification and should be used sparingly
+    /// (e.g. global resets, factory reset, etc.). Every active subscription
+    /// will be flagged for re-report.
+    fn notify_all_changed(&self);
 }
 
 impl<T> AttrChangeNotifier for &T
@@ -60,11 +85,79 @@ where
     fn notify_attr_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId, attr_id: AttrId) {
         (**self).notify_attr_changed(endpoint_id, cluster_id, attr_id)
     }
+
+    fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
+        (**self).notify_cluster_changed(endpoint_id, cluster_id)
+    }
+
+    fn notify_endpoint_changed(&self, endpoint_id: EndptId) {
+        (**self).notify_endpoint_changed(endpoint_id)
+    }
+
+    fn notify_all_changed(&self) {
+        (**self).notify_all_changed()
+    }
 }
 
 impl AttrChangeNotifier for () {
     fn notify_attr_changed(&self, _endpt: EndptId, _clust: ClusterId, _attr: AttrId) {
         // No-op
+    }
+
+    fn notify_cluster_changed(&self, _endpt: EndptId, _clust: ClusterId) {
+        // No-op
+    }
+
+    fn notify_endpoint_changed(&self, _endpt: EndptId) {
+        // No-op
+    }
+
+    fn notify_all_changed(&self) {
+        // No-op
+    }
+}
+
+/// A trait for notifying the data model that the state of an attribute has changed.
+/// Typically implemented on types that have a notion of a "current" endpoint and a "current" cluster, so that the caller doesn't have to specify them again.
+pub trait OwnAttrChangeNotifier {
+    /// Notify that the state of an attribute has changed.
+    ///
+    /// # Arguments
+    /// - `attr_id`: The attribute ID of the attribute that has changed.
+    fn notify_own_attr_changed(&self, attr_id: AttrId);
+
+    /// Notify that every attribute of our own cluster may have changed.
+    ///
+    /// Use this when a single operation mutates many attributes of the same
+    /// cluster and enumerating them would be cumbersome or error-prone (e.g.
+    /// commissioning-window transitions, cluster-wide resets).
+    ///
+    /// Subscriptions whose interest paths intersect `(endpoint_id, cluster_id)`
+    /// at any attribute will be re-reported.
+    fn notify_own_cluster_changed(&self);
+
+    /// Notify that every attribute on every cluster of our own endpoint may
+    /// have changed.
+    ///
+    /// Typically used when the endpoint's composition changes (dynamic
+    /// endpoints being enabled/disabled, bridge device add/remove, etc.).
+    fn notify_own_endpoint_changed(&self);
+}
+
+impl<T> OwnAttrChangeNotifier for &T
+where
+    T: OwnAttrChangeNotifier,
+{
+    fn notify_own_attr_changed(&self, attr_id: AttrId) {
+        (**self).notify_own_attr_changed(attr_id)
+    }
+
+    fn notify_own_cluster_changed(&self) {
+        (**self).notify_own_cluster_changed()
+    }
+
+    fn notify_own_endpoint_changed(&self) {
+        (**self).notify_own_endpoint_changed()
     }
 }
 
@@ -214,7 +307,7 @@ where
 }
 
 /// A context super-type that is passed to the handler when processing an attribute read/write or a command invoke operation.
-pub trait OperationContext: HandlerContext + OwnEventEmitter {
+pub trait OperationContext: HandlerContext + OwnAttrChangeNotifier + OwnEventEmitter {
     /// Return the exchange object that is associated with this operation.
     fn exchange(&self) -> &Exchange<'_>;
 
@@ -376,6 +469,18 @@ where
         self.context
             .notify_attr_changed(endpoint_id, cluster_id, attr_id);
     }
+
+    fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
+        self.context.notify_cluster_changed(endpoint_id, cluster_id);
+    }
+
+    fn notify_endpoint_changed(&self, endpoint_id: EndptId) {
+        self.context.notify_endpoint_changed(endpoint_id);
+    }
+
+    fn notify_all_changed(&self) {
+        self.context.notify_all_changed();
+    }
 }
 
 impl<C> EventEmitter for ReadContextInstance<'_, C>
@@ -412,6 +517,23 @@ where
 
     fn cluster(&self) -> ClusterId {
         self.attr.cluster_id
+    }
+}
+
+impl<C> OwnAttrChangeNotifier for ReadContextInstance<'_, C>
+where
+    C: HandlerContext,
+{
+    fn notify_own_attr_changed(&self, attr_id: AttrId) {
+        self.notify_attr_changed(self.endpt(), self.cluster(), attr_id);
+    }
+
+    fn notify_own_cluster_changed(&self) {
+        self.notify_cluster_changed(self.endpt(), self.cluster());
+    }
+
+    fn notify_own_endpoint_changed(&self) {
+        self.notify_endpoint_changed(self.endpt());
     }
 }
 
@@ -509,6 +631,18 @@ where
         self.context
             .notify_attr_changed(endpoint_id, cluster_id, attr_id);
     }
+
+    fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
+        self.context.notify_cluster_changed(endpoint_id, cluster_id);
+    }
+
+    fn notify_endpoint_changed(&self, endpoint_id: EndptId) {
+        self.context.notify_endpoint_changed(endpoint_id);
+    }
+
+    fn notify_all_changed(&self) {
+        self.context.notify_all_changed();
+    }
 }
 
 impl<C> EventEmitter for WriteContextInstance<'_, C>
@@ -545,6 +679,23 @@ where
 
     fn cluster(&self) -> ClusterId {
         self.attr.cluster_id
+    }
+}
+
+impl<C> OwnAttrChangeNotifier for WriteContextInstance<'_, C>
+where
+    C: HandlerContext,
+{
+    fn notify_own_attr_changed(&self, attr_id: AttrId) {
+        self.notify_attr_changed(self.endpt(), self.cluster(), attr_id);
+    }
+
+    fn notify_own_cluster_changed(&self) {
+        self.notify_cluster_changed(self.endpt(), self.cluster());
+    }
+
+    fn notify_own_endpoint_changed(&self) {
+        self.notify_endpoint_changed(self.endpt());
     }
 }
 
@@ -646,6 +797,18 @@ where
         self.context
             .notify_attr_changed(endpoint_id, cluster_id, attr_id);
     }
+
+    fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
+        self.context.notify_cluster_changed(endpoint_id, cluster_id);
+    }
+
+    fn notify_endpoint_changed(&self, endpoint_id: EndptId) {
+        self.context.notify_endpoint_changed(endpoint_id);
+    }
+
+    fn notify_all_changed(&self) {
+        self.context.notify_all_changed();
+    }
 }
 
 impl<C> EventEmitter for InvokeContextInstance<'_, C>
@@ -682,6 +845,23 @@ where
 
     fn cluster(&self) -> ClusterId {
         self.cmd.cluster_id
+    }
+}
+
+impl<C> OwnAttrChangeNotifier for InvokeContextInstance<'_, C>
+where
+    C: HandlerContext,
+{
+    fn notify_own_attr_changed(&self, attr_id: AttrId) {
+        self.notify_attr_changed(self.endpt(), self.cluster(), attr_id);
+    }
+
+    fn notify_own_cluster_changed(&self) {
+        self.notify_cluster_changed(self.endpt(), self.cluster());
+    }
+
+    fn notify_own_endpoint_changed(&self) {
+        self.notify_endpoint_changed(self.endpt());
     }
 }
 

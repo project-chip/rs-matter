@@ -56,11 +56,14 @@ impl<'a> Node<'a> {
     /// accessible by the accessor and whether they should be served based on the
     /// fabric filtering and dataver filtering rules and filter out the inaccessible ones (wildcard reads)
     /// or report an error status for the non-wildcard ones.
-    pub fn read<'m>(
+    pub fn read<'m, F>(
         &'m self,
         req: &'m ReportDataReq,
         accessor: &'m Accessor<'m>,
+        filter: F,
     ) -> Result<impl Iterator<Item = Result<Result<AttrDetails<'m>, AttrStatus>, Error>> + 'm, Error>
+    where
+        F: FnMut(EndptId, ClusterId, u32) -> bool + 'm,
     {
         let dataver_filters = req.dataver_filters()?;
         let fabric_filtered = req.fabric_filtered()?;
@@ -78,6 +81,7 @@ impl<'a> Node<'a> {
                     })
                 })
             }),
+            filter,
         ))
     }
 
@@ -101,6 +105,7 @@ impl<'a> Node<'a> {
             accessor,
             req.timed_request()?,
             Some(req.write_requests()?.into_iter()),
+            |_, _, _| true,
         ))
     }
 
@@ -124,6 +129,7 @@ impl<'a> Node<'a> {
             accessor,
             req.timed_request()?,
             req.inv_requests()?.map(move |reqs| reqs.into_iter()),
+            |_, _, _| true,
         ))
     }
 
@@ -478,7 +484,7 @@ impl<'a> PathExpansionItem<'a> for CmdData<'a> {
 /// While the iterator can be (and used to be) implemented by using monadic combinators,
 /// this implementation is done in a more imperative way to avoid the overhead of monadic
 /// combinators in terms of memory size.
-struct PathExpander<'a, T, I>
+struct PathExpander<'a, T, I, F>
 where
     I: Iterator<Item = Result<T, Error>>,
 {
@@ -498,12 +504,15 @@ where
     cluster_index: u16,
     /// The current leaf index.
     leaf_index: u16,
+    /// Filter the expanded item or not
+    filter: F,
 }
 
-impl<'a, T, I> PathExpander<'a, T, I>
+impl<'a, T, I, F> PathExpander<'a, T, I, F>
 where
     I: Iterator<Item = Result<T, Error>>,
     T: PathExpansionItem<'a>,
+    F: FnMut(EndptId, ClusterId, u32) -> bool,
 {
     /// Create a new path expander with the given node, accessor, and paths.
     pub const fn new(
@@ -511,6 +520,7 @@ where
         accessor: &'a Accessor<'a>,
         timed: bool,
         paths: Option<I>,
+        filter: F,
     ) -> Self {
         Self {
             node,
@@ -521,6 +531,7 @@ where
             endpoint_index: 0,
             cluster_index: 0,
             leaf_index: 0,
+            filter,
         }
     }
 
@@ -577,49 +588,65 @@ where
                             };
 
                             if path.leaf.is_none() || path.leaf == Some(leaf_id as _) {
-                                // Leaf found, check its access rights
+                                // Leaf found, filter and check its access rights
 
-                                let check = if matches!(T::OPERATION, Operation::Invoke) {
-                                    cluster.check_cmd_access(
-                                        self.accessor,
-                                        self.timed,
-                                        GenericPath::new(
-                                            Some(endpoint.id),
-                                            Some(cluster.id),
-                                            Some(leaf_id),
-                                        ),
-                                        unwrap!(cluster
-                                            .commands()
-                                            .map(|cmd| cmd.id)
-                                            .nth(self.leaf_index as usize)),
-                                    )
+                                let check = if (self.filter)(endpoint.id, cluster.id, leaf_id) {
+                                    if matches!(T::OPERATION, Operation::Invoke) {
+                                        cluster.check_cmd_access(
+                                            self.accessor,
+                                            self.timed,
+                                            GenericPath::new(
+                                                Some(endpoint.id),
+                                                Some(cluster.id),
+                                                Some(leaf_id),
+                                            ),
+                                            unwrap!(cluster
+                                                .commands()
+                                                .map(|cmd| cmd.id)
+                                                .nth(self.leaf_index as usize)),
+                                        )
+                                    } else {
+                                        // TODO: Need to also check that the code is not trying to access an element of an array
+                                        // when the attribute is not an array
+
+                                        cluster.check_attr_access(
+                                            self.accessor,
+                                            self.timed,
+                                            GenericPath::new(
+                                                Some(endpoint.id),
+                                                Some(cluster.id),
+                                                Some(leaf_id),
+                                            ),
+                                            matches!(T::OPERATION, Operation::Write),
+                                            unwrap!(cluster
+                                                .attributes()
+                                                .map(|attr| attr.id)
+                                                .nth(self.leaf_index as usize)),
+                                        )
+                                    }
+                                    .map(|_| true)
                                 } else {
-                                    // TODO: Need to also check that the code is not trying to access an element of an array
-                                    // when the attribute is not an array
-
-                                    cluster.check_attr_access(
-                                        self.accessor,
-                                        self.timed,
-                                        GenericPath::new(
-                                            Some(endpoint.id),
-                                            Some(cluster.id),
-                                            Some(leaf_id),
-                                        ),
-                                        matches!(T::OPERATION, Operation::Write),
-                                        unwrap!(cluster
-                                            .attributes()
-                                            .map(|attr| attr.id)
-                                            .nth(self.leaf_index as usize)),
-                                    )
+                                    Ok(false)
                                 };
 
                                 match check {
-                                    Ok(()) => {
+                                    Ok(true) => {
                                         // Because on the next call we should start from the next leaf or if leaves
                                         // are over, from the next cluster and so on
                                         self.leaf_index += 1;
 
                                         return Ok(Some((endpoint.id, cluster.id, leaf_id)));
+                                    }
+                                    Ok(false) => {
+                                        // Filtered out. For a non-wildcard path the
+                                        // leaf exists but the filter explicitly rejected
+                                        // it - treat this as "no output" rather than
+                                        // reporting `UnsupportedAttribute`/`UnsupportedCommand`.
+                                        if !path.is_wildcard() {
+                                            self.leaf_index += 1;
+                                            return Ok(None);
+                                        }
+                                        // Else: just skip it and continue scanning
                                     }
                                     Err(status) => {
                                         if !path.is_wildcard() {
@@ -666,10 +693,11 @@ where
     }
 }
 
-impl<'a, T, I> Iterator for PathExpander<'a, T, I>
+impl<'a, T, I, F> Iterator for PathExpander<'a, T, I, F>
 where
     I: Iterator<Item = Result<T, Error>>,
     T: PathExpansionItem<'a>,
+    F: FnMut(EndptId, ClusterId, u32) -> bool,
 {
     type Item = Result<Result<T::Expanded<'a>, T::Status>, Error>;
 
@@ -794,11 +822,27 @@ mod test {
         input: &[GenericPath],
         expected: &[Result<Result<GenericPath, IMStatusCode>, ErrorCode>],
     ) {
+        test_with_filter(node, input, |_, _, _| true, expected)
+    }
+
+    /// Compare an input of paths against their expanded expectations,
+    /// using the provided per-(endpoint, cluster, leaf) filter.
+    fn test_with_filter(
+        node: &Node,
+        input: &[GenericPath],
+        filter: impl FnMut(EndptId, ClusterId, u32) -> bool,
+        expected: &[Result<Result<GenericPath, IMStatusCode>, ErrorCode>],
+    ) {
         let matter = test_matter();
         let accessor = Accessor::new(0, AccessorSubjects::new(0), Some(AuthMode::Pase), &matter);
 
-        let expander =
-            PathExpander::new(node, &accessor, false, Some(input.iter().cloned().map(Ok)));
+        let expander = PathExpander::new(
+            node,
+            &accessor,
+            false,
+            Some(input.iter().cloned().map(Ok)),
+            filter,
+        );
 
         assert_eq!(
             expander
@@ -1054,6 +1098,96 @@ mod test {
                 Ok(Ok(GenericPath::new(Some(5), Some(20), Some(20)))),
                 Ok(Err(IMStatusCode::UnsupportedAttribute)),
             ],
+        );
+    }
+
+    #[test]
+    fn test_filter() {
+        static NODE: Node = Node::new(&[
+            Endpoint::new(
+                0,
+                &[DeviceType { dtype: 0, drev: 0 }],
+                &[Cluster::new(
+                    1,
+                    1,
+                    0,
+                    &[
+                        Attribute::new(1, Access::all(), Quality::all()),
+                        Attribute::new(2, Access::all(), Quality::all()),
+                    ],
+                    &[Command::new(1, None, Access::all())],
+                    &[],
+                    |_, _, _| true,
+                    |_, _, _| true,
+                    |_, _, _| true,
+                )],
+            ),
+            Endpoint::new(
+                5,
+                &[DeviceType { dtype: 0, drev: 0 }],
+                &[Cluster::new(
+                    1,
+                    1,
+                    0,
+                    &[Attribute::new(1, Access::all(), Quality::all())],
+                    &[Command::new(1, None, Access::all())],
+                    &[],
+                    |_, _, _| true,
+                    |_, _, _| true,
+                    |_, _, _| true,
+                )],
+            ),
+        ]);
+
+        // Non-wildcard path, leaf exists but is filtered out: the expander
+        // must yield nothing for this input (neither an expansion nor an
+        // `UnsupportedAttribute` status).
+        test_with_filter(
+            &NODE,
+            &[GenericPath::new(Some(0), Some(1), Some(1))],
+            |_, _, _| false,
+            &[],
+        );
+
+        // Non-wildcard path, leaf does not exist: filter must not be consulted
+        // and the expander must still produce `UnsupportedAttribute`.
+        test_with_filter(
+            &NODE,
+            &[GenericPath::new(Some(0), Some(1), Some(99))],
+            |_, _, _| true,
+            &[Ok(Err(IMStatusCode::UnsupportedAttribute))],
+        );
+
+        // Wildcard path, filter rejects everything: empty output, no errors.
+        test_with_filter(
+            &NODE,
+            &[GenericPath::new(None, None, None)],
+            |_, _, _| false,
+            &[],
+        );
+
+        // Wildcard path, filter rejects some leaves: the accepted ones are
+        // yielded and the rejected ones are silently skipped.
+        test_with_filter(
+            &NODE,
+            &[GenericPath::new(None, None, None)],
+            |_, _, leaf| leaf == 1,
+            &[
+                Ok(Ok(GenericPath::new(Some(0), Some(1), Some(1)))),
+                Ok(Ok(GenericPath::new(Some(5), Some(1), Some(1)))),
+            ],
+        );
+
+        // Mixed: a non-wildcard filtered-out path followed by a wildcard
+        // should only yield items from the wildcard.
+        test_with_filter(
+            &NODE,
+            &[
+                GenericPath::new(Some(0), Some(1), Some(1)),
+                GenericPath::new(None, None, None),
+            ],
+            |_ep, _cl, leaf| leaf != 1,
+            &[Ok(Ok(GenericPath::new(Some(0), Some(1), Some(2))))],
         );
     }
 }

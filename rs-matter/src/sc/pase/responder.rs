@@ -113,10 +113,8 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         let mut count = 0;
 
         let notify_mdns = || exchange.matter().notify_mdns_changed();
-        let notify_change = |endpt_id, cluster_id, attr_id| {
-            self.notify
-                .notify_attr_changed(endpt_id, cluster_id, attr_id)
-        };
+        let notify_change =
+            |endpt_id, cluster_id| self.notify.notify_cluster_changed(endpt_id, cluster_id);
 
         let has_comm_window = {
             exchange.with_state(|state| {
@@ -208,10 +206,8 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         let mut cb = HMAC_HASH_ZEROED;
 
         let notify_mdns = || exchange.matter().notify_mdns_changed();
-        let notify_change = |endpt_id, cluster_id, attr_id| {
-            self.notify
-                .notify_attr_changed(endpt_id, cluster_id, attr_id)
-        };
+        let notify_change =
+            |endpt_id, cluster_id| self.notify.notify_cluster_changed(endpt_id, cluster_id);
 
         let has_comm_window = {
             exchange.with_state(|state| {

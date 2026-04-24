@@ -17,7 +17,7 @@
 
 use core::fmt::Debug;
 
-use crate::dm::{ClusterId, EndptId, EventEmitter, EventId};
+use crate::dm::{ClusterId, EndptId, EventId};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
     EventData, EventDataTag, EventDataTimestamp, EventNumber, EventPath, EventPriority,
@@ -120,7 +120,7 @@ impl<const N: usize> Events<N> {
             .await
     }
 
-    pub fn fetch<F, R>(&self, f: F) -> R
+    pub(crate) fn fetch<F, R>(&self, f: F) -> R
     where
         F: FnOnce(EventsIter<'_, N>) -> R,
     {
@@ -129,6 +129,10 @@ impl<const N: usize> Events<N> {
 
             f(state.iter())
         })
+    }
+
+    pub(crate) fn watermark(&self) -> EventNumber {
+        self.inner.lock(|state| state.borrow().next_event_number)
     }
 
     /// Push a new event into the event queue.
@@ -183,23 +187,6 @@ impl<const N: usize> Events<N> {
         persist.run()?;
 
         Ok(event_number)
-    }
-}
-
-impl<const N: usize, S: KvBlobStoreAccess> EventEmitter for (&Events<N>, S) {
-    fn emit_event<F>(
-        &self,
-        endpoint_id: EndptId,
-        cluster_id: ClusterId,
-        event_id: EventId,
-        priority: EventPriority,
-        f: F,
-    ) -> Result<EventNumber, Error>
-    where
-        F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
-    {
-        self.0
-            .push(endpoint_id, cluster_id, event_id, priority, &self.1, f)
     }
 }
 

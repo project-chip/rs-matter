@@ -1337,6 +1337,9 @@ where
             }),
         )?;
 
+        // Networks list mutated
+        ctx.notify_own_cluster_changed();
+
         status.read_into(index, response)
     }
 
@@ -1358,6 +1361,9 @@ where
             }),
         )?;
 
+        // Networks list mutated
+        ctx.notify_own_cluster_changed();
+
         status.read_into(index, response)
     }
 
@@ -1376,6 +1382,9 @@ where
                 })
             }),
         )?;
+
+        // Networks list mutated
+        ctx.notify_own_cluster_changed();
 
         status.read_into(index, response)
     }
@@ -1484,6 +1493,9 @@ where
             }
         };
 
+        // LastNetworkingStatus / LastNetworkID / LastConnectErrorValue mutated
+        ctx.notify_own_cluster_changed();
+
         response
             .networking_status(status)?
             .debug_text(None)?
@@ -1507,6 +1519,9 @@ where
                 })
             }),
         )?;
+
+        // Networks order mutated
+        ctx.notify_own_cluster_changed();
 
         status.read_into(index, response)
     }

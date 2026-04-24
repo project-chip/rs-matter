@@ -320,10 +320,23 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         // ... on receipt of the On command, a server SHALL set the OnOff attribute to TRUE.
         self.hooks.set_on_off(true);
 
-        let _ = Self::update_attr_on(state);
+        let lighting_attrs_updated = Self::update_attr_on(state);
 
         self.dataver_changed();
         ctx.notify_attr_changed(self.endpoint_id, Self::CLUSTER.id, AttributeId::OnOff as _);
+        if lighting_attrs_updated {
+            // `update_attr_on` may have forced OffWaitTime to 0 and GlobalSceneControl to TRUE
+            ctx.notify_attr_changed(
+                self.endpoint_id,
+                Self::CLUSTER.id,
+                AttributeId::OffWaitTime as _,
+            );
+            ctx.notify_attr_changed(
+                self.endpoint_id,
+                Self::CLUSTER.id,
+                AttributeId::GlobalSceneControl as _,
+            );
+        }
 
         // LevelControl coupling logic defined in section 1.6.4.1.1
         if !level_control_initiated {
@@ -374,7 +387,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
             return true;
         }
 
-        let attr_updated = Self::update_attr_off(state);
+        let on_time_updated = Self::update_attr_off(state);
 
         // LevelControl coupling logic defined in section 1.6.4.1.1
         let level_control_handler = self.level_control_handler.lock(|h| h.get());
@@ -382,12 +395,18 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
             if !level_control_initiated {
                 level_control_handler.coupled_on_off_cluster_on_off_state_change(false);
 
-                if attr_updated {
+                if on_time_updated {
                     self.dataver_changed();
                     ctx.notify_attr_changed(
                         self.endpoint_id,
                         Self::CLUSTER.id,
                         AttributeId::OnOff as _,
+                    );
+                    // `update_attr_off` forced OnTime to 0
+                    ctx.notify_attr_changed(
+                        self.endpoint_id,
+                        Self::CLUSTER.id,
+                        AttributeId::OnTime as _,
                     );
                 }
 
@@ -403,6 +422,10 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         self.hooks.set_on_off(false);
         self.dataver_changed();
         ctx.notify_attr_changed(self.endpoint_id, Self::CLUSTER.id, AttributeId::OnOff as _);
+        if on_time_updated {
+            // `update_attr_off` forced OnTime to 0
+            ctx.notify_attr_changed(self.endpoint_id, Self::CLUSTER.id, AttributeId::OnTime as _);
+        }
 
         true
     }
@@ -434,7 +457,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
 
                 state.state = OnOffClusterState::On;
 
-                let _ = Self::update_attr_on(state);
+                let lighting_attrs_updated = Self::update_attr_on(state);
 
                 self.dataver_changed();
                 ctx.notify_attr_changed(
@@ -442,6 +465,18 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                     Self::CLUSTER.id,
                     AttributeId::OnOff as _,
                 );
+                if lighting_attrs_updated {
+                    ctx.notify_attr_changed(
+                        self.endpoint_id,
+                        Self::CLUSTER.id,
+                        AttributeId::OffWaitTime as _,
+                    );
+                    ctx.notify_attr_changed(
+                        self.endpoint_id,
+                        Self::CLUSTER.id,
+                        AttributeId::GlobalSceneControl as _,
+                    );
+                }
             }
             false => {
                 if state.state == OnOffClusterState::Off {
@@ -450,7 +485,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
 
                 state.state = OnOffClusterState::Off;
 
-                let _ = Self::update_attr_off(state);
+                let on_time_updated = Self::update_attr_off(state);
 
                 self.dataver_changed();
                 ctx.notify_attr_changed(
@@ -458,6 +493,13 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                     Self::CLUSTER.id,
                     AttributeId::OnOff as _,
                 );
+                if on_time_updated {
+                    ctx.notify_attr_changed(
+                        self.endpoint_id,
+                        Self::CLUSTER.id,
+                        AttributeId::OnTime as _,
+                    );
+                }
             }
         }
     }
@@ -496,7 +538,16 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                             // If the GlobalSceneControl attribute is equal to TRUE, the server SHALL store its settings in its global
                             // scene then set the GlobalSceneControl attribute to FALSE...
                             // todo: store the GlobalSceneControl setting (true) in the global scene.
+                            let gsc_changed = state.global_scene_control;
                             state.global_scene_control = false;
+                            if gsc_changed {
+                                self.dataver_changed();
+                                ctx.notify_attr_changed(
+                                    self.endpoint_id,
+                                    Self::CLUSTER.id,
+                                    AttributeId::GlobalSceneControl as _,
+                                );
+                            }
 
                             Outcome::OffWithEffect {
                                 effect_variant: effect,
@@ -559,7 +610,16 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                                 // If the GlobalSceneControl attribute is equal to TRUE, the server SHALL store its settings in its global
                                 // scene then set the GlobalSceneControl attribute to FALSE...
                                 // todo: store the GlobalSceneControl setting (true) in the global scene.
+                                let gsc_changed = state.global_scene_control;
                                 state.global_scene_control = false;
+                                if gsc_changed {
+                                    self.dataver_changed();
+                                    ctx.notify_attr_changed(
+                                        self.endpoint_id,
+                                        Self::CLUSTER.id,
+                                        AttributeId::GlobalSceneControl as _,
+                                    );
+                                }
 
                                 Outcome::OffWithEffect {
                                     effect_variant: effect,
@@ -928,14 +988,32 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
                 // equal to FALSE, then the server SHALL set the OffWaitTime attribute to the minimum of the
                 // OffWaitTime attribute and the value specified in the OffWaitTime field.
                 if state.off_wait_time > 0 && !self.hooks.on_off() {
-                    state.off_wait_time = state.off_wait_time.min(request.off_wait_time()?);
+                    let new_off_wait_time = state.off_wait_time.min(request.off_wait_time()?);
+                    if new_off_wait_time != state.off_wait_time {
+                        state.off_wait_time = new_off_wait_time;
+                        self.dataver_changed();
+                        ctx.notify_own_attr_changed(AttributeId::OffWaitTime as _);
+                    }
                 }
                 // In all other cases, the server SHALL set the OnTime attribute to the maximum of the OnTime
                 // attribute and the value specified in the OnTime field, set the OffWaitTime attribute to the value
                 // specified in the OffWaitTime field and set the OnOff attribute to TRUE.
                 else {
-                    state.on_time = state.on_time.max(request.on_time()?);
-                    state.off_wait_time = request.off_wait_time()?;
+                    let new_on_time = state.on_time.max(request.on_time()?);
+                    let new_off_wait_time = request.off_wait_time()?;
+                    let on_time_changed = new_on_time != state.on_time;
+                    let off_wait_time_changed = new_off_wait_time != state.off_wait_time;
+                    state.on_time = new_on_time;
+                    state.off_wait_time = new_off_wait_time;
+                    if on_time_changed || off_wait_time_changed {
+                        self.dataver_changed();
+                        if on_time_changed {
+                            ctx.notify_own_attr_changed(AttributeId::OnTime as _);
+                        }
+                        if off_wait_time_changed {
+                            ctx.notify_own_attr_changed(AttributeId::OffWaitTime as _);
+                        }
+                    }
                     self.set_on(state, false, &ctx);
                 }
 

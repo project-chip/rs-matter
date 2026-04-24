@@ -79,8 +79,7 @@ impl ClusterHandler for AdminCommHandler {
 
     fn window_status(&self, ctx: impl ReadContext) -> Result<CommissioningWindowStatusEnum, Error> {
         let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
-        let notify_change =
-            |endpt_id, clust_id, attr_id| ctx.notify_attr_changed(endpt_id, clust_id, attr_id);
+        let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
         ctx.exchange().with_state(|state| {
             state
@@ -101,8 +100,7 @@ impl ClusterHandler for AdminCommHandler {
 
     fn admin_fabric_index(&self, ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
         let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
-        let notify_change =
-            |endpt_id, clust_id, attr_id| ctx.notify_attr_changed(endpt_id, clust_id, attr_id);
+        let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
         ctx.exchange().with_state(|state| {
             state
@@ -125,8 +123,7 @@ impl ClusterHandler for AdminCommHandler {
 
     fn admin_vendor_id(&self, ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
         let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
-        let notify_change =
-            |endpt_id, clust_id, attr_id| ctx.notify_attr_changed(endpt_id, clust_id, attr_id);
+        let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
         ctx.exchange().with_state(|state| {
             state
@@ -149,8 +146,7 @@ impl ClusterHandler for AdminCommHandler {
         request: OpenCommissioningWindowRequest<'_>,
     ) -> Result<(), Error> {
         let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
-        let notify_change =
-            |endpt_id, clust_id, attr_id| ctx.notify_attr_changed(endpt_id, clust_id, attr_id);
+        let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
         ctx.exchange().with_state(|state| {
             state
@@ -181,8 +177,7 @@ impl ClusterHandler for AdminCommHandler {
         request: OpenBasicCommissioningWindowRequest<'_>,
     ) -> Result<(), Error> {
         let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
-        let notify_change =
-            |endpt_id, clust_id, attr_id| ctx.notify_attr_changed(endpt_id, clust_id, attr_id);
+        let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
         ctx.exchange().with_state(|state| {
             state
@@ -215,8 +210,7 @@ impl ClusterHandler for AdminCommHandler {
 
     fn handle_revoke_commissioning(&self, ctx: impl InvokeContext) -> Result<(), Error> {
         let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
-        let notify_change =
-            |endpt_id, clust_id, attr_id| ctx.notify_attr_changed(endpt_id, clust_id, attr_id);
+        let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
         ctx.exchange()
             .with_state(|state| state.pase.close_comm_window(notify_mdns, notify_change))?;
