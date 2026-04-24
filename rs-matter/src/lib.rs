@@ -346,11 +346,6 @@ impl<'a> Matter<'a> {
         )
     }
 
-    /// Initialize the transport buffers if using the `large-buffers` feature flag.
-    pub fn initialize_transport_buffers(&mut self) {
-        self.transport.initialize_buffers()
-    }
-
     pub fn dev_det(&self) -> &BasicInfoConfig<'_> {
         self.dev_det
     }

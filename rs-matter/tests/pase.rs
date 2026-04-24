@@ -52,13 +52,10 @@ fn test_pase_handshake() {
     init_env_logger();
 
     futures_lite::future::block_on(async {
-        let mut device_matter =
-            Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, sys_epoch, 0);
-        device_matter.initialize_transport_buffers();
+        let device_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, sys_epoch, 0);
 
-        let mut controller_matter =
+        let controller_matter =
             Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, sys_epoch, 0);
-        controller_matter.initialize_transport_buffers();
 
         let crypto = test_only_crypto();
 

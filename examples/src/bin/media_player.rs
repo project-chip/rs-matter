@@ -90,9 +90,6 @@ fn main() -> Result<(), Error> {
     // Create the Matter object
     let mut matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
-    // Need to call this once
-    matter.initialize_transport_buffers();
-
     // Create the event queue
     let mut events: Events = Events::new_default();
 

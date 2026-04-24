@@ -24,7 +24,7 @@ use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::{Duration, Timer};
 
-use crate::utils::init::{init, Init, UnsafeCellInit};
+use crate::utils::init::{init, Init, InitDefault, UnsafeCellInit};
 use crate::utils::sync::blocking::raw::MatterRawMutex;
 use crate::utils::sync::Signal;
 
@@ -108,12 +108,15 @@ where
 
     fn init_buffers(pool: &UnsafeCell<crate::utils::storage::Vec<T, N>>)
     where
-        T: Default + Clone,
+        T: InitDefault,
     {
         let buffers = unwrap!(unsafe { pool.get().as_mut() });
 
-        if buffers.len() < N {
-            unwrap!(buffers.resize_default(N));
+        while buffers.len() < N {
+            // In-place initialization: each slot is written directly via pinned-init,
+            // never materializing a full `T` value on the stack. This is essential when
+            // `T` is a large buffer (e.g. 1 MiB) that would otherwise overflow the stack.
+            unwrap!(buffers.push_init_unchecked(T::init_default()));
         }
     }
 }
@@ -134,7 +137,7 @@ where
 
 impl<const N: usize, T, M> BufferAccess<T> for PooledBuffers<N, T, M>
 where
-    T: Default + Clone,
+    T: InitDefault,
     M: RawMutex,
 {
     type Buffer<'b>

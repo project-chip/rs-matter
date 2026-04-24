@@ -195,7 +195,6 @@ macro_rules! commissioning_test {
                 sys_epoch,
                 MATTER_PORT,
             ));
-            device_matter.initialize_transport_buffers();
 
             let device_crypto = test_only_crypto();
             let mut rand = device_crypto.rand()?;
@@ -242,7 +241,6 @@ macro_rules! commissioning_test {
                 sys_epoch,
                 0,
             ));
-            ctrl_matter.initialize_transport_buffers();
             let ctrl_crypto = test_only_crypto();
 
             let transport_label = if $use_tcp { "TCP" } else { "UDP" };
