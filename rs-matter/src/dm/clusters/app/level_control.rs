@@ -36,9 +36,9 @@ use core::pin::pin;
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_time::{Duration, Instant};
 
+use crate::dm::clusters::app::on_off::{OnOffHooks, FULL_CLUSTER as ON_OFF_FULL_CLUSTER};
+use crate::dm::clusters::app::{level_control, on_off::OnOffHandler};
 pub use crate::dm::clusters::decl::level_control::*;
-use crate::dm::clusters::on_off::{OnOffHooks, FULL_CLUSTER as ON_OFF_FULL_CLUSTER};
-use crate::dm::clusters::{level_control, on_off::OnOffHandler};
 use crate::dm::{
     Cluster, Dataver, EndptId, HandlerContext, InvokeContext, ReadContext, WriteContext,
 };
@@ -1739,7 +1739,7 @@ impl OnOffHooks for NoOnOff {
 }
 
 pub mod test {
-    use crate::dm::clusters::level_control::{
+    use crate::dm::clusters::app::level_control::{
         AttributeId, CommandId, Feature, LevelControlHooks, FULL_CLUSTER,
     };
     use crate::dm::Cluster;

@@ -16,12 +16,12 @@
  */
 
 use rs_matter::crypto::{Crypto, RngCore};
-use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
-use rs_matter::dm::clusters::level_control::LevelControlHooks;
-use rs_matter::dm::clusters::on_off::{
+use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
+use rs_matter::dm::clusters::app::on_off::{
     self, test::TestOnOffDeviceLogic, ClusterAsyncHandler as _, NoLevelControl, OnOffHandler,
     OnOffHooks,
 };
+use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints::{with_eth_sys, EthSysHandler, ROOT_ENDPOINT_ID};
 use rs_matter::dm::{

@@ -32,15 +32,15 @@ use log::info;
 
 use rand::RngCore;
 use rs_matter::crypto::{default_crypto, Crypto};
+use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
+use rs_matter::dm::clusters::app::on_off::test::TestOnOffDeviceLogic;
+use rs_matter::dm::clusters::app::on_off::{self, OnOffHandler, OnOffHooks};
 use rs_matter::dm::clusters::basic_info::{
     BasicInfoConfig, ColorEnum, PairingHintFlags, ProductAppearance, ProductFinishEnum,
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::SharedNetworks;
-use rs_matter::dm::clusters::on_off::test::TestOnOffDeviceLogic;
-use rs_matter::dm::clusters::on_off::{self, OnOffHandler, OnOffHooks};
 use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
 };

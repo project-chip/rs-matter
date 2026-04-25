@@ -61,8 +61,8 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::clusters::net_comm::{
     NetCtl, NetCtlError, NetCtlStatus, NetworkScanInfo, NetworkType, SharedNetworks, WirelessCreds,
 };
-use rs_matter::dm::clusters::on_off::NoLevelControl;
-use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
+use rs_matter::dm::clusters::app::on_off::NoLevelControl;
+use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::wifi_diag::{
     SecurityTypeEnum, WiFiVersionEnum, WifiDiag, WirelessDiag,
 };
