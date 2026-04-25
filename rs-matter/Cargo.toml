@@ -117,7 +117,7 @@ max-btp-sessions-1 = [] # default
 astro-dnssd = ["os", "dep:astro-dnssd"]
 zeroconf = ["os", "dep:zeroconf"]
 zbus = ["dep:zbus", "os", "futures-lite", "libc", "uuid", "async-channel"]
-os = ["std", "backtrace", "async-io", "critical-section/std", "embassy-sync/std", "embassy-time/std"]
+os = ["std", "backtrace", "async-io", "critical-section/std", "embassy-sync/std", "embassy-time/std", "dep:if-addrs"]
 std = ["alloc", "rand"]
 backtrace = []
 alloc = ["defmt?/alloc"]
@@ -196,6 +196,7 @@ libc = { version = "0.2", optional = true }
 futures-lite = { version = "2", optional = true }
 astro-dnssd = { version = "0.3", optional = true }
 zeroconf = { version = "0.15", optional = true }
+if-addrs = { version = "0.15", optional = true }
 
 [target.'cfg(all(unix, not(target_os = "espidf")))'.dependencies]
 bitflags = "2"

@@ -38,7 +38,7 @@ use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::events::NoEvents;
 use rs_matter::dm::networks::eth::EthNetwork;
-use rs_matter::dm::networks::unix::UnixNetifs;
+use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{
@@ -216,7 +216,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
         endpoints::with_eth_sys(
             &false,
             &(),
-            &UnixNetifs,
+            &SysNetifs,
             rand,
             EmptyHandler
                 .chain(

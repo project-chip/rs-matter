@@ -38,7 +38,7 @@ use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::{self, EthSysHandler};
 use rs_matter::dm::events::Events;
 use rs_matter::dm::networks::eth::EthNetwork;
-use rs_matter::dm::networks::unix::UnixNetifs;
+use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{Async, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node};
@@ -257,7 +257,7 @@ fn dm_handler<'a>(
     endpoints::with_eth_sys(
         &false,
         &(),
-        &UnixNetifs,
+        &SysNetifs,
         rand,
         EmptyHandler
             .chain(

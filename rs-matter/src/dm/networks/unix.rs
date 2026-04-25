@@ -85,8 +85,17 @@ impl NetifDiag for UnixNetifs {
 }
 
 impl NetChangeNotif for UnixNetifs {
+    /// Wait until the set of network interfaces (or their addresses) may have
+    /// changed.
+    ///
+    /// NOTE: This is a polling-based fallback that simply waits for
+    /// [`super::NETIF_POLL_INTERVAL`] and then returns; it does not actually
+    /// detect changes. Callers are expected to re-read the interface state
+    /// after this returns and diff it against the previously observed one.
+    /// A future improvement would use OS-specific notifications (e.g.
+    /// `RTNETLINK` on Linux) for instant change detection.
     async fn wait_changed(&self) {
-        core::future::pending().await // TODO
+        super::poll_netifs_changed().await;
     }
 }
 
