@@ -115,7 +115,7 @@ where
                 match result {
                     Ok(()) => Ok(None),
                     Err(e) if e.code() != ErrorCode::NoSpace => {
-                        error!("Error reading attribute: {:?}", e);
+                        error!("Error reading attribute: {}", e);
 
                         tw.rewind_to(pos);
 

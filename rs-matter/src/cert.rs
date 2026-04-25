@@ -209,7 +209,13 @@ impl<'a> Extension<'a> {
                 Self::encode_extension_end(w)?;
             }
             Extension::FutureExtensions(t) => {
-                error!("Future Extensions Not Yet Supported: {}", Bytes(t.0))
+                // Per Matter Spec 6.5.11.5, the `future-extensions` TLV field
+                // carries one or more ASN.1 DER-encoded X.509 `Extension`
+                // structures verbatim. They MUST be reproduced byte-for-byte
+                // inside the TBS extensions SEQUENCE so that the
+                // signature-over-TBS verification matches what the issuer
+                // actually signed.
+                w.raw("Future Extensions", t.0)?;
             }
         }
 
@@ -832,6 +838,13 @@ pub trait CertConsumer {
     fn end_ctx(&mut self) -> Result<(), Error>;
     fn oid(&mut self, tag: &str, oid: &[u8]) -> Result<(), Error>;
     fn utctime(&mut self, tag: &str, epoch: u64) -> Result<(), Error>;
+    /// Emit raw, pre-encoded DER bytes into the output stream verbatim.
+    ///
+    /// This is used to carry through TLV `future-extensions`, whose payload is
+    /// already a fully DER-encoded X.509 Extension (or a sequence of them) and
+    /// must be reproduced byte-for-byte for the TBS hash to match the signed
+    /// data.
+    fn raw(&mut self, tag: &str, data: &[u8]) -> Result<(), Error>;
 }
 
 #[cfg(test)]

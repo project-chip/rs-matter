@@ -65,7 +65,7 @@ pub async fn run_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(), E
 async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(), Error> {
     use std::net::UdpSocket;
 
-    use log::info;
+    use log::{debug, error, info, warn};
 
     use rs_matter::transport::network::{Ipv4Addr, Ipv6Addr};
 
@@ -76,10 +76,10 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
     // examples work on Linux, macOS and Windows.
     #[inline(never)]
     fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
-        use log::error;
         use rs_matter::error::ErrorCode;
 
         let all = if_addrs::get_if_addrs().map_err(|_| ErrorCode::StdIoError)?;
+        debug!("Available network interfaces: {:?}", all);
 
         // A quick and dirty way to pick the interface we want: find one that
         // has both an IPv6 address AND a non-loopback IPv4 address assigned.
@@ -91,7 +91,7 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
         // On Windows the `if_addrs` crate may omit link-local IPv6 addresses,
         // so we fall back to accepting any non-loopback IPv6 address paired
         // with an IPv4 address on the same interface.
-        let find_candidate = |ipv6_filter: fn(std::net::Ipv6Addr) -> bool| {
+        let find_ipv6_candidate = |ipv6_filter: fn(std::net::Ipv6Addr) -> bool| {
             all.iter()
                 .filter(|ia| !ia.is_loopback())
                 .filter_map(|ia| match ia.addr {
@@ -112,10 +112,40 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
                 })
         };
 
-        // Prefer an interface with a link-local IPv6 address …
-        let candidate = find_candidate(|ip| (ip.segments()[0] & 0xffc0) == 0xfe80)
-            // … otherwise accept any non-loopback IPv6 address
-            .or_else(|| find_candidate(|_| true))
+        // Last-resort fallback trying to find the ethernet interface even if it doesn't have an IPv6 address assigned.
+        let find_fallback_candidate = || {
+            all.iter()
+                .filter(|ia| !ia.is_loopback())
+                .filter(|ia| ia.name.starts_with("eth") || ia.name.starts_with("eno"))
+                .map(|ia| match ia.addr {
+                    if_addrs::IfAddr::V4(ref v4) => (
+                        ia.name.clone(),
+                        v4.ip,
+                        std::net::Ipv6Addr::UNSPECIFIED,
+                        ia.index.unwrap_or(0),
+                    ),
+                    if_addrs::IfAddr::V6(ref v6) => (
+                        ia.name.clone(),
+                        std::net::Ipv4Addr::UNSPECIFIED,
+                        v6.ip,
+                        ia.index.unwrap_or(0),
+                    ),
+                })
+                .next()
+        };
+
+        // Prefer an interface with a link-local IPv6 address
+        let candidate = find_ipv6_candidate(|ip| ip.is_unicast_link_local())
+            // otherwise accept any non-loopback IPv6 address
+            .or_else(|| find_ipv6_candidate(|_| true))
+            // otherwise do one last fallback: accept an interface named "eth*" or "eno*" with a non-loopback IPv4 address
+            // even if it doesn't have an IPv6 address assigned.
+            //
+            // This is a common scenario in VMs and containers where the host might not provide an IPv6 address - including GH actions.
+            .or_else(|| {
+                warn!("No network interface with a suitable IPv6 address found");
+                find_fallback_candidate()
+            })
             .ok_or_else(|| {
                 error!("Cannot find network interface suitable for mDNS broadcasting");
                 ErrorCode::StdIoError

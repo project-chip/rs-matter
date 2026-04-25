@@ -30,9 +30,9 @@ use crate::dm::events::EventTLVWrite;
 use crate::dm::subscriptions::SubscriptionsBuffers;
 use crate::error::{Error, ErrorCode};
 use crate::im::{
-    EventPriority, EventResp, EventStatus, IMStatusCode, InvReq, InvRespTag, OpCode, ReadReq,
-    ReportDataReq, ReportDataRespTag, StatusResp, SubscribeReq, SubscribeResp, TimedReq, WriteReq,
-    WriteRespTag, PROTO_ID_INTERACTION_MODEL,
+    AttrPath, EventPriority, EventResp, EventStatus, IMStatusCode, InvReq, InvRespTag, OpCode,
+    ReadReq, ReportDataReq, ReportDataRespTag, StatusResp, SubscribeReq, SubscribeResp, TimedReq,
+    WriteReq, WriteRespTag, PROTO_ID_INTERACTION_MODEL,
 };
 use crate::persist::KvBlobStoreAccess;
 use crate::respond::ExchangeHandler;
@@ -267,6 +267,11 @@ where
         let read_req = ReadReq::new(TLVElement::new(&rx));
         debug!("IM: Read request: {:?}", read_req);
 
+        if let Err(err) = Self::validate_read(&read_req) {
+            error!("Invalid read request: {:?}", err);
+            return Self::send_status(exchange, err.code().into()).await;
+        }
+
         let req = ReportDataReq::Read(&read_req);
 
         let mut wb = WriteBuf::new(&mut tx);
@@ -284,6 +289,35 @@ where
         );
 
         resp.respond(&mut wb, true, true, |_, _, _| true).await?;
+
+        Ok(())
+    }
+
+    /// Validate a `ReadReq` request prior to processing.
+    fn validate_read(req: &ReadReq<'_>) -> Result<(), Error> {
+        if let Some(attr_requests) = req.attr_requests()? {
+            for attr_req in attr_requests {
+                Self::validate_attr_wildcard_path(&attr_req?)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Per-spec validation of an `AttrPath` that may contain wildcards.
+    ///
+    /// Per Matter spec section 8.9.2.3, when a path uses a wildcard cluster
+    /// but specifies a concrete attribute id, that attribute id must be a
+    /// global (system) attribute. Any other combination must be rejected with
+    /// `INVALID_ACTION`.
+    fn validate_attr_wildcard_path(path: &AttrPath) -> Result<(), Error> {
+        if path.cluster.is_none() {
+            if let Some(attr_id) = path.attr {
+                if !Attribute::is_system_attr(attr_id) {
+                    return Err(ErrorCode::InvalidAction.into());
+                }
+            }
+        }
 
         Ok(())
     }
@@ -463,7 +497,9 @@ where
             for attr_req in attr_requests {
                 let path = attr_req?;
 
-                if !path.is_wildcard() {
+                if path.is_wildcard() {
+                    Self::validate_attr_wildcard_path(&path)?;
+                } else {
                     node.validate_attr_path(&path, false, false, accessor)
                         .map_err(|_| ErrorCode::InvalidAction)?;
                 }
