@@ -65,6 +65,9 @@ const REQUIRED_PACKAGES: &[&str] = &[
     "libdbus-1-dev",
     "libglib2.0-dev",
     "libavahi-client-dev",
+    // Required by `pyscard` (built as part of the CHIP Python wheel):
+    // provides `libpcsclite.pc` and `<winscard.h>` (in /usr/include/PCSC/).
+    "libpcsclite-dev",
 ];
 
 /// Execute command with stderr always surpressed
@@ -161,6 +164,61 @@ impl ChipBuilder {
         } else {
             info!("Using existing chip-tool build");
         }
+
+        Ok(())
+    }
+
+    /// Build and install the CHIP Python "matter" wheel into the
+    /// pigweed venv that `scripts/activate.sh` already sets up.
+    ///
+    /// Required by `scripts/tests/run_python_test.py`, whose imports
+    /// (`matter.testing.metadata`, `matter.testing.tasks`) come from
+    /// the wheel built by `scripts/build_python.sh`.
+    ///
+    /// Idempotent: if the wheel is already importable in the venv,
+    /// this is a no-op (unless `force_rebuild` is set).
+    pub fn build_python_wheel(&self, force_rebuild: bool) -> anyhow::Result<()> {
+        let chip_dir = self.chip_dir();
+
+        let venv_dir = chip_dir.join(".environment/pigweed-venv");
+        if !venv_dir.exists() {
+            anyhow::bail!(
+                "Pigweed venv not found at {}; run `cargo xtask itest-setup` first.",
+                venv_dir.display(),
+            );
+        }
+
+        // Probe: is the `matter.testing` package already importable?
+        let probe = Command::new(venv_dir.join("bin/python3"))
+            .arg("-c")
+            .arg("import matter.testing.metadata, matter.testing.tasks")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        if !force_rebuild && probe.map(|s| s.success()).unwrap_or(false) {
+            info!("CHIP Python wheel already installed in pigweed venv");
+            return Ok(());
+        }
+
+        warn!("Building CHIP Python wheel (this may take several minutes)...");
+
+        // `-i <venv>` installs the wheel into the existing venv; `-c no`
+        // keeps the venv (preserves mobly etc.) instead of recreating it.
+        // `run_in_build_env.sh` sources `activate.sh` first so that
+        // `python`, `gn`, `ninja` etc. are on PATH.
+        let runner = chip_dir.join("scripts/run_in_build_env.sh");
+        let cmd_line = "./scripts/build_python.sh -i .environment/pigweed-venv -c no -d false";
+
+        // Note: if this step fails in CI, temporarily flip the third arg to
+        // `false` (or re-run with `-v`) to surface stderr — the wheel build
+        // has many native deps and errors are otherwise invisible.
+        run_command_with(
+            Command::new(&runner).current_dir(chip_dir).arg(cmd_line),
+            self.print_cmd_output,
+            !self.print_cmd_output,
+        )?;
+
+        info!("CHIP Python wheel installed successfully");
 
         Ok(())
     }

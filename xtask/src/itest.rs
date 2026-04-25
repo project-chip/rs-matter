@@ -27,6 +27,11 @@ use std::process::Command;
 use log::{debug, info, warn};
 
 /// Default tests
+///
+/// Names matching the `TC_*` convention are dispatched to
+/// `scripts/tests/run_python_test.py` and target a `MatterBaseTest`
+/// in `src/python_testing/`. All other names are YAML test suites
+/// dispatched to `scripts/tests/run_test_suite.py`.
 const DEFAULT_TESTS: &[&str] = &[
     "Test_AddNewFabricFromExistingFabric",
     "TestAccessControlCluster",
@@ -74,7 +79,11 @@ const DEFAULT_TESTS: &[&str] = &[
 const CHIP_DIR: &str = ".build/itest/connectedhomeip";
 
 /// A utility for running Chip integration tests for `rs-matter`.
-/// (currently the YAML ones, Python ones would be supported in future too)
+///
+/// Supports both YAML test suites (dispatched to
+/// `scripts/tests/run_test_suite.py`) and Python `MatterBaseTest`
+/// scripts (dispatched to `scripts/tests/run_python_test.py`). Names
+/// starting with `TC_` are treated as Python; everything else is YAML.
 pub struct ITests {
     /// The `rs-matter` workspace directory
     workspace_dir: PathBuf,
@@ -111,7 +120,10 @@ impl ITests {
     /// Setup the Chip environment so that integration tests can be run.
     pub fn setup(&self, chip_gitref: Option<&str>, force_rebuild: bool) -> anyhow::Result<()> {
         self.chip_builder
-            .build_chip_tool(chip_gitref, force_rebuild)
+            .build_chip_tool(chip_gitref, force_rebuild)?;
+        // Required so that `TC_*` Python tests can be dispatched via
+        // `scripts/tests/run_python_test.py`.
+        self.chip_builder.build_python_wheel(force_rebuild)
     }
 
     /// Build the executable (`chip-tool-tests`) that is to be tested with the Chip integration tests.
@@ -210,20 +222,11 @@ impl ITests {
             self.print_cmd_output,
         );
 
-        let test_suite_path = chip_dir.join("scripts/tests/run_test_suite.py");
-        let chip_tool_path = chip_dir.join("out/host/chip-tool");
-        let test_exe_path = self.test_exe_path(profile, target);
-        let test_pics_path = self.test_pics_path(target);
-
-        let test_command = format!(
-            "{} --log-level warn --target {} --runner chip_tool_python --chip-tool {} run --iterations 1 --test-timeout-seconds {} --all-clusters-app '{}' --pics-file {}",
-            test_suite_path.display(),
-            test_name,
-            chip_tool_path.display(),
-            timeout_secs,
-            test_exe_path.display(),
-            test_pics_path.display(),
-        );
+        let test_command = if Self::is_python_test(test_name) {
+            self.python_test_command(test_name, timeout_secs, profile, target)?
+        } else {
+            self.yaml_test_command(test_name, timeout_secs, profile, target)
+        };
 
         let script_path = chip_dir.join("scripts/run_in_build_env.sh");
 
@@ -241,6 +244,83 @@ impl ITests {
         };
 
         Ok(())
+    }
+
+    /// `TC_*` (camelCase) is the upstream filename convention for
+    /// CHIP `MatterBaseTest`-style Python tests in
+    /// `src/python_testing/`. Anything else is a YAML test suite.
+    fn is_python_test(test_name: &str) -> bool {
+        test_name.starts_with("TC_")
+    }
+
+    fn yaml_test_command(
+        &self,
+        test_name: &str,
+        timeout_secs: u32,
+        profile: &str,
+        target: &str,
+    ) -> String {
+        let chip_dir = self.chip_builder.chip_dir();
+        let test_suite_path = chip_dir.join("scripts/tests/run_test_suite.py");
+        let chip_tool_path = chip_dir.join("out/host/chip-tool");
+        let test_exe_path = self.test_exe_path(profile, target);
+        let test_pics_path = self.test_pics_path(target);
+
+        format!(
+            "{} --log-level warn --target {} --runner chip_tool_python --chip-tool {} run --iterations 1 --test-timeout-seconds {} --all-clusters-app '{}' --pics-file {}",
+            test_suite_path.display(),
+            test_name,
+            chip_tool_path.display(),
+            timeout_secs,
+            test_exe_path.display(),
+            test_pics_path.display(),
+        )
+    }
+
+    fn python_test_command(
+        &self,
+        test_name: &str,
+        timeout_secs: u32,
+        profile: &str,
+        target: &str,
+    ) -> anyhow::Result<String> {
+        let chip_dir = self.chip_builder.chip_dir();
+        let runner_path = chip_dir.join("scripts/tests/run_python_test.py");
+        let test_exe_path = self.test_exe_path(profile, target);
+        let script_path = chip_dir
+            .join("src/python_testing")
+            .join(format!("{test_name}.py"));
+
+        if !script_path.exists() {
+            anyhow::bail!(
+                "Python test script not found: {} (expected for test `{test_name}`)",
+                script_path.display(),
+            );
+        }
+
+        // Standard rs-matter test commissioning values, sourced directly
+        // from `rs_matter::dm::devices::test::TEST_DEV_COMM`.
+        let test_comm = &rs_matter::dm::devices::test::TEST_DEV_COMM;
+        let discriminator: u16 = test_comm.discriminator;
+        let passcode: u32 = u32::from_le_bytes(*test_comm.password.access());
+
+        // The Python test framework drives commissioning itself via
+        // `--script-args`; the rs-matter test executable is launched
+        // by `run_python_test.py` and passed via `--app`.
+        let script_args = format!(
+            "--commissioning-method on-network --discriminator {discriminator} \
+             --passcode {passcode} --endpoint 1 \
+             --paa-trust-store-path credentials/development/paa-root-certs"
+        );
+
+        Ok(format!(
+            "timeout --kill-after=10s {timeout_secs}s \
+             {} --app '{}' --factory-reset --script {} --script-args \"{}\"",
+            runner_path.display(),
+            test_exe_path.display(),
+            script_path.display(),
+            script_args,
+        ))
     }
 
     fn build_test_exe<'a>(
