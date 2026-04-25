@@ -38,7 +38,7 @@ use rs_matter::dm::devices::{DEV_TYPE_AGGREGATOR, DEV_TYPE_BRIDGED_NODE, DEV_TYP
 use rs_matter::dm::endpoints;
 use rs_matter::dm::events::Events;
 use rs_matter::dm::networks::eth::EthNetwork;
-use rs_matter::dm::networks::unix::UnixNetifs;
+use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver, EmptyHandler, Endpoint,
@@ -211,7 +211,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
         endpoints::with_eth_sys(
             &false,
             &(),
-            &UnixNetifs,
+            &SysNetifs,
             rand,
             EmptyHandler
                 // The next chain is the handler for the "aggregator" endpoint 1.
