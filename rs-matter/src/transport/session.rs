@@ -1118,17 +1118,23 @@ impl Sessions {
         peer_node_id: u64,
         secure: bool,
     ) -> Option<&mut Session> {
-        let mut session = self
+        // Prefer a TCP-backed session (larger payloads, no MRP fragmentation
+        // limits) over UDP when both are available for the same peer. This
+        // is required e.g. for the WebRTC Transport Provider's outbound
+        // `Answer(sdp)` invoke whose payload can easily exceed a UDP MTU.
+        let idx = self
             .sessions
-            .iter_mut()
-            // Expired sessions are not allowed to initiate new exchanges
-            .find(|sess| !sess.expired && sess.is_for_node(fabric_idx, peer_node_id, secure));
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !s.expired && s.is_for_node(fabric_idx, peer_node_id, secure))
+            .max_by_key(|(_, s)| i32::from(s.peer_addr.is_tcp()))
+            .map(|(i, _)| i)?;
 
-        if let Some(session) = session.as_mut() {
-            session.update_last_used(self.epoch);
-        }
+        let session = &mut self.sessions[idx];
 
-        session
+        session.update_last_used(self.epoch);
+
+        Some(session)
     }
 
     pub(crate) fn get_for_rx(

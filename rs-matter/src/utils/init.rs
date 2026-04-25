@@ -98,3 +98,15 @@ impl<T> InitMaybeUninit<T> for MaybeUninit<T> {
         }
     }
 }
+
+/// A trait for types that have a canonical, stack-safe, in-place default initializer.
+///
+/// This is the in-place initialization analogue of `Default`: unlike `Default::default()`
+/// which returns `Self` by value (potentially materializing a large value on the stack),
+/// `init_default()` returns an `Init<Self>` that writes the value directly into its
+/// final memory location. This is essential for large types (e.g. buffers sized in MiB)
+/// whose on-stack construction would overflow the stack.
+pub trait InitDefault: Sized {
+    /// Returns a canonical in-place initializer for `Self`.
+    fn init_default() -> impl Init<Self>;
+}

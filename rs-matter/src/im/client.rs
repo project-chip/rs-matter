@@ -111,8 +111,13 @@ impl<'a> InvokeRequestBuilder<'a> {
     /// Create a new InvokeRequestBuilder
     pub const fn new(invoke_requests: &'a [CmdData<'a>], timed: bool) -> Self {
         Self {
-            suppress_response: None,
-            timed_request: if timed { Some(true) } else { None },
+            // Matter 1.5 Core spec §8.8.5: `SuppressResponse` and
+            // `TimedRequest` are mandatory fields of `InvokeRequestMessage`
+            // and MUST be present on the wire. Encode them explicitly so
+            // strictly-validating peers (e.g. SmartThings) accept the
+            // request instead of rejecting it with `INVALID_ACTION`.
+            suppress_response: Some(false),
+            timed_request: Some(timed),
             invoke_requests,
         }
     }
@@ -786,6 +791,40 @@ impl ImClient {
             .await?;
 
         exchange.recv_fetch().await?;
+
+        // Servers MAY reply with a plain `StatusResponse` instead of a full
+        // `InvokeResponse` for commands whose return is `DefaultSuccess`
+        // (empty response body). Accept both.
+        let opcode = exchange.rx()?.meta().proto_opcode;
+
+        if opcode == OpCode::StatusResponse as u8 {
+            // Parse status from the RX buffer, then ACK.
+            let status = {
+                let rx = exchange.rx()?;
+                let element = TLVElement::new(rx.payload());
+                StatusResp::from_tlv(&element)?.status
+            };
+
+            exchange.acknowledge().await?;
+
+            if status == IMStatusCode::Success {
+                return Ok(CmdResp::status_new(
+                    CmdPath {
+                        endpoint: Some(endpoint),
+                        cluster: Some(cluster),
+                        cmd: Some(cmd),
+                    },
+                    IMStatusCode::Success,
+                    None,
+                ));
+            } else {
+                error!("Invoke reply: StatusResponse({:?})", status);
+                return Err(status
+                    .to_error_code()
+                    .unwrap_or(ErrorCode::InvalidData)
+                    .into());
+            }
+        }
 
         // Check opcode and more_chunks before acknowledging
         {

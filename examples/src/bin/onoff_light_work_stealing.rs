@@ -111,9 +111,6 @@ fn run() -> Result<(), Error> {
         MATTER_PORT,
     ));
 
-    // Need to call this once
-    matter.initialize_transport_buffers();
-
     // Create the events
     let events = EVENTS.uninit().init_with(Events::init_default());
 

@@ -225,7 +225,7 @@ impl<C: Crypto> E2eRunner<C> {
         #[cfg(not(feature = "std"))]
         use rs_matter::utils::rand::dummy_rand as rand;
 
-        let mut matter = Matter::new(
+        let matter = Matter::new(
             &TEST_DEV_DET,
             TEST_DEV_COMM,
             &TEST_DEV_ATT,
@@ -236,8 +236,6 @@ impl<C: Crypto> E2eRunner<C> {
         matter.with_state(|state| {
             state.fabrics.add_with_post_init(|_| Ok(())).unwrap();
         });
-
-        matter.initialize_transport_buffers();
 
         matter
     }

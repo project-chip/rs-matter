@@ -63,7 +63,7 @@ mod types;
 /// write requests per-transaction will be supported.
 const MAX_WRITE_ATTRS_IN_ONE_TRANS: usize = 15;
 
-pub type IMBuffer = heapless::Vec<u8, MAX_EXCHANGE_RX_BUF_SIZE>;
+pub type IMBuffer = crate::utils::storage::Vec<u8, MAX_EXCHANGE_RX_BUF_SIZE>;
 
 /// An `ExchangeHandler` implementation capable of handling responder exchanges for the Interaction Model protocol.
 /// The implementation needs a `DataModelHandler` instance to interact with the underlying clusters of the data model.

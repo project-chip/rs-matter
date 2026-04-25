@@ -34,7 +34,7 @@ use core::{
     slice,
 };
 
-use crate::utils::init::{init_from_closure, Init};
+use crate::utils::init::{init_from_closure, Init, InitDefault};
 
 /// A fixed capacity [`Vec`](https://doc.rust-lang.org/std/vec/struct.Vec.html)
 ///
@@ -112,7 +112,6 @@ impl<T, const N: usize> Vec<T, N> {
     }
 
     /// Constructs a new vector with a fixed capacity of `N` and fills it
-    /// with the provided slice.
     ///
     /// This is equivalent to the following code:
     ///
@@ -908,6 +907,12 @@ impl<T, const N: usize> Vec<T, N> {
 impl<T, const N: usize> Default for Vec<T, N> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<T, const N: usize> InitDefault for Vec<T, N> {
+    fn init_default() -> impl Init<Self> {
+        Self::init()
     }
 }
 

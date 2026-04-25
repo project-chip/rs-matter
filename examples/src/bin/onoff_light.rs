@@ -106,9 +106,6 @@ fn run() -> Result<(), Error> {
         MATTER_PORT,
     ));
 
-    // Need to call this once
-    matter.initialize_transport_buffers();
-
     // Persistence
     let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
     let mut kv = DirKvBlobStore::new_default();

@@ -124,9 +124,6 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     // Create the Matter object
     let mut matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
-    // Need to call this once
-    matter.initialize_transport_buffers();
-
     // A storage for the Wifi networks
     let mut networks = WifiNetworks::<3>::new();
 
