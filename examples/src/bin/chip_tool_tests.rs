@@ -303,8 +303,7 @@ const NODE: Node<'static> = Node {
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
-                TestOnOffDeviceLogic::CLUSTER,
-                UnitTestingHandler::CLUSTER
+                TestOnOffDeviceLogic::CLUSTER
             ),
         },
     ],

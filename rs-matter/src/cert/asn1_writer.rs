@@ -302,4 +302,11 @@ impl CertConsumer for ASN1Writer<'_> {
             self.write_str(0x17, time_str.as_bytes())
         }
     }
+
+    fn raw(&mut self, _tag: &str, data: &[u8]) -> Result<(), Error> {
+        self.append_with(data.len(), |t| {
+            let end_offset = t.offset + data.len();
+            t.buf[t.offset..end_offset].copy_from_slice(data);
+        })
+    }
 }

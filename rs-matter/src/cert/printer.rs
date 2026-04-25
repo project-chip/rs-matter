@@ -133,4 +133,8 @@ impl CertConsumer for CertPrinter<'_, '_> {
         let _ = writeln!(self.f, "{} {} {:?}", SPACE[self.level], tag, dt);
         Ok(())
     }
+    fn raw(&mut self, tag: &str, data: &[u8]) -> Result<(), Error> {
+        let _ = writeln!(self.f, "{} {} {:x?}", SPACE[self.level], tag, data);
+        Ok(())
+    }
 }

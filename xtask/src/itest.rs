@@ -33,6 +33,9 @@ use log::{debug, info, warn};
 /// in `src/python_testing/`. All other names are YAML test suites
 /// dispatched to `scripts/tests/run_test_suite.py`.
 const DEFAULT_TESTS: &[&str] = &[
+    //
+    // YAML tests
+    //
     "Test_AddNewFabricFromExistingFabric",
     "TestAccessControlCluster",
     "TestAccessControlConstraints",
@@ -73,6 +76,11 @@ const DEFAULT_TESTS: &[&str] = &[
     // "TestSystemCommands", // TODO: Error attempting to start secondary device
     // "TestUserLabelCluster",  // TODO: specific cluster, to be implemented with all others
     // "TestUserLabelClusterConstraints",  // TODO: specific cluster, to be implemented with all others
+
+    //
+    // Python tests
+    //
+    "TC_IDM_2_2",
 ];
 
 /// The directory where the Chip repository will be cloned

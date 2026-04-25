@@ -67,13 +67,17 @@ fn test_read_success() {
 
 #[test]
 fn test_read_unsupported_fields() {
-    // 6 reads
+    // 5 reads
     // - endpoint doesn't exist - UnsupportedEndpoint
     // - cluster doesn't exist - UnsupportedCluster
     // - cluster doesn't exist and endpoint is wildcard - Silently ignore
     // - attribute doesn't exist - UnsupportedAttribute
     // - attribute doesn't exist and endpoint is wildcard - Silently ignore
-    // - attribute doesn't exist and cluster is wildcard - Silently ignore
+    //
+    // Note: a path with a wildcard cluster and a concrete non-global
+    // attribute id is rejected at the request level with InvalidAction
+    // (per Matter spec section 8.9.2.3) and is therefore covered by a
+    // dedicated integration test rather than this per-path test.
     init_env_logger();
 
     let invalid_endpoint = GenericPath::new(
@@ -94,14 +98,12 @@ fn test_read_unsupported_fields() {
     let invalid_attribute = GenericPath::new(Some(0), Some(echo_cluster::ID), Some(0x1234));
     let invalid_attribute_wc_endpoint =
         GenericPath::new(None, Some(echo_cluster::ID), Some(0x1234));
-    let invalid_attribute_wc_cluster = GenericPath::new(Some(0), None, Some(0x1234));
     let input = &[
         AttrPath::from_gp(&invalid_endpoint),
         AttrPath::from_gp(&invalid_cluster),
         AttrPath::from_gp(&invalid_cluster_wc_endpoint),
         AttrPath::from_gp(&invalid_attribute),
         AttrPath::from_gp(&invalid_attribute_wc_endpoint),
-        AttrPath::from_gp(&invalid_attribute_wc_cluster),
     ];
 
     let expected = &[
