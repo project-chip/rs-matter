@@ -1011,7 +1011,7 @@ impl Fabrics {
             return true;
         }
 
-        let Some(fab_idx) = NonZeroU8::new(req.accessor().fab_idx) else {
+        let Ok(fab_idx) = req.accessor().fab_idx() else {
             return false;
         };
 

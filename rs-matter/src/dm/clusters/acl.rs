@@ -19,14 +19,14 @@
 
 use core::num::NonZeroU8;
 
-use crate::acl::{self, AclEntry, MAX_ACL_ENTRIES_PER_FABRIC};
+use crate::acl::{self, AclEntry, AuthMode, MAX_ACL_ENTRIES_PER_FABRIC};
 use crate::dm::{
     ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, Cluster, Dataver, InvokeContext,
     ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, FabricPersist, Fabrics};
-use crate::tlv::{TLVArray, TLVBuilderParent};
+use crate::tlv::{Nullable, TLVArray, TLVBuilderParent};
 use crate::utils::init::stack_try_pin_init;
 use crate::with;
 
@@ -180,8 +180,21 @@ impl ClusterHandler for AclHandler {
     ) -> Result<(), Error> {
         let mut persist = FabricPersist::new(ctx.kv());
 
+        let accessor = ctx.exchange().accessor()?;
+        let admin_node_id: Nullable<u64> = match accessor.peer_node_id() {
+            Some(id) => Nullable::some(id),
+            None => Nullable::none(),
+        };
+        let admin_passcode_id: Nullable<u16> =
+            if matches!(accessor.auth_mode(), Some(AuthMode::Pase)) {
+                Nullable::some(0u16)
+            } else {
+                Nullable::none()
+            };
+
+        let fab_idx = NonZeroU8::new(ctx.attr().fab_idx).ok_or(ErrorCode::UnsupportedAccess)?;
+
         ctx.exchange().with_state(|state| {
-            let fab_idx = NonZeroU8::new(ctx.attr().fab_idx).ok_or(ErrorCode::Invalid)?;
             let fabric = state.fabrics.fabric_mut(fab_idx)?;
             self.set_acl(fabric, value)?;
 
@@ -195,7 +208,20 @@ impl ClusterHandler for AclHandler {
             Ok(())
         })?;
 
-        persist.run()
+        persist.run()?;
+
+        AccessControlEntryChanged::emit(&ctx, |tw| {
+            tw.admin_node_id(admin_node_id)?
+                .admin_passcode_id(admin_passcode_id)?
+                .change_type(ChangeTypeEnum::Changed)?
+                .latest_value()?
+                .null()?
+                .fabric_index(Some(fab_idx.get()))?
+                .end()
+        })
+        .unwrap();
+
+        Ok(())
     }
 
     fn handle_review_fabric_restrictions<P: TLVBuilderParent>(

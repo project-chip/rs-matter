@@ -209,11 +209,19 @@ impl ChipBuilder {
         let runner = chip_dir.join("scripts/run_in_build_env.sh");
         let cmd_line = "./scripts/build_python.sh -i .environment/pigweed-venv -c no -d false";
 
+        // PW_ACTIVATE_SKIP_CHECKS=1 bypasses the `pw doctor` health check in
+        // activate.sh which fails when the `pw` CLI isn't on PATH (e.g. when
+        // bazelisk is absent). The PATH/PYTHONPATH setup that precedes the
+        // check in activate.sh is still applied, so gn/ninja remain usable.
+        //
         // Note: if this step fails in CI, temporarily flip the third arg to
         // `false` (or re-run with `-v`) to surface stderr — the wheel build
         // has many native deps and errors are otherwise invisible.
         run_command_with(
-            Command::new(&runner).current_dir(chip_dir).arg(cmd_line),
+            Command::new(&runner)
+                .current_dir(chip_dir)
+                .env("PW_ACTIVATE_SKIP_CHECKS", "1")
+                .arg(cmd_line),
             self.print_cmd_output,
             !self.print_cmd_output,
         )?;

@@ -157,6 +157,45 @@ impl<'a> Node<'a> {
         cluster.check_attr_access(accessor, timed, gp, write, attr.id)
     }
 
+    /// Return `true` if at least one attribute matching the (potentially wildcard) path
+    /// is accessible to the given accessor. Used for subscription validation.
+    pub(crate) fn has_accessible_attr(&self, path: &AttrPath, accessor: &Accessor<'_>) -> bool {
+        for endpoint in self.endpoints.iter() {
+            if let Some(ep_id) = path.endpoint {
+                if endpoint.id != ep_id {
+                    continue;
+                }
+            }
+
+            for cluster in endpoint.clusters.iter() {
+                if let Some(cluster_id) = path.cluster {
+                    if cluster.id != cluster_id {
+                        continue;
+                    }
+                }
+
+                for attr in cluster.attributes.iter() {
+                    if let Some(attr_id) = path.attr {
+                        if attr.id != attr_id {
+                            continue;
+                        }
+                    }
+
+                    let gp = GenericPath::new(Some(endpoint.id), Some(cluster.id), Some(attr.id));
+
+                    if cluster
+                        .check_attr_access(accessor, false, gp, false, attr.id)
+                        .is_ok()
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
     pub(crate) fn validate_event_path(
         &self,
         path: &EventPath,

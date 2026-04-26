@@ -533,6 +533,10 @@ where
 
                 if path.is_wildcard() {
                     Self::validate_attr_wildcard_path(&path)?;
+
+                    if !node.has_accessible_attr(&path, accessor) {
+                        return Err(ErrorCode::InvalidAction.into());
+                    }
                 } else {
                     node.validate_attr_path(&path, false, false, accessor)
                         .map_err(|_| ErrorCode::InvalidAction)?;

@@ -323,7 +323,7 @@ impl defmt::Format for AccessorSubjects {
 /// The Accessor Object
 pub struct Accessor<'a> {
     /// The fabric index of the accessor
-    pub fab_idx: u8,
+    pub(crate) fab_idx: u8,
     /// Accessor's subject: could be node-id, NoC CAT, group id
     subjects: AccessorSubjects,
     /// The auth mode of this session. Might be `None` for plain-text sessions
@@ -386,13 +386,17 @@ impl<'a> Accessor<'a> {
         }
     }
 
+    pub fn fab_idx(&self) -> Result<NonZeroU8, Error> {
+        NonZeroU8::new(self.fab_idx).ok_or(ErrorCode::UnsupportedAccess.into())
+    }
+
     /// Return the subjects of the accessor
-    pub fn subjects(&self) -> &AccessorSubjects {
+    pub const fn subjects(&self) -> &AccessorSubjects {
         &self.subjects
     }
 
     /// Return the auth mode of the accessor
-    pub fn auth_mode(&self) -> Option<AuthMode> {
+    pub const fn auth_mode(&self) -> Option<AuthMode> {
         self.auth_mode
     }
 
@@ -429,6 +433,20 @@ impl<'a> Accessor<'a> {
 
         self.matter
             .with_state(|state| state.fabrics.get(fab_idx).map(|fabric| fabric.node_id()))
+    }
+
+    /// Return the peer node ID (admin node ID) for CASE sessions, or None for PASE/other sessions.
+    pub fn peer_node_id(&self) -> Option<u64> {
+        if matches!(self.auth_mode, Some(AuthMode::Case)) {
+            let id = self.subjects.0[0];
+            if is_node(id) {
+                Some(id)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 }
 
