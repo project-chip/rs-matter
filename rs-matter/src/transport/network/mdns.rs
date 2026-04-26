@@ -533,10 +533,11 @@ impl Service<'_> {
 
         match matter_service {
             MatterMdnsService::Commissioned { .. } => {
-                // Per Matter Core Spec Section 4.3.1.14, T=1 indicates TCP support
+                // Per Matter Core Spec Section 4.3.1.14, T is a bitmap:
+                // bit 1 (value 2) = TCP client, bit 2 (value 4) = TCP server
                 let txt_kvs: heapless::Vec<(&str, &str), 2> = if dev_det.tcp_supported {
                     let mut v = heapless::Vec::new();
-                    unwrap!(v.push(("T", "1")));
+                    unwrap!(v.push(("T", "6")));
                     v
                 } else {
                     // Some mDNS responders do not accept empty TXT records
@@ -623,9 +624,10 @@ impl Service<'_> {
                     unwrap!(txt_kvs.push(("PI", dev_det.pairing_instruction)));
                 }
 
-                // Per Matter Core Spec Section 4.3.1.14, T=1 indicates TCP support
+                // Per Matter Core Spec Section 4.3.1.14, T is a bitmap:
+                // bit 1 (value 2) = TCP client, bit 2 (value 4) = TCP server
                 if dev_det.tcp_supported {
-                    unwrap!(txt_kvs.push(("T", "1")));
+                    unwrap!(txt_kvs.push(("T", "6")));
                 }
 
                 f(&Service {

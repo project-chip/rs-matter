@@ -80,6 +80,7 @@ use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
 use crate::with;
 
+pub use crate::dm::clusters::decl::camera_av_stream_management::AudioCodecEnum;
 #[allow(unused_imports)]
 pub use crate::dm::clusters::decl::camera_av_stream_management::*;
 pub use crate::dm::clusters::decl::globals::StreamUsageEnum;
@@ -112,6 +113,29 @@ pub struct RateDistortionPoint {
     pub codec: VideoCodecEnum,
     pub min_resolution: (u16, u16),
     pub min_bit_rate: u32,
+}
+
+/// One row in the `AllocatedAudioStreams` attribute.
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct AudioStream {
+    pub audio_stream_id: u16,
+    pub stream_usage: StreamUsageEnum,
+    pub audio_codec: AudioCodecEnum,
+    pub channel_count: u8,
+    pub sample_rate: u32,
+    pub bit_rate: u32,
+    pub bit_depth: u8,
+    pub reference_count: u8,
+}
+
+/// Static description of the microphone, reported via `MicrophoneCapabilities`.
+#[derive(Debug, Clone, Copy)]
+pub struct AudioCapabilitiesConfig<'a> {
+    pub max_channels: u8,
+    pub supported_codecs: &'a [AudioCodecEnum],
+    pub supported_sample_rates: &'a [u32],
+    pub supported_bit_depths: &'a [u8],
 }
 
 /// One row in the `AllocatedVideoStreams` attribute.
@@ -243,23 +267,28 @@ pub struct CameraAvStreamConfig<'a> {
     /// `RateDistortionTradeOffPoints` operating-points catalogue. At
     /// least one entry strongly recommended for interop.
     pub rate_distortion_points: &'a [RateDistortionPoint],
+    /// If `Some`, the `AUDIO` feature is active and this describes the
+    /// microphone via `MicrophoneCapabilities`. If `None`, only VIDEO is
+    /// supported (the `CLUSTER` constant; the `CLUSTER_VIDEO_AUDIO`
+    /// constant requires `Some`).
+    pub mic_capabilities: Option<AudioCapabilitiesConfig<'a>>,
 }
 
-struct State<const NV: usize> {
+struct State<const NV: usize, const NA: usize> {
     videos: Vec<VideoStream, NV>,
+    audios: Vec<AudioStream, NA>,
     stream_usage_priorities: Vec<StreamUsageEnum, MAX_STREAM_USAGES>,
 }
 
-impl<const NV: usize> State<NV> {
+impl<const NV: usize, const NA: usize> State<NV, NA> {
     const fn new() -> Self {
         Self {
             videos: Vec::new(),
+            audios: Vec::new(),
             stream_usage_priorities: Vec::new(),
         }
     }
 
-    /// Return a mutable reference to the row with the given ID, or
-    /// `Error::NotFound` (mapped to `NOT_FOUND`).
     fn find_video_mut(&mut self, id: u16) -> Result<&mut VideoStream, Error> {
         self.videos
             .iter_mut()
@@ -271,7 +300,7 @@ impl<const NV: usize> State<NV> {
 /// Handler for the Camera AV Stream Management cluster (0x0551).
 ///
 /// See the [module documentation](self) for architecture and usage.
-pub struct CameraAvStreamHandler<'a, H, const NV: usize>
+pub struct CameraAvStreamHandler<'a, H, const NV: usize, const NA: usize = 0>
 where
     H: CameraAvStreamHooks,
 {
@@ -283,11 +312,12 @@ where
     /// in-handler test for `WATERMARK` / `ON_SCREEN_DISPLAY`.
     features: u32,
     hooks: H,
-    state: Mutex<RefCell<State<NV>>>,
+    state: Mutex<RefCell<State<NV, NA>>>,
     next_id: Mutex<Cell<u16>>,
+    next_audio_id: Mutex<Cell<u16>>,
 }
 
-impl<'a, H, const NV: usize> CameraAvStreamHandler<'a, H, NV>
+impl<'a, H, const NV: usize, const NA: usize> CameraAvStreamHandler<'a, H, NV, NA>
 where
     H: CameraAvStreamHooks,
 {
@@ -308,6 +338,31 @@ where
                 | AttributeId::MinViewportResolution
                 | AttributeId::RateDistortionTradeOffPoints
                 | AttributeId::AllocatedVideoStreams
+        ))
+        .with_cmds(with!(
+            decl::CommandId::VideoStreamAllocate
+                | decl::CommandId::VideoStreamModify
+                | decl::CommandId::VideoStreamDeallocate
+                | decl::CommandId::SetStreamPriorities
+        ));
+
+    /// Cluster metadata advertising both `VIDEO` and `AUDIO` features.
+    ///
+    /// Use this (together with `CameraAvStreamConfig::mic_capabilities: Some(...)`)
+    /// when the camera also exposes a microphone and pre-allocated audio streams.
+    pub const CLUSTER_VIDEO_AUDIO: Cluster<'static> = decl::FULL_CLUSTER
+        .with_revision(1)
+        .with_features(decl::Feature::VIDEO.bits() | decl::Feature::AUDIO.bits())
+        .with_attrs(with!(
+            required;
+            AttributeId::MaxConcurrentEncoders
+                | AttributeId::MaxEncodedPixelRate
+                | AttributeId::VideoSensorParams
+                | AttributeId::MinViewportResolution
+                | AttributeId::RateDistortionTradeOffPoints
+                | AttributeId::AllocatedVideoStreams
+                | AttributeId::MicrophoneCapabilities
+                | AttributeId::AllocatedAudioStreams
         ))
         .with_cmds(with!(
             decl::CommandId::VideoStreamAllocate
@@ -337,6 +392,7 @@ where
             hooks,
             state: Mutex::new(RefCell::new(State::new())),
             next_id: Mutex::new(Cell::new(1)),
+            next_audio_id: Mutex::new(Cell::new(1)),
         }
     }
 
@@ -427,6 +483,31 @@ where
         Ok(id)
     }
 
+    /// Snapshot the current set of allocated audio streams.
+    pub fn audio_streams(&self) -> Vec<AudioStream, NA> {
+        self.state.lock(|cell| cell.borrow().audios.clone())
+    }
+
+    /// Pre-seed an entry into `AllocatedAudioStreams` at boot without
+    /// calling any hooks. Mirrors [`Self::add_preallocated_video`].
+    ///
+    /// Returns the assigned ID, or `RESOURCE_EXHAUSTED` if the table
+    /// is full (or `NA = 0`).
+    pub fn add_preallocated_audio(&self, mut stream: AudioStream) -> Result<u16, Error> {
+        stream.reference_count = 0;
+        stream.audio_stream_id = self.alloc_audio_id();
+        let id = stream.audio_stream_id;
+        let pushed = self.state.lock(|cell| {
+            let mut state = cell.borrow_mut();
+            state.audios.push(stream).is_ok()
+        });
+        if !pushed {
+            return Err(ErrorCode::ResourceExhausted.into());
+        }
+        self.dataver.changed();
+        Ok(id)
+    }
+
     // ----- internals -----
 
     /// Allocate the next free `video_stream_id`. Wraps to 1 if `next_id`
@@ -434,6 +515,17 @@ where
     /// cheap to defend against).
     fn alloc_video_id(&self) -> u16 {
         self.next_id.lock(|cell| {
+            let mut id = cell.get();
+            if id == 0 {
+                id = 1;
+            }
+            cell.set(id.wrapping_add(1).max(1));
+            id
+        })
+    }
+
+    fn alloc_audio_id(&self) -> u16 {
+        self.next_audio_id.lock(|cell| {
             let mut id = cell.get();
             if id == 0 {
                 id = 1;
@@ -601,7 +693,8 @@ where
     }
 }
 
-impl<'a, H, const NV: usize> ClusterAsyncHandler for CameraAvStreamHandler<'a, H, NV>
+impl<'a, H, const NV: usize, const NA: usize> ClusterAsyncHandler
+    for CameraAvStreamHandler<'a, H, NV, NA>
 where
     H: CameraAvStreamHooks,
 {
@@ -740,7 +833,7 @@ where
 
     async fn handle_video_stream_allocate<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: VideoStreamAllocateRequest<'_>,
         response: VideoStreamAllocateResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -773,14 +866,14 @@ where
             let _ = self.hooks.deallocate_video(candidate.video_stream_id).await;
             return Err(ErrorCode::ResourceExhausted.into());
         }
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::AllocatedVideoStreams as _);
 
         response.video_stream_id(candidate.video_stream_id)?.end()
     }
 
     async fn handle_video_stream_modify(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: VideoStreamModifyRequest<'_>,
     ) -> Result<(), Error> {
         let id = request.video_stream_id()?;
@@ -816,13 +909,13 @@ where
                 }
             }
         });
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::AllocatedVideoStreams as _);
         Ok(())
     }
 
     async fn handle_video_stream_deallocate(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: VideoStreamDeallocateRequest<'_>,
     ) -> Result<(), Error> {
         let id = request.video_stream_id()?;
@@ -845,13 +938,13 @@ where
             let mut state = cell.borrow_mut();
             state.videos.retain(|s| s.video_stream_id != id);
         });
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::AllocatedVideoStreams as _);
         Ok(())
     }
 
     async fn handle_set_stream_priorities(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: SetStreamPrioritiesRequest<'_>,
     ) -> Result<(), Error> {
         let new_prio: TLVArray<'_, StreamUsageEnum> = request.stream_priorities()?;
@@ -879,8 +972,57 @@ where
                 let _ = state.stream_usage_priorities.push(*u);
             }
         });
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::StreamUsagePriorities as _);
         Ok(())
+    }
+
+    async fn microphone_capabilities<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl ReadContext,
+        builder: AudioCapabilitiesStructBuilder<P>,
+    ) -> Result<P, Error> {
+        let Some(cfg) = self.config.mic_capabilities else {
+            return Err(ErrorCode::InvalidAction.into());
+        };
+        let b = builder.max_number_of_channels(cfg.max_channels)?;
+        let mut codecs = b.supported_codecs()?;
+        for codec in cfg.supported_codecs {
+            codecs = codecs.push(codec)?;
+        }
+        let b = codecs.end()?;
+        let mut rates = b.supported_sample_rates()?;
+        for r in cfg.supported_sample_rates {
+            rates = rates.push(r)?;
+        }
+        let b = rates.end()?;
+        let mut depths = b.supported_bit_depths()?;
+        for d in cfg.supported_bit_depths {
+            depths = depths.push(d)?;
+        }
+        depths.end()?.end()
+    }
+
+    async fn allocated_audio_streams<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl ReadContext,
+        builder: ArrayAttributeRead<AudioStreamStructArrayBuilder<P>, AudioStreamStructBuilder<P>>,
+    ) -> Result<P, Error> {
+        let snapshot = self.state.lock(|cell| cell.borrow().audios.clone());
+        match builder {
+            ArrayAttributeRead::ReadAll(mut b) => {
+                for s in snapshot.iter() {
+                    b = write_audio_stream(b.push()?, s)?;
+                }
+                b.end()
+            }
+            ArrayAttributeRead::ReadOne(idx, b) => {
+                let Some(s) = snapshot.get(idx as usize) else {
+                    return Err(ErrorCode::ConstraintError.into());
+                };
+                write_audio_stream(b, s)
+            }
+            ArrayAttributeRead::ReadNone(b) => b.end(),
+        }
     }
 
     // ----- Commands deferred to follow-up sessions -----
@@ -990,6 +1132,22 @@ fn write_video_stream<P: TLVBuilderParent>(
         .key_frame_interval(s.key_frame_interval)?
         .watermark_enabled(s.watermark_enabled)?
         .osd_enabled(s.osd_enabled)?
+        .reference_count(s.reference_count)?
+        .end()
+}
+
+fn write_audio_stream<P: TLVBuilderParent>(
+    builder: AudioStreamStructBuilder<P>,
+    s: &AudioStream,
+) -> Result<P, Error> {
+    builder
+        .audio_stream_id(s.audio_stream_id)?
+        .stream_usage(s.stream_usage)?
+        .audio_codec(s.audio_codec)?
+        .channel_count(s.channel_count)?
+        .sample_rate(s.sample_rate)?
+        .bit_rate(s.bit_rate)?
+        .bit_depth(s.bit_depth)?
         .reference_count(s.reference_count)?
         .end()
 }

@@ -80,6 +80,7 @@ pub enum IMStatusCode {
     FailSafeRequired = 0xca,
     InvalidInState = 0xcb,
     NoCommandResponse = 0xcc,
+    DynamicConstraintError = 0xcf,
 }
 
 impl From<ErrorCode> for IMStatusCode {
@@ -101,6 +102,7 @@ impl From<ErrorCode> for IMStatusCode {
             ErrorCode::FailSafeRequired => IMStatusCode::FailSafeRequired,
             ErrorCode::NeedsTimedInteraction => IMStatusCode::NeedsTimedInteraction,
             ErrorCode::ConstraintError => IMStatusCode::ConstraintError,
+            ErrorCode::DynamicConstraintError => IMStatusCode::DynamicConstraintError,
             ErrorCode::NotFound => IMStatusCode::NotFound,
             ErrorCode::Failure => IMStatusCode::Failure,
             _ => IMStatusCode::Failure,
@@ -127,6 +129,7 @@ impl IMStatusCode {
             Self::InvalidCommand => Some(ErrorCode::InvalidCommand),
             Self::UnsupportedAttribute => Some(ErrorCode::AttributeNotFound),
             Self::ConstraintError => Some(ErrorCode::ConstraintError),
+            Self::DynamicConstraintError => Some(ErrorCode::DynamicConstraintError),
             Self::ResourceExhausted => Some(ErrorCode::ResourceExhausted),
             Self::NotFound => Some(ErrorCode::NotFound),
             Self::InvalidDataType => Some(ErrorCode::InvalidDataType),

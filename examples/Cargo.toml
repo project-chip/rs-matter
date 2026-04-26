@@ -25,6 +25,9 @@ name = "media_player"
 name = "bridge"
 
 [[bin]]
+name = "camera_tests"
+
+[[bin]]
 name = "chip_tool_tests"
 
 [[bin]]

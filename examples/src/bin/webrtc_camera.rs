@@ -1241,6 +1241,7 @@ fn main() -> Result<(), Error> {
         supported_stream_usages: CAM_AV_STREAM_USAGES,
         default_stream_usage_priorities: CAM_AV_STREAM_USAGES,
         rate_distortion_points: CAM_AV_RATE_DISTORTION,
+        mic_capabilities: None,
     };
     let cam_av = CAM_AV.init(CameraAvStreamHandler::new(
         Dataver::new_rand(&mut rand),

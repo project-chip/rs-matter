@@ -45,6 +45,7 @@ pub enum ErrorCode {
     FailSafeRequired,
     NeedsTimedInteraction,
     ConstraintError,
+    DynamicConstraintError,
     InvalidDataType,
     UnsupportedAccess,
     ResourceExhausted,

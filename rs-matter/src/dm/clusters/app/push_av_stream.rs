@@ -465,7 +465,7 @@ where
             let _ = self.hooks.on_deallocate(connection_id).await;
             return Err(ErrorCode::ResourceExhausted.into());
         }
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::CurrentConnections as _);
 
         // Build the response: echo the just-stored connection.
         let snapshot = self
@@ -503,7 +503,7 @@ where
                 .connections
                 .retain(|c| !(c.connection_id == connection_id && c.fabric_index == fab_idx));
         });
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::CurrentConnections as _);
         Ok(())
     }
 
@@ -546,7 +546,7 @@ where
                 row.transport_options = stored_options;
             }
         });
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::CurrentConnections as _);
         Ok(())
     }
 
@@ -588,7 +588,7 @@ where
                 c.status = status;
             }
         });
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::CurrentConnections as _);
         Ok(())
     }
 

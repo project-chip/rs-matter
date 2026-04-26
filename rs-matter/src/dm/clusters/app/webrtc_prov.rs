@@ -102,6 +102,9 @@ pub enum WebRtcError {
     /// `INVALID_IN_STATE` — the command cannot be processed in the current
     /// session state (e.g. `ProvideAnswer` before an Offer was sent).
     InvalidInState,
+    /// `INVALID_COMMAND` — the command parameters are structurally invalid
+    /// (e.g. `SolicitOffer` with no stream IDs at all).
+    InvalidCommand,
     /// `DYNAMIC_CONSTRAINT_ERROR` — the request refers to stream IDs,
     /// codecs or capabilities the hooks cannot satisfy.
     DynamicConstraint,
@@ -115,7 +118,8 @@ impl From<WebRtcError> for Error {
     fn from(e: WebRtcError) -> Self {
         match e {
             WebRtcError::InvalidInState => ErrorCode::InvalidAction.into(),
-            WebRtcError::DynamicConstraint => ErrorCode::ConstraintError.into(),
+            WebRtcError::InvalidCommand => ErrorCode::InvalidCommand.into(),
+            WebRtcError::DynamicConstraint => ErrorCode::DynamicConstraintError.into(),
             WebRtcError::ResourceExhausted => ErrorCode::ResourceExhausted.into(),
             WebRtcError::Failure => ErrorCode::Failure.into(),
         }
@@ -466,7 +470,7 @@ impl<H: WebRtcHooks, const N_SESSIONS: usize, const SDP_LEN: usize, const OUT_LE
     }
 
     fn upsert_session(&self, entry: SessionEntry) -> Result<(), Error> {
-        let r: Result<(), Error> = self.sessions.lock(|cell| {
+        self.sessions.lock(|cell| {
             let mut sessions = cell.borrow_mut();
             if let Some(existing) = sessions.iter_mut().find(|s| s.id == entry.id) {
                 *existing = entry;
@@ -476,22 +480,14 @@ impl<H: WebRtcHooks, const N_SESSIONS: usize, const SDP_LEN: usize, const OUT_LE
                     .push(entry)
                     .map_err(|_| Error::from(ErrorCode::ResourceExhausted))
             }
-        });
-        r?;
-        self.dataver.changed();
-        Ok(())
+        })
     }
 
     fn remove_session(&self, id: u16) {
-        let changed = self.sessions.lock(|cell| {
+        self.sessions.lock(|cell| {
             let mut sessions = cell.borrow_mut();
-            let before = sessions.len();
             sessions.retain(|s| s.id != id);
-            before != sessions.len()
         });
-        if changed {
-            self.dataver.changed();
-        }
     }
 
     fn set_state(&self, id: u16, state: SessionState) {
@@ -737,6 +733,7 @@ impl<H: WebRtcHooks, const N_SESSIONS: usize, const SDP_LEN: usize, const OUT_LE
             metadata_enabled: params.metadata_enabled,
             state,
         })?;
+        ctx.notify_own_attr_changed(AttributeId::CurrentSessions as _);
 
         response
             .web_rtc_session_id(session_id)?
@@ -798,6 +795,7 @@ impl<H: WebRtcHooks, const N_SESSIONS: usize, const SDP_LEN: usize, const OUT_LE
             metadata_enabled: params.metadata_enabled,
             state: SessionState::Established,
         })?;
+        ctx.notify_own_attr_changed(AttributeId::CurrentSessions as _);
 
         response
             .web_rtc_session_id(session_id)?
@@ -882,6 +880,7 @@ impl<H: WebRtcHooks, const N_SESSIONS: usize, const SDP_LEN: usize, const OUT_LE
         // Best-effort notify the hooks; even if they fail we drop the row.
         let _ = self.hooks.on_end_session(session_id, reason).await;
         self.remove_session(session_id);
+        ctx.notify_own_attr_changed(AttributeId::CurrentSessions as _);
         Ok(())
     }
 }

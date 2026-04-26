@@ -17,22 +17,27 @@
 
 //! A module for running Chip integration tests on the `rs-matter` project.
 
-use crate::common::{run_command, ChipBuilder};
-
 use core::iter::once;
 
 use std::path::PathBuf;
 use std::process::Command;
 
+use clap::ValueEnum;
+
 use log::{debug, info, warn};
 
-/// Default tests
+use crate::common::{run_command, ChipBuilder};
+
+/// System cluster tests + general Matter protocol/IM/SC tests.
+///
+/// Run against the `chip_tool_tests` example. This is the default suite
+/// when `cargo xtask itest` is invoked without `--suite`.
 ///
 /// Names matching the `TC_*` convention are dispatched to
 /// `scripts/tests/run_python_test.py` and target a `MatterBaseTest`
 /// in `src/python_testing/`. All other names are YAML test suites
 /// dispatched to `scripts/tests/run_test_suite.py`.
-const DEFAULT_TESTS: &[&str] = &[
+pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // YAML tests — general Matter protocol & system clusters
     //
@@ -183,6 +188,92 @@ const DEFAULT_TESTS: &[&str] = &[
     // "TC_DeviceConformance",      // TODO: not yet verified
 ];
 
+/// Camera cluster tests — run against the `camera_tests` example.
+///
+/// These target the clusters introduced in Matter 1.5 (Chime, CameraAvStream,
+/// CameraAvSettings, ZoneManagement, PushAvStreamTransport, WebRTCProvider).
+/// Only the _2_1 attribute-read tests are listed here; add more as they pass.
+pub(crate) const CAMERA_TESTS: &[&str] = &[
+    "TC_CHIME_2_1",
+    "TC_AVSM_2_1",
+    "TC_AVSUM_2_1",
+    "TC_ZONEMGMT_2_1",
+    "TC_PAVST_2_1",
+    // WebRTC provider attribute read
+    "TC_WEBRTCP_2_1",
+];
+
+/// LevelControl + OnOff YAML tests — run against the `dimmable_light` example.
+///
+/// Mirrors the list in `.github/workflows/chiptool-tests.yml`. Requires the
+/// `chip-test` cargo feature on the build (see [`TestSuite::default_features`]).
+pub(crate) const LIGHT_TESTS: &[&str] = &[
+    "Test_TC_LVL_2_1",
+    "Test_TC_LVL_2_2",
+    "Test_TC_LVL_3_1",
+    // "Test_TC_LVL_4_1", // TODO: not yet passing
+    "Test_TC_LVL_5_1",
+    "Test_TC_LVL_6_1",
+    "Test_TC_LVL_7_1",
+    // "Test_TC_LVL_9_1", // TODO: not yet passing
+    "Test_TC_OO_2_1",
+    "Test_TC_OO_2_2",
+    "Test_TC_OO_2_4",
+    "Test_TC_OO_2_6",
+    // "Test_TC_OO_2_7", // TODO: not yet passing
+];
+
+/// A pre-canned test suite. Selects a default test list, the example
+/// binary they run against, the cargo features it must be built with,
+/// and a per-test timeout suitable for that suite.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum TestSuite {
+    /// System clusters + general Matter protocol/IM/SC. Default suite.
+    #[default]
+    System,
+    /// Matter 1.5 camera-related clusters.
+    Camera,
+    /// OnOff + LevelControl, exercising the dimmable_light example.
+    Light,
+}
+
+impl TestSuite {
+    /// Default list of tests for this suite.
+    pub(crate) fn default_tests(&self) -> &'static [&'static str] {
+        match self {
+            Self::System => SYS_TESTS,
+            Self::Camera => CAMERA_TESTS,
+            Self::Light => LIGHT_TESTS,
+        }
+    }
+
+    /// Default `--target` (example binary) for this suite.
+    pub(crate) fn default_target(&self) -> &'static str {
+        match self {
+            Self::System => "chip_tool_tests",
+            Self::Camera => "camera_tests",
+            Self::Light => "dimmable_light",
+        }
+    }
+
+    /// Cargo features the example binary must be built with for this suite.
+    pub(crate) fn default_features(&self) -> &'static [&'static str] {
+        match self {
+            Self::System | Self::Camera => &[],
+            Self::Light => &["chip-test"],
+        }
+    }
+
+    /// Default per-test timeout in seconds.
+    pub(crate) fn default_timeout_secs(&self) -> u32 {
+        match self {
+            Self::System => 120,
+            Self::Camera => 180,
+            Self::Light => 500,
+        }
+    }
+}
+
 /// The directory where the Chip repository will be cloned
 const CHIP_DIR: &str = ".build/itest/connectedhomeip";
 
@@ -281,9 +372,9 @@ impl ITests {
         let tests = if tests.clone().into_iter().next().is_some() {
             tests.into_iter().map(|s| s.as_str()).collect::<Vec<_>>()
         } else {
-            info!("Using default tests");
+            info!("Using default (system) tests");
 
-            DEFAULT_TESTS.to_vec()
+            SYS_TESTS.to_vec()
         };
 
         if tests.is_empty() {

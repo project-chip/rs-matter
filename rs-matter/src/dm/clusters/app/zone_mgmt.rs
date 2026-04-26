@@ -226,6 +226,8 @@ where
                 | AttributeId::MaxZones
                 | AttributeId::Zones
                 | AttributeId::Triggers
+                | AttributeId::SensitivityMax
+                | AttributeId::Sensitivity
                 | AttributeId::TwoDCartesianMax
         ))
         .with_cmds(with!(
@@ -418,7 +420,6 @@ where
             s.sensitivity = value;
             s.seeded = true;
         });
-        self.dataver.changed();
         Ok(())
     }
 
@@ -487,7 +488,7 @@ where
 
     async fn handle_create_two_d_cartesian_zone<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: CreateTwoDCartesianZoneRequest<'_>,
         response: CreateTwoDCartesianZoneResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -528,14 +529,14 @@ where
             });
             return Err(e.into());
         }
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::Zones as _);
 
         response.zone_id(id)?.end()
     }
 
     async fn handle_update_two_d_cartesian_zone(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: UpdateTwoDCartesianZoneRequest<'_>,
     ) -> Result<(), Error> {
         if !self.has_feature(decl::Feature::USER_DEFINED.bits()) {
@@ -591,13 +592,13 @@ where
             });
             return Err(e.into());
         }
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::Zones as _);
         Ok(())
     }
 
     async fn handle_remove_zone(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: RemoveZoneRequest<'_>,
     ) -> Result<(), Error> {
         let id = request.zone_id()?;
@@ -614,18 +615,23 @@ where
 
         self.hooks.zone_removed(id).await?;
 
-        self.state.lock(|cell| {
+        let triggers_changed = self.state.lock(|cell| {
             let mut s = cell.borrow_mut();
             s.zones.retain(|z| z.zone_id != id);
+            let before = s.triggers.len();
             s.triggers.retain(|t| t.zone_id != id);
+            s.triggers.len() != before
         });
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::Zones as _);
+        if triggers_changed {
+            ctx.notify_own_attr_changed(AttributeId::Triggers as _);
+        }
         Ok(())
     }
 
     async fn handle_create_or_update_trigger(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: CreateOrUpdateTriggerRequest<'_>,
     ) -> Result<(), Error> {
         let payload = request.trigger()?;
@@ -683,13 +689,13 @@ where
             });
             return Err(e.into());
         }
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::Triggers as _);
         Ok(())
     }
 
     async fn handle_remove_trigger(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: RemoveTriggerRequest<'_>,
     ) -> Result<(), Error> {
         let zone_id = request.zone_id()?;
@@ -704,7 +710,7 @@ where
             let mut s = cell.borrow_mut();
             s.triggers.retain(|t| t.zone_id != zone_id);
         });
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::Triggers as _);
         Ok(())
     }
 }

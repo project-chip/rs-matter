@@ -416,6 +416,23 @@ where
         Ok(())
     }
 
+    /// Remove a DPTZ stream entry by video stream ID.
+    /// Returns `NotFound` if no entry with that ID exists.
+    pub fn remove_dptz_stream(&self, video_stream_id: u16) -> Result<(), Error> {
+        self.state.lock(|cell| -> Result<(), Error> {
+            let mut s = cell.borrow_mut();
+            let pos = s
+                .dptz
+                .iter()
+                .position(|v| v.video_stream_id == video_stream_id)
+                .ok_or(Error::from(ErrorCode::NotFound))?;
+            s.dptz.swap_remove(pos);
+            Ok(())
+        })?;
+        self.dataver.changed();
+        Ok(())
+    }
+
     /// Pre-seed an MPTZ preset at boot. Returns `ConstraintError` if
     /// the id is out of range, `ResourceExhausted` if the table is full.
     pub fn add_preallocated_preset(&self, preset: MptzPreset) -> Result<(), Error> {
@@ -684,7 +701,7 @@ where
 
     async fn handle_mptz_set_position(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: MPTZSetPositionRequest<'_>,
     ) -> Result<(), Error> {
         if !self.any_mptz_axis() {
@@ -728,13 +745,13 @@ where
             self.state.lock(|cell| cell.borrow_mut().mptz = prior);
             return Err(e.into());
         }
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::MPTZPosition as _);
         Ok(())
     }
 
     async fn handle_mptz_relative_move(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: MPTZRelativeMoveRequest<'_>,
     ) -> Result<(), Error> {
         if !self.any_mptz_axis() {
@@ -784,13 +801,13 @@ where
             self.state.lock(|cell| cell.borrow_mut().mptz = prior);
             return Err(e.into());
         }
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::MPTZPosition as _);
         Ok(())
     }
 
     async fn handle_mptz_move_to_preset(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: MPTZMoveToPresetRequest<'_>,
     ) -> Result<(), Error> {
         if !self.has_feature(decl::Feature::MECHANICAL_PRESETS.bits()) {
@@ -817,13 +834,13 @@ where
             self.state.lock(|cell| cell.borrow_mut().mptz = prior);
             return Err(e.into());
         }
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::MPTZPosition as _);
         Ok(())
     }
 
     async fn handle_mptz_save_preset(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: MPTZSavePresetRequest<'_>,
     ) -> Result<(), Error> {
         if !self.has_feature(decl::Feature::MECHANICAL_PRESETS.bits()) {
@@ -850,8 +867,8 @@ where
                 // Allocate the lowest free id within
                 // 1..=max_presets.
                 let max_id = self.config.max_presets.min(NP as u8);
-                let used: heapless::Vec<u8, 256> = self.state.lock(|cell| {
-                    let mut v: heapless::Vec<u8, 256> = heapless::Vec::new();
+                let used: heapless::Vec<u8, NP> = self.state.lock(|cell| {
+                    let mut v: heapless::Vec<u8, NP> = heapless::Vec::new();
                     for p in cell.borrow().presets.iter() {
                         let _ = v.push(p.preset_id);
                     }
@@ -911,13 +928,13 @@ where
             });
             return Err(e.into());
         }
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::MPTZPresets as _);
         Ok(())
     }
 
     async fn handle_mptz_remove_preset(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: MPTZRemovePresetRequest<'_>,
     ) -> Result<(), Error> {
         if !self.has_feature(decl::Feature::MECHANICAL_PRESETS.bits()) {
@@ -936,13 +953,13 @@ where
             let mut s = cell.borrow_mut();
             s.presets.retain(|p| p.preset_id != id);
         });
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::MPTZPresets as _);
         Ok(())
     }
 
     async fn handle_dptz_set_viewport(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: DPTZSetViewportRequest<'_>,
     ) -> Result<(), Error> {
         if !self.has_feature(decl::Feature::DIGITAL_PTZ.bits()) {
@@ -995,13 +1012,13 @@ where
             });
             return Err(e.into());
         }
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::DPTZStreams as _);
         Ok(())
     }
 
     async fn handle_dptz_relative_move(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: DPTZRelativeMoveRequest<'_>,
     ) -> Result<(), Error> {
         if !self.has_feature(decl::Feature::DIGITAL_PTZ.bits()) {
@@ -1066,7 +1083,7 @@ where
             });
             return Err(e.into());
         }
-        self.dataver.changed();
+        ctx.notify_own_attr_changed(AttributeId::DPTZStreams as _);
         Ok(())
     }
 }
