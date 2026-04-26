@@ -325,33 +325,38 @@ impl Session {
 
         let exch_index = self.get_exch_for_rx(&rx_header.proto);
         if let Some(exch_index) = exch_index {
-            let exch = unwrap!(self.exchanges[exch_index].as_mut());
-
-            exch.post_recv(&rx_header.plain, &rx_header.proto, epoch)?;
-
-            Ok(false)
-        } else {
-            if !rx_header.proto.is_initiator()
-                || !MessageMeta::from(&rx_header.proto).is_new_exchange()
-            {
-                // Do not create a new exchange if the peer is not an initiator, or if
-                // the packet is NOT a candidate for a new exchange
-                // (i.e. it is a standalone ACK or a SC status response)
-                Err(ErrorCode::NoExchange)?;
-            }
-
-            if let Some(exch_index) =
-                self.add_exch(rx_header.proto.exch_id, Role::Responder(Default::default()))
-            {
-                // unwrap is safe as we just created the exchange
+            // If we receive a new session request (CASESigma1/PBKDFParamRequest) on an
+            // existing exchange, the peer has restarted the handshake. Remove the stale
+            // exchange (or mark as dropped if MRP is pending) and create a fresh one.
+            if MessageMeta::from(&rx_header.proto).is_new_session() {
+                warn!("New session request on existing exchange — peer restarted handshake, evicting stale exchange");
+                self.remove_exch(exch_index);
+                // Fall through to create a new exchange below
+            } else {
                 let exch = unwrap!(self.exchanges[exch_index].as_mut());
 
                 exch.post_recv(&rx_header.plain, &rx_header.proto, epoch)?;
 
-                Ok(true)
-            } else {
-                Err(ErrorCode::NoSpaceExchanges)?
+                return Ok(false);
             }
+        }
+
+        // Create a new exchange for this message (new session request, or no existing exchange)
+        if !rx_header.proto.is_initiator() || !MessageMeta::from(&rx_header.proto).is_new_exchange()
+        {
+            Err(ErrorCode::NoExchange)?;
+        }
+
+        if let Some(exch_index) =
+            self.add_exch(rx_header.proto.exch_id, Role::Responder(Default::default()))
+        {
+            let exch = unwrap!(self.exchanges[exch_index].as_mut());
+
+            exch.post_recv(&rx_header.plain, &rx_header.proto, epoch)?;
+
+            Ok(true)
+        } else {
+            Err(ErrorCode::NoSpaceExchanges)?
         }
     }
 
@@ -487,7 +492,10 @@ impl Session {
     }
 
     pub(crate) fn remove_exch(&mut self, index: usize) -> bool {
-        let exchange = unwrap!(self.exchanges[index].as_mut());
+        let Some(exchange) = self.exchanges[index].as_mut() else {
+            // Already removed (e.g. evicted by stale-exchange handling before Drop ran)
+            return true;
+        };
         let exchange_id = ExchangeId::new(self.id, index);
 
         if exchange.mrp.is_retrans_pending() {
