@@ -355,7 +355,7 @@ impl<const N: usize> Subscriptions<N> {
             let (sub, buf) = state.report::<B>(now, event_numbers_watermark, buffers)?;
             let attr_change_ids_watermark = state.changed_attrs.watermark();
 
-            info!("About to report on subscription {:?}, details: max_seen_attr_change_id: {}, max_seen_event_number: {}, attr_change_ids_watermark: {}, event_numbers_watermark: {}", sub.ids(), sub.max_seen_attr_change_id, sub.max_seen_event_number, attr_change_ids_watermark, event_numbers_watermark);
+            debug!("About to report on subscription {:?}, details: max_seen_attr_change_id: {}, max_seen_event_number: {}, attr_change_ids_watermark: {}, event_numbers_watermark: {}", sub.ids(), sub.max_seen_attr_change_id, sub.max_seen_event_number, attr_change_ids_watermark, event_numbers_watermark);
 
             Some((sub, buf, attr_change_ids_watermark))
         })?;
@@ -591,7 +591,7 @@ impl<const N: usize> SubscriptionsInner<N> {
             let sub = self.subscriptions.swap_remove(index);
             let buf = buffers.swap_remove(index);
 
-            info!("About to report on subscription {:?}", sub.ids());
+            debug!("About to report on subscription {:?}", sub.ids());
 
             // Leave a snapshot clone behind so that `Subscriptions::remove`
             // can still match and cancel this subscription while the report

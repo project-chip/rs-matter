@@ -26,6 +26,7 @@ use crate::dm::{Cluster, Dataver, InvokeContext, OperationContext, ReadContext, 
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricPersist;
 use crate::persist::{Persist, BASIC_INFO_KEY, NETWORKS_KEY};
+use crate::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use crate::tlv::TLVBuilderParent;
 use crate::utils::sync::DynBase;
 use crate::{with, MatterState};
@@ -118,7 +119,13 @@ impl CommPolicy for bool {
     }
 
     fn failsafe_max_cml_secs(&self) -> u16 {
-        120
+        // Aligned with the Matter reference SDK example implementations and
+        // with `MAX_COMM_WINDOW_TIMEOUT_SECS` in `sc::pase`. Some Python tests
+        // (e.g. TC_ACL_2_9) read this attribute and reuse it as the
+        // `commissioning_timeout` for `OpenCommissioningWindow`, which the spec
+        // bounds at [180, 900] seconds; reporting 900 keeps such tests within
+        // the valid range while still being a reasonable upper bound.
+        MAX_COMM_WINDOW_TIMEOUT_SECS
     }
 
     fn regulatory_config(&self) -> RegulatoryLocationTypeEnum {
