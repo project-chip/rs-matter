@@ -1142,10 +1142,14 @@ impl Sessions {
         rx_peer: &Address,
         rx_plain: &PlainHdr,
     ) -> Option<&mut Session> {
+        // Per Matter Core spec section 4.7.1.3, an expired session must not
+        // accept new inbound messages. Skipping expired sessions here lets the
+        // caller surface a `SessionNotFound` to the peer rather than running
+        // the request through ACL checks against a removed fabric.
         let mut session = self
             .sessions
             .iter_mut()
-            .find(|sess| sess.is_for_rx(rx_peer, rx_plain));
+            .find(|sess| !sess.expired && sess.is_for_rx(rx_peer, rx_plain));
 
         if let Some(session) = session.as_mut() {
             session.update_last_used(self.epoch);

@@ -361,6 +361,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use core::cell::Cell;
     use core::num::NonZeroU8;
 
     use crate::acl::{AclEntry, AuthMode};
@@ -546,6 +547,7 @@ mod tests {
                 fab_filter: false,
                 dataver: None,
                 wildcard: false,
+                cluster_status: Cell::new(0),
             };
 
             acl_read(&acl, &fabrics, &attr, &mut writebuf);
@@ -573,6 +575,7 @@ mod tests {
                 fab_filter: true,
                 dataver: None,
                 wildcard: false,
+                cluster_status: Cell::new(0),
             };
 
             acl_read(&acl, &fabrics, &attr, &mut writebuf);
@@ -599,6 +602,7 @@ mod tests {
                 fab_filter: true,
                 dataver: None,
                 wildcard: false,
+                cluster_status: Cell::new(0),
             };
 
             acl_read(&acl, &fabrics, &attr, &mut writebuf);

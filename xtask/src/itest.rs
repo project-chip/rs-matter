@@ -111,81 +111,80 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — General & Administrator Commissioning (system clusters)
     //
-    // "TC_CADMIN_1_3_4", // TODO: not yet verified
-    // "TC_CADMIN_1_5",   // TODO: not yet verified
-    // "TC_CADMIN_1_9",   // TODO: not yet verified
-    // "TC_CADMIN_1_11",  // TODO: not yet verified
-    // "TC_CADMIN_1_15",  // TODO: not yet verified
-    // "TC_CADMIN_1_19",  // TODO: not yet verified
-    // "TC_CADMIN_1_22",  // TODO: not yet verified
-    // "TC_CADMIN_1_25",  // TODO: not yet verified
-    // "TC_CADMIN_1_27",  // TODO: not yet verified
-    // "TC_CADMIN_1_28",  // TODO: not yet verified
-    // "TC_CGEN_2_1",     // TODO: not yet verified
-    // "TC_CGEN_2_2",     // TODO: not yet verified
-    // "TC_CGEN_2_4",     // TODO: not yet verified
-    // "TC_CGEN_2_5",     // TODO: not yet verified
-    // "TC_CGEN_2_6",     // TODO: not yet verified
-    // "TC_CGEN_2_7",     // TODO: not yet verified
-    // "TC_CGEN_2_8",     // TODO: not yet verified
-    // "TC_CGEN_2_9",     // TODO: not yet verified
-    // "TC_CGEN_2_10",    // TODO: not yet verified
-    // "TC_CGEN_2_11",    // TODO: not yet verified
+    "TC_CADMIN_1_3_4",
+    "TC_CADMIN_1_5",
+    "TC_CADMIN_1_9",
+    "TC_CADMIN_1_11",
+    "TC_CADMIN_1_15",
+    // "TC_CADMIN_1_19",  // TODO: multi-fabric stress test commissions `SupportedFabrics` controllers back-to-back. Fails part-way with `Incorrect state` from the Python pairing controller. Likely needs deeper investigation of CASE setup between rapid commissioning rounds; not blocking other coverage.
+    "TC_CADMIN_1_22",
+    "TC_CADMIN_1_25",
+    // "TC_CADMIN_1_27",  // Skipped: requires the CHIP `jfc-server-app` (Joint Fabric Controller); rs-matter does not implement JF.
+    // "TC_CADMIN_1_28",  // Skipped: requires the CHIP `jfc-server-app` (Joint Fabric Controller); rs-matter does not implement JF.
+    "TC_CGEN_2_1",
+    // "TC_CGEN_2_2",  // TODO: after `AddTrustedRootCertificate` during a failsafe, the read-back of `TrustedRootCertificates` still reports the original size — the new root isn't surfaced. Likely an attribute-list issue in rs-matter's NOC handler.
+    // "TC_CGEN_2_4",  // TODO: `CommissioningComplete` returns an unexpected SDK error part on the negative paths exercised here (no fail-safe armed / wrong fabric). Needs alignment with the spec's expected error category.
+    // "TC_CGEN_2_5",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
+    // "TC_CGEN_2_6",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
+    // "TC_CGEN_2_7",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
+    // "TC_CGEN_2_8",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
+    // "TC_CGEN_2_9",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
+    // "TC_CGEN_2_10", // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
+    // "TC_CGEN_2_11", // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
 
     //
     // Python tests — Operational Credentials (system cluster)
     //
-    // "TC_OPCREDS_3_1", // TODO: not yet verified
-    // "TC_OPCREDS_3_2", // TODO: not yet verified
-    // "TC_OPCREDS_3_4", // TODO: not yet verified
-    // "TC_OPCREDS_3_5", // TODO: not yet verified
-    // "TC_OPCREDS_3_8", // TODO: not yet verified
+    // "TC_OPCREDS_3_1", // TODO: rs-matter accepts an `AddTrustedRootCertificate` payload with a malformed signature (the test expects this to be rejected). NOC handler needs to validate the RCAC's self-signature before accepting it.
+    "TC_OPCREDS_3_2",
+    // "TC_OPCREDS_3_4", // TODO: `UpdateNOC` returns `FailSafeRequired` / `NocMissingCsr` on the negative paths, but the test expects the spec's specific `NodeOperationalCertStatusEnum` values for each error condition. Needs alignment of error mapping.
+    // "TC_OPCREDS_3_5", // TODO: `UpdateNOC` returns `kMissingCsr` instead of `kOk` even on the valid happy path — looks like the CSR slot is being cleared too eagerly between the CSR request and the `UpdateNOC` call.
+    // "TC_OPCREDS_3_8", // TODO: a second-fabric NOC entry is not visible in the `NOCs` attribute when read non-fabric-filtered — likely a fabric-scoped attribute filter incorrectly applied to a non-fabric-filtered read.
 
     //
     // Python tests — Session/Commissioning (general Matter protocol)
     //
-    // "TC_SC_3_4", // TODO: not yet verified
-    // "TC_SC_3_5", // TODO: not yet verified
-    // "TC_SC_3_6", // TODO: not yet verified
-    // "TC_SC_4_1", // TODO: not yet verified
-    // "TC_SC_4_3", // TODO: not yet verified
-    // "TC_SC_7_1", // TODO: not yet verified
+    // "TC_SC_3_4", // TODO: a negative-path assertion expects `ChipStackError` to be raised but rs-matter accepts the request. Needs investigation of which validation step is missing.
+    // "TC_SC_3_5", // Skipped: requires the CHIP `all-clusters-app` (`--string-arg th_server_app_path`); rs-matter does not provide the secondary TH server app this test relies on.
+    // "TC_SC_3_6", // TODO: triggers an internal exception during the multi-fabric subscription scenario; needs investigation alongside the other multi-fabric stress tests.
+    // "TC_SC_4_1", // Skipped: must be invoked with `--qr-code`/`--manual-code` setup payloads instead of `--discriminator`/`--passcode`. The xtask wrapper passes the latter.
+    // "TC_SC_4_3", // TODO: the discovery PTR record `D4E76DDAABB4974F-0000000012344321` is not advertised on the loopback mDNS the test scrapes. Needs the rs-matter mDNS layer to publish the operational instance name in that test environment.
+    // "TC_SC_7_1", // Skipped: must be invoked with `--qr-code`/`--manual-code` setup payloads instead of `--discriminator`/`--passcode`. The xtask wrapper passes the latter.
 
     //
     // Python tests — Basic Information (system cluster)
     //
-    // "TC_BINFO_3_2", // TODO: not yet verified
+    // "TC_BINFO_3_2", // TODO: requires `BasicInformation::ConfigurationVersion` (1.5+ attribute); rs-matter returns `UnsupportedCluster` on the read. Add the attribute to the BINFO cluster.
 
     //
     // Python tests — Groups (system cluster)
     //
-    // "TC_G_2_2", // TODO: not yet verified
-
+    "TC_G_2_2",
     //
     // Python tests — General Diagnostics (system cluster)
     //
-    // "TC_DGGEN_2_4", // TODO: not yet verified
-    // "TC_DGGEN_3_2", // TODO: not yet verified
+    // "TC_DGGEN_2_4", // TODO: rs-matter does not advertise `GeneralDiagnostics::UpTime` (returns `UnsupportedAttribute`). Implement the attribute in the diagnostics cluster.
+    // "TC_DGGEN_3_2", // TODO: requires `BasicInformation::MaxPathsPerInvoke`; same gap as TC_BINFO_3_2 — needs the attribute exposed.
 
     //
     // Python tests — Device Attestation (commissioning)
     //
-    // "TC_DA_1_2", // TODO: not yet verified
-    // "TC_DA_1_5", // TODO: not yet verified
-    // "TC_DA_1_7", // TODO: not yet verified
+    // "TC_DA_1_2", // TODO: `AttestationRequest` invoke fails (likely needs an armed fail-safe or different access path in rs-matter). Needs attestation flow review.
+    // "TC_DA_1_5", // TODO: same setup issue as TC_DA_1_2 — DA test infrastructure needs the attestation invoke path to succeed before any of the cert-chain assertions can run.
+    // "TC_DA_1_7", // Skipped: requires two distinct discriminators (DUT + reference DUT). The xtask wrapper only commissions one device.
     // "TC_DA_1_9", // TODO: not yet verified
 
     //
     // Python tests — Device Discovery (general)
     //
-    // "TC_DD_1_16_17", // TODO: not yet verified
-    // "TC_DD_3_23",    // TODO: not yet verified
+    // "TC_DD_1_16_17", // Skipped: must be invoked with `--manual-code`. The xtask wrapper passes `--discriminator`/`--passcode` instead.
+    // "TC_DD_3_23",    // Skipped: requires PC/SC smart-card subsystem (`smartcard.pcsc`). Not available in the CI environment.
 
     //
     // Python tests — Device Composition / Conformance (general)
     //
-    // "TC_DeviceBasicComposition", // TODO: not yet verified
-    // "TC_DeviceConformance",      // TODO: not yet verified
+    // "TC_DeviceBasicComposition", // TODO: wildcard read returns `InvalidDataType`/`Failure` for some attribute on cluster 49 (NetworkCommissioning). Likely encoder gap on a specific attribute.
+    // "TC_DeviceConformance",      // TODO: device type revisions on the example endpoints don't match the spec-mandated values for the device types being advertised. Update the example apps' device-type revisions.
 ];
 
 /// Camera cluster tests — run against the `camera_tests` example.
@@ -403,6 +402,12 @@ impl ITests {
     ) -> anyhow::Result<()> {
         // TODO: Running test-by-test is slow. Turn this into a run-multiple-tests function.
 
+        // Some tests legitimately need more wall-clock time than the default
+        // (e.g. those that wait for a commissioning window to expire on its
+        // own). Allow per-test overrides while keeping the global `--timeout`
+        // as the floor for everything else.
+        let timeout_secs = Self::per_test_timeout_secs(test_name).unwrap_or(timeout_secs);
+
         info!("=> Running test `{test_name}` with timeout {timeout_secs}s...");
 
         let chip_dir = self.chip_builder.chip_dir();
@@ -542,6 +547,21 @@ impl ITests {
         ))
     }
 
+    /// Test-specific timeout override (in seconds) for tests that legitimately
+    /// need more wall-clock time than the default. Returning `None` falls
+    /// back to whatever `--timeout` was passed on the `cargo xtask itest`
+    /// command line.
+    fn per_test_timeout_secs(test_name: &str) -> Option<u32> {
+        match test_name {
+            // Several CADMIN tests open commissioning windows and then wait
+            // for them to expire on the device side, which takes 180s+ by
+            // construction.
+            "TC_CADMIN_1_3_4" | "TC_CADMIN_1_5" | "TC_CADMIN_1_9" | "TC_CADMIN_1_11"
+            | "TC_CADMIN_1_15" | "TC_CADMIN_1_22" | "TC_CADMIN_1_25" => Some(300),
+            _ => None,
+        }
+    }
+
     /// Test-specific extra `--script-args` for `run_python_test.py`.
     ///
     /// Some `MatterBaseTest`-style scripts require PIXIT/PICS values supplied
@@ -567,6 +587,43 @@ impl ITests {
             // ACL events. argparse keeps the last `--endpoint`, so appending
             // here wins.
             "TC_ACL_2_6" | "TC_ACL_2_7" | "TC_ACL_2_8" => " --endpoint 0",
+            // CADMIN (Administrator Commissioning) tests target the root
+            // endpoint via `@run_if_endpoint_matches(has_cluster(...))`.
+            "TC_CADMIN_1_3_4"
+            | "TC_CADMIN_1_5"
+            | "TC_CADMIN_1_9"
+            | "TC_CADMIN_1_11"
+            | "TC_CADMIN_1_15"
+            | "TC_CADMIN_1_22"
+            | "TC_CADMIN_1_25"
+            // CGEN (General Commissioning) tests target the root endpoint
+            // where the GeneralCommissioning cluster lives.
+            | "TC_CGEN_2_1"
+            // OPCREDS (Operational Credentials) tests live on the root
+            // endpoint.
+            | "TC_OPCREDS_3_1"
+            | "TC_OPCREDS_3_2"
+            | "TC_OPCREDS_3_4"
+            | "TC_OPCREDS_3_5"
+            | "TC_OPCREDS_3_8"
+            // SC (Secure Channel) tests target the root endpoint.
+            | "TC_SC_3_4"
+            | "TC_SC_3_6"
+            | "TC_SC_4_1"
+            | "TC_SC_4_3"
+            | "TC_SC_7_1"
+            // BINFO (Basic Information), DGGEN (General Diagnostics) live on
+            // the root endpoint.
+            | "TC_BINFO_3_2"
+            | "TC_DGGEN_2_4"
+            | "TC_DGGEN_3_2"
+            // Groups (TC_G_2_2) defaults to endpoint 0 if not provided.
+            | "TC_G_2_2"
+            // Device Attestation (DA) covers attestation primitives on the
+            // root endpoint.
+            | "TC_DA_1_2"
+            | "TC_DA_1_5"
+            | "TC_DA_1_7" => " --endpoint 0",
             _ => "",
         }
     }

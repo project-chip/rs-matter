@@ -25,8 +25,10 @@ use crate::acl::AclEntry;
 use crate::cert::CertRef;
 use crate::crypto::{CanonPkcSignature, Crypto, SigningSecretKey};
 use crate::dm::clusters::acl::{emit_acl_entry_changed, ChangeTypeEnum};
+use crate::dm::clusters::adm_comm;
 use crate::dm::clusters::dev_att::DeviceAttestation;
 use crate::dm::clusters::gen_comm::GenCommHandler;
+use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, FabricPersist, MAX_FABRICS};
@@ -614,7 +616,7 @@ impl ClusterHandler for NocHandler {
 
         let mut persist = FabricPersist::new(ctx.kv());
 
-        let status = ctx.exchange().with_state(|state| {
+        let (status, opener_fabric_removed) = ctx.exchange().with_state(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
 
             if state.fabrics.remove(fab_idx).is_ok() {
@@ -641,9 +643,20 @@ impl ClusterHandler for NocHandler {
 
                 info!("Removed operational fabric with local index {}", fab_idx);
 
-                Ok(NodeOperationalCertStatusEnum::OK)
+                // If the removed fabric was the one that opened the current
+                // commissioning window, `AdminFabricIndex` (and `AdminVendorId`)
+                // transition to null and subscribers must be notified — see
+                // Matter Core spec section 11.18.7.
+                let opener_fabric_removed = state
+                    .pase
+                    .comm_window()
+                    .and_then(|w| w.opener())
+                    .map(|opener| opener.fab_idx == fab_idx)
+                    .unwrap_or(false);
+
+                Ok::<_, Error>((NodeOperationalCertStatusEnum::OK, opener_fabric_removed))
             } else {
-                Ok(NodeOperationalCertStatusEnum::InvalidFabricIndex)
+                Ok((NodeOperationalCertStatusEnum::InvalidFabricIndex, false))
             }
         })?;
 
@@ -651,6 +664,10 @@ impl ClusterHandler for NocHandler {
 
         // RemoveFabric mutates NOCs, Fabrics, CommissionedFabrics, TrustedRootCerts
         ctx.notify_own_cluster_changed();
+
+        if opener_fabric_removed {
+            ctx.notify_cluster_changed(ROOT_ENDPOINT_ID, adm_comm::FULL_CLUSTER.id);
+        }
 
         response
             .status_code(status)?

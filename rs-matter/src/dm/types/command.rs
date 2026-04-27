@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+use core::cell::Cell;
 use core::fmt;
 
 use crate::im::{CmdPath, CmdStatus, IMStatusCode};
@@ -97,6 +98,55 @@ pub struct CmdDetails<'a> {
     /// The CommandRef from the originating `CommandDataIB`, if any.
     /// Echoed back in the response so the requester can correlate batched invokes.
     pub command_ref: Option<u16>,
+    /// Cluster-specific status to stamp into the response `StatusIB.clusterStatus`
+    /// when the handler returns `Err`. `0` means "no cluster status" (the
+    /// reserved `kSuccess` value in Matter cluster-status enums).
+    ///
+    /// Cluster handlers set this via `InvokeContext::set_cluster_status`
+    /// before returning an error. Stored here as a `Cell<u8>` rather than
+    /// on `Error` so that `Result<T, Error>` keeps its compact 1-byte error
+    /// payload across the codebase.
+    cluster_status: Cell<u8>,
+}
+
+impl<'a> CmdDetails<'a> {
+    /// Construct a new `CmdDetails`. Initializes `cluster_status` to `0`
+    /// (no cluster-specific status to report).
+    pub const fn new(
+        node: &'a Node<'a>,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        cmd_id: CmdId,
+        fab_idx: u8,
+        wildcard: bool,
+        command_ref: Option<u16>,
+    ) -> Self {
+        Self {
+            node,
+            endpoint_id,
+            cluster_id,
+            cmd_id,
+            fab_idx,
+            wildcard,
+            command_ref,
+            cluster_status: Cell::new(0),
+        }
+    }
+
+    /// Stamp a cluster-specific status code onto this invoke. The value is
+    /// echoed in `StatusIB.clusterStatus` when the handler returns `Err`.
+    /// `0` is treated as "none" (Matter reserves it for `kSuccess`).
+    pub fn set_cluster_status(&self, cluster_status: u8) {
+        self.cluster_status.set(cluster_status);
+    }
+
+    /// The currently stashed cluster-specific status, if any.
+    pub fn cluster_status(&self) -> Option<u16> {
+        match self.cluster_status.get() {
+            0 => None,
+            n => Some(n as u16),
+        }
+    }
 }
 
 impl CmdDetails<'_> {
@@ -111,7 +161,7 @@ impl CmdDetails<'_> {
         )
     }
 
-    pub const fn status(&self, status: IMStatusCode) -> Option<CmdStatus> {
+    pub fn status(&self, status: IMStatusCode) -> Option<CmdStatus> {
         if self.should_report(status) {
             Some(CmdStatus::new(
                 CmdPath::new(
@@ -120,7 +170,7 @@ impl CmdDetails<'_> {
                     Some(self.cmd_id),
                 ),
                 status,
-                None,
+                self.cluster_status(),
                 self.command_ref,
             ))
         } else {
