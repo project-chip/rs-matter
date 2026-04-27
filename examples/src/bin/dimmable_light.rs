@@ -35,15 +35,15 @@ use futures_lite::StreamExt;
 
 use rand::RngCore;
 use rs_matter::crypto::{default_crypto, Crypto};
+use rs_matter::dm::clusters::app::level_control::{self, LevelControlHooks};
+use rs_matter::dm::clusters::app::on_off::{self, OnOffHooks, StartUpOnOffEnum};
 use rs_matter::dm::clusters::decl::level_control::{
     AttributeId, CommandId, OptionsBitmap, FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER,
 };
 use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::level_control::{self, LevelControlHooks};
 use rs_matter::dm::clusters::net_comm::SharedNetworks;
-use rs_matter::dm::clusters::on_off::{self, OnOffHooks, StartUpOnOffEnum};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::endpoints;

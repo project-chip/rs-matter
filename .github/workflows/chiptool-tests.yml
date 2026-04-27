@@ -66,7 +66,7 @@ jobs:
         run: |
           cargo xtask itest-setup --gitref "${{ inputs.chip_ref || 'v1.5-branch' }}"
 
-      - name: Run YAML Integration Tests (with RustCrypto by default))
+      - name: Run System integration tests (with RustCrypto by default)
         run: |
           cargo xtask itest --skip-setup
 
@@ -75,14 +75,17 @@ jobs:
       #   run: |
       #     cargo xtask itest --features mbedtls TestBasicInformation
 
-      - name: Run One YAML Integration Test with OpenSSL
+      - name: Run One integration test with OpenSSL
         run: |
           cargo xtask itest --skip-setup --features openssl TestBasicInformation
 
-      - name: Run LevelControl and OnOff YAML Integration Tests for dimmable_light
+      - name: Run LevelControl and OnOff integration tests for dimmable_light
         run: |
-          # TODO: Specify this test list inside of itest instead of here & re-add Test_TC_LVL_4_1, Test_TC_LVL_9_1, Test_TC_OO_2_7
-          cargo xtask itest --skip-setup --target dimmable_light --timeout 500 --features chip-test Test_TC_LVL_2_1 Test_TC_LVL_2_2 Test_TC_LVL_3_1 Test_TC_LVL_5_1 Test_TC_LVL_6_1 Test_TC_LVL_7_1 Test_TC_OO_2_1 Test_TC_OO_2_2 Test_TC_OO_2_4 Test_TC_OO_2_6
+          cargo xtask itest --skip-setup --suite light
+
+      - name: Run Camera integration tests
+        run: |
+          cargo xtask itest --skip-setup --suite camera
 
       - name: Upload test results on failure
         if: failure()

@@ -34,8 +34,8 @@ use core::pin::pin;
 
 use embassy_futures::select::{select, select3, Either, Either3};
 
+use crate::dm::clusters::app::level_control::{LevelControlHandler, LevelControlHooks};
 use crate::dm::clusters::decl::{level_control, on_off};
-use crate::dm::clusters::level_control::{LevelControlHandler, LevelControlHooks};
 use crate::dm::types::EndptId;
 use crate::dm::{Cluster, Dataver, HandlerContext, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
@@ -1120,10 +1120,10 @@ impl LevelControlHooks for NoLevelControl {
 pub mod test {
     use embassy_time::{Duration, Timer};
 
-    use crate::dm::clusters::decl::on_off as on_off_cluster;
-    use crate::dm::clusters::on_off::{
+    use crate::dm::clusters::app::on_off::{
         EffectVariantEnum, OnOffHooks, OutOfBandMessage, StartUpOnOffEnum,
     };
+    use crate::dm::clusters::decl::on_off as on_off_cluster;
     use crate::dm::Cluster;
     use crate::error::Error;
     use crate::tlv::Nullable;
