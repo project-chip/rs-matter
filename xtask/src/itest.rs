@@ -101,7 +101,7 @@ const DEFAULT_TESTS: &[&str] = &[
     // "TC_ACL_2_7", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
     // "TC_ACL_2_8", // Skipped: the test re-runs itself internally with legacy list encoding after the modern-encoding pass. The Python framework's between-runs controller cleanup is buggy (`object NoneType can't be used in 'await' expression`) and leaves stale fabrics on the DUT, so the second commissioning fails with `Incorrect state`. The modern-encoding pass — including fabric-scoped event filtering — is exercised end-to-end and passes.
     "TC_ACL_2_9",
-    // "TC_ACL_2_10", // TODO: post-reboot session handling. The test reboots the DUT mid-flow; afterwards the controller still uses its pre-reboot session ID. rs-matter silently drops those packets ("No valid session found, dropping") instead of replying with a status report (Matter Core spec section 4.7), so the controller times out. Needs a transport-layer fix.
+    "TC_ACL_2_10",
     // "TC_ACL_2_11", // Skipped: tests the provisional `ManagedAclRestrictions` feature (ARL attribute) and requires manufacturer-specific access restrictions to be pre-configured. rs-matter does not implement this feature.
 
     //
