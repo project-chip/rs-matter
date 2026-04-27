@@ -519,9 +519,22 @@ impl ITests {
              --paa-trust-store-path credentials/development/paa-root-certs{extra_args}"
         );
 
+        // Block the runner until the rs-matter app has actually started
+        // serving on the wire before it is allowed to SIGTERM the previous
+        // instance during `request_device_reboot()`. Without this the
+        // monitor thread starts the new app and immediately tears down the
+        // old one, while the controller — which has just expired its
+        // sessions — re-handshakes against whichever process answers first.
+        // That race lets a fresh CASE session get pinned to the dying
+        // process; the next invoke (e.g. `RemoveFabric` in TC_ACL_2_10
+        // step 14) then hits the new app, which has no such session, and
+        // times out with `SessionNotFound`. The pattern matches the
+        // `info!("Running Matter transport")` line emitted from
+        // `rs_matter::transport::TransportRunner::run`.
         Ok(format!(
             "timeout --kill-after=10s {timeout_secs}s \
-             {} --app '{}' --factory-reset --script {} --script-args \"{}\"",
+             {} --app '{}' --app-ready-pattern 'Running Matter transport' \
+             --factory-reset --script {} --script-args \"{}\"",
             runner_path.display(),
             test_exe_path.display(),
             script_path.display(),

@@ -389,7 +389,9 @@ where
         features: u32,
         hooks: H,
     ) -> Self {
-        assert!(
+        // `core::assert!` is required here (not the crate-local `assert!`
+        // shim) because `::defmt::assert!` is not const-callable.
+        core::assert!(
             (features & decl::Feature::AUDIO.bits()) == 0 || config.mic_capabilities.is_some(),
             "CameraAvStreamHandler: AUDIO feature requires `config.mic_capabilities` to be Some",
         );
