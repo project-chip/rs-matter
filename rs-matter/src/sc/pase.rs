@@ -94,6 +94,10 @@ pub struct CommWindow {
     opener: Option<CommWindowOpener>,
     /// The window expiry instant
     window_expiry: Duration,
+    /// Number of failed PAKE handshake attempts within this window.
+    /// Per Matter Core spec section 11.18.6.1.5, the window SHALL be
+    /// revoked after 20 unsuccessful handshakes.
+    pake_failures: u8,
 }
 
 impl CommWindow {
@@ -120,6 +124,7 @@ impl CommWindow {
             verifier <- Spake2pVerifierData::init_with_pw(password, salt),
             opener,
             window_expiry,
+            pake_failures: 0,
         })
     }
 
@@ -147,6 +152,7 @@ impl CommWindow {
             verifier <- Spake2pVerifierData::init(verifier, salt, count),
             opener,
             window_expiry,
+            pake_failures: 0,
         })
     }
 
@@ -350,6 +356,47 @@ impl Pase {
         notify_adm_comm_window_attrs_changed(&mut notify_change);
 
         info!("PASE Commissioning Window opened");
+
+        Ok(())
+    }
+
+    /// Record a failed PAKE handshake against the currently-open
+    /// commissioning window, and revoke the window if the limit is reached.
+    ///
+    /// Per Matter Core spec section 11.18.6.1.5, after 20 unsuccessful PAKE
+    /// attempts the device SHALL revoke the open commissioning window.
+    ///
+    /// Also clears the in-progress PASE establishment timeout so that the
+    /// next handshake attempt is not rejected as "another session in
+    /// progress" — without this, only the first wrong-passcode attempt would
+    /// be counted because subsequent attempts would be short-circuited at the
+    /// session-timeout gate.
+    ///
+    /// Has no effect on the failure counter if no window is open.
+    pub fn record_pake_failure(
+        &mut self,
+        notify_mdns: impl FnMut(),
+        notify_change: impl FnMut(EndptId, ClusterId),
+    ) -> Result<(), Error> {
+        const MAX_PAKE_FAILURES: u8 = 20;
+
+        self.session_timeout = None;
+
+        let revoke = if let Some(window) = self.comm_window.as_opt_mut() {
+            window.pake_failures = window.pake_failures.saturating_add(1);
+            warn!(
+                "PASE Commissioning Window: PAKE failure {} of {}",
+                window.pake_failures, MAX_PAKE_FAILURES
+            );
+            window.pake_failures >= MAX_PAKE_FAILURES
+        } else {
+            false
+        };
+
+        if revoke {
+            warn!("PASE Commissioning Window revoked after too many failed PAKE attempts");
+            self.close_comm_window(notify_mdns, notify_change)?;
+        }
 
         Ok(())
     }

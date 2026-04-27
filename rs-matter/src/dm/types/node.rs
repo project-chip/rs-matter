@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+use core::cell::Cell;
 use core::fmt;
 
 use crate::acl::Accessor;
@@ -433,6 +434,7 @@ impl<'a> PathExpansionItem<'a> for AttrReadPath<'a> {
             fab_idx: accessor.fab_idx,
             fab_filter: self.fabric_filtered,
             dataver: dataver(self.dataver_filters.as_ref(), endpoint_id, cluster_id)?,
+            cluster_status: Cell::new(0),
         })
     }
 
@@ -474,6 +476,7 @@ impl<'a> PathExpansionItem<'a> for AttrData<'a> {
                 // are assumed to be always fabric-filtered
                 fab_filter: true,
                 dataver: self.data_ver,
+                cluster_status: Cell::new(0),
             },
             self.data.clone(),
         );
@@ -506,15 +509,15 @@ impl<'a> PathExpansionItem<'a> for CmdData<'a> {
         leaf_id: u32,
     ) -> Result<Self::Expanded<'a>, Error> {
         let expanded = (
-            CmdDetails {
+            CmdDetails::new(
                 node,
                 endpoint_id,
                 cluster_id,
-                cmd_id: leaf_id,
-                fab_idx: accessor.fab_idx,
-                wildcard: false,
-                command_ref: self.command_ref,
-            },
+                leaf_id,
+                accessor.fab_idx,
+                false,
+                self.command_ref,
+            ),
             self.data.clone(),
         );
 
