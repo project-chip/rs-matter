@@ -16,7 +16,7 @@
  */
 
 use crate::acl::Accessor;
-use crate::dm::{AsyncHandler, EventNumber, HandlerContext, Node};
+use crate::dm::{AsyncHandler, HandlerContext, Node};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
     AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
@@ -309,17 +309,15 @@ where
 
 pub struct EventReader {
     max_seen_event_number: u64,
+    next_max_seen_event_number: u64,
 }
 
 impl EventReader {
-    pub const fn new(max_seen_event_number: u64) -> Self {
+    pub const fn new(max_seen_event_number: u64, next_max_seen_event_number: u64) -> Self {
         Self {
             max_seen_event_number,
+            next_max_seen_event_number,
         }
-    }
-
-    pub const fn max_seen_event_number(&self) -> EventNumber {
-        self.max_seen_event_number
     }
 
     pub fn process_read<T: TLVWrite>(
@@ -330,17 +328,13 @@ impl EventReader {
         node: &Node<'_>,
         accessor: &Accessor<'_>,
         mut tw: T,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         let event_number = event.event_number;
-        // `max_seen_event_number` is stored as the *next* event number the
-        // caller expects to receive (i.e. one past the largest already
-        // delivered). A fresh reader initialised with `0` must therefore
-        // still deliver event `0`, which is why the comparison is strictly
-        // less than, and the field is advanced to `event_number + 1` after
-        // a successful emit.
-        if event_number < self.max_seen_event_number {
-            // This event has already been seen by the caller, skip
-            return Ok(());
+        if !(event_number > self.max_seen_event_number
+            && event_number <= self.next_max_seen_event_number)
+        {
+            // This event is outside the range of interest, skip
+            return Ok(false);
         }
 
         let tail = tw.get_tail();
@@ -348,10 +342,16 @@ impl EventReader {
         let result = self.do_process_read(event, paths, event_filters, node, accessor, &mut tw);
 
         if result.is_err() {
-            // If there was an error, rewind to the tail so we don't write any data.
+            // If there was an error, rewind to the tail so we don't write any data
+            // and leave `max_seen_event_number` untouched so this event will be
+            // retried on the next chunk.
             tw.rewind_to(tail);
         } else {
-            self.max_seen_event_number = event_number.wrapping_add(1);
+            // The event was considered (whether or not it actually matched the
+            // path/filter/access checks). Advance the local watermark so that
+            // chunked reads do not re-consider the same event again on
+            // continuation, and so that the iteration converges.
+            self.max_seen_event_number = event_number;
         }
 
         result
@@ -365,14 +365,16 @@ impl EventReader {
         node: &Node<'_>,
         accessor: &Accessor<'_>,
         mut tw: T,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         if Self::matches_paths(&event, paths, node, accessor)?
             && Self::matches_filters(&event, event_filters)?
             && Self::matches_access(&event, node, accessor)?
         {
-            EventResp::Data(event).to_tlv(&TagType::Anonymous, &mut tw)
+            EventResp::Data(event).to_tlv(&TagType::Anonymous, &mut tw)?;
+
+            Ok(true)
         } else {
-            Ok(())
+            Ok(false)
         }
     }
 

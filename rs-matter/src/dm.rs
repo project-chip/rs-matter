@@ -284,7 +284,7 @@ where
             &node,
             None,
             HandlerInvoker::new(exchange, self),
-            EventReader::new(0),
+            EventReader::new(0, u64::MAX),
             self.events,
         );
 
@@ -578,13 +578,14 @@ where
 
             // Now report while there are subscriptions which are due for reporting
 
-            let max_event_number = self.events.watermark();
+            let event_numbers_watermark = self.events.watermark();
 
             loop {
-                let Some(mut rctx) =
-                    self.subscriptions
-                        .report(now, max_event_number, &self.subscriptions_buffers)
-                else {
+                let Some(mut rctx) = self.subscriptions.report(
+                    now,
+                    event_numbers_watermark,
+                    &self.subscriptions_buffers,
+                ) else {
                     break;
                 };
 
@@ -728,7 +729,10 @@ where
             &node,
             Some(rctx.subscription().ids().id),
             HandlerInvoker::new(exchange, self),
-            EventReader::new(rctx.max_seen_event_number()),
+            EventReader::new(
+                rctx.max_seen_event_number(),
+                rctx.next_max_seen_event_number(),
+            ),
             self.events,
         );
 
@@ -737,9 +741,8 @@ where
                 rctx.should_report_attr(e, c, a)
             })
             .await?;
-        if sub_valid {
-            rctx.update_max_seen_event_number(resp.event_reader.max_seen_event_number());
-        } else {
+
+        if !sub_valid {
             warn!(
                 "Subscription {:?} removed during reporting",
                 rctx.subscription().ids()
@@ -1134,8 +1137,6 @@ where
             for event_req in event_reqs.iter() {
                 let path = event_req?;
 
-                *empty = false;
-
                 if !path.is_wildcard() {
                     if let Err(status) = self.node.validate_event_path(&path, &accessor) {
                         if matches!(status, IMStatusCode::UnsupportedEvent) {
@@ -1144,6 +1145,8 @@ where
                             // Seems we should not error out in that case?
                             continue;
                         }
+
+                        *empty = false;
 
                         let resp = EventResp::Status(EventStatus::new(path, status, None));
 
@@ -1188,7 +1191,9 @@ where
                             }
                         }
 
-                        result?;
+                        if result? {
+                            *empty = false;
+                        }
                     }
 
                     Ok(true)
