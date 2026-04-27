@@ -92,10 +92,10 @@ const DEFAULT_TESTS: &[&str] = &[
     "TC_ACE_1_2",
     "TC_ACE_1_3",
     "TC_ACE_1_4",
-    // "TC_ACE_1_5", // TODO: not yet verified
-    // "TC_ACL_2_2", // TODO: not yet verified
-    // "TC_ACL_2_3", // TODO: not yet verified
-    // "TC_ACL_2_4", // TODO: not yet verified
+    "TC_ACE_1_5",
+    "TC_ACL_2_2",
+    // "TC_ACL_2_3", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
+    "TC_ACL_2_4",
     // "TC_ACL_2_5", // TODO: not yet verified
     // "TC_ACL_2_6", // TODO: not yet verified
     // "TC_ACL_2_7", // TODO: not yet verified
