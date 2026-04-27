@@ -85,7 +85,6 @@ const DEFAULT_TESTS: &[&str] = &[
     "TC_IDM_1_2",
     "TC_IDM_1_4",
     "TC_IDM_4_2",
-
     //
     // Python tests — Access Control (system cluster)
     //
