@@ -345,6 +345,25 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                 // as reserved.
                 session.complete();
 
+                // Per CHIP `CommissioningWindowManager::OnSessionEstablished`,
+                // arm the fail-safe automatically once a PASE session is up so
+                // the commissioner can issue `AddTrustedRootCertificate` and
+                // friends without first sending `ArmFailSafe` itself. Mirrors
+                // `CHIP_DEVICE_CONFIG_FAILSAFE_EXPIRY_LENGTH_SEC` (60s default).
+                exchange.with_state(|state| {
+                    if !state.failsafe.is_armed() {
+                        let session_mode = SessionMode::Pase { fab_idx: 0 };
+                        let _ = state.failsafe.arm(
+                            crate::failsafe::DEFAULT_FAILSAFE_EXPIRY_SECS,
+                            0,
+                            &session_mode,
+                            &mut state.pase,
+                        );
+                    }
+
+                    Ok(())
+                })?;
+
                 SCStatusCodes::SessionEstablishmentSuccess
             }
             Err(status) => status,

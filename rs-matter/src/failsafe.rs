@@ -80,6 +80,11 @@ impl From<IMStatusCode> for IMError {
     }
 }
 
+/// Default fail-safe expiry length used when the device implicitly arms the
+/// fail-safe (e.g. on PASE session establishment). Mirrors
+/// `CHIP_DEVICE_CONFIG_FAILSAFE_EXPIRY_LENGTH_SEC` from the reference SDK.
+pub const DEFAULT_FAILSAFE_EXPIRY_SECS: u16 = 60;
+
 pub struct FailSafe {
     state: State,
     secret_key: CanonPkcSecretKey,
@@ -254,6 +259,34 @@ impl FailSafe {
 
     pub fn is_armed(&self) -> bool {
         matches!(self.state, State::Armed(_))
+    }
+
+    /// Return the trusted root certificate that has been staged via
+    /// `AddTrustedRootCertificate` while the fail-safe is armed but has not
+    /// yet been bound to a fabric via `AddNOC` / `UpdateNOC`.
+    ///
+    /// Once `AddNOC` or `UpdateNOC` is processed the root certificate is
+    /// owned by the (new or updated) fabric and is reported through the
+    /// fabric table; until then it has no fabric association but the spec
+    /// still requires it to appear in the `TrustedRootCertificates` list
+    /// (Matter Core spec, NodeOperationalCredentials cluster).
+    pub fn pending_root_ca(&self) -> Option<&[u8]> {
+        let State::Armed(ctx) = &self.state else {
+            return None;
+        };
+
+        if !ctx.flags.contains(NocFlags::ADD_ROOT_CERT_RECVD) {
+            return None;
+        }
+
+        if ctx
+            .flags
+            .intersects(NocFlags::ADD_NOC_RECVD | NocFlags::UPDATE_NOC_RECVD)
+        {
+            return None;
+        }
+
+        (!self.root_ca.is_empty()).then_some(self.root_ca.as_slice())
     }
 
     pub fn is_armed_for(&self, caller_fab_idx: u8) -> bool {

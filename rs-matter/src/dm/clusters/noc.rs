@@ -229,27 +229,35 @@ impl ClusterHandler for NocHandler {
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<OctetsArrayBuilder<P>, OctetsBuilder<P>>,
     ) -> Result<P, Error> {
-        let attr = ctx.attr();
-
         ctx.exchange().with_state(|state| {
-            let mut fabrics = state.fabrics.iter().filter(|fabric| {
-                (!attr.fab_filter || attr.fab_idx == fabric.fab_idx().get())
-                    && !fabric.root_ca().is_empty()
-            });
+            // `TrustedRootCertificates` is a plain `list[octet_string]`, not a
+            // fabric-scoped struct list, so fabric filtering does not apply
+            // here — every committed fabric's root cert is reported.
+            let fabric_certs = state
+                .fabrics
+                .iter()
+                .filter(|fabric| !fabric.root_ca().is_empty())
+                .map(|fabric| fabric.root_ca());
+
+            // While the fail-safe is armed, an `AddTrustedRootCertificate`
+            // command stages a root certificate that is not yet bound to a
+            // fabric. Per the Matter Core spec it must still appear in the
+            // `TrustedRootCertificates` list until the fail-safe expires or
+            // the cert is consumed by `AddNOC` / `UpdateNOC` (at which point
+            // the fabric table reports it).
+            let mut certs = fabric_certs.chain(state.failsafe.pending_root_ca());
 
             match builder {
                 ArrayAttributeRead::ReadAll(mut builder) => {
-                    for fabric in fabrics {
-                        builder = builder.push(Octets::new(fabric.root_ca()))?;
+                    for cert in certs {
+                        builder = builder.push(Octets::new(cert))?;
                     }
 
                     builder.end()
                 }
                 ArrayAttributeRead::ReadOne(index, builder) => {
-                    let fabric = fabrics.nth(index as _);
-
-                    if let Some(fabric) = fabric {
-                        builder.set(Octets::new(fabric.root_ca()))
+                    if let Some(cert) = certs.nth(index as _) {
+                        builder.set(Octets::new(cert))
                     } else {
                         Err(ErrorCode::ConstraintError.into())
                     }
