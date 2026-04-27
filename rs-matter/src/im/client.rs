@@ -694,6 +694,7 @@ impl ImClient {
         let data = CmdData {
             path,
             data: cmd_data,
+            command_ref: None,
         };
 
         let mut result: Option<Result<T, Error>> = None;
@@ -779,6 +780,7 @@ impl ImClient {
         let cmd_data = [CmdData {
             path,
             data: cmd_data,
+            command_ref: None,
         }];
 
         let req = InvokeRequestBuilder::new(&cmd_data, timed_timeout_ms.is_some());
@@ -815,6 +817,7 @@ impl ImClient {
                         cmd: Some(cmd),
                     },
                     IMStatusCode::Success,
+                    None,
                     None,
                 ));
             } else {
@@ -892,6 +895,7 @@ mod tests {
         let data = CmdData {
             path,
             data: TLVElement::new(&[]),
+            command_ref: None,
         };
 
         let cmds = [data];

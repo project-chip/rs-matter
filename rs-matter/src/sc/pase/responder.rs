@@ -153,6 +153,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                 initiator_random.load(Spake2pRandomRef::try_new(req.initiator_random.0)?);
 
                 // Generate response
+                let max_paths = exchange.matter().dev_det().max_paths_per_invoke;
                 let resp = PBKDFParamResp {
                     initiator_random: OctetStr::new(initiator_random.access()),
                     responder_random: OctetStr::new(our_random.access()),
@@ -160,6 +161,10 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                     params: (!req.has_params).then(|| PBKDFParamRespParams {
                         iterations: count,
                         salt: OctetStr::new(salt.access()),
+                    }),
+                    session_parameters: Some(crate::sc::SessionParameters {
+                        max_paths_per_invoke: Some(max_paths),
+                        ..Default::default()
                     }),
                 };
 
