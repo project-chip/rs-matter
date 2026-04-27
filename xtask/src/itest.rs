@@ -96,10 +96,10 @@ const DEFAULT_TESTS: &[&str] = &[
     "TC_ACL_2_2",
     // "TC_ACL_2_3", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
     "TC_ACL_2_4",
-    // "TC_ACL_2_5", // TODO: not yet verified
-    // "TC_ACL_2_6", // TODO: not yet verified
-    // "TC_ACL_2_7", // TODO: not yet verified
-    // "TC_ACL_2_8", // TODO: not yet verified
+    // "TC_ACL_2_5", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
+    "TC_ACL_2_6",
+    // "TC_ACL_2_7", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
+    // "TC_ACL_2_8", // TODO: requires fabric-scoped event filtering (`fabricFiltered=True` on `ReadEvent` should drop events whose `fabricIndex` differs from the requester's fabric). rs-matter does not implement this.
     // "TC_ACL_2_9", // TODO: not yet verified
     // "TC_ACL_2_10", // TODO: not yet verified
     // "TC_ACL_2_11", // TODO: not yet verified
@@ -457,6 +457,13 @@ impl ITests {
                  --string-arg PIXIT.ACE.APPATTRIBUTE:OnOff \
                  --int-arg PIXIT.ACE.APPDEVTYPEID:256"
             }
+            // ACL tests target the AccessControl cluster which lives on
+            // endpoint 0. The default `--endpoint 1` we pass for application
+            // tests would route ancillary helpers like
+            // `get_latest_event_number` at endpoint 1, where there are no
+            // ACL events. argparse keeps the last `--endpoint`, so appending
+            // here wins.
+            "TC_ACL_2_6" | "TC_ACL_2_7" | "TC_ACL_2_8" => " --endpoint 0",
             _ => "",
         }
     }

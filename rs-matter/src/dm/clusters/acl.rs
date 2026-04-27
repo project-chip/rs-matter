@@ -194,9 +194,104 @@ impl ClusterHandler for AclHandler {
 
         let fab_idx = NonZeroU8::new(ctx.attr().fab_idx).ok_or(ErrorCode::UnsupportedAccess)?;
 
+        // We emit `AccessControlEntryChanged` events while still holding the
+        // matter state lock so that we can compare the *old* and *new* ACL
+        // contents and produce one event per entry change. `Events::push` (used
+        // by the emit path) takes its own independent lock, so this is safe.
         ctx.exchange().with_state(|state| {
             let fabric = state.fabrics.fabric_mut(fab_idx)?;
-            self.set_acl(fabric, value)?;
+
+            match value {
+                ArrayAttributeWrite::Replace(list) => {
+                    // Snapshot old entries so we can diff against the new list per index
+                    // (Matter Core spec section 9.10.7 mandates one event per entry change,
+                    // with `LatestValue` populated). `MAX_ACL_ENTRIES_PER_FABRIC` is small
+                    // (default 4), so a stack-allocated snapshot is cheap.
+                    let mut old_entries: heapless::Vec<AclEntry, MAX_ACL_ENTRIES_PER_FABRIC> =
+                        heapless::Vec::new();
+                    for e in fabric.acl_iter() {
+                        let _ = old_entries.push(e.clone());
+                    }
+
+                    self.set_acl(fabric, ArrayAttributeWrite::Replace(list))?;
+
+                    let new_count = fabric.acl_iter().count();
+                    let old_count = old_entries.len();
+
+                    // Per-index Changed (overlap) and Added (new tail) events.
+                    for (i, entry) in fabric.acl_iter().enumerate() {
+                        let change = if i < old_count {
+                            ChangeTypeEnum::Changed
+                        } else {
+                            ChangeTypeEnum::Added
+                        };
+                        emit_acl_entry_changed(
+                            &ctx,
+                            admin_node_id.clone(),
+                            admin_passcode_id.clone(),
+                            change,
+                            entry,
+                            fab_idx.get(),
+                        )?;
+                    }
+
+                    // Removed events for entries that fell off the end of the list.
+                    // `LatestValue` for a removal is the entry's contents just before removal.
+                    for old_entry in old_entries.iter().skip(new_count) {
+                        emit_acl_entry_changed(
+                            &ctx,
+                            admin_node_id.clone(),
+                            admin_passcode_id.clone(),
+                            ChangeTypeEnum::Removed,
+                            old_entry,
+                            fab_idx.get(),
+                        )?;
+                    }
+                }
+                ArrayAttributeWrite::Add(entry) => {
+                    let old_count = fabric.acl_iter().count();
+                    self.set_acl(fabric, ArrayAttributeWrite::Add(entry))?;
+                    if let Some(new_entry) = fabric.acl_iter().nth(old_count) {
+                        emit_acl_entry_changed(
+                            &ctx,
+                            admin_node_id.clone(),
+                            admin_passcode_id.clone(),
+                            ChangeTypeEnum::Added,
+                            new_entry,
+                            fab_idx.get(),
+                        )?;
+                    }
+                }
+                ArrayAttributeWrite::Update(index, entry) => {
+                    let idx = index as usize;
+                    self.set_acl(fabric, ArrayAttributeWrite::Update(index, entry))?;
+                    if let Some(new_entry) = fabric.acl_iter().nth(idx) {
+                        emit_acl_entry_changed(
+                            &ctx,
+                            admin_node_id.clone(),
+                            admin_passcode_id.clone(),
+                            ChangeTypeEnum::Changed,
+                            new_entry,
+                            fab_idx.get(),
+                        )?;
+                    }
+                }
+                ArrayAttributeWrite::Remove(index) => {
+                    let idx = index as usize;
+                    let removed = fabric.acl_iter().nth(idx).cloned();
+                    self.set_acl(fabric, ArrayAttributeWrite::Remove(index))?;
+                    if let Some(old_entry) = removed {
+                        emit_acl_entry_changed(
+                            &ctx,
+                            admin_node_id.clone(),
+                            admin_passcode_id.clone(),
+                            ChangeTypeEnum::Removed,
+                            &old_entry,
+                            fab_idx.get(),
+                        )?;
+                    }
+                }
+            }
 
             // NOTE: Not sure this is a spec-compliant behavor:
             // If the failsafe is armed for our fabric, we'll NOT persist the groups changes until commissioning is complete.
@@ -208,20 +303,7 @@ impl ClusterHandler for AclHandler {
             Ok(())
         })?;
 
-        persist.run()?;
-
-        AccessControlEntryChanged::emit(&ctx, |tw| {
-            tw.admin_node_id(admin_node_id)?
-                .admin_passcode_id(admin_passcode_id)?
-                .change_type(ChangeTypeEnum::Changed)?
-                .latest_value()?
-                .null()?
-                .fabric_index(Some(fab_idx.get()))?
-                .end()
-        })
-        .unwrap();
-
-        Ok(())
+        persist.run()
     }
 
     fn handle_review_fabric_restrictions<P: TLVBuilderParent>(
@@ -233,6 +315,48 @@ impl ClusterHandler for AclHandler {
         // Only necessary with MNGD feature (ManagedDevice)
         unimplemented!()
     }
+}
+
+/// Emit one `AccessControlEntryChanged` event with the given change type and
+/// the entry's contents serialized into `LatestValue`.
+///
+/// Callers pass in the `admin_node_id` / `admin_passcode_id` derived from the
+/// requesting accessor (CASE → node id, PASE → passcode id 0). For changes
+/// originating from internal flows that do not have a requester (e.g. the
+/// auto-created admin entry on AddNOC, which runs over PASE), pass null/0.
+///
+/// The event is emitted on endpoint 0 (the AccessControl cluster always lives
+/// there), via `emit_for` so the helper can be used from cluster handlers
+/// other than ACL itself (e.g. from the OperationalCredentials handler when
+/// AddNOC seeds the initial admin entry).
+pub(crate) fn emit_acl_entry_changed<E>(
+    emitter: E,
+    admin_node_id: Nullable<u64>,
+    admin_passcode_id: Nullable<u16>,
+    change_type: ChangeTypeEnum,
+    entry: &AclEntry,
+    fab_idx: u8,
+) -> Result<(), Error>
+where
+    E: crate::dm::EventEmitter,
+{
+    AccessControlEntryChanged::emit_for(emitter, 0, |tw| {
+        let inner = tw
+            .admin_node_id(admin_node_id)?
+            .admin_passcode_id(admin_passcode_id)?
+            .change_type(change_type)?
+            .latest_value()?
+            .non_null()?;
+
+        // `read_into` populates the full `AccessControlEntryStruct` for the
+        // requested fabric. We pass `fab_idx == fab_idx` so that all
+        // fabric-sensitive fields are included in the event payload.
+        let parent = entry.read_into(fab_idx, Some(fab_idx), inner)?;
+
+        parent.fabric_index(Some(fab_idx))?.end()
+    })?;
+
+    Ok(())
 }
 
 #[cfg(test)]

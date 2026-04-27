@@ -669,6 +669,15 @@ impl AclEntry {
                             Err(ErrorCode::ConstraintError)?;
                         }
 
+                        if matches!(auth_mode, AccessControlEntryAuthModeEnum::Group) {
+                            // Per Matter Core spec section 9.10.5.1: for Group auth mode, the
+                            // subject SHALL be a valid 16-bit Group ID. Group ID 0 is reserved
+                            // and MUST NOT be used; values larger than `u16::MAX` are also invalid.
+                            if subject == 0 || subject > u16::MAX as u64 {
+                                Err(ErrorCode::ConstraintError)?;
+                            }
+                        }
+
                         // As per spec, on too many subjects we should return a FAILURE status code
                         // `ErrorCode::BufferTooSmall` translates to a generic FAILURE status code
                         esubjects
