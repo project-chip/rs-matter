@@ -90,8 +90,8 @@ const DEFAULT_TESTS: &[&str] = &[
     // Python tests — Access Control (system cluster)
     //
     "TC_ACE_1_2",
-    // "TC_ACE_1_3", // TODO: not yet verified
-    // "TC_ACE_1_4", // TODO: not yet verified
+    "TC_ACE_1_3",
+    "TC_ACE_1_4",
     // "TC_ACE_1_5", // TODO: not yet verified
     // "TC_ACL_2_2", // TODO: not yet verified
     // "TC_ACL_2_3", // TODO: not yet verified
@@ -421,11 +421,12 @@ impl ITests {
         // `run_python_test.py` also deletes the controller-side fabric state.
         // Without it, the Python SDK reuses stale fabric storage from previous
         // runs while the device has been factory-reset, causing AddNOC to fail.
+        let extra_args = Self::extra_python_script_args(test_name);
         let script_args = format!(
             "--storage-path /tmp/rs_matter_python_test_storage.json \
              --commissioning-method on-network --discriminator {discriminator} \
              --passcode {passcode} --endpoint 1 \
-             --paa-trust-store-path credentials/development/paa-root-certs"
+             --paa-trust-store-path credentials/development/paa-root-certs{extra_args}"
         );
 
         Ok(format!(
@@ -436,6 +437,28 @@ impl ITests {
             script_path.display(),
             script_args,
         ))
+    }
+
+    /// Test-specific extra `--script-args` for `run_python_test.py`.
+    ///
+    /// Some `MatterBaseTest`-style scripts require PIXIT/PICS values supplied
+    /// on the command line via the `--int-arg`, `--string-arg`, `--hex-arg`
+    /// flags. Map them here per test, keyed by file stem, so the rest of the
+    /// dispatch path stays uniform.
+    fn extra_python_script_args(test_name: &str) -> &'static str {
+        match test_name {
+            // TC_ACE_1_4 needs the PIXITs that point at the application
+            // endpoint/cluster/attribute exposed by `chip_tool_tests`. Endpoint 1
+            // hosts the OnOff cluster on a `DEV_TYPE_ON_OFF_LIGHT` (device type
+            // 0x0100 == 256).
+            "TC_ACE_1_4" => {
+                " --int-arg PIXIT.ACE.APPENDPOINT:1 \
+                 --string-arg PIXIT.ACE.APPCLUSTER:OnOff \
+                 --string-arg PIXIT.ACE.APPATTRIBUTE:OnOff \
+                 --int-arg PIXIT.ACE.APPDEVTYPEID:256"
+            }
+            _ => "",
+        }
     }
 
     fn build_test_exe<'a>(
