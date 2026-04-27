@@ -34,7 +34,7 @@ use log::{debug, info, warn};
 /// dispatched to `scripts/tests/run_test_suite.py`.
 const DEFAULT_TESTS: &[&str] = &[
     //
-    // YAML tests
+    // YAML tests — general Matter protocol & system clusters
     //
     "Test_AddNewFabricFromExistingFabric",
     "TestAccessControlCluster",
@@ -42,7 +42,7 @@ const DEFAULT_TESTS: &[&str] = &[
     "TestArmFailSafe",
     "TestAttributesById",
     "TestBasicInformation",
-    // "TestBinding", // TODO: specific cluster, to be implemented with all others
+    // "TestBinding", // TODO: Binding cluster not yet implemented
     "TestCASERecovery",
     "TestCluster",
     "TestClusterComplexTypes",
@@ -53,8 +53,8 @@ const DEFAULT_TESTS: &[&str] = &[
     "TestConfigVariables",
     "TestConstraints",
     "TestDelayCommands",
-    //"TestDescriptorCluster", // TODO: Assumes a Power Source device type and expects a lot of clusters to be there
-    // "TestDiagnosticLogs", // TODO: specific cluster, to be implemented with all others
+    // "TestDescriptorCluster", // TODO: Assumes a Power Source device type and expects a lot of clusters to be there
+    // "TestDiagnosticLogs", // TODO: Diagnostic Logs cluster not yet implemented
     "TestDiscovery",
     "TestEqualities",
     "TestEvents",
@@ -64,23 +64,123 @@ const DEFAULT_TESTS: &[&str] = &[
     "TestGroupMessaging",
     "TestGroupsCluster",
     "TestGroupKeyManagementCluster",
-    // "TestIdentifyCluster", // TODO: specific cluster, to be implemented with all others
+    // "TestIdentifyCluster", // TODO: Identify cluster not yet implemented
     "TestLogCommands",
     "TestMultiAdmin",
     "TestOperationalCredentialsCluster",
-    // "TestOperationalState", // TODO: specific cluster, to be implemented with all others
+    // "TestOperationalState", // TODO: Operational State cluster not yet implemented
     "TestReadNoneSubscribeNone",
+    // "TestSaveAs", // TODO: not yet verified
     "TestSelfFabricRemoval",
     "TestSubscribe_AdministratorCommissioning",
     "TestSubscribe_OnOff",
     // "TestSystemCommands", // TODO: Error attempting to start secondary device
-    // "TestUserLabelCluster",  // TODO: specific cluster, to be implemented with all others
-    // "TestUserLabelClusterConstraints",  // TODO: specific cluster, to be implemented with all others
+    // "TestUserLabelCluster", // TODO: User Label cluster not yet implemented
+    // "TestUserLabelClusterConstraints", // TODO: User Label cluster not yet implemented
 
     //
-    // Python tests
+    // Python tests — Interaction Data Model (general Matter protocol)
     //
     "TC_IDM_2_2",
+    "TC_IDM_1_2",
+    "TC_IDM_1_4",
+    "TC_IDM_4_2",
+    //
+    // Python tests — Access Control (system cluster)
+    //
+    "TC_ACE_1_2",
+    "TC_ACE_1_3",
+    "TC_ACE_1_4",
+    "TC_ACE_1_5",
+    "TC_ACL_2_2",
+    // "TC_ACL_2_3", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
+    "TC_ACL_2_4",
+    // "TC_ACL_2_5", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
+    "TC_ACL_2_6",
+    // "TC_ACL_2_7", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
+    // "TC_ACL_2_8", // Skipped: the test re-runs itself internally with legacy list encoding after the modern-encoding pass. The Python framework's between-runs controller cleanup is buggy (`object NoneType can't be used in 'await' expression`) and leaves stale fabrics on the DUT, so the second commissioning fails with `Incorrect state`. The modern-encoding pass — including fabric-scoped event filtering — is exercised end-to-end and passes.
+    "TC_ACL_2_9",
+    "TC_ACL_2_10",
+    // "TC_ACL_2_11", // Skipped: tests the provisional `ManagedAclRestrictions` feature (ARL attribute) and requires manufacturer-specific access restrictions to be pre-configured. rs-matter does not implement this feature.
+
+    //
+    // Python tests — General & Administrator Commissioning (system clusters)
+    //
+    // "TC_CADMIN_1_3_4", // TODO: not yet verified
+    // "TC_CADMIN_1_5",   // TODO: not yet verified
+    // "TC_CADMIN_1_9",   // TODO: not yet verified
+    // "TC_CADMIN_1_11",  // TODO: not yet verified
+    // "TC_CADMIN_1_15",  // TODO: not yet verified
+    // "TC_CADMIN_1_19",  // TODO: not yet verified
+    // "TC_CADMIN_1_22",  // TODO: not yet verified
+    // "TC_CADMIN_1_25",  // TODO: not yet verified
+    // "TC_CADMIN_1_27",  // TODO: not yet verified
+    // "TC_CADMIN_1_28",  // TODO: not yet verified
+    // "TC_CGEN_2_1",     // TODO: not yet verified
+    // "TC_CGEN_2_2",     // TODO: not yet verified
+    // "TC_CGEN_2_4",     // TODO: not yet verified
+    // "TC_CGEN_2_5",     // TODO: not yet verified
+    // "TC_CGEN_2_6",     // TODO: not yet verified
+    // "TC_CGEN_2_7",     // TODO: not yet verified
+    // "TC_CGEN_2_8",     // TODO: not yet verified
+    // "TC_CGEN_2_9",     // TODO: not yet verified
+    // "TC_CGEN_2_10",    // TODO: not yet verified
+    // "TC_CGEN_2_11",    // TODO: not yet verified
+
+    //
+    // Python tests — Operational Credentials (system cluster)
+    //
+    // "TC_OPCREDS_3_1", // TODO: not yet verified
+    // "TC_OPCREDS_3_2", // TODO: not yet verified
+    // "TC_OPCREDS_3_4", // TODO: not yet verified
+    // "TC_OPCREDS_3_5", // TODO: not yet verified
+    // "TC_OPCREDS_3_8", // TODO: not yet verified
+
+    //
+    // Python tests — Session/Commissioning (general Matter protocol)
+    //
+    // "TC_SC_3_4", // TODO: not yet verified
+    // "TC_SC_3_5", // TODO: not yet verified
+    // "TC_SC_3_6", // TODO: not yet verified
+    // "TC_SC_4_1", // TODO: not yet verified
+    // "TC_SC_4_3", // TODO: not yet verified
+    // "TC_SC_7_1", // TODO: not yet verified
+
+    //
+    // Python tests — Basic Information (system cluster)
+    //
+    // "TC_BINFO_3_2", // TODO: not yet verified
+
+    //
+    // Python tests — Groups (system cluster)
+    //
+    // "TC_G_2_2", // TODO: not yet verified
+
+    //
+    // Python tests — General Diagnostics (system cluster)
+    //
+    // "TC_DGGEN_2_4", // TODO: not yet verified
+    // "TC_DGGEN_3_2", // TODO: not yet verified
+
+    //
+    // Python tests — Device Attestation (commissioning)
+    //
+    // "TC_DA_1_2", // TODO: not yet verified
+    // "TC_DA_1_5", // TODO: not yet verified
+    // "TC_DA_1_7", // TODO: not yet verified
+    // "TC_DA_1_9", // TODO: not yet verified
+
+    //
+    // Python tests — Device Discovery (general)
+    //
+    // "TC_DD_1_16_17", // TODO: not yet verified
+    // "TC_DD_3_23",    // TODO: not yet verified
+
+    //
+    // Python tests — Device Composition / Conformance (general)
+    //
+    // "TC_DeviceBasicComposition", // TODO: not yet verified
+    // "TC_DeviceConformance",      // TODO: not yet verified
 ];
 
 /// The directory where the Chip repository will be cloned
@@ -315,10 +415,17 @@ impl ITests {
         // The Python test framework drives commissioning itself via
         // `--script-args`; the rs-matter test executable is launched
         // by `run_python_test.py` and passed via `--app`.
+        //
+        // `--storage-path` must be specified so that `--factory-reset` in
+        // `run_python_test.py` also deletes the controller-side fabric state.
+        // Without it, the Python SDK reuses stale fabric storage from previous
+        // runs while the device has been factory-reset, causing AddNOC to fail.
+        let extra_args = Self::extra_python_script_args(test_name);
         let script_args = format!(
-            "--commissioning-method on-network --discriminator {discriminator} \
+            "--storage-path /tmp/rs_matter_python_test_storage.json \
+             --commissioning-method on-network --discriminator {discriminator} \
              --passcode {passcode} --endpoint 1 \
-             --paa-trust-store-path credentials/development/paa-root-certs"
+             --paa-trust-store-path credentials/development/paa-root-certs{extra_args}"
         );
 
         Ok(format!(
@@ -329,6 +436,35 @@ impl ITests {
             script_path.display(),
             script_args,
         ))
+    }
+
+    /// Test-specific extra `--script-args` for `run_python_test.py`.
+    ///
+    /// Some `MatterBaseTest`-style scripts require PIXIT/PICS values supplied
+    /// on the command line via the `--int-arg`, `--string-arg`, `--hex-arg`
+    /// flags. Map them here per test, keyed by file stem, so the rest of the
+    /// dispatch path stays uniform.
+    fn extra_python_script_args(test_name: &str) -> &'static str {
+        match test_name {
+            // TC_ACE_1_4 needs the PIXITs that point at the application
+            // endpoint/cluster/attribute exposed by `chip_tool_tests`. Endpoint 1
+            // hosts the OnOff cluster on a `DEV_TYPE_ON_OFF_LIGHT` (device type
+            // 0x0100 == 256).
+            "TC_ACE_1_4" => {
+                " --int-arg PIXIT.ACE.APPENDPOINT:1 \
+                 --string-arg PIXIT.ACE.APPCLUSTER:OnOff \
+                 --string-arg PIXIT.ACE.APPATTRIBUTE:OnOff \
+                 --int-arg PIXIT.ACE.APPDEVTYPEID:256"
+            }
+            // ACL tests target the AccessControl cluster which lives on
+            // endpoint 0. The default `--endpoint 1` we pass for application
+            // tests would route ancillary helpers like
+            // `get_latest_event_number` at endpoint 1, where there are no
+            // ACL events. argparse keeps the last `--endpoint`, so appending
+            // here wins.
+            "TC_ACL_2_6" | "TC_ACL_2_7" | "TC_ACL_2_8" => " --endpoint 0",
+            _ => "",
+        }
     }
 
     fn build_test_exe<'a>(

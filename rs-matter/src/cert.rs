@@ -22,7 +22,6 @@ use num_derive::FromPrimitive;
 
 use crate::crypto::{Crypto, PublicKey};
 use crate::error::{Error, ErrorCode};
-use crate::fmt::Bytes;
 use crate::tlv::{FromTLV, Octets, TLVArray, TLVElement, TLVList, ToTLV};
 use crate::utils::epoch::MATTER_CERT_DOESNT_EXPIRE;
 use crate::utils::iter::TryFindIterator;
@@ -798,12 +797,6 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
                 .verify(asn1, self.cert.signature()?.try_into()?)?;
 
             if !result {
-                error!(
-                    "Verification of certificate signature failed: {:?} by {:?}",
-                    self.cert.get_subject_key_id().map(Bytes),
-                    parent.get_subject_key_id().map(Bytes)
-                );
-
                 Err(ErrorCode::InvalidSignature)?;
             }
         }

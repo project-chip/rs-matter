@@ -146,7 +146,7 @@ impl<'a> Node<'a> {
 
         let gp = path.to_gp();
 
-        let Some((cluster, attr_id)) = self.validate_cluster_path(&gp)? else {
+        let Some((endpoint, cluster, attr_id)) = self.validate_cluster_path(&gp)? else {
             return Ok(());
         };
 
@@ -154,7 +154,53 @@ impl<'a> Node<'a> {
             return Err(IMStatusCode::UnsupportedAttribute);
         };
 
-        cluster.check_attr_access(accessor, timed, gp, write, attr.id)
+        cluster.check_attr_access(accessor, timed, gp, endpoint.device_types, write, attr.id)
+    }
+
+    /// Return `true` if at least one attribute matching the (potentially wildcard) path
+    /// is accessible to the given accessor. Used for subscription validation.
+    pub(crate) fn has_accessible_attr(&self, path: &AttrPath, accessor: &Accessor<'_>) -> bool {
+        for endpoint in self.endpoints.iter() {
+            if let Some(ep_id) = path.endpoint {
+                if endpoint.id != ep_id {
+                    continue;
+                }
+            }
+
+            for cluster in endpoint.clusters.iter() {
+                if let Some(cluster_id) = path.cluster {
+                    if cluster.id != cluster_id {
+                        continue;
+                    }
+                }
+
+                for attr in cluster.attributes.iter() {
+                    if let Some(attr_id) = path.attr {
+                        if attr.id != attr_id {
+                            continue;
+                        }
+                    }
+
+                    let gp = GenericPath::new(Some(endpoint.id), Some(cluster.id), Some(attr.id));
+
+                    if cluster
+                        .check_attr_access(
+                            accessor,
+                            false,
+                            gp,
+                            endpoint.device_types,
+                            false,
+                            attr.id,
+                        )
+                        .is_ok()
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     pub(crate) fn validate_event_path(
@@ -168,7 +214,7 @@ impl<'a> Node<'a> {
 
         let gp = path.to_gp();
 
-        let Some((cluster, event_id)) = self.validate_cluster_path(&gp)? else {
+        let Some((endpoint, cluster, event_id)) = self.validate_cluster_path(&gp)? else {
             return Ok(());
         };
 
@@ -176,7 +222,7 @@ impl<'a> Node<'a> {
             return Err(IMStatusCode::UnsupportedEvent);
         };
 
-        cluster.check_event_access(accessor, gp, event.id)
+        cluster.check_event_access(accessor, gp, endpoint.device_types, event.id)
     }
 
     fn validate_node_id(
@@ -198,7 +244,7 @@ impl<'a> Node<'a> {
     fn validate_cluster_path(
         &self,
         path: &GenericPath,
-    ) -> Result<Option<(&Cluster<'_>, u32)>, IMStatusCode> {
+    ) -> Result<Option<(&Endpoint<'_>, &Cluster<'_>, u32)>, IMStatusCode> {
         let Some(endpoint_id) = path.endpoint else {
             return Ok(None);
         };
@@ -221,7 +267,7 @@ impl<'a> Node<'a> {
             return Ok(None);
         };
 
-        Ok(Some((cluster, leaf_id)))
+        Ok(Some((endpoint, cluster, leaf_id)))
     }
 }
 
@@ -601,6 +647,7 @@ where
                                                 Some(cluster.id),
                                                 Some(leaf_id),
                                             ),
+                                            endpoint.device_types,
                                             unwrap!(cluster
                                                 .commands()
                                                 .map(|cmd| cmd.id)
@@ -618,6 +665,7 @@ where
                                                 Some(cluster.id),
                                                 Some(leaf_id),
                                             ),
+                                            endpoint.device_types,
                                             matches!(T::OPERATION, Operation::Write),
                                             unwrap!(cluster
                                                 .attributes()

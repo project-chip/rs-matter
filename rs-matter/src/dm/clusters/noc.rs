@@ -21,8 +21,10 @@ use core::cell::Cell;
 use core::mem::MaybeUninit;
 use core::num::NonZeroU8;
 
+use crate::acl::AclEntry;
 use crate::cert::CertRef;
 use crate::crypto::{CanonPkcSignature, Crypto, SigningSecretKey};
+use crate::dm::clusters::acl::{emit_acl_entry_changed, ChangeTypeEnum};
 use crate::dm::clusters::dev_att::DeviceAttestation;
 use crate::dm::clusters::gen_comm::GenCommHandler;
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
@@ -430,6 +432,10 @@ impl ClusterHandler for NocHandler {
             .filter(|icac| !icac.is_empty());
 
         let mut added_fab_idx = None;
+        // Captured inside the closure so we can emit `AccessControlEntryChanged`
+        // for the auto-created admin ACL entry *after* the failsafe-armed
+        // closure unwinds successfully (Matter Core spec section 9.10.7).
+        let mut admin_acl_entry: Option<AclEntry> = None;
 
         let buf = response.writer().available_space();
 
@@ -452,6 +458,10 @@ impl ClusterHandler for NocHandler {
                 )?;
 
                 let fab_idx = fabric.fab_idx();
+                // Snapshot the freshly seeded admin ACL entry while we still
+                // hold the state lock; we'll emit the event once we're sure
+                // the fabric stays committed (i.e. no rollback happened).
+                let captured_admin_entry = fabric.acl_iter().next().cloned();
                 let succeeded = Cell::new(false);
 
                 let _fab_guard = scopeguard::guard(fab_idx, |fab_idx| {
@@ -471,6 +481,7 @@ impl ClusterHandler for NocHandler {
 
                 succeeded.set(true);
                 added_fab_idx = Some(fab_idx.get());
+                admin_acl_entry = captured_admin_entry;
 
                 Ok(())
             },
@@ -478,6 +489,21 @@ impl ClusterHandler for NocHandler {
 
         // AddNOC mutates NOCs, Fabrics, CommissionedFabrics, TrustedRootCerts, etc.
         ctx.notify_own_cluster_changed();
+
+        // Emit the `AccessControlEntryChanged` event for the auto-created admin
+        // entry. AddNOC happens over PASE during commissioning, so per Matter
+        // Core spec 9.10.7 the event has `adminNodeID = null` and
+        // `adminPasscodeID = 0`.
+        if let (Some(fab_idx), Some(entry)) = (added_fab_idx, &admin_acl_entry) {
+            emit_acl_entry_changed(
+                &ctx,
+                crate::tlv::Nullable::none(),
+                crate::tlv::Nullable::some(0u16),
+                ChangeTypeEnum::Added,
+                entry,
+                fab_idx,
+            )?;
+        }
 
         response
             .status_code(status)?

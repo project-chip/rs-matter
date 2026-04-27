@@ -556,7 +556,11 @@ impl Service<'_> {
                 })
                 .await
             }
-            MatterMdnsService::Commissionable { discriminator, .. } => {
+            MatterMdnsService::Commissionable {
+                discriminator,
+                enhanced,
+                ..
+            } => {
                 // "_L{u16}""
                 let mut discr_svc_str = heapless::String::<7>::new();
                 // "_S{u16}""
@@ -590,7 +594,7 @@ impl Service<'_> {
                 write_unwrap!(discr_str, "{}", *discriminator);
                 unwrap!(txt_kvs.push(("D", discr_str.as_str())));
 
-                unwrap!(txt_kvs.push(("CM", "1")));
+                unwrap!(txt_kvs.push(("CM", if *enhanced { "2" } else { "1" })));
 
                 write_unwrap!(&mut vp_str, "{}+{}", dev_det.vid, dev_det.pid);
                 unwrap!(txt_kvs.push(("VP", &vp_str)));

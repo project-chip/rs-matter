@@ -29,11 +29,19 @@ bitflags! {
         const O = 0x02;
         const M = 0x04;
         const A = 0x08;
+        // ProxyView (kProxyView=2 in `AccessControlEntryPrivilegeEnum`).
+        // Stored as a non-hierarchical flag because, per the Matter spec,
+        // ProxyView is implementation-defined and SHALL NOT affect normal
+        // device operation. With no corresponding `NEED_*` bit in `Access`,
+        // an ACL entry with ProxyView grants no rights for non-proxy
+        // operations but still round-trips correctly across read/write.
+        const P = 0x10;
 
         const VIEW = Self::V.bits();
         const OPERATE = Self::V.bits() | Self::O.bits();
         const MANAGE = Self::V.bits() | Self::O.bits() | Self::M.bits();
         const ADMIN = Self::V.bits() | Self::O.bits() | Self::M.bits() | Self::A.bits();
+        const PROXYVIEW = Self::P.bits();
     }
 }
 
@@ -66,6 +74,8 @@ impl From<Privilege> for AccessControlEntryPrivilegeEnum {
             AccessControlEntryPrivilegeEnum::Operate
         } else if value.contains(Privilege::V) {
             AccessControlEntryPrivilegeEnum::View
+        } else if value.contains(Privilege::P) {
+            AccessControlEntryPrivilegeEnum::ProxyView
         } else {
             unreachable!()
         }
@@ -79,7 +89,7 @@ impl From<AccessControlEntryPrivilegeEnum> for Privilege {
             AccessControlEntryPrivilegeEnum::Manage => Privilege::MANAGE,
             AccessControlEntryPrivilegeEnum::Operate => Privilege::OPERATE,
             AccessControlEntryPrivilegeEnum::Administer => Privilege::ADMIN,
-            _ => Privilege::empty(),
+            AccessControlEntryPrivilegeEnum::ProxyView => Privilege::PROXYVIEW,
         }
     }
 }

@@ -169,6 +169,7 @@ impl CommWindow {
         MatterMdnsService::Commissionable {
             id: self.mdns_id,
             discriminator: self.discriminator,
+            enhanced: matches!(self.comm_window_type(), CommWindowType::Enhanced),
         }
     }
 }
