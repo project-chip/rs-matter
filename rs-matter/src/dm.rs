@@ -279,12 +279,17 @@ where
         let metadata = self.handler.lock().await;
         let node = metadata.node();
 
+        // Honor the `fabricFiltered` flag on the originating Read request.
+        // When set, fabric-sensitive events emitted on other fabrics are
+        // dropped before they reach the wire (Matter Core spec section 8.5.2).
+        let fabric_filtered = req.fabric_filtered().unwrap_or(true);
+
         let mut resp = ReportDataResponder::new(
             &req,
             &node,
             None,
             HandlerInvoker::new(exchange, self),
-            EventReader::new(0, u64::MAX),
+            EventReader::new(0, u64::MAX, fabric_filtered),
             self.events,
         );
 
@@ -762,6 +767,11 @@ where
         let metadata = self.handler.lock().await;
         let node = metadata.node();
 
+        // Honor the `fabricFiltered` flag on the originating Subscribe request.
+        // When set, fabric-sensitive events emitted on other fabrics are
+        // dropped before they reach the wire (Matter Core spec section 8.5.2).
+        let fabric_filtered = req.fabric_filtered().unwrap_or(true);
+
         let mut resp = ReportDataResponder::new(
             &req,
             &node,
@@ -770,6 +780,7 @@ where
             EventReader::new(
                 rctx.max_seen_event_number(),
                 rctx.next_max_seen_event_number(),
+                fabric_filtered,
             ),
             self.events,
         );

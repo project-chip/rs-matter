@@ -16,7 +16,7 @@
  */
 
 use crate::acl::Accessor;
-use crate::dm::{AsyncHandler, HandlerContext, Node};
+use crate::dm::{AsyncHandler, GlobalElements, HandlerContext, Node};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
     AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
@@ -310,13 +310,23 @@ where
 pub struct EventReader {
     max_seen_event_number: u64,
     next_max_seen_event_number: u64,
+    /// Whether the originating Read/Subscribe request had `fabricFiltered=true`.
+    /// When set, fabric-sensitive events (those whose payload carries a
+    /// `FabricIndex` context-tag 254) are dropped if their fabric index does
+    /// not match the accessor's. See Matter Core spec section 8.5.2.
+    fabric_filtered: bool,
 }
 
 impl EventReader {
-    pub const fn new(max_seen_event_number: u64, next_max_seen_event_number: u64) -> Self {
+    pub const fn new(
+        max_seen_event_number: u64,
+        next_max_seen_event_number: u64,
+        fabric_filtered: bool,
+    ) -> Self {
         Self {
             max_seen_event_number,
             next_max_seen_event_number,
+            fabric_filtered,
         }
     }
 
@@ -366,6 +376,10 @@ impl EventReader {
         accessor: &Accessor<'_>,
         mut tw: T,
     ) -> Result<bool, Error> {
+        if self.fabric_filtered && !Self::matches_fabric(&event, accessor) {
+            return Ok(false);
+        }
+
         if Self::matches_paths(&event, paths, node, accessor)?
             && Self::matches_filters(&event, event_filters)?
             && Self::matches_access(&event, node, accessor)?
@@ -375,6 +389,33 @@ impl EventReader {
             Ok(true)
         } else {
             Ok(false)
+        }
+    }
+
+    /// Per Matter Core spec section 8.5.2 (Fabric-Sensitive Reporting):
+    /// When `fabricFiltered=true`, fabric-sensitive events (those whose payload
+    /// carries a `FabricIndex` field at context tag 254) SHALL only be reported
+    /// to the requesting fabric.
+    ///
+    /// Events without a `FabricIndex` field are not fabric-sensitive and pass
+    /// through unfiltered. Events with a `FabricIndex` field that matches the
+    /// accessor's fabric are reported as well.
+    fn matches_fabric(event: &EventData<'_>, accessor: &Accessor<'_>) -> bool {
+        // Inspect the event payload struct for context tag 254 (FabricIndex).
+        let Ok(payload) = event.data.structure() else {
+            // Not a struct payload — treat as non-fabric-sensitive.
+            return true;
+        };
+
+        let Ok(elem) = payload.find_ctx(GlobalElements::FabricIndex as u8) else {
+            // No `FabricIndex` field — non-fabric-sensitive, allow.
+            return true;
+        };
+
+        match elem.non_empty().and_then(|e| e.u8().ok()) {
+            Some(fab_idx) => fab_idx == accessor.fab_idx,
+            // Field present but unreadable / null — be conservative and allow.
+            None => true,
         }
     }
 
