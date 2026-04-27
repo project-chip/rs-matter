@@ -821,8 +821,7 @@ impl WebRtcHooks for Str0mHooks {
         &self,
         session_id: u16,
         _params: &OfferParams,
-        _sdp_out: &mut [u8],
-    ) -> Result<(SolicitOutcome, usize), WebRtcError> {
+    ) -> Result<SolicitOutcome, WebRtcError> {
         warn!(
             "webrtc_camera: SolicitOffer (session {session_id}) rejected — \
              camera-initiated flow not implemented in this example"

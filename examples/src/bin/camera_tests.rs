@@ -195,8 +195,7 @@ impl WebRtcHooks for StubWebRtcHooks {
         &self,
         _session_id: u16,
         params: &OfferParams,
-        _sdp_out: &mut [u8],
-    ) -> Result<(SolicitOutcome, usize), WebRtcError> {
+    ) -> Result<SolicitOutcome, WebRtcError> {
         // Both absent → InvalidCommand (TC_WEBRTCP_2_1 step 2)
         if params.video_stream_id.is_none() && params.audio_stream_id.is_none() {
             return Err(WebRtcError::InvalidCommand);
@@ -224,14 +223,11 @@ impl WebRtcHooks for StubWebRtcHooks {
             }
         }
         // NullValue for both → deferred offer (step 6)
-        Ok((
-            SolicitOutcome {
-                deferred: true,
-                video_stream_id: None,
-                audio_stream_id: None,
-            },
-            0,
-        ))
+        Ok(SolicitOutcome {
+            deferred: true,
+            video_stream_id: None,
+            audio_stream_id: None,
+        })
     }
 
     async fn on_offer(

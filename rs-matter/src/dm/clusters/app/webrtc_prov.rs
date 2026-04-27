@@ -52,6 +52,12 @@
 //!   payload produced by [`WebRtcProvHandler::run`]. Must be large enough
 //!   for a trickle-ICE batch; typical value 1 KiB.
 //!
+//! On `no_std` / embedded targets, [`WebRtcProvHandler::run`] holds an
+//! `[u8; OUT_LEN]` plus, on the `Offer`/`Answer` paths, an `[u8; SDP_LEN]`
+//! in its async-future state. Pick `SDP_LEN` to fit the smallest SDP your
+//! deployment will negotiate (e.g. 2 KiB for a single H.264 + Opus track)
+//! to keep the future small enough for the executor's task slot.
+//!
 //! # Scope
 //!
 //! * Inbound command state machine: fully implemented for
@@ -235,14 +241,19 @@ pub enum OutboundWork {
 /// dispatch. Implementations MUST NOT perform blocking I/O.
 pub trait WebRtcHooks {
     /// Handle an inbound `SolicitOffer` command. The session ID has been
-    /// allocated; the hooks decides whether to respond with an immediate
-    /// or deferred Offer.
+    /// allocated; the hook decides whether to respond with `deferred = false`
+    /// (in which case it MUST shortly enqueue an [`OutboundWork::Offer`] so
+    /// the handler can push the SDP Offer via
+    /// `WebRTCTransportRequestor::Offer`) or `deferred = true` (Offer
+    /// pushed when the media source becomes ready).
+    ///
+    /// `SolicitOfferResponse` itself does NOT carry an SDP — see Matter 1.5
+    /// §1.16 — so this hook never returns Offer bytes inline.
     async fn on_solicit_offer(
         &self,
         session_id: u16,
         params: &OfferParams,
-        sdp_out: &mut [u8],
-    ) -> Result<(SolicitOutcome, usize), WebRtcError>;
+    ) -> Result<SolicitOutcome, WebRtcError>;
 
     /// Handle an inbound `ProvideOffer` command. The SDP Offer has been
     /// validated as UTF-8; the hooks buffers the SDP Answer internally
@@ -710,10 +721,9 @@ impl<H: WebRtcHooks, const N_SESSIONS: usize, const SDP_LEN: usize, const OUT_LE
 
         let session_id = self.allocate_id();
 
-        let mut sdp_buf = [0u8; 0]; // SolicitOffer never carries an SDP in the response.
-        let (outcome, _sdp_len) = self
+        let outcome = self
             .hooks
-            .on_solicit_offer(session_id, &params, &mut sdp_buf)
+            .on_solicit_offer(session_id, &params)
             .await
             .map_err(Error::from)?;
         let state = if outcome.deferred {

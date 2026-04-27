@@ -377,6 +377,11 @@ where
     /// handler is registered with; the handler uses it to decide
     /// whether `WATERMARK` / `ON_SCREEN_DISPLAY` toggles are legal in
     /// `VideoStreamAllocate` / `VideoStreamModify`.
+    ///
+    /// Panics if `features` advertises `AUDIO` but
+    /// `config.mic_capabilities` is `None`. The `MicrophoneCapabilities`
+    /// attribute is mandatory whenever `AUDIO` is enabled (Matter 1.5
+    /// §1.16) and must be supplied at construction.
     pub const fn new(
         dataver: Dataver,
         endpoint_id: EndptId,
@@ -384,6 +389,10 @@ where
         features: u32,
         hooks: H,
     ) -> Self {
+        assert!(
+            (features & decl::Feature::AUDIO.bits()) == 0 || config.mic_capabilities.is_some(),
+            "CameraAvStreamHandler: AUDIO feature requires `config.mic_capabilities` to be Some",
+        );
         Self {
             dataver,
             endpoint_id,
