@@ -94,6 +94,9 @@ pub struct CmdDetails<'a> {
     pub fab_idx: u8,
     /// Whether the original command was a wildcard one
     pub wildcard: bool,
+    /// The CommandRef from the originating `CommandDataIB`, if any.
+    /// Echoed back in the response so the requester can correlate batched invokes.
+    pub command_ref: Option<u16>,
 }
 
 impl CmdDetails<'_> {
@@ -118,6 +121,7 @@ impl CmdDetails<'_> {
                 ),
                 status,
                 None,
+                self.command_ref,
             ))
         } else {
             None

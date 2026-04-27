@@ -86,17 +86,27 @@ pub struct CmdStatus {
     pub path: CmdPath,
     /// The status of the command invocation.
     pub status: Status,
+    /// The CommandRef echoed from the corresponding `CommandDataIB`.
+    /// Required when the request was part of a batched (multi-path) invoke.
+    pub command_ref: Option<u16>,
 }
 
 impl CmdStatus {
-    /// Create a new command status with the given path, status code, and optional cluster status.
-    pub const fn new(path: CmdPath, status: IMStatusCode, cluster_status: Option<u16>) -> Self {
+    /// Create a new command status with the given path, status code, optional cluster status,
+    /// and optional CommandRef (echoed from the request when batched).
+    pub const fn new(
+        path: CmdPath,
+        status: IMStatusCode,
+        cluster_status: Option<u16>,
+        command_ref: Option<u16>,
+    ) -> Self {
         Self {
             path,
             status: Status {
                 status,
                 cluster_status,
             },
+            command_ref,
         }
     }
 }
@@ -110,12 +120,19 @@ impl CmdStatus {
 pub struct CmdData<'a> {
     pub path: CmdPath,
     pub data: TLVElement<'a>,
+    /// CommandRef set by the requester to correlate batched invokes with their responses.
+    /// Mandatory when the `InvokeRequestMessage` carries more than one `CommandDataIB`.
+    pub command_ref: Option<u16>,
 }
 
 impl<'a> CmdData<'a> {
-    /// Create a new command data instance with the specified path and data.
-    pub const fn new(path: CmdPath, data: TLVElement<'a>) -> Self {
-        Self { path, data }
+    /// Create a new command data instance with the specified path, data, and optional CommandRef.
+    pub const fn new(path: CmdPath, data: TLVElement<'a>, command_ref: Option<u16>) -> Self {
+        Self {
+            path,
+            data,
+            command_ref,
+        }
     }
 }
 
@@ -126,6 +143,7 @@ impl<'a> CmdData<'a> {
 pub enum CmdDataTag {
     Path = 0,
     Data = 1,
+    CommandRef = 2,
 }
 
 /// Response to a command invocation.
@@ -141,15 +159,17 @@ pub enum CmdResp<'a> {
 
 impl CmdResp<'_> {
     /// Create the `Status` variant of a command response
-    /// with the given command path, status code, and optional cluster status.
+    /// with the given command path, status code, optional cluster status, and optional CommandRef.
     pub const fn status_new(
         cmd_path: CmdPath,
         status: IMStatusCode,
         cluster_status: Option<u16>,
+        command_ref: Option<u16>,
     ) -> Self {
         Self::Status(CmdStatus {
             path: cmd_path,
             status: Status::new(status, cluster_status),
+            command_ref,
         })
     }
 }

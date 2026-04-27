@@ -392,6 +392,40 @@ where
             return Ok(());
         }
 
+        let max_paths = exchange.matter().dev_det().max_paths_per_invoke as usize;
+
+        if let Some(reqs) = req.inv_requests()? {
+            let mut count = 0;
+            for r in &reqs {
+                let _ = r?;
+                count += 1;
+            }
+
+            if count > max_paths {
+                return Self::send_status(exchange, IMStatusCode::InvalidAction).await;
+            }
+
+            // Per Matter Core spec section 8.9.4: when an `InvokeRequestMessage`
+            // carries multiple `CommandDataIB` entries, each MUST include a unique
+            // `CommandRef` and the request paths SHALL be unique. `count` is bounded
+            // by `max_paths_per_invoke` (typically a single-digit number), so the
+            // O(n²) pairwise check below is cheaper than allocating buffers.
+            if count > 1 {
+                for (i, req_i) in reqs.iter().enumerate() {
+                    let req_i = req_i?;
+                    if req_i.command_ref.is_none() {
+                        return Self::send_status(exchange, IMStatusCode::InvalidAction).await;
+                    }
+                    for req_j in reqs.iter().skip(i + 1) {
+                        let req_j = req_j?;
+                        if req_i.path == req_j.path || req_i.command_ref == req_j.command_ref {
+                            return Self::send_status(exchange, IMStatusCode::InvalidAction).await;
+                        }
+                    }
+                }
+            }
+        }
+
         let mut wb = WriteBuf::new(&mut tx);
 
         let metadata = self.handler.lock().await;

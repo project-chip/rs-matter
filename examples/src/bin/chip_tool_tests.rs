@@ -272,6 +272,10 @@ fn main() -> Result<(), Error> {
 /// - We can set the product appearance to what the `TestBasicInformation` tests expect;
 /// - We can set the device type and pairing hint to what the `TestDiscovery` tests expect.
 /// - When the `test-tcp` feature is enabled, we advertise TCP support via mDNS (`T=1`).
+/// - We advertise `MaxPathsPerInvoke = 1`. This is the spec minimum and keeps
+///   `TC_IDM_1_4` on the short path (it skips steps 3+ for devices that report 1),
+///   avoiding test-only requirements like `TestEventTriggers` on the General Diagnostics
+///   cluster which we do not implement.
 const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     product_appearance: ProductAppearance {
         finish: ProductFinishEnum::Satin,
@@ -280,6 +284,7 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     device_type: Some(0x0101),
     pairing_hint: PairingHintFlags::PRESS_RESET_BUTTON,
     tcp_supported: cfg!(feature = "test-tcp"),
+    max_paths_per_invoke: 1,
     ..TEST_DEV_DET
 };
 

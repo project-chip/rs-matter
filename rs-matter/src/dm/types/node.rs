@@ -467,6 +467,7 @@ impl<'a> PathExpansionItem<'a> for CmdData<'a> {
                 cmd_id: leaf_id,
                 fab_idx: accessor.fab_idx,
                 wildcard: false,
+                command_ref: self.command_ref,
             },
             self.data.clone(),
         );
@@ -475,7 +476,7 @@ impl<'a> PathExpansionItem<'a> for CmdData<'a> {
     }
 
     fn into_status(self, status: IMStatusCode) -> Self::Status {
-        CmdStatus::new(self.path, status, None)
+        CmdStatus::new(self.path, status, None, self.command_ref)
     }
 }
 

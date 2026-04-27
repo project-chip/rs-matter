@@ -208,8 +208,14 @@ fn test_timed_cmd_success() {
     // A timed request that works
     init_env_logger();
 
-    let input = &[echo_req!(0, 5), echo_req!(1, 10)];
-    let expected = &[echo_resp!(0, 10), echo_resp!(1, 30)];
+    let input = &[
+        echo_req!(0, 5).with_command_ref(0),
+        echo_req!(1, 10).with_command_ref(1),
+    ];
+    let expected = &[
+        echo_resp!(0, 10).with_command_ref(0),
+        echo_resp!(1, 30).with_command_ref(1),
+    ];
 
     let im = new_default_runner();
     let handler = im.handler();

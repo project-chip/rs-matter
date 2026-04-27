@@ -551,6 +551,7 @@ where
 /// A concrete implementation of the `InvokeReply` trait for encoding command data.
 pub struct InvokeReplyInstance<T> {
     path: CmdPath,
+    command_ref: Option<u16>,
     tw: T,
 }
 
@@ -561,6 +562,7 @@ where
     pub const fn new(cmd: &CmdDetails, tw: T) -> Self {
         Self {
             path: cmd.reply_path(),
+            command_ref: cmd.command_ref,
             tw,
         }
     }
@@ -571,7 +573,7 @@ where
     T: TLVWrite + Send,
 {
     fn with_command(mut self, cmd: u32) -> Result<impl Reply, Error> {
-        let mut writer = CmdInvokeReplyInstance::new(self.tw);
+        let mut writer = CmdInvokeReplyInstance::new(self.tw, self.command_ref);
         let mut tw = writer.writer();
 
         tw.start_struct(&TLVTag::Anonymous)?;
@@ -591,6 +593,7 @@ where
     T: TLVWrite,
 {
     anchor: T::Position,
+    command_ref: Option<u16>,
     tw: T,
 }
 
@@ -600,9 +603,10 @@ where
 {
     const TAG: TagType = TagType::Context(CmdDataTag::Data as _);
 
-    fn new(tw: T) -> Self {
+    fn new(tw: T, command_ref: Option<u16>) -> Self {
         Self {
             anchor: tw.get_tail(),
+            command_ref,
             tw,
         }
     }
@@ -620,6 +624,11 @@ where
     }
 
     fn complete(mut self) -> Result<(), Error> {
+        if let Some(command_ref) = self.command_ref {
+            self.tw
+                .u16(&TLVTag::Context(CmdDataTag::CommandRef as _), command_ref)?;
+        }
+
         self.tw.end_container()?;
         self.tw.end_container()?;
 

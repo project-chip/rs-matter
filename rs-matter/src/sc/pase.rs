@@ -449,6 +449,8 @@ pub(crate) struct PBKDFParamResp<'a> {
     pub responder_ssid: u16,
     /// The PBKDF2 parameters, if any
     pub params: Option<PBKDFParamRespParams<'a>>,
+    /// The responder session parameters, if any
+    pub session_parameters: Option<crate::sc::SessionParameters>,
 }
 
 /// The PBKDFParamResponse parameters structure

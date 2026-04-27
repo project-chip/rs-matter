@@ -54,6 +54,7 @@ fn test_client_invoke_non_chunked() {
             let cmd = CmdData {
                 path,
                 data: TLVElement::new(&echo_data),
+                command_ref: None,
             };
 
             let mut chunk_count = 0u32;
