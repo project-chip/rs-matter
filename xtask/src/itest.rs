@@ -143,7 +143,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Session/Commissioning (general Matter protocol)
     //
-    // "TC_SC_3_4", // TODO: a negative-path assertion expects `ChipStackError` to be raised but rs-matter accepts the request. Needs investigation of which validation step is missing.
+    "TC_SC_3_4",
     // "TC_SC_3_5", // Skipped: requires the CHIP `all-clusters-app` (`--string-arg th_server_app_path`); rs-matter does not provide the secondary TH server app this test relies on.
     // "TC_SC_3_6", // TODO: triggers an internal exception during the multi-fabric subscription scenario; needs investigation alongside the other multi-fabric stress tests.
     // "TC_SC_4_1", // Skipped: must be invoked with `--qr-code`/`--manual-code` setup payloads instead of `--discriminator`/`--passcode`. The xtask wrapper passes the latter.
