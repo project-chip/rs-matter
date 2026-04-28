@@ -28,6 +28,7 @@ use crate::fabric::FabricPersist;
 use crate::persist::{Persist, BASIC_INFO_KEY, NETWORKS_KEY};
 use crate::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use crate::tlv::TLVBuilderParent;
+use crate::transport::session::SessionMode;
 use crate::utils::sync::DynBase;
 use crate::{with, MatterState};
 
@@ -294,8 +295,14 @@ impl ClusterHandler for GenCommHandler<'_> {
             let notify_change = |endpt_id, clust_id| ctx.notify_cluster_changed(endpt_id, clust_id);
 
             CommissioningErrorEnum::map(ctx.exchange().with_state(|state| {
+                let sess = ctx.exchange().id().session(&mut state.sessions);
+                let pase_sess_id =
+                    matches!(sess.get_session_mode(), SessionMode::Pase { .. }).then(|| sess.id());
+
                 state.failsafe.expire(
                     &mut state.fabrics,
+                    &mut state.sessions,
+                    pase_sess_id,
                     ctx.networks(),
                     ctx.kv(),
                     notify_mdns,
@@ -398,14 +405,35 @@ impl ClusterHandler for GenCommHandler<'_> {
         let status =
             CommissioningErrorEnum::map(Self::with_armed_failsafe(&ctx, |state, notify_mdns| {
                 let sess = ctx.exchange().id().session(&mut state.sessions);
+                // Spec V1.3 §5.5 / V1.4 §11.10.7.4: on
+                // `CommissioningComplete` the PASE session SHALL be
+                // terminated. The current command is being delivered over
+                // that PASE, so mark it `expired` (response can still go
+                // out, no further exchanges accepted) and let the LRU
+                // eviction reclaim the slot. Without this the promoted
+                // PASE leaks across commissioning rounds and eventually
+                // exhausts the session table — visible as `BUSY` on the
+                // next round's `PBKDFParamRequest` (TC_CADMIN_1_19 hit
+                // this on the 4th round of `SupportedFabrics` rounds).
+                // Modern controllers (CHIP SDK 1.4+) run a
+                // `FindOperationalForCommissioningComplete` step before
+                // sending `CommissioningComplete`, so this command
+                // typically arrives over the new operational CASE session
+                // rather than over PASE. In that case the current session
+                // doesn't need preserving and we just drop every PASE
+                // session unconditionally. (For legacy behaviour where the
+                // command does come over PASE we still preserve the
+                // current one.)
+                let pase_sess_id =
+                    matches!(sess.get_session_mode(), SessionMode::Pase { .. }).then(|| sess.id());
 
                 let fabric = state
                     .failsafe
                     .disarm(sess.get_session_mode(), &mut state.fabrics)?;
 
-                // As per section 5.5 of the Matter Core Spec V1.3 we have to terminate the PASE session
-                // upon completion of commissioning
                 state.pase.close_comm_window(notify_mdns, notify_change)?;
+                state.sessions.remove_pase(pase_sess_id);
+                ctx.exchange().matter().session_removed.notify();
 
                 // Finally, persist the fabric and the network settings, prior to sending the other party a "success" status
                 persist.store(fabric)?;

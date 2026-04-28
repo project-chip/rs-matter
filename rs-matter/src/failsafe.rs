@@ -125,6 +125,7 @@ impl FailSafe {
     pub fn check_failsafe_timeout<S, N>(
         &mut self,
         fabrics: &mut Fabrics,
+        sessions: &mut crate::transport::session::Sessions,
         networks: N,
         kv: S,
         mdns_notif: impl FnMut(),
@@ -137,7 +138,18 @@ impl FailSafe {
         if let State::Armed(ctx) = &self.state {
             let now = (self.epoch)();
             if now >= ctx.armed_at + Duration::from_secs(ctx.timeout_secs as u64) {
-                self.expire(fabrics, networks, kv, mdns_notif, notify_change)?;
+                // Timeout path: no caller exchange to preserve, so wipe
+                // every PASE session along with the fabric / networks
+                // rollback.
+                self.expire(
+                    fabrics,
+                    sessions,
+                    None,
+                    networks,
+                    kv,
+                    mdns_notif,
+                    notify_change,
+                )?;
                 return Ok(true);
             }
         }
@@ -148,9 +160,18 @@ impl FailSafe {
     /// Force the fail-safe context to expire immediately, rolling back any
     /// fabric / network changes that the in-flight commissioning had staged
     /// and resetting the breadcrumb to 0.
+    ///
+    /// `expire_sess_id` is the optional session ID of the exchange that
+    /// triggered the expiry — typically passed when the trigger arrived
+    /// over PASE, so the response can still be sent before the slot is
+    /// reclaimed. `None` for the timeout-driven path or when the trigger
+    /// arrived over CASE.
+    #[allow(clippy::too_many_arguments)]
     pub fn expire<S, N>(
         &mut self,
         fabrics: &mut Fabrics,
+        sessions: &mut crate::transport::session::Sessions,
+        expire_sess_id: Option<u32>,
         networks: N,
         kv: S,
         mut mdns_notif: impl FnMut(),
@@ -187,6 +208,15 @@ impl FailSafe {
                 }
             })
         })?;
+
+        // Any PASE session that was in flight under this fail-safe is
+        // now orphaned: its commissioning attempt was rolled back, so the
+        // session has nothing to do and should not stick around to fill
+        // the session table (same leak class fixed for
+        // `CommissioningComplete`). `Sessions::remove_pase` keeps
+        // `expire_sess_id` alive (marked expired) so any in-flight
+        // response can complete.
+        sessions.remove_pase(expire_sess_id);
 
         self.state = State::Idle;
         self.breadcrumb = 0;

@@ -116,7 +116,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_CADMIN_1_9",
     "TC_CADMIN_1_11",
     "TC_CADMIN_1_15",
-    // "TC_CADMIN_1_19",  // TODO: multi-fabric stress test commissions `SupportedFabrics` controllers back-to-back. Fails part-way with `Incorrect state` from the Python pairing controller. Likely needs deeper investigation of CASE setup between rapid commissioning rounds; not blocking other coverage.
+    "TC_CADMIN_1_19",
     "TC_CADMIN_1_22",
     "TC_CADMIN_1_25",
     // "TC_CADMIN_1_27",  // Skipped: requires the CHIP `jfc-server-app` (Joint Fabric Controller); rs-matter does not implement JF.

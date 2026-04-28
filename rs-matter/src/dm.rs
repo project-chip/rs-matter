@@ -179,6 +179,7 @@ where
             // Disarm the failsafe on timeout
             state.failsafe.check_failsafe_timeout(
                 &mut state.fabrics,
+                &mut state.sessions,
                 &self.networks,
                 &self.kv,
                 &mut notify_mdns,
