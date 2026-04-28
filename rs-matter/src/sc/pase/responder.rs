@@ -353,12 +353,12 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                 exchange.with_state(|state| {
                     if !state.failsafe.is_armed() {
                         let session_mode = SessionMode::Pase { fab_idx: 0 };
-                        let _ = state.failsafe.arm(
+                        state.failsafe.arm(
                             crate::failsafe::DEFAULT_FAILSAFE_EXPIRY_SECS,
                             0,
                             &session_mode,
                             &mut state.pase,
-                        );
+                        )?;
                     }
 
                     Ok(())
