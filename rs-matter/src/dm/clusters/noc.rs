@@ -23,7 +23,7 @@ use core::num::NonZeroU8;
 
 use crate::acl::AclEntry;
 use crate::cert::CertRef;
-use crate::crypto::{CanonPkcSignature, Crypto, SigningSecretKey};
+use crate::crypto::{CanonPkcSignature, Crypto, SigningSecretKey, PKC_CANON_PUBLIC_KEY_LEN};
 use crate::dm::clusters::acl::{emit_acl_entry_changed, ChangeTypeEnum};
 use crate::dm::clusters::adm_comm;
 use crate::dm::clusters::dev_att::DeviceAttestation;
@@ -36,7 +36,7 @@ use crate::tlv::{
     Nullable, Octets, OctetsArrayBuilder, OctetsBuilder, TLVBuilder, TLVBuilderParent, TLVElement,
     TLVTag, TLVWrite,
 };
-use crate::transport::session::{AttChallengeRef, SessionMode};
+use crate::transport::session::{AttChallengeRef, SessionMode, ATT_CHALLENGE_LEN};
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::WriteBuf;
 
@@ -127,7 +127,7 @@ impl ClusterHandler for NocHandler {
                 .icac(Nullable::new(
                     (!fabric.icac().is_empty()).then(|| Octets::new(fabric.icac())),
                 ))?
-                .vvsc(None)?
+                .vvsc((!fabric.vvsc().is_empty()).then(|| Octets::new(fabric.vvsc())))?
                 .fabric_index(Some(fabric.fab_idx().get()))?
                 .end()
         }
@@ -190,7 +190,10 @@ impl ClusterHandler for NocHandler {
                 .fabric_id(fabric.fabric_id())?
                 .node_id(fabric.node_id())?
                 .label(fabric.label())?
-                .vid_verification_statement(None)?
+                .vid_verification_statement(
+                    (!fabric.vid_verification_statement().is_empty())
+                        .then(|| Octets::new(fabric.vid_verification_statement())),
+                )?
                 .fabric_index(Some(fabric.fab_idx().get()))?
                 .end()
         }
@@ -744,18 +747,208 @@ impl ClusterHandler for NocHandler {
 
     fn handle_set_vid_verification_statement(
         &self,
-        _ctx: impl InvokeContext,
-        _request: SetVIDVerificationStatementRequest<'_>,
+        ctx: impl InvokeContext,
+        request: SetVIDVerificationStatementRequest<'_>,
     ) -> Result<(), Error> {
-        Ok(()) // TODO
+        info!("Got Set VID Verification Statement Request");
+
+        let vendor_id = request.vendor_id()?;
+        let vvs = request.vid_verification_statement()?;
+        let vvsc = request.vvsc()?;
+
+        // Spec section 11.18.6.15 (`SetVIDVerificationStatement`): at
+        // least one field must be present, otherwise the command SHALL
+        // be rejected with `INVALID_COMMAND`.
+        if vendor_id.is_none() && vvs.is_none() && vvsc.is_none() {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
+
+        // Per Matter Core spec section 6.2.1, valid VendorIDs are
+        // 0x0001..=0xFFF4. 0xFFF5..=0xFFFF are reserved or test/CSA
+        // values not allowed for SetVIDVerificationStatement.
+        if let Some(vid) = vendor_id {
+            if vid == 0 || vid > 0xFFF4 {
+                return Err(ErrorCode::ConstraintError.into());
+            }
+        }
+
+        // VID Verification Statement, when present, must be either
+        // empty (clearing) or exactly `VID_VERIFICATION_STATEMENT_LEN`
+        // bytes (cluster XML: `length="85" minLength="85"`).
+        if let Some(s) = &vvs {
+            if !s.0.is_empty() && s.0.len() != crate::fabric::VID_VERIFICATION_STATEMENT_LEN {
+                return Err(ErrorCode::ConstraintError.into());
+            }
+        }
+
+        // VVSC, when present, must fit in the shared `icac_or_vvsc`
+        // slot — see `Fabric::icac_or_vvsc` (capacity `MAX_CERT_TLV_LEN`,
+        // also the spec's 400-byte ceiling on the field). An empty VVSC
+        // clears the existing one.
+        if let Some(v) = &vvsc {
+            if v.0.len() > crate::cert::MAX_CERT_TLV_LEN {
+                return Err(ErrorCode::ConstraintError.into());
+            }
+        }
+
+        let fab_idx = NonZeroU8::new(ctx.cmd().fab_idx).ok_or(ErrorCode::UnsupportedAccess)?;
+
+        let mut persist = FabricPersist::new(ctx.kv());
+
+        ctx.exchange().with_state(|state| {
+            let fabric = state.fabrics.fabric_mut(fab_idx)?;
+
+            // A VVSC may only be present on a fabric whose chain has no
+            // ICAC (Matter Core spec section 6.5.7): the VVSC takes the
+            // ICAC's slot in the cert chain, the two are mutually
+            // exclusive. Reject any non-empty VVSC against a fabric
+            // that already carries an ICAC.
+            if let Some(v) = &vvsc {
+                if !v.0.is_empty() && !fabric.icac().is_empty() {
+                    return Err(ErrorCode::InvalidCommand.into());
+                }
+            }
+
+            fabric.set_vid_verification(
+                vendor_id,
+                vvs.as_ref().map(|s| s.0),
+                vvsc.as_ref().map(|v| v.0),
+            )?;
+
+            // Persist semantics (Matter Core spec section 11.18.6.15):
+            //   * If `AddNOC` / `UpdateNOC` was already received in this
+            //     fail-safe context, the VID-verification state is part
+            //     of the pending fabric mutation. Don't persist yet —
+            //     `CommissioningComplete` will persist; a fail-safe
+            //     expiry will roll back via the usual fabric remove /
+            //     reload path.
+            //   * Otherwise (no in-flight fabric mutation), the change
+            //     is immediately persistent and SHALL NOT be reverted
+            //     even if the caller later disarms the fail-safe.
+            let part_of_pending_fabric =
+                state.failsafe.is_armed() && state.failsafe.has_pending_noc_for(fab_idx);
+            if !part_of_pending_fabric {
+                persist.store(fabric)?;
+            }
+
+            Ok(())
+        })?;
+
+        persist.run()?;
+
+        // The mutation changed `NOCs.vvsc` and / or `Fabrics.vendorID`
+        // / `.vidVerificationStatement` on this cluster.
+        ctx.notify_own_cluster_changed();
+
+        Ok(())
     }
 
     fn handle_sign_vid_verification_request<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
-        _request: SignVIDVerificationRequestRequest<'_>,
-        _response: SignVIDVerificationResponseBuilder<P>,
+        ctx: impl InvokeContext,
+        request: SignVIDVerificationRequestRequest<'_>,
+        mut response: SignVIDVerificationResponseBuilder<P>,
     ) -> Result<P, Error> {
-        todo!()
+        info!("Got Sign VID Verification Request");
+
+        // Spec section 11.18.6.16: `FabricIndex` must be in [1..254];
+        // 0 / 255 are constraint errors.
+        let fab_idx_raw = request.fabric_index()?;
+        let fab_idx = NonZeroU8::new(fab_idx_raw)
+            .filter(|fi| fi.get() != u8::MAX)
+            .ok_or(ErrorCode::ConstraintError)?;
+
+        // `ClientChallenge` is fixed at 32 octets per cluster XML
+        // (`length="32" minLength="32"`). Anything else is a
+        // `CONSTRAINT_ERROR`.
+        let client_challenge = request.client_challenge()?.0;
+        if client_challenge.len() != VID_VERIFY_CLIENT_CHALLENGE_LEN {
+            return Err(ErrorCode::ConstraintError.into());
+        }
+
+        ctx.exchange().with_state(|state| {
+            let sess = ctx.exchange().id().session(&mut state.sessions);
+            let attestation_challenge = sess.get_att_challenge().ok_or(ErrorCode::InvalidState)?;
+            let attestation_challenge_bytes: [u8; ATT_CHALLENGE_LEN] =
+                *attestation_challenge.access();
+
+            let fabric = state
+                .fabrics
+                .get(fab_idx)
+                .ok_or(ErrorCode::ConstraintError)?;
+
+            // Build VendorFabricBindingMessage (Matter Core spec
+            // section 6.5.6.2):
+            //   1B fabric_binding_version || 65B root_pub_key
+            //   || 8B fabric_id BE || 2B vendor_id BE
+            let root_ref = CertRef::new(TLVElement::new(fabric.root_ca()));
+            let root_pub_key = root_ref.pubkey()?;
+            if root_pub_key.len() != PKC_CANON_PUBLIC_KEY_LEN {
+                return Err(ErrorCode::InvalidData.into());
+            }
+
+            let fabric_id_be = fabric.fabric_id().to_be_bytes();
+            let vendor_id_be = fabric.vendor_id().to_be_bytes();
+
+            // Compute VIDVerificationTBS in a single contiguous buffer
+            // and feed it to the fabric's NOC private key.
+            //   1B fabric_binding_version || 32B client_challenge
+            //   || 32B attestation_challenge || 1B fabric_index
+            //   || vendor_fabric_binding_message (76B)
+            //   [|| vid_verification_statement (85B)]
+            //
+            // Borrow the response writer's unused tail as scratch — the TBS
+            // is consumed by `sign(...)` before any response field is
+            // written, so the bytes can safely be overwritten afterwards.
+            let tbs_buf = response.writer().available_space();
+            let mut len = 0usize;
+
+            tbs_buf[len] = FABRIC_BINDING_VERSION_1;
+            len += 1;
+            tbs_buf[len..len + client_challenge.len()].copy_from_slice(client_challenge);
+            len += client_challenge.len();
+            tbs_buf[len..len + attestation_challenge_bytes.len()]
+                .copy_from_slice(&attestation_challenge_bytes);
+            len += attestation_challenge_bytes.len();
+            tbs_buf[len] = fab_idx.get();
+            len += 1;
+            // VendorFabricBindingMessage starts here.
+            tbs_buf[len] = FABRIC_BINDING_VERSION_1;
+            len += 1;
+            tbs_buf[len..len + PKC_CANON_PUBLIC_KEY_LEN].copy_from_slice(root_pub_key);
+            len += PKC_CANON_PUBLIC_KEY_LEN;
+            tbs_buf[len..len + 8].copy_from_slice(&fabric_id_be);
+            len += 8;
+            tbs_buf[len..len + 2].copy_from_slice(&vendor_id_be);
+            len += 2;
+            // VIDVerificationStatement is appended only when set.
+            let vvs = fabric.vid_verification_statement();
+            if !vvs.is_empty() {
+                tbs_buf[len..len + vvs.len()].copy_from_slice(vvs);
+                len += vvs.len();
+            }
+
+            // TODO XXX FIXME: MEDIUM BUFFER
+            let mut signature = MaybeUninit::uninit();
+            let signature = signature.init_with(CanonPkcSignature::init());
+
+            ctx.crypto()
+                .secret_key(fabric.secret_key())?
+                .sign(&tbs_buf[..len], signature)?;
+
+            response
+                .fabric_index(fab_idx.get())?
+                .fabric_binding_version(FABRIC_BINDING_VERSION_1)?
+                .signature(Octets::new(signature.access()))?
+                .end()
+        })
     }
 }
+
+/// Matter Core spec section 6.5.6.2: `FabricBindingVersion` constant
+/// for V1 of the `VendorFabricBindingMessage` and `VIDVerificationTBS`.
+const FABRIC_BINDING_VERSION_1: u8 = 1;
+
+/// `ClientChallenge` is fixed at 32 octets (cluster XML
+/// `length="32" minLength="32"` on `SignVIDVerificationRequest`).
+const VID_VERIFY_CLIENT_CHALLENGE_LEN: usize = 32;

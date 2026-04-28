@@ -291,11 +291,16 @@ impl ClusterHandler for GenCommHandler<'_> {
         // `Idle` and would leave the staged fabric committed.
         let status = if expiry_length_seconds == 0 {
             let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
+            let notify_change = |endpt_id, clust_id| ctx.notify_cluster_changed(endpt_id, clust_id);
 
             CommissioningErrorEnum::map(ctx.exchange().with_state(|state| {
-                state
-                    .failsafe
-                    .expire(&mut state.fabrics, ctx.networks(), ctx.kv(), notify_mdns)?;
+                state.failsafe.expire(
+                    &mut state.fabrics,
+                    ctx.networks(),
+                    ctx.kv(),
+                    notify_mdns,
+                    notify_change,
+                )?;
 
                 Ok(())
             }))?

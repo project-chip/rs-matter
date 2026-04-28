@@ -276,9 +276,13 @@ impl ClusterHandler for AdminCommHandler {
         //     don't confuse the commissioner across multiple rounds (see
         //     TC_CGEN_2_4, which iterates open / commission / revoke 8x).
         ctx.exchange().with_state(|state| {
-            state
-                .failsafe
-                .expire(&mut state.fabrics, ctx.networks(), ctx.kv(), notify_mdns)?;
+            state.failsafe.expire(
+                &mut state.fabrics,
+                ctx.networks(),
+                ctx.kv(),
+                notify_mdns,
+                notify_change,
+            )?;
 
             // If RevokeCommissioning came in over a PASE session, don't
             // drop it before we've sent the response — mark it as expired

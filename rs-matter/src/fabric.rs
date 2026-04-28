@@ -324,8 +324,16 @@ pub struct Fabric {
     /// This simplifies the implementation, but results in potentially multiple
     /// copies of the same Root CA used accross multiple fabrics.
     root_ca: Vec<u8, { MAX_CERT_TLV_LEN }>,
-    /// Intermediate CA certificate
-    icac: Vec<u8, { MAX_CERT_TLV_LEN }>,
+    /// Either the Intermediate CA certificate (`vvsc_set == false`) or the
+    /// Vendor Verification Signing Cert (`vvsc_set == true`). The two are
+    /// mutually exclusive in the cert chain (Matter Core spec section
+    /// 6.5.7) — a fabric with an ICAC cannot also carry a VVSC and vice
+    /// versa — so we share one buffer instead of paying for both. Empty
+    /// means neither is set; in that case `vvsc_set` is meaningless.
+    icac_or_vvsc: Vec<u8, { MAX_CERT_TLV_LEN }>,
+    /// Selector for what `icac_or_vvsc` holds: `false` for an ICAC,
+    /// `true` for a VVSC.
+    vvsc_set: bool,
     /// Node Operational Certificate
     noc: Vec<u8, { MAX_CERT_TLV_LEN }>,
     /// Identity Protection Key
@@ -336,7 +344,17 @@ pub struct Fabric {
     acl: Vec<AclEntry, { acl::MAX_ACL_ENTRIES_PER_FABRIC }>,
     /// Fabric group information
     groups: Groups,
+    /// VID Verification Statement (Matter Core spec section 6.2.4 / 11.18.6.15).
+    /// Either empty (not set) or exactly `VID_VERIFICATION_STATEMENT_LEN`
+    /// bytes long; the cluster XML enforces both bounds at the schema
+    /// level (`length="85" minLength="85"`).
+    vid_verification_statement: Vec<u8, VID_VERIFICATION_STATEMENT_LEN>,
 }
+
+/// Exact length of a non-empty VID Verification Statement.
+/// Matches `length="85" minLength="85"` on
+/// `OperationalCredentials::SetVIDVerificationStatement.vid_verification_statement`.
+pub const VID_VERIFICATION_STATEMENT_LEN: usize = 85;
 
 impl Fabric {
     /// Return an in-place-initializer for a Fabric type, with the
@@ -356,12 +374,14 @@ impl Fabric {
             compressed_fabric_id: 0,
             secret_key <- CanonPkcSecretKey::init(),
             root_ca <- Vec::init(),
-            icac <- Vec::init(),
+            icac_or_vvsc <- Vec::init(),
+            vvsc_set: false,
             noc <- Vec::init(),
             ipk <- KeySet::init(),
             label: String::new(),
             acl <- Vec::init(),
             groups <- Groups::init(),
+            vid_verification_statement <- Vec::init(),
         })
     }
 
@@ -394,10 +414,14 @@ impl Fabric {
                 .extend_from_slice(root_ca)
                 .map_err(|_| ErrorCode::BufferTooSmall)?;
         }
-        self.icac.clear();
-        self.icac
+        // `AddNOC` / `UpdateNOC` always replace the cert chain, so any
+        // previously-staged VVSC for this fabric is implicitly cleared
+        // here — the spec doesn't allow an ICAC and a VVSC to coexist.
+        self.icac_or_vvsc.clear();
+        self.icac_or_vvsc
             .extend_from_slice(icac)
             .map_err(|_| ErrorCode::BufferTooSmall)?;
+        self.vvsc_set = false;
         self.noc.clear();
         self.noc
             .extend_from_slice(noc)
@@ -551,8 +575,14 @@ impl Fabric {
     ///
     /// Note that this method might return an empty slice,
     /// which indicates that this fabric does not have an ICAC.
+    /// (The shared `icac_or_vvsc` slot may instead hold a VVSC; see
+    /// `vvsc()`.)
     pub fn icac(&self) -> &[u8] {
-        &self.icac
+        if self.vvsc_set {
+            &[]
+        } else {
+            &self.icac_or_vvsc
+        }
     }
 
     /// Return the fabric's NOC
@@ -573,6 +603,72 @@ impl Fabric {
     /// Return a mutable reference to the fabric's groups
     pub fn groups_mut(&mut self) -> &mut Groups {
         &mut self.groups
+    }
+
+    /// Return the fabric's VVSC bytes (Matter Core spec section 6.5.7).
+    /// Empty when `SetVIDVerificationStatement` has never been called with
+    /// a non-empty VVSC for this fabric, or when the fabric instead carries
+    /// an ICAC (see `icac()`) — VVSC and ICAC share storage and are
+    /// mutually exclusive per spec section 6.5.7.
+    pub fn vvsc(&self) -> &[u8] {
+        if self.vvsc_set {
+            &self.icac_or_vvsc
+        } else {
+            &[]
+        }
+    }
+
+    /// Return the fabric's VID Verification Statement bytes (Matter Core
+    /// spec section 6.2.4 / 11.18.6.15). Either empty (not set) or
+    /// exactly `VID_VERIFICATION_STATEMENT_LEN` bytes.
+    pub fn vid_verification_statement(&self) -> &[u8] {
+        &self.vid_verification_statement
+    }
+
+    /// Apply a `SetVIDVerificationStatement` mutation to the fabric. Each
+    /// field is `Some(slice)` for "replace with this value" (where an
+    /// empty slice clears the value), or `None` for "leave unchanged".
+    /// The caller is responsible for spec-level validation (size limits,
+    /// VVSC vs ICAC mutual exclusion, "all fields absent" → INVALID_COMMAND,
+    /// VendorID range, …); this method only enforces the storage
+    /// invariants (heapless `Vec` capacity).
+    pub fn set_vid_verification(
+        &mut self,
+        vendor_id: Option<u16>,
+        vid_verification_statement: Option<&[u8]>,
+        vvsc: Option<&[u8]>,
+    ) -> Result<(), Error> {
+        if let Some(vid) = vendor_id {
+            self.vendor_id = vid;
+        }
+
+        if let Some(vvs) = vid_verification_statement {
+            self.vid_verification_statement.clear();
+            self.vid_verification_statement
+                .extend_from_slice(vvs)
+                .map_err(|_| ErrorCode::BufferTooSmall)?;
+        }
+
+        if let Some(v) = vvsc {
+            // VVSC and ICAC share `icac_or_vvsc`. Clearing the VVSC must
+            // not stomp on an existing ICAC: per spec section 6.5.7 the
+            // two never coexist on the same fabric, so an empty-VVSC
+            // request against a fabric that holds an ICAC is a no-op
+            // here. The cluster handler still rejects a *non-empty* VVSC
+            // against such a fabric upstream.
+            if !v.is_empty() {
+                self.icac_or_vvsc.clear();
+                self.icac_or_vvsc
+                    .extend_from_slice(v)
+                    .map_err(|_| ErrorCode::BufferTooSmall)?;
+                self.vvsc_set = true;
+            } else if self.vvsc_set {
+                self.icac_or_vvsc.clear();
+                self.vvsc_set = false;
+            }
+        }
+
+        Ok(())
     }
 
     /// Return an iterator over the ACL entries of the fabric

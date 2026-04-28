@@ -182,6 +182,7 @@ where
                 &self.networks,
                 &self.kv,
                 &mut notify_mdns,
+                &mut notify_change,
             )?;
 
             // Close the commissioning window on timeout

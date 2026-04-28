@@ -24,6 +24,8 @@ use crate::crypto::{
     SigningSecretKey, PKC_SECRET_KEY_ZEROED,
 };
 use crate::dm::clusters::net_comm::NetworksAccess;
+use crate::dm::endpoints::ROOT_ENDPOINT_ID;
+use crate::dm::{ClusterId, EndptId};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, Fabrics};
 use crate::im::IMStatusCode;
@@ -126,6 +128,7 @@ impl FailSafe {
         networks: N,
         kv: S,
         mdns_notif: impl FnMut(),
+        notify_change: impl FnMut(EndptId, ClusterId),
     ) -> Result<bool, Error>
     where
         S: KvBlobStoreAccess,
@@ -134,7 +137,7 @@ impl FailSafe {
         if let State::Armed(ctx) = &self.state {
             let now = (self.epoch)();
             if now >= ctx.armed_at + Duration::from_secs(ctx.timeout_secs as u64) {
-                self.expire(fabrics, networks, kv, mdns_notif)?;
+                self.expire(fabrics, networks, kv, mdns_notif, notify_change)?;
                 return Ok(true);
             }
         }
@@ -151,6 +154,7 @@ impl FailSafe {
         networks: N,
         kv: S,
         mut mdns_notif: impl FnMut(),
+        mut notify_change: impl FnMut(EndptId, ClusterId),
     ) -> Result<bool, Error>
     where
         S: KvBlobStoreAccess,
@@ -188,6 +192,26 @@ impl FailSafe {
         self.breadcrumb = 0;
 
         mdns_notif();
+
+        // The rollback above restores attributes visible to subscribers —
+        // `OperationalCredentials::NOCs` / `Fabrics` (including `vvsc`,
+        // `VIDVerificationStatement`, `vendorID` mutated in-failsafe by
+        // `SetVIDVerificationStatement`) and `NetworkCommissioning::Networks`
+        // — to their persisted values. Notify so any active subscriptions
+        // re-report.
+        //
+        // TODO: this only flags subscriptions for re-reporting; it does
+        // *not* bump the affected clusters' data versions. `Failsafe`
+        // has no handle to the cluster meta needed to do that. Pre-existing
+        // limitation, not introduced by the timeout-vs-force-expiry path.
+        notify_change(
+            ROOT_ENDPOINT_ID,
+            crate::dm::clusters::decl::operational_credentials::FULL_CLUSTER.id,
+        );
+        notify_change(
+            ROOT_ENDPOINT_ID,
+            crate::dm::clusters::decl::network_commissioning::FULL_CLUSTER.id,
+        );
 
         Ok(true)
     }
@@ -318,6 +342,21 @@ impl FailSafe {
             State::Idle => false,
             State::Armed(ArmedCtx { fab_idx, .. }) => fab_idx == caller_fab_idx,
         }
+    }
+
+    /// Whether the current fail-safe context already has an in-flight
+    /// `AddNOC` or `UpdateNOC` for `caller_fab_idx`. Used by
+    /// `SetVIDVerificationStatement` to decide whether the VID-verification
+    /// mutation rides along with the pending fabric (and thus rolls back
+    /// on fail-safe expiry) or is committed to storage immediately.
+    pub fn has_pending_noc_for(&self, caller_fab_idx: NonZeroU8) -> bool {
+        let State::Armed(ctx) = &self.state else {
+            return false;
+        };
+        ctx.fab_idx == caller_fab_idx.get()
+            && ctx
+                .flags
+                .intersects(NocFlags::ADD_NOC_RECVD | NocFlags::UPDATE_NOC_RECVD)
     }
 
     pub fn check_armed(&self, session_mode: &SessionMode) -> Result<(), Error> {

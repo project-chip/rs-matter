@@ -139,8 +139,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_OPCREDS_3_2",
     "TC_OPCREDS_3_4",
     "TC_OPCREDS_3_5",
-    // "TC_OPCREDS_3_8", // Skipped: requires the Matter 1.4 `VID Verification` feature (`SignVIDVerificationRequest`, `SetVIDVerificationStatement`, the `vvsc` field on `NOCs`, and the `VIDVerificationStatement` field on `Fabrics`). rs-matter currently stubs both VID-Verification commands, so steps 4+ of this test all surface as `Failure`. The "non-fabric-filtered NOCs read" gap that originally blocked step 2 is fixed (`NOCStruct.noc` / `.icac` are no longer treated as fabric-sensitive in `NocHandler::nocs`), but enabling the test requires implementing VID Verification end-to-end (signing TBS with the fabric's NOC key, plus persisted VVSC/VID/VIDVerificationStatement on `Fabric`).
-
+    "TC_OPCREDS_3_8",
     //
     // Python tests — Session/Commissioning (general Matter protocol)
     //
@@ -558,6 +557,17 @@ impl ITests {
             // construction.
             "TC_CADMIN_1_3_4" | "TC_CADMIN_1_5" | "TC_CADMIN_1_9" | "TC_CADMIN_1_11"
             | "TC_CADMIN_1_15" | "TC_CADMIN_1_22" | "TC_CADMIN_1_25" => Some(300),
+            // TC_OPCREDS_3_8 exercises the VID-Verification feature (Matter
+            // 1.4): it sets a 400-byte VVSC and an 85-byte
+            // VIDVerificationStatement on a fabric and then issues
+            // non-fabric-filtered reads of `NOCs` / `Fabrics` covering both
+            // fabrics. With two ~750-byte struct entries plus the 400-byte
+            // VVSC the response cannot fit in a single MTU and rs-matter
+            // falls back to its chunked-read path, which on the debug
+            // profile is dominated by per-error backtrace dumps. Bump the
+            // per-test ceiling so the chunked transfer has time to
+            // complete; the test passes in well under a minute on release.
+            "TC_OPCREDS_3_8" => Some(300),
             _ => None,
         }
     }
@@ -614,6 +624,16 @@ impl ITests {
                  --PICS src/app/tests/suites/certification/ci-pics-values"
             }
             "TC_CGEN_2_4" => " --endpoint 0",
+            // TC_OPCREDS_3_8 reads `NOCs` non-fabric-filtered with two
+            // fabrics, each carrying a max-sized 400-byte VVSC; the
+            // resulting payload is well past one MTU and rs-matter falls
+            // back to chunked reads. On the debug profile every chunk
+            // boundary triggers an `Error::NoSpace` whose backtrace dump
+            // dominates the per-chunk wall-clock. Bumping the test's
+            // `default_timeout` (90 s) past the per_endpoint_runner
+            // wait_for is enough to let the chunked transfers finish; the
+            // test passes in well under 30 s on release.
+            "TC_OPCREDS_3_8" => " --endpoint 0 --timeout 240",
             // CADMIN (Administrator Commissioning) tests target the root
             // endpoint via `@run_if_endpoint_matches(has_cluster(...))`.
             "TC_CADMIN_1_3_4"
@@ -632,7 +652,6 @@ impl ITests {
             | "TC_OPCREDS_3_2"
             | "TC_OPCREDS_3_4"
             | "TC_OPCREDS_3_5"
-            | "TC_OPCREDS_3_8"
             // SC (Secure Channel) tests target the root endpoint.
             | "TC_SC_3_4"
             | "TC_SC_3_6"
