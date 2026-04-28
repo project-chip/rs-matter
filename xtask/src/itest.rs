@@ -135,7 +135,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Operational Credentials (system cluster)
     //
-    // "TC_OPCREDS_3_1", // TODO: rs-matter accepts an `AddTrustedRootCertificate` payload with a malformed signature (the test expects this to be rejected). NOC handler needs to validate the RCAC's self-signature before accepting it.
+    "TC_OPCREDS_3_1",
     "TC_OPCREDS_3_2",
     // "TC_OPCREDS_3_4", // TODO: `UpdateNOC` returns `FailSafeRequired` / `NocMissingCsr` on the negative paths, but the test expects the spec's specific `NodeOperationalCertStatusEnum` values for each error condition. Needs alignment of error mapping.
     // "TC_OPCREDS_3_5", // TODO: `UpdateNOC` returns `kMissingCsr` instead of `kOk` even on the valid happy path — looks like the CSR slot is being cleared too eagerly between the CSR request and the `UpdateNOC` call.

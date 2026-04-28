@@ -101,11 +101,13 @@ pub enum ErrorCode {
     Utf8Fail,
     GennCommInvalidAuthentication,
     NocInvalidNoc,
+    NocInvalidPublicKey,
     NocMissingCsr,
     NocFabricTableFull,
     NocFabricConflict,
     NocLabelConflict,
     NocInvalidFabricIndex,
+    NocInvalidAdminSubject,
     Failure,
     // Certification Declaration errors
     CdInvalidFormat,

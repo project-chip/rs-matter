@@ -49,7 +49,18 @@ impl NodeOperationalCertStatusEnum {
             Err(err) => match err.code() {
                 ErrorCode::NocFabricTableFull => Ok(Self::TableFull),
                 ErrorCode::NocInvalidFabricIndex => Ok(Self::InvalidFabricIndex),
-                ErrorCode::ConstraintError => Ok(Self::MissingCsr),
+                ErrorCode::NocFabricConflict => Ok(Self::FabricConflict),
+                ErrorCode::NocLabelConflict => Ok(Self::LabelConflict),
+                ErrorCode::NocInvalidNoc => Ok(Self::InvalidNOC),
+                ErrorCode::NocInvalidPublicKey => Ok(Self::InvalidPublicKey),
+                ErrorCode::NocInvalidAdminSubject => Ok(Self::InvalidAdminSubject),
+                ErrorCode::NocMissingCsr => Ok(Self::MissingCsr),
+                // Bare `ConstraintError` from `FailSafe::check_state`
+                // (e.g. "AddNOC received twice in the same fail-safe
+                // context", spec section 11.18.6.6) is reported as an
+                // IM-level status code per the spec, not as a
+                // `NodeOperationalCertStatusEnum` cluster status — let it
+                // propagate.
                 _ => Err(err),
             },
         }
@@ -580,13 +591,21 @@ impl ClusterHandler for NocHandler {
         let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_state(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
 
-            let SessionMode::Case { fab_idx, .. } = sess.get_session_mode() else {
-                return Err(ErrorCode::GennCommInvalidAuthentication.into());
-            };
+            // `UpdateFabricLabel` is fabric-scoped and the IM access-control
+            // check (see `cluster::check_cmd_access`) already rejects calls
+            // from a session with no associated fabric (PASE pre-AddNOC) with
+            // `UnsupportedAccess`. Anything that gets here therefore has an
+            // accessing fabric — and per the spec / CHIP reference impl,
+            // that includes a PASE session whose fab_idx was upgraded by
+            // `AddNOC` (`session.upgrade_fabric_idx`). So allow Case *and*
+            // Pase as long as fab_idx > 0; the `accessing_fab_idx()` helper
+            // returns 0 only for plain-text / un-upgraded PASE.
+            let fab_idx = NonZeroU8::new(sess.get_local_fabric_idx())
+                .ok_or(ErrorCode::GennCommInvalidAuthentication)?;
 
             let fabric = state
                 .fabrics
-                .update_label(*fab_idx, request.label()?)
+                .update_label(fab_idx, request.label()?)
                 .map_err(|e| {
                     if e.code() == ErrorCode::Invalid {
                         ErrorCode::NocLabelConflict.into()
@@ -691,12 +710,25 @@ impl ClusterHandler for NocHandler {
     ) -> Result<(), Error> {
         info!("Got Add Trusted Root Cert Request");
 
+        // Self-signature validation in `add_trusted_root_cert` re-encodes the
+        // RCAC into ASN.1 to feed it to ECDSA verify; sized to
+        // `MAX_CERT_ASN1_LEN` (the same bound `validate_certs` uses for the
+        // NOC chain).
+        // TODO XXX FIXME: LARGE BUFFER.
+        // We can avoid it if we had access to
+        // the output buffer (TX), but this is not possible yet for handler methods
+        // that are not expected to return command responses other than status result.
+        let mut buf = [0u8; crate::cert::MAX_CERT_ASN1_LEN];
+
         GenCommHandler::with_armed_failsafe(&ctx, |state, _| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
 
-            state
-                .failsafe
-                .add_trusted_root_cert(sess.get_session_mode(), request.root_ca_certificate()?.0)
+            state.failsafe.add_trusted_root_cert(
+                ctx.crypto(),
+                sess.get_session_mode(),
+                request.root_ca_certificate()?.0,
+                &mut buf,
+            )
         })
     }
 

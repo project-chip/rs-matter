@@ -688,6 +688,13 @@ impl<'a> CertRef<'a> {
         Ok(authority.is_some())
     }
 
+    /// Whether this certificate is self-signed (its `AuthorityKeyId` matches
+    /// its `SubjectKeyId`). Matter-issued RCACs are always self-signed; an
+    /// ICAC or NOC must not be (Matter Core spec section 6.5).
+    pub fn is_self_signed(&self) -> Result<bool, Error> {
+        self.is_authority(self)
+    }
+
     pub fn as_asn1(&self, buf: &mut [u8]) -> Result<usize, Error> {
         let mut w = ASN1Writer::new(buf);
         self.encode(&mut w)?;

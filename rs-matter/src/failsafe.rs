@@ -20,8 +20,8 @@ use core::time::Duration;
 
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
 use crate::crypto::{
-    CanonAeadKeyRef, CanonPkcSecretKey, CanonPkcSecretKeyRef, Crypto, SecretKey,
-    PKC_SECRET_KEY_ZEROED,
+    CanonAeadKeyRef, CanonPkcSecretKey, CanonPkcSecretKeyRef, Crypto, PublicKey, SecretKey,
+    SigningSecretKey, PKC_SECRET_KEY_ZEROED,
 };
 use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::error::{Error, ErrorCode};
@@ -351,10 +351,12 @@ impl FailSafe {
         )
     }
 
-    pub fn add_trusted_root_cert(
+    pub fn add_trusted_root_cert<C: Crypto>(
         &mut self,
+        crypto: C,
         session_mode: &SessionMode,
         root_ca: &[u8],
+        buf: &mut [u8],
     ) -> Result<(), Error> {
         self.check_state(
             session_mode,
@@ -362,6 +364,20 @@ impl FailSafe {
             NocFlags::ADD_ROOT_CERT_RECVD,
             NocFlags::ADD_ROOT_CERT_RECVD,
         )?;
+
+        // Validate the candidate RCAC by checking its self-signature (a Matter
+        // RCAC is self-issued, so the certificate's own public key must verify
+        // the certificate's signature). Any decode or signature failure must
+        // surface as `INVALID_COMMAND` per Matter Core spec section 11.18.6.13
+        // (`AddTrustedRootCertificate`), not as the generic `Failure` we'd
+        // otherwise get from `ErrorCode::InvalidSignature`.
+        {
+            let root_ref = CertRef::new(TLVElement::new(root_ca));
+            root_ref
+                .verify_chain_start(&crypto)
+                .finalise(buf)
+                .map_err(|_| ErrorCode::InvalidCommand)?;
+        }
 
         self.root_ca.clear();
         self.root_ca
@@ -442,8 +458,24 @@ impl FailSafe {
             let icac_ref = icac.map(|icac| CertRef::new(TLVElement::new(icac)));
             let root_ref = CertRef::new(TLVElement::new(&self.root_ca));
 
-            // Validate the certs first
-            Self::validate_certs(&crypto, &noc_ref, icac_ref.as_ref(), &root_ref, buf)?;
+            // Validate the certs first. A chain that doesn't pass
+            // signature verification (or that doesn't chain back to the
+            // staged root) is reported as `kInvalidNOC` cluster status per
+            // Matter Core spec section 11.18.6.7 (`UpdateNOC`).
+            Self::validate_certs(&crypto, &noc_ref, icac_ref.as_ref(), &root_ref, buf)
+                .map_err(|_| ErrorCode::NocInvalidNoc)?;
+
+            // The NOC's public key must match the public key derived from
+            // the most recent `CSRRequest(isForUpdateNOC=true)` (Matter
+            // Core spec section 11.18.6.7).
+            let mut csr_pubkey = crate::crypto::CanonPkcPublicKey::new();
+            crypto
+                .secret_key(self.secret_key.reference())?
+                .pub_key()?
+                .write_canon(&mut csr_pubkey)?;
+            if csr_pubkey.access().as_slice() != noc_ref.pubkey()? {
+                Err(ErrorCode::NocInvalidPublicKey)?;
+            }
 
             // Check that the fabric ID and root cert pubkey in the NOC
             // match the ones of the fabric which is being updated
@@ -509,13 +541,38 @@ impl FailSafe {
             NocFlags::ADD_NOC_RECVD,
         )?;
 
+        // CaseAdminSubject must be either a valid Operational Node ID or a
+        // CASE Authenticated Tag (CAT) — Matter Core spec section 11.18.6.6
+        // (`AddNOC`). Anything else (most commonly 0) is reported as
+        // `kInvalidAdminSubject` cluster status.
+        if !crate::acl::is_node(case_admin_subject) && !crate::acl::is_noc_cat(case_admin_subject) {
+            Err(ErrorCode::NocInvalidAdminSubject)?;
+        }
+
         {
             let noc_ref = CertRef::new(TLVElement::new(noc));
             let icac_ref = icac.map(|icac| CertRef::new(TLVElement::new(icac)));
             let root_ref = CertRef::new(TLVElement::new(&self.root_ca));
 
-            // Validate the certs first
-            Self::validate_certs(&crypto, &noc_ref, icac_ref.as_ref(), &root_ref, buf)?;
+            // Validate the certs first. A chain that doesn't pass
+            // signature verification (or that doesn't chain back to the
+            // staged root) is reported as `kInvalidNOC` cluster status per
+            // Matter Core spec section 11.18.6.6 (`AddNOC`).
+            Self::validate_certs(&crypto, &noc_ref, icac_ref.as_ref(), &root_ref, buf)
+                .map_err(|_| ErrorCode::NocInvalidNoc)?;
+
+            // The NOC's public key must match the public key derived from
+            // the most recent `CSRRequest` (Matter Core spec section
+            // 11.18.6.6). The CSR's secret key is stashed in
+            // `self.secret_key` by `add_csr_req` / `update_csr_req`.
+            let mut csr_pubkey = crate::crypto::CanonPkcPublicKey::new();
+            crypto
+                .secret_key(self.secret_key.reference())?
+                .pub_key()?
+                .write_canon(&mut csr_pubkey)?;
+            if csr_pubkey.access().as_slice() != noc_ref.pubkey()? {
+                Err(ErrorCode::NocInvalidPublicKey)?;
+            }
 
             // Check that there is no fabric with the same fabric ID and root cert pubkey
             // as the one in the NOC, to avoid adding duplicate fabrics
@@ -593,7 +650,13 @@ impl FailSafe {
         let mut verifier = noc.verify_chain_start(crypto);
 
         if let Some(icac) = icac {
-            // If ICAC is present handle it
+            // If ICAC is present handle it. Reject the case where the
+            // commissioner re-uses the RCAC as the ICAC: Matter Core spec
+            // section 6.5 requires the ICAC to be a separate CA cert
+            // (i.e. not self-signed).
+            if icac.is_self_signed()? {
+                return Err(ErrorCode::InvalidData.into());
+            }
             verifier = verifier.add_cert(icac, buf)?;
         }
 

@@ -275,21 +275,44 @@ impl ClusterHandler for GenCommHandler<'_> {
         request: ArmFailSafeRequest<'_>,
         response: ArmFailSafeResponseBuilder<P>,
     ) -> Result<P, Error> {
+        let expiry_length_seconds = request.expiry_length_seconds()?;
+
         info!(
             "Got Arm Fail Safe Request, expiry {}s",
-            request.expiry_length_seconds()?
+            expiry_length_seconds
         );
 
-        let status = CommissioningErrorEnum::map(ctx.exchange().with_state(|state| {
-            let sess = ctx.exchange().id().session(&mut state.sessions);
+        // `ArmFailSafe(0)` means "force-expire the fail-safe context" per
+        // Matter Core spec section 11.10.7.1: if the fail-safe is armed,
+        // the device SHALL roll back any uncommitted fabric / network state
+        // and reset the breadcrumb. Route through `force_expiry` so that
+        // in-flight `AddNOC` / `SetRegulatoryConfig` changes are reverted —
+        // the bare `failsafe.arm(0, ...)` path only flips the state to
+        // `Idle` and would leave the staged fabric committed.
+        let status = if expiry_length_seconds == 0 {
+            let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
 
-            state.failsafe.arm(
-                request.expiry_length_seconds()?,
-                request.breadcrumb()?,
-                sess.get_session_mode(),
-                &mut state.pase,
-            )
-        }))?;
+            CommissioningErrorEnum::map(ctx.exchange().with_state(|state| {
+                let _ = state.failsafe.force_expiry(
+                    &mut state.fabrics,
+                    ctx.networks(),
+                    ctx.kv(),
+                    notify_mdns,
+                )?;
+                Ok(())
+            }))?
+        } else {
+            CommissioningErrorEnum::map(ctx.exchange().with_state(|state| {
+                let sess = ctx.exchange().id().session(&mut state.sessions);
+
+                state.failsafe.arm(
+                    expiry_length_seconds,
+                    request.breadcrumb()?,
+                    sess.get_session_mode(),
+                    &mut state.pase,
+                )
+            }))?
+        };
 
         // Breadcrumb (and possibly failsafe-arm state) may have changed
         ctx.notify_own_cluster_changed();
