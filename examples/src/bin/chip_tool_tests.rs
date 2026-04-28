@@ -77,7 +77,7 @@ mod mdns;
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
-static BUFFERS: StaticCell<PooledBuffers<10, rs_matter::dm::IMBuffer>> = StaticCell::new();
+static BUFFERS: StaticCell<PooledBuffers<20, rs_matter::dm::IMBuffer>> = StaticCell::new();
 static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
 static EVENTS: StaticCell<Events> = StaticCell::new();
 static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
@@ -102,7 +102,7 @@ fn main() -> Result<(), Error> {
     info!(
         "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
         core::mem::size_of::<Matter>(),
-        core::mem::size_of::<PooledBuffers<10, rs_matter::dm::IMBuffer>>(),
+        core::mem::size_of::<PooledBuffers<20, rs_matter::dm::IMBuffer>>(),
         core::mem::size_of::<Subscriptions>()
     );
 
@@ -176,12 +176,16 @@ fn main() -> Result<(), Error> {
     info!(
         "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
         core::mem::size_of_val(&responder),
-        core::mem::size_of_val(&responder.run::<4, 4>())
+        core::mem::size_of_val(&responder.run::<16, 4>())
     );
 
-    // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
-    // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-    let mut respond = pin!(responder.run::<4, 4>());
+    // Run the responder with up to 16 handlers (i.e. 16 exchanges can be handled simultaneously).
+    // Clients trying to open more exchanges than the ones currently running will get
+    // "I'm busy, please try again later" from the busy-responder pool (4 handlers).
+    // 16 / 4 chosen to match `max-sessions-32`: TC_SC_3_6 establishes 15 subscriptions
+    // back-to-back and the initial-report exchanges overlap with the next handshake,
+    // overflowing the smaller pool with IM BUSY (status 0x9c).
+    let mut respond = pin!(responder.run::<16, 4>());
 
     // Run the background job of the data model
     let mut dm_job = pin!(dm.run());
