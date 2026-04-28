@@ -139,7 +139,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_OPCREDS_3_2",
     "TC_OPCREDS_3_4",
     "TC_OPCREDS_3_5",
-    // "TC_OPCREDS_3_8", // TODO: a second-fabric NOC entry is not visible in the `NOCs` attribute when read non-fabric-filtered — likely a fabric-scoped attribute filter incorrectly applied to a non-fabric-filtered read.
+    // "TC_OPCREDS_3_8", // Skipped: requires the Matter 1.4 `VID Verification` feature (`SignVIDVerificationRequest`, `SetVIDVerificationStatement`, the `vvsc` field on `NOCs`, and the `VIDVerificationStatement` field on `Fabrics`). rs-matter currently stubs both VID-Verification commands, so steps 4+ of this test all surface as `Failure`. The "non-fabric-filtered NOCs read" gap that originally blocked step 2 is fixed (`NOCStruct.noc` / `.icac` are no longer treated as fabric-sensitive in `NocHandler::nocs`), but enabling the test requires implementing VID Verification end-to-end (signing TBS with the fabric's NOC key, plus persisted VVSC/VID/VIDVerificationStatement on `Fabric`).
 
     //
     // Python tests — Session/Commissioning (general Matter protocol)

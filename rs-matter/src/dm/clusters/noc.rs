@@ -140,27 +140,26 @@ impl ClusterHandler for NocHandler {
                     && !fabric.root_ca().is_empty()
             });
 
+            // Outer `fabrics` iterator already drops entries the
+            // accessor isn't allowed to see when `fab_filter` is true;
+            // the inner-loop checks that used to gate every entry on
+            // `attr.fab_idx == fabric.fab_idx().get()` were therefore
+            // hiding non-accessing fabrics from a deliberately
+            // non-fabric-filtered read. Per Matter Core spec §11.18.5.1
+            // (NOCStruct, post-1.4.2) `noc` / `icac` are no longer
+            // fabric-sensitive, so a non-fabric-filtered read MUST return
+            // every fabric's NOC.
             match builder {
                 ArrayAttributeRead::ReadAll(mut builder) => {
                     for fabric in fabrics {
-                        if attr.fab_idx != fabric.fab_idx().get() {
-                            continue;
-                        }
-
                         builder = read_into(fabric, builder.push()?)?;
                     }
 
                     builder.end()
                 }
                 ArrayAttributeRead::ReadOne(index, builder) => {
-                    let fabric = fabrics.nth(index as _);
-
-                    if let Some(fabric) = fabric {
-                        if attr.fab_idx != fabric.fab_idx().get() {
-                            Err(ErrorCode::ConstraintError.into())
-                        } else {
-                            read_into(fabric, builder)
-                        }
+                    if let Some(fabric) = fabrics.nth(index as _) {
+                        read_into(fabric, builder)
                     } else {
                         Err(ErrorCode::ConstraintError.into())
                     }
