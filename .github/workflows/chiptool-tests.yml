@@ -66,16 +66,16 @@ jobs:
         run: |
           cargo xtask itest-setup --gitref "${{ inputs.chip_ref || 'v1.5-branch' }}"
 
-      - name: Run System integration tests (with RustCrypto by default)
+      - name: Run System integration tests with RustCrypto
         run: |
           cargo xtask itest --skip-setup
 
       # TODO: Enable once mbedtls-rs-sys built removes the installation step
-      # - name: Run One YAML Integration Test with MbedTLS
+      # - name: Run one System integration test with MbedTLS
       #   run: |
       #     cargo xtask itest --features mbedtls TestBasicInformation
 
-      - name: Run One integration test with OpenSSL
+      - name: Run one System integration test with OpenSSL
         run: |
           cargo xtask itest --skip-setup --features openssl TestBasicInformation
 

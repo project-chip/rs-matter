@@ -86,9 +86,9 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Interaction Data Model (general Matter protocol)
     //
-    "TC_IDM_2_2",
     "TC_IDM_1_2",
     "TC_IDM_1_4",
+    "TC_IDM_2_2",
     "TC_IDM_4_2",
     //
     // Python tests — Access Control (system cluster)

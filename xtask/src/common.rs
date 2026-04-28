@@ -169,14 +169,23 @@ impl ChipBuilder {
     }
 
     /// Build and install the CHIP Python "matter" wheel into the
-    /// pigweed venv that `scripts/activate.sh` already sets up.
+    /// pigweed venv that `scripts/activate.sh` already sets up, plus the
+    /// runtime requirements that the `MatterBaseTest`-style scripts in
+    /// `src/python_testing/` import (zeroconf, ifaddr, mobly, …). Both
+    /// happen in a single `scripts/build_python.sh` call so we stay
+    /// aligned with how CHIP's own CI bootstraps the venv — no
+    /// hand-rolled `pip install` lines that would drift from upstream's
+    /// dependency list.
     ///
     /// Required by `scripts/tests/run_python_test.py`, whose imports
     /// (`matter.testing.metadata`, `matter.testing.tasks`) come from
-    /// the wheel built by `scripts/build_python.sh`.
+    /// the wheel built by `scripts/build_python.sh`, and by the test
+    /// scripts themselves (e.g. CADMIN tests pull in `mdns_discovery`,
+    /// which imports `zeroconf`).
     ///
-    /// Idempotent: if the wheel is already importable in the venv,
-    /// this is a no-op (unless `force_rebuild` is set).
+    /// Idempotent: if both the wheel and the python_testing requirements
+    /// are already importable in the venv, this is a no-op (unless
+    /// `force_rebuild` is set).
     pub fn build_python_wheel(&self, force_rebuild: bool) -> anyhow::Result<()> {
         let chip_dir = self.chip_dir();
 
@@ -188,15 +197,17 @@ impl ChipBuilder {
             );
         }
 
-        // Probe: is the `matter.testing` package already importable?
+        // Probe both the wheel and a representative pytest dep (`zeroconf`).
+        // If either is missing we re-run `build_python.sh`, which is
+        // idempotent against an existing venv when invoked with `-c no`.
         let probe = Command::new(venv_dir.join("bin/python3"))
             .arg("-c")
-            .arg("import matter.testing.metadata, matter.testing.tasks")
+            .arg("import matter.testing.metadata, matter.testing.tasks, zeroconf")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
         if !force_rebuild && probe.map(|s| s.success()).unwrap_or(false) {
-            info!("CHIP Python wheel already installed in pigweed venv");
+            info!("CHIP Python wheel and test requirements already installed in pigweed venv");
             return Ok(());
         }
 
@@ -204,10 +215,17 @@ impl ChipBuilder {
 
         // `-i <venv>` installs the wheel into the existing venv; `-c no`
         // keeps the venv (preserves mobly etc.) instead of recreating it.
+        // `--include_pytest_deps yes` pulls in `scripts/tests/requirements.txt`
+        // and `src/python_testing/requirements.txt` (zeroconf, ifaddr, …) —
+        // matches what CHIP CI does so the venv ends up with the same set of
+        // packages the upstream test scripts assume. Note that this requires
+        // `libpcsclite-dev` on the host (already listed in `REQUIRED_PACKAGES`)
+        // because `pyscard` in those requirements builds a native extension
+        // against `<winscard.h>`.
         // `run_in_build_env.sh` sources `activate.sh` first so that
         // `python`, `gn`, `ninja` etc. are on PATH.
         let runner = chip_dir.join("scripts/run_in_build_env.sh");
-        let cmd_line = "./scripts/build_python.sh -i .environment/pigweed-venv -c no -d false";
+        let cmd_line = "./scripts/build_python.sh -i .environment/pigweed-venv -c no -d false --include_pytest_deps yes";
 
         // PW_ACTIVATE_SKIP_CHECKS=1 bypasses the `pw doctor` health check in
         // activate.sh which fails when the `pw` CLI isn't on PATH (e.g. when
@@ -226,7 +244,7 @@ impl ChipBuilder {
             !self.print_cmd_output,
         )?;
 
-        info!("CHIP Python wheel installed successfully");
+        info!("CHIP Python wheel and test requirements installed successfully");
 
         Ok(())
     }
