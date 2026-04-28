@@ -138,7 +138,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_OPCREDS_3_1",
     "TC_OPCREDS_3_2",
     "TC_OPCREDS_3_4",
-    // "TC_OPCREDS_3_5", // TODO: `UpdateNOC` returns `kMissingCsr` instead of `kOk` even on the valid happy path — looks like the CSR slot is being cleared too eagerly between the CSR request and the `UpdateNOC` call.
+    "TC_OPCREDS_3_5",
     // "TC_OPCREDS_3_8", // TODO: a second-fabric NOC entry is not visible in the `NOCs` attribute when read non-fabric-filtered — likely a fabric-scoped attribute filter incorrectly applied to a non-fabric-filtered read.
 
     //
