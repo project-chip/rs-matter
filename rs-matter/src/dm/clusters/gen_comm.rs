@@ -168,6 +168,24 @@ impl<'a> GenCommHandler<'a> {
         Self::with_armed_failsafe_ex(ctx, f)
     }
 
+    /// Return whether the supplied `NewRegulatoryConfig` value is allowed
+    /// given the device's `LocationCapability`. Mirrors the matrix in Matter
+    /// Core spec section 11.10.7.2.1.
+    fn is_regulatory_config_supported(
+        policy: &dyn CommPolicy,
+        new_config: RegulatoryLocationTypeEnum,
+    ) -> bool {
+        match policy.location_cap() {
+            RegulatoryLocationTypeEnum::Indoor => {
+                matches!(new_config, RegulatoryLocationTypeEnum::Indoor)
+            }
+            RegulatoryLocationTypeEnum::Outdoor => {
+                matches!(new_config, RegulatoryLocationTypeEnum::Outdoor)
+            }
+            RegulatoryLocationTypeEnum::IndoorOutdoor => true,
+        }
+    }
+
     /// Execute the provided closure after checking that the failsafe is armed for the
     /// fabric of this session.
     ///
@@ -292,8 +310,31 @@ impl ClusterHandler for GenCommHandler<'_> {
             return Err(ErrorCode::ConstraintError.into());
         }
 
-        let location_type = request.new_regulatory_config()?;
+        // Per Matter Core spec section 11.10.7.2.1, `NewRegulatoryConfig`
+        // SHALL be one of the values supported by the device's
+        // `LocationCapability`:
+        //
+        //   * `LocationCapability::Indoor`         -> only `Indoor`
+        //   * `LocationCapability::Outdoor`        -> only `Outdoor`
+        //   * `LocationCapability::IndoorOutdoor`  -> any of the three
+        //
+        // A request that violates this — including an enum value the device
+        // doesn't even recognise — must be rejected with the cluster-level
+        // `ValueOutsideRange` rather than a generic IM `Failure`. Decode the
+        // enum defensively because TLV decoding will reject an unknown
+        // variant before we ever see it (the test sends `3`).
+        let location_type = request.new_regulatory_config();
         let breadcrumb = request.breadcrumb()?;
+
+        let location_type = match location_type {
+            Ok(loc) if Self::is_regulatory_config_supported(self.commissioning_policy, loc) => loc,
+            _ => {
+                return response
+                    .error_code(CommissioningErrorEnum::ValueOutsideRange)?
+                    .debug_text("")?
+                    .end();
+            }
+        };
 
         let mut persist = Persist::new(ctx.kv());
 

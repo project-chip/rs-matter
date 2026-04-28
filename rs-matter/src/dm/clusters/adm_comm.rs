@@ -256,6 +256,37 @@ impl ClusterHandler for AdminCommHandler {
         let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
         let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
+        // Per Matter Core spec section 11.18.6.2 (and CHIP's
+        // `AdministratorCommissioningLogic::RevokeCommissioning`), revoking
+        // the commissioning window also:
+        //
+        //  1. Forces any in-flight fail-safe context to expire. Otherwise
+        //     stale state — e.g. the breadcrumb value an interrupted
+        //     commissioning attempt left behind — leaks into the next
+        //     `OpenCommissioningWindow` round and causes the commissioner to
+        //     skip past `ArmFailSafe` (it reads `breadcrumb > 0` and assumes
+        //     an in-progress commission, per the CHIP
+        //     `AutoCommissioner::GetNextCommissioningStageInternal` post-NOC
+        //     recovery path).
+        //
+        //  2. Tears down any PASE sessions that were established under that
+        //     commissioning window but never promoted to a fabric. CHIP ties
+        //     this to fail-safe expiry inside `CommissioningWindowManager`;
+        //     we do it explicitly here so accumulated dangling PASE sessions
+        //     don't confuse the commissioner across multiple rounds (see
+        //     TC_CGEN_2_4, which iterates open / commission / revoke 8x).
+        ctx.exchange().with_state(|state| {
+            state.failsafe.force_expiry(
+                &mut state.fabrics,
+                ctx.networks(),
+                ctx.kv(),
+                notify_mdns,
+            )?;
+            state.sessions.remove_pase();
+            ctx.exchange().matter().session_removed.notify();
+            Ok::<_, Error>(())
+        })?;
+
         ctx.exchange().with_state(|state| {
             state
                 .pase

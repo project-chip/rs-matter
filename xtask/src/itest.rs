@@ -123,7 +123,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // "TC_CADMIN_1_28",  // Skipped: requires the CHIP `jfc-server-app` (Joint Fabric Controller); rs-matter does not implement JF.
     "TC_CGEN_2_1",
     "TC_CGEN_2_2",
-    // "TC_CGEN_2_4",  // TODO: `CommissioningComplete` returns an unexpected SDK error part on the negative paths exercised here (no fail-safe armed / wrong fabric). Needs alignment with the spec's expected error category.
+    "TC_CGEN_2_4",
     // "TC_CGEN_2_5",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
     // "TC_CGEN_2_6",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
     // "TC_CGEN_2_7",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
@@ -613,6 +613,7 @@ impl ITests {
                 " --endpoint 0 --int-arg PIXIT.CGEN.FailsafeExpiryLengthSeconds:10 \
                  --PICS src/app/tests/suites/certification/ci-pics-values"
             }
+            "TC_CGEN_2_4" => " --endpoint 0",
             // CADMIN (Administrator Commissioning) tests target the root
             // endpoint via `@run_if_endpoint_matches(has_cluster(...))`.
             "TC_CADMIN_1_3_4"

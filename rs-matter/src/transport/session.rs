@@ -1205,6 +1205,26 @@ impl Sessions {
     pub fn iter(&self) -> impl Iterator<Item = &Session> {
         self.sessions.iter()
     }
+
+    /// Drop every PASE session that has not yet been promoted to a fabric
+    /// (i.e. `SessionMode::Pase { fab_idx: 0 }`). This is what
+    /// `RevokeCommissioning` and a fail-safe expiry over a PASE session need
+    /// to do per Matter Core spec section 11.18.6.2: when the commissioning
+    /// window is torn down, any in-flight PASE sessions associated with it
+    /// must be terminated.
+    pub fn remove_pase(&mut self) {
+        while let Some(index) = self
+            .sessions
+            .iter()
+            .position(|sess| matches!(sess.get_session_mode(), SessionMode::Pase { fab_idx: 0 }))
+        {
+            info!(
+                "Dropping unpromoted PASE session with ID {}",
+                self.sessions[index].id
+            );
+            self.sessions.swap_remove(index);
+        }
+    }
 }
 
 impl fmt::Display for Sessions {

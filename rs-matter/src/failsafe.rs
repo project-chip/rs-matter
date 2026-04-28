@@ -125,47 +125,93 @@ impl FailSafe {
         fabrics: &mut Fabrics,
         networks: N,
         kv: S,
-        mut mdns_notif: impl FnMut(),
+        mdns_notif: impl FnMut(),
     ) -> Result<bool, Error>
     where
         S: KvBlobStoreAccess,
         N: NetworksAccess,
     {
-        if let State::Armed(ctx) = &mut self.state {
+        if let State::Armed(ctx) = &self.state {
             let now = (self.epoch)();
             if now >= ctx.armed_at + Duration::from_secs(ctx.timeout_secs as u64) {
-                warn!(
-                    "Fail-Safe timeout expired for fabric {}, disarming",
-                    ctx.fab_idx
-                );
-
-                kv.access(|mut kv, buf| {
-                    if let Some(fab_idx) = NonZeroU8::new(ctx.fab_idx) {
-                        fabrics.remove(fab_idx)?;
-                        fabrics.add_load(fab_idx.get(), &mut kv, buf)?;
-                    }
-
-                    networks.access(|networks| {
-                        let data = kv.load(NETWORKS_KEY, buf)?;
-
-                        if let Some(data) = data {
-                            networks.load(data)
-                        } else {
-                            networks.reset()
-                        }
-                    })
-                })?;
-
-                self.state = State::Idle;
-                self.breadcrumb = 0;
-
-                mdns_notif();
-
+                self.expire(fabrics, networks, kv, mdns_notif)?;
                 return Ok(true);
             }
         }
 
         Ok(false)
+    }
+
+    /// Force the fail-safe context to expire immediately, rolling back any
+    /// fabric / network changes that the in-flight commissioning had staged
+    /// and resetting the breadcrumb to 0. Mirrors CHIP's
+    /// `FailSafeContext::ForceFailSafeTimerExpiry`, used by
+    /// `RevokeCommissioning` to cancel a partially-completed commissioning
+    /// attempt.
+    pub fn force_expiry<S, N>(
+        &mut self,
+        fabrics: &mut Fabrics,
+        networks: N,
+        kv: S,
+        mdns_notif: impl FnMut(),
+    ) -> Result<bool, Error>
+    where
+        S: KvBlobStoreAccess,
+        N: NetworksAccess,
+    {
+        if matches!(self.state, State::Armed(_)) {
+            self.expire(fabrics, networks, kv, mdns_notif)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn expire<S, N>(
+        &mut self,
+        fabrics: &mut Fabrics,
+        networks: N,
+        kv: S,
+        mut mdns_notif: impl FnMut(),
+    ) -> Result<(), Error>
+    where
+        S: KvBlobStoreAccess,
+        N: NetworksAccess,
+    {
+        let State::Armed(ctx) = &self.state else {
+            return Ok(());
+        };
+
+        warn!(
+            "Fail-Safe timeout expired for fabric {}, disarming",
+            ctx.fab_idx
+        );
+
+        let fab_idx_raw = ctx.fab_idx;
+
+        kv.access(|mut kv, buf| {
+            if let Some(fab_idx) = NonZeroU8::new(fab_idx_raw) {
+                fabrics.remove(fab_idx)?;
+                fabrics.add_load(fab_idx.get(), &mut kv, buf)?;
+            }
+
+            networks.access(|networks| {
+                let data = kv.load(NETWORKS_KEY, buf)?;
+
+                if let Some(data) = data {
+                    networks.load(data)
+                } else {
+                    networks.reset()
+                }
+            })
+        })?;
+
+        self.state = State::Idle;
+        self.breadcrumb = 0;
+
+        mdns_notif();
+
+        Ok(())
     }
 
     pub fn arm(
