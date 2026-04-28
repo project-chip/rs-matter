@@ -85,7 +85,8 @@ static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCe
 
 fn main() -> Result<(), Error> {
     // Enable detailed backtraces for debugging test failures
-    std::env::set_var("RUST_BACKTRACE", "1");
+    // (Temporarily disabled to keep TC_SC_3_4 traces readable.)
+    // std::env::set_var("RUST_BACKTRACE", "1");
 
     // Special logging configuration compatible with ConnectedHomeIP YAML tests
     // Log to stdout with simplified format at debug level as required by chip-tool tests

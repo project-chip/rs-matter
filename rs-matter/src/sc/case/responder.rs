@@ -22,7 +22,7 @@ use super::CASE_LARGE_BUF_SIZE;
 use crate::alloc;
 use crate::cert::CertRef;
 use crate::crypto::{CanonPkcSignature, CanonPkcSignatureRef, Crypto, Hash, AEAD_CANON_KEY_LEN};
-use crate::error::{Error, ErrorCode};
+use crate::error::Error;
 use crate::sc::{
     check_opcode, complete_with_status, sc_write, OpCode, SCStatusCodes, SessionParameters,
 };
@@ -116,6 +116,18 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         check_opcode(exchange, OpCode::CASESigma1)?;
 
         let req = Sigma1Req::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
+
+        // Matter Core spec section 4.13.2.1.1: `resumptionID` and
+        // `initiatorResumeMIC` SHALL either both be present or both be
+        // absent. A mismatched pair is a malformed Sigma1 and the
+        // responder MUST reject it with `INVALID_PARAMETER` and stop
+        // processing (TC-SC-3.4 steps 1 and 2 cover this).
+        if req.resumption_id.is_some() != req.initiator_resume_mic.is_some() {
+            error!("Sigma1 has mismatched resumptionID/initiatorResumeMIC presence; rejecting");
+            complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await?;
+
+            return Ok(());
+        }
 
         let local_fabric_idx = exchange.with_state(|state| {
             Ok(state
@@ -240,24 +252,60 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
             let fabric = NonZeroU8::new(self.casep.local_fabric_idx())
                 .and_then(|fabric_idx| state.fabrics.get(fabric_idx));
             if let Some(fabric) = fabric {
-                let req = get_root_node_struct(exchange.rx()?.payload())?;
-                let encrypted = req.structure()?.ctx(1)?.str()?;
+                // A malformed or corrupted Sigma3 — bad TLV at the outer
+                // wrapper, an oversized `TBEData3Encrypted` field, AEAD auth
+                // failure, or a decrypted payload that doesn't parse — must
+                // be reported back to the peer with `INVALID_PARAMETER`
+                // rather than silently abandoning the exchange (TC-SC-3.4
+                // step 5 covers this).
+                let req = match get_root_node_struct(exchange.rx()?.payload()) {
+                    Ok(req) => req,
+                    Err(e) => {
+                        error!("Sigma3 outer TLV parse failed: {}", e);
+                        return Ok(SCStatusCodes::InvalidParameter);
+                    }
+                };
+                let encrypted = match req.structure().and_then(|s| s.ctx(1)).and_then(|c| c.str()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        error!("Sigma3 encrypted field parse failed: {}", e);
+                        return Ok(SCStatusCodes::InvalidParameter);
+                    }
+                };
 
                 let mut decrypted = alloc!([0; CASE_LARGE_BUF_SIZE]); // TODO LARGE BUFFER
                 if encrypted.len() > decrypted.len() {
-                    error!("Encrypted data too large");
-                    Err(ErrorCode::BufferTooSmall)?;
+                    error!(
+                        "Encrypted Sigma3 data too large ({} bytes)",
+                        encrypted.len()
+                    );
+                    return Ok(SCStatusCodes::InvalidParameter);
                 }
 
                 let decrypted = &mut decrypted[..encrypted.len()];
                 decrypted.copy_from_slice(encrypted);
 
                 let len =
-                    self.casep
-                        .sigma3_decrypt(self.crypto, fabric.ipk().op_key(), decrypted)?;
+                    match self
+                        .casep
+                        .sigma3_decrypt(self.crypto, fabric.ipk().op_key(), decrypted)
+                    {
+                        Ok(len) => len,
+                        Err(e) => {
+                            error!("Sigma3 AEAD decrypt failed: {}", e);
+                            return Ok(SCStatusCodes::InvalidParameter);
+                        }
+                    };
                 let decrypted = &decrypted[..len];
-                let decrypted_req: Sigma3Decrypt<'_> =
-                    Sigma3Decrypt::from_tlv(&get_root_node_struct(decrypted)?)?;
+                let decrypted_req: Sigma3Decrypt<'_> = match get_root_node_struct(decrypted)
+                    .and_then(|n| Sigma3Decrypt::from_tlv(&n))
+                {
+                    Ok(req) => req,
+                    Err(e) => {
+                        error!("Sigma3 decrypted TLV parse failed: {}", e);
+                        return Ok(SCStatusCodes::InvalidParameter);
+                    }
+                };
 
                 let initiator_noc = CertRef::new(TLVElement::new(decrypted_req.initiator_noc.0));
                 let initiator_icac = decrypted_req
