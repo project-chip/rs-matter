@@ -145,7 +145,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     "TC_SC_3_4",
     // "TC_SC_3_5", // Skipped: requires the CHIP `all-clusters-app` (`--string-arg th_server_app_path`); rs-matter does not provide the secondary TH server app this test relies on.
-    // "TC_SC_3_6", // TODO: triggers an internal exception during the multi-fabric subscription scenario; needs investigation alongside the other multi-fabric stress tests.
+    "TC_SC_3_6",
     // "TC_SC_4_1", // Skipped: must be invoked with `--qr-code`/`--manual-code` setup payloads instead of `--discriminator`/`--passcode`. The xtask wrapper passes the latter.
     // "TC_SC_4_3", // TODO: the discovery PTR record `D4E76DDAABB4974F-0000000012344321` is not advertised on the loopback mDNS the test scrapes. Needs the rs-matter mDNS layer to publish the operational instance name in that test environment.
     // "TC_SC_7_1", // Skipped: must be invoked with `--qr-code`/`--manual-code` setup payloads instead of `--discriminator`/`--passcode`. The xtask wrapper passes the latter.
