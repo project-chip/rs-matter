@@ -23,7 +23,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  yaml_integration_tests:
+  chip_integration_tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
 

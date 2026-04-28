@@ -1212,17 +1212,35 @@ impl Sessions {
     /// to do per Matter Core spec section 11.18.6.2: when the commissioning
     /// window is torn down, any in-flight PASE sessions associated with it
     /// must be terminated.
-    pub fn remove_pase(&mut self) {
-        while let Some(index) = self
-            .sessions
-            .iter()
-            .position(|sess| matches!(sess.get_session_mode(), SessionMode::Pase { fab_idx: 0 }))
-        {
+    ///
+    /// `expire_sess_id` is the optional ID of a session that should NOT be
+    /// removed immediately — typically the session that issued the
+    /// `RevokeCommissioning` command, so the response can still be sent.
+    /// That session is marked as `expired` instead, so it stops accepting
+    /// new exchanges but the in-flight one can complete.
+    pub fn remove_pase(&mut self, expire_sess_id: Option<u32>) {
+        while let Some(index) = self.sessions.iter().position(|sess| {
+            matches!(sess.get_session_mode(), SessionMode::Pase { fab_idx: 0 })
+                && Some(sess.id) != expire_sess_id
+        }) {
             info!(
                 "Dropping unpromoted PASE session with ID {}",
                 self.sessions[index].id
             );
             self.sessions.swap_remove(index);
+        }
+
+        if let Some(expire_sess_id) = expire_sess_id {
+            if let Some(sess) = self.sessions.iter_mut().find(|sess| {
+                sess.id == expire_sess_id
+                    && matches!(sess.get_session_mode(), SessionMode::Pase { fab_idx: 0 })
+            }) {
+                sess.expired = true;
+                info!(
+                    "Marking unpromoted PASE session with ID {} as expired",
+                    expire_sess_id
+                );
+            }
         }
     }
 }

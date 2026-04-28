@@ -369,11 +369,18 @@ impl Fabric {
     ///
     /// This method is supposed to be called right after `Fabric::init` or
     /// when the NOC of the fabric needs to be updated.
+    ///
+    /// `root_ca` is `None` when called from the `UpdateNOC` flow — Matter
+    /// Core spec section 11.18.6.7 keeps the fabric's root cert unchanged
+    /// across `UpdateNOC`, and re-passing the existing bytes here would
+    /// require a (large) caller-side copy of `self.root_ca`. `Some(...)`
+    /// is used by the initial `AddNOC` flow, where the cert was just
+    /// staged in the fail-safe context.
     #[allow(clippy::too_many_arguments)]
     fn update<C: Crypto>(
         &mut self,
         crypto: C,
-        root_ca: &[u8],
+        root_ca: Option<&[u8]>,
         noc: &[u8],
         icac: &[u8],
         secret_key: CanonPkcSecretKeyRef<'_>,
@@ -381,17 +388,22 @@ impl Fabric {
         vendor_id: Option<u16>,
         case_admin_subject: Option<u64>,
     ) -> Result<(), Error> {
-        self.root_ca
-            .extend_from_slice(root_ca)
-            .map_err(|_| ErrorCode::BufferTooSmall)?;
+        if let Some(root_ca) = root_ca {
+            self.root_ca.clear();
+            self.root_ca
+                .extend_from_slice(root_ca)
+                .map_err(|_| ErrorCode::BufferTooSmall)?;
+        }
+        self.icac.clear();
         self.icac
             .extend_from_slice(icac)
             .map_err(|_| ErrorCode::BufferTooSmall)?;
+        self.noc.clear();
         self.noc
             .extend_from_slice(noc)
             .map_err(|_| ErrorCode::BufferTooSmall)?;
 
-        let root_cert = CertRef::new(TLVElement::new(root_ca));
+        let root_cert = CertRef::new(TLVElement::new(self.root_ca.as_slice()));
         let noc_cert = CertRef::new(TLVElement::new(noc));
 
         self.node_id = noc_cert.get_node_id()?;
@@ -881,7 +893,7 @@ impl Fabrics {
         self.add_with_post_init(|fabric| {
             fabric.update(
                 crypto,
-                root_ca,
+                Some(root_ca),
                 noc,
                 icac,
                 secret_key,
@@ -894,22 +906,25 @@ impl Fabrics {
 
     /// Update an existing fabric with the provided data (usually, as a result of an `UpdateNOC` IM command).
     ///
+    /// The fabric's existing root cert is preserved across this call —
+    /// `UpdateNOC` per Matter Core spec section 11.18.6.7 is not allowed
+    /// to change the root, and re-passing the bytes would force the
+    /// caller to take a (large) heap-less copy of `Fabric::root_ca`.
+    ///
     /// If this operation succeeds, the fabric immediately becomes operational.
     /// Note however, that the caller is expected to remove all sessions associated with the fabric, as they would
     /// contain invalid keys after the NOC update.
-    #[allow(clippy::too_many_arguments)]
     pub fn update<C: Crypto>(
         &mut self,
         crypto: C,
         fab_idx: NonZeroU8,
         secret_key: CanonPkcSecretKeyRef<'_>,
-        root_ca: &[u8],
         noc: &[u8],
         icac: &[u8],
     ) -> Result<&mut Fabric, Error> {
         let fabric = self.fabric_mut(fab_idx)?;
 
-        fabric.update(crypto, root_ca, noc, icac, secret_key, None, None, None)?;
+        fabric.update(crypto, None, noc, icac, secret_key, None, None, None)?;
 
         Ok(fabric)
     }

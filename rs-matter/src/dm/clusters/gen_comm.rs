@@ -293,12 +293,10 @@ impl ClusterHandler for GenCommHandler<'_> {
             let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
 
             CommissioningErrorEnum::map(ctx.exchange().with_state(|state| {
-                let _ = state.failsafe.force_expiry(
-                    &mut state.fabrics,
-                    ctx.networks(),
-                    ctx.kv(),
-                    notify_mdns,
-                )?;
+                state
+                    .failsafe
+                    .expire(&mut state.fabrics, ctx.networks(), ctx.kv(), notify_mdns)?;
+
                 Ok(())
             }))?
         } else {

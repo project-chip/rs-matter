@@ -379,10 +379,21 @@ impl ClusterHandler for NocHandler {
     ) -> Result<P, Error> {
         info!("Got CSR Request");
 
+        let is_for_update_noc = request.is_for_update_noc()?.unwrap_or(false);
+
         GenCommHandler::with_armed_failsafe(&ctx, |state, _| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
 
-            let secret_key = if request.is_for_update_noc()?.unwrap_or(false) {
+            // Per Matter Core spec section 11.18.6.5 (`CSRRequest`),
+            // `isForUpdateNOC=true` is only valid over CASE — UpdateNOC
+            // can never run over PASE. A CSRRequest of that flavour over
+            // PASE is rejected with IM `INVALID_COMMAND` rather than
+            // bubbling up the generic auth failure as `Failure`.
+            if is_for_update_noc && !matches!(sess.get_session_mode(), SessionMode::Case { .. }) {
+                return Err(ErrorCode::InvalidCommand.into());
+            }
+
+            let secret_key = if is_for_update_noc {
                 state
                     .failsafe
                     .update_csr_req(ctx.crypto(), sess.get_session_mode())?

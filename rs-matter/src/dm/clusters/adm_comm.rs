@@ -276,13 +276,21 @@ impl ClusterHandler for AdminCommHandler {
         //     don't confuse the commissioner across multiple rounds (see
         //     TC_CGEN_2_4, which iterates open / commission / revoke 8x).
         ctx.exchange().with_state(|state| {
-            state.failsafe.force_expiry(
-                &mut state.fabrics,
-                ctx.networks(),
-                ctx.kv(),
-                notify_mdns,
-            )?;
-            state.sessions.remove_pase();
+            state
+                .failsafe
+                .expire(&mut state.fabrics, ctx.networks(), ctx.kv(), notify_mdns)?;
+
+            // If RevokeCommissioning came in over a PASE session, don't
+            // drop it before we've sent the response — mark it as expired
+            // instead so it lingers just long enough for the in-flight
+            // exchange to complete, then can't accept new ones.
+            let sess = ctx.exchange().id().session(&mut state.sessions);
+            let expire_sess_id = matches!(
+                sess.get_session_mode(),
+                crate::transport::session::SessionMode::Pase { .. }
+            )
+            .then(|| sess.id());
+            state.sessions.remove_pase(expire_sess_id);
             ctx.exchange().matter().session_removed.notify();
             Ok::<_, Error>(())
         })?;

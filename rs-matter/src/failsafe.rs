@@ -144,42 +144,20 @@ impl FailSafe {
 
     /// Force the fail-safe context to expire immediately, rolling back any
     /// fabric / network changes that the in-flight commissioning had staged
-    /// and resetting the breadcrumb to 0. Mirrors CHIP's
-    /// `FailSafeContext::ForceFailSafeTimerExpiry`, used by
-    /// `RevokeCommissioning` to cancel a partially-completed commissioning
-    /// attempt.
-    pub fn force_expiry<S, N>(
-        &mut self,
-        fabrics: &mut Fabrics,
-        networks: N,
-        kv: S,
-        mdns_notif: impl FnMut(),
-    ) -> Result<bool, Error>
-    where
-        S: KvBlobStoreAccess,
-        N: NetworksAccess,
-    {
-        if matches!(self.state, State::Armed(_)) {
-            self.expire(fabrics, networks, kv, mdns_notif)?;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-
-    fn expire<S, N>(
+    /// and resetting the breadcrumb to 0.
+    pub fn expire<S, N>(
         &mut self,
         fabrics: &mut Fabrics,
         networks: N,
         kv: S,
         mut mdns_notif: impl FnMut(),
-    ) -> Result<(), Error>
+    ) -> Result<bool, Error>
     where
         S: KvBlobStoreAccess,
         N: NetworksAccess,
     {
         let State::Armed(ctx) = &self.state else {
-            return Ok(());
+            return Ok(false);
         };
 
         warn!(
@@ -211,7 +189,7 @@ impl FailSafe {
 
         mdns_notif();
 
-        Ok(())
+        Ok(true)
     }
 
     pub fn arm(
@@ -446,17 +424,32 @@ impl FailSafe {
     ) -> Result<&'a mut Fabric, Error> {
         let fab_idx = Self::get_case_fab_idx(session_mode)?;
 
+        // `UpdateNOC` only requires the corresponding `CSRRequest` (with
+        // `isForUpdateNOC=true`) to have been processed in this fail-safe
+        // context. Per Matter Core spec section 11.18.6.7 it must NOT
+        // have been preceded by `AddTrustedRootCertificate`, `AddNOC`,
+        // `UpdateNOC`, or a CSRRequest of the wrong kind — those go in
+        // `absent`. `validate_certs` further down uses the *committed*
+        // root cert (`fabrics.fabric(fab_idx).root_ca()`), not anything
+        // staged via AddTrustedRootCertificate.
         self.check_state(
             session_mode,
-            NocFlags::ADD_ROOT_CERT_RECVD | NocFlags::UPDATE_CSR_REQ_RECVD,
-            NocFlags::ADD_NOC_RECVD | NocFlags::ADD_CSR_REQ_RECVD | NocFlags::UPDATE_NOC_RECVD,
+            NocFlags::UPDATE_CSR_REQ_RECVD,
+            NocFlags::ADD_ROOT_CERT_RECVD
+                | NocFlags::ADD_NOC_RECVD
+                | NocFlags::ADD_CSR_REQ_RECVD
+                | NocFlags::UPDATE_NOC_RECVD,
             NocFlags::UPDATE_NOC_RECVD,
         )?;
 
         {
             let noc_ref = CertRef::new(TLVElement::new(noc));
             let icac_ref = icac.map(|icac| CertRef::new(TLVElement::new(icac)));
-            let root_ref = CertRef::new(TLVElement::new(&self.root_ca));
+            // `UpdateNOC` re-uses the existing fabric's root cert; it does
+            // not consume one staged via `AddTrustedRootCertificate` (the
+            // `absent` constraint above ensures none was staged).
+            let fabric_root_ca = fabrics.fabric(fab_idx)?.root_ca();
+            let root_ref = CertRef::new(TLVElement::new(fabric_root_ca));
 
             // Validate the certs first. A chain that doesn't pass
             // signature verification (or that doesn't chain back to the
@@ -477,31 +470,25 @@ impl FailSafe {
                 Err(ErrorCode::NocInvalidPublicKey)?;
             }
 
-            // Check that the fabric ID and root cert pubkey in the NOC
-            // match the ones of the fabric which is being updated
+            // Check that the fabric ID in the NOC matches the fabric
+            // being updated. The root cert pubkey check is implicit: the
+            // chain validation above used the fabric's own root cert.
 
             let fabric_id = noc_ref.get_fabric_id()?;
-            let root_cert_pubkey = root_ref.pubkey()?;
-
             let fabric = fabrics.fabric(fab_idx)?;
 
             if fabric_id != fabric.fabric_id() {
                 Err(ErrorCode::NocFabricConflict)?;
             }
-
-            let f_root_ref = CertRef::new(TLVElement::new(fabric.root_ca()));
-            let f_root_pubkey = f_root_ref.pubkey()?;
-
-            if root_cert_pubkey != f_root_pubkey {
-                Err(ErrorCode::NocFabricConflict)?;
-            }
         }
 
+        // `Fabrics::update` keeps the existing root cert in place — no
+        // need (and no reason) to copy it out of the fabric just to pass
+        // it back in.
         let fabric = fabrics.update(
             &crypto,
             fab_idx,
             self.secret_key.reference(),
-            &self.root_ca,
             noc,
             icac.unwrap_or(&[]),
         )?;
@@ -697,14 +684,21 @@ impl FailSafe {
             }
 
             if !ctx.flags.contains(present) {
-                // State is not what is expected for that concrete command
-
-                if op == NocFlags::ADD_NOC_RECVD
-                    && !ctx.flags.contains(NocFlags::UPDATE_CSR_REQ_RECVD)
-                    || op == NocFlags::UPDATE_NOC_RECVD
-                        && !ctx.flags.contains(NocFlags::UPDATE_CSR_REQ_RECVD)
-                {
-                    // Return a more concrete error if the problem is that the CSR request is missing
+                // State is not what is expected for that concrete command.
+                //
+                // Disambiguate "no CSR at all" from "wrong CSR type" per
+                // Matter Core spec sections 11.18.6.6 (`AddNOC`) and
+                // 11.18.6.7 (`UpdateNOC`):
+                //   * No `CSRRequest` of either kind seen yet for this
+                //     fail-safe context → `kMissingCsr` cluster status.
+                //   * A CSR was issued but with the opposite
+                //     `isForUpdateNOC` flag from the command being
+                //     processed (e.g. `UpdateNOC` after a CSR for
+                //     `AddNOC`) → IM `CONSTRAINT_ERROR`.
+                let any_csr = ctx
+                    .flags
+                    .intersects(NocFlags::ADD_CSR_REQ_RECVD | NocFlags::UPDATE_CSR_REQ_RECVD);
+                if (op == NocFlags::ADD_NOC_RECVD || op == NocFlags::UPDATE_NOC_RECVD) && !any_csr {
                     Err(ErrorCode::NocMissingCsr)?;
                 }
 
@@ -712,17 +706,16 @@ impl FailSafe {
             }
 
             if !ctx.flags.intersection(absent).is_empty() {
-                // State is not what is expected for that concrete command
-
-                if op == NocFlags::ADD_NOC_RECVD
-                    && ctx.flags.contains(NocFlags::UPDATE_CSR_REQ_RECVD)
-                    || op == NocFlags::UPDATE_NOC_RECVD
-                        && ctx.flags.contains(NocFlags::ADD_CSR_REQ_RECVD)
-                {
-                    // Return a more concrete error if the problem is an add/update NOC mismatch
-                    Err(ErrorCode::NocFabricConflict)?;
-                }
-
+                // State is not what is expected for that concrete command.
+                //
+                // Two flavours both surface as IM `CONSTRAINT_ERROR` per
+                // Matter Core spec sections 11.18.6.6 (`AddNOC`) and
+                // 11.18.6.7 (`UpdateNOC`):
+                //   * the same `Add`/`UpdateNOC` was already received in
+                //     this fail-safe context
+                //   * the most recent `CSRRequest` had the wrong
+                //     `isForUpdateNOC` flag for the command being
+                //     processed (e.g. UpdateNOC after an AddNOC-style CSR)
                 Err(ErrorCode::ConstraintError)?;
             }
         } else {
