@@ -86,9 +86,9 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Interaction Data Model (general Matter protocol)
     //
-    "TC_IDM_2_2",
     "TC_IDM_1_2",
     "TC_IDM_1_4",
+    "TC_IDM_2_2",
     "TC_IDM_4_2",
     //
     // Python tests — Access Control (system cluster)
@@ -116,14 +116,14 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_CADMIN_1_9",
     "TC_CADMIN_1_11",
     "TC_CADMIN_1_15",
-    // "TC_CADMIN_1_19",  // TODO: multi-fabric stress test commissions `SupportedFabrics` controllers back-to-back. Fails part-way with `Incorrect state` from the Python pairing controller. Likely needs deeper investigation of CASE setup between rapid commissioning rounds; not blocking other coverage.
+    "TC_CADMIN_1_19",
     "TC_CADMIN_1_22",
     "TC_CADMIN_1_25",
     // "TC_CADMIN_1_27",  // Skipped: requires the CHIP `jfc-server-app` (Joint Fabric Controller); rs-matter does not implement JF.
     // "TC_CADMIN_1_28",  // Skipped: requires the CHIP `jfc-server-app` (Joint Fabric Controller); rs-matter does not implement JF.
     "TC_CGEN_2_1",
-    // "TC_CGEN_2_2",  // TODO: after `AddTrustedRootCertificate` during a failsafe, the read-back of `TrustedRootCertificates` still reports the original size — the new root isn't surfaced. Likely an attribute-list issue in rs-matter's NOC handler.
-    // "TC_CGEN_2_4",  // TODO: `CommissioningComplete` returns an unexpected SDK error part on the negative paths exercised here (no fail-safe armed / wrong fabric). Needs alignment with the spec's expected error category.
+    "TC_CGEN_2_2",
+    "TC_CGEN_2_4",
     // "TC_CGEN_2_5",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
     // "TC_CGEN_2_6",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
     // "TC_CGEN_2_7",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
@@ -135,12 +135,11 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Operational Credentials (system cluster)
     //
-    // "TC_OPCREDS_3_1", // TODO: rs-matter accepts an `AddTrustedRootCertificate` payload with a malformed signature (the test expects this to be rejected). NOC handler needs to validate the RCAC's self-signature before accepting it.
+    "TC_OPCREDS_3_1",
     "TC_OPCREDS_3_2",
-    // "TC_OPCREDS_3_4", // TODO: `UpdateNOC` returns `FailSafeRequired` / `NocMissingCsr` on the negative paths, but the test expects the spec's specific `NodeOperationalCertStatusEnum` values for each error condition. Needs alignment of error mapping.
-    // "TC_OPCREDS_3_5", // TODO: `UpdateNOC` returns `kMissingCsr` instead of `kOk` even on the valid happy path — looks like the CSR slot is being cleared too eagerly between the CSR request and the `UpdateNOC` call.
-    // "TC_OPCREDS_3_8", // TODO: a second-fabric NOC entry is not visible in the `NOCs` attribute when read non-fabric-filtered — likely a fabric-scoped attribute filter incorrectly applied to a non-fabric-filtered read.
-
+    "TC_OPCREDS_3_4",
+    "TC_OPCREDS_3_5",
+    "TC_OPCREDS_3_8",
     //
     // Python tests — Session/Commissioning (general Matter protocol)
     //
@@ -558,6 +557,17 @@ impl ITests {
             // construction.
             "TC_CADMIN_1_3_4" | "TC_CADMIN_1_5" | "TC_CADMIN_1_9" | "TC_CADMIN_1_11"
             | "TC_CADMIN_1_15" | "TC_CADMIN_1_22" | "TC_CADMIN_1_25" => Some(300),
+            // TC_OPCREDS_3_8 exercises the VID-Verification feature (Matter
+            // 1.4): it sets a 400-byte VVSC and an 85-byte
+            // VIDVerificationStatement on a fabric and then issues
+            // non-fabric-filtered reads of `NOCs` / `Fabrics` covering both
+            // fabrics. With two ~750-byte struct entries plus the 400-byte
+            // VVSC the response cannot fit in a single MTU and rs-matter
+            // falls back to its chunked-read path, which on the debug
+            // profile is dominated by per-error backtrace dumps. Bump the
+            // per-test ceiling so the chunked transfer has time to
+            // complete; the test passes in well under a minute on release.
+            "TC_OPCREDS_3_8" => Some(300),
             _ => None,
         }
     }
@@ -587,6 +597,43 @@ impl ITests {
             // ACL events. argparse keeps the last `--endpoint`, so appending
             // here wins.
             "TC_ACL_2_6" | "TC_ACL_2_7" | "TC_ACL_2_8" => " --endpoint 0",
+            // TC_CGEN_2_2 lives on the root endpoint (GeneralCommissioning /
+            // OperationalCredentials clusters) and uses
+            // `PIXIT.CGEN.FailsafeExpiryLengthSeconds` to bound the fail-safe
+            // window for several "arm → mutate → read" sub-flows. With the CI
+            // default of 1s the fail-safe expires mid-way through chunked
+            // reads of the (relatively large) `TrustedRootCertificates`
+            // attribute on a debug build, so the pending root certificate is
+            // dropped before the response finishes serializing. Bump it to a
+            // value that survives chunking on a slow build while keeping the
+            // overall test runtime reasonable.
+            //
+            // The `--PICS` file enables `PICS_SDK_CI_ONLY=1`, which the test
+            // uses to skip the step #38–#44 sub-flow. Those steps reassign
+            // the test's local `maxFailsafe` to `failsafe_expiration_seconds`
+            // and then assert that the *device's* fail-safe times out after
+            // that shortened window — which only holds if the device's
+            // `BasicCommissioningInfo.MaxCumulativeFailsafeSeconds` is set
+            // to the same small value. rs-matter advertises 900s here (see
+            // `CommPolicy::failsafe_max_cml_secs`), so the Cert path's
+            // assumption does not match this device and step #44 would always
+            // see the still-armed pending root cert. CI mode covers the same
+            // attribute / command surface without that assumption.
+            "TC_CGEN_2_2" => {
+                " --endpoint 0 --int-arg PIXIT.CGEN.FailsafeExpiryLengthSeconds:10 \
+                 --PICS src/app/tests/suites/certification/ci-pics-values"
+            }
+            "TC_CGEN_2_4" => " --endpoint 0",
+            // TC_OPCREDS_3_8 reads `NOCs` non-fabric-filtered with two
+            // fabrics, each carrying a max-sized 400-byte VVSC; the
+            // resulting payload is well past one MTU and rs-matter falls
+            // back to chunked reads. On the debug profile every chunk
+            // boundary triggers an `Error::NoSpace` whose backtrace dump
+            // dominates the per-chunk wall-clock. Bumping the test's
+            // `default_timeout` (90 s) past the per_endpoint_runner
+            // wait_for is enough to let the chunked transfers finish; the
+            // test passes in well under 30 s on release.
+            "TC_OPCREDS_3_8" => " --endpoint 0 --timeout 240",
             // CADMIN (Administrator Commissioning) tests target the root
             // endpoint via `@run_if_endpoint_matches(has_cluster(...))`.
             "TC_CADMIN_1_3_4"
@@ -605,7 +652,6 @@ impl ITests {
             | "TC_OPCREDS_3_2"
             | "TC_OPCREDS_3_4"
             | "TC_OPCREDS_3_5"
-            | "TC_OPCREDS_3_8"
             // SC (Secure Channel) tests target the root endpoint.
             | "TC_SC_3_4"
             | "TC_SC_3_6"

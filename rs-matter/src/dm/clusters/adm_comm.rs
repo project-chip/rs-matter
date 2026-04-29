@@ -256,6 +256,52 @@ impl ClusterHandler for AdminCommHandler {
         let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
         let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
+        // Per Matter Core spec section 11.18.6.2 (and CHIP's
+        // `AdministratorCommissioningLogic::RevokeCommissioning`), revoking
+        // the commissioning window also:
+        //
+        //  1. Forces any in-flight fail-safe context to expire. Otherwise
+        //     stale state — e.g. the breadcrumb value an interrupted
+        //     commissioning attempt left behind — leaks into the next
+        //     `OpenCommissioningWindow` round and causes the commissioner to
+        //     skip past `ArmFailSafe` (it reads `breadcrumb > 0` and assumes
+        //     an in-progress commission, per the CHIP
+        //     `AutoCommissioner::GetNextCommissioningStageInternal` post-NOC
+        //     recovery path).
+        //
+        //  2. Tears down any PASE sessions that were established under that
+        //     commissioning window but never promoted to a fabric. CHIP ties
+        //     this to fail-safe expiry inside `CommissioningWindowManager`;
+        //     we do it explicitly here so accumulated dangling PASE sessions
+        //     don't confuse the commissioner across multiple rounds (see
+        //     TC_CGEN_2_4, which iterates open / commission / revoke 8x).
+        ctx.exchange().with_state(|state| {
+            // If RevokeCommissioning came in over a PASE session, don't
+            // drop it before we've sent the response — mark it as expired
+            // instead so it lingers just long enough for the in-flight
+            // exchange to complete, then can't accept new ones.
+            // `Failsafe::expire` does the actual `remove_pase` call.
+            let sess = ctx.exchange().id().session(&mut state.sessions);
+            let expire_sess_id = matches!(
+                sess.get_session_mode(),
+                crate::transport::session::SessionMode::Pase { .. }
+            )
+            .then(|| sess.id());
+
+            state.failsafe.expire(
+                &mut state.fabrics,
+                &mut state.sessions,
+                expire_sess_id,
+                ctx.networks(),
+                ctx.kv(),
+                notify_mdns,
+                notify_change,
+            )?;
+
+            ctx.exchange().matter().session_removed.notify();
+            Ok::<_, Error>(())
+        })?;
+
         ctx.exchange().with_state(|state| {
             state
                 .pase

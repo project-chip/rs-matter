@@ -28,6 +28,7 @@ use crate::fabric::FabricPersist;
 use crate::persist::{Persist, BASIC_INFO_KEY, NETWORKS_KEY};
 use crate::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use crate::tlv::TLVBuilderParent;
+use crate::transport::session::SessionMode;
 use crate::utils::sync::DynBase;
 use crate::{with, MatterState};
 
@@ -168,6 +169,24 @@ impl<'a> GenCommHandler<'a> {
         Self::with_armed_failsafe_ex(ctx, f)
     }
 
+    /// Return whether the supplied `NewRegulatoryConfig` value is allowed
+    /// given the device's `LocationCapability`. Mirrors the matrix in Matter
+    /// Core spec section 11.10.7.2.1.
+    fn is_regulatory_config_supported(
+        policy: &dyn CommPolicy,
+        new_config: RegulatoryLocationTypeEnum,
+    ) -> bool {
+        match policy.location_cap() {
+            RegulatoryLocationTypeEnum::Indoor => {
+                matches!(new_config, RegulatoryLocationTypeEnum::Indoor)
+            }
+            RegulatoryLocationTypeEnum::Outdoor => {
+                matches!(new_config, RegulatoryLocationTypeEnum::Outdoor)
+            }
+            RegulatoryLocationTypeEnum::IndoorOutdoor => true,
+        }
+    }
+
     /// Execute the provided closure after checking that the failsafe is armed for the
     /// fabric of this session.
     ///
@@ -257,21 +276,53 @@ impl ClusterHandler for GenCommHandler<'_> {
         request: ArmFailSafeRequest<'_>,
         response: ArmFailSafeResponseBuilder<P>,
     ) -> Result<P, Error> {
+        let expiry_length_seconds = request.expiry_length_seconds()?;
+
         info!(
             "Got Arm Fail Safe Request, expiry {}s",
-            request.expiry_length_seconds()?
+            expiry_length_seconds
         );
 
-        let status = CommissioningErrorEnum::map(ctx.exchange().with_state(|state| {
-            let sess = ctx.exchange().id().session(&mut state.sessions);
+        // `ArmFailSafe(0)` means "force-expire the fail-safe context" per
+        // Matter Core spec section 11.10.7.1: if the fail-safe is armed,
+        // the device SHALL roll back any uncommitted fabric / network state
+        // and reset the breadcrumb. Route through `force_expiry` so that
+        // in-flight `AddNOC` / `SetRegulatoryConfig` changes are reverted —
+        // the bare `failsafe.arm(0, ...)` path only flips the state to
+        // `Idle` and would leave the staged fabric committed.
+        let status = if expiry_length_seconds == 0 {
+            let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
+            let notify_change = |endpt_id, clust_id| ctx.notify_cluster_changed(endpt_id, clust_id);
 
-            state.failsafe.arm(
-                request.expiry_length_seconds()?,
-                request.breadcrumb()?,
-                sess.get_session_mode(),
-                &mut state.pase,
-            )
-        }))?;
+            CommissioningErrorEnum::map(ctx.exchange().with_state(|state| {
+                let sess = ctx.exchange().id().session(&mut state.sessions);
+                let pase_sess_id =
+                    matches!(sess.get_session_mode(), SessionMode::Pase { .. }).then(|| sess.id());
+
+                state.failsafe.expire(
+                    &mut state.fabrics,
+                    &mut state.sessions,
+                    pase_sess_id,
+                    ctx.networks(),
+                    ctx.kv(),
+                    notify_mdns,
+                    notify_change,
+                )?;
+
+                Ok(())
+            }))?
+        } else {
+            CommissioningErrorEnum::map(ctx.exchange().with_state(|state| {
+                let sess = ctx.exchange().id().session(&mut state.sessions);
+
+                state.failsafe.arm(
+                    expiry_length_seconds,
+                    request.breadcrumb()?,
+                    sess.get_session_mode(),
+                    &mut state.pase,
+                )
+            }))?
+        };
 
         // Breadcrumb (and possibly failsafe-arm state) may have changed
         ctx.notify_own_cluster_changed();
@@ -292,8 +343,31 @@ impl ClusterHandler for GenCommHandler<'_> {
             return Err(ErrorCode::ConstraintError.into());
         }
 
-        let location_type = request.new_regulatory_config()?;
+        // Per Matter Core spec section 11.10.7.2.1, `NewRegulatoryConfig`
+        // SHALL be one of the values supported by the device's
+        // `LocationCapability`:
+        //
+        //   * `LocationCapability::Indoor`         -> only `Indoor`
+        //   * `LocationCapability::Outdoor`        -> only `Outdoor`
+        //   * `LocationCapability::IndoorOutdoor`  -> any of the three
+        //
+        // A request that violates this — including an enum value the device
+        // doesn't even recognise — must be rejected with the cluster-level
+        // `ValueOutsideRange` rather than a generic IM `Failure`. Decode the
+        // enum defensively because TLV decoding will reject an unknown
+        // variant before we ever see it (the test sends `3`).
+        let location_type = request.new_regulatory_config();
         let breadcrumb = request.breadcrumb()?;
+
+        let location_type = match location_type {
+            Ok(loc) if Self::is_regulatory_config_supported(self.commissioning_policy, loc) => loc,
+            _ => {
+                return response
+                    .error_code(CommissioningErrorEnum::ValueOutsideRange)?
+                    .debug_text("")?
+                    .end();
+            }
+        };
 
         let mut persist = Persist::new(ctx.kv());
 
@@ -331,14 +405,35 @@ impl ClusterHandler for GenCommHandler<'_> {
         let status =
             CommissioningErrorEnum::map(Self::with_armed_failsafe(&ctx, |state, notify_mdns| {
                 let sess = ctx.exchange().id().session(&mut state.sessions);
+                // Spec V1.3 §5.5 / V1.4 §11.10.7.4: on
+                // `CommissioningComplete` the PASE session SHALL be
+                // terminated. The current command is being delivered over
+                // that PASE, so mark it `expired` (response can still go
+                // out, no further exchanges accepted) and let the LRU
+                // eviction reclaim the slot. Without this the promoted
+                // PASE leaks across commissioning rounds and eventually
+                // exhausts the session table — visible as `BUSY` on the
+                // next round's `PBKDFParamRequest` (TC_CADMIN_1_19 hit
+                // this on the 4th round of `SupportedFabrics` rounds).
+                // Modern controllers (CHIP SDK 1.4+) run a
+                // `FindOperationalForCommissioningComplete` step before
+                // sending `CommissioningComplete`, so this command
+                // typically arrives over the new operational CASE session
+                // rather than over PASE. In that case the current session
+                // doesn't need preserving and we just drop every PASE
+                // session unconditionally. (For legacy behaviour where the
+                // command does come over PASE we still preserve the
+                // current one.)
+                let pase_sess_id =
+                    matches!(sess.get_session_mode(), SessionMode::Pase { .. }).then(|| sess.id());
 
                 let fabric = state
                     .failsafe
                     .disarm(sess.get_session_mode(), &mut state.fabrics)?;
 
-                // As per section 5.5 of the Matter Core Spec V1.3 we have to terminate the PASE session
-                // upon completion of commissioning
                 state.pase.close_comm_window(notify_mdns, notify_change)?;
+                state.sessions.remove_pase(pase_sess_id);
+                ctx.exchange().matter().session_removed.notify();
 
                 // Finally, persist the fabric and the network settings, prior to sending the other party a "success" status
                 persist.store(fabric)?;

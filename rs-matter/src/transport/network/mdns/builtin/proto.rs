@@ -142,21 +142,47 @@ impl Host<'_> {
         self.add_ipv4(&mut answer, ttl_sec)?;
         self.add_ipv6(&mut answer, ttl_sec)?;
 
+        // The DNS broadcast packet has a fixed buffer (one Matter MTU) so
+        // a host with many services can overflow it — typically when more
+        // than ~4 commissioned fabrics are advertised at once
+        // (TC_CADMIN_1_19 hits this with 5). Treat overflow as
+        // "non-fatal": stop appending, keep whatever already fit, send
+        // that. Controllers that need a service we couldn't fit will
+        // still discover it via the per-instance query path
+        // (`Host::respond`), which only carries one service at a time.
+        //
+        // TODO: per RFC 6762 §17 we should split across multiple packets
+        // (with the TC bit set) and round-robin which services start each
+        // packet so no service is starved. The single-packet truncation
+        // below is the pragmatic fix that gets multi-fabric tests
+        // passing; it relies on solicited responses to fill the gap.
+        let mut overflowed = false;
         services.for_each(|service| {
-            service.add_service(&mut answer, self.hostname, ttl_sec)?;
-            service.add_service_type(&mut answer, ttl_sec)?;
-            service.add_dns_sd_service_type(&mut answer, ttl_sec)?;
-
-            // TODO: Apple commissioning - since Apple commissions > 1 fabric
-            // we are overflowing the DNS broadcast record.
-            // Temporarily comment out a few records to make it work.
-
-            //service.add_service_subtypes(&mut answer, ttl_sec)?;
-            //service.add_dns_sd_service_subtypes(&mut answer, ttl_sec)?;
-            //service.add_txt(&mut answer, ttl_sec)?;
-
-            Ok(())
+            if overflowed {
+                return Ok(());
+            }
+            let mut try_add = || -> Result<(), Error> {
+                service.add_service(&mut answer, self.hostname, ttl_sec)?;
+                service.add_service_type(&mut answer, ttl_sec)?;
+                service.add_dns_sd_service_type(&mut answer, ttl_sec)?;
+                Ok(())
+            };
+            if let Err(err) = try_add() {
+                if matches!(err.code(), ErrorCode::BufferTooSmall) {
+                    overflowed = true;
+                    Ok(())
+                } else {
+                    Err(err)
+                }
+            } else {
+                Ok(())
+            }
         })?;
+        if overflowed {
+            warn!(
+                "mDNS broadcast packet overflowed; some service records were dropped (will be served via direct queries)"
+            );
+        }
 
         let buf = answer.finish();
 

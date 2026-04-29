@@ -216,7 +216,7 @@ const NOC_CAT_VERSION_MASK: u64 = 0xFFFF;
 const NODE_ID_RANGE: RangeInclusive<u64> = 1..=0xFFFF_FFEF_FFFF_FFFF;
 
 /// Is this identifier a NOC CAT
-fn is_noc_cat(id: u64) -> bool {
+pub(crate) fn is_noc_cat(id: u64) -> bool {
     ((id & NOC_CAT_SUBJECT_MASK) == NOC_CAT_SUBJECT_PREFIX)
         && ((id & (NOC_CAT_ID_MASK | NOC_CAT_VERSION_MASK)) > 0)
 }
@@ -238,7 +238,7 @@ pub fn gen_noc_cat(id: u16, version: u16) -> u32 {
 }
 
 /// Is this identifier a node id
-fn is_node(id: u64) -> bool {
+pub(crate) fn is_node(id: u64) -> bool {
     NODE_ID_RANGE.contains(&id)
 }
 

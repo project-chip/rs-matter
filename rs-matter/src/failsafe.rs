@@ -20,10 +20,12 @@ use core::time::Duration;
 
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
 use crate::crypto::{
-    CanonAeadKeyRef, CanonPkcSecretKey, CanonPkcSecretKeyRef, Crypto, SecretKey,
-    PKC_SECRET_KEY_ZEROED,
+    CanonAeadKeyRef, CanonPkcSecretKey, CanonPkcSecretKeyRef, Crypto, PublicKey, SecretKey,
+    SigningSecretKey, PKC_SECRET_KEY_ZEROED,
 };
 use crate::dm::clusters::net_comm::NetworksAccess;
+use crate::dm::endpoints::ROOT_ENDPOINT_ID;
+use crate::dm::{ClusterId, EndptId};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, Fabrics};
 use crate::im::IMStatusCode;
@@ -80,6 +82,11 @@ impl From<IMStatusCode> for IMError {
     }
 }
 
+/// Default fail-safe expiry length used when the device implicitly arms the
+/// fail-safe (e.g. on PASE session establishment). Mirrors
+/// `CHIP_DEVICE_CONFIG_FAILSAFE_EXPIRY_LENGTH_SEC` from the reference SDK.
+pub const DEFAULT_FAILSAFE_EXPIRY_SECS: u16 = 60;
+
 pub struct FailSafe {
     state: State,
     secret_key: CanonPkcSecretKey,
@@ -118,49 +125,125 @@ impl FailSafe {
     pub fn check_failsafe_timeout<S, N>(
         &mut self,
         fabrics: &mut Fabrics,
+        sessions: &mut crate::transport::session::Sessions,
         networks: N,
         kv: S,
-        mut mdns_notif: impl FnMut(),
+        mdns_notif: impl FnMut(),
+        notify_change: impl FnMut(EndptId, ClusterId),
     ) -> Result<bool, Error>
     where
         S: KvBlobStoreAccess,
         N: NetworksAccess,
     {
-        if let State::Armed(ctx) = &mut self.state {
+        if let State::Armed(ctx) = &self.state {
             let now = (self.epoch)();
             if now >= ctx.armed_at + Duration::from_secs(ctx.timeout_secs as u64) {
-                warn!(
-                    "Fail-Safe timeout expired for fabric {}, disarming",
-                    ctx.fab_idx
-                );
-
-                kv.access(|mut kv, buf| {
-                    if let Some(fab_idx) = NonZeroU8::new(ctx.fab_idx) {
-                        fabrics.remove(fab_idx)?;
-                        fabrics.add_load(fab_idx.get(), &mut kv, buf)?;
-                    }
-
-                    networks.access(|networks| {
-                        let data = kv.load(NETWORKS_KEY, buf)?;
-
-                        if let Some(data) = data {
-                            networks.load(data)
-                        } else {
-                            networks.reset()
-                        }
-                    })
-                })?;
-
-                self.state = State::Idle;
-                self.breadcrumb = 0;
-
-                mdns_notif();
-
+                // Timeout path: no caller exchange to preserve, so wipe
+                // every PASE session along with the fabric / networks
+                // rollback.
+                self.expire(
+                    fabrics,
+                    sessions,
+                    None,
+                    networks,
+                    kv,
+                    mdns_notif,
+                    notify_change,
+                )?;
                 return Ok(true);
             }
         }
 
         Ok(false)
+    }
+
+    /// Force the fail-safe context to expire immediately, rolling back any
+    /// fabric / network changes that the in-flight commissioning had staged
+    /// and resetting the breadcrumb to 0.
+    ///
+    /// `expire_sess_id` is the optional session ID of the exchange that
+    /// triggered the expiry — typically passed when the trigger arrived
+    /// over PASE, so the response can still be sent before the slot is
+    /// reclaimed. `None` for the timeout-driven path or when the trigger
+    /// arrived over CASE.
+    #[allow(clippy::too_many_arguments)]
+    pub fn expire<S, N>(
+        &mut self,
+        fabrics: &mut Fabrics,
+        sessions: &mut crate::transport::session::Sessions,
+        expire_sess_id: Option<u32>,
+        networks: N,
+        kv: S,
+        mut mdns_notif: impl FnMut(),
+        mut notify_change: impl FnMut(EndptId, ClusterId),
+    ) -> Result<bool, Error>
+    where
+        S: KvBlobStoreAccess,
+        N: NetworksAccess,
+    {
+        let State::Armed(ctx) = &self.state else {
+            return Ok(false);
+        };
+
+        warn!(
+            "Fail-Safe timeout expired for fabric {}, disarming",
+            ctx.fab_idx
+        );
+
+        let fab_idx_raw = ctx.fab_idx;
+
+        kv.access(|mut kv, buf| {
+            if let Some(fab_idx) = NonZeroU8::new(fab_idx_raw) {
+                fabrics.remove(fab_idx)?;
+                fabrics.add_load(fab_idx.get(), &mut kv, buf)?;
+            }
+
+            networks.access(|networks| {
+                let data = kv.load(NETWORKS_KEY, buf)?;
+
+                if let Some(data) = data {
+                    networks.load(data)
+                } else {
+                    networks.reset()
+                }
+            })
+        })?;
+
+        // Any PASE session that was in flight under this fail-safe is
+        // now orphaned: its commissioning attempt was rolled back, so the
+        // session has nothing to do and should not stick around to fill
+        // the session table (same leak class fixed for
+        // `CommissioningComplete`). `Sessions::remove_pase` keeps
+        // `expire_sess_id` alive (marked expired) so any in-flight
+        // response can complete.
+        sessions.remove_pase(expire_sess_id);
+
+        self.state = State::Idle;
+        self.breadcrumb = 0;
+
+        mdns_notif();
+
+        // The rollback above restores attributes visible to subscribers —
+        // `OperationalCredentials::NOCs` / `Fabrics` (including `vvsc`,
+        // `VIDVerificationStatement`, `vendorID` mutated in-failsafe by
+        // `SetVIDVerificationStatement`) and `NetworkCommissioning::Networks`
+        // — to their persisted values. Notify so any active subscriptions
+        // re-report.
+        //
+        // TODO: this only flags subscriptions for re-reporting; it does
+        // *not* bump the affected clusters' data versions. `Failsafe`
+        // has no handle to the cluster meta needed to do that. Pre-existing
+        // limitation, not introduced by the timeout-vs-force-expiry path.
+        notify_change(
+            ROOT_ENDPOINT_ID,
+            crate::dm::clusters::decl::operational_credentials::FULL_CLUSTER.id,
+        );
+        notify_change(
+            ROOT_ENDPOINT_ID,
+            crate::dm::clusters::decl::network_commissioning::FULL_CLUSTER.id,
+        );
+
+        Ok(true)
     }
 
     pub fn arm(
@@ -256,11 +339,54 @@ impl FailSafe {
         matches!(self.state, State::Armed(_))
     }
 
+    /// Return the trusted root certificate that has been staged via
+    /// `AddTrustedRootCertificate` while the fail-safe is armed but has not
+    /// yet been bound to a fabric via `AddNOC` / `UpdateNOC`.
+    ///
+    /// Once `AddNOC` or `UpdateNOC` is processed the root certificate is
+    /// owned by the (new or updated) fabric and is reported through the
+    /// fabric table; until then it has no fabric association but the spec
+    /// still requires it to appear in the `TrustedRootCertificates` list
+    /// (Matter Core spec, NodeOperationalCredentials cluster).
+    pub fn pending_root_ca(&self) -> Option<&[u8]> {
+        let State::Armed(ctx) = &self.state else {
+            return None;
+        };
+
+        if !ctx.flags.contains(NocFlags::ADD_ROOT_CERT_RECVD) {
+            return None;
+        }
+
+        if ctx
+            .flags
+            .intersects(NocFlags::ADD_NOC_RECVD | NocFlags::UPDATE_NOC_RECVD)
+        {
+            return None;
+        }
+
+        (!self.root_ca.is_empty()).then_some(self.root_ca.as_slice())
+    }
+
     pub fn is_armed_for(&self, caller_fab_idx: u8) -> bool {
         match self.state {
             State::Idle => false,
             State::Armed(ArmedCtx { fab_idx, .. }) => fab_idx == caller_fab_idx,
         }
+    }
+
+    /// Whether the current fail-safe context already has an in-flight
+    /// `AddNOC` or `UpdateNOC` for `caller_fab_idx`. Used by
+    /// `SetVIDVerificationStatement` to decide whether the VID-verification
+    /// mutation rides along with the pending fabric (and thus rolls back
+    /// on fail-safe expiry) or is committed to storage immediately.
+    pub fn has_pending_noc_for(&self, caller_fab_idx: NonZeroU8) -> bool {
+        let State::Armed(ctx) = &self.state else {
+            return false;
+        };
+        ctx.fab_idx == caller_fab_idx.get()
+            && ctx
+                .flags
+                .intersects(NocFlags::ADD_NOC_RECVD | NocFlags::UPDATE_NOC_RECVD)
     }
 
     pub fn check_armed(&self, session_mode: &SessionMode) -> Result<(), Error> {
@@ -272,10 +398,12 @@ impl FailSafe {
         )
     }
 
-    pub fn add_trusted_root_cert(
+    pub fn add_trusted_root_cert<C: Crypto>(
         &mut self,
+        crypto: C,
         session_mode: &SessionMode,
         root_ca: &[u8],
+        buf: &mut [u8],
     ) -> Result<(), Error> {
         self.check_state(
             session_mode,
@@ -283,6 +411,20 @@ impl FailSafe {
             NocFlags::ADD_ROOT_CERT_RECVD,
             NocFlags::ADD_ROOT_CERT_RECVD,
         )?;
+
+        // Validate the candidate RCAC by checking its self-signature (a Matter
+        // RCAC is self-issued, so the certificate's own public key must verify
+        // the certificate's signature). Any decode or signature failure must
+        // surface as `INVALID_COMMAND` per Matter Core spec section 11.18.6.13
+        // (`AddTrustedRootCertificate`), not as the generic `Failure` we'd
+        // otherwise get from `ErrorCode::InvalidSignature`.
+        {
+            let root_ref = CertRef::new(TLVElement::new(root_ca));
+            root_ref
+                .verify_chain_start(&crypto)
+                .finalise(buf)
+                .map_err(|_| ErrorCode::InvalidCommand)?;
+        }
 
         self.root_ca.clear();
         self.root_ca
@@ -351,46 +493,71 @@ impl FailSafe {
     ) -> Result<&'a mut Fabric, Error> {
         let fab_idx = Self::get_case_fab_idx(session_mode)?;
 
+        // `UpdateNOC` only requires the corresponding `CSRRequest` (with
+        // `isForUpdateNOC=true`) to have been processed in this fail-safe
+        // context. Per Matter Core spec section 11.18.6.7 it must NOT
+        // have been preceded by `AddTrustedRootCertificate`, `AddNOC`,
+        // `UpdateNOC`, or a CSRRequest of the wrong kind — those go in
+        // `absent`. `validate_certs` further down uses the *committed*
+        // root cert (`fabrics.fabric(fab_idx).root_ca()`), not anything
+        // staged via AddTrustedRootCertificate.
         self.check_state(
             session_mode,
-            NocFlags::ADD_ROOT_CERT_RECVD | NocFlags::UPDATE_CSR_REQ_RECVD,
-            NocFlags::ADD_NOC_RECVD | NocFlags::ADD_CSR_REQ_RECVD | NocFlags::UPDATE_NOC_RECVD,
+            NocFlags::UPDATE_CSR_REQ_RECVD,
+            NocFlags::ADD_ROOT_CERT_RECVD
+                | NocFlags::ADD_NOC_RECVD
+                | NocFlags::ADD_CSR_REQ_RECVD
+                | NocFlags::UPDATE_NOC_RECVD,
             NocFlags::UPDATE_NOC_RECVD,
         )?;
 
         {
             let noc_ref = CertRef::new(TLVElement::new(noc));
             let icac_ref = icac.map(|icac| CertRef::new(TLVElement::new(icac)));
-            let root_ref = CertRef::new(TLVElement::new(&self.root_ca));
+            // `UpdateNOC` re-uses the existing fabric's root cert; it does
+            // not consume one staged via `AddTrustedRootCertificate` (the
+            // `absent` constraint above ensures none was staged).
+            let fabric_root_ca = fabrics.fabric(fab_idx)?.root_ca();
+            let root_ref = CertRef::new(TLVElement::new(fabric_root_ca));
 
-            // Validate the certs first
-            Self::validate_certs(&crypto, &noc_ref, icac_ref.as_ref(), &root_ref, buf)?;
+            // Validate the certs first. A chain that doesn't pass
+            // signature verification (or that doesn't chain back to the
+            // staged root) is reported as `kInvalidNOC` cluster status per
+            // Matter Core spec section 11.18.6.7 (`UpdateNOC`).
+            Self::validate_certs(&crypto, &noc_ref, icac_ref.as_ref(), &root_ref, buf)
+                .map_err(|_| ErrorCode::NocInvalidNoc)?;
 
-            // Check that the fabric ID and root cert pubkey in the NOC
-            // match the ones of the fabric which is being updated
+            // The NOC's public key must match the public key derived from
+            // the most recent `CSRRequest(isForUpdateNOC=true)` (Matter
+            // Core spec section 11.18.6.7).
+            let mut csr_pubkey = crate::crypto::CanonPkcPublicKey::new();
+            crypto
+                .secret_key(self.secret_key.reference())?
+                .pub_key()?
+                .write_canon(&mut csr_pubkey)?;
+            if csr_pubkey.access().as_slice() != noc_ref.pubkey()? {
+                Err(ErrorCode::NocInvalidPublicKey)?;
+            }
+
+            // Check that the fabric ID in the NOC matches the fabric
+            // being updated. The root cert pubkey check is implicit: the
+            // chain validation above used the fabric's own root cert.
 
             let fabric_id = noc_ref.get_fabric_id()?;
-            let root_cert_pubkey = root_ref.pubkey()?;
-
             let fabric = fabrics.fabric(fab_idx)?;
 
             if fabric_id != fabric.fabric_id() {
                 Err(ErrorCode::NocFabricConflict)?;
             }
-
-            let f_root_ref = CertRef::new(TLVElement::new(fabric.root_ca()));
-            let f_root_pubkey = f_root_ref.pubkey()?;
-
-            if root_cert_pubkey != f_root_pubkey {
-                Err(ErrorCode::NocFabricConflict)?;
-            }
         }
 
+        // `Fabrics::update` keeps the existing root cert in place — no
+        // need (and no reason) to copy it out of the fabric just to pass
+        // it back in.
         let fabric = fabrics.update(
             &crypto,
             fab_idx,
             self.secret_key.reference(),
-            &self.root_ca,
             noc,
             icac.unwrap_or(&[]),
         )?;
@@ -430,13 +597,38 @@ impl FailSafe {
             NocFlags::ADD_NOC_RECVD,
         )?;
 
+        // CaseAdminSubject must be either a valid Operational Node ID or a
+        // CASE Authenticated Tag (CAT) — Matter Core spec section 11.18.6.6
+        // (`AddNOC`). Anything else (most commonly 0) is reported as
+        // `kInvalidAdminSubject` cluster status.
+        if !crate::acl::is_node(case_admin_subject) && !crate::acl::is_noc_cat(case_admin_subject) {
+            Err(ErrorCode::NocInvalidAdminSubject)?;
+        }
+
         {
             let noc_ref = CertRef::new(TLVElement::new(noc));
             let icac_ref = icac.map(|icac| CertRef::new(TLVElement::new(icac)));
             let root_ref = CertRef::new(TLVElement::new(&self.root_ca));
 
-            // Validate the certs first
-            Self::validate_certs(&crypto, &noc_ref, icac_ref.as_ref(), &root_ref, buf)?;
+            // Validate the certs first. A chain that doesn't pass
+            // signature verification (or that doesn't chain back to the
+            // staged root) is reported as `kInvalidNOC` cluster status per
+            // Matter Core spec section 11.18.6.6 (`AddNOC`).
+            Self::validate_certs(&crypto, &noc_ref, icac_ref.as_ref(), &root_ref, buf)
+                .map_err(|_| ErrorCode::NocInvalidNoc)?;
+
+            // The NOC's public key must match the public key derived from
+            // the most recent `CSRRequest` (Matter Core spec section
+            // 11.18.6.6). The CSR's secret key is stashed in
+            // `self.secret_key` by `add_csr_req` / `update_csr_req`.
+            let mut csr_pubkey = crate::crypto::CanonPkcPublicKey::new();
+            crypto
+                .secret_key(self.secret_key.reference())?
+                .pub_key()?
+                .write_canon(&mut csr_pubkey)?;
+            if csr_pubkey.access().as_slice() != noc_ref.pubkey()? {
+                Err(ErrorCode::NocInvalidPublicKey)?;
+            }
 
             // Check that there is no fabric with the same fabric ID and root cert pubkey
             // as the one in the NOC, to avoid adding duplicate fabrics
@@ -514,7 +706,13 @@ impl FailSafe {
         let mut verifier = noc.verify_chain_start(crypto);
 
         if let Some(icac) = icac {
-            // If ICAC is present handle it
+            // If ICAC is present handle it. Reject the case where the
+            // commissioner re-uses the RCAC as the ICAC: Matter Core spec
+            // section 6.5 requires the ICAC to be a separate CA cert
+            // (i.e. not self-signed).
+            if icac.is_self_signed()? {
+                return Err(ErrorCode::InvalidData.into());
+            }
             verifier = verifier.add_cert(icac, buf)?;
         }
 
@@ -555,14 +753,21 @@ impl FailSafe {
             }
 
             if !ctx.flags.contains(present) {
-                // State is not what is expected for that concrete command
-
-                if op == NocFlags::ADD_NOC_RECVD
-                    && !ctx.flags.contains(NocFlags::UPDATE_CSR_REQ_RECVD)
-                    || op == NocFlags::UPDATE_NOC_RECVD
-                        && !ctx.flags.contains(NocFlags::UPDATE_CSR_REQ_RECVD)
-                {
-                    // Return a more concrete error if the problem is that the CSR request is missing
+                // State is not what is expected for that concrete command.
+                //
+                // Disambiguate "no CSR at all" from "wrong CSR type" per
+                // Matter Core spec sections 11.18.6.6 (`AddNOC`) and
+                // 11.18.6.7 (`UpdateNOC`):
+                //   * No `CSRRequest` of either kind seen yet for this
+                //     fail-safe context → `kMissingCsr` cluster status.
+                //   * A CSR was issued but with the opposite
+                //     `isForUpdateNOC` flag from the command being
+                //     processed (e.g. `UpdateNOC` after a CSR for
+                //     `AddNOC`) → IM `CONSTRAINT_ERROR`.
+                let any_csr = ctx
+                    .flags
+                    .intersects(NocFlags::ADD_CSR_REQ_RECVD | NocFlags::UPDATE_CSR_REQ_RECVD);
+                if (op == NocFlags::ADD_NOC_RECVD || op == NocFlags::UPDATE_NOC_RECVD) && !any_csr {
                     Err(ErrorCode::NocMissingCsr)?;
                 }
 
@@ -570,17 +775,16 @@ impl FailSafe {
             }
 
             if !ctx.flags.intersection(absent).is_empty() {
-                // State is not what is expected for that concrete command
-
-                if op == NocFlags::ADD_NOC_RECVD
-                    && ctx.flags.contains(NocFlags::UPDATE_CSR_REQ_RECVD)
-                    || op == NocFlags::UPDATE_NOC_RECVD
-                        && ctx.flags.contains(NocFlags::ADD_CSR_REQ_RECVD)
-                {
-                    // Return a more concrete error if the problem is an add/update NOC mismatch
-                    Err(ErrorCode::NocFabricConflict)?;
-                }
-
+                // State is not what is expected for that concrete command.
+                //
+                // Two flavours both surface as IM `CONSTRAINT_ERROR` per
+                // Matter Core spec sections 11.18.6.6 (`AddNOC`) and
+                // 11.18.6.7 (`UpdateNOC`):
+                //   * the same `Add`/`UpdateNOC` was already received in
+                //     this fail-safe context
+                //   * the most recent `CSRRequest` had the wrong
+                //     `isForUpdateNOC` flag for the command being
+                //     processed (e.g. UpdateNOC after an AddNOC-style CSR)
                 Err(ErrorCode::ConstraintError)?;
             }
         } else {

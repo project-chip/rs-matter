@@ -213,6 +213,16 @@ impl<'a> Cluster<'a> {
             Err(IMStatusCode::NeedsTimedInteraction)?;
         }
 
+        // Per Matter Core spec section 8.9.4 (Invoke Interaction): "Else if
+        // the command in the path is fabric-scoped and there is no accessing
+        // fabric, a CommandStatusIB SHALL be generated with the
+        // UNSUPPORTED_ACCESS Status Code." This is the catch for fabric-scoped
+        // admin commands invoked over a PASE session that hasn't yet promoted
+        // its fabric index via AddNOC.
+        if target_perms.contains(Access::FAB_SCOPED) && accessor.fab_idx == 0 {
+            Err(IMStatusCode::UnsupportedAccess)?;
+        }
+
         access_req.set_target_perms(target_perms);
         if access_req.allow() {
             Ok(())
