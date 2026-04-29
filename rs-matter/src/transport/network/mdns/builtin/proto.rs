@@ -189,6 +189,48 @@ impl Host<'_> {
         Ok(buf.1)
     }
 
+    /// Build a Matter mDNS Goodbye broadcast packet (RFC 6762 §10.1) for
+    /// services that were just retired from the host's mDNS publication
+    /// set. Emits the type / subtype PTR records for each service with
+    /// `TTL=0` so receiving caches drop the stale entries immediately
+    /// instead of waiting up to a minute for the regular TTL to expire.
+    ///
+    /// Without this, e.g. closing a commissioning window leaves its
+    /// `<random>._matterc._udp.local.` instance cached on every host
+    /// that has already seen it, which then surfaces as duplicate
+    /// `_CM._sub` PTR records on the next browse (TC-SC-4.1 step 11
+    /// caught this).
+    ///
+    /// Host A/AAAA records and the meta `_services._dns-sd._udp` PTR
+    /// are deliberately *not* withdrawn — only the per-instance
+    /// records belonging to the retired services.
+    pub fn broadcast_goodbye<T: Services>(
+        &self,
+        services: T,
+        buf: &mut [u8],
+    ) -> Result<usize, Error> {
+        let buf = Buf(buf, 0);
+        let message = MessageBuilder::from_target(buf)?;
+        let mut answer = message.answer();
+
+        self.set_answer_header(&mut answer);
+
+        services.for_each(|service| {
+            // PTR `_matterc._udp.local. -> <inst>._matterc._udp.local.`
+            // and one PTR per subtype (`_L<long>`, `_S<short>`, `_V<vid>P<pid>`,
+            // `_CM`); zero TTL retracts each cached entry.
+            service.add_service_type(&mut answer, 0)?;
+            for subtype in service.service_subtypes {
+                service.add_service_subtype(&mut answer, subtype, 0)?;
+            }
+            Ok(())
+        })?;
+
+        let buf = answer.finish();
+
+        Ok(buf.1)
+    }
+
     /// Respond to an mDNS packet as long as it contains at least one question
     /// which is applicable to the hoswt and its services
     ///
