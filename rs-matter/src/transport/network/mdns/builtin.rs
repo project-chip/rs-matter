@@ -30,6 +30,7 @@ use rand_core::RngCore;
 
 use crate::crypto::Crypto;
 use crate::error::{Error, ErrorCode};
+use crate::fabric::MAX_FABRICS;
 use crate::transport::network::mdns::{
     MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_PORT,
 };
@@ -39,7 +40,7 @@ use crate::transport::network::{
 use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::BufferAccess;
 use crate::utils::sync::IfMutex;
-use crate::Matter;
+use crate::{Matter, MatterMdnsService};
 
 use self::proto::Services;
 use super::Service;
@@ -110,11 +111,42 @@ where
     where
         S: NetworkSend,
     {
+        // Track the set of services published in the previous broadcast
+        // so we can emit Goodbye records (TTL=0) for any that have just
+        // been retired (RFC 6762 §10.1). Without that, OS-level mDNS
+        // caches (avahi, mDNSResponder, ...) keep stale instance names
+        // around for the full TTL window — TC-SC-4.1 fails on the
+        // resulting duplicate `_CM._sub` PTR records.
+        //
+        // Capacity = `MAX_FABRICS` commissioned services + 1
+        // commissionable window.
+        const MAX_TRACKED_SERVICES: usize = MAX_FABRICS + 1;
+        let mut last: heapless::Vec<MatterMdnsService, MAX_TRACKED_SERVICES> = heapless::Vec::new();
+
         loop {
             let mut notification = pin!(self.matter.wait_mdns());
             let mut timeout = pin!(Timer::after(Duration::from_secs(30)));
 
             select(&mut notification, &mut timeout).await;
+
+            // Snapshot the services that should be live now.
+            let mut current: heapless::Vec<MatterMdnsService, MAX_TRACKED_SERVICES> =
+                heapless::Vec::new();
+            self.matter.mdns_services(|s| {
+                current
+                    .push(s)
+                    .map_err(|_| Error::from(ErrorCode::ResourceExhausted))
+            })?;
+
+            // Anything in `last` that's no longer in `current` was just
+            // retired and needs a Goodbye broadcast.
+            let mut removed: heapless::Vec<MatterMdnsService, MAX_TRACKED_SERVICES> =
+                heapless::Vec::new();
+            for prev in &last {
+                if !current.iter().any(|c| c == prev) {
+                    let _ = removed.push(prev.clone());
+                }
+            }
 
             for addr in Iterator::chain(
                 ipv4_interface
@@ -131,6 +163,29 @@ where
             ) {
                 let buffer = self.matter.transport_tx_buffer();
 
+                if !removed.is_empty() {
+                    let mut buf = buffer.get().await.ok_or(ErrorCode::ResourceExhausted)?;
+                    let mut send = send.lock().await;
+
+                    let goodbye = GoodbyeServices {
+                        services: &removed,
+                        dev_det: self.matter.dev_det(),
+                        port: self.matter.port(),
+                    };
+                    let len = host.broadcast_goodbye(&goodbye, &mut buf)?;
+                    if len > 0 {
+                        if let Err(e) = send.send_to(&buf[..len], Address::Udp(addr)).await {
+                            warn!("Failed to send mDNS goodbye to {}: {}", addr, e);
+                        } else {
+                            debug!(
+                                "Broadcasting mDNS goodbye for {} retired service(s) to {}",
+                                removed.len(),
+                                addr
+                            );
+                        }
+                    }
+                }
+
                 let mut buf = buffer.get().await.ok_or(ErrorCode::ResourceExhausted)?;
                 let mut send = send.lock().await;
 
@@ -144,6 +199,8 @@ where
                     }
                 }
             }
+
+            last = current;
         }
     }
 
@@ -250,5 +307,27 @@ where
                 &mut callback,
             )
         })
+    }
+}
+
+/// `Services` adapter that expands a slice of `MatterMdnsService` values
+/// into full `Service` descriptions on demand. Used to feed the goodbye
+/// broadcast path with services that are no longer live (and therefore
+/// no longer reachable through `Matter::mdns_services`).
+struct GoodbyeServices<'a> {
+    services: &'a [MatterMdnsService],
+    dev_det: &'a crate::BasicInfoConfig<'a>,
+    port: u16,
+}
+
+impl Services for GoodbyeServices<'_> {
+    fn for_each<F>(&self, mut callback: F) -> Result<(), Error>
+    where
+        F: FnMut(&Service) -> Result<(), Error>,
+    {
+        for matter_service in self.services {
+            Service::call_with(matter_service, self.dev_det, self.port, &mut callback)?;
+        }
+        Ok(())
     }
 }
