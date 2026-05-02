@@ -2,6 +2,7 @@ target
 Cargo.lock
 .vscode
 .idea
+.claude
 
 # Nix
 .devenv/

@@ -17,12 +17,13 @@
 
 //! This module imports all system clusters that are used by the `rs-matter` itself.
 //!
-//! Additionally, it imports the following extra ones:
-//! - OnOff - for demoing purposes
-//! - UnitTesting - for testing purposes
+//! Application-level clusters (OnOff, LevelControl, the camera / streaming
+//! clusters, etc.) live under [`app`] and have to be opted into by the
+//! application as needed.
 
 pub mod acl;
 pub mod adm_comm;
+pub mod app;
 pub mod basic_info;
 pub mod desc;
 pub mod dev_att;
@@ -31,10 +32,8 @@ pub mod gen_comm;
 pub mod gen_diag;
 pub mod groups;
 pub mod grp_key_mgmt;
-pub mod level_control;
 pub mod net_comm;
 pub mod noc;
-pub mod on_off;
 pub mod thread_diag;
 pub mod unit_testing;
 pub mod wifi_diag;

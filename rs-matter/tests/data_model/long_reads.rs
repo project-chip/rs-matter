@@ -15,8 +15,9 @@
  *    limitations under the License.
  */
 
+use rs_matter::dm::clusters::app::on_off;
 use rs_matter::dm::clusters::{
-    acl, adm_comm, basic_info, desc, gen_comm, gen_diag, grp_key_mgmt, net_comm, noc, on_off,
+    acl, adm_comm, basic_info, desc, gen_comm, gen_diag, grp_key_mgmt, net_comm, noc,
 };
 use rs_matter::dm::GlobalElements;
 use rs_matter::im::AttrPath;

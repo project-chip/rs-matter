@@ -21,10 +21,12 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
+
 use env_logger::fmt::style;
+
 use log::{Level, LevelFilter};
 
-use crate::itest::ITests;
+use crate::itest::{ITests, TestSuite};
 
 mod common;
 mod itest;
@@ -52,11 +54,19 @@ enum Command {
         setup_args: ItestSetupArgs,
         #[command(flatten)]
         build_args: BuildArgs,
-        /// Test names to run (if empty, runs all default tests)
+        /// Test names to run. If empty, runs the default test list for
+        /// the selected `--suite` (system tests by default).
         tests: Vec<String>,
-        /// Timeout for each test in seconds
-        #[arg(long, default_value = "120")]
-        timeout: u32,
+        /// Test suite to run. Selects a default test list, target binary,
+        /// cargo features, and per-test timeout. `--target`, `--features`,
+        /// `--timeout` and positional test names override the corresponding
+        /// suite defaults.
+        #[arg(long, short = 's', default_value_t = TestSuite::System, value_enum)]
+        suite: TestSuite,
+        /// Timeout for each test in seconds. Defaults to the selected
+        /// suite's default timeout.
+        #[arg(long)]
+        timeout: Option<u32>,
         /// Skip setting up of the Chip environment (assume it's already set up)
         #[arg(long)]
         skip_setup: bool,
@@ -99,7 +109,7 @@ impl Command {
                 .setup(Some(&args.gitref), args.force_setup),
             Command::ItestExe(args) => ITests::new(workspace_dir(), print_cmd_output).build(
                 &args.profile,
-                &args.target,
+                args.target_or_default(),
                 &args.features,
                 args.force_rebuild,
             ),
@@ -107,23 +117,52 @@ impl Command {
                 setup_args,
                 build_args,
                 tests,
+                suite,
                 timeout,
                 skip_setup,
                 skip_build,
             } => {
+                // Resolve overrides against the selected suite's defaults.
+                let resolved_target = build_args
+                    .target
+                    .clone()
+                    .unwrap_or_else(|| suite.default_target().to_string());
+                let resolved_features: Vec<String> = suite
+                    .default_features()
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .chain(build_args.features.iter().cloned())
+                    .collect();
+                let resolved_timeout = timeout.unwrap_or_else(|| suite.default_timeout_secs());
+                let resolved_tests: Vec<String> = if tests.is_empty() {
+                    suite
+                        .default_tests()
+                        .iter()
+                        .map(|s| (*s).to_string())
+                        .collect()
+                } else {
+                    tests.clone()
+                };
+
                 if !*skip_setup {
                     Command::ItestSetup(setup_args.clone()).run(print_cmd_output)?;
                 }
 
                 if !*skip_build {
-                    Command::ItestExe(build_args.clone()).run(print_cmd_output)?;
+                    let resolved_build = BuildArgs {
+                        profile: build_args.profile.clone(),
+                        target: Some(resolved_target.clone()),
+                        features: resolved_features.clone(),
+                        force_rebuild: build_args.force_rebuild,
+                    };
+                    Command::ItestExe(resolved_build).run(print_cmd_output)?;
                 }
 
                 ITests::new(workspace_dir(), print_cmd_output).run(
-                    tests,
-                    *timeout,
+                    &resolved_tests,
+                    resolved_timeout,
                     &build_args.profile,
-                    &build_args.target,
+                    &resolved_target,
                 )
             }
             Command::Tlv {
@@ -186,15 +225,25 @@ struct BuildArgs {
     /// Build profile (debug or release)
     #[arg(long, default_value = "debug")]
     profile: String,
-    /// Build target application name (`chip_tool_tests` by default)
-    #[arg(long, default_value = "chip_tool_tests")]
-    target: String,
-    /// Additional cargo features
+    /// Build target application name. Defaults to `chip_tool_tests` for
+    /// `itest-exe`; for `itest`, defaults to the selected suite's example
+    /// binary (see `--suite`).
+    #[arg(long)]
+    target: Option<String>,
+    /// Extra cargo features. For `itest`, these are appended to whatever
+    /// the selected suite already requires.
     #[arg(long)]
     features: Vec<String>,
     /// Force clean rebuild
     #[arg(long)]
     force_rebuild: bool,
+}
+
+impl BuildArgs {
+    /// Resolve `target` for the standalone `itest-exe` command.
+    fn target_or_default(&self) -> &str {
+        self.target.as_deref().unwrap_or("chip_tool_tests")
+    }
 }
 
 fn main() -> anyhow::Result<()> {

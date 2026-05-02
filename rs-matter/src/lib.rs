@@ -138,6 +138,8 @@ pub enum MatterMdnsService {
         id: u64,
         /// The discriminator to be communicated over mDNS
         discriminator: u16,
+        /// Whether this is an enhanced (ECM) commissioning window (`CM=2`) vs basic (`CM=1`)
+        enhanced: bool,
     },
 }
 

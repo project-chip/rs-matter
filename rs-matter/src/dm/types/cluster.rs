@@ -143,18 +143,22 @@ impl<'a> Cluster<'a> {
     /// designated by the provided path.
     ///
     /// if `write` is true, the operation is a write operation, otherwise it is a read operation.
+    /// `device_types` lists the device types declared by the endpoint hosting `path`,
+    /// so ACL entries with a `Target` of kind `DeviceType` can be evaluated correctly.
     pub(crate) fn check_attr_access(
         &self,
         accessor: &Accessor,
         timed: bool,
         path: GenericPath,
+        device_types: &[DeviceType],
         write: bool,
         attr_id: AttrId,
     ) -> Result<(), IMStatusCode> {
-        let mut access_req = AccessReq::new(
+        let mut access_req = AccessReq::new_with_device_types(
             accessor,
             path,
             if write { Access::WRITE } else { Access::READ },
+            device_types,
         );
 
         let target_perms = self
@@ -186,14 +190,17 @@ impl<'a> Cluster<'a> {
 
     /// Check if the accessor has the required permissions to access the command
     /// designated by the provided path.
+    /// `device_types` lists the device types declared by the endpoint hosting `path`.
     pub(crate) fn check_cmd_access(
         &self,
         accessor: &Accessor,
         timed: bool,
         path: GenericPath,
+        device_types: &[DeviceType],
         cmd_id: CmdId,
     ) -> Result<(), IMStatusCode> {
-        let mut access_req = AccessReq::new(accessor, path, Access::WRITE);
+        let mut access_req =
+            AccessReq::new_with_device_types(accessor, path, Access::WRITE, device_types);
 
         let target_perms = self
             .commands
@@ -206,6 +213,16 @@ impl<'a> Cluster<'a> {
             Err(IMStatusCode::NeedsTimedInteraction)?;
         }
 
+        // Per Matter Core spec section 8.9.4 (Invoke Interaction): "Else if
+        // the command in the path is fabric-scoped and there is no accessing
+        // fabric, a CommandStatusIB SHALL be generated with the
+        // UNSUPPORTED_ACCESS Status Code." This is the catch for fabric-scoped
+        // admin commands invoked over a PASE session that hasn't yet promoted
+        // its fabric index via AddNOC.
+        if target_perms.contains(Access::FAB_SCOPED) && accessor.fab_idx == 0 {
+            Err(IMStatusCode::UnsupportedAccess)?;
+        }
+
         access_req.set_target_perms(target_perms);
         if access_req.allow() {
             Ok(())
@@ -216,13 +233,16 @@ impl<'a> Cluster<'a> {
 
     /// Check if the accessor has the required permissions to access the event
     /// designated by the provided path.
+    /// `device_types` lists the device types declared by the endpoint hosting `path`.
     pub(crate) fn check_event_access(
         &self,
         accessor: &Accessor,
         path: GenericPath,
+        device_types: &[DeviceType],
         event_id: EventId,
     ) -> Result<(), IMStatusCode> {
-        let mut access_req = AccessReq::new(accessor, path, Access::READ);
+        let mut access_req =
+            AccessReq::new_with_device_types(accessor, path, Access::READ, device_types);
 
         let target_perms = self
             .events

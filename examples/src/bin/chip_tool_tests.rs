@@ -32,15 +32,15 @@ use log::info;
 
 use rand::RngCore;
 use rs_matter::crypto::{default_crypto, Crypto};
+use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
+use rs_matter::dm::clusters::app::on_off::test::TestOnOffDeviceLogic;
+use rs_matter::dm::clusters::app::on_off::{self, OnOffHandler, OnOffHooks};
 use rs_matter::dm::clusters::basic_info::{
     BasicInfoConfig, ColorEnum, PairingHintFlags, ProductAppearance, ProductFinishEnum,
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::SharedNetworks;
-use rs_matter::dm::clusters::on_off::test::TestOnOffDeviceLogic;
-use rs_matter::dm::clusters::on_off::{self, OnOffHandler, OnOffHooks};
 use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
 };
@@ -272,6 +272,10 @@ fn main() -> Result<(), Error> {
 /// - We can set the product appearance to what the `TestBasicInformation` tests expect;
 /// - We can set the device type and pairing hint to what the `TestDiscovery` tests expect.
 /// - When the `test-tcp` feature is enabled, we advertise TCP support via mDNS (`T=1`).
+/// - We advertise `MaxPathsPerInvoke = 1`. This is the spec minimum and keeps
+///   `TC_IDM_1_4` on the short path (it skips steps 3+ for devices that report 1),
+///   avoiding test-only requirements like `TestEventTriggers` on the General Diagnostics
+///   cluster which we do not implement.
 const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     product_appearance: ProductAppearance {
         finish: ProductFinishEnum::Satin,
@@ -280,6 +284,7 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     device_type: Some(0x0101),
     pairing_hint: PairingHintFlags::PRESS_RESET_BUTTON,
     tcp_supported: cfg!(feature = "test-tcp"),
+    max_paths_per_invoke: 1,
     ..TEST_DEV_DET
 };
 

@@ -179,9 +179,11 @@ where
             // Disarm the failsafe on timeout
             state.failsafe.check_failsafe_timeout(
                 &mut state.fabrics,
+                &mut state.sessions,
                 &self.networks,
                 &self.kv,
                 &mut notify_mdns,
+                &mut notify_change,
             )?;
 
             // Close the commissioning window on timeout
@@ -279,12 +281,17 @@ where
         let metadata = self.handler.lock().await;
         let node = metadata.node();
 
+        // Honor the `fabricFiltered` flag on the originating Read request.
+        // When set, fabric-sensitive events emitted on other fabrics are
+        // dropped before they reach the wire (Matter Core spec section 8.5.2).
+        let fabric_filtered = req.fabric_filtered().unwrap_or(true);
+
         let mut resp = ReportDataResponder::new(
             &req,
             &node,
             None,
             HandlerInvoker::new(exchange, self),
-            EventReader::new(0),
+            EventReader::new(0, u64::MAX, fabric_filtered),
             self.events,
         );
 
@@ -390,6 +397,40 @@ where
 
         if self.timed_out(exchange, timeout_instant, timed).await? {
             return Ok(());
+        }
+
+        let max_paths = exchange.matter().dev_det().max_paths_per_invoke as usize;
+
+        if let Some(reqs) = req.inv_requests()? {
+            let mut count = 0;
+            for r in &reqs {
+                let _ = r?;
+                count += 1;
+            }
+
+            if count > max_paths {
+                return Self::send_status(exchange, IMStatusCode::InvalidAction).await;
+            }
+
+            // Per Matter Core spec section 8.9.4: when an `InvokeRequestMessage`
+            // carries multiple `CommandDataIB` entries, each MUST include a unique
+            // `CommandRef` and the request paths SHALL be unique. `count` is bounded
+            // by `max_paths_per_invoke` (typically a single-digit number), so the
+            // O(n²) pairwise check below is cheaper than allocating buffers.
+            if count > 1 {
+                for (i, req_i) in reqs.iter().enumerate() {
+                    let req_i = req_i?;
+                    if req_i.command_ref.is_none() {
+                        return Self::send_status(exchange, IMStatusCode::InvalidAction).await;
+                    }
+                    for req_j in reqs.iter().skip(i + 1) {
+                        let req_j = req_j?;
+                        if req_i.path == req_j.path || req_i.command_ref == req_j.command_ref {
+                            return Self::send_status(exchange, IMStatusCode::InvalidAction).await;
+                        }
+                    }
+                }
+            }
         }
 
         let mut wb = WriteBuf::new(&mut tx);
@@ -499,6 +540,10 @@ where
 
                 if path.is_wildcard() {
                     Self::validate_attr_wildcard_path(&path)?;
+
+                    if !node.has_accessible_attr(&path, accessor) {
+                        return Err(ErrorCode::InvalidAction.into());
+                    }
                 } else {
                     node.validate_attr_path(&path, false, false, accessor)
                         .map_err(|_| ErrorCode::InvalidAction)?;
@@ -578,13 +623,14 @@ where
 
             // Now report while there are subscriptions which are due for reporting
 
-            let max_event_number = self.events.watermark();
+            let event_numbers_watermark = self.events.watermark();
 
             loop {
-                let Some(mut rctx) =
-                    self.subscriptions
-                        .report(now, max_event_number, &self.subscriptions_buffers)
-                else {
+                let Some(mut rctx) = self.subscriptions.report(
+                    now,
+                    event_numbers_watermark,
+                    &self.subscriptions_buffers,
+                ) else {
                     break;
                 };
 
@@ -723,12 +769,21 @@ where
         let metadata = self.handler.lock().await;
         let node = metadata.node();
 
+        // Honor the `fabricFiltered` flag on the originating Subscribe request.
+        // When set, fabric-sensitive events emitted on other fabrics are
+        // dropped before they reach the wire (Matter Core spec section 8.5.2).
+        let fabric_filtered = req.fabric_filtered().unwrap_or(true);
+
         let mut resp = ReportDataResponder::new(
             &req,
             &node,
             Some(rctx.subscription().ids().id),
             HandlerInvoker::new(exchange, self),
-            EventReader::new(rctx.max_seen_event_number()),
+            EventReader::new(
+                rctx.max_seen_event_number(),
+                rctx.next_max_seen_event_number(),
+                fabric_filtered,
+            ),
             self.events,
         );
 
@@ -737,9 +792,8 @@ where
                 rctx.should_report_attr(e, c, a)
             })
             .await?;
-        if sub_valid {
-            rctx.update_max_seen_event_number(resp.event_reader.max_seen_event_number());
-        } else {
+
+        if !sub_valid {
             warn!(
                 "Subscription {:?} removed during reporting",
                 rctx.subscription().ids()
@@ -1134,8 +1188,6 @@ where
             for event_req in event_reqs.iter() {
                 let path = event_req?;
 
-                *empty = false;
-
                 if !path.is_wildcard() {
                     if let Err(status) = self.node.validate_event_path(&path, &accessor) {
                         if matches!(status, IMStatusCode::UnsupportedEvent) {
@@ -1144,6 +1196,8 @@ where
                             // Seems we should not error out in that case?
                             continue;
                         }
+
+                        *empty = false;
 
                         let resp = EventResp::Status(EventStatus::new(path, status, None));
 
@@ -1188,7 +1242,9 @@ where
                             }
                         }
 
-                        result?;
+                        if result? {
+                            *empty = false;
+                        }
                     }
 
                     Ok(true)

@@ -181,7 +181,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         ctx: impl WriteContext,
         value: ArrayAttributeWrite<TLVArray<'_, GroupKeyMapStruct<'_>>, GroupKeyMapStruct<'_>>,
     ) -> Result<(), Error> {
-        let fab_idx = NonZeroU8::new(ctx.attr().fab_idx).ok_or(ErrorCode::Invalid)?;
+        let fab_idx = NonZeroU8::new(ctx.attr().fab_idx).ok_or(ErrorCode::UnsupportedAccess)?;
 
         let mut persist = FabricPersist::new(ctx.kv());
 
@@ -253,9 +253,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         ctx: impl InvokeContext,
         request: KeySetWriteRequest<'_>,
     ) -> Result<(), Error> {
-        let fab_idx =
-            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
-
+        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
         let key_set = request.group_key_set()?;
 
         let group_key_set_id = key_set.group_key_set_id()?;
@@ -421,13 +419,33 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         request: KeySetReadRequest<'_>,
         response: KeySetReadResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let fab_idx =
-            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
-
+        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
         let group_key_set_id = request.group_key_set_id()?;
 
         ctx.exchange().with_state(|state| {
             let fabric = state.fabrics.fabric(fab_idx)?;
+
+            // KeySet ID 0 is the IPK (Identity Protection Key); per Matter
+            // Core spec section 11.2.7.5 it is always present once the
+            // fabric has been added (`AddNOC`) and is reported here with
+            // its epoch keys redacted to null. The IPK isn't kept in the
+            // generic `key_sets` list — it lives on the fabric directly.
+            // Any other ID is looked up in the per-fabric `key_sets` map.
+            if group_key_set_id == 0 {
+                return response
+                    .group_key_set()?
+                    .group_key_set_id(0)?
+                    .group_key_security_policy(GroupKeySecurityPolicyEnum::TrustFirst)?
+                    .epoch_key_0(Nullable::<Octets<'_>>::none())?
+                    .epoch_start_time_0(Nullable::some(0))?
+                    .epoch_key_1(Nullable::<Octets<'_>>::none())?
+                    .epoch_start_time_1(Nullable::none())?
+                    .epoch_key_2(Nullable::<Octets<'_>>::none())?
+                    .epoch_start_time_2(Nullable::none())?
+                    .end()?
+                    .end();
+            }
+
             let entry = fabric
                 .groups()
                 .key_set_get(group_key_set_id)
@@ -470,9 +488,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         ctx: impl InvokeContext,
         request: KeySetRemoveRequest<'_>,
     ) -> Result<(), Error> {
-        let fab_idx =
-            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
-
+        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
         let group_key_set_id = request.group_key_set_id()?;
 
         // KeySetRemove of ID 0 (IPK) is not allowed
@@ -509,8 +525,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         ctx: impl InvokeContext,
         response: KeySetReadAllIndicesResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let fab_idx =
-            NonZeroU8::new(ctx.exchange().accessor()?.fab_idx).ok_or(ErrorCode::Invalid)?;
+        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
 
         ctx.exchange().with_state(|state| {
             let fabric = state.fabrics.fabric(fab_idx)?;

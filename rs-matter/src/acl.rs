@@ -29,7 +29,7 @@ use crate::dm::clusters::acl::{
     AccessControlAuxiliaryTypeEnum, AccessControlEntryAuthModeEnum,
     AccessControlEntryPrivilegeEnum, AccessControlEntryStruct, AccessControlEntryStructBuilder,
 };
-use crate::dm::{Access, ClusterId, EndptId, NodeId, Privilege};
+use crate::dm::{Access, ClusterId, DeviceType, EndptId, NodeId, Privilege};
 use crate::error::{Error, ErrorCode};
 use crate::im::GenericPath;
 use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
@@ -216,7 +216,7 @@ const NOC_CAT_VERSION_MASK: u64 = 0xFFFF;
 const NODE_ID_RANGE: RangeInclusive<u64> = 1..=0xFFFF_FFEF_FFFF_FFFF;
 
 /// Is this identifier a NOC CAT
-fn is_noc_cat(id: u64) -> bool {
+pub(crate) fn is_noc_cat(id: u64) -> bool {
     ((id & NOC_CAT_SUBJECT_MASK) == NOC_CAT_SUBJECT_PREFIX)
         && ((id & (NOC_CAT_ID_MASK | NOC_CAT_VERSION_MASK)) > 0)
 }
@@ -238,7 +238,7 @@ pub fn gen_noc_cat(id: u16, version: u16) -> u32 {
 }
 
 /// Is this identifier a node id
-fn is_node(id: u64) -> bool {
+pub(crate) fn is_node(id: u64) -> bool {
     NODE_ID_RANGE.contains(&id)
 }
 
@@ -323,7 +323,7 @@ impl defmt::Format for AccessorSubjects {
 /// The Accessor Object
 pub struct Accessor<'a> {
     /// The fabric index of the accessor
-    pub fab_idx: u8,
+    pub(crate) fab_idx: u8,
     /// Accessor's subject: could be node-id, NoC CAT, group id
     subjects: AccessorSubjects,
     /// The auth mode of this session. Might be `None` for plain-text sessions
@@ -386,13 +386,17 @@ impl<'a> Accessor<'a> {
         }
     }
 
+    pub fn fab_idx(&self) -> Result<NonZeroU8, Error> {
+        NonZeroU8::new(self.fab_idx).ok_or(ErrorCode::UnsupportedAccess.into())
+    }
+
     /// Return the subjects of the accessor
-    pub fn subjects(&self) -> &AccessorSubjects {
+    pub const fn subjects(&self) -> &AccessorSubjects {
         &self.subjects
     }
 
     /// Return the auth mode of the accessor
-    pub fn auth_mode(&self) -> Option<AuthMode> {
+    pub const fn auth_mode(&self) -> Option<AuthMode> {
         self.auth_mode
     }
 
@@ -430,12 +434,26 @@ impl<'a> Accessor<'a> {
         self.matter
             .with_state(|state| state.fabrics.get(fab_idx).map(|fabric| fabric.node_id()))
     }
+
+    /// Return the peer node ID (admin node ID) for CASE sessions, or None for PASE/other sessions.
+    pub fn peer_node_id(&self) -> Option<u64> {
+        if matches!(self.auth_mode, Some(AuthMode::Case)) {
+            let id = self.subjects.0[0];
+            if is_node(id) {
+                Some(id)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
 }
 
 /// Access Descriptor Object
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct AccessDesc {
+pub struct AccessDesc<'a> {
     /// The object to be acted upon
     path: GenericPath,
     /// The target permissions
@@ -443,6 +461,10 @@ pub struct AccessDesc {
     // The operation being done
     // TODO: Currently this is Access, but we need a way to represent the 'invoke' somehow too
     operation: Access,
+    /// The device types of the endpoint hosting `path`. Used by ACL `Target`
+    /// entries that filter by `DeviceType` (Matter Core spec section 9.10.5.4).
+    /// Empty when the access target's endpoint is unknown / not yet expanded.
+    device_types: &'a [DeviceType],
 }
 
 /// Access Request Object
@@ -450,21 +472,37 @@ pub struct AccessReq<'a> {
     /// The accessor requesting access
     accessor: &'a Accessor<'a>,
     /// The object being accessed
-    object: AccessDesc,
+    object: AccessDesc<'a>,
 }
 
 impl<'a> AccessReq<'a> {
-    /// Create an access request object
+    /// Create an access request object.
     ///
     /// An access request specifies the _accessor_ attempting to access _path_
-    /// with _operation_
-    pub fn new(accessor: &'a Accessor, path: GenericPath, operation: Access) -> Self {
+    /// with _operation_. `device_types` lists the device types declared by
+    /// the endpoint that hosts `path`; pass an empty slice when this is not
+    /// applicable (e.g. for unit tests that don't exercise `DeviceType` ACL
+    /// targets).
+    pub const fn new(accessor: &'a Accessor, path: GenericPath, operation: Access) -> Self {
+        Self::new_with_device_types(accessor, path, operation, &[])
+    }
+
+    /// Create an access request object that also carries the device types of
+    /// the access target's endpoint, so that ACL entries with a `Target` of
+    /// kind `DeviceType` can be evaluated.
+    pub const fn new_with_device_types(
+        accessor: &'a Accessor,
+        path: GenericPath,
+        operation: Access,
+        device_types: &'a [DeviceType],
+    ) -> Self {
         AccessReq {
             accessor,
             object: AccessDesc {
                 path,
                 target_perms: None,
                 operation,
+                device_types,
             },
         }
     }
@@ -631,6 +669,15 @@ impl AclEntry {
                             Err(ErrorCode::ConstraintError)?;
                         }
 
+                        if matches!(auth_mode, AccessControlEntryAuthModeEnum::Group) {
+                            // Per Matter Core spec section 9.10.5.1: for Group auth mode, the
+                            // subject SHALL be a valid 16-bit Group ID. Group ID 0 is reserved
+                            // and MUST NOT be used; values larger than `u16::MAX` are also invalid.
+                            if subject == 0 || subject > u16::MAX as u64 {
+                                Err(ErrorCode::ConstraintError)?;
+                            }
+                        }
+
                         // As per spec, on too many subjects we should return a FAILURE status code
                         // `ErrorCode::BufferTooSmall` translates to a generic FAILURE status code
                         esubjects
@@ -652,11 +699,16 @@ impl AclEntry {
 
                         let target = target?;
 
-                        if
-                            // As per spec, either the device type or the endpoint/cluster shuld be set, but not all
-                            target.device_type()?.is_some() && (target.endpoint()?.is_some() || target.cluster()?.is_some())
-                            // As per spec, at least one of device type, endpoint or cluster should be set
-                            || target.device_type()?.is_none() && target.endpoint()?.is_none() && target.cluster()?.is_none()
+                        // Matter Core spec section 9.10.5.4 (AccessControlTargetStruct):
+                        // - At least one of cluster, endpoint or deviceType SHALL be present.
+                        // - If endpoint is present, deviceType SHALL NOT be present (and vice
+                        //   versa). cluster may be combined with either endpoint or deviceType.
+                        let has_endpoint = target.endpoint()?.is_some();
+                        let has_cluster = target.cluster()?.is_some();
+                        let has_device_type = target.device_type()?.is_some();
+
+                        if (!has_endpoint && !has_cluster && !has_device_type)
+                            || (has_endpoint && has_device_type)
                         {
                             Err(ErrorCode::ConstraintError)?;
                         }
@@ -818,8 +870,19 @@ impl AclEntry {
             // Otherwise, check if the target matches any of the ACL entry's targets
             targets.is_empty()
                 || targets.iter().any(|t| {
-                    (t.endpoint.is_none() || t.endpoint == object.path.endpoint)
-                        && (t.cluster.is_none() || t.cluster == object.path.cluster)
+                    let endpoint_match = t.endpoint.is_none() || t.endpoint == object.path.endpoint;
+                    let cluster_match = t.cluster.is_none() || t.cluster == object.path.cluster;
+                    // When `Target.device_type` is set, the access target's endpoint
+                    // must declare a matching device type in its `DeviceTypeList`
+                    // (Matter Core spec section 9.10.5.4).
+                    let device_type_match = match t.device_type {
+                        Some(dt) => object
+                            .device_types
+                            .iter()
+                            .any(|endpoint_dt| endpoint_dt.dtype as u32 == dt),
+                        None => true,
+                    };
+                    endpoint_match && cluster_match && device_type_match
                 })
         });
 

@@ -25,10 +25,17 @@ name = "media_player"
 name = "bridge"
 
 [[bin]]
+name = "camera_tests"
+
+[[bin]]
 name = "chip_tool_tests"
 
 [[bin]]
 name = "dimmable_light"
+
+[[bin]]
+name = "webrtc_camera"
+required-features = ["webrtc"]
 
 [features]
 default = ["log"]
@@ -45,10 +52,21 @@ chip-test = []
 test-tcp = ["rs-matter/large-buffers"]
 # Temporary fix for unexpected cfgs lint
 defmt = []
+# Enables the `webrtc_camera` example that bridges a WebRTC peer to a
+# Matter-spec WebRTC Transport Provider cluster via `str0m`.
+webrtc = [
+    "dep:str0m",
+    "dep:async-channel",
+    "dep:tracing",
+    "dep:tracing-subscriber",
+    "rs-matter/large-buffers",
+]
 
 [dependencies]
 log = "0.4"
 env_logger = "0.11"
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "tracing-log"], optional = true }
 embassy-futures = "0.1"
 embassy-sync = "0.7"
 embassy-time = { version = "0.5", features = ["std"] }
@@ -63,3 +81,5 @@ rand = { version = "0.8", features = ["std", "std_rng"] }
 async-signal = "0.2"
 socket2 = "0.5"
 async-executor = "1"
+async-channel = { version = "2", optional = true }
+str0m = { version = "0.18", optional = true }

@@ -132,7 +132,8 @@ impl<const N: usize> Events<N> {
     }
 
     pub(crate) fn watermark(&self) -> EventNumber {
-        self.inner.lock(|state| state.borrow().next_event_number)
+        self.inner
+            .lock(|state| state.borrow().next_event_number.wrapping_sub(1))
     }
 
     /// Push a new event into the event queue.
@@ -213,6 +214,8 @@ struct EventsInner<const N: usize> {
     buf_debug: EventsBuf<N>,
     buf_info: EventsBuf<N>,
     buf_critical: EventsBuf<N>,
+    /// The first assigned event number is 1; `0` is reserved as the "no events seen yet"
+    /// sentinel used by fresh subscriptions.
     next_event_number: EventNumber,
 }
 
@@ -222,7 +225,7 @@ impl<const N: usize> EventsInner<N> {
             buf_debug: EventsBuf::new(),
             buf_info: EventsBuf::new(),
             buf_critical: EventsBuf::new(),
-            next_event_number: 0,
+            next_event_number: 1,
         }
     }
 
@@ -231,7 +234,7 @@ impl<const N: usize> EventsInner<N> {
             buf_debug <- EventsBuf::init(),
             buf_info <- EventsBuf::init(),
             buf_critical <- EventsBuf::init(),
-            next_event_number: 0,
+            next_event_number: 1,
         })
     }
 
@@ -239,7 +242,7 @@ impl<const N: usize> EventsInner<N> {
         self.buf_debug.reset();
         self.buf_info.reset();
         self.buf_critical.reset();
-        self.next_event_number = 0;
+        self.next_event_number = 1;
     }
 
     /// Remove persisted state from the given key-value store.
@@ -330,16 +333,20 @@ impl<const N: usize> EventsInner<N> {
     {
         let event_number = self.next_event_number;
 
-        if event_number.is_multiple_of(EVENT_NUMBER_EPOCH_SIZE) {
+        if event_number == 1 || event_number.is_multiple_of(EVENT_NUMBER_EPOCH_SIZE) {
             // We're at an epoch start boundary. Therefore, we need to persist the new epoch to storage
             // so we don't lose it on reboot and end up reusing event numbers.
             persist.store_tlv(
                 EVENT_EPOCH_KEY,
-                event_number.wrapping_add(EVENT_NUMBER_EPOCH_SIZE),
+                if event_number == 1 {
+                    EVENT_NUMBER_EPOCH_SIZE
+                } else {
+                    event_number.wrapping_add(EVENT_NUMBER_EPOCH_SIZE).max(1)
+                },
             )?;
         }
 
-        self.next_event_number = event_number.wrapping_add(1);
+        self.next_event_number = event_number.wrapping_add(1).max(1);
 
         Ok(event_number)
     }

@@ -16,6 +16,7 @@
  */
 #![allow(clippy::bad_bit_mask)]
 
+use core::cell::Cell;
 use core::fmt::{self, Debug};
 
 use strum::FromRepr;
@@ -270,6 +271,17 @@ pub struct AttrDetails<'a> {
     pub dataver: Option<u32>,
     /// Whether the original attribute was a wildcard one
     pub wildcard: bool,
+    /// Cluster-specific status to stamp into the response `StatusIB.clusterStatus`
+    /// for this attribute read or write. `0` means "no cluster status" (the
+    /// reserved `kSuccess` value in Matter cluster-status enums).
+    ///
+    /// Mirrors the same field on `CmdDetails` — kept off `Error` so that
+    /// `Result<T, Error>` stays a compact 1-byte error payload across the
+    /// codebase. Cluster handlers set this via
+    /// `ReadContext::attr().set_cluster_status(...)` /
+    /// `WriteContext::attr().set_cluster_status(...)` before returning an
+    /// error.
+    pub cluster_status: Cell<u8>,
 }
 
 impl AttrDetails<'_> {
@@ -310,9 +322,29 @@ impl AttrDetails<'_> {
             })
     }
 
+    /// Stamp a cluster-specific status code onto this attribute access. The
+    /// value is echoed in `StatusIB.clusterStatus` when the read or write
+    /// returns `Err`. `0` is treated as "none" (Matter reserves it for
+    /// `kSuccess`).
+    pub fn set_cluster_status(&self, cluster_status: u8) {
+        self.cluster_status.set(cluster_status);
+    }
+
+    /// The currently stashed cluster-specific status, if any.
+    pub fn cluster_status(&self) -> Option<u16> {
+        match self.cluster_status.get() {
+            0 => None,
+            n => Some(n as u16),
+        }
+    }
+
     pub fn status(&self, status: IMStatusCode) -> Option<AttrStatus> {
         if self.should_report(status) {
-            Some(AttrStatus::new(self.reply_path(), status, None))
+            Some(AttrStatus::new(
+                self.reply_path(),
+                status,
+                self.cluster_status(),
+            ))
         } else {
             None
         }

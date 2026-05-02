@@ -229,7 +229,7 @@ impl<const N: usize> Subscriptions<N> {
         session_id: u32,
         min_int_secs: u16,
         max_int_secs: u16,
-        max_event_number: EventNumber,
+        event_numbers_watermark: EventNumber,
         buffer: B::Buffer<'a>,
         buffers: &'s SubscriptionsBuffers<'a, B, N>,
     ) -> Option<ReportContext<'a, 's, B, N>>
@@ -243,7 +243,6 @@ impl<const N: usize> Subscriptions<N> {
                 session_id,
                 min_int_secs,
                 max_int_secs,
-                max_event_number,
                 buffer,
                 buffers,
             )?;
@@ -261,6 +260,7 @@ impl<const N: usize> Subscriptions<N> {
             subscription: Some(sub),
             subscription_buffer: Some(buf),
             next_max_seen_attr_change_id,
+            next_max_seen_event_number: event_numbers_watermark,
             next_reported_at: now,
             keep: false,
         })
@@ -345,16 +345,19 @@ impl<const N: usize> Subscriptions<N> {
     pub(crate) fn report<'a, 's, B>(
         &'s self,
         now: Instant,
-        max_event_number: EventNumber,
+        event_numbers_watermark: EventNumber,
         buffers: &'s SubscriptionsBuffers<'a, B, N>,
     ) -> Option<ReportContext<'a, 's, B, N>>
     where
         B: BufferAccess<IMBuffer> + 'a,
     {
         let (sub, buf, next_max_seen_attr_change_id) = self.with(buffers, |state, buffers| {
-            let (sub, buf) = state.report::<B>(now, max_event_number, buffers)?;
+            let (sub, buf) = state.report::<B>(now, event_numbers_watermark, buffers)?;
+            let attr_change_ids_watermark = state.changed_attrs.watermark();
 
-            Some((sub, buf, state.changed_attrs.watermark()))
+            debug!("About to report on subscription {:?}, details: max_seen_attr_change_id: {}, max_seen_event_number: {}, attr_change_ids_watermark: {}, event_numbers_watermark: {}", sub.ids(), sub.max_seen_attr_change_id, sub.max_seen_event_number, attr_change_ids_watermark, event_numbers_watermark);
+
+            Some((sub, buf, attr_change_ids_watermark))
         })?;
 
         Some(ReportContext {
@@ -363,6 +366,7 @@ impl<const N: usize> Subscriptions<N> {
             subscription: Some(sub),
             subscription_buffer: Some(buf),
             next_max_seen_attr_change_id,
+            next_max_seen_event_number: event_numbers_watermark,
             next_reported_at: now,
             keep: false,
         })
@@ -384,6 +388,7 @@ impl<const N: usize> Subscriptions<N> {
         let buf = unwrap!(report.subscription_buffer.take());
 
         sub.max_seen_attr_change_id = report.next_max_seen_attr_change_id;
+        sub.max_seen_event_number = report.next_max_seen_event_number;
         sub.reported_at = report.next_reported_at;
 
         let keep = report.keep;
@@ -514,7 +519,6 @@ impl<const N: usize> SubscriptionsInner<N> {
         session_id: u32,
         min_int_secs: u16,
         max_int_secs: u16,
-        _max_event_number: EventNumber,
         buffer: B::Buffer<'a>,
         _buffers: &mut SubscriptionsBuffersInner<'a, B, N>,
     ) -> Option<(Subscription, B::Buffer<'a>)>
@@ -571,7 +575,7 @@ impl<const N: usize> SubscriptionsInner<N> {
     fn report<'a, B>(
         &mut self,
         now: Instant,
-        max_event_number: EventNumber,
+        event_numbers_watermark: EventNumber,
         buffers: &mut SubscriptionsBuffersInner<'a, B, N>,
     ) -> Option<(Subscription, B::Buffer<'a>)>
     where
@@ -583,11 +587,11 @@ impl<const N: usize> SubscriptionsInner<N> {
         debug_assert!(self.reporting.is_none());
         debug_assert!(self.reporting_cancelled.is_none());
 
-        if let Some(index) = self.find_reportable::<B>(now, max_event_number, buffers) {
+        if let Some(index) = self.find_reportable::<B>(now, event_numbers_watermark, buffers) {
             let sub = self.subscriptions.swap_remove(index);
             let buf = buffers.swap_remove(index);
 
-            info!("About to report on subscription {:?}", sub.ids());
+            debug!("About to report on subscription {:?}", sub.ids());
 
             // Leave a snapshot clone behind so that `Subscriptions::remove`
             // can still match and cancel this subscription while the report
@@ -621,6 +625,8 @@ impl<const N: usize> SubscriptionsInner<N> {
             );
             self.subscriptions_count -= 1;
         } else if keep {
+            info!("Subscription {:?} kept after reporting; max-attr-change-id: {}, max-seen-event-number: {}", sub.ids(), sub.max_seen_attr_change_id, sub.max_seen_event_number);
+
             unwrap!(self.subscriptions.push(sub));
             unwrap!(buffers.push(buffer).map_err(|_| ()));
         } else {
@@ -632,7 +638,7 @@ impl<const N: usize> SubscriptionsInner<N> {
     fn find_reportable<'a, B>(
         &self,
         now: Instant,
-        max_event_number: EventNumber,
+        event_numbers_watermark: EventNumber,
         buffers: &SubscriptionsBuffersInner<'a, B, N>,
     ) -> Option<usize>
     where
@@ -642,7 +648,9 @@ impl<const N: usize> SubscriptionsInner<N> {
             .iter()
             .enumerate()
             .map(|(index, sub)| (sub, &buffers[index]))
-            .position(|(sub, rx)| sub.is_reportable(now, rx, &self.changed_attrs, max_event_number))
+            .position(|(sub, rx)| {
+                sub.is_reportable(now, rx, &self.changed_attrs, event_numbers_watermark)
+            })
     }
 
     /// Remove entries that every subscription has already reported on.
@@ -724,7 +732,7 @@ impl Subscription {
         now: Instant,
         rx: &[u8],
         changed_attrs: &ChangedAttrs,
-        max_event_number: EventNumber,
+        event_numbers_watermark: EventNumber,
     ) -> bool {
         if !self.is_report_allowed(now) {
             return false;
@@ -732,7 +740,7 @@ impl Subscription {
 
         self.is_report_due(now)
             || self.is_affected_by_attr_changes(rx, changed_attrs)
-            || self.is_affected_by_new_events(rx, max_event_number)
+            || self.is_affected_by_new_events(rx, event_numbers_watermark)
     }
 
     /// Return `true` if the subscription is allowed to report based on the min interval, or `false` if it is still in the quiet period since the last report.
@@ -765,14 +773,14 @@ impl Subscription {
         changes.any_since(self.max_seen_attr_change_id)
     }
 
-    /// Return `true` if the subscription is affected by new events based on the subscription's RX and the given max event number, or `false` if it is not affected.
-    fn is_affected_by_new_events(&self, _rx: &[u8], max_event_number: EventNumber) -> bool {
+    /// Return `true` if the subscription is affected by new events based on the subscription's RX and the given event numbers watermark, or `false` if it is not affected.
+    fn is_affected_by_new_events(&self, _rx: &[u8], event_numbers_watermark: EventNumber) -> bool {
         // NOTE: we could consult the subscription's RX here to skip the check if the subscription
         // is not interested in events at all, but that would require parsing the RX at every report check,
         // which is anyway done later during reporting and the report is canceled if empty
         //
         // Therefore and for now do not to this here
-        self.max_seen_event_number < max_event_number
+        self.max_seen_event_number < event_numbers_watermark
     }
 }
 
@@ -1173,6 +1181,12 @@ where
     /// This is captured here because the subscription's own `max_seen_attr_change_id`
     /// is not updated until the report completes as it is until then still used.
     next_max_seen_attr_change_id: u64,
+    /// The next maximum seen event number for the subscription
+    /// to be updated into it upon returning the subscription to the table.
+    ///
+    /// This is captured here because the subscription's own `max_seen_event_number`
+    /// is not updated until the report completes as it is until then still used.
+    next_max_seen_event_number: EventNumber,
     /// The next reported timestamp for the subscription,
     /// to be updated into it upon returning the subscription to the table.
     ///
@@ -1241,12 +1255,9 @@ where
         unwrap!(self.subscription.as_ref()).max_seen_event_number
     }
 
-    /// Update the maximum event number the subscription has seen so far to the given value.
-    pub fn update_max_seen_event_number(&mut self, max_seen_event_number: EventNumber) {
-        let sub = unwrap!(self.subscription.as_mut());
-
-        assert!(sub.max_seen_event_number <= max_seen_event_number);
-        sub.max_seen_event_number = max_seen_event_number;
+    /// Return the next maximum event number to be updated into the subscription upon returning it to the table.
+    pub fn next_max_seen_event_number(&self) -> EventNumber {
+        self.next_max_seen_event_number
     }
 
     /// Mark the subscription to be kept in the table after the report completes,
@@ -1957,7 +1968,8 @@ mod tests {
     //   * `find_report_due_events_pending_receives_subscription_watermark` —
     //     the old `events_pending` callback no longer exists; the
     //     subscription's `max_seen_event_number` is now compared directly
-    //     against the `max_event_number` passed to `Subscriptions::report`.
+    //     against the `event_numbers_watermark` passed to
+    //     `Subscriptions::report`.
     //   * `find_removed_session_matches_predicate` — `session_id` tracking
     //     was dropped in the refactor (see REVIEW on `SubscriptionsInner::add`).
     //     Predicate-based removal is covered by `remove_invokes_predicate_*`.
@@ -1983,7 +1995,7 @@ mod tests {
             /* session_id */ 0,
             min_int,
             max_int,
-            /* max_event_number */ 0,
+            /* event_numbers_watermark */ 0,
             pool.get_immediate().unwrap(),
             subs_bufs,
         )
@@ -2076,8 +2088,8 @@ mod tests {
 
     #[test]
     fn report_triggered_by_new_events() {
-        // A bump in `max_event_number` (i.e. a newly emitted event) makes the
-        // subscription reportable even without attribute changes.
+        // A bump in `event_numbers_watermark` (i.e. a newly emitted event)
+        // makes the subscription reportable even without attribute changes.
         let subs: Subscriptions<1> = Subscriptions::new();
         let pool = TestPool::<2>::new(0);
         let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
@@ -2088,7 +2100,7 @@ mod tests {
             rctx.set_keep();
         }
 
-        // Same instant, no new events (max_event_number = 0 same as sub's
+        // Same instant, no new events (watermark = 0 same as sub's
         // max_seen), min_int not elapsed → nothing to report.
         assert!(subs.report(now, 0, &subs_bufs).is_none());
 
@@ -2097,21 +2109,24 @@ mod tests {
         // Still no new events at `later` (min_int elapsed though).
         assert!(subs.report(later, 0, &subs_bufs).is_none());
 
-        // A new event bumps max_event_number → sub is reportable.
+        // A new event bumps the watermark → sub is reportable. The captured
+        // `next_max_seen_event_number` mirrors the watermark and is the
+        // value that will be committed on `set_keep`.
         {
             let mut rctx = subs.report(later, 5, &subs_bufs).unwrap();
             assert_eq!(rctx.max_seen_event_number(), 0);
-            rctx.update_max_seen_event_number(5);
-            assert_eq!(rctx.max_seen_event_number(), 5);
+            assert_eq!(rctx.next_max_seen_event_number(), 5);
             rctx.set_keep();
         }
 
-        // After reporting, max_event_number=5 is no longer "new" for this sub.
+        // After reporting, watermark=5 is no longer "new" for this sub.
         assert!(subs.report(later, 5, &subs_bufs).is_none());
         // But a further bump does trigger again (past min_int is needed).
         let even_later = later + Duration::from_secs(2);
         {
             let mut rctx = subs.report(even_later, 6, &subs_bufs).unwrap();
+            assert_eq!(rctx.max_seen_event_number(), 5);
+            assert_eq!(rctx.next_max_seen_event_number(), 6);
             rctx.set_keep();
         }
     }
@@ -2396,22 +2411,56 @@ mod tests {
     }
 
     #[test]
-    fn update_max_seen_event_number_is_monotonic() {
-        // The setter advances the watermark but panics on regression
-        // (asserted in `update_max_seen_event_number`). We only exercise the
-        // monotonic-advance path here to avoid a deliberate panic in tests.
+    fn next_max_seen_event_number_captured_at_report_time() {
+        // The captured `next_max_seen_event_number` reflects the
+        // `event_numbers_watermark` passed to `add` / `report` and is what
+        // gets committed to the subscription on `set_keep`. The committed
+        // value advances even if no events were actually emitted during the
+        // report — this is what prevents the "endless reporting loop" for
+        // subscriptions that are not interested in events but receive an
+        // event-triggered report.
         let subs: Subscriptions<1> = Subscriptions::new();
         let pool = TestPool::<2>::new(0);
         let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
 
         let now = Instant::now();
-        let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 1, 60);
-        assert_eq!(rctx.max_seen_event_number(), 0);
-        rctx.update_max_seen_event_number(3);
-        assert_eq!(rctx.max_seen_event_number(), 3);
-        rctx.update_max_seen_event_number(3); // equal is allowed
-        assert_eq!(rctx.max_seen_event_number(), 3);
-        rctx.update_max_seen_event_number(42);
-        assert_eq!(rctx.max_seen_event_number(), 42);
+
+        // Priming report sees the watermark passed to `add` (0 here).
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 1, 60);
+            assert_eq!(rctx.max_seen_event_number(), 0);
+            assert_eq!(rctx.next_max_seen_event_number(), 0);
+            rctx.set_keep();
+        }
+
+        let later = now + Duration::from_secs(2);
+
+        // First incremental report at watermark=7: the captured "next" is 7,
+        // and the previous watermark (the sub's `max_seen_event_number`) is
+        // still 0 until commit.
+        {
+            let mut rctx = subs.report(later, 7, &subs_bufs).unwrap();
+            assert_eq!(rctx.max_seen_event_number(), 0);
+            assert_eq!(rctx.next_max_seen_event_number(), 7);
+            rctx.set_keep();
+        }
+
+        // After commit the sub's `max_seen_event_number` has advanced to 7
+        // — even though we never recorded a single emitted event during
+        // this report. A second call at the same watermark is therefore a
+        // no-op (no new events to deliver).
+        assert!(subs.report(later, 7, &subs_bufs).is_none());
+
+        let even_later = later + Duration::from_secs(2);
+
+        // Bumping the watermark to 42 makes the sub reportable again; the
+        // previous max-seen is the 7 we just committed, the captured next
+        // is the new watermark.
+        {
+            let mut rctx = subs.report(even_later, 42, &subs_bufs).unwrap();
+            assert_eq!(rctx.max_seen_event_number(), 7);
+            assert_eq!(rctx.next_max_seen_event_number(), 42);
+            rctx.set_keep();
+        }
     }
 }

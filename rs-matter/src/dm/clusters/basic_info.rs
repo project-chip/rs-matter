@@ -46,8 +46,9 @@ pub const DEFAULT_DATA_MODEL_REVISION: u16 = 19;
 
 /// The default maximum number of paths that can be included in an Invoke request
 ///
-/// Set to 1
-pub const DEFAULT_MAX_PATHS_PER_INVOKE: u16 = 1;
+/// Set to 5, which is enough to support typical batched invokes while
+/// keeping the in-memory CommandRef tracking buffer in `dm::invoke()` small.
+pub const DEFAULT_MAX_PATHS_PER_INVOKE: u16 = 5;
 
 bitflags! {
     #[repr(transparent)]
@@ -205,9 +206,9 @@ pub struct BasicInfoConfig<'a> {
     /// Whether the device supports TCP transport.
     ///
     /// Not a real attribute; advertised via the `T` TXT record key in mDNS.
-    /// Per the Matter Core Spec Section 4.3.1.14, `T=1` indicates that the device
-    /// supports TCP for the transport of Matter messages (required for large payloads
-    /// such as WebRTC SDP exchanges and camera snapshots).
+    /// Per the Matter Core Spec Section 4.3.1.14, `T` is a bitmap: bit 2 (value 4)
+    /// indicates TCP server support. Required for large payloads such as WebRTC SDP
+    /// exchanges and camera snapshots.
     pub tcp_supported: bool,
 }
 

@@ -734,10 +734,37 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 );
             }
             Err(e) if matches!(e.code(), ErrorCode::NoSession) => {
+                // Per Matter Core spec section 4.7.1.3, when a session-bearing
+                // message arrives for which we have no matching secure session
+                // (e.g. after a reboot has wiped the session table while the
+                // peer still believes the old session is alive), we reply with
+                // an unsecured `SessionNotFound` Status Report on the Secure
+                // Channel protocol. This nudges the peer to drop its stale
+                // session and re-establish CASE, instead of waiting for MRP
+                // retries to exhaust on its side.
                 warn!(
-                    "\n>>RCV {}\n      => No valid session found, dropping",
+                    "\n>>RCV {}\n      => No valid session found, replying with SessionNotFound",
                     packet
                 );
+
+                // `write_packet` with `session = None` requires the incoming
+                // header to look like an unsecured, non-reliable, source-tagged
+                // packet (see its preconditions). Clear `sess_id` so it is not
+                // considered encrypted, drop the reliable/ack flags since we
+                // are not party to any exchange, and stamp a placeholder
+                // `src_nodeid` (echoed as the response's `dst_nodeid` — UDP
+                // peer addressing is what actually routes the reply).
+                packet.header.plain.sess_id = 0;
+                packet.header.plain.set_src_nodeid(Some(0));
+                packet.header.proto.unset_reliable();
+                packet.header.proto.set_ack(None);
+
+                self.write_packet(packet, None, None, true, |wb| {
+                    sc_write(wb, SCStatusCodes::SessionNotFound, &[])
+                })?;
+
+                Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
+                    .await?;
             }
             Err(e) => {
                 error!("\n>>RCV {}\n      => Error ({:?}), dropping", packet, e);

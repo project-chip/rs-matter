@@ -1142,10 +1142,14 @@ impl Sessions {
         rx_peer: &Address,
         rx_plain: &PlainHdr,
     ) -> Option<&mut Session> {
+        // Per Matter Core spec section 4.7.1.3, an expired session must not
+        // accept new inbound messages. Skipping expired sessions here lets the
+        // caller surface a `SessionNotFound` to the peer rather than running
+        // the request through ACL checks against a removed fabric.
         let mut session = self
             .sessions
             .iter_mut()
-            .find(|sess| sess.is_for_rx(rx_peer, rx_plain));
+            .find(|sess| !sess.expired && sess.is_for_rx(rx_peer, rx_plain));
 
         if let Some(session) = session.as_mut() {
             session.update_last_used(self.epoch);
@@ -1200,6 +1204,49 @@ impl Sessions {
     /// Iterate over the sessions
     pub fn iter(&self) -> impl Iterator<Item = &Session> {
         self.sessions.iter()
+    }
+
+    /// Drop every PASE session, whether unpromoted (still
+    /// `SessionMode::Pase { fab_idx: 0 }`) or already promoted to a
+    /// fabric. Used by:
+    ///
+    /// * `RevokeCommissioning` and a fail-safe expiry over a PASE
+    ///   session (Matter Core spec section 11.18.6.2): when the
+    ///   commissioning window is torn down, any in-flight PASE sessions
+    ///   associated with it must be terminated. A PASE that was
+    ///   promoted via `AddNOC` is rolled back by the same fail-safe
+    ///   expiry, so its session must go too.
+    /// * `CommissioningComplete` (spec V1.3 section 5.5 / V1.4 section
+    ///   11.10.7.4): once the device transitions to operational state,
+    ///   all PASE sessions SHALL be terminated. Without this each
+    ///   commissioning round leaks the promoted PASE it ran on, and
+    ///   the session table eventually exhausts — visible as `BUSY` on
+    ///   the next round's `PBKDFParamRequest`.
+    ///
+    /// `expire_sess_id` is the optional ID of a session that should NOT
+    /// be removed immediately — typically the session that issued the
+    /// triggering command, so its response can still be sent. That
+    /// session is marked as `expired` instead, so it stops accepting
+    /// new exchanges but the in-flight one can complete; the transport
+    /// reclaims the slot via the usual LRU eviction path.
+    pub fn remove_pase(&mut self, expire_sess_id: Option<u32>) {
+        while let Some(index) = self.sessions.iter().position(|sess| {
+            matches!(sess.get_session_mode(), SessionMode::Pase { .. })
+                && Some(sess.id) != expire_sess_id
+        }) {
+            info!("Dropping PASE session with ID {}", self.sessions[index].id);
+            self.sessions.swap_remove(index);
+        }
+
+        if let Some(expire_sess_id) = expire_sess_id {
+            if let Some(sess) = self.sessions.iter_mut().find(|sess| {
+                sess.id == expire_sess_id
+                    && matches!(sess.get_session_mode(), SessionMode::Pase { .. })
+            }) {
+                sess.expired = true;
+                info!("Marking PASE session with ID {} as expired", expire_sess_id);
+            }
+        }
     }
 }
 

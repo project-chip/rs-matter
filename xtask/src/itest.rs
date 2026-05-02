@@ -17,24 +17,29 @@
 
 //! A module for running Chip integration tests on the `rs-matter` project.
 
-use crate::common::{run_command, ChipBuilder};
-
 use core::iter::once;
 
 use std::path::PathBuf;
 use std::process::Command;
 
+use clap::ValueEnum;
+
 use log::{debug, info, warn};
 
-/// Default tests
+use crate::common::{run_command, ChipBuilder};
+
+/// System cluster tests + general Matter protocol/IM/SC tests.
+///
+/// Run against the `chip_tool_tests` example. This is the default suite
+/// when `cargo xtask itest` is invoked without `--suite`.
 ///
 /// Names matching the `TC_*` convention are dispatched to
 /// `scripts/tests/run_python_test.py` and target a `MatterBaseTest`
 /// in `src/python_testing/`. All other names are YAML test suites
 /// dispatched to `scripts/tests/run_test_suite.py`.
-const DEFAULT_TESTS: &[&str] = &[
+pub(crate) const SYS_TESTS: &[&str] = &[
     //
-    // YAML tests
+    // YAML tests — general Matter protocol & system clusters
     //
     "Test_AddNewFabricFromExistingFabric",
     "TestAccessControlCluster",
@@ -42,7 +47,7 @@ const DEFAULT_TESTS: &[&str] = &[
     "TestArmFailSafe",
     "TestAttributesById",
     "TestBasicInformation",
-    // "TestBinding", // TODO: specific cluster, to be implemented with all others
+    // "TestBinding", // TODO: Binding cluster not yet implemented
     "TestCASERecovery",
     "TestCluster",
     "TestClusterComplexTypes",
@@ -53,8 +58,8 @@ const DEFAULT_TESTS: &[&str] = &[
     "TestConfigVariables",
     "TestConstraints",
     "TestDelayCommands",
-    //"TestDescriptorCluster", // TODO: Assumes a Power Source device type and expects a lot of clusters to be there
-    // "TestDiagnosticLogs", // TODO: specific cluster, to be implemented with all others
+    // "TestDescriptorCluster", // TODO: Assumes a Power Source device type and expects a lot of clusters to be there
+    // "TestDiagnosticLogs", // TODO: Diagnostic Logs cluster not yet implemented
     "TestDiscovery",
     "TestEqualities",
     "TestEvents",
@@ -64,24 +69,208 @@ const DEFAULT_TESTS: &[&str] = &[
     "TestGroupMessaging",
     "TestGroupsCluster",
     "TestGroupKeyManagementCluster",
-    // "TestIdentifyCluster", // TODO: specific cluster, to be implemented with all others
+    // "TestIdentifyCluster", // TODO: Identify cluster not yet implemented
     "TestLogCommands",
     "TestMultiAdmin",
     "TestOperationalCredentialsCluster",
-    // "TestOperationalState", // TODO: specific cluster, to be implemented with all others
+    // "TestOperationalState", // TODO: Operational State cluster not yet implemented
     "TestReadNoneSubscribeNone",
+    // "TestSaveAs", // TODO: not yet verified
     "TestSelfFabricRemoval",
     "TestSubscribe_AdministratorCommissioning",
     "TestSubscribe_OnOff",
     // "TestSystemCommands", // TODO: Error attempting to start secondary device
-    // "TestUserLabelCluster",  // TODO: specific cluster, to be implemented with all others
-    // "TestUserLabelClusterConstraints",  // TODO: specific cluster, to be implemented with all others
+    // "TestUserLabelCluster", // TODO: User Label cluster not yet implemented
+    // "TestUserLabelClusterConstraints", // TODO: User Label cluster not yet implemented
 
     //
-    // Python tests
+    // Python tests — Interaction Data Model (general Matter protocol)
     //
+    "TC_IDM_1_2",
+    "TC_IDM_1_4",
     "TC_IDM_2_2",
+    "TC_IDM_4_2",
+    //
+    // Python tests — Access Control (system cluster)
+    //
+    "TC_ACE_1_2",
+    "TC_ACE_1_3",
+    "TC_ACE_1_4",
+    "TC_ACE_1_5",
+    "TC_ACL_2_2",
+    // "TC_ACL_2_3", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
+    "TC_ACL_2_4",
+    // "TC_ACL_2_5", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
+    "TC_ACL_2_6",
+    // "TC_ACL_2_7", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
+    // "TC_ACL_2_8", // Skipped: the test re-runs itself internally with legacy list encoding after the modern-encoding pass. The Python framework's between-runs controller cleanup is buggy (`object NoneType can't be used in 'await' expression`) and leaves stale fabrics on the DUT, so the second commissioning fails with `Incorrect state`. The modern-encoding pass — including fabric-scoped event filtering — is exercised end-to-end and passes.
+    "TC_ACL_2_9",
+    "TC_ACL_2_10",
+    // "TC_ACL_2_11", // Skipped: tests the provisional `ManagedAclRestrictions` feature (ARL attribute) and requires manufacturer-specific access restrictions to be pre-configured. rs-matter does not implement this feature.
+
+    //
+    // Python tests — General & Administrator Commissioning (system clusters)
+    //
+    "TC_CADMIN_1_3_4",
+    "TC_CADMIN_1_5",
+    "TC_CADMIN_1_9",
+    "TC_CADMIN_1_11",
+    "TC_CADMIN_1_15",
+    "TC_CADMIN_1_19",
+    "TC_CADMIN_1_22",
+    "TC_CADMIN_1_25",
+    // "TC_CADMIN_1_27",  // Skipped: requires the CHIP `jfc-server-app` (Joint Fabric Controller); rs-matter does not implement JF.
+    // "TC_CADMIN_1_28",  // Skipped: requires the CHIP `jfc-server-app` (Joint Fabric Controller); rs-matter does not implement JF.
+    "TC_CGEN_2_1",
+    "TC_CGEN_2_2",
+    "TC_CGEN_2_4",
+    // "TC_CGEN_2_5",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
+    // "TC_CGEN_2_6",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
+    // "TC_CGEN_2_7",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
+    // "TC_CGEN_2_8",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
+    // "TC_CGEN_2_9",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
+    // "TC_CGEN_2_10", // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
+    // "TC_CGEN_2_11", // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
+
+    //
+    // Python tests — Operational Credentials (system cluster)
+    //
+    "TC_OPCREDS_3_1",
+    "TC_OPCREDS_3_2",
+    "TC_OPCREDS_3_4",
+    "TC_OPCREDS_3_5",
+    "TC_OPCREDS_3_8",
+    //
+    // Python tests — Session/Commissioning (general Matter protocol)
+    //
+    // "TC_SC_3_4", // TODO: a negative-path assertion expects `ChipStackError` to be raised but rs-matter accepts the request. Needs investigation of which validation step is missing.
+    // "TC_SC_3_5", // Skipped: requires the CHIP `all-clusters-app` (`--string-arg th_server_app_path`); rs-matter does not provide the secondary TH server app this test relies on.
+    // "TC_SC_3_6", // TODO: triggers an internal exception during the multi-fabric subscription scenario; needs investigation alongside the other multi-fabric stress tests.
+    // "TC_SC_4_1", // Skipped: must be invoked with `--qr-code`/`--manual-code` setup payloads instead of `--discriminator`/`--passcode`. The xtask wrapper passes the latter.
+    // "TC_SC_4_3", // TODO: the discovery PTR record `D4E76DDAABB4974F-0000000012344321` is not advertised on the loopback mDNS the test scrapes. Needs the rs-matter mDNS layer to publish the operational instance name in that test environment.
+    // "TC_SC_7_1", // Skipped: must be invoked with `--qr-code`/`--manual-code` setup payloads instead of `--discriminator`/`--passcode`. The xtask wrapper passes the latter.
+
+    //
+    // Python tests — Basic Information (system cluster)
+    //
+    // "TC_BINFO_3_2", // TODO: requires `BasicInformation::ConfigurationVersion` (1.5+ attribute); rs-matter returns `UnsupportedCluster` on the read. Add the attribute to the BINFO cluster.
+
+    //
+    // Python tests — Groups (system cluster)
+    //
+    "TC_G_2_2",
+    //
+    // Python tests — General Diagnostics (system cluster)
+    //
+    // "TC_DGGEN_2_4", // TODO: rs-matter does not advertise `GeneralDiagnostics::UpTime` (returns `UnsupportedAttribute`). Implement the attribute in the diagnostics cluster.
+    // "TC_DGGEN_3_2", // TODO: requires `BasicInformation::MaxPathsPerInvoke`; same gap as TC_BINFO_3_2 — needs the attribute exposed.
+
+    //
+    // Python tests — Device Attestation (commissioning)
+    //
+    // "TC_DA_1_2", // TODO: `AttestationRequest` invoke fails (likely needs an armed fail-safe or different access path in rs-matter). Needs attestation flow review.
+    // "TC_DA_1_5", // TODO: same setup issue as TC_DA_1_2 — DA test infrastructure needs the attestation invoke path to succeed before any of the cert-chain assertions can run.
+    // "TC_DA_1_7", // Skipped: requires two distinct discriminators (DUT + reference DUT). The xtask wrapper only commissions one device.
+    // "TC_DA_1_9", // TODO: not yet verified
+
+    //
+    // Python tests — Device Discovery (general)
+    //
+    // "TC_DD_1_16_17", // Skipped: must be invoked with `--manual-code`. The xtask wrapper passes `--discriminator`/`--passcode` instead.
+    // "TC_DD_3_23",    // Skipped: requires PC/SC smart-card subsystem (`smartcard.pcsc`). Not available in the CI environment.
+
+    //
+    // Python tests — Device Composition / Conformance (general)
+    //
+    // "TC_DeviceBasicComposition", // TODO: wildcard read returns `InvalidDataType`/`Failure` for some attribute on cluster 49 (NetworkCommissioning). Likely encoder gap on a specific attribute.
+    // "TC_DeviceConformance",      // TODO: device type revisions on the example endpoints don't match the spec-mandated values for the device types being advertised. Update the example apps' device-type revisions.
 ];
+
+/// Camera cluster tests — run against the `camera_tests` example.
+///
+/// These target the clusters introduced in Matter 1.5 (Chime, CameraAvStream,
+/// CameraAvSettings, ZoneManagement, PushAvStreamTransport, WebRTCProvider).
+/// Only the _2_1 attribute-read tests are listed here; add more as they pass.
+pub(crate) const CAMERA_TESTS: &[&str] = &[
+    "TC_CHIME_2_1",
+    "TC_AVSM_2_1",
+    "TC_AVSUM_2_1",
+    "TC_ZONEMGMT_2_1",
+    "TC_PAVST_2_1",
+    // WebRTC provider attribute read
+    "TC_WEBRTCP_2_1",
+];
+
+/// LevelControl + OnOff YAML tests — run against the `dimmable_light` example.
+///
+/// Mirrors the list in `.github/workflows/chiptool-tests.yml`. Requires the
+/// `chip-test` cargo feature on the build (see [`TestSuite::default_features`]).
+pub(crate) const LIGHT_TESTS: &[&str] = &[
+    "Test_TC_LVL_2_1",
+    "Test_TC_LVL_2_2",
+    "Test_TC_LVL_3_1",
+    // "Test_TC_LVL_4_1", // TODO: not yet passing
+    "Test_TC_LVL_5_1",
+    "Test_TC_LVL_6_1",
+    "Test_TC_LVL_7_1",
+    // "Test_TC_LVL_9_1", // TODO: not yet passing
+    "Test_TC_OO_2_1",
+    "Test_TC_OO_2_2",
+    "Test_TC_OO_2_4",
+    "Test_TC_OO_2_6",
+    // "Test_TC_OO_2_7", // TODO: not yet passing
+];
+
+/// A pre-canned test suite. Selects a default test list, the example
+/// binary they run against, the cargo features it must be built with,
+/// and a per-test timeout suitable for that suite.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum TestSuite {
+    /// System clusters + general Matter protocol/IM/SC. Default suite.
+    #[default]
+    System,
+    /// Matter 1.5 camera-related clusters.
+    Camera,
+    /// OnOff + LevelControl, exercising the dimmable_light example.
+    Light,
+}
+
+impl TestSuite {
+    /// Default list of tests for this suite.
+    pub(crate) fn default_tests(&self) -> &'static [&'static str] {
+        match self {
+            Self::System => SYS_TESTS,
+            Self::Camera => CAMERA_TESTS,
+            Self::Light => LIGHT_TESTS,
+        }
+    }
+
+    /// Default `--target` (example binary) for this suite.
+    pub(crate) fn default_target(&self) -> &'static str {
+        match self {
+            Self::System => "chip_tool_tests",
+            Self::Camera => "camera_tests",
+            Self::Light => "dimmable_light",
+        }
+    }
+
+    /// Cargo features the example binary must be built with for this suite.
+    pub(crate) fn default_features(&self) -> &'static [&'static str] {
+        match self {
+            Self::System | Self::Camera => &[],
+            Self::Light => &["chip-test"],
+        }
+    }
+
+    /// Default per-test timeout in seconds.
+    pub(crate) fn default_timeout_secs(&self) -> u32 {
+        match self {
+            Self::System => 120,
+            Self::Camera => 180,
+            Self::Light => 500,
+        }
+    }
+}
 
 /// The directory where the Chip repository will be cloned
 const CHIP_DIR: &str = ".build/itest/connectedhomeip";
@@ -181,9 +370,9 @@ impl ITests {
         let tests = if tests.clone().into_iter().next().is_some() {
             tests.into_iter().map(|s| s.as_str()).collect::<Vec<_>>()
         } else {
-            info!("Using default tests");
+            info!("Using default (system) tests");
 
-            DEFAULT_TESTS.to_vec()
+            SYS_TESTS.to_vec()
         };
 
         if tests.is_empty() {
@@ -211,6 +400,12 @@ impl ITests {
         target: &str,
     ) -> anyhow::Result<()> {
         // TODO: Running test-by-test is slow. Turn this into a run-multiple-tests function.
+
+        // Some tests legitimately need more wall-clock time than the default
+        // (e.g. those that wait for a commissioning window to expire on its
+        // own). Allow per-test overrides while keeping the global `--timeout`
+        // as the floor for everything else.
+        let timeout_secs = Self::per_test_timeout_secs(test_name).unwrap_or(timeout_secs);
 
         info!("=> Running test `{test_name}` with timeout {timeout_secs}s...");
 
@@ -315,20 +510,168 @@ impl ITests {
         // The Python test framework drives commissioning itself via
         // `--script-args`; the rs-matter test executable is launched
         // by `run_python_test.py` and passed via `--app`.
+        //
+        // `--storage-path` must be specified so that `--factory-reset` in
+        // `run_python_test.py` also deletes the controller-side fabric state.
+        // Without it, the Python SDK reuses stale fabric storage from previous
+        // runs while the device has been factory-reset, causing AddNOC to fail.
+        let extra_args = Self::extra_python_script_args(test_name);
         let script_args = format!(
-            "--commissioning-method on-network --discriminator {discriminator} \
+            "--storage-path /tmp/rs_matter_python_test_storage.json \
+             --commissioning-method on-network --discriminator {discriminator} \
              --passcode {passcode} --endpoint 1 \
-             --paa-trust-store-path credentials/development/paa-root-certs"
+             --paa-trust-store-path credentials/development/paa-root-certs{extra_args}"
         );
 
+        // Block the runner until the rs-matter app has actually started
+        // serving on the wire before it is allowed to SIGTERM the previous
+        // instance during `request_device_reboot()`. Without this the
+        // monitor thread starts the new app and immediately tears down the
+        // old one, while the controller — which has just expired its
+        // sessions — re-handshakes against whichever process answers first.
+        // That race lets a fresh CASE session get pinned to the dying
+        // process; the next invoke (e.g. `RemoveFabric` in TC_ACL_2_10
+        // step 14) then hits the new app, which has no such session, and
+        // times out with `SessionNotFound`. The pattern matches the
+        // `info!("Running Matter transport")` line emitted from
+        // `rs_matter::transport::TransportRunner::run`.
         Ok(format!(
             "timeout --kill-after=10s {timeout_secs}s \
-             {} --app '{}' --factory-reset --script {} --script-args \"{}\"",
+             {} --app '{}' --app-ready-pattern 'Running Matter transport' \
+             --factory-reset --script {} --script-args \"{}\"",
             runner_path.display(),
             test_exe_path.display(),
             script_path.display(),
             script_args,
         ))
+    }
+
+    /// Test-specific timeout override (in seconds) for tests that legitimately
+    /// need more wall-clock time than the default. Returning `None` falls
+    /// back to whatever `--timeout` was passed on the `cargo xtask itest`
+    /// command line.
+    fn per_test_timeout_secs(test_name: &str) -> Option<u32> {
+        match test_name {
+            // Several CADMIN tests open commissioning windows and then wait
+            // for them to expire on the device side, which takes 180s+ by
+            // construction.
+            "TC_CADMIN_1_3_4" | "TC_CADMIN_1_5" | "TC_CADMIN_1_9" | "TC_CADMIN_1_11"
+            | "TC_CADMIN_1_15" | "TC_CADMIN_1_22" | "TC_CADMIN_1_25" => Some(300),
+            // TC_OPCREDS_3_8 exercises the VID-Verification feature (Matter
+            // 1.4): it sets a 400-byte VVSC and an 85-byte
+            // VIDVerificationStatement on a fabric and then issues
+            // non-fabric-filtered reads of `NOCs` / `Fabrics` covering both
+            // fabrics. With two ~750-byte struct entries plus the 400-byte
+            // VVSC the response cannot fit in a single MTU and rs-matter
+            // falls back to its chunked-read path, which on the debug
+            // profile is dominated by per-error backtrace dumps. Bump the
+            // per-test ceiling so the chunked transfer has time to
+            // complete; the test passes in well under a minute on release.
+            "TC_OPCREDS_3_8" => Some(300),
+            _ => None,
+        }
+    }
+
+    /// Test-specific extra `--script-args` for `run_python_test.py`.
+    ///
+    /// Some `MatterBaseTest`-style scripts require PIXIT/PICS values supplied
+    /// on the command line via the `--int-arg`, `--string-arg`, `--hex-arg`
+    /// flags. Map them here per test, keyed by file stem, so the rest of the
+    /// dispatch path stays uniform.
+    fn extra_python_script_args(test_name: &str) -> &'static str {
+        match test_name {
+            // TC_ACE_1_4 needs the PIXITs that point at the application
+            // endpoint/cluster/attribute exposed by `chip_tool_tests`. Endpoint 1
+            // hosts the OnOff cluster on a `DEV_TYPE_ON_OFF_LIGHT` (device type
+            // 0x0100 == 256).
+            "TC_ACE_1_4" => {
+                " --int-arg PIXIT.ACE.APPENDPOINT:1 \
+                 --string-arg PIXIT.ACE.APPCLUSTER:OnOff \
+                 --string-arg PIXIT.ACE.APPATTRIBUTE:OnOff \
+                 --int-arg PIXIT.ACE.APPDEVTYPEID:256"
+            }
+            // ACL tests target the AccessControl cluster which lives on
+            // endpoint 0. The default `--endpoint 1` we pass for application
+            // tests would route ancillary helpers like
+            // `get_latest_event_number` at endpoint 1, where there are no
+            // ACL events. argparse keeps the last `--endpoint`, so appending
+            // here wins.
+            "TC_ACL_2_6" | "TC_ACL_2_7" | "TC_ACL_2_8" => " --endpoint 0",
+            // TC_CGEN_2_2 lives on the root endpoint (GeneralCommissioning /
+            // OperationalCredentials clusters) and uses
+            // `PIXIT.CGEN.FailsafeExpiryLengthSeconds` to bound the fail-safe
+            // window for several "arm → mutate → read" sub-flows. With the CI
+            // default of 1s the fail-safe expires mid-way through chunked
+            // reads of the (relatively large) `TrustedRootCertificates`
+            // attribute on a debug build, so the pending root certificate is
+            // dropped before the response finishes serializing. Bump it to a
+            // value that survives chunking on a slow build while keeping the
+            // overall test runtime reasonable.
+            //
+            // The `--PICS` file enables `PICS_SDK_CI_ONLY=1`, which the test
+            // uses to skip the step #38–#44 sub-flow. Those steps reassign
+            // the test's local `maxFailsafe` to `failsafe_expiration_seconds`
+            // and then assert that the *device's* fail-safe times out after
+            // that shortened window — which only holds if the device's
+            // `BasicCommissioningInfo.MaxCumulativeFailsafeSeconds` is set
+            // to the same small value. rs-matter advertises 900s here (see
+            // `CommPolicy::failsafe_max_cml_secs`), so the Cert path's
+            // assumption does not match this device and step #44 would always
+            // see the still-armed pending root cert. CI mode covers the same
+            // attribute / command surface without that assumption.
+            "TC_CGEN_2_2" => {
+                " --endpoint 0 --int-arg PIXIT.CGEN.FailsafeExpiryLengthSeconds:10 \
+                 --PICS src/app/tests/suites/certification/ci-pics-values"
+            }
+            "TC_CGEN_2_4" => " --endpoint 0",
+            // TC_OPCREDS_3_8 reads `NOCs` non-fabric-filtered with two
+            // fabrics, each carrying a max-sized 400-byte VVSC; the
+            // resulting payload is well past one MTU and rs-matter falls
+            // back to chunked reads. On the debug profile every chunk
+            // boundary triggers an `Error::NoSpace` whose backtrace dump
+            // dominates the per-chunk wall-clock. Bumping the test's
+            // `default_timeout` (90 s) past the per_endpoint_runner
+            // wait_for is enough to let the chunked transfers finish; the
+            // test passes in well under 30 s on release.
+            "TC_OPCREDS_3_8" => " --endpoint 0 --timeout 240",
+            // CADMIN (Administrator Commissioning) tests target the root
+            // endpoint via `@run_if_endpoint_matches(has_cluster(...))`.
+            "TC_CADMIN_1_3_4"
+            | "TC_CADMIN_1_5"
+            | "TC_CADMIN_1_9"
+            | "TC_CADMIN_1_11"
+            | "TC_CADMIN_1_15"
+            | "TC_CADMIN_1_22"
+            | "TC_CADMIN_1_25"
+            // CGEN (General Commissioning) tests target the root endpoint
+            // where the GeneralCommissioning cluster lives.
+            | "TC_CGEN_2_1"
+            // OPCREDS (Operational Credentials) tests live on the root
+            // endpoint.
+            | "TC_OPCREDS_3_1"
+            | "TC_OPCREDS_3_2"
+            | "TC_OPCREDS_3_4"
+            | "TC_OPCREDS_3_5"
+            // SC (Secure Channel) tests target the root endpoint.
+            | "TC_SC_3_4"
+            | "TC_SC_3_6"
+            | "TC_SC_4_1"
+            | "TC_SC_4_3"
+            | "TC_SC_7_1"
+            // BINFO (Basic Information), DGGEN (General Diagnostics) live on
+            // the root endpoint.
+            | "TC_BINFO_3_2"
+            | "TC_DGGEN_2_4"
+            | "TC_DGGEN_3_2"
+            // Groups (TC_G_2_2) defaults to endpoint 0 if not provided.
+            | "TC_G_2_2"
+            // Device Attestation (DA) covers attestation primitives on the
+            // root endpoint.
+            | "TC_DA_1_2"
+            | "TC_DA_1_5"
+            | "TC_DA_1_7" => " --endpoint 0",
+            _ => "",
+        }
     }
 
     fn build_test_exe<'a>(

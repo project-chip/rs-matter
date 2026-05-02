@@ -71,12 +71,24 @@ macro_rules! echo_resp {
 pub struct TestCmdData<'a> {
     pub path: CmdPath,
     pub data: &'a dyn TestToTLV,
+    pub command_ref: Option<u16>,
 }
 
 impl<'a> TestCmdData<'a> {
     /// Create a new `TestCmdData` instance.
     pub const fn new(path: CmdPath, data: &'a dyn TestToTLV) -> Self {
-        Self { path, data }
+        Self {
+            path,
+            data,
+            command_ref: None,
+        }
+    }
+
+    /// Set the `CommandRef` to be sent with this command. Required when batching
+    /// multiple commands in a single `InvokeRequestMessage` per Matter spec.
+    pub const fn with_command_ref(mut self, command_ref: u16) -> Self {
+        self.command_ref = Some(command_ref);
+        self
     }
 }
 
@@ -87,6 +99,10 @@ impl TestToTLV for TestCmdData<'_> {
         self.path.test_to_tlv(&TLVTag::Context(0), tw)?;
 
         self.data.test_to_tlv(&TLVTag::Context(1), tw)?;
+
+        if let Some(command_ref) = self.command_ref {
+            tw.u16(&TLVTag::Context(2), command_ref)?;
+        }
 
         tw.end_container()?;
 
@@ -102,6 +118,19 @@ impl TestToTLV for TestCmdData<'_> {
 pub enum TestCmdResp<'a> {
     Cmd(TestCmdData<'a>),
     Status(CmdStatus),
+}
+
+impl TestCmdResp<'_> {
+    /// Set the `CommandRef` to be echoed back in this response. Mirrors the
+    /// `with_command_ref` builder on `TestCmdData` and is required when the
+    /// originating `InvokeRequestMessage` carried multiple `CommandDataIB` entries.
+    pub fn with_command_ref(mut self, command_ref: u16) -> Self {
+        match &mut self {
+            TestCmdResp::Cmd(data) => data.command_ref = Some(command_ref),
+            TestCmdResp::Status(status) => status.command_ref = Some(command_ref),
+        }
+        self
+    }
 }
 
 impl TestToTLV for TestCmdResp<'_> {

@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use rs_matter::dm::clusters::on_off::{
+use rs_matter::dm::clusters::app::on_off::{
     self, test::TestOnOffDeviceLogic, ClusterAsyncHandler as _, NoLevelControl,
 };
 use rs_matter::im::IMStatusCode;
@@ -33,8 +33,16 @@ fn test_invoke_cmds_success() {
     // - another on endpoint 1 with data 10
     init_env_logger();
 
-    let input = &[echo_req!(0, 5), echo_req!(1, 10)];
-    let expected = &[echo_resp!(0, 10), echo_resp!(1, 30)];
+    // Multi-command invokes require a unique CommandRef in each request and
+    // each response per Matter spec section 8.9.4.
+    let input = &[
+        echo_req!(0, 5).with_command_ref(0),
+        echo_req!(1, 10).with_command_ref(1),
+    ];
+    let expected = &[
+        echo_resp!(0, 10).with_command_ref(0),
+        echo_resp!(1, 30).with_command_ref(1),
+    ];
     commands(input, expected);
 }
 
@@ -66,11 +74,11 @@ fn test_invoke_cmds_unsupported_fields() {
     let invalid_command = CmdPath::new(Some(0), Some(echo_cluster::ID), Some(0x1234));
     let invalid_command_wc_endpoint = CmdPath::new(None, Some(echo_cluster::ID), Some(0x1234));
     let input = &[
-        cmd_data!(invalid_endpoint.clone(), 5),
-        cmd_data!(invalid_cluster.clone(), 5),
-        cmd_data!(invalid_cluster_wc_endpoint, 5),
-        cmd_data!(invalid_command.clone(), 5),
-        cmd_data!(invalid_command_wc_endpoint, 5),
+        cmd_data!(invalid_endpoint.clone(), 5).with_command_ref(0),
+        cmd_data!(invalid_cluster.clone(), 5).with_command_ref(1),
+        cmd_data!(invalid_cluster_wc_endpoint, 5).with_command_ref(2),
+        cmd_data!(invalid_command.clone(), 5).with_command_ref(3),
+        cmd_data!(invalid_command_wc_endpoint, 5).with_command_ref(4),
     ];
 
     let expected = &[
@@ -78,16 +86,19 @@ fn test_invoke_cmds_unsupported_fields() {
             invalid_endpoint,
             IMStatusCode::UnsupportedEndpoint,
             None,
+            Some(0),
         )),
         TestCmdResp::Status(CmdStatus::new(
             invalid_cluster,
             IMStatusCode::UnsupportedCluster,
             None,
+            Some(1),
         )),
         TestCmdResp::Status(CmdStatus::new(
             invalid_command,
             IMStatusCode::UnsupportedCommand,
             None,
+            Some(3),
         )),
     ];
     commands(input, expected);
@@ -128,6 +139,7 @@ fn test_invoke_cmd_wc_endpoint_only_1_has_cluster() {
     let expected = &[TestCmdResp::Status(CmdStatus::new(
         expected_path,
         IMStatusCode::Success,
+        None,
         None,
     ))];
     commands(input, expected);

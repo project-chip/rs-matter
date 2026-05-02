@@ -26,7 +26,7 @@ use crate::error::{Error, ErrorCode};
 use crate::sc::{
     check_opcode, complete_with_status, sc_write, OpCode, SCStatusCodes, SessionParameters,
 };
-use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite};
+use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::{NocCatIds, ReservedSession, SessionMode};
 use crate::utils::init::{init, Init, InitMaybeUninit};
@@ -199,6 +199,16 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                             buf,
                         )
                     })?;
+
+                    // Responder session parameters (tag 5)
+                    let session_params = crate::sc::SessionParameters {
+                        max_paths_per_invoke: Some(
+                            exchange.matter().dev_det().max_paths_per_invoke,
+                        ),
+                        ..Default::default()
+                    };
+                    session_params.to_tlv(&TLVTag::Context(5), &mut *tw)?;
+
                     tw.end_container()?;
 
                     if !tt_updated {

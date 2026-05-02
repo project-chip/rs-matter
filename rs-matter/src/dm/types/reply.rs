@@ -16,7 +16,7 @@
  */
 
 use crate::acl::Accessor;
-use crate::dm::{AsyncHandler, EventNumber, HandlerContext, Node};
+use crate::dm::{AsyncHandler, GlobalElements, HandlerContext, Node};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
     AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
@@ -309,17 +309,25 @@ where
 
 pub struct EventReader {
     max_seen_event_number: u64,
+    next_max_seen_event_number: u64,
+    /// Whether the originating Read/Subscribe request had `fabricFiltered=true`.
+    /// When set, fabric-sensitive events (those whose payload carries a
+    /// `FabricIndex` context-tag 254) are dropped if their fabric index does
+    /// not match the accessor's. See Matter Core spec section 8.5.2.
+    fabric_filtered: bool,
 }
 
 impl EventReader {
-    pub const fn new(max_seen_event_number: u64) -> Self {
+    pub const fn new(
+        max_seen_event_number: u64,
+        next_max_seen_event_number: u64,
+        fabric_filtered: bool,
+    ) -> Self {
         Self {
             max_seen_event_number,
+            next_max_seen_event_number,
+            fabric_filtered,
         }
-    }
-
-    pub const fn max_seen_event_number(&self) -> EventNumber {
-        self.max_seen_event_number
     }
 
     pub fn process_read<T: TLVWrite>(
@@ -330,17 +338,13 @@ impl EventReader {
         node: &Node<'_>,
         accessor: &Accessor<'_>,
         mut tw: T,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         let event_number = event.event_number;
-        // `max_seen_event_number` is stored as the *next* event number the
-        // caller expects to receive (i.e. one past the largest already
-        // delivered). A fresh reader initialised with `0` must therefore
-        // still deliver event `0`, which is why the comparison is strictly
-        // less than, and the field is advanced to `event_number + 1` after
-        // a successful emit.
-        if event_number < self.max_seen_event_number {
-            // This event has already been seen by the caller, skip
-            return Ok(());
+        if !(event_number > self.max_seen_event_number
+            && event_number <= self.next_max_seen_event_number)
+        {
+            // This event is outside the range of interest, skip
+            return Ok(false);
         }
 
         let tail = tw.get_tail();
@@ -348,10 +352,16 @@ impl EventReader {
         let result = self.do_process_read(event, paths, event_filters, node, accessor, &mut tw);
 
         if result.is_err() {
-            // If there was an error, rewind to the tail so we don't write any data.
+            // If there was an error, rewind to the tail so we don't write any data
+            // and leave `max_seen_event_number` untouched so this event will be
+            // retried on the next chunk.
             tw.rewind_to(tail);
         } else {
-            self.max_seen_event_number = event_number.wrapping_add(1);
+            // The event was considered (whether or not it actually matched the
+            // path/filter/access checks). Advance the local watermark so that
+            // chunked reads do not re-consider the same event again on
+            // continuation, and so that the iteration converges.
+            self.max_seen_event_number = event_number;
         }
 
         result
@@ -365,14 +375,47 @@ impl EventReader {
         node: &Node<'_>,
         accessor: &Accessor<'_>,
         mut tw: T,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
+        if self.fabric_filtered && !Self::matches_fabric(&event, accessor) {
+            return Ok(false);
+        }
+
         if Self::matches_paths(&event, paths, node, accessor)?
             && Self::matches_filters(&event, event_filters)?
             && Self::matches_access(&event, node, accessor)?
         {
-            EventResp::Data(event).to_tlv(&TagType::Anonymous, &mut tw)
+            EventResp::Data(event).to_tlv(&TagType::Anonymous, &mut tw)?;
+
+            Ok(true)
         } else {
-            Ok(())
+            Ok(false)
+        }
+    }
+
+    /// Per Matter Core spec section 8.5.2 (Fabric-Sensitive Reporting):
+    /// When `fabricFiltered=true`, fabric-sensitive events (those whose payload
+    /// carries a `FabricIndex` field at context tag 254) SHALL only be reported
+    /// to the requesting fabric.
+    ///
+    /// Events without a `FabricIndex` field are not fabric-sensitive and pass
+    /// through unfiltered. Events with a `FabricIndex` field that matches the
+    /// accessor's fabric are reported as well.
+    fn matches_fabric(event: &EventData<'_>, accessor: &Accessor<'_>) -> bool {
+        // Inspect the event payload struct for context tag 254 (FabricIndex).
+        let Ok(payload) = event.data.structure() else {
+            // Not a struct payload — treat as non-fabric-sensitive.
+            return true;
+        };
+
+        let Ok(elem) = payload.find_ctx(GlobalElements::FabricIndex as u8) else {
+            // No `FabricIndex` field — non-fabric-sensitive, allow.
+            return true;
+        };
+
+        match elem.non_empty().and_then(|e| e.u8().ok()) {
+            Some(fab_idx) => fab_idx == accessor.fab_idx,
+            // Field present but unreadable / null — be conservative and allow.
+            None => true,
         }
     }
 
@@ -549,6 +592,7 @@ where
 /// A concrete implementation of the `InvokeReply` trait for encoding command data.
 pub struct InvokeReplyInstance<T> {
     path: CmdPath,
+    command_ref: Option<u16>,
     tw: T,
 }
 
@@ -559,6 +603,7 @@ where
     pub const fn new(cmd: &CmdDetails, tw: T) -> Self {
         Self {
             path: cmd.reply_path(),
+            command_ref: cmd.command_ref,
             tw,
         }
     }
@@ -569,7 +614,7 @@ where
     T: TLVWrite + Send,
 {
     fn with_command(mut self, cmd: u32) -> Result<impl Reply, Error> {
-        let mut writer = CmdInvokeReplyInstance::new(self.tw);
+        let mut writer = CmdInvokeReplyInstance::new(self.tw, self.command_ref);
         let mut tw = writer.writer();
 
         tw.start_struct(&TLVTag::Anonymous)?;
@@ -589,6 +634,7 @@ where
     T: TLVWrite,
 {
     anchor: T::Position,
+    command_ref: Option<u16>,
     tw: T,
 }
 
@@ -598,9 +644,10 @@ where
 {
     const TAG: TagType = TagType::Context(CmdDataTag::Data as _);
 
-    fn new(tw: T) -> Self {
+    fn new(tw: T, command_ref: Option<u16>) -> Self {
         Self {
             anchor: tw.get_tail(),
+            command_ref,
             tw,
         }
     }
@@ -618,6 +665,11 @@ where
     }
 
     fn complete(mut self) -> Result<(), Error> {
+        if let Some(command_ref) = self.command_ref {
+            self.tw
+                .u16(&TLVTag::Context(CmdDataTag::CommandRef as _), command_ref)?;
+        }
+
         self.tw.end_container()?;
         self.tw.end_container()?;
 

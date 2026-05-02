@@ -166,25 +166,25 @@ pub enum GeneralCode {
 }
 
 /// Represents the session parameters
-/// that might present in a "PBKDFParamRequest" or "CASE-Sigma1" message
-#[derive(FromTLV, ToTLV, Debug)]
+/// that might present in a "PBKDFParamRequest"/"PBKDFParamResponse" or "CASE-Sigma1"/"CASE-Sigma2" message
+#[derive(Default, FromTLV, ToTLV, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1)]
 pub(crate) struct SessionParameters {
     /// Session Idle Interval
-    sii: Option<u32>,
+    pub(crate) sii: Option<u32>,
     /// Session Active Interval
-    sai: Option<u32>,
+    pub(crate) sai: Option<u32>,
     /// Session Active Threshold
-    sat: Option<u16>,
+    pub(crate) sat: Option<u16>,
     /// Data Model Revision
-    dm_revision: Option<u16>,
+    pub(crate) dm_revision: Option<u16>,
     /// Interaction Model Revision
-    im_revision: Option<u16>,
+    pub(crate) im_revision: Option<u16>,
     /// Specification Version
-    spec_version: Option<u32>,
+    pub(crate) spec_version: Option<u32>,
     /// Maximum number of paths per invoke
-    max_paths_per_invoke: Option<u16>,
+    pub(crate) max_paths_per_invoke: Option<u16>,
 }
 
 /// Represents a Status Report message, as per "Appendix D: Status Report Messages" of the Matter Spec.

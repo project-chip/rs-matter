@@ -21,7 +21,7 @@ use rand_core::RngCore;
 
 use crate::crypto::Crypto;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
-use crate::error::Error;
+use crate::error::{Error, ErrorCode};
 use crate::sc::pase::spake2p::SPAKE2P_VERIFIER_SALT_ZEROED;
 use crate::sc::pase::{CommWindowOpener, CommWindowType};
 use crate::tlv::Nullable;
@@ -30,6 +30,26 @@ use crate::MatterState;
 pub use crate::dm::clusters::decl::administrator_commissioning::*;
 use crate::transport::exchange::ExchangeId;
 use crate::transport::session::SessionMode;
+
+/// PAKE iteration count bounds (Matter Core spec section 11.18.6.1.4).
+const MIN_PBKDF_ITERATIONS: u32 = 1000;
+const MAX_PBKDF_ITERATIONS: u32 = 100_000;
+
+/// PAKE salt length bounds (Matter Core spec section 11.18.6.1.4 / 5.1.6.1).
+const MIN_PAKE_SALT_LEN: usize = 16;
+const MAX_PAKE_SALT_LEN: usize = 32;
+
+/// SPAKE2+ verifier length: W0 (32) || L (65) = 97 octets
+/// (Matter Core spec section 3.10).
+const PAKE_VERIFIER_LEN: usize = 97;
+
+/// Stash an `AdministratorCommissioning` cluster-specific status on the
+/// invoke context so the IM layer surfaces it in `StatusIB.clusterStatus`,
+/// then build the matching `Failure(0x01)` error to return from the handler.
+fn cluster_status_err(ctx: &impl InvokeContext, status: StatusCode) -> Error {
+    ctx.cmd().set_cluster_status(status as u8);
+    Error::new(ErrorCode::Failure)
+}
 
 /// The system implementation of a handler for the Administrative Commissioning Matter cluster.
 #[derive(Debug, Clone)]
@@ -148,6 +168,24 @@ impl ClusterHandler for AdminCommHandler {
         let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
         let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
+        // Validate the PAKE parameters up front so we can surface
+        // `PAKEParameterError` as the cluster-specific status (Matter Core
+        // spec section 11.18.6.1.4).
+        let iterations = request.iterations()?;
+        if !(MIN_PBKDF_ITERATIONS..=MAX_PBKDF_ITERATIONS).contains(&iterations) {
+            return Err(cluster_status_err(&ctx, StatusCode::PAKEParameterError));
+        }
+
+        let salt = request.salt()?;
+        if !(MIN_PAKE_SALT_LEN..=MAX_PAKE_SALT_LEN).contains(&salt.0.len()) {
+            return Err(cluster_status_err(&ctx, StatusCode::PAKEParameterError));
+        }
+
+        let verifier = request.pake_passcode_verifier()?;
+        if verifier.0.len() != PAKE_VERIFIER_LEN {
+            return Err(cluster_status_err(&ctx, StatusCode::PAKEParameterError));
+        }
+
         ctx.exchange().with_state(|state| {
             state
                 .pase
@@ -157,17 +195,20 @@ impl ClusterHandler for AdminCommHandler {
 
             let mdns_id = ctx.crypto().rand()?.next_u64();
 
-            state.pase.open_comm_window(
-                mdns_id,
-                request.pake_passcode_verifier()?.0.try_into()?,
-                request.salt()?.0.try_into()?,
-                request.iterations()?,
-                request.discriminator()?,
-                request.commissioning_timeout()?,
-                opener,
-                notify_mdns,
-                notify_change,
-            )
+            state
+                .pase
+                .open_comm_window(
+                    mdns_id,
+                    verifier.0.try_into()?,
+                    salt.0.try_into()?,
+                    iterations,
+                    request.discriminator()?,
+                    request.commissioning_timeout()?,
+                    opener,
+                    notify_mdns,
+                    notify_change,
+                )
+                .map_err(|err| map_open_window_err(&ctx, err))
         })
     }
 
@@ -195,16 +236,19 @@ impl ClusterHandler for AdminCommHandler {
             let mut salt = SPAKE2P_VERIFIER_SALT_ZEROED;
             rand.fill_bytes(salt.access_mut());
 
-            state.pase.open_basic_comm_window(
-                mdns_id,
-                salt.reference(),
-                dev_comm.password.reference(),
-                dev_comm.discriminator,
-                request.commissioning_timeout()?,
-                opener,
-                notify_mdns,
-                notify_change,
-            )
+            state
+                .pase
+                .open_basic_comm_window(
+                    mdns_id,
+                    salt.reference(),
+                    dev_comm.password.reference(),
+                    dev_comm.discriminator,
+                    request.commissioning_timeout()?,
+                    opener,
+                    notify_mdns,
+                    notify_change,
+                )
+                .map_err(|err| map_open_window_err(&ctx, err))
         })
     }
 
@@ -212,11 +256,83 @@ impl ClusterHandler for AdminCommHandler {
         let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
         let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
-        ctx.exchange()
-            .with_state(|state| state.pase.close_comm_window(notify_mdns, notify_change))?;
+        // Per Matter Core spec section 11.18.6.2 (and CHIP's
+        // `AdministratorCommissioningLogic::RevokeCommissioning`), revoking
+        // the commissioning window also:
+        //
+        //  1. Forces any in-flight fail-safe context to expire. Otherwise
+        //     stale state — e.g. the breadcrumb value an interrupted
+        //     commissioning attempt left behind — leaks into the next
+        //     `OpenCommissioningWindow` round and causes the commissioner to
+        //     skip past `ArmFailSafe` (it reads `breadcrumb > 0` and assumes
+        //     an in-progress commission, per the CHIP
+        //     `AutoCommissioner::GetNextCommissioningStageInternal` post-NOC
+        //     recovery path).
+        //
+        //  2. Tears down any PASE sessions that were established under that
+        //     commissioning window but never promoted to a fabric. CHIP ties
+        //     this to fail-safe expiry inside `CommissioningWindowManager`;
+        //     we do it explicitly here so accumulated dangling PASE sessions
+        //     don't confuse the commissioner across multiple rounds (see
+        //     TC_CGEN_2_4, which iterates open / commission / revoke 8x).
+        ctx.exchange().with_state(|state| {
+            // If RevokeCommissioning came in over a PASE session, don't
+            // drop it before we've sent the response — mark it as expired
+            // instead so it lingers just long enough for the in-flight
+            // exchange to complete, then can't accept new ones.
+            // `Failsafe::expire` does the actual `remove_pase` call.
+            let sess = ctx.exchange().id().session(&mut state.sessions);
+            let expire_sess_id = matches!(
+                sess.get_session_mode(),
+                crate::transport::session::SessionMode::Pase { .. }
+            )
+            .then(|| sess.id());
 
-        // TODO: Send status code if no commissioning window is open?
+            state.failsafe.expire(
+                &mut state.fabrics,
+                &mut state.sessions,
+                expire_sess_id,
+                ctx.networks(),
+                ctx.kv(),
+                notify_mdns,
+                notify_change,
+            )?;
+
+            ctx.exchange().matter().session_removed.notify();
+            Ok::<_, Error>(())
+        })?;
+
+        ctx.exchange().with_state(|state| {
+            state
+                .pase
+                .close_comm_window(notify_mdns, notify_change)
+                .map_err(|err| map_revoke_err(&ctx, err))
+        })?;
 
         Ok(())
+    }
+}
+
+/// Map errors returned by `Pase::open_*_comm_window` to
+/// `AdministratorCommissioning` cluster-specific status codes (Matter Core
+/// spec section 11.18.6). `Busy` is the only cluster status the open paths
+/// surface today; other transport-level errors (e.g. invalid timeout) bubble
+/// up unchanged so the IM layer turns them into the generic `InvalidCommand`.
+fn map_open_window_err(ctx: &impl InvokeContext, err: Error) -> Error {
+    if err.code() == ErrorCode::Busy {
+        cluster_status_err(ctx, StatusCode::Busy)
+    } else {
+        err
+    }
+}
+
+/// Same idea for `RevokeCommissioning`: per spec, attempting to revoke when
+/// no window is open SHALL return `WindowNotOpen`. `Pase::close_comm_window`
+/// reports this as `ErrorCode::Invalid`.
+fn map_revoke_err(ctx: &impl InvokeContext, err: Error) -> Error {
+    if matches!(err.code(), ErrorCode::Invalid) {
+        cluster_status_err(ctx, StatusCode::WindowNotOpen)
+    } else {
+        err
     }
 }
