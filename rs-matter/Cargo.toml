@@ -117,6 +117,7 @@ max-btp-sessions-1 = [] # default
 astro-dnssd = ["os", "dep:astro-dnssd"]
 zeroconf = ["os", "dep:zeroconf"]
 zbus = ["dep:zbus", "os", "futures-lite", "libc", "uuid", "async-channel"]
+bluer = ["dep:bluer", "os"]
 os = ["std", "backtrace", "async-io", "critical-section/std", "embassy-sync/std", "embassy-time/std", "dep:if-addrs"]
 std = ["alloc", "rand"]
 backtrace = []
@@ -203,7 +204,7 @@ bitflags = "2"
 nix = { version = "0.30", features = ["net"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-bluer = { version = "0.17", features = ["bluetoothd"] }
+bluer = { version = "0.17", features = ["bluetoothd"], optional = true }
 tokio = { version = "1", features = ["sync"] }
 tokio-stream = { version = "0.1" }
 

@@ -21,7 +21,7 @@ use crate::dm::clusters::basic_info::BasicInfoConfig;
 
 use super::{GATT_HEADER_SIZE, MAX_BTP_SEGMENT_SIZE};
 
-#[cfg(all(feature = "os", target_os = "linux"))]
+#[cfg(all(feature = "os", feature = "bluer", target_os = "linux"))]
 pub mod bluer;
 // BlueZ is Linux-only (it uses the Linux Bluetooth stack and Linux-specific
 // socket flags such as `SOCK_CLOEXEC`).
