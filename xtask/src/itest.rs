@@ -143,10 +143,11 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Session/Commissioning (general Matter protocol)
     //
-    // "TC_SC_3_4", // TODO: a negative-path assertion expects `ChipStackError` to be raised but rs-matter accepts the request. Needs investigation of which validation step is missing.
+    "TC_SC_3_4",
     // "TC_SC_3_5", // Skipped: requires the CHIP `all-clusters-app` (`--string-arg th_server_app_path`); rs-matter does not provide the secondary TH server app this test relies on.
-    // "TC_SC_3_6", // TODO: triggers an internal exception during the multi-fabric subscription scenario; needs investigation alongside the other multi-fabric stress tests.
-    // "TC_SC_4_1", // Skipped: must be invoked with `--qr-code`/`--manual-code` setup payloads instead of `--discriminator`/`--passcode`. The xtask wrapper passes the latter.
+    "TC_SC_3_6",
+    // "TC_SC_4_1",  // Step 11 asserts there is exactly one `_CM._sub._matterc._udp.local.` PTR record on the LAN, so the test breaks on any environment that runs another commissionable Matter device alongside rs-matter (e.g. a Home Assistant Matter bridge in dev). The library-side wiring (Goodbye records on retraction in `BuiltinMdnsResponder::broadcast`, `--manual-code` injection via `setup_payload_override`) is in place — uncomment this line to enable the test in clean environments such as a GitHub Actions runner. Note that GHA is IPv4-only; the test's mDNS browse may need additional wiring there.
+
     // "TC_SC_4_3", // TODO: the discovery PTR record `D4E76DDAABB4974F-0000000012344321` is not advertised on the loopback mDNS the test scrapes. Needs the rs-matter mDNS layer to publish the operational instance name in that test environment.
     // "TC_SC_7_1", // Skipped: must be invoked with `--qr-code`/`--manual-code` setup payloads instead of `--discriminator`/`--passcode`. The xtask wrapper passes the latter.
 
@@ -516,10 +517,22 @@ impl ITests {
         // Without it, the Python SDK reuses stale fabric storage from previous
         // runs while the device has been factory-reset, causing AddNOC to fail.
         let extra_args = Self::extra_python_script_args(test_name);
+        // Some tests (e.g. TC_SC_4_1) need to be commissioned via a setup
+        // payload (manual or QR code) rather than the raw discriminator /
+        // passcode pair, because their script logic inspects
+        // `matter_test_config.manual_code` / `qr_code_content` to choose
+        // between long- and short-discriminator mDNS subtypes. Passing
+        // both `--discriminator`/`--passcode` *and* `--manual-code` makes
+        // the framework attempt commissioning twice (once per setup
+        // payload) and the second attempt times out, so we must drop the
+        // raw form here.
+        let commissioning_args = match Self::setup_payload_override(test_name) {
+            Some(setup_payload) => setup_payload.to_string(),
+            None => format!("--discriminator {discriminator} --passcode {passcode}"),
+        };
         let script_args = format!(
             "--storage-path /tmp/rs_matter_python_test_storage.json \
-             --commissioning-method on-network --discriminator {discriminator} \
-             --passcode {passcode} --endpoint 1 \
+             --commissioning-method on-network {commissioning_args} --endpoint 1 \
              --paa-trust-store-path credentials/development/paa-root-certs{extra_args}"
         );
 
@@ -568,6 +581,27 @@ impl ITests {
             // per-test ceiling so the chunked transfer has time to
             // complete; the test passes in well under a minute on release.
             "TC_OPCREDS_3_8" => Some(300),
+            _ => None,
+        }
+    }
+
+    /// Replace the default `--discriminator`/`--passcode` commissioning
+    /// arguments with a setup-payload form (e.g. `--manual-code <code>`)
+    /// for tests whose script logic requires it. Returns `None` for tests
+    /// that take the default raw-credentials form.
+    ///
+    /// rs-matter's standard test pairing code is printed by the test
+    /// executable at startup as `PairingCode: [3497-0112-332]`
+    /// (digits `34970112332`); it encodes `discriminator=3840` and
+    /// `passcode=20202021` from `TEST_DEV_COMM`.
+    fn setup_payload_override(test_name: &str) -> Option<&'static str> {
+        match test_name {
+            // TC_SC_4_1 inspects `matter_test_config.manual_code` /
+            // `qr_code_content` to decide between long- and
+            // short-discriminator mDNS subtypes (`_L<id>` vs `_S<id>`).
+            // Without one of those fields its
+            // `setup_code_type = NONE_SUPLIED` and step 9 bails.
+            "TC_SC_4_1" => Some("--manual-code 34970112332"),
             _ => None,
         }
     }
@@ -634,6 +668,10 @@ impl ITests {
             // wait_for is enough to let the chunked transfers finish; the
             // test passes in well under 30 s on release.
             "TC_OPCREDS_3_8" => " --endpoint 0 --timeout 240",
+            // TC_SC_4_1: setup payload is supplied via
+            // `setup_payload_override`; this entry just routes it to
+            // endpoint 0 like the other root-endpoint tests.
+            "TC_SC_4_1" => " --endpoint 0",
             // CADMIN (Administrator Commissioning) tests target the root
             // endpoint via `@run_if_endpoint_matches(has_cluster(...))`.
             "TC_CADMIN_1_3_4"
@@ -653,9 +691,10 @@ impl ITests {
             | "TC_OPCREDS_3_4"
             | "TC_OPCREDS_3_5"
             // SC (Secure Channel) tests target the root endpoint.
+            // (TC_SC_4_1 has its own arm above for the `--manual-code`
+            // setup-payload form.)
             | "TC_SC_3_4"
             | "TC_SC_3_6"
-            | "TC_SC_4_1"
             | "TC_SC_4_3"
             | "TC_SC_7_1"
             // BINFO (Basic Information), DGGEN (General Diagnostics) live on
