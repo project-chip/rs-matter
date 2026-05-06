@@ -34,13 +34,13 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use zbus::Connection;
 
 use crate::error::Error;
-use crate::transport::network::mdns::Service;
+use crate::transport::network::mdns::MatterService;
 use crate::utils::zbus_proxies::avahi::entry_group::EntryGroupProxy;
 use crate::utils::zbus_proxies::avahi::server2::Server2Proxy;
 use crate::utils::zbus_proxies::avahi::service_browser::ServiceBrowserProxy;
+use crate::Matter;
 
 use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
-use crate::{Matter, MatterMdnsService};
 
 /// Avahi constant for "any interface"
 const AVAHI_IF_UNSPEC: i32 = -1;
@@ -50,7 +50,7 @@ const AVAHI_PROTO_UNSPEC: i32 = -1;
 /// An mDNS responder for Matter utilizing the Avahi daemon over DBus.
 pub struct AvahiMdnsResponder<'a> {
     matter: &'a Matter<'a>,
-    services: HashMap<MatterMdnsService, OwnedObjectPath>,
+    services: HashMap<MatterService, OwnedObjectPath>,
 }
 
 impl<'a> AvahiMdnsResponder<'a> {
@@ -93,7 +93,7 @@ impl<'a> AvahiMdnsResponder<'a> {
     async fn update_services(
         &mut self,
         connection: &Connection,
-        services: &HashSet<MatterMdnsService>,
+        services: &HashSet<MatterService>,
     ) -> Result<(), Error> {
         for service in services {
             if !self.services.contains_key(service) {
@@ -124,89 +124,86 @@ impl<'a> AvahiMdnsResponder<'a> {
     async fn register(
         &mut self,
         connection: &Connection,
-        service: &MatterMdnsService,
+        service: &MatterService,
     ) -> Result<OwnedObjectPath, Error> {
-        Service::async_call_with(
-            service,
-            self.matter.dev_det(),
-            self.matter.port(),
-            async |service| {
-                let avahi = Server2Proxy::new(connection).await?;
+        // Scratch buffer for expanding `MatterService` into a `Service` view —
+        // the strings (name, subtypes, TXT values) are formatted into this buffer.
+        let mut buf = [0u8; 512];
+        let (service, _) = service.service(self.matter.dev_det(), self.matter.port(), &mut buf)?;
 
-                let path = avahi.entry_group_new().await?;
+        let avahi = Server2Proxy::new(connection).await?;
 
-                let group = EntryGroupProxy::builder(connection)
-                    .path(path.clone())?
-                    .build()
-                    .await?;
+        let path = avahi.entry_group_new().await?;
 
-                let mut txt_buf = Vec::new();
+        let group = EntryGroupProxy::builder(connection)
+            .path(path.clone())?
+            .build()
+            .await?;
 
-                let offsets = service
-                    .txt_kvs
-                    .iter()
-                    .map(|(k, v)| {
-                        let start = txt_buf.len();
+        let mut txt_buf = Vec::new();
 
-                        if v.is_empty() {
-                            txt_buf.extend_from_slice(k.as_bytes());
-                        } else {
-                            write_unwrap!(&mut txt_buf, "{}={}", k, v);
-                        }
+        let offsets = service
+            .txt_kvs
+            .clone()
+            .map(|(k, v)| {
+                let start = txt_buf.len();
 
-                        txt_buf.len() - start
-                    })
-                    .collect::<Vec<_>>();
-
-                let mut txt_slice = txt_buf.as_slice();
-                let mut txt = Vec::new();
-
-                for offset in offsets {
-                    let (entry, next_slice) = txt_slice.split_at(offset);
-
-                    txt.push(entry);
-
-                    txt_slice = next_slice;
+                if v.is_empty() {
+                    txt_buf.extend_from_slice(k.as_bytes());
+                } else {
+                    write_unwrap!(&mut txt_buf, "{}={}", k, v);
                 }
 
-                group
-                    .add_service(
-                        AVAHI_IF_UNSPEC,
-                        AVAHI_PROTO_UNSPEC,
-                        0,
-                        service.name,
-                        service.service_protocol,
-                        "",
-                        "",
-                        service.port,
-                        &txt,
-                    )
-                    .await?;
+                txt_buf.len() - start
+            })
+            .collect::<Vec<_>>();
 
-                for subtype in service.service_subtypes {
-                    // Unclear why, but Avahi wants this very special
-                    // way of formatting service subtypes
-                    let avahi_subtype = format!("{}._sub.{}", subtype, service.service_protocol);
+        let mut txt_slice = txt_buf.as_slice();
+        let mut txt = Vec::new();
 
-                    group
-                        .add_service_subtype(
-                            AVAHI_IF_UNSPEC,
-                            AVAHI_PROTO_UNSPEC,
-                            0,
-                            service.name,
-                            service.service_protocol,
-                            "",
-                            &avahi_subtype,
-                        )
-                        .await?;
-                }
+        for offset in offsets {
+            let (entry, next_slice) = txt_slice.split_at(offset);
 
-                group.commit().await?;
+            txt.push(entry);
 
-                Ok(path)
-            },
-        )
-        .await
+            txt_slice = next_slice;
+        }
+
+        group
+            .add_service(
+                AVAHI_IF_UNSPEC,
+                AVAHI_PROTO_UNSPEC,
+                0,
+                service.name,
+                service.service_protocol,
+                "",
+                "",
+                service.port,
+                &txt,
+            )
+            .await?;
+
+        for subtype in service.service_subtypes.clone() {
+            // Unclear why, but Avahi wants this very special
+            // way of formatting service subtypes
+            let avahi_subtype = format!("{}._sub.{}", subtype, service.service_protocol);
+
+            group
+                .add_service_subtype(
+                    AVAHI_IF_UNSPEC,
+                    AVAHI_PROTO_UNSPEC,
+                    0,
+                    service.name,
+                    service.service_protocol,
+                    "",
+                    &avahi_subtype,
+                )
+                .await?;
+        }
+
+        group.commit().await?;
+
+        Ok(path)
     }
 
     async fn deregister(connection: &Connection, path: ObjectPath<'_>) -> Result<(), Error> {

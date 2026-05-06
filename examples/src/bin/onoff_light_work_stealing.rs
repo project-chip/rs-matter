@@ -178,7 +178,8 @@ fn run() -> Result<(), Error> {
     );
 
     // Run the Matter and mDNS transports
-    let mdns = mdns::run_mdns(matter, crypto);
+    // TODO: Now also fails with "lifetime not general enough"
+    // let mdns = mdns::run_mdns(matter, crypto);
     let transport = matter.run(crypto, &socket, &socket, &socket);
 
     if !matter.is_commissioned() {

@@ -32,9 +32,8 @@ use domain::rdata::{Aaaa, Ptr, Srv, Txt, A};
 use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Instant, Timer};
 
-use super::proto::Buf;
-
 use crate::error::Error;
+use crate::transport::network::mdns::builtin::types::Buf;
 use crate::transport::network::mdns::{
     CommissionableFilter, DiscoveredDevice, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR,
     MDNS_PORT,
@@ -80,7 +79,7 @@ impl<const AD: usize> DiscoveryState<AD> {
 
 /// Build an mDNS query for PTR records of a service type
 fn build_ptr_query(service_type: &str, buf: &mut [u8]) -> Result<usize, Error> {
-    let buf = Buf(buf, 0);
+    let buf = Buf::new(buf);
     let message = MessageBuilder::from_target(buf)?;
 
     let mut question = message.question();

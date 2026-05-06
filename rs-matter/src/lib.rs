@@ -45,6 +45,7 @@ use crate::pairing::DiscoveryCapabilities;
 use crate::persist::KvBlobStore;
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
 use crate::sc::pase::Pase;
+use crate::transport::network::mdns::MatterService;
 use crate::transport::network::{NetworkMulticast, NetworkReceive, NetworkSend};
 use crate::transport::session::Sessions;
 use crate::transport::{
@@ -54,7 +55,6 @@ use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::pooled::BufferAccess;
-use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
 
@@ -115,85 +115,6 @@ macro_rules! alloc {
 
 /// The Matter UDP port
 pub const MATTER_PORT: u16 = 5540;
-
-/// The maximum length of a Matter mDNS service name
-pub const MATTER_SERVICE_MAX_NAME_LEN: usize = 33;
-
-/// A type capturing all the information necessary to publish a commissioned
-/// Matter fabric or a non-commissioned Matter instance over mDNS.
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum MatterMdnsService {
-    /// A commissioned Matter service for a particular fabric
-    ///
-    /// The published name is in the form `<compressed-fabric-id-hex>-<node-id-hex>`.
-    Commissioned {
-        compressed_fabric_id: u64,
-        node_id: u64,
-    },
-    /// A non-commissioned Matter service
-    ///
-    /// The published name is in the form `<id-hex>`. The discriminator should be used as an mDNS TXT entry
-    Commissionable {
-        id: u64,
-        /// The discriminator to be communicated over mDNS
-        discriminator: u16,
-        /// Whether this is an enhanced (ECM) commissioning window (`CM=2`) vs basic (`CM=1`)
-        enhanced: bool,
-    },
-}
-
-impl MatterMdnsService {
-    /// Return the name of the mDNS service in a buffer
-    ///
-    /// NOTE: The buffer needs to be at least `MATTER_SERVICE_MAX_NAME_LEN` bytes long
-    /// or else this method will panic.
-    pub fn name<'a>(&self, buf: &'a mut [u8]) -> &'a str {
-        use core::fmt::Write;
-
-        match self {
-            Self::Commissioned {
-                compressed_fabric_id,
-                node_id,
-            } => {
-                if buf.len() < MATTER_SERVICE_MAX_NAME_LEN {
-                    panic!("Buffer too small for mDNS service name");
-                }
-
-                let mut wb = WriteBuf::new(buf);
-
-                write_unwrap!(&mut wb, "{:016X}", compressed_fabric_id);
-
-                unwrap!(wb.append(b"-"));
-
-                write_unwrap!(&mut wb, "{:016X}", node_id);
-
-                let len = wb.get_tail();
-
-                unwrap!(
-                    core::str::from_utf8(&buf[..len]),
-                    "Invalid UTF-8 in mDNS service name"
-                )
-            }
-            Self::Commissionable { id, .. } => {
-                if buf.len() < 16 {
-                    panic!("Buffer too small for mDNS service name");
-                }
-
-                let mut wb = WriteBuf::new(buf);
-
-                write_unwrap!(&mut wb, "{:016X}", id);
-
-                let len = wb.get_tail();
-
-                unwrap!(
-                    core::str::from_utf8(&buf[..len]),
-                    "Invalid UTF-8 in mDNS service name"
-                )
-            }
-        }
-    }
-}
 
 /// Device basic commissioning data
 #[derive(Debug, Clone)]
@@ -650,7 +571,7 @@ impl<'a> Matter<'a> {
     /// Invoke the given closure for each currently published Matter mDNS service.
     pub fn mdns_services<F>(&self, mut f: F) -> Result<(), Error>
     where
-        F: FnMut(MatterMdnsService) -> Result<(), Error>,
+        F: FnMut(MatterService) -> Result<(), Error>,
     {
         debug!("=== Currently published mDNS services");
 

@@ -367,10 +367,7 @@ fn main() -> ! {
 
     report_size("Data Model", size_of_val(dm), &mut aux_total);
 
-    let mdns = mk_static!(
-        BuiltinMdnsResponder<'static, &'static AppCrypto>,
-        BuiltinMdnsResponder::new(&stack.matter, crypto)
-    );
+    let mdns = mk_static!(BuiltinMdnsResponder, BuiltinMdnsResponder::new());
 
     report_size("mDNS responder", size_of_val(&*mdns), &mut aux_total);
 
@@ -427,7 +424,7 @@ fn main() -> ! {
     report_size("DM task", size_of_val(&dm_task_fut(dm)), &mut fut_total);
     report_size(
         "mDNS task",
-        size_of_val(&mdns_task_fut(mdns)),
+        size_of_val(&mdns_task_fut(mdns, &stack.matter, crypto)),
         &mut fut_total,
     );
     report_size(
@@ -483,7 +480,7 @@ fn main() -> ! {
         spawner.spawn(unwrap!(respond_task(responder, 1)));
         spawner.spawn(unwrap!(respond_task(responder, 0)));
         spawner.spawn(unwrap!(dm_task(dm)));
-        spawner.spawn(unwrap!(mdns_task(mdns)));
+        spawner.spawn(unwrap!(mdns_task(mdns, &stack.matter, crypto)));
         spawner.spawn(unwrap!(btp_task(&stack.btp)));
         spawner.spawn(unwrap!(wifi_task(wifi_mgr)));
         spawner.spawn(unwrap!(transport_task(
@@ -535,27 +532,30 @@ async fn dm_task(dm: &'static AppDataModel<'static>) {
 }
 
 #[inline(always)]
-fn mdns_task_fut<'a>(
-    mdns: &'a mut BuiltinMdnsResponder<'static, &'static AppCrypto>,
+fn mdns_task_fut<'a, C: Crypto + 'a>(
+    mdns: &'a mut BuiltinMdnsResponder,
+    matter: &'a Matter<'a>,
+    crypto: C,
 ) -> impl Future<Output = Result<(), Error>> + 'a {
     mdns.run(
         FakeUdp,
         FakeUdp,
         &Host {
-            id: 0,
             hostname: "rs-matter-bloat-check",
             ip: Ipv4Addr::LOCALHOST,
             ipv6: Ipv6Addr::LOCALHOST,
         },
         Some(Ipv4Addr::LOCALHOST),
         Some(0),
+        matter,
+        crypto,
     )
 }
 
 #[embassy_executor::task]
-async fn mdns_task(mdns: &'static mut BuiltinMdnsResponder<'static, &'static AppCrypto>) {
+async fn mdns_task(mdns: &'static mut BuiltinMdnsResponder, matter: &'static Matter<'static>, crypto: &'static AppCrypto) {
     info!("Starting mDNS task...");
-    unwrap!(mdns_task_fut(mdns).await);
+    unwrap!(mdns_task_fut(mdns, matter, crypto).await);
 }
 
 #[inline(always)]

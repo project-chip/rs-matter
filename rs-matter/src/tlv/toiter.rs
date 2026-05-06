@@ -244,6 +244,7 @@ impl<'a, T> TLVIter<'a> for T where T: Iterator<Item = TLVResult<'a>> {}
 ///
 /// Useful when the "to-tlv-iter" implementation needs to return
 /// one of two iterators based on some condition.
+#[derive(Clone)]
 pub enum EitherIter<F, S> {
     First(F),
     Second(S),
@@ -269,6 +270,7 @@ where
 ///
 /// Useful when the "to-tlv-iter" implementation needs to return
 /// one of three iterators based on some condition.
+#[derive(Clone)]
 pub enum Either3Iter<F, S, T> {
     First(F),
     Second(S),
@@ -297,6 +299,7 @@ where
 ///
 /// Useful when the "to-tlv-iter" implementation needs to return
 /// one of four iterators based on some condition.
+#[derive(Clone)]
 pub enum Either4Iter<F, S, T, U> {
     First(F),
     Second(S),
@@ -328,6 +331,7 @@ where
 ///
 /// Useful when the "to-tlv-iter" implementation needs to return
 /// one of five iterators based on some condition.
+#[derive(Clone)]
 pub enum Either5Iter<F, S, T, U, I> {
     First(F),
     Second(S),
@@ -362,6 +366,7 @@ where
 ///
 /// Useful when the "to-tlv-iter" implementation needs to return
 /// one of six iterators based on some condition.
+#[derive(Clone)]
 pub enum Either6Iter<F, S, T, U, I, X> {
     First(F),
     Second(S),

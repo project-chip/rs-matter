@@ -138,18 +138,19 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
         .get_ref()
         .join_multicast_v4(&MDNS_IPV4_BROADCAST_ADDR, &ipv4_addr)?;
 
-    BuiltinMdnsResponder::new(matter, crypto)
+    BuiltinMdnsResponder::new()
         .run(
             &socket,
             &socket,
             &Host {
-                id: 0,
                 hostname: "rs-matter-test",
                 ip: ipv4_addr,
                 ipv6: ipv6_addr,
             },
             Some(ipv4_addr),
             Some(interface),
+            matter,
+            crypto,
         )
         .await
 }
