@@ -148,7 +148,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_SC_3_6",
     // "TC_SC_4_1",  // Step 11 asserts there is exactly one `_CM._sub._matterc._udp.local.` PTR record on the LAN, so the test breaks on any environment that runs another commissionable Matter device alongside rs-matter (e.g. a Home Assistant Matter bridge in dev). The library-side wiring (Goodbye records on retraction in `BuiltinMdnsResponder::broadcast`, `--manual-code` injection via `setup_payload_override`) is in place — uncomment this line to enable the test in clean environments such as a GitHub Actions runner. Note that GHA is IPv4-only; the test's mDNS browse may need additional wiring there.
 
-    // "TC_SC_4_3", // TODO: the discovery PTR record `D4E76DDAABB4974F-0000000012344321` is not advertised on the loopback mDNS the test scrapes. Needs the rs-matter mDNS layer to publish the operational instance name in that test environment.
+    "TC_SC_4_3",
     // "TC_SC_7_1", // Skipped: must be invoked with `--qr-code`/`--manual-code` setup payloads instead of `--discriminator`/`--passcode`. The xtask wrapper passes the latter.
 
     //

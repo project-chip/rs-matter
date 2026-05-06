@@ -547,8 +547,14 @@ impl MatterService {
             } => {
                 let mut wb = WriteBuf::new(buf);
 
-                let (name, wb) =
+                let (name, mut wb) =
                     write_split!(wb, "{:016X}-{:016X}", compressed_fabric_id, node_id)?;
+
+                // Operational fabric subtype per Matter Core Spec §4.3.2:
+                // `_I<compressed_fabric_id>._sub._matter._tcp.local.` lets a
+                // controller browse for nodes of a given fabric without
+                // already knowing each node's id.
+                let (subtype_i, wb) = write_split!(wb, "_I{:016X}", compressed_fabric_id)?;
 
                 // Per Matter Core Spec Section 4.3.1.14, T is a bitmap:
                 // bit 1 (value 2) = TCP client, bit 2 (value 4) = TCP server
@@ -566,7 +572,7 @@ impl MatterService {
                         protocol: "_tcp",
                         service_protocol: "_matter._tcp",
                         port: matter_port,
-                        service_subtypes: EitherIter::First(core::iter::empty()),
+                        service_subtypes: EitherIter::First(core::iter::once(subtype_i)),
                         txt_kvs: EitherIter::First(txt_kvs),
                     },
                     wb.into_buf(),
