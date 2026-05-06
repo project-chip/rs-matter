@@ -31,6 +31,7 @@ use futures_lite::StreamExt;
 use log::info;
 
 use rand::RngCore;
+
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::test::TestOnOffDeviceLogic;
@@ -66,6 +67,7 @@ use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
+use rs_matter::BasicCommData;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
@@ -106,9 +108,19 @@ fn main() -> Result<(), Error> {
         core::mem::size_of::<Subscriptions>()
     );
 
+    // Optional `--discriminator <u16>` / `--passcode <u32>` overrides for the
+    // hardcoded `TEST_DEV_COMM` defaults. Used by tests like TC-SC-7.1 that
+    // assert the device is *not* using the spec-default `3840`/`20202021`.
+    let comm_data = parse_comm_overrides();
+    let passcode = u32::from_le_bytes(*comm_data.password.access());
+    info!(
+        "Commissioning data: discriminator={}, passcode={}",
+        comm_data.discriminator, passcode,
+    );
+
     let matter = MATTER.uninit().init_with(Matter::init(
         &BASIC_INFO,
-        TEST_DEV_COMM,
+        comm_data,
         &TEST_DEV_ATT,
         rs_matter::utils::epoch::sys_epoch,
         MATTER_PORT,
@@ -370,4 +382,37 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 ),
         ),
     )
+}
+
+/// Parse optional `--discriminator <u16>` / `--passcode <u32>` CLI overrides
+/// and return a `BasicCommData` based on those (or the spec defaults when not
+/// provided).
+///
+/// Used by tests such as TC-SC-7.1 that assert the device is *not* using the
+/// spec-default discriminator (3840) and passcode (20202021).
+fn parse_comm_overrides() -> BasicCommData {
+    let mut discriminator: u16 = TEST_DEV_COMM.discriminator;
+    let mut passcode: u32 = u32::from_le_bytes(*TEST_DEV_COMM.password.access());
+
+    let args: Vec<String> = std::env::args().collect();
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--discriminator" if i + 1 < args.len() => {
+                if let Ok(v) = args[i + 1].parse::<u16>() {
+                    discriminator = v;
+                }
+                i += 2;
+            }
+            "--passcode" if i + 1 < args.len() => {
+                if let Ok(v) = args[i + 1].parse::<u32>() {
+                    passcode = v;
+                }
+                i += 2;
+            }
+            _ => i += 1,
+        }
+    }
+
+    BasicCommData::new(passcode, discriminator)
 }

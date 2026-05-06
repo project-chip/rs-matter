@@ -43,7 +43,9 @@ use crate::pairing::qr::{
 };
 use crate::pairing::DiscoveryCapabilities;
 use crate::persist::KvBlobStore;
-use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
+use crate::sc::pase::spake2p::{
+    Spake2pVerifierPassword, Spake2pVerifierPasswordRef, SPAKE2P_VERIFIER_SALT_ZEROED,
+};
 use crate::sc::pase::Pase;
 use crate::transport::network::mdns::MatterService;
 use crate::transport::network::{NetworkMulticast, NetworkReceive, NetworkSend};
@@ -125,6 +127,22 @@ pub struct BasicCommData {
     pub password: Spake2pVerifierPassword,
     /// The 12-bit discriminator used to differentiate between multiple devices
     pub discriminator: u16,
+}
+
+impl BasicCommData {
+    /// Construct a `BasicCommData` from a numeric passcode and discriminator.
+    ///
+    /// Convenience for callers (e.g. example/test binaries) that want to
+    /// supply commissioning credentials at runtime without having to import
+    /// the SPAKE2+ verifier types.
+    pub const fn new(passcode: u32, discriminator: u16) -> Self {
+        Self {
+            password: Spake2pVerifierPassword::new_from_ref(Spake2pVerifierPasswordRef::new(
+                &passcode.to_le_bytes(),
+            )),
+            discriminator,
+        }
+    }
 }
 
 /// The primary Matter Object

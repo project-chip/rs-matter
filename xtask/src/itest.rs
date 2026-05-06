@@ -149,7 +149,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // "TC_SC_4_1",  // Step 11 asserts there is exactly one `_CM._sub._matterc._udp.local.` PTR record on the LAN, so the test breaks on any environment that runs another commissionable Matter device alongside rs-matter (e.g. a Home Assistant Matter bridge in dev). The library-side wiring (Goodbye records on retraction in `BuiltinMdnsResponder::broadcast`, `--manual-code` injection via `setup_payload_override`) is in place — uncomment this line to enable the test in clean environments such as a GitHub Actions runner. Note that GHA is IPv4-only; the test's mDNS browse may need additional wiring there.
 
     "TC_SC_4_3",
-    // "TC_SC_7_1", // Skipped: must be invoked with `--qr-code`/`--manual-code` setup payloads instead of `--discriminator`/`--passcode`. The xtask wrapper passes the latter.
+    "TC_SC_7_1",
 
     //
     // Python tests — Basic Information (system cluster)
@@ -530,11 +530,29 @@ impl ITests {
             Some(setup_payload) => setup_payload.to_string(),
             None => format!("--discriminator {discriminator} --passcode {passcode}"),
         };
+        // A handful of tests (e.g. TC_SC_7_1) only do PASE establishment in
+        // the test body itself, and assert that the device starts factory
+        // reset. Pre-test commissioning would add a fabric and break the
+        // assertion, so omit `--commissioning-method` for those tests.
+        let commissioning_method = if Self::skip_pre_commissioning(test_name) {
+            ""
+        } else {
+            "--commissioning-method on-network "
+        };
         let script_args = format!(
             "--storage-path /tmp/rs_matter_python_test_storage.json \
-             --commissioning-method on-network {commissioning_args} --endpoint 1 \
+             {commissioning_method}{commissioning_args} --endpoint 1 \
              --paa-trust-store-path credentials/development/paa-root-certs{extra_args}"
         );
+
+        // Optional `--app-args` passed through to `chip_tool_tests`. Used by
+        // tests like TC_SC_7_1 that require non-default discriminator /
+        // passcode values, which the test then asserts (`assert_not_equal`
+        // against `3840` / `20202021`).
+        let app_args_clause = match Self::app_args_override(test_name) {
+            Some(args) => format!(" --app-args '{args}'"),
+            None => String::new(),
+        };
 
         // Block the runner until the rs-matter app has actually started
         // serving on the wire before it is allowed to SIGTERM the previous
@@ -550,10 +568,11 @@ impl ITests {
         // `rs_matter::transport::TransportRunner::run`.
         Ok(format!(
             "timeout --kill-after=10s {timeout_secs}s \
-             {} --app '{}' --app-ready-pattern 'Running Matter transport' \
+             {} --app '{}'{} --app-ready-pattern 'Running Matter transport' \
              --factory-reset --script {} --script-args \"{}\"",
             runner_path.display(),
             test_exe_path.display(),
+            app_args_clause,
             script_path.display(),
             script_args,
         ))
@@ -602,6 +621,36 @@ impl ITests {
             // Without one of those fields its
             // `setup_code_type = NONE_SUPLIED` and step 9 bails.
             "TC_SC_4_1" => Some("--manual-code 34970112332"),
+            // TC_SC_7_1 in post-cert mode asserts the device is *not* using
+            // the spec-default discriminator (3840) / passcode (20202021).
+            // The QR code matches the values we pass to `chip_tool_tests`
+            // via `--app-args` (see `app_args_override`).
+            "TC_SC_7_1" => Some("--qr-code MT:-24J0KCZ16N71648G00"),
+            _ => None,
+        }
+    }
+
+    /// Tests that should NOT trigger the framework's pre-test commissioning
+    /// pass. Returning `true` causes `--commissioning-method` to be omitted
+    /// from `--script-args`, so `MatterBaseTest` skips its `CommissionDevice`
+    /// step and the test body runs against a factory-fresh device.
+    fn skip_pre_commissioning(test_name: &str) -> bool {
+        // TC_SC_7_1 only does PASE establishment in the test body and
+        // explicitly asserts that no fabrics exist on the device when
+        // step 1 runs.
+        matches!(test_name, "TC_SC_7_1")
+    }
+
+    /// Optional `--app-args` passed straight through to `chip_tool_tests`.
+    ///
+    /// `chip_tool_tests` recognises `--discriminator <u16>` and
+    /// `--passcode <u32>`; both override the spec-default `TEST_DEV_COMM`
+    /// values for tests that demand non-defaults.
+    fn app_args_override(test_name: &str) -> Option<&'static str> {
+        match test_name {
+            // Match the values encoded in the QR code returned by
+            // `setup_payload_override` for this test (MT:-24J0KCZ16N71648G00).
+            "TC_SC_7_1" => Some("--discriminator 2222 --passcode 20202024"),
             _ => None,
         }
     }
@@ -696,7 +745,6 @@ impl ITests {
             | "TC_SC_3_4"
             | "TC_SC_3_6"
             | "TC_SC_4_3"
-            | "TC_SC_7_1"
             // BINFO (Basic Information), DGGEN (General Diagnostics) live on
             // the root endpoint.
             | "TC_BINFO_3_2"
@@ -709,6 +757,13 @@ impl ITests {
             | "TC_DA_1_2"
             | "TC_DA_1_5"
             | "TC_DA_1_7" => " --endpoint 0",
+            // TC_SC_7_1 supports a "post-cert" single-DUT mode that swaps
+            // the two-device commissioning-codes assertion for direct
+            // factory-state and non-default-credentials checks against the
+            // sole DUT. Without `post_cert_test:true` the test bails out
+            // before step 1 demanding a second discriminator. Routes to
+            // endpoint 0 like the other root-endpoint SC tests.
+            "TC_SC_7_1" => " --bool-arg post_cert_test:true --endpoint 0",
             _ => "",
         }
     }

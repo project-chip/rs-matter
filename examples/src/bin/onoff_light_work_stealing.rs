@@ -178,8 +178,8 @@ fn run() -> Result<(), Error> {
     );
 
     // Run the Matter and mDNS transports
-    // TODO: Now also fails with "lifetime not general enough"
-    // let mdns = mdns::run_mdns(matter, crypto);
+    #[allow(unused)]
+    let mdns = mdns::run_mdns(matter, crypto);
     let transport = matter.run(crypto, &socket, &socket, &socket);
 
     if !matter.is_commissioned() {
@@ -195,7 +195,8 @@ fn run() -> Result<(), Error> {
     let executor = async_executor::Executor::new();
 
     executor.spawn(transport).detach();
-    executor.spawn(mdns).detach();
+    // TODO: Now also fails with "lifetime not general enough"
+    // executor.spawn(mdns).detach();
 
     // NOTE: Commented out because compiling this line blocks forever
     //executor.spawn(dm_job).detach();
