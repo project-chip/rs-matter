@@ -187,7 +187,14 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //              // exercises the all-clusters-app's FaultInjection cluster, not
     //              // any rs-matter code path.
     "TC_SC_3_6",
-    // "TC_SC_4_1",  // Step 11 asserts there is exactly one `_CM._sub._matterc._udp.local.` PTR record on the LAN, so the test breaks on any environment that runs another commissionable Matter device alongside rs-matter (e.g. a Home Assistant Matter bridge in dev). The library-side wiring (Goodbye records on retraction in `BuiltinMdnsResponder::broadcast`, `--manual-code` injection via `setup_payload_override`) is in place — uncomment this line to enable the test in clean environments such as a GitHub Actions runner. Note that GHA is IPv4-only; the test's mDNS browse may need additional wiring there.
+    // NOTE: TC_SC_4_1 step 11 asserts there is exactly one
+    // `_CM._sub._matterc._udp.local.` PTR record on the LAN. It passes on
+    // a clean network (e.g. a GitHub Actions runner) but breaks in dev
+    // environments that already host another commissionable Matter device
+    // (Home Assistant Matter bridge, ESP32 fixture, …). If you're seeing
+    // this fail locally, it's the LAN, not rs-matter — comment the entry
+    // back out for the duration of your local run.
+    "TC_SC_4_1",
     "TC_SC_4_3",
     "TC_SC_7_1",
     //
@@ -269,6 +276,16 @@ pub(crate) enum TestSuite {
     /// System clusters + general Matter protocol/IM/SC. Default suite.
     #[default]
     System,
+    /// Same as `System` but only the Python `MatterBaseTest` scripts
+    /// (names starting with `TC_`); skips the chip-tool YAML suites.
+    /// Useful when iterating on a Python-test failure without paying the
+    /// (long) cost of the full YAML pass that runs first in `System`.
+    SystemPython,
+    /// Same as `System` but only the chip-tool YAML suites (names not
+    /// starting with `TC_`); skips the Python `MatterBaseTest` scripts.
+    /// The mirror image of `SystemPython` — handy when iterating on a
+    /// YAML-test regression in isolation.
+    SystemYaml,
     /// Matter 1.5 camera-related clusters.
     Camera,
     /// OnOff + LevelControl, exercising the dimmable_light example.
@@ -277,18 +294,32 @@ pub(crate) enum TestSuite {
 
 impl TestSuite {
     /// Default list of tests for this suite.
-    pub(crate) fn default_tests(&self) -> &'static [&'static str] {
+    pub(crate) fn default_tests(&self) -> Vec<&'static str> {
         match self {
-            Self::System => SYS_TESTS,
-            Self::Camera => CAMERA_TESTS,
-            Self::Light => LIGHT_TESTS,
+            Self::System => SYS_TESTS.to_vec(),
+            // YAML test suites have names like `TestFoo`; Python
+            // `MatterBaseTest` scripts use the `TC_*` convention. Filter
+            // the system suite down to just the latter.
+            Self::SystemPython => SYS_TESTS
+                .iter()
+                .copied()
+                .filter(|name| name.starts_with("TC_"))
+                .collect(),
+            // Mirror image: only YAML test suites.
+            Self::SystemYaml => SYS_TESTS
+                .iter()
+                .copied()
+                .filter(|name| !name.starts_with("TC_"))
+                .collect(),
+            Self::Camera => CAMERA_TESTS.to_vec(),
+            Self::Light => LIGHT_TESTS.to_vec(),
         }
     }
 
     /// Default `--target` (example binary) for this suite.
     pub(crate) fn default_target(&self) -> &'static str {
         match self {
-            Self::System => "chip_tool_tests",
+            Self::System | Self::SystemPython | Self::SystemYaml => "chip_tool_tests",
             Self::Camera => "camera_tests",
             Self::Light => "dimmable_light",
         }
@@ -297,7 +328,7 @@ impl TestSuite {
     /// Cargo features the example binary must be built with for this suite.
     pub(crate) fn default_features(&self) -> &'static [&'static str] {
         match self {
-            Self::System | Self::Camera => &[],
+            Self::System | Self::SystemPython | Self::SystemYaml | Self::Camera => &[],
             Self::Light => &["chip-test"],
         }
     }
@@ -305,7 +336,7 @@ impl TestSuite {
     /// Default per-test timeout in seconds.
     pub(crate) fn default_timeout_secs(&self) -> u32 {
         match self {
-            Self::System => 120,
+            Self::System | Self::SystemPython | Self::SystemYaml => 120,
             Self::Camera => 180,
             Self::Light => 500,
         }
