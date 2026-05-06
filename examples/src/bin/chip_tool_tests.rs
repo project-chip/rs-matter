@@ -62,7 +62,6 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{FileKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
@@ -113,9 +112,15 @@ fn main() -> Result<(), Error> {
     // assert the device is *not* using the spec-default `3840`/`20202021`.
     let comm_data = parse_comm_overrides();
     let passcode = u32::from_le_bytes(*comm_data.password.access());
+    // Optional `--port <u16>` override for the default Matter UDP/TCP port.
+    // Used by tests that spawn a *second* CHIP Matter app under the test
+    // framework's control (e.g. TC-SC-3.5, where `chip-all-clusters-app`
+    // takes the default 5540 as TH_SERVER and the rs-matter DUT must move
+    // out of the way).
+    let port = parse_port_override();
     info!(
-        "Commissioning data: discriminator={}, passcode={}",
-        comm_data.discriminator, passcode,
+        "Commissioning data: discriminator={}, passcode={}, port={}",
+        comm_data.discriminator, passcode, port,
     );
 
     let matter = MATTER.uninit().init_with(Matter::init(
@@ -123,7 +128,7 @@ fn main() -> Result<(), Error> {
         comm_data,
         &TEST_DEV_ATT,
         rs_matter::utils::epoch::sys_epoch,
-        MATTER_PORT,
+        port,
     ));
 
     // Create the event queue
@@ -202,8 +207,16 @@ fn main() -> Result<(), Error> {
     // Run the background job of the data model
     let mut dm_job = pin!(dm.run());
 
-    // Bind the UDP socket
-    let udp_socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
+    // Bind the UDP socket. When `--port` is overridden we have to bind to
+    // the same port instead of the default `MATTER_SOCKET_BIND_ADDR` (which
+    // is hard-coded to 5540).
+    let bind_addr = std::net::SocketAddr::V6(std::net::SocketAddrV6::new(
+        std::net::Ipv6Addr::UNSPECIFIED,
+        port,
+        0,
+        0,
+    ));
+    let udp_socket = async_io::Async::<UdpSocket>::bind(bind_addr)?;
 
     #[allow(unused_mut)]
     let (mut net_send, mut net_recv, mut net_multicast) = (&udp_socket, &udp_socket, &udp_socket);
@@ -213,12 +226,9 @@ fn main() -> Result<(), Error> {
     let tcp = {
         use rs_matter::transport::network::tcp::TcpNetwork;
 
-        let tcp_socket = async_io::Async::<std::net::TcpListener>::bind(MATTER_SOCKET_BIND_ADDR)?;
+        let tcp_socket = async_io::Async::<std::net::TcpListener>::bind(bind_addr)?;
 
-        info!(
-            "TCP transport enabled, listening on {}",
-            MATTER_SOCKET_BIND_ADDR
-        );
+        info!("TCP transport enabled, listening on {}", bind_addr);
 
         TcpNetwork::<8>::new(tcp_socket)
     };
@@ -415,4 +425,26 @@ fn parse_comm_overrides() -> BasicCommData {
     }
 
     BasicCommData::new(passcode, discriminator)
+}
+
+/// Parse an optional `--port <u16>` CLI override and return the Matter UDP/TCP
+/// port to bind on. Defaults to `MATTER_PORT` (5540) when not provided.
+///
+/// Used by tests like TC-SC-3.5 that spawn a *second* CHIP Matter app
+/// (`chip-all-clusters-app`) under the test framework's control. That app
+/// hard-codes 5540 as TH_SERVER, so the rs-matter DUT must move out of the
+/// way to avoid a `bind: Address already in use`.
+fn parse_port_override() -> u16 {
+    let args: Vec<String> = std::env::args().collect();
+    let mut i = 1;
+    while i < args.len() {
+        if args[i] == "--port" && i + 1 < args.len() {
+            if let Ok(v) = args[i + 1].parse::<u16>() {
+                return v;
+            }
+        }
+        i += 1;
+    }
+
+    MATTER_PORT
 }
