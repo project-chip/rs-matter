@@ -196,13 +196,19 @@ pub struct BasicInfoConfig<'a> {
     /// Session Active Interval in ms
     /// If not specified, defaults to 300
     ///
+    /// Per the Matter Core Spec, the value is a 32-bit unsigned integer and
+    /// SHALL NOT exceed 3,600,000 (1 hour in milliseconds).
+    ///
     /// Not a real attribute, just used to configure the session timeouts
-    pub sai: Option<u16>,
+    pub sai: Option<u32>,
     /// Session Idle Interval in ms
     /// If not specified, defaults to 5000
     ///
+    /// Per the Matter Core Spec, the value is a 32-bit unsigned integer and
+    /// SHALL NOT exceed 3,600,000 (1 hour in milliseconds).
+    ///
     /// Not a real attribute, just used to configure the session timeouts
-    pub sii: Option<u16>,
+    pub sii: Option<u32>,
     /// Whether the device supports TCP transport.
     ///
     /// Not a real attribute; advertised via the `T` TXT record key in mDNS.

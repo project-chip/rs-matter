@@ -447,8 +447,8 @@ impl ExchangeState {
         &mut self,
         tx_plain: &PlainHdr,
         tx_proto: &mut ProtoHdr,
-        session_active_interval_ms: Option<u16>,
-        session_idle_interval_ms: Option<u16>,
+        session_active_interval_ms: Option<u32>,
+        session_idle_interval_ms: Option<u32>,
     ) -> Result<(), Error> {
         if matches!(self.role, Role::Initiator(_)) {
             tx_proto.set_initiator();
