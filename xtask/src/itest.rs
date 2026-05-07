@@ -201,7 +201,6 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // Python tests — Basic Information (system cluster)
     //
     "TC_BINFO_3_2",
-
     //
     // Python tests — Groups (system cluster)
     //

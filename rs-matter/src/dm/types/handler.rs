@@ -1675,10 +1675,11 @@ mod asynch {
 
         fn bump_dataver(&self, ctx: impl MatchContext) {
             if self.matcher.matches(&ctx) {
-                self.handler.bump_dataver(ctx)
-            } else {
-                self.next.bump_dataver(ctx)
+                self.handler.bump_dataver(&ctx)
             }
+
+            // Fall-through to the next handler in the chain since multiple handlers might need to bump dataver for the same operation
+            self.next.bump_dataver(ctx)
         }
 
         async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
