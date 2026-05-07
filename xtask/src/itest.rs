@@ -246,7 +246,28 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Device Composition / Conformance (general)
     //
-    // "TC_DeviceBasicComposition", // TODO: wildcard read returns `InvalidDataType`/`Failure` for some attribute on cluster 49 (NetworkCommissioning). Likely encoder gap on a specific attribute.
+    // "TC_DeviceBasicComposition",
+    //   // Bundles several MatterBaseTests run after a single wildcard read.
+    //   // Multiple independent gaps hit at once:
+    //   //
+    //   // 1. `test_TC_DESC_2_2` — checks `Descriptor::TagList` /
+    //   //    `EndpointUniqueID` semantic-tag attributes per Matter Core
+    //   //    spec §9.5 to validate tree-composition tagging on every
+    //   //    endpoint. rs-matter's `DescHandler` doesn't yet expose these.
+    //   //
+    //   // 2. `test_TC_IDM_10_1` — performs a wildcard *event* subscribe
+    //   //    across all endpoints/clusters and asserts no failures. Needs
+    //   //    a triage pass over rs-matter's event-subscription surface.
+    //   //
+    //   // 3. The wildcard read also pulls
+    //   //    `UnitTesting::GeneralErrorBoolean` (attr 0x31, returns
+    //   //    `InvalidDataType`) and `UnitTesting::ClusterErrorBoolean`
+    //   //    (0x32, returns `Invalid`) — see `unit_testing.rs:1042-1048`.
+    //   //    They're spec-mandated to error out (test fixtures for cluster
+    //   //    error handling), but `TC_IDM_12_1`'s JSON dump records them as
+    //   //    `49:ERROR` / `50:ERROR` and the surrounding tests treat the
+    //   //    decode failures as device problems. Re-enable once 1 and 2
+    //   //    are addressed.
     // "TC_DeviceConformance",      // TODO: device type revisions on the example endpoints don't match the spec-mandated values for the device types being advertised. Update the example apps' device-type revisions.
 ];
 
