@@ -224,7 +224,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     "TC_DA_1_2",
     "TC_DA_1_5",
-    // "TC_DA_1_7", // Skipped: requires two distinct discriminators (DUT + reference DUT). The xtask wrapper only commissions one device.
+    "TC_DA_1_7",
     // "TC_DA_1_9", // TODO: not yet verified
 
     //
@@ -878,8 +878,14 @@ impl ITests {
             | "TC_DGGEN_2_4"
             | "TC_DGGEN_3_2"
             // Groups (TC_G_2_2) defaults to endpoint 0 if not provided.
-            | "TC_G_2_2"
-            | "TC_DA_1_7" => " --endpoint 0",
+            | "TC_G_2_2" => " --endpoint 0",
+            // TC_DA_1_7 ("device attestation: distinct keys per DUT") normally
+            // requires two distinct DUTs with different DAC keys. The test
+            // also supports a single-DUT mode for CI when `allow_sdk_dac:true`
+            // is passed: it then runs steps 1.x against one device and skips
+            // the two-DUT public-key inequality check at step 3 (the inner
+            // PAI-AKID denylist check is also skipped under that flag).
+            "TC_DA_1_7" => " --endpoint 0 --bool-arg allow_sdk_dac:true",
             // Device Attestation (DA) covers attestation primitives on the
             // root endpoint. The Vendor-ID range / certification-type checks
             // in step 6.x of TC_DA_1_2 (and the analogous steps in TC_DA_1_5)
