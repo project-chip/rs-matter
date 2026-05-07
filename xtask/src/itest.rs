@@ -225,8 +225,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_DA_1_2",
     "TC_DA_1_5",
     "TC_DA_1_7",
-    // "TC_DA_1_9", // TODO: not yet verified
-
+    "TC_DA_1_9",
     //
     // Python tests — Device Discovery (general)
     //
@@ -461,10 +460,11 @@ impl ITests {
         debug!("About to run tests: {tests:?}");
 
         // Lazily build `chip-all-clusters-app` if any test in the list
-        // needs a CHIP TH_SERVER (it's a heavy GN/ninja build, so we don't
-        // pay for it in the common case). Cached on disk after the first
-        // build.
-        if tests.iter().any(|t| Self::needs_th_server_app(t)) {
+        // needs a secondary CHIP Matter device (TH_SERVER for TC-SC-3.5, or
+        // the spawn-and-commission-revoked-DAC fixtures used by TC-DA-1.9).
+        // It's a heavy GN/ninja build, so we don't pay for it in the common
+        // case. Cached on disk after the first build.
+        if tests.iter().any(|t| Self::needs_chip_all_clusters_app(t)) {
             self.chip_builder.build_chip_all_clusters_app(None, false)?;
         }
 
@@ -696,6 +696,10 @@ impl ITests {
             // per-test ceiling so the chunked transfer has time to
             // complete; the test passes in well under a minute on release.
             "TC_OPCREDS_3_8" => Some(300),
+            // TC_DA_1_9 commissions seven different revoked-DAC variants
+            // back-to-back; each commissioning attempt blocks for ~30 s, so
+            // the wall-clock budget needs ~210 s + setup overhead.
+            "TC_DA_1_9" => Some(360),
             _ => None,
         }
     }
@@ -737,11 +741,20 @@ impl ITests {
         matches!(test_name, "TC_SC_7_1")
     }
 
-    /// Tests that need the CHIP `chip-all-clusters-app` binary spawned as a
-    /// secondary "TH_SERVER" Matter device under the test framework's
-    /// control (`matter.testing.apps.AppServerSubprocess`). `setup()` builds
-    /// the app once into the chip output tree; here we just signal that the
-    /// test needs the `th_server_app_path` string user-param injected.
+    /// Tests that need the CHIP `chip-all-clusters-app` binary built into
+    /// the chip output tree (whether spawned by the test itself or by the
+    /// framework as a TH_SERVER). Drives the lazy build in `run_tests`.
+    fn needs_chip_all_clusters_app(test_name: &str) -> bool {
+        // TC_SC_3_5 plumbs the path through `--string-arg th_server_app_path`
+        // (see `needs_th_server_app`). TC_DA_1_9 spawns the binary itself
+        // via `--string-arg app_path:out/host/chip-all-clusters-app` (see
+        // `extra_python_script_args`).
+        matches!(test_name, "TC_SC_3_5" | "TC_DA_1_9")
+    }
+
+    /// Tests that need the CHIP `chip-all-clusters-app` binary path injected
+    /// as the `th_server_app_path` string user-param (consumed by
+    /// `matter.testing.apps.AppServerSubprocess`).
     fn needs_th_server_app(test_name: &str) -> bool {
         // TC_SC_3_5 ("CASE Error Handling [DUT_Initiator]") spawns a TH_SERVER
         // and uses CHIP's `FaultInjection` cluster on it to corrupt Sigma2
@@ -764,6 +777,10 @@ impl ITests {
             // default Matter port (5540). The rs-matter DUT must move to a
             // different port so the two apps don't fight over the bind.
             "TC_SC_3_5" => Some("--port 5541"),
+            // TC_DA_1_9 likewise spawns `chip-all-clusters-app` (with
+            // various revoked DAC/PAI configurations) at the Matter default
+            // port; we must vacate 5540 for the same reason.
+            "TC_DA_1_9" => Some("--port 5541"),
             // TC_BINFO_3_2 simulates a configuration-version change via the
             // CHIP `app-pipe` mechanism — the test writes
             // `{"Name":"SimulateConfigurationVersionChange"}` to the named
@@ -886,6 +903,23 @@ impl ITests {
             // the two-DUT public-key inequality check at step 3 (the inner
             // PAI-AKID denylist check is also skipped under that flag).
             "TC_DA_1_7" => " --endpoint 0 --bool-arg allow_sdk_dac:true",
+            // TC_DA_1_9 ("device attestation: revocation [DUT-Commissioner]")
+            // is a commissioner-side test: it spawns `chip-all-clusters-app`
+            // with a series of revoked DAC/PAI configurations and uses the
+            // *test framework's* `ChipDeviceCtrl.CommissionWithCode` to verify
+            // that revoked credentials are rejected. The chip_tool_tests app
+            // we launch is sidelined (the framework drives the controller
+            // directly), but we still need to point the test at the cached
+            // chip output from `cargo xtask itest-setup` and bump its
+            // per-test timeout (default 90 s) past the seven 30-s commission
+            // attempts the test performs.
+            "TC_DA_1_9" => {
+                " --PICS src/app/tests/suites/certification/ci-pics-values \
+                 --string-arg app_path:out/host/chip-all-clusters-app \
+                 --string-arg dac_provider_base_path:credentials/test/revoked-attestation-certificates/dac-provider-test-vectors \
+                 --string-arg revocation_set_base_path:credentials/test/revoked-attestation-certificates/revocation-sets \
+                 --timeout 300"
+            }
             // Device Attestation (DA) covers attestation primitives on the
             // root endpoint. The Vendor-ID range / certification-type checks
             // in step 6.x of TC_DA_1_2 (and the analogous steps in TC_DA_1_5)
