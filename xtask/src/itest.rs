@@ -230,7 +230,18 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // Python tests — Device Discovery (general)
     //
     "TC_DD_1_16_17",
-    // "TC_DD_3_23",    // Skipped: requires PC/SC smart-card subsystem (`smartcard.pcsc`). Not available in the CI environment.
+    // "TC_DD_3_23", // Skipped: triple blocker. (1) The test imports
+    //               // `matter.testing.matter_nfc_interaction`, which itself
+    //               // imports `smartcard.System` — the `smartcard` PC/SC
+    //               // Python binding isn't installed in the chip pigweed venv,
+    //               // so the script fails at import time. (2) Even with the
+    //               // module, `connect_read_nfc_tag_data` drives a physical
+    //               // PC/SC NFC reader connected to the host, which the CI
+    //               // environment doesn't provide. (3) rs-matter does not
+    //               // implement Matter 1.5's NFC-based commissioning transport,
+    //               // so step 2's `supports_nfc_commissioning` assertion would
+    //               // fail even if (1) and (2) were resolved. Re-enable once
+    //               // the NFC commissioning device-side feature lands.
 
     //
     // Python tests — Device Composition / Conformance (general)
