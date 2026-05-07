@@ -167,25 +167,24 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // Python tests — Session/Commissioning (general Matter protocol)
     //
     "TC_SC_3_4",
-    // "TC_SC_3_5", // Skipped: covers "CASE Error Handling [DUT_Initiator]" with a
-    //              // *separate* CHIP `chip-all-clusters-app` running as TH_SERVER
-    //              // (faulted via `FaultInjection` cluster on its CASE Sigma2). The
-    //              // test executable build is wired (via `build_chip_all_clusters_app`,
-    //              // triggered lazily by `needs_th_server_app`), `--string-arg
-    //              // th_server_app_path` is passed, and the rs-matter DUT is moved off
-    //              // port 5540 so TH_SERVER can take it (`--port 5541` via
-    //              // `app_args_override`). The remaining blocker is that both apps
-    //              // need to bind UDP/5353 for mDNS at the same time: CHIP CI gives
-    //              // each app its own network namespace, but our wrapper does not
-    //              // (the `Cannot open network namespace "app"` warning earlier in
-    //              // the run is the framework giving up on netns isolation), so the
-    //              // TH_SERVER's mDNS records are not visible to the test framework's
-    //              // controller and `CommissionOnNetwork` for TH_SERVER fails with
-    //              // `INVALID_PASE_PARAMETER`. Even with that resolved, the test
-    //              // is a `MCORE.ROLE.COMMISSIONER` test and in `is_pics_sdk_ci_only`
-    //              // mode all DUT_Commissioner steps short-circuit to "Y" — so it
-    //              // exercises the all-clusters-app's FaultInjection cluster, not
-    //              // any rs-matter code path.
+    // [TC-SC-3.5] CASE Error Handling [DUT_Initiator]: spawns a *separate* CHIP
+    // `chip-all-clusters-app` (TH_SERVER) and uses its `FaultInjection` cluster
+    // to corrupt fields in the Sigma2 it sends back during CASE Handshake — the
+    // test then drives a DUT_Commissioner through the resulting CASE failures.
+    // We pass `--string-arg th_server_app_path:<chip-all-clusters-app>` (built
+    // lazily via `needs_chip_all_clusters_app`), move chip_tool_tests off the
+    // default Matter port via `--port 5541` so TH_SERVER can take 5540, and
+    // hand the test `--PICS ci-pics-values` so `is_pics_sdk_ci_only=True` —
+    // without that flag, every "TH prompts the user to commission DUT" step
+    // requires a real DUT_Commissioner, which rs-matter isn't, and the steps
+    // hang on `wait_for_user_input`. With the flag, those DUT_Commissioner
+    // steps short-circuit to "Y" and the test verifies the framework
+    // controller's CASE-error handling against the FaultInjection-corrupted
+    // chip-all-clusters-app. NB: rs-matter code is exercised only via the
+    // initial CommissionDeviceTest commissioning of chip_tool_tests itself —
+    // the body of the test then drives the controller against TH_SERVER, not
+    // against the rs-matter DUT.
+    "TC_SC_3_5",
     "TC_SC_3_6",
     // NOTE: TC_SC_4_1 step 11 asserts there is exactly one
     // `_CM._sub._matterc._udp.local.` PTR record on the LAN. It passes on
@@ -948,6 +947,13 @@ impl ITests {
             // the two-DUT public-key inequality check at step 3 (the inner
             // PAI-AKID denylist check is also skipped under that flag).
             "TC_DA_1_7" => " --endpoint 0 --bool-arg allow_sdk_dac:true",
+            // TC_SC_3_5 needs `is_pics_sdk_ci_only=True` so the
+            // DUT_Commissioner steps short-circuit to "Y" — see the
+            // explanatory comment in `SYS_TESTS` above. Without the CI PICS
+            // file the test hangs on `wait_for_user_input` waiting for an
+            // operator to commission the DUT_Commissioner from chip_tool_tests
+            // (which doesn't act as a commissioner).
+            "TC_SC_3_5" => " --PICS src/app/tests/suites/certification/ci-pics-values",
             // TC_DA_1_9 ("device attestation: revocation [DUT-Commissioner]")
             // is a commissioner-side test: it spawns `chip-all-clusters-app`
             // with a series of revoked DAC/PAI configurations and uses the
