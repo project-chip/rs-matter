@@ -428,7 +428,6 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     {
         let result = self.with_state(f);
 
-        self.dataver_changed();
         ctx.notify_changed();
 
         result
@@ -601,7 +600,6 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                     let (level, should_notify) =
                         self.set_level(state, H::MIN_LEVEL, false, true)?;
                     if should_notify {
-                        self.dataver_changed();
                         ctx.notify_attr_changed(
                             self.endpoint_id,
                             Self::CLUSTER.id,
@@ -662,7 +660,6 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             });
             if restored {
                 // CurrentLevel was restored to the pre-Off stored value
-                self.dataver_changed();
                 ctx.notify_attr_changed(
                     self.endpoint_id,
                     Self::CLUSTER.id,
@@ -897,7 +894,6 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                         )
                     })
                 {
-                    self.dataver_changed();
                     ctx.notify_attr_changed(
                         self.endpoint_id,
                         Self::CLUSTER.id,
@@ -920,7 +916,6 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                     state.write_remaining_time_quietly(remaining_time, is_transition_start)
                 })
             {
-                self.dataver_changed();
                 ctx.notify_attr_changed(
                     self.endpoint_id,
                     Self::CLUSTER.id,
@@ -1035,7 +1030,6 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             let (new_level, should_notify) = self
                 .with_state(|state| self.set_level(state, new_level, is_end_of_transition, true))?;
             if should_notify {
-                self.dataver_changed();
                 ctx.notify_attr_changed(
                     self.endpoint_id,
                     Self::CLUSTER.id,
@@ -1137,7 +1131,6 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         if self
             .with_state(|state| state.write_remaining_time_quietly(Duration::from_millis(0), false))
         {
-            self.dataver_changed();
             ctx.notify_attr_changed(
                 self.endpoint_id,
                 Self::CLUSTER.id,
@@ -1159,7 +1152,6 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                             if should_notify
                                 || state.write_remaining_time_quietly(Duration::from_millis(0), false)
                             {
-                                self.dataver_changed();
                                 ctx.notify_attr_changed(
                                     self.endpoint_id,
                                     Self::CLUSTER.id,
@@ -1233,7 +1225,6 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                 OutOfBandMessage::Stop => {
                     self.task_signal.signal(Task::Stop);
                     if state.write_remaining_time_quietly(Duration::from_millis(0), false) {
-                        self.dataver_changed();
                         ctx.notify_attr_changed(
                             self.endpoint_id,
                             Self::CLUSTER.id,
@@ -1474,7 +1465,6 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
             }
 
             self.hooks.set_start_up_current_level(value.into_option())?;
-            self.dataver_changed();
             ctx.notify_changed();
             Ok(())
         })

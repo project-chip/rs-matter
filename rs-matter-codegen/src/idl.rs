@@ -32422,7 +32422,6 @@ pub mod unit_testing {
                     return Err(rs_matter_crate::error::ErrorCode::AttributeNotFound.into());
                 }
             }
-            self.0.dataver_changed();
             Ok(())
         }
         #[allow(unreachable_code)]
@@ -33978,8 +33977,12 @@ pub mod unit_testing {
                     return Err(rs_matter_crate::error::ErrorCode::CommandNotFound.into());
                 }
             }
-            self.0.dataver_changed();
             Ok(())
+        }
+        fn bump_dataver(&self, ctx: impl rs_matter_crate::dm::MatchContext) {
+            if ctx.cluster().map(|c| c == 4294048773u32).unwrap_or(true) {
+                self.0.dataver_changed();
+            }
         }
     }
     impl<T, Q> core::fmt::Debug for MetadataDebug<(u16, &HandlerAdaptor<T>, Q)>

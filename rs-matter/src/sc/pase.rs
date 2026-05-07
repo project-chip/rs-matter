@@ -24,14 +24,12 @@ use core::num::NonZeroU8;
 use core::ops::Add;
 use core::time::Duration;
 
-use spake2p::Spake2pVerifierData;
-
 use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::error::{Error, ErrorCode};
 use crate::im::{ClusterId, EndptId};
 use crate::sc::pase::spake2p::{
-    Spake2pVerifierPasswordRef, Spake2pVerifierSaltRef, Spake2pVerifierStrRef,
+    Spake2pVerifierData, Spake2pVerifierSaltRef, Spake2pVerifierStrRef,
 };
 use crate::sc::SessionParameters;
 use crate::tlv::{FromTLV, OctetStr, ToTLV};
@@ -43,6 +41,10 @@ use crate::MatterService;
 
 pub use initiator::PaseInitiator;
 pub use responder::PaseResponder;
+pub use spake2p::{
+    Spake2pVerifierPassword, Spake2pVerifierPasswordRef, SPAKE2P_VERIFIER_PASSWORD_LEN,
+    SPAKE2P_VERIFIER_PASSWORD_ZEROED,
+};
 
 mod initiator;
 mod responder;

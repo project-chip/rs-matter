@@ -126,8 +126,6 @@ bitflags! {
     }
 }
 
-pub const DEFAULT_MATTER_CONFIGURATION_VERSION: u32 = 1;
-
 /// Basic information which is immutable
 /// (i.e. valid for the lifetime of the device firmware)
 ///
@@ -176,7 +174,6 @@ pub struct BasicInfoConfig<'a> {
     pub data_model_revision: u16,
     /// Max Paths Per Invoke
     pub max_paths_per_invoke: u16,
-    pub configuration_version: u32,
     /// Device Name
     ///
     /// Not a real attribute; used in the mDNS commissioning advertisement
@@ -240,7 +237,6 @@ impl BasicInfoConfig<'_> {
             specification_version: DEFAULT_MATTER_SPEC_VERSION,
             data_model_revision: DEFAULT_DATA_MODEL_REVISION,
             max_paths_per_invoke: DEFAULT_MAX_PATHS_PER_INVOKE,
-            configuration_version: DEFAULT_MATTER_CONFIGURATION_VERSION,
             device_name: "",
             device_type: None,
             pairing_hint: PairingHintFlags::empty(),
@@ -320,6 +316,13 @@ pub struct BasicInfoSettings {
     pub location: Option<heapless::String<2>>, // Max location as per the spec
     pub location_type: RegulatoryLocationTypeEnum,
     pub local_config_disabled: bool,
+    /// `BasicInformation::ConfigurationVersion` (Matter Core Spec
+    /// §11.1.5.24). Non-volatile, monotonically increasing, minimum 1.
+    /// Bumped by application code via
+    /// `DataModel::bump_configuration_version` whenever the node's
+    /// fixed-quality surface (Server/Parts list, device types, software
+    /// version, …) changes — see Matter Core Spec §7.7.2 and §9.2.11.
+    pub configuration_version: u32,
 }
 
 impl BasicInfoSettings {
@@ -330,6 +333,9 @@ impl BasicInfoSettings {
             location: None,
             location_type: RegulatoryLocationTypeEnum::IndoorOutdoor,
             local_config_disabled: false,
+            // Spec fallback for `ConfigurationVersion` is 1 (`min 1`,
+            // Core Spec §11.1.5).
+            configuration_version: 1,
         }
     }
 
@@ -340,6 +346,7 @@ impl BasicInfoSettings {
             location: None,
             location_type: RegulatoryLocationTypeEnum::IndoorOutdoor,
             local_config_disabled: false,
+            configuration_version: 1,
         })
     }
 
@@ -351,6 +358,22 @@ impl BasicInfoSettings {
         self.node_label.clear();
         self.location = None;
         self.local_config_disabled = false;
+        self.configuration_version = 1;
+    }
+
+    /// Bump `ConfigurationVersion` by one and return the new value.
+    ///
+    /// Saturates at `u32::MAX` (the spec gives no wrap semantics, so
+    /// staying at the max is safer than rolling over to 0 which would
+    /// violate the `min 1` constraint).
+    ///
+    /// This routine only mutates the in-memory value. Persistence and
+    /// subscriber notification are the caller's responsibility — use
+    /// `DataModel::bump_configuration_version` for the full
+    /// "bump + persist + notify + dataver-bump" pass.
+    pub fn bump_configuration_version(&mut self) -> u32 {
+        self.configuration_version = self.configuration_version.saturating_add(1);
+        self.configuration_version
     }
 
     pub fn set_location(&mut self, location: &str) {
@@ -388,6 +411,7 @@ impl BasicInfoSettings {
         self.location = info.location;
         self.location_type = info.location_type;
         self.local_config_disabled = info.local_config_disabled;
+        self.configuration_version = info.configuration_version;
 
         Ok(())
     }
@@ -450,9 +474,20 @@ impl BasicInfoHandler {
 
 impl ClusterHandler for BasicInfoHandler {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
+        // Hide `Reachable` (TODO) and `ConfigurationVersion` from the default
+        // metadata. `ConfigurationVersion` is provisional in Matter 1.5 and
+        // upstream's 1.5 dataset (CHIP commit faf4d09ad1, "Remove
+        // configuration version from 1.5 branch") explicitly excludes it from
+        // `BasicInformation`'s `AttributeList`. The
+        // `BasicInformation`/`BasicInfoSettings` plumbing for it stays in
+        // place — read handler, persisted settings field, and the
+        // `Matter::bump_configuration_version` / `DataModel::bump_configuration_version`
+        // entry points — so a user that supplies their own cluster metadata
+        // (i.e. one that drops `ConfigurationVersion` from `except!`) gets a
+        // working implementation out of the box.
         .with_attrs(except!(
             AttributeId::Reachable | AttributeId::ConfigurationVersion
-        )) // TODO
+        ))
         .with_cmds(with!());
 
     fn dataver(&self) -> u32 {
@@ -593,7 +628,12 @@ impl ClusterHandler for BasicInfoHandler {
     }
 
     fn configuration_version(&self, ctx: impl ReadContext) -> Result<u32, Error> {
-        Ok(Self::config(ctx.exchange()).configuration_version)
+        // Non-volatile, runtime-mutable. Lives in `BasicInfoSettings`,
+        // bumped via `DataModel::bump_configuration_version`.
+        Self::with_settings(
+            ctx.exchange(),
+            |settings| Ok(settings.configuration_version),
+        )
     }
 
     fn handle_mfg_specific_ping(&self, _ctx: impl InvokeContext) -> Result<(), Error> {

@@ -150,6 +150,59 @@ where
         self.subscriptions
     }
 
+    /// Open the basic commissioning window.
+    ///
+    /// Equivalent to [`Matter::open_basic_comm_window`] but additionally
+    /// bumps the data version of the `AdministratorCommissioning`
+    /// cluster on the root endpoint and routes the change to
+    /// subscribers — both happen automatically because this `DataModel`
+    /// is itself the [`AttrChangeNotifier`] passed down.
+    ///
+    /// Prefer this entry point over the `Matter` one for any code path
+    /// that has a `DataModel` available; `Matter::open_basic_comm_window`
+    /// is the building block we delegate to and does not bump dataver
+    /// (see its docs).
+    pub fn open_basic_comm_window(&self, timeout_secs: u16) -> Result<(), Error> {
+        self.matter
+            .open_basic_comm_window(timeout_secs, &self.crypto, self)
+    }
+
+    /// Close the active commissioning window.
+    ///
+    /// Equivalent to [`Matter::close_comm_window`] but additionally
+    /// bumps the `AdministratorCommissioning` dataver and routes
+    /// subscribers via this `DataModel`'s [`AttrChangeNotifier`]. See
+    /// `open_basic_comm_window` for the rationale.
+    pub fn close_comm_window(&self) -> Result<bool, Error> {
+        self.matter.close_comm_window(self)
+    }
+
+    /// Bump `BasicInformation::ConfigurationVersion` by one, persist
+    /// the new value, and notify subscribers (which also bumps the
+    /// `BasicInformation` cluster's dataver via this `DataModel`'s
+    /// [`AttrChangeNotifier`]).
+    ///
+    /// Per Matter Core Spec §7.7.2 / §9.2.11, callers MUST invoke this
+    /// whenever the node's exposed fixed-quality surface changes —
+    /// typically after a firmware update that adds or removes
+    /// functionality, after an internal reconfiguration that changes
+    /// any `F`-quality attribute (Descriptor::ServerList,
+    /// PartsList, …), or (for bridges) after a bridged node is added
+    /// or removed. It is not invoked automatically by `rs-matter`
+    /// because the library has no way to know about an application's
+    /// reconfiguration events.
+    ///
+    /// Returns the new `ConfigurationVersion` value.
+    pub fn bump_configuration_version(&self) -> Result<u32, Error> {
+        // Delegate to `Matter::bump_configuration_version` for the
+        // in-memory bump + persist; pass `self` as the
+        // `AttrChangeNotifier` so the cluster's `Dataver` is bumped
+        // too (the `Matter`-level call by itself only routes
+        // subscribers and persists).
+        self.kv
+            .access(|kvb, buf| self.matter.bump_configuration_version(kvb, buf, self))
+    }
+
     /// Run the Data Model instance.
     pub async fn run(&self) -> Result<(), Error> {
         let mut timeouts = pin!(self.run_timeout_checks());
@@ -968,21 +1021,33 @@ where
     N: NetworksAccess,
 {
     fn notify_attr_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId, attr_id: AttrId) {
+        self.handler.bump_dataver(MatchContextInstance::new(
+            Some(endpoint_id),
+            Some(cluster_id),
+        ));
         self.subscriptions
-            .notify_attribute_changed(endpoint_id, cluster_id, attr_id)
+            .notify_attribute_changed(endpoint_id, cluster_id, attr_id);
     }
 
     fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
+        self.handler.bump_dataver(MatchContextInstance::new(
+            Some(endpoint_id),
+            Some(cluster_id),
+        ));
         self.subscriptions
-            .notify_cluster_attrs_changed(endpoint_id, cluster_id)
+            .notify_cluster_attrs_changed(endpoint_id, cluster_id);
     }
 
     fn notify_endpoint_changed(&self, endpoint_id: EndptId) {
+        self.handler
+            .bump_dataver(MatchContextInstance::new(Some(endpoint_id), None));
         self.subscriptions
             .notify_endpoint_attrs_changed(endpoint_id)
     }
 
     fn notify_all_changed(&self) {
+        self.handler
+            .bump_dataver(MatchContextInstance::new(None, None));
         self.subscriptions.notify_all_attrs_changed()
     }
 }

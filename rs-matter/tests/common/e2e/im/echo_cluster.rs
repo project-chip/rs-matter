@@ -27,8 +27,8 @@ use strum::{EnumDiscriminants, FromRepr};
 
 use rs_matter::dm::{
     Access, ArrayAttributeWrite, Attribute, Cluster, Command, Dataver, Event, Handler,
-    InvokeContext, InvokeReply, NonBlockingHandler, Quality, ReadContext, ReadReply, Reply,
-    WriteContext,
+    InvokeContext, InvokeReply, MatchContext, NonBlockingHandler, Quality, ReadContext, ReadReply,
+    Reply, WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::tlv::{TLVArray, TLVElement, TLVTag, TLVWrite};
@@ -237,8 +237,6 @@ impl EchoHandler {
             }
         }
 
-        self.data_ver.changed();
-
         Ok(())
     }
 
@@ -260,6 +258,12 @@ impl EchoHandler {
 
                 writer.complete()
             }
+        }
+    }
+
+    pub fn bump_dataver(&self, ctx: impl MatchContext) {
+        if ctx.cluster().map(|c| c == CLUSTER.id).unwrap_or(true) {
+            self.data_ver.changed();
         }
     }
 
@@ -318,6 +322,10 @@ impl Handler for EchoHandler {
 
     fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
         EchoHandler::invoke(self, ctx, reply)
+    }
+
+    fn bump_dataver(&self, ctx: impl MatchContext) {
+        EchoHandler::bump_dataver(self, ctx)
     }
 }
 

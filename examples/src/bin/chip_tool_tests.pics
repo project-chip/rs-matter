@@ -1703,6 +1703,15 @@ BINFO.S.A0013=1
 BINFO.S.A0014=1
 BINFO.S.A0015=1
 BINFO.S.A0016=1
+# A0018 (ConfigurationVersion) is provisional in Matter 1.5 and is not
+# exposed by the default `BasicInfoHandler` metadata — see the comment on
+# `BasicInfoHandler::CLUSTER` in `rs-matter/src/dm/clusters/basic_info.rs`.
+BINFO.S.A0018=0
+
+# Manufacturer-specific.
+# Disabled here because the default device doesn't expose `ConfigurationVersion`,
+# so `TC_BINFO_3_2` is PICS-gated off via `pics_TC_BINFO_3_2`.
+BINFO.S.M.DeviceConfigurationChange=0
 
 # Events
 BINFO.S.E00=1
