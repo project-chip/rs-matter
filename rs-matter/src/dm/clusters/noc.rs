@@ -293,6 +293,15 @@ impl ClusterHandler for NocHandler {
     ) -> Result<P, Error> {
         info!("Got Attestation Request");
 
+        // Per Matter Core spec §11.18.6.3, the `AttestationNonce` field MUST
+        // be exactly 32 octets. Anything else is rejected with
+        // `INVALID_COMMAND`. TC_DA_1_2 steps 13/14 cover the >32 / <32 cases.
+        const ATTESTATION_NONCE_LEN: usize = 32;
+
+        if request.attestation_nonce()?.0.len() != ATTESTATION_NONCE_LEN {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
+
         ctx.exchange().with_state(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
 
@@ -380,6 +389,15 @@ impl ClusterHandler for NocHandler {
         response: CSRResponseBuilder<P>,
     ) -> Result<P, Error> {
         info!("Got CSR Request");
+
+        // Per Matter Core spec §11.18.6.5, the `CSRNonce` field MUST be
+        // exactly 32 octets — anything else is rejected with
+        // `INVALID_COMMAND`. TC_DA_1_5 steps 11/12 cover the <32 / >32 cases.
+        const CSR_NONCE_LEN: usize = 32;
+
+        if request.csr_nonce()?.0.len() != CSR_NONCE_LEN {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
 
         let is_for_update_noc = request.is_for_update_noc()?.unwrap_or(false);
 

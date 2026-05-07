@@ -96,8 +96,8 @@ pub trait GenDiag: DynBase {
     /// Get the reboot count of the node.
     fn reboot_count(&self) -> Result<u16, Error>;
 
-    /// Get the uptime of the node in seconds.
-    fn uptime_secs(&self) -> Result<u64, Error>;
+    /// Get the uptime of the node in milliseconds.
+    fn uptime_ms(&self) -> Result<u64, Error>;
 
     /// Whether the test event triggers are enabled.
     /// Check the Matter Core spec for more info.
@@ -116,8 +116,8 @@ where
         (**self).reboot_count()
     }
 
-    fn uptime_secs(&self) -> Result<u64, Error> {
-        (**self).uptime_secs()
+    fn uptime_ms(&self) -> Result<u64, Error> {
+        (**self).uptime_ms()
     }
 
     fn test_event_triggers_enabled(&self) -> Result<bool, Error> {
@@ -129,14 +129,20 @@ where
     }
 }
 
-/// A dummy implementation of the `GenDiag` trait.
+/// A default implementation of the `GenDiag` trait, suitable as a stand-in
+/// for devices that don't have a more sophisticated diagnostics source.
+///
+/// `uptime_ms` is backed by `embassy_time::Instant::now()`, which by
+/// construction counts ticks since system boot — exactly the "uptime"
+/// semantics the spec asks for, and what `TimeSnapshot::SystemTimeMs` needs
+/// to advance with real wall time between calls.
 impl GenDiag for () {
     fn reboot_count(&self) -> Result<u16, Error> {
         Ok(0)
     }
 
-    fn uptime_secs(&self) -> Result<u64, Error> {
-        Ok(u32::MAX as _)
+    fn uptime_ms(&self) -> Result<u64, Error> {
+        Ok(embassy_time::Instant::now().as_millis())
     }
 
     fn test_event_triggers_enabled(&self) -> Result<bool, Error> {
@@ -200,8 +206,12 @@ impl<'a> GenDiagHandler<'a> {
 
 impl ClusterHandler for GenDiagHandler<'_> {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
-        .with_attrs(with!(required))
-        .with_cmds(with!(CommandId::TestEventTrigger));
+        // Expose `UpTime` (optional in spec) so `TC_DGGEN_2_4` can read it,
+        // and accept the `TimeSnapshot` command which is required by the
+        // same test (returns SystemTimeMs from `GenDiag::uptime_ms` and a
+        // null PosixTimeMs when no Time Synchronization cluster is present).
+        .with_attrs(with!(required; AttributeId::UpTime))
+        .with_cmds(with!(CommandId::TestEventTrigger | CommandId::TimeSnapshot));
 
     fn dataver(&self) -> u32 {
         self.dataver.get()
@@ -254,6 +264,10 @@ impl ClusterHandler for GenDiagHandler<'_> {
         self.diag.reboot_count()
     }
 
+    fn up_time(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
+        self.diag.uptime_ms().map(|uptime| uptime / 1000)
+    }
+
     fn test_event_triggers_enabled(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         self.diag.test_event_triggers_enabled()
     }
@@ -272,9 +286,18 @@ impl ClusterHandler for GenDiagHandler<'_> {
     fn handle_time_snapshot<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
-        _response: TimeSnapshotResponseBuilder<P>,
+        response: TimeSnapshotResponseBuilder<P>,
     ) -> Result<P, Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        // `SystemTimeMs` is the monotonic since-boot timestamp; we delegate
+        // to `GenDiag::uptime_ms`. `PosixTimeMs` is null when the device
+        // does not implement the Time Synchronization cluster (rs-matter
+        // does not), which is what TC_DGGEN_2_4 expects on the
+        // not-supported branch.
+        let system_time_ms = self.diag.uptime_ms()?;
+        response
+            .system_time_ms(system_time_ms)?
+            .posix_time_ms(Nullable::none())?
+            .end()
     }
 
     fn handle_payload_test_request<P: TLVBuilderParent>(

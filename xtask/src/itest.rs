@@ -167,25 +167,24 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // Python tests — Session/Commissioning (general Matter protocol)
     //
     "TC_SC_3_4",
-    // "TC_SC_3_5", // Skipped: covers "CASE Error Handling [DUT_Initiator]" with a
-    //              // *separate* CHIP `chip-all-clusters-app` running as TH_SERVER
-    //              // (faulted via `FaultInjection` cluster on its CASE Sigma2). The
-    //              // test executable build is wired (via `build_chip_all_clusters_app`,
-    //              // triggered lazily by `needs_th_server_app`), `--string-arg
-    //              // th_server_app_path` is passed, and the rs-matter DUT is moved off
-    //              // port 5540 so TH_SERVER can take it (`--port 5541` via
-    //              // `app_args_override`). The remaining blocker is that both apps
-    //              // need to bind UDP/5353 for mDNS at the same time: CHIP CI gives
-    //              // each app its own network namespace, but our wrapper does not
-    //              // (the `Cannot open network namespace "app"` warning earlier in
-    //              // the run is the framework giving up on netns isolation), so the
-    //              // TH_SERVER's mDNS records are not visible to the test framework's
-    //              // controller and `CommissionOnNetwork` for TH_SERVER fails with
-    //              // `INVALID_PASE_PARAMETER`. Even with that resolved, the test
-    //              // is a `MCORE.ROLE.COMMISSIONER` test and in `is_pics_sdk_ci_only`
-    //              // mode all DUT_Commissioner steps short-circuit to "Y" — so it
-    //              // exercises the all-clusters-app's FaultInjection cluster, not
-    //              // any rs-matter code path.
+    // [TC-SC-3.5] CASE Error Handling [DUT_Initiator]: spawns a *separate* CHIP
+    // `chip-all-clusters-app` (TH_SERVER) and uses its `FaultInjection` cluster
+    // to corrupt fields in the Sigma2 it sends back during CASE Handshake — the
+    // test then drives a DUT_Commissioner through the resulting CASE failures.
+    // We pass `--string-arg th_server_app_path:<chip-all-clusters-app>` (built
+    // lazily via `needs_chip_all_clusters_app`), move chip_tool_tests off the
+    // default Matter port via `--port 5541` so TH_SERVER can take 5540, and
+    // hand the test `--PICS ci-pics-values` so `is_pics_sdk_ci_only=True` —
+    // without that flag, every "TH prompts the user to commission DUT" step
+    // requires a real DUT_Commissioner, which rs-matter isn't, and the steps
+    // hang on `wait_for_user_input`. With the flag, those DUT_Commissioner
+    // steps short-circuit to "Y" and the test verifies the framework
+    // controller's CASE-error handling against the FaultInjection-corrupted
+    // chip-all-clusters-app. NB: rs-matter code is exercised only via the
+    // initial CommissionDeviceTest commissioning of chip_tool_tests itself —
+    // the body of the test then drives the controller against TH_SERVER, not
+    // against the rs-matter DUT.
+    "TC_SC_3_5",
     "TC_SC_3_6",
     // NOTE: TC_SC_4_1 step 11 asserts there is exactly one
     // `_CM._sub._matterc._udp.local.` PTR record on the LAN. It passes on
@@ -217,27 +216,57 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — General Diagnostics (system cluster)
     //
-    // "TC_DGGEN_2_4", // TODO: rs-matter does not advertise `GeneralDiagnostics::UpTime` (returns `UnsupportedAttribute`). Implement the attribute in the diagnostics cluster.
-    // "TC_DGGEN_3_2", // TODO: requires `BasicInformation::MaxPathsPerInvoke`; same gap as TC_BINFO_3_2 — needs the attribute exposed.
-
+    "TC_DGGEN_2_4",
+    "TC_DGGEN_3_2",
     //
     // Python tests — Device Attestation (commissioning)
     //
-    // "TC_DA_1_2", // TODO: `AttestationRequest` invoke fails (likely needs an armed fail-safe or different access path in rs-matter). Needs attestation flow review.
-    // "TC_DA_1_5", // TODO: same setup issue as TC_DA_1_2 — DA test infrastructure needs the attestation invoke path to succeed before any of the cert-chain assertions can run.
-    // "TC_DA_1_7", // Skipped: requires two distinct discriminators (DUT + reference DUT). The xtask wrapper only commissions one device.
-    // "TC_DA_1_9", // TODO: not yet verified
-
+    "TC_DA_1_2",
+    "TC_DA_1_5",
+    "TC_DA_1_7",
+    "TC_DA_1_9",
     //
     // Python tests — Device Discovery (general)
     //
-    // "TC_DD_1_16_17", // Skipped: must be invoked with `--manual-code`. The xtask wrapper passes `--discriminator`/`--passcode` instead.
-    // "TC_DD_3_23",    // Skipped: requires PC/SC smart-card subsystem (`smartcard.pcsc`). Not available in the CI environment.
+    "TC_DD_1_16_17",
+    // "TC_DD_3_23", // Skipped: triple blocker. (1) The test imports
+    //               // `matter.testing.matter_nfc_interaction`, which itself
+    //               // imports `smartcard.System` — the `smartcard` PC/SC
+    //               // Python binding isn't installed in the chip pigweed venv,
+    //               // so the script fails at import time. (2) Even with the
+    //               // module, `connect_read_nfc_tag_data` drives a physical
+    //               // PC/SC NFC reader connected to the host, which the CI
+    //               // environment doesn't provide. (3) rs-matter does not
+    //               // implement Matter 1.5's NFC-based commissioning transport,
+    //               // so step 2's `supports_nfc_commissioning` assertion would
+    //               // fail even if (1) and (2) were resolved. Re-enable once
+    //               // the NFC commissioning device-side feature lands.
 
     //
     // Python tests — Device Composition / Conformance (general)
     //
-    // "TC_DeviceBasicComposition", // TODO: wildcard read returns `InvalidDataType`/`Failure` for some attribute on cluster 49 (NetworkCommissioning). Likely encoder gap on a specific attribute.
+    // "TC_DeviceBasicComposition",
+    //   // Bundles several MatterBaseTests run after a single wildcard read.
+    //   // Multiple independent gaps hit at once:
+    //   //
+    //   // 1. `test_TC_DESC_2_2` — checks `Descriptor::TagList` /
+    //   //    `EndpointUniqueID` semantic-tag attributes per Matter Core
+    //   //    spec §9.5 to validate tree-composition tagging on every
+    //   //    endpoint. rs-matter's `DescHandler` doesn't yet expose these.
+    //   //
+    //   // 2. `test_TC_IDM_10_1` — performs a wildcard *event* subscribe
+    //   //    across all endpoints/clusters and asserts no failures. Needs
+    //   //    a triage pass over rs-matter's event-subscription surface.
+    //   //
+    //   // 3. The wildcard read also pulls
+    //   //    `UnitTesting::GeneralErrorBoolean` (attr 0x31, returns
+    //   //    `InvalidDataType`) and `UnitTesting::ClusterErrorBoolean`
+    //   //    (0x32, returns `Invalid`) — see `unit_testing.rs:1042-1048`.
+    //   //    They're spec-mandated to error out (test fixtures for cluster
+    //   //    error handling), but `TC_IDM_12_1`'s JSON dump records them as
+    //   //    `49:ERROR` / `50:ERROR` and the surrounding tests treat the
+    //   //    decode failures as device problems. Re-enable once 1 and 2
+    //   //    are addressed.
     // "TC_DeviceConformance",      // TODO: device type revisions on the example endpoints don't match the spec-mandated values for the device types being advertised. Update the example apps' device-type revisions.
 ];
 
@@ -462,10 +491,11 @@ impl ITests {
         debug!("About to run tests: {tests:?}");
 
         // Lazily build `chip-all-clusters-app` if any test in the list
-        // needs a CHIP TH_SERVER (it's a heavy GN/ninja build, so we don't
-        // pay for it in the common case). Cached on disk after the first
-        // build.
-        if tests.iter().any(|t| Self::needs_th_server_app(t)) {
+        // needs a secondary CHIP Matter device (TH_SERVER for TC-SC-3.5, or
+        // the spawn-and-commission-revoked-DAC fixtures used by TC-DA-1.9).
+        // It's a heavy GN/ninja build, so we don't pay for it in the common
+        // case. Cached on disk after the first build.
+        if tests.iter().any(|t| Self::needs_chip_all_clusters_app(t)) {
             self.chip_builder.build_chip_all_clusters_app(None, false)?;
         }
 
@@ -697,6 +727,10 @@ impl ITests {
             // per-test ceiling so the chunked transfer has time to
             // complete; the test passes in well under a minute on release.
             "TC_OPCREDS_3_8" => Some(300),
+            // TC_DA_1_9 commissions seven different revoked-DAC variants
+            // back-to-back; each commissioning attempt blocks for ~30 s, so
+            // the wall-clock budget needs ~210 s + setup overhead.
+            "TC_DA_1_9" => Some(360),
             _ => None,
         }
     }
@@ -723,6 +757,19 @@ impl ITests {
             // The QR code matches the values we pass to `chip_tool_tests`
             // via `--app-args` (see `app_args_override`).
             "TC_SC_7_1" => Some("--qr-code MT:-24J0KCZ16N71648G00"),
+            // TC_DD_1_16_17 bundles two MatterBaseTests:
+            //  - `test_TC_DD_1_16` parses `matter_test_config.qr_code_content`
+            //  - `test_TC_DD_1_17` parses `matter_test_config.manual_code`
+            // so we have to hand the framework both forms. The values are
+            // the spec-default chip_tool_tests credentials (discriminator
+            // 3840, passcode 20202021) — same as
+            // `rs_matter::dm::devices::test::TEST_DEV_COMM`. The QR code is
+            // what `chip_tool_tests` prints at startup as
+            // `INFO: SetupQRCode: [...]`.
+            "TC_DD_1_16_17" => Some(
+                "--manual-code 34970112332 \
+                 --qr-code MT:-24J0AFN00KA064IJ3P0WISA0DK5N1K8SQ1RYCU1O0",
+            ),
             _ => None,
         }
     }
@@ -738,11 +785,20 @@ impl ITests {
         matches!(test_name, "TC_SC_7_1")
     }
 
-    /// Tests that need the CHIP `chip-all-clusters-app` binary spawned as a
-    /// secondary "TH_SERVER" Matter device under the test framework's
-    /// control (`matter.testing.apps.AppServerSubprocess`). `setup()` builds
-    /// the app once into the chip output tree; here we just signal that the
-    /// test needs the `th_server_app_path` string user-param injected.
+    /// Tests that need the CHIP `chip-all-clusters-app` binary built into
+    /// the chip output tree (whether spawned by the test itself or by the
+    /// framework as a TH_SERVER). Drives the lazy build in `run_tests`.
+    fn needs_chip_all_clusters_app(test_name: &str) -> bool {
+        // TC_SC_3_5 plumbs the path through `--string-arg th_server_app_path`
+        // (see `needs_th_server_app`). TC_DA_1_9 spawns the binary itself
+        // via `--string-arg app_path:out/host/chip-all-clusters-app` (see
+        // `extra_python_script_args`).
+        matches!(test_name, "TC_SC_3_5" | "TC_DA_1_9")
+    }
+
+    /// Tests that need the CHIP `chip-all-clusters-app` binary path injected
+    /// as the `th_server_app_path` string user-param (consumed by
+    /// `matter.testing.apps.AppServerSubprocess`).
     fn needs_th_server_app(test_name: &str) -> bool {
         // TC_SC_3_5 ("CASE Error Handling [DUT_Initiator]") spawns a TH_SERVER
         // and uses CHIP's `FaultInjection` cluster on it to corrupt Sigma2
@@ -765,6 +821,10 @@ impl ITests {
             // default Matter port (5540). The rs-matter DUT must move to a
             // different port so the two apps don't fight over the bind.
             "TC_SC_3_5" => Some("--port 5541"),
+            // TC_DA_1_9 likewise spawns `chip-all-clusters-app` (with
+            // various revoked DAC/PAI configurations) at the Matter default
+            // port; we must vacate 5540 for the same reason.
+            "TC_DA_1_9" => Some("--port 5541"),
             // TC_BINFO_3_2 simulates a configuration-version change via the
             // CHIP `app-pipe` mechanism — the test writes
             // `{"Name":"SimulateConfigurationVersionChange"}` to the named
@@ -879,12 +939,51 @@ impl ITests {
             | "TC_DGGEN_2_4"
             | "TC_DGGEN_3_2"
             // Groups (TC_G_2_2) defaults to endpoint 0 if not provided.
-            | "TC_G_2_2"
+            | "TC_G_2_2" => " --endpoint 0",
+            // TC_DA_1_7 ("device attestation: distinct keys per DUT") normally
+            // requires two distinct DUTs with different DAC keys. The test
+            // also supports a single-DUT mode for CI when `allow_sdk_dac:true`
+            // is passed: it then runs steps 1.x against one device and skips
+            // the two-DUT public-key inequality check at step 3 (the inner
+            // PAI-AKID denylist check is also skipped under that flag).
+            "TC_DA_1_7" => " --endpoint 0 --bool-arg allow_sdk_dac:true",
+            // TC_SC_3_5 needs `is_pics_sdk_ci_only=True` so the
+            // DUT_Commissioner steps short-circuit to "Y" — see the
+            // explanatory comment in `SYS_TESTS` above. Without the CI PICS
+            // file the test hangs on `wait_for_user_input` waiting for an
+            // operator to commission the DUT_Commissioner from chip_tool_tests
+            // (which doesn't act as a commissioner).
+            "TC_SC_3_5" => " --PICS src/app/tests/suites/certification/ci-pics-values",
+            // TC_DA_1_9 ("device attestation: revocation [DUT-Commissioner]")
+            // is a commissioner-side test: it spawns `chip-all-clusters-app`
+            // with a series of revoked DAC/PAI configurations and uses the
+            // *test framework's* `ChipDeviceCtrl.CommissionWithCode` to verify
+            // that revoked credentials are rejected. The chip_tool_tests app
+            // we launch is sidelined (the framework drives the controller
+            // directly), but we still need to point the test at the cached
+            // chip output from `cargo xtask itest-setup` and bump its
+            // per-test timeout (default 90 s) past the seven 30-s commission
+            // attempts the test performs.
+            "TC_DA_1_9" => {
+                " --PICS src/app/tests/suites/certification/ci-pics-values \
+                 --string-arg app_path:out/host/chip-all-clusters-app \
+                 --string-arg dac_provider_base_path:credentials/test/revoked-attestation-certificates/dac-provider-test-vectors \
+                 --string-arg revocation_set_base_path:credentials/test/revoked-attestation-certificates/revocation-sets \
+                 --timeout 300"
+            }
             // Device Attestation (DA) covers attestation primitives on the
-            // root endpoint.
-            | "TC_DA_1_2"
-            | "TC_DA_1_5"
-            | "TC_DA_1_7" => " --endpoint 0",
+            // root endpoint. The Vendor-ID range / certification-type checks
+            // in step 6.x of TC_DA_1_2 (and the analogous steps in TC_DA_1_5)
+            // are gated on `is_pics_sdk_ci_only`: without that gate the test
+            // rejects test-VID CDs (rs-matter ships a Test CD with VID 0xFFF1
+            // — line 366 of TC_DA_1_2.py: `assert_in(vendor_id, range(1,
+            // 0xfff0))`). Enabling the CI PICS file flips
+            // `is_pics_sdk_ci_only` to true and the rest of the cert-chain
+            // assertions still exercise the attestation invoke surface.
+            "TC_DA_1_2" | "TC_DA_1_5" => {
+                " --endpoint 0 \
+                 --PICS src/app/tests/suites/certification/ci-pics-values"
+            }
             // TC_SC_7_1 supports a "post-cert" single-DUT mode that swaps
             // the two-device commissioning-codes assertion for direct
             // factory-state and non-default-credentials checks against the
