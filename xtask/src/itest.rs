@@ -200,7 +200,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Basic Information (system cluster)
     //
-    // "TC_BINFO_3_2", // TODO: requires `BasicInformation::ConfigurationVersion` (1.5+ attribute); rs-matter returns `UnsupportedCluster` on the read. Add the attribute to the BINFO cluster.
+    "TC_BINFO_3_2",
 
     //
     // Python tests — Groups (system cluster)
@@ -757,6 +757,12 @@ impl ITests {
             // default Matter port (5540). The rs-matter DUT must move to a
             // different port so the two apps don't fight over the bind.
             "TC_SC_3_5" => Some("--port 5541"),
+            // TC_BINFO_3_2 simulates a configuration-version change via the
+            // CHIP `app-pipe` mechanism — the test writes
+            // `{"Name":"SimulateConfigurationVersionChange"}` to the named
+            // pipe and the DUT translates that into a
+            // `DataModel::bump_configuration_version` call.
+            "TC_BINFO_3_2" => Some("--app-pipe /tmp/rs_matter_bin_info_3_2_fifo"),
             _ => None,
         }
     }
@@ -813,6 +819,16 @@ impl ITests {
                  --PICS src/app/tests/suites/certification/ci-pics-values"
             }
             "TC_CGEN_2_4" => " --endpoint 0",
+            // TC_BINFO_3_2 (BasicInformation::ConfigurationVersion) takes the
+            // simulated-bump path only when `is_pics_sdk_ci_only` is True, so
+            // we must hand the controller a PICS file that sets
+            // `PICS_SDK_CI_ONLY=1`. The matching `--app-pipe` path is
+            // mirrored on the DUT side via `app_args_override`.
+            "TC_BINFO_3_2" => {
+                " --endpoint 0 \
+                 --PICS src/app/tests/suites/certification/ci-pics-values \
+                 --app-pipe /tmp/rs_matter_bin_info_3_2_fifo"
+            }
             // TC_OPCREDS_3_8 reads `NOCs` non-fabric-filtered with two
             // fabrics, each carrying a max-sized 400-byte VVSC; the
             // resulting payload is well past one MTU and rs-matter falls
@@ -851,9 +867,7 @@ impl ITests {
             | "TC_SC_3_4"
             | "TC_SC_3_6"
             | "TC_SC_4_3"
-            // BINFO (Basic Information), DGGEN (General Diagnostics) live on
-            // the root endpoint.
-            | "TC_BINFO_3_2"
+            // DGGEN (General Diagnostics) lives on the root endpoint.
             | "TC_DGGEN_2_4"
             | "TC_DGGEN_3_2"
             // Groups (TC_G_2_2) defaults to endpoint 0 if not provided.

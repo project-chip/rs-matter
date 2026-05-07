@@ -1703,6 +1703,10 @@ BINFO.S.A0013=1
 BINFO.S.A0014=1
 BINFO.S.A0015=1
 BINFO.S.A0016=1
+BINFO.S.A0018=1
+
+# Manufacturer-specific
+BINFO.S.M.DeviceConfigurationChange=1
 
 # Events
 BINFO.S.E00=1

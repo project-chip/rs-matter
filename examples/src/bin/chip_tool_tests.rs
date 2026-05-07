@@ -24,11 +24,11 @@ use std::net::UdpSocket;
 
 use async_signal::{Signal, Signals};
 
-use embassy_futures::select::select3;
+use embassy_futures::select::{select3, select4};
 
 use futures_lite::StreamExt;
 
-use log::info;
+use log::{info, warn};
 
 use rand::RngCore;
 
@@ -62,6 +62,7 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{FileKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::sc::pase::{Spake2pVerifierPassword, Spake2pVerifierPasswordRef};
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
@@ -272,6 +273,20 @@ fn main() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, dm.change_notify())?;
     }
 
+    // Optional `--app-pipe <path>` CLI integration.
+    //
+    // The CHIP Python test framework (`MatterBaseTest::write_to_app_pipe`) sends out-of-band JSON
+    // commands to the DUT through a named pipe at the given path.
+    let mut app_pipe_actions = pin!(run_app_pipe_actions(parse_app_pipe_override(), |action| {
+        if action.contains("SimulateConfigurationVersionChange") {
+            dm.bump_configuration_version()?;
+
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }));
+
     // Listen to SIGTERM (or Ctrl-C on Windows, where SIGTERM is not
     // supported by `async-signal`) because at the end of the test we'll
     // receive it.
@@ -285,9 +300,10 @@ fn main() -> Result<(), Error> {
     });
 
     // Combine all async tasks in a single one
-    let all = select3(
+    let all = select4(
         &mut transport,
         &mut mdns,
+        &mut app_pipe_actions,
         select3(&mut respond, &mut dm_job, &mut term).coalesce(),
     );
 
@@ -401,30 +417,23 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 /// Used by tests such as TC-SC-7.1 that assert the device is *not* using the
 /// spec-default discriminator (3840) and passcode (20202021).
 fn parse_comm_overrides() -> BasicCommData {
-    let mut discriminator: u16 = TEST_DEV_COMM.discriminator;
-    let mut passcode: u32 = u32::from_le_bytes(*TEST_DEV_COMM.password.access());
+    let mut data = TEST_DEV_COMM;
 
-    let args: Vec<String> = std::env::args().collect();
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--discriminator" if i + 1 < args.len() => {
-                if let Ok(v) = args[i + 1].parse::<u16>() {
-                    discriminator = v;
-                }
-                i += 2;
-            }
-            "--passcode" if i + 1 < args.len() => {
-                if let Ok(v) = args[i + 1].parse::<u32>() {
-                    passcode = v;
-                }
-                i += 2;
-            }
-            _ => i += 1,
-        }
+    if let Some(discriminator) =
+        parse_arg_opt_override("--discriminator", |s| s.parse::<u16>().ok()).flatten()
+    {
+        data.discriminator = discriminator;
     }
 
-    BasicCommData::new(passcode, discriminator)
+    if let Some(passcode) =
+        parse_arg_opt_override("--passcode", |s| s.parse::<u32>().ok()).flatten()
+    {
+        data.password = Spake2pVerifierPassword::new_from_ref(Spake2pVerifierPasswordRef::new(
+            &passcode.to_le_bytes(),
+        ));
+    }
+
+    data
 }
 
 /// Parse an optional `--port <u16>` CLI override and return the Matter UDP/TCP
@@ -435,16 +444,91 @@ fn parse_comm_overrides() -> BasicCommData {
 /// hard-codes 5540 as TH_SERVER, so the rs-matter DUT must move out of the
 /// way to avoid a `bind: Address already in use`.
 fn parse_port_override() -> u16 {
+    parse_arg_opt_override("--port", |s| s.parse::<u16>().unwrap_or(MATTER_PORT))
+        .unwrap_or(MATTER_PORT)
+}
+
+/// Parse an optional `--app-pipe <path>` CLI override. When present, the CHIP
+/// Python test framework writes JSON command lines to that path; we spin up
+/// an OS-thread reader to act on them.
+fn parse_app_pipe_override() -> Option<String> {
+    parse_arg_opt_override("--app-pipe", |s| s.to_string())
+}
+
+fn parse_arg_opt_override<T>(opt: &str, conv: impl FnOnce(&str) -> T) -> Option<T> {
     let args: Vec<String> = std::env::args().collect();
+
     let mut i = 1;
     while i < args.len() {
-        if args[i] == "--port" && i + 1 < args.len() {
-            if let Ok(v) = args[i + 1].parse::<u16>() {
-                return v;
-            }
+        if args[i] == opt && i + 1 < args.len() {
+            return Some(conv(&args[i + 1]));
         }
+
         i += 1;
     }
 
-    MATTER_PORT
+    None
+}
+
+/// Read JSON command lines from the named pipe at `path` and dispatch them to
+/// `bump` on the calling task — which is the main thread, so it's free to
+/// touch `&Matter` / `&DataModel` directly (neither is `Sync`).
+async fn run_app_pipe_actions(
+    path: Option<String>,
+    mut action: impl FnMut(String) -> Result<bool, Error>,
+) -> Result<(), Error> {
+    let Some(path) = path else {
+        info!("No --app-pipe provided; out-of-band command channel disabled.");
+        core::future::pending::<()>().await;
+        unreachable!()
+    };
+    info!("App pipe enabled at {path}");
+
+    use blocking::{unblock, Unblock};
+    use futures_lite::io::{AsyncBufReadExt, BufReader};
+
+    // Best-effort: create the FIFO if it doesn't already exist. Shell out to
+    // `mkfifo` to avoid pulling in a `libc`/`nix` dep just for this. Errors
+    // here are non-fatal: if the file already exists (or is a regular file
+    // from a prior run) the reader open below will surface a useful error.
+    let _ = std::process::Command::new("mkfifo").arg(&path).status();
+
+    loop {
+        let path_clone = path.clone();
+        let file = match unblock(move || std::fs::File::open(&path_clone)).await {
+            Ok(f) => f,
+            Err(e) => {
+                log::warn!("Failed to open app pipe {}: {}", path, e);
+                embassy_time::Timer::after(embassy_time::Duration::from_secs(1)).await;
+                continue;
+            }
+        };
+
+        let mut reader = BufReader::new(Unblock::new(file));
+        let mut line = String::new();
+
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => break, // writer closed; reopen
+                Ok(_) => {
+                    // Avoid a JSON dep: the framework sends one JSON dict per
+                    // line and we only care about a single command name.
+
+                    let line = line.trim_end();
+                    info!("[app-pipe] received: {line}");
+
+                    match action(line.to_string()) {
+                        Ok(true) => info!("Processed"),
+                        Ok(false) => info!("Skipped"),
+                        Err(e) => warn!("Failed: {}", e),
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Error reading from app pipe: {}", e);
+                    break;
+                }
+            }
+        }
+    }
 }
