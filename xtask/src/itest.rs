@@ -218,8 +218,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // Python tests — General Diagnostics (system cluster)
     //
     "TC_DGGEN_2_4",
-    // "TC_DGGEN_3_2", // TODO: requires `BasicInformation::MaxPathsPerInvoke`; same gap as TC_BINFO_3_2 — needs the attribute exposed.
-
+    "TC_DGGEN_3_2",
     //
     // Python tests — Device Attestation (commissioning)
     //
