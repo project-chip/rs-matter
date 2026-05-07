@@ -200,6 +200,15 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Basic Information (system cluster)
     //
+    // The default `BasicInfoHandler` metadata excludes `ConfigurationVersion`
+    // (provisional in Matter 1.5; upstream pulled it from the 1.5 dataset in
+    // CHIP commit faf4d09ad1), so `TestBasicInformation`'s exact-set assertion
+    // on `AttributeList` keeps passing. For `TC_BINFO_3_2` the
+    // `chip_tool_tests` binary swaps in an alternate `Node` whose
+    // `BasicInformation` cluster metadata exposes `ConfigurationVersion` — see
+    // `NODE_BINFO_CV_EXPOSED` in `examples/src/bin/chip_tool_tests.rs`. The
+    // switch is gated on the presence of `--app-pipe` (see `app_args_override`
+    // below), which only this test passes.
     "TC_BINFO_3_2",
     //
     // Python tests — Groups (system cluster)

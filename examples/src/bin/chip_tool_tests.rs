@@ -33,28 +33,36 @@ use log::{info, warn};
 use rand::RngCore;
 
 use rs_matter::crypto::{default_crypto, Crypto};
+use rs_matter::dm::clusters::acl::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::adm_comm::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::test::TestOnOffDeviceLogic;
 use rs_matter::dm::clusters::app::on_off::{self, OnOffHandler, OnOffHooks};
 use rs_matter::dm::clusters::basic_info::{
-    BasicInfoConfig, ColorEnum, PairingHintFlags, ProductAppearance, ProductFinishEnum,
+    AttributeId as BasicInfoAttributeId, BasicInfoConfig, ColorEnum, PairingHintFlags,
+    ProductAppearance, ProductFinishEnum, FULL_CLUSTER as BASIC_INFO_FULL_CLUSTER,
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::eth_diag::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::gen_comm::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::gen_diag::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::SharedNetworks;
+use rs_matter::dm::clusters::grp_key_mgmt::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::net_comm::{self, SharedNetworks};
+use rs_matter::dm::clusters::noc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
 };
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
-use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::dm::endpoints;
+use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
+use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
 use rs_matter::dm::events::Events;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher,
-    Node,
+    Async, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver, EmptyHandler, Endpoint,
+    EpClMatcher, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -171,6 +179,19 @@ fn main() -> Result<(), Error> {
         .uninit()
         .init_with(RefCell::init(UnitTestingHandlerData::init()));
 
+    // `--app-pipe <path>` is only ever supplied by `TC_BINFO_3_2`. We use it
+    // as the trigger to switch the device's BasicInformation cluster metadata
+    // to the variant that exposes the provisional `ConfigurationVersion`
+    // attribute, while leaving the default chip_tool_tests build (used by
+    // `TestBasicInformation` and everything else) on the upstream-1.5
+    // attribute set.
+    let app_pipe = parse_app_pipe_override();
+    let node: &'static Node<'static> = if app_pipe.is_some() {
+        &NODE_BINFO_CV_EXPOSED
+    } else {
+        &NODE
+    };
+
     // Create the Data Model instance
     let dm = DataModel::new(
         matter,
@@ -179,6 +200,7 @@ fn main() -> Result<(), Error> {
         subscriptions,
         events,
         dm_handler(
+            node,
             rand,
             unit_testing_data,
             &on_off_handler_1,
@@ -277,7 +299,7 @@ fn main() -> Result<(), Error> {
     //
     // The CHIP Python test framework (`MatterBaseTest::write_to_app_pipe`) sends out-of-band JSON
     // commands to the DUT through a named pipe at the given path.
-    let mut app_pipe_actions = pin!(run_app_pipe_actions(parse_app_pipe_override(), |action| {
+    let mut app_pipe_actions = pin!(run_app_pipe_actions(app_pipe, |action| {
         if action.contains("SimulateConfigurationVersionChange") {
             dm.bump_configuration_version()?;
 
@@ -357,16 +379,86 @@ const NODE: Node<'static> = Node {
     ],
 };
 
+/// `BasicInformation` cluster metadata that exposes the provisional
+/// `ConfigurationVersion` attribute (only `Reachable` is excluded). Used by
+/// `NODE_BINFO_CV_EXPOSED` when the test runner wires the device up for
+/// `TC_BINFO_3_2` (signalled by the presence of `--app-pipe`).
+const BASIC_INFO_CLUSTER_CV_EXPOSED: Cluster<'static> = BASIC_INFO_FULL_CLUSTER
+    .with_attrs(rs_matter::except!(BasicInfoAttributeId::Reachable))
+    .with_cmds(rs_matter::with!());
+
+/// Alternate Node metadata used when the test framework signals it intends
+/// to run `TC_BINFO_3_2` (via `--app-pipe`). It's identical to `NODE` except
+/// that endpoint 0's cluster list substitutes
+/// `BASIC_INFO_CLUSTER_CV_EXPOSED` for the standard `BasicInfoHandler::CLUSTER`,
+/// putting `ConfigurationVersion` in `AttributeList` and accepting reads on
+/// it. The runtime handler chain (`with_eth_sys`) is unchanged: the standard
+/// `BasicInfoHandler` already implements `configuration_version()` against
+/// `BasicInfoSettings`, so the read dispatches to it once the metadata
+/// allows the attribute through.
+///
+/// We can't condition this at the rs-matter library level because `Cluster`'s
+/// `WithAttrs` filter is a plain `fn`-pointer with no access to runtime
+/// state, so we keep the choice in the test app and pick at startup. Other
+/// chip_tool_tests-driven YAML/Python tests (notably `TestBasicInformation`,
+/// which asserts an exact `AttributeList` from upstream's 1.5 dataset where
+/// `ConfigurationVersion` was deliberately removed in
+/// `connectedhomeip@faf4d09ad1`) keep using the default `NODE`.
+const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
+    endpoints: &[
+        Endpoint {
+            id: ROOT_ENDPOINT_ID,
+            device_types: devices!(DEV_TYPE_ROOT_NODE),
+            // Manually expanded `clusters!(geth;)` with `BasicInfoHandler::CLUSTER`
+            // replaced by `BASIC_INFO_CLUSTER_CV_EXPOSED`. Keep this in sync
+            // with `clusters!(geth;)` in `rs-matter/src/dm/types/cluster.rs`.
+            clusters: clusters!(
+                desc::DescHandler::CLUSTER,
+                acl::AclHandler::CLUSTER,
+                BASIC_INFO_CLUSTER_CV_EXPOSED,
+                gen_comm::GenCommHandler::CLUSTER,
+                gen_diag::GenDiagHandler::CLUSTER,
+                adm_comm::AdminCommHandler::CLUSTER,
+                noc::NocHandler::CLUSTER,
+                grp_key_mgmt::GrpKeyMgmtHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
+                net_comm::NetworkType::Ethernet.cluster(),
+                eth_diag::EthDiagHandler::CLUSTER,
+            ),
+        },
+        Endpoint {
+            id: 1,
+            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters: clusters!(
+                desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
+                TestOnOffDeviceLogic::CLUSTER,
+                UnitTestingHandler::CLUSTER
+            ),
+        },
+        Endpoint {
+            id: 2,
+            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters: clusters!(
+                desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
+                TestOnOffDeviceLogic::CLUSTER
+            ),
+        },
+    ],
+};
+
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off and unit testing handlers.
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
+    node: &'static Node<'static>,
     mut rand: impl RngCore + Copy,
     unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
     on_off_1: &'a OnOffHandler<'a, OH, LH>,
     on_off_2: &'a OnOffHandler<'a, OH, LH>,
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
-        NODE,
+        node,
         endpoints::with_eth_sys(
             &false,
             &(),

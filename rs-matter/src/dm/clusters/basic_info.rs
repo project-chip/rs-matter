@@ -474,7 +474,20 @@ impl BasicInfoHandler {
 
 impl ClusterHandler for BasicInfoHandler {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
-        .with_attrs(except!(AttributeId::Reachable)) // TODO
+        // Hide `Reachable` (TODO) and `ConfigurationVersion` from the default
+        // metadata. `ConfigurationVersion` is provisional in Matter 1.5 and
+        // upstream's 1.5 dataset (CHIP commit faf4d09ad1, "Remove
+        // configuration version from 1.5 branch") explicitly excludes it from
+        // `BasicInformation`'s `AttributeList`. The
+        // `BasicInformation`/`BasicInfoSettings` plumbing for it stays in
+        // place — read handler, persisted settings field, and the
+        // `Matter::bump_configuration_version` / `DataModel::bump_configuration_version`
+        // entry points — so a user that supplies their own cluster metadata
+        // (i.e. one that drops `ConfigurationVersion` from `except!`) gets a
+        // working implementation out of the box.
+        .with_attrs(except!(
+            AttributeId::Reachable | AttributeId::ConfigurationVersion
+        ))
         .with_cmds(with!());
 
     fn dataver(&self) -> u32 {
