@@ -26,7 +26,6 @@ use std::net::ToSocketAddrs;
 use std::time::Duration;
 
 use crate::error::{Error, ErrorCode};
-use crate::im::{AttrId, ClusterId, EndptId};
 use crate::transport::network::mdns::MatterService;
 use crate::Matter;
 
@@ -37,27 +36,28 @@ use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
 ///
 /// NOTE: For Linux, you need to install the avahi-compat libraries. E.g., on Ubuntu:
 /// `sudo apt install -y libavahi-compat-libdnssd-dev libavahi-compat-libdnssd1`
-pub struct AstroMdnsResponder<'a> {
-    matter: &'a Matter<'a>,
+pub struct AstroMdnsResponder {
     services: HashMap<MatterService, RegisteredDnsService>,
 }
 
-impl<'a> AstroMdnsResponder<'a> {
-    /// Create a new `AstroMdnsResponder` for the given `Matter` instance.
-    pub fn new(matter: &'a Matter<'a>) -> Self {
+impl AstroMdnsResponder {
+    /// Create a new `AstroMdnsResponder`.
+    pub fn new() -> Self {
         Self {
-            matter,
             services: HashMap::new(),
         }
     }
 
     /// Run the mDNS responder
-    pub async fn run(&mut self) -> Result<(), Error> {
+    ///
+    /// # Arguments
+    /// - `matter`: A reference to the Matter instance to get mDNS services from.
+    pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
         loop {
-            self.matter.wait_mdns().await;
+            matter.wait_mdns().await;
 
             let mut services = HashSet::new();
-            self.matter.mdns_services(|service| {
+            matter.mdns_services(|service| {
                 services.insert(service);
 
                 Ok(())
@@ -65,17 +65,21 @@ impl<'a> AstroMdnsResponder<'a> {
 
             info!("mDNS services changed, updating...");
 
-            self.update_services(&services).await?;
+            self.update_services(matter, &services)?;
 
             info!("mDNS services updated");
         }
     }
 
-    async fn update_services(&mut self, services: &HashSet<MatterService>) -> Result<(), Error> {
+    fn update_services(
+        &mut self,
+        matter: &Matter<'_>,
+        services: &HashSet<MatterService>,
+    ) -> Result<(), Error> {
         for service in services {
             if !self.services.contains_key(service) {
                 info!("Registering mDNS service: {:?}", service);
-                let registered = self.register(service)?;
+                let registered = self.register(matter, service)?;
                 self.services.insert(service.clone(), registered);
             }
         }
@@ -97,11 +101,15 @@ impl<'a> AstroMdnsResponder<'a> {
         Ok(())
     }
 
-    fn register(&mut self, service: &MatterService) -> Result<RegisteredDnsService, Error> {
+    fn register(
+        &mut self,
+        matter: &Matter<'_>,
+        service: &MatterService,
+    ) -> Result<RegisteredDnsService, Error> {
         // Scratch buffer for expanding `MatterService` into a `Service` view —
         // the strings (name, subtypes, TXT values) are formatted into this buffer.
         let mut buf = [0u8; 512];
-        let (service, _) = service.service(self.matter.dev_det(), self.matter.port(), &mut buf)?;
+        let (service, _) = service.service(matter.dev_det(), matter.port(), &mut buf)?;
 
         // Materialize subtypes once: we need both `is_empty` and `join`.
         let subtypes: Vec<&str> = service.service_subtypes.clone().collect();

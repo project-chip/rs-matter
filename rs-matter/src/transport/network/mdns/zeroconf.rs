@@ -31,7 +31,6 @@ use zeroconf::txt_record::TTxtRecord;
 use zeroconf::{MdnsBrowser, ServiceDiscovery, ServiceType};
 
 use crate::error::{Error, ErrorCode};
-use crate::im::{AttrId, ClusterId, EndptId};
 use crate::transport::network::mdns::MatterService;
 use crate::Matter;
 
@@ -39,27 +38,28 @@ use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
 
 /// An mDNS responder for Matter utilizing the `zeroconf` crate.
 /// In theory, it should work on all of Linux, MacOS and Windows, however seems to have issues on MacOSX and Windows.
-pub struct ZeroconfMdnsResponder<'a> {
-    matter: &'a Matter<'a>,
+pub struct ZeroconfMdnsResponder {
     services: HashMap<MatterService, MdnsEntry>,
 }
 
-impl<'a> ZeroconfMdnsResponder<'a> {
-    /// Create a new `ZeroconfMdnsResponder` for the given `Matter` instance.
-    pub fn new(matter: &'a Matter<'a>) -> Self {
+impl ZeroconfMdnsResponder {
+    /// Create a new `ZeroconfMdnsResponder`.
+    pub fn new() -> Self {
         Self {
-            matter,
             services: HashMap::new(),
         }
     }
 
-    /// Run the mDNS responder.
-    pub async fn run(&mut self) -> Result<(), Error> {
+    /// Run the mDNS responder
+    ///
+    /// # Arguments
+    /// - `matter`: A reference to the Matter instance to get mDNS services from.
+    pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
         loop {
-            self.matter.wait_mdns().await;
+            matter.wait_mdns().await;
 
             let mut services = HashSet::new();
-            self.matter.mdns_services(|service| {
+            matter.mdns_services(|service| {
                 services.insert(service);
 
                 Ok(())
@@ -67,18 +67,22 @@ impl<'a> ZeroconfMdnsResponder<'a> {
 
             info!("mDNS services changed, updating...");
 
-            self.update_services(&services)?;
+            self.update_services(matter, &services)?;
 
             info!("mDNS services updated");
         }
     }
 
-    fn update_services(&mut self, services: &HashSet<MatterService>) -> Result<(), Error> {
+    fn update_services(
+        &mut self,
+        matter: &Matter<'_>,
+        services: &HashSet<MatterService>,
+    ) -> Result<(), Error> {
         for service in services {
             if !self.services.contains_key(service) {
                 info!("Registering mDNS service: {:?}", service);
 
-                let zeroconf_service = SendableZeroconfMdnsService::new(self.matter, service)?;
+                let zeroconf_service = SendableZeroconfMdnsService::new(matter, service)?;
                 let (sender, receiver) = sync_channel(1);
 
                 // Spawning a thread for each service is not ideal, but unavoidable with the current API of `zeroconf`

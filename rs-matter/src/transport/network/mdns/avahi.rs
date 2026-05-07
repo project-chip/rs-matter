@@ -48,35 +48,35 @@ const AVAHI_IF_UNSPEC: i32 = -1;
 const AVAHI_PROTO_UNSPEC: i32 = -1;
 
 /// An mDNS responder for Matter utilizing the Avahi daemon over DBus.
-pub struct AvahiMdnsResponder<'a> {
-    matter: &'a Matter<'a>,
+pub struct AvahiMdnsResponder {
     services: HashMap<MatterService, OwnedObjectPath>,
+    connection: Connection,
 }
 
-impl<'a> AvahiMdnsResponder<'a> {
+impl AvahiMdnsResponder {
     /// Create a new instance of the Avahi mDNS responder.
-    pub fn new(matter: &'a Matter<'a>) -> Self {
+    pub fn new(connection: Connection) -> Self {
         Self {
-            matter,
             services: HashMap::new(),
+            connection,
         }
     }
 
     /// Run the mDNS responder
     ///
     /// # Arguments
-    /// - `connection`: A reference to the DBus system connection to use for communication with Avahi.
-    pub async fn run(&mut self, connection: &Connection) -> Result<(), Error> {
+    /// - `matter`: A reference to the Matter instance to get mDNS services from.
+    pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
         {
-            let avahi = Server2Proxy::new(connection).await?;
+            let avahi = Server2Proxy::new(&self.connection).await?;
             info!("Avahi API version: {}", avahi.get_apiversion().await?);
         }
 
         loop {
-            self.matter.wait_mdns().await;
+            matter.wait_mdns().await;
 
             let mut services = HashSet::new();
-            self.matter.mdns_services(|service| {
+            matter.mdns_services(|service| {
                 services.insert(service);
 
                 Ok(())
@@ -84,7 +84,7 @@ impl<'a> AvahiMdnsResponder<'a> {
 
             info!("mDNS services changed, updating...");
 
-            self.update_services(connection, &services).await?;
+            self.update_services(matter, &services).await?;
 
             info!("mDNS services updated");
         }
@@ -92,13 +92,13 @@ impl<'a> AvahiMdnsResponder<'a> {
 
     async fn update_services(
         &mut self,
-        connection: &Connection,
+        matter: &Matter<'_>,
         services: &HashSet<MatterService>,
     ) -> Result<(), Error> {
         for service in services {
             if !self.services.contains_key(service) {
                 info!("Registering mDNS service: {:?}", service);
-                let path = self.register(connection, service).await?;
+                let path = self.register(matter, service).await?;
                 self.services.insert(service.clone(), path);
             }
         }
@@ -111,7 +111,7 @@ impl<'a> AvahiMdnsResponder<'a> {
 
             if let Some((service, path)) = removed {
                 info!("Deregistering mDNS service: {:?}", service);
-                Self::deregister(connection, path.as_ref()).await?;
+                self.deregister(path.as_ref()).await?;
                 self.services.remove(&service.clone());
             } else {
                 break;
@@ -123,19 +123,19 @@ impl<'a> AvahiMdnsResponder<'a> {
 
     async fn register(
         &mut self,
-        connection: &Connection,
+        matter: &Matter<'_>,
         service: &MatterService,
     ) -> Result<OwnedObjectPath, Error> {
         // Scratch buffer for expanding `MatterService` into a `Service` view —
         // the strings (name, subtypes, TXT values) are formatted into this buffer.
         let mut buf = [0u8; 512];
-        let (service, _) = service.service(self.matter.dev_det(), self.matter.port(), &mut buf)?;
+        let (service, _) = service.service(matter.dev_det(), matter.port(), &mut buf)?;
 
-        let avahi = Server2Proxy::new(connection).await?;
+        let avahi = Server2Proxy::new(&self.connection).await?;
 
         let path = avahi.entry_group_new().await?;
 
-        let group = EntryGroupProxy::builder(connection)
+        let group = EntryGroupProxy::builder(&self.connection)
             .path(path.clone())?
             .build()
             .await?;
@@ -206,8 +206,8 @@ impl<'a> AvahiMdnsResponder<'a> {
         Ok(path)
     }
 
-    async fn deregister(connection: &Connection, path: ObjectPath<'_>) -> Result<(), Error> {
-        let group = EntryGroupProxy::builder(connection)
+    async fn deregister(&self, path: ObjectPath<'_>) -> Result<(), Error> {
+        let group = EntryGroupProxy::builder(&self.connection)
             .path(path)?
             .build()
             .await?;

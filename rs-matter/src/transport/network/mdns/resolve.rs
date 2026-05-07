@@ -64,30 +64,30 @@ const DNS_TYPE_PTR: u16 = 12;
 /// required by the systemd-resolved daemon so as to register mDNS services.
 ///
 /// For testing, easiest is to run the application with `sudo` or as root.
-pub struct ResolveMdnsResponder<'a> {
-    matter: &'a Matter<'a>,
+pub struct ResolveMdnsResponder {
     services: HashMap<MatterService, OwnedObjectPath>,
+    connection: Connection,
 }
 
-impl<'a> ResolveMdnsResponder<'a> {
+impl ResolveMdnsResponder {
     /// Create a new instance of the systemd-resolved mDNS responder.
-    pub fn new(matter: &'a Matter<'a>) -> Self {
+    pub fn new(connection: Connection) -> Self {
         Self {
-            matter,
             services: HashMap::new(),
+            connection,
         }
     }
 
     /// Run the mDNS responder
     ///
     /// # Arguments
-    /// - `connection`: A reference to the DBus system connection to use for communication with Avahi.
-    pub async fn run(&mut self, connection: &Connection) -> Result<(), Error> {
+    /// - `matter`: A reference to the Matter instance to get mDNS services from.
+    pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
         loop {
-            self.matter.wait_mdns().await;
+            matter.wait_mdns().await;
 
             let mut services = HashSet::new();
-            self.matter.mdns_services(|service| {
+            matter.mdns_services(|service| {
                 services.insert(service);
 
                 Ok(())
@@ -95,7 +95,7 @@ impl<'a> ResolveMdnsResponder<'a> {
 
             info!("mDNS services changed, updating...");
 
-            self.update_services(connection, &services).await?;
+            self.update_services(matter, &services).await?;
 
             info!("mDNS services updated");
         }
@@ -103,13 +103,13 @@ impl<'a> ResolveMdnsResponder<'a> {
 
     async fn update_services(
         &mut self,
-        connection: &Connection,
+        matter: &Matter<'_>,
         services: &HashSet<MatterService>,
     ) -> Result<(), Error> {
         for service in services {
             if !self.services.contains_key(service) {
                 info!("Registering mDNS service: {:?}", service);
-                let path = self.register(connection, service).await?;
+                let path = self.register(matter, service).await?;
                 self.services.insert(service.clone(), path);
             }
         }
@@ -122,7 +122,7 @@ impl<'a> ResolveMdnsResponder<'a> {
 
             if let Some((service, path)) = removed {
                 info!("Deregistering mDNS service: {:?}", service);
-                Self::deregister(connection, path.as_ref()).await?;
+                self.deregister(path.as_ref()).await?;
                 self.services.remove(&service.clone());
             } else {
                 break;
@@ -134,15 +134,15 @@ impl<'a> ResolveMdnsResponder<'a> {
 
     async fn register(
         &mut self,
-        connection: &Connection,
+        matter: &Matter<'_>,
         service: &MatterService,
     ) -> Result<OwnedObjectPath, Error> {
         // Scratch buffer for expanding `MatterService` into a `Service` view —
         // the strings (name, subtypes, TXT values) are formatted into this buffer.
         let mut buf = [0u8; 512];
-        let (service, _) = service.service(self.matter.dev_det(), self.matter.port(), &mut buf)?;
+        let (service, _) = service.service(matter.dev_det(), matter.port(), &mut buf)?;
 
-        let resolve = ManagerProxy::new(connection).await?;
+        let resolve = ManagerProxy::new(&self.connection).await?;
 
         let txt = service
             .txt_kvs
@@ -174,8 +174,8 @@ impl<'a> ResolveMdnsResponder<'a> {
         Ok(path)
     }
 
-    async fn deregister(connection: &Connection, path: ObjectPath<'_>) -> Result<(), Error> {
-        let resolve = ManagerProxy::new(connection).await?;
+    async fn deregister(&self, path: ObjectPath<'_>) -> Result<(), Error> {
+        let resolve = ManagerProxy::new(&self.connection).await?;
 
         resolve.unregister_service(&path).await?;
 

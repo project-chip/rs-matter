@@ -25,30 +25,34 @@ use socket2::{Domain, Protocol, Socket, Type};
 #[allow(unused)]
 pub async fn run_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(), Error> {
     #[cfg(feature = "astro-dnssd")]
-    rs_matter::transport::network::mdns::astro::AstroMdnsResponder::new(matter)
-        .run()
+    rs_matter::transport::network::mdns::astro::AstroMdnsResponder::new()
+        .run(matter)
         .await?;
 
     #[cfg(all(feature = "zeroconf", not(feature = "astro-dnssd")))]
-    rs_matter::transport::network::mdns::zeroconf::ZeroconfMdnsResponder::new(matter)
-        .run()
+    rs_matter::transport::network::mdns::zeroconf::ZeroconfMdnsResponder::new()
+        .run(matter)
         .await?;
 
     #[cfg(all(
         feature = "resolve",
         not(any(feature = "zeroconf", feature = "astro-dnssd"))
     ))]
-    rs_matter::transport::network::mdns::resolve::ResolveMdnsResponder::new(matter)
-        .run(&rs_matter::utils::zbus::Connection::system().await.unwrap())
-        .await?;
+    rs_matter::transport::network::mdns::resolve::ResolveMdnsResponder::new(
+        rs_matter::utils::zbus::Connection::system().await.unwrap(),
+    )
+    .run(matter)
+    .await?;
 
     #[cfg(all(
         feature = "avahi",
         not(any(feature = "resolve", feature = "zeroconf", feature = "astro-dnssd"))
     ))]
-    rs_matter::transport::network::mdns::avahi::AvahiMdnsResponder::new(matter)
-        .run(&rs_matter::utils::zbus::Connection::system().await.unwrap())
-        .await?;
+    rs_matter::transport::network::mdns::avahi::AvahiMdnsResponder::new(
+        rs_matter::utils::zbus::Connection::system().await.unwrap(),
+    )
+    .run(matter)
+    .await?;
 
     #[cfg(not(any(
         feature = "avahi",
