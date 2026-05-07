@@ -229,7 +229,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Device Discovery (general)
     //
-    // "TC_DD_1_16_17", // Skipped: must be invoked with `--manual-code`. The xtask wrapper passes `--discriminator`/`--passcode` instead.
+    "TC_DD_1_16_17",
     // "TC_DD_3_23",    // Skipped: requires PC/SC smart-card subsystem (`smartcard.pcsc`). Not available in the CI environment.
 
     //
@@ -726,6 +726,19 @@ impl ITests {
             // The QR code matches the values we pass to `chip_tool_tests`
             // via `--app-args` (see `app_args_override`).
             "TC_SC_7_1" => Some("--qr-code MT:-24J0KCZ16N71648G00"),
+            // TC_DD_1_16_17 bundles two MatterBaseTests:
+            //  - `test_TC_DD_1_16` parses `matter_test_config.qr_code_content`
+            //  - `test_TC_DD_1_17` parses `matter_test_config.manual_code`
+            // so we have to hand the framework both forms. The values are
+            // the spec-default chip_tool_tests credentials (discriminator
+            // 3840, passcode 20202021) — same as
+            // `rs_matter::dm::devices::test::TEST_DEV_COMM`. The QR code is
+            // what `chip_tool_tests` prints at startup as
+            // `INFO: SetupQRCode: [...]`.
+            "TC_DD_1_16_17" => Some(
+                "--manual-code 34970112332 \
+                 --qr-code MT:-24J0AFN00KA064IJ3P0WISA0DK5N1K8SQ1RYCU1O0",
+            ),
             _ => None,
         }
     }
