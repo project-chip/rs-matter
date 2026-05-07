@@ -293,6 +293,15 @@ impl ClusterHandler for NocHandler {
     ) -> Result<P, Error> {
         info!("Got Attestation Request");
 
+        // Per Matter Core spec §11.18.6.3, the `AttestationNonce` field MUST
+        // be exactly 32 octets. Anything else is rejected with
+        // `INVALID_COMMAND`. TC_DA_1_2 steps 13/14 cover the >32 / <32 cases.
+        const ATTESTATION_NONCE_LEN: usize = 32;
+
+        if request.attestation_nonce()?.0.len() != ATTESTATION_NONCE_LEN {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
+
         ctx.exchange().with_state(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
 

@@ -222,7 +222,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Device Attestation (commissioning)
     //
-    // "TC_DA_1_2", // TODO: `AttestationRequest` invoke fails (likely needs an armed fail-safe or different access path in rs-matter). Needs attestation flow review.
+    "TC_DA_1_2",
     // "TC_DA_1_5", // TODO: same setup issue as TC_DA_1_2 — DA test infrastructure needs the attestation invoke path to succeed before any of the cert-chain assertions can run.
     // "TC_DA_1_7", // Skipped: requires two distinct discriminators (DUT + reference DUT). The xtask wrapper only commissions one device.
     // "TC_DA_1_9", // TODO: not yet verified
@@ -879,11 +879,20 @@ impl ITests {
             | "TC_DGGEN_3_2"
             // Groups (TC_G_2_2) defaults to endpoint 0 if not provided.
             | "TC_G_2_2"
-            // Device Attestation (DA) covers attestation primitives on the
-            // root endpoint.
-            | "TC_DA_1_2"
-            | "TC_DA_1_5"
             | "TC_DA_1_7" => " --endpoint 0",
+            // Device Attestation (DA) covers attestation primitives on the
+            // root endpoint. The Vendor-ID range / certification-type checks
+            // in step 6.x of TC_DA_1_2 (and the analogous steps in TC_DA_1_5)
+            // are gated on `is_pics_sdk_ci_only`: without that gate the test
+            // rejects test-VID CDs (rs-matter ships a Test CD with VID 0xFFF1
+            // — line 366 of TC_DA_1_2.py: `assert_in(vendor_id, range(1,
+            // 0xfff0))`). Enabling the CI PICS file flips
+            // `is_pics_sdk_ci_only` to true and the rest of the cert-chain
+            // assertions still exercise the attestation invoke surface.
+            "TC_DA_1_2" | "TC_DA_1_5" => {
+                " --endpoint 0 \
+                 --PICS src/app/tests/suites/certification/ci-pics-values"
+            }
             // TC_SC_7_1 supports a "post-cert" single-DUT mode that swaps
             // the two-device commissioning-codes assertion for direct
             // factory-state and non-default-credentials checks against the
