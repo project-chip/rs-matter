@@ -41,7 +41,7 @@ pub struct AstroMdnsResponder {
 }
 
 impl AstroMdnsResponder {
-    /// Create a new `AstroMdnsResponder` for the given `Matter` instance.
+    /// Create a new `AstroMdnsResponder`.
     pub fn new() -> Self {
         Self {
             services: HashMap::new(),
@@ -65,13 +65,13 @@ impl AstroMdnsResponder {
 
             info!("mDNS services changed, updating...");
 
-            self.update_services(matter, &services).await?;
+            self.update_services(matter, &services)?;
 
             info!("mDNS services updated");
         }
     }
 
-    async fn update_services(
+    fn update_services(
         &mut self,
         matter: &Matter<'_>,
         services: &HashSet<MatterService>,
