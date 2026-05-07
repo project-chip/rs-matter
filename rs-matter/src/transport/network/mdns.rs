@@ -554,16 +554,29 @@ impl MatterService {
                 // `_I<compressed_fabric_id>._sub._matter._tcp.local.` lets a
                 // controller browse for nodes of a given fabric without
                 // already knowing each node's id.
-                let (subtype_i, wb) = write_split!(wb, "_I{:016X}", compressed_fabric_id)?;
+                let (subtype_i, mut wb) = write_split!(wb, "_I{:016X}", compressed_fabric_id)?;
+                let (txt_sai, mut wb) = if let Some(sai) = dev_det.sai {
+                    write_split!(wb, "{}", sai)?
+                } else {
+                    ("", wb)
+                };
+                let (txt_sii, wb) = if let Some(sii) = dev_det.sii {
+                    write_split!(wb, "{}", sii)?
+                } else {
+                    ("", wb)
+                };
 
                 // Per Matter Core Spec Section 4.3.1.14, T is a bitmap:
                 // bit 1 (value 2) = TCP client, bit 2 (value 4) = TCP server
-                let txt_kvs = core::iter::once(if dev_det.tcp_supported {
-                    ("T", "6")
-                } else {
+                let txt_kvs = [
+                    ("SAI", txt_sai),
+                    ("SII", txt_sii),
+                    ("T", if dev_det.tcp_supported { "6" } else { "" }),
                     // Some mDNS responders do not accept empty TXT records
-                    ("dummy", "dummy")
-                });
+                    ("DUMMY", "DUMMY"),
+                ]
+                .into_iter()
+                .filter(|(_, v)| !v.is_empty());
 
                 Ok((
                     Service {
@@ -612,8 +625,16 @@ impl MatterService {
 
                 let (txt_discr, mut wb) = write_split!(wb, "{}", *discriminator)?;
                 let (txt_vid_pid, mut wb) = write_split!(wb, "{}+{}", dev_det.vid, dev_det.pid)?;
-                let (txt_sai, mut wb) = write_split!(wb, "{}", dev_det.sai.unwrap_or(300))?;
-                let (txt_sii, mut wb) = write_split!(wb, "{}", dev_det.sii.unwrap_or(5000))?;
+                let (txt_sai, mut wb) = if let Some(sai) = dev_det.sai {
+                    write_split!(wb, "{}", sai)?
+                } else {
+                    ("", wb)
+                };
+                let (txt_sii, mut wb) = if let Some(sii) = dev_det.sii {
+                    write_split!(wb, "{}", sii)?
+                } else {
+                    ("", wb)
+                };
                 let (txt_dn, mut wb) = write_split!(wb, "{}", dev_det.device_name)?;
                 let (txt_pi, mut wb) = write_split!(wb, "{}", dev_det.pairing_instruction)?;
                 let (txt_ph, mut wb) = write_split!(wb, "{}", dev_det.pairing_hint.bits())?;

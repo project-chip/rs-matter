@@ -86,9 +86,9 @@ pub struct Transport {
     /// Notification for when an exchange is dropped.
     exchange_dropped: Notification,
     /// Device SAI (Secure Association Identifier)
-    device_sai: Option<u16>,
+    device_sai: Option<u32>,
     /// Device SII (Secure Identity Identifier)
-    device_sii: Option<u16>,
+    device_sii: Option<u32>,
 }
 
 impl Transport {

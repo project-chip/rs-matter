@@ -21,7 +21,7 @@ use crate::utils::epoch::Epoch;
 use super::{plain_hdr::PlainHdr, proto_hdr::ProtoHdr};
 
 //const MRP_STANDALONE_ACK_TIMEOUT_MS: u64 = 200;   // TODO: Use to pro-actively send ACKs
-const MRP_BASE_RETRY_INTERVAL_MS: u16 = 300;
+const MRP_BASE_RETRY_INTERVAL_MS: u32 = 300;
 const MRP_MAX_TRANSMISSIONS: u16 = 10;
 const MRP_BACKOFF_THRESHOLD: u16 = 1;
 const MRP_BACKOFF_BASE: (u64, u64) = (16, 10); // 1.6
@@ -33,7 +33,7 @@ const MRP_JITTER_RAND_MAX: u8 = u8::MAX;
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RetransEntry {
     /// The retransmission delay interval in milliseconds
-    base_delay_interval_ms: u16,
+    base_delay_interval_ms: u32,
     // The msg counter that we are waiting to be acknowledged
     msg_ctr: u32,
     // The retransmission counter
@@ -41,7 +41,7 @@ pub struct RetransEntry {
 }
 
 impl RetransEntry {
-    pub fn new(base_delay_interval_ms: Option<u16>, msg_ctr: u32) -> Self {
+    pub fn new(base_delay_interval_ms: Option<u32>, msg_ctr: u32) -> Self {
         Self {
             base_delay_interval_ms: base_delay_interval_ms.unwrap_or(MRP_BASE_RETRY_INTERVAL_MS),
             msg_ctr,
@@ -154,10 +154,10 @@ impl ReliableMessage {
         &mut self,
         tx_plain: &PlainHdr,
         tx_proto: &mut ProtoHdr,
-        session_active_interval_ms: Option<u16>,
+        session_active_interval_ms: Option<u32>,
         // TODO: Need to make use of it in future,
         // once we detect idle vs active devices
-        _session_idle_interval_ms: Option<u16>,
+        _session_idle_interval_ms: Option<u32>,
     ) -> Result<(), Error> {
         // Check if any acknowledgements are pending for this exchange,
         if let Some(ack) = &mut self.ack {

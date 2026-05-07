@@ -359,8 +359,8 @@ impl Session {
         &mut self,
         exch_index: Option<usize>,
         tx_header: &mut PacketHdr,
-        session_active_interval_ms: Option<u16>,
-        session_idle_interval_ms: Option<u16>,
+        session_active_interval_ms: Option<u32>,
+        session_idle_interval_ms: Option<u32>,
     ) -> Result<(Address, bool), Error> {
         let ctr = if let Some(exchange_index) = exch_index {
             let exchange = unwrap!(self.exchanges[exchange_index].as_mut());
