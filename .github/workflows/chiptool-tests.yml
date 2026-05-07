@@ -53,6 +53,34 @@ jobs:
         run: |
             sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
 
+      - name: Enable IPv6 on the runner interface
+        # GHA Linux runners have IPv6 enabled in the kernel but no IPv6
+        # address assigned to their primary NIC, so any service that
+        # publishes an mDNS AAAA record (rs-matter's `chip_tool_tests`
+        # advertises one when its DUT side has any non-unspecified
+        # IPv6 address — see `examples/src/common/mdns.rs::initialize_network`)
+        # ends up advertising IPv4 only. TC_SC_4_3 step 10 explicitly
+        # asserts at least one AAAA address is resolvable for the
+        # device's hostname (`asserts.assert_greater(len(quada_records), 0,
+        # …)`), so without an IPv6 on the interface the test fails on
+        # any IPv4-only environment regardless of what rs-matter does.
+        #
+        # Assign a unique-local (RFC 4193) `fd…/64` to the default-route
+        # interface — purely for in-host mDNS, never routed off the box.
+        run: |
+          set -euxo pipefail
+          IFACE=$(ip -4 -o route show default | awk '{print $5}' | head -1)
+          test -n "${IFACE}"
+          sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0
+          sudo sysctl -w net.ipv6.conf.default.disable_ipv6=0
+          sudo sysctl -w "net.ipv6.conf.${IFACE}.disable_ipv6=0"
+          sudo ip -6 addr add fd12:3456:789a::1/64 dev "${IFACE}"
+          # `loopback` is always there but we additionally need the test
+          # NIC to have a global-scope (or ULA) v6 so `if_addrs` shows it
+          # to the DUT — link-local alone wouldn't pair with the IPv4
+          # address picker in `initialize_network`.
+          ip -6 addr show
+
       - name: Cache Chip build
         uses: actions/cache@v4
         with:
@@ -68,7 +96,14 @@ jobs:
 
       - name: Run System integration tests with RustCrypto
         run: |
-          cargo xtask itest --skip-setup
+          # `tee` so the chip_tool_tests stdout/stderr (and the python
+          # framework's mDNS browse, PASE traces, etc.) end up both in
+          # the live action log AND in a file we upload as an artifact.
+          # Without it, a failure half a suite in is harder to diagnose
+          # because the relevant lines have already scrolled past the
+          # GitHub Actions live tail.
+          set -o pipefail
+          cargo xtask itest --skip-setup 2>&1 | tee /tmp/itest-system-rustcrypto.log
 
       # TODO: Enable once mbedtls-rs-sys built removes the installation step
       # - name: Run one System integration test with MbedTLS
@@ -77,22 +112,39 @@ jobs:
 
       - name: Run one System integration test with OpenSSL
         run: |
-          cargo xtask itest --skip-setup --features openssl TestBasicInformation
+          set -o pipefail
+          cargo xtask itest --skip-setup --features openssl TestBasicInformation \
+            2>&1 | tee /tmp/itest-system-openssl.log
 
       - name: Run LevelControl and OnOff integration tests for dimmable_light
         run: |
-          cargo xtask itest --skip-setup --suite light
+          set -o pipefail
+          cargo xtask itest --skip-setup --suite light \
+            2>&1 | tee /tmp/itest-light.log
 
       - name: Run Camera integration tests
         run: |
-          cargo xtask itest --skip-setup --suite camera
+          set -o pipefail
+          cargo xtask itest --skip-setup --suite camera \
+            2>&1 | tee /tmp/itest-camera.log
 
       - name: Upload test results on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ github.run_id }}
+          # `/tmp/matter_testing/logs/` is where the python `MatterBaseTest`
+          # framework drops one directory per run, each containing
+          # `test_log.DEBUG` (the mDNS browse dumps and per-step
+          # transitions live there), `test_log.INFO` and
+          # `test_summary.yaml`. The `/tmp/itest-*.log` files are the
+          # captured stdout/stderr of each `cargo xtask itest` step.
+          # `/tmp/chip_kvs` is `chip_tool_tests`' on-disk persistence
+          # snapshot at the time the failing test exited — useful for
+          # spotting unexpected fabric / commissioning state.
           path: |
-            /tmp/rs-matter*/
-            .build/itest/connectedhomeip/out/host/chip-tool.log
+            /tmp/matter_testing/logs/**
+            /tmp/itest-*.log
+            /tmp/chip_kvs
           retention-days: 7
+          if-no-files-found: warn

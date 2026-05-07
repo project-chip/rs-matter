@@ -106,7 +106,18 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
             return Ok(true);
         }
 
-        self.handle_pbkdfparamrequest(exchange).await?;
+        // If the commissioning window is not open we silently drop the
+        // PASE attempt and let the initiator time out (CHIP-style behavior;
+        // TC-CADMIN-1.5 step 7 specifically asserts `CHIP_ERROR_TIMEOUT`).
+        // Replying with `InvalidParameter` here would surface as
+        // `CHIP_ERROR_INVALID_PASE_PARAMETER` and fail the test.
+        // Also clear the per-exchange `session_timeout` we set above so
+        // the next inbound PASE attempt isn't rejected as "another PAKE
+        // session in progress".
+        if !self.handle_pbkdfparamrequest(exchange).await? {
+            self.clear_session_timeout(exchange)?;
+            return Ok(true);
+        }
 
         exchange.recv_fetch().await?;
 
@@ -114,7 +125,10 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
             return Ok(true);
         }
 
-        self.handle_pasepake1(exchange).await?;
+        if !self.handle_pasepake1(exchange).await? {
+            self.clear_session_timeout(exchange)?;
+            return Ok(true);
+        }
 
         exchange.recv_fetch().await?;
 
@@ -135,7 +149,15 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
     ///
     /// # Arguments
     /// - `exchange` - The exchange
-    async fn handle_pbkdfparamrequest(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    ///
+    /// Returns `Ok(true)` when a `PBKDFParamResponse` was sent (handshake
+    /// continues), or `Ok(false)` when the commissioning window is closed
+    /// and the request was silently dropped (caller should abort the
+    /// exchange without further processing).
+    async fn handle_pbkdfparamrequest(
+        &mut self,
+        exchange: &mut Exchange<'_>,
+    ) -> Result<bool, Error> {
         check_opcode(exchange, OpCode::PBKDFParamRequest)?;
 
         let rx = exchange.rx()?;
@@ -221,9 +243,16 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                 })
                 .await?;
 
-            Ok(())
+            Ok(true)
         } else {
-            complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await
+            // No commissioning window open: silently ignore so the
+            // initiator times out (RFC 6762 §6.7-style "no response").
+            // Per Matter Core Spec §11.18 a PASE attempt outside the
+            // commissioning window is not a wrong-passcode failure and
+            // therefore must not count toward the 20-failure limit, so
+            // we report `Ok(false)` (drop) rather than an error.
+            debug!("Dropping PBKDFParamRequest: no commissioning window open");
+            Ok(false)
         }
     }
 
@@ -231,7 +260,12 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
     ///
     /// # Arguments
     /// - `exchange` - The exchange
-    async fn handle_pasepake1(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    ///
+    /// Returns `Ok(true)` when a `PASEPake2` reply was sent (handshake
+    /// continues), or `Ok(false)` when the commissioning window has
+    /// closed between PBKDF and Pake1 and the request was silently
+    /// dropped.
+    async fn handle_pasepake1(&mut self, exchange: &mut Exchange<'_>) -> Result<bool, Error> {
         check_opcode(exchange, OpCode::PASEPake1)?;
 
         let req = get_root_node_struct(exchange.rx()?.payload())?;
@@ -278,9 +312,13 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
 
                     Ok(Some(OpCode::PASEPake2.into()))
                 })
-                .await
+                .await?;
+            Ok(true)
         } else {
-            complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await
+            // Commissioning window was closed (e.g. revoked or timed out)
+            // between PBKDFParamRequest and PASEPake1 — silently drop.
+            debug!("Dropping PASEPake1: no commissioning window open");
+            Ok(false)
         }
     }
 

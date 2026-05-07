@@ -27,8 +27,8 @@ use std::time::Duration;
 
 use crate::error::{Error, ErrorCode};
 use crate::im::{AttrId, ClusterId, EndptId};
-use crate::transport::network::mdns::Service;
-use crate::{Matter, MatterMdnsService};
+use crate::transport::network::mdns::MatterService;
+use crate::Matter;
 
 use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
 
@@ -39,7 +39,7 @@ use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
 /// `sudo apt install -y libavahi-compat-libdnssd-dev libavahi-compat-libdnssd1`
 pub struct AstroMdnsResponder<'a> {
     matter: &'a Matter<'a>,
-    services: HashMap<MatterMdnsService, RegisteredDnsService>,
+    services: HashMap<MatterService, RegisteredDnsService>,
 }
 
 impl<'a> AstroMdnsResponder<'a> {
@@ -71,10 +71,7 @@ impl<'a> AstroMdnsResponder<'a> {
         }
     }
 
-    async fn update_services(
-        &mut self,
-        services: &HashSet<MatterMdnsService>,
-    ) -> Result<(), Error> {
+    async fn update_services(&mut self, services: &HashSet<MatterService>) -> Result<(), Error> {
         for service in services {
             if !self.services.contains_key(service) {
                 info!("Registering mDNS service: {:?}", service);
@@ -100,36 +97,36 @@ impl<'a> AstroMdnsResponder<'a> {
         Ok(())
     }
 
-    fn register(&mut self, service: &MatterMdnsService) -> Result<RegisteredDnsService, Error> {
-        Service::call_with(
-            service,
-            self.matter.dev_det(),
-            self.matter.port(),
-            |service| {
-                let composite_service_type = if !service.service_subtypes.is_empty() {
-                    format!(
-                        "{}.{},{}",
-                        service.service,
-                        service.protocol,
-                        service.service_subtypes.join(",")
-                    )
-                } else {
-                    format!("{}.{}", service.service, service.protocol)
-                };
+    fn register(&mut self, service: &MatterService) -> Result<RegisteredDnsService, Error> {
+        // Scratch buffer for expanding `MatterService` into a `Service` view —
+        // the strings (name, subtypes, TXT values) are formatted into this buffer.
+        let mut buf = [0u8; 512];
+        let (service, _) = service.service(self.matter.dev_det(), self.matter.port(), &mut buf)?;
 
-                let mut builder = DNSServiceBuilder::new(&composite_service_type, service.port)
-                    .with_name(service.name);
+        // Materialize subtypes once: we need both `is_empty` and `join`.
+        let subtypes: Vec<&str> = service.service_subtypes.clone().collect();
+        let composite_service_type = if !subtypes.is_empty() {
+            format!(
+                "{}.{},{}",
+                service.service,
+                service.protocol,
+                subtypes.join(",")
+            )
+        } else {
+            format!("{}.{}", service.service, service.protocol)
+        };
 
-                for kvs in service.txt_kvs {
-                    trace!("mDNS TXT key {} val {}", kvs.0, kvs.1);
-                    builder = builder.with_key_value(kvs.0.to_string(), kvs.1.to_string());
-                }
+        let mut builder =
+            DNSServiceBuilder::new(&composite_service_type, service.port).with_name(service.name);
 
-                let svc = builder.register().map_err(|_| ErrorCode::MdnsError)?;
+        for (k, v) in service.txt_kvs.clone() {
+            trace!("mDNS TXT key {} val {}", k, v);
+            builder = builder.with_key_value(k.to_string(), v.to_string());
+        }
 
-                Ok(svc)
-            },
-        )
+        let svc = builder.register().map_err(|_| ErrorCode::MdnsError)?;
+
+        Ok(svc)
     }
 }
 

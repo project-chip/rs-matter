@@ -70,6 +70,21 @@ impl<'a> WriteBuf<'a> {
         &mut self.buf[self.end..self.buf_size]
     }
 
+    pub fn split(self) -> (&'a mut [u8], Self) {
+        let (head, tail) = self.buf.split_at_mut(self.end);
+        (head, Self::new(tail))
+    }
+
+    pub fn split_str(self) -> (&'a str, Self) {
+        let (bytes, wb) = self.split();
+
+        (core::str::from_utf8(bytes).unwrap(), wb)
+    }
+
+    pub fn into_buf(self) -> &'a mut [u8] {
+        self.buf
+    }
+
     pub fn reset(&mut self) {
         self.buf_size = self.buf.len();
         self.start = 0;
@@ -182,6 +197,7 @@ impl<'a> WriteBuf<'a> {
     pub fn le_u16(&mut self, data: u16) -> Result<(), Error> {
         self.append(&data.to_le_bytes())
     }
+
     pub fn le_i16(&mut self, data: i16) -> Result<(), Error> {
         self.append(&data.to_le_bytes())
     }
@@ -210,6 +226,19 @@ impl core::fmt::Write for WriteBuf<'_> {
         Ok(())
     }
 }
+
+#[collapse_debuginfo(yes)]
+macro_rules! write_split {
+    ($f:expr, $s:literal $(, $x:expr)* $(,)?) => {
+        {
+            write!(&mut $f, $s $(, $x)*).map_err(|_| ErrorCode::BufferTooSmall)?;
+
+            Ok::<_, Error>($f.split_str())
+        }
+    };
+}
+
+pub(crate) use write_split;
 
 #[cfg(test)]
 mod tests {

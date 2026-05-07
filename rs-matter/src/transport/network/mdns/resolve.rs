@@ -27,9 +27,9 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use zbus::Connection;
 
 use crate::error::Error;
-use crate::transport::network::mdns::Service;
+use crate::transport::network::mdns::MatterService;
 use crate::utils::zbus_proxies::resolve::manager::ManagerProxy;
-use crate::{Matter, MatterMdnsService};
+use crate::Matter;
 
 use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
 
@@ -66,7 +66,7 @@ const DNS_TYPE_PTR: u16 = 12;
 /// For testing, easiest is to run the application with `sudo` or as root.
 pub struct ResolveMdnsResponder<'a> {
     matter: &'a Matter<'a>,
-    services: HashMap<MatterMdnsService, OwnedObjectPath>,
+    services: HashMap<MatterService, OwnedObjectPath>,
 }
 
 impl<'a> ResolveMdnsResponder<'a> {
@@ -104,7 +104,7 @@ impl<'a> ResolveMdnsResponder<'a> {
     async fn update_services(
         &mut self,
         connection: &Connection,
-        services: &HashSet<MatterMdnsService>,
+        services: &HashSet<MatterService>,
     ) -> Result<(), Error> {
         for service in services {
             if !self.services.contains_key(service) {
@@ -135,46 +135,43 @@ impl<'a> ResolveMdnsResponder<'a> {
     async fn register(
         &mut self,
         connection: &Connection,
-        service: &MatterMdnsService,
+        service: &MatterService,
     ) -> Result<OwnedObjectPath, Error> {
-        Service::async_call_with(
-            service,
-            self.matter.dev_det(),
-            self.matter.port(),
-            async |service| {
-                let resolve = ManagerProxy::new(connection).await?;
+        // Scratch buffer for expanding `MatterService` into a `Service` view —
+        // the strings (name, subtypes, TXT values) are formatted into this buffer.
+        let mut buf = [0u8; 512];
+        let (service, _) = service.service(self.matter.dev_det(), self.matter.port(), &mut buf)?;
 
-                let txt = service
-                    .txt_kvs
-                    .iter()
-                    .map(|(k, v)| (*k, v.as_bytes()))
-                    .collect::<HashMap<_, _>>();
+        let resolve = ManagerProxy::new(connection).await?;
 
-                // NOTE: By looking at the DBus `register_service` implementation it seems
-                // that the `register_service` call does not support mDNS subtypes at all:
-                // https://github.com/systemd/systemd/blob/0ae3a8d147f12cd47aa0cfbaa4c92570ae8ff949/src/resolve/resolved-bus.c#L1861
-                //
-                // (They are supported for mDNS configurations in config files though.)
+        let txt = service
+            .txt_kvs
+            .clone()
+            .map(|(k, v)| (k, v.as_bytes()))
+            .collect::<HashMap<_, _>>();
 
-                // Make our ID a bit more unique
-                let id = format!("rs-matter-{}", service.name);
+        // NOTE: By looking at the DBus `register_service` implementation it seems
+        // that the `register_service` call does not support mDNS subtypes at all:
+        // https://github.com/systemd/systemd/blob/0ae3a8d147f12cd47aa0cfbaa4c92570ae8ff949/src/resolve/resolved-bus.c#L1861
+        //
+        // (They are supported for mDNS configurations in config files though.)
 
-                let path = resolve
-                    .register_service(
-                        &id,
-                        service.name,
-                        service.service_protocol,
-                        service.port,
-                        0,
-                        0,
-                        &[txt],
-                    )
-                    .await?;
+        // Make our ID a bit more unique
+        let id = format!("rs-matter-{}", service.name);
 
-                Ok(path)
-            },
-        )
-        .await
+        let path = resolve
+            .register_service(
+                &id,
+                service.name,
+                service.service_protocol,
+                service.port,
+                0,
+                0,
+                &[txt],
+            )
+            .await?;
+
+        Ok(path)
     }
 
     async fn deregister(connection: &Connection, path: ObjectPath<'_>) -> Result<(), Error> {

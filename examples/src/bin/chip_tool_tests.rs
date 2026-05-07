@@ -31,6 +31,7 @@ use futures_lite::StreamExt;
 use log::info;
 
 use rand::RngCore;
+
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::test::TestOnOffDeviceLogic;
@@ -61,11 +62,11 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{FileKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
+use rs_matter::BasicCommData;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
@@ -77,7 +78,7 @@ mod mdns;
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
-static BUFFERS: StaticCell<PooledBuffers<10, rs_matter::dm::IMBuffer>> = StaticCell::new();
+static BUFFERS: StaticCell<PooledBuffers<20, rs_matter::dm::IMBuffer>> = StaticCell::new();
 static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
 static EVENTS: StaticCell<Events> = StaticCell::new();
 static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
@@ -85,7 +86,8 @@ static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCe
 
 fn main() -> Result<(), Error> {
     // Enable detailed backtraces for debugging test failures
-    std::env::set_var("RUST_BACKTRACE", "1");
+    // (Temporarily disabled to keep TC_SC_3_4 traces readable.)
+    // std::env::set_var("RUST_BACKTRACE", "1");
 
     // Special logging configuration compatible with ConnectedHomeIP YAML tests
     // Log to stdout with simplified format at debug level as required by chip-tool tests
@@ -101,16 +103,32 @@ fn main() -> Result<(), Error> {
     info!(
         "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
         core::mem::size_of::<Matter>(),
-        core::mem::size_of::<PooledBuffers<10, rs_matter::dm::IMBuffer>>(),
+        core::mem::size_of::<PooledBuffers<20, rs_matter::dm::IMBuffer>>(),
         core::mem::size_of::<Subscriptions>()
+    );
+
+    // Optional `--discriminator <u16>` / `--passcode <u32>` overrides for the
+    // hardcoded `TEST_DEV_COMM` defaults. Used by tests like TC-SC-7.1 that
+    // assert the device is *not* using the spec-default `3840`/`20202021`.
+    let comm_data = parse_comm_overrides();
+    let passcode = u32::from_le_bytes(*comm_data.password.access());
+    // Optional `--port <u16>` override for the default Matter UDP/TCP port.
+    // Used by tests that spawn a *second* CHIP Matter app under the test
+    // framework's control (e.g. TC-SC-3.5, where `chip-all-clusters-app`
+    // takes the default 5540 as TH_SERVER and the rs-matter DUT must move
+    // out of the way).
+    let port = parse_port_override();
+    info!(
+        "Commissioning data: discriminator={}, passcode={}, port={}",
+        comm_data.discriminator, passcode, port,
     );
 
     let matter = MATTER.uninit().init_with(Matter::init(
         &BASIC_INFO,
-        TEST_DEV_COMM,
+        comm_data,
         &TEST_DEV_ATT,
         rs_matter::utils::epoch::sys_epoch,
-        MATTER_PORT,
+        port,
     ));
 
     // Create the event queue
@@ -175,18 +193,30 @@ fn main() -> Result<(), Error> {
     info!(
         "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
         core::mem::size_of_val(&responder),
-        core::mem::size_of_val(&responder.run::<4, 4>())
+        core::mem::size_of_val(&responder.run::<16, 4>())
     );
 
-    // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
-    // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-    let mut respond = pin!(responder.run::<4, 4>());
+    // Run the responder with up to 16 handlers (i.e. 16 exchanges can be handled simultaneously).
+    // Clients trying to open more exchanges than the ones currently running will get
+    // "I'm busy, please try again later" from the busy-responder pool (4 handlers).
+    // 16 / 4 chosen to match `max-sessions-32`: TC_SC_3_6 establishes 15 subscriptions
+    // back-to-back and the initial-report exchanges overlap with the next handshake,
+    // overflowing the smaller pool with IM BUSY (status 0x9c).
+    let mut respond = pin!(responder.run::<16, 4>());
 
     // Run the background job of the data model
     let mut dm_job = pin!(dm.run());
 
-    // Bind the UDP socket
-    let udp_socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
+    // Bind the UDP socket. When `--port` is overridden we have to bind to
+    // the same port instead of the default `MATTER_SOCKET_BIND_ADDR` (which
+    // is hard-coded to 5540).
+    let bind_addr = std::net::SocketAddr::V6(std::net::SocketAddrV6::new(
+        std::net::Ipv6Addr::UNSPECIFIED,
+        port,
+        0,
+        0,
+    ));
+    let udp_socket = async_io::Async::<UdpSocket>::bind(bind_addr)?;
 
     #[allow(unused_mut)]
     let (mut net_send, mut net_recv, mut net_multicast) = (&udp_socket, &udp_socket, &udp_socket);
@@ -196,12 +226,9 @@ fn main() -> Result<(), Error> {
     let tcp = {
         use rs_matter::transport::network::tcp::TcpNetwork;
 
-        let tcp_socket = async_io::Async::<std::net::TcpListener>::bind(MATTER_SOCKET_BIND_ADDR)?;
+        let tcp_socket = async_io::Async::<std::net::TcpListener>::bind(bind_addr)?;
 
-        info!(
-            "TCP transport enabled, listening on {}",
-            MATTER_SOCKET_BIND_ADDR
-        );
+        info!("TCP transport enabled, listening on {}", bind_addr);
 
         TcpNetwork::<8>::new(tcp_socket)
     };
@@ -365,4 +392,59 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 ),
         ),
     )
+}
+
+/// Parse optional `--discriminator <u16>` / `--passcode <u32>` CLI overrides
+/// and return a `BasicCommData` based on those (or the spec defaults when not
+/// provided).
+///
+/// Used by tests such as TC-SC-7.1 that assert the device is *not* using the
+/// spec-default discriminator (3840) and passcode (20202021).
+fn parse_comm_overrides() -> BasicCommData {
+    let mut discriminator: u16 = TEST_DEV_COMM.discriminator;
+    let mut passcode: u32 = u32::from_le_bytes(*TEST_DEV_COMM.password.access());
+
+    let args: Vec<String> = std::env::args().collect();
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--discriminator" if i + 1 < args.len() => {
+                if let Ok(v) = args[i + 1].parse::<u16>() {
+                    discriminator = v;
+                }
+                i += 2;
+            }
+            "--passcode" if i + 1 < args.len() => {
+                if let Ok(v) = args[i + 1].parse::<u32>() {
+                    passcode = v;
+                }
+                i += 2;
+            }
+            _ => i += 1,
+        }
+    }
+
+    BasicCommData::new(passcode, discriminator)
+}
+
+/// Parse an optional `--port <u16>` CLI override and return the Matter UDP/TCP
+/// port to bind on. Defaults to `MATTER_PORT` (5540) when not provided.
+///
+/// Used by tests like TC-SC-3.5 that spawn a *second* CHIP Matter app
+/// (`chip-all-clusters-app`) under the test framework's control. That app
+/// hard-codes 5540 as TH_SERVER, so the rs-matter DUT must move out of the
+/// way to avoid a `bind: Address already in use`.
+fn parse_port_override() -> u16 {
+    let args: Vec<String> = std::env::args().collect();
+    let mut i = 1;
+    while i < args.len() {
+        if args[i] == "--port" && i + 1 < args.len() {
+            if let Ok(v) = args[i + 1].parse::<u16>() {
+                return v;
+            }
+        }
+        i += 1;
+    }
+
+    MATTER_PORT
 }

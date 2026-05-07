@@ -32,8 +32,8 @@ use zeroconf::{MdnsBrowser, ServiceDiscovery, ServiceType};
 
 use crate::error::{Error, ErrorCode};
 use crate::im::{AttrId, ClusterId, EndptId};
-use crate::transport::network::mdns::Service;
-use crate::{Matter, MatterMdnsService};
+use crate::transport::network::mdns::MatterService;
+use crate::Matter;
 
 use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
 
@@ -41,7 +41,7 @@ use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
 /// In theory, it should work on all of Linux, MacOS and Windows, however seems to have issues on MacOSX and Windows.
 pub struct ZeroconfMdnsResponder<'a> {
     matter: &'a Matter<'a>,
-    services: HashMap<MatterMdnsService, MdnsEntry>,
+    services: HashMap<MatterService, MdnsEntry>,
 }
 
 impl<'a> ZeroconfMdnsResponder<'a> {
@@ -73,7 +73,7 @@ impl<'a> ZeroconfMdnsResponder<'a> {
         }
     }
 
-    fn update_services(&mut self, services: &HashSet<MatterMdnsService>) -> Result<(), Error> {
+    fn update_services(&mut self, services: &HashSet<MatterService>) -> Result<(), Error> {
         for service in services {
             if !self.services.contains_key(service) {
                 info!("Registering mDNS service: {:?}", service);
@@ -123,40 +123,43 @@ struct SendableZeroconfMdnsService {
 }
 
 impl SendableZeroconfMdnsService {
-    /// Create a new `SendableZeroconfMdnsService` from a `MatterMdnsService`.
-    fn new(matter: &Matter<'_>, mdns_service: &MatterMdnsService) -> Result<Self, Error> {
-        Service::call_with(mdns_service, matter.dev_det(), matter.port(), |service| {
-            let service_name = service.service.strip_prefix('_').unwrap_or(service.service);
+    /// Create a new `SendableZeroconfMdnsService` from a `MatterService`.
+    fn new(matter: &Matter<'_>, mdns_service: &MatterService) -> Result<Self, Error> {
+        // Scratch buffer for expanding `MatterService` into a `Service` view —
+        // the strings (name, subtypes, TXT values) are formatted into this buffer.
+        let mut buf = [0u8; 512];
+        let (service, _) = mdns_service.service(matter.dev_det(), matter.port(), &mut buf)?;
 
-            let protocol = service
-                .protocol
-                .strip_prefix('_')
-                .unwrap_or(service.protocol);
+        let service_name = service.service.strip_prefix('_').unwrap_or(service.service);
 
-            let service_type = if !service.service_subtypes.is_empty() {
-                let subtypes = service
-                    .service_subtypes
-                    .iter()
-                    .map(|subtype| subtype.strip_prefix('_').unwrap_or(*subtype))
-                    .collect();
+        let protocol = service
+            .protocol
+            .strip_prefix('_')
+            .unwrap_or(service.protocol);
 
-                ServiceType::with_sub_types(service_name, protocol, subtypes)?
-            } else {
-                ServiceType::new(service_name, protocol)?
-            };
+        let subtypes: Vec<&str> = service
+            .service_subtypes
+            .clone()
+            .map(|subtype| subtype.strip_prefix('_').unwrap_or(subtype))
+            .collect();
 
-            let txt_kvs = service
-                .txt_kvs
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect::<Vec<_>>();
+        let service_type = if !subtypes.is_empty() {
+            ServiceType::with_sub_types(service_name, protocol, subtypes)?
+        } else {
+            ServiceType::new(service_name, protocol)?
+        };
 
-            Ok(Self {
-                name: service.name.to_string(),
-                service_type,
-                port: service.port,
-                txt_kvs,
-            })
+        let txt_kvs = service
+            .txt_kvs
+            .clone()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect::<Vec<_>>();
+
+        Ok(Self {
+            name: service.name.to_string(),
+            service_type,
+            port: service.port,
+            txt_kvs,
         })
     }
 

@@ -20,8 +20,9 @@ use core::future::Future;
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 
 use crate::dm::clusters::basic_info::BasicInfoConfig;
-use crate::error::Error;
-use crate::{MatterMdnsService, MATTER_SERVICE_MAX_NAME_LEN};
+use crate::error::{Error, ErrorCode};
+use crate::tlv::EitherIter;
+use crate::utils::storage::{write_split, WriteBuf};
 
 #[cfg(feature = "astro-dnssd")]
 pub mod astro;
@@ -495,10 +496,185 @@ where
     }
 }
 
-/// A utility type for expanding a `MatterMdnsService` type into a full mDNS service description
+/// A type capturing all the information necessary to publish a commissioned
+/// Matter fabric or a non-commissioned Matter instance over mDNS.
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum MatterService {
+    /// A commissioned Matter service for a particular fabric
+    ///
+    /// The published name is in the form `<compressed-fabric-id-hex>-<node-id-hex>`.
+    Commissioned {
+        compressed_fabric_id: u64,
+        node_id: u64,
+    },
+    /// A non-commissioned Matter service
+    ///
+    /// The published name is in the form `<id-hex>`. The discriminator should be used as an mDNS TXT entry
+    Commissionable {
+        id: u64,
+        /// The discriminator to be communicated over mDNS
+        discriminator: u16,
+        /// Whether this is an enhanced (ECM) commissioning window (`CM=2`) vs basic (`CM=1`)
+        enhanced: bool,
+    },
+}
+
+impl MatterService {
+    /// Build a full mDNS service description for this Matter service, including
+    /// the service name, type, protocol, port, subtypes, and TXT records.
+    #[allow(clippy::type_complexity)]
+    pub fn service<'a>(
+        &self,
+        dev_det: &BasicInfoConfig<'_>,
+        matter_port: u16,
+        buf: &'a mut [u8],
+    ) -> Result<
+        (
+            Service<
+                'a,
+                impl Iterator<Item = &'a str> + Clone,
+                impl Iterator<Item = (&'a str, &'a str)> + Clone,
+            >,
+            &'a mut [u8],
+        ),
+        Error,
+    > {
+        match self {
+            Self::Commissioned {
+                compressed_fabric_id,
+                node_id,
+            } => {
+                let mut wb = WriteBuf::new(buf);
+
+                let (name, mut wb) =
+                    write_split!(wb, "{:016X}-{:016X}", compressed_fabric_id, node_id)?;
+
+                // Operational fabric subtype per Matter Core Spec §4.3.2:
+                // `_I<compressed_fabric_id>._sub._matter._tcp.local.` lets a
+                // controller browse for nodes of a given fabric without
+                // already knowing each node's id.
+                let (subtype_i, wb) = write_split!(wb, "_I{:016X}", compressed_fabric_id)?;
+
+                // Per Matter Core Spec Section 4.3.1.14, T is a bitmap:
+                // bit 1 (value 2) = TCP client, bit 2 (value 4) = TCP server
+                let txt_kvs = core::iter::once(if dev_det.tcp_supported {
+                    ("T", "6")
+                } else {
+                    // Some mDNS responders do not accept empty TXT records
+                    ("dummy", "dummy")
+                });
+
+                Ok((
+                    Service {
+                        name,
+                        service: "_matter",
+                        protocol: "_tcp",
+                        service_protocol: "_matter._tcp",
+                        port: matter_port,
+                        service_subtypes: EitherIter::First(core::iter::once(subtype_i)),
+                        txt_kvs: EitherIter::First(txt_kvs),
+                    },
+                    wb.into_buf(),
+                ))
+            }
+            Self::Commissionable {
+                id,
+                discriminator,
+                enhanced,
+            } => {
+                let mut wb = WriteBuf::new(buf);
+
+                let (name, mut wb) = write_split!(wb, "{:016X}", id)?;
+
+                let (subtype_discr, mut wb) = write_split!(wb, "_L{}", *discriminator)?;
+                let (subtype_short_discr, mut wb) = write_split!(
+                    wb,
+                    "_S{}",
+                    Self::compute_short_discriminator(*discriminator)
+                )?;
+                let (subtype_v, mut wb) = write_split!(wb, "_V{}", dev_det.vid)?;
+                let (subtype_t, mut wb) = if let Some(dt) = dev_det.device_type {
+                    write_split!(wb, "_T{}", dt)?
+                } else {
+                    ("", wb)
+                };
+
+                let service_subtypes = [
+                    subtype_discr,
+                    subtype_short_discr,
+                    subtype_v,
+                    subtype_t,
+                    "_CM",
+                ]
+                .into_iter()
+                .filter(|s| !s.is_empty());
+
+                let (txt_discr, mut wb) = write_split!(wb, "{}", *discriminator)?;
+                let (txt_vid_pid, mut wb) = write_split!(wb, "{}+{}", dev_det.vid, dev_det.pid)?;
+                let (txt_sai, mut wb) = write_split!(wb, "{}", dev_det.sai.unwrap_or(300))?;
+                let (txt_sii, mut wb) = write_split!(wb, "{}", dev_det.sii.unwrap_or(5000))?;
+                let (txt_dn, mut wb) = write_split!(wb, "{}", dev_det.device_name)?;
+                let (txt_pi, mut wb) = write_split!(wb, "{}", dev_det.pairing_instruction)?;
+                let (txt_ph, mut wb) = write_split!(wb, "{}", dev_det.pairing_hint.bits())?;
+                let (txt_dt, mut wb) = if let Some(dt) = dev_det.device_type {
+                    write_split!(wb, "{}", dt)?
+                } else {
+                    ("", wb)
+                };
+                let (txt_tcp, wb) = if dev_det.tcp_supported {
+                    write_split!(wb, "6")?
+                } else {
+                    ("", wb)
+                };
+
+                let txt_kvs = [
+                    ("D", txt_discr),
+                    ("CM", if *enhanced { "2" } else { "1" }),
+                    ("VP", txt_vid_pid),
+                    ("SAI", txt_sai),
+                    ("SII", txt_sii),
+                    ("DN", txt_dn),
+                    ("PI", txt_pi),
+                    ("PH", txt_ph),
+                    ("DT", txt_dt),
+                    ("T", txt_tcp),
+                ]
+                .into_iter()
+                .filter(|(_, v)| !v.is_empty());
+
+                Ok((
+                    Service {
+                        name,
+                        service: "_matterc",
+                        protocol: "_udp",
+                        service_protocol: "_matterc._udp",
+                        port: matter_port,
+                        service_subtypes: EitherIter::Second(service_subtypes),
+                        txt_kvs: EitherIter::Second(txt_kvs),
+                    },
+                    wb.into_buf(),
+                ))
+            }
+        }
+    }
+
+    fn compute_short_discriminator(discriminator: u16) -> u16 {
+        const SHORT_DISCRIMINATOR_MASK: u16 = 0xF00;
+        const SHORT_DISCRIMINATOR_SHIFT: u16 = 8;
+
+        (discriminator & SHORT_DISCRIMINATOR_MASK) >> SHORT_DISCRIMINATOR_SHIFT
+    }
+}
+
+/// A utility type for expanding a `MatterService` type into a full mDNS service description
 ///
 /// Useful as an implementation detail when interfacing with OS-specific mDNS libraries.
-pub struct Service<'a> {
+pub struct Service<'a, S, T>
+where
+    S: Iterator<Item = &'a str> + Clone,
+    T: Iterator<Item = (&'a str, &'a str)> + Clone,
+{
     /// The name of the service, typically the mDNS name
     pub name: &'a str,
     /// The service type, e.g. "_matter" or "_matterc"
@@ -510,175 +686,9 @@ pub struct Service<'a> {
     /// The port number the service is running on
     pub port: u16,
     /// Optional service subtypes, e.g. "_L1234" or "_S12"
-    pub service_subtypes: &'a [&'a str],
+    pub service_subtypes: S,
     /// Key-value pairs for TXT records, e.g. ("D", "1234")
-    pub txt_kvs: &'a [(&'a str, &'a str)],
-}
-
-impl Service<'_> {
-    /// Asynchronously expand a `MatterMdnsService` into a full service description
-    ///
-    /// # Arguments
-    /// - `matter_service`: The Matter mDNS service to expand.
-    /// - `dev_det`: The device details configuration.
-    /// - `matter_port`: The port number the Matter service is running on.
-    /// - `f`: A closure that takes a reference to the expanded service and returns a result.
-    pub async fn async_call_with<R, F: for<'a> AsyncFnOnce(&'a Service<'a>) -> Result<R, Error>>(
-        matter_service: &MatterMdnsService,
-        dev_det: &BasicInfoConfig<'_>,
-        matter_port: u16,
-        f: F,
-    ) -> Result<R, Error> {
-        let mut name_buf = [0; MATTER_SERVICE_MAX_NAME_LEN];
-
-        match matter_service {
-            MatterMdnsService::Commissioned { .. } => {
-                // Per Matter Core Spec Section 4.3.1.14, T is a bitmap:
-                // bit 1 (value 2) = TCP client, bit 2 (value 4) = TCP server
-                let txt_kvs: heapless::Vec<(&str, &str), 2> = if dev_det.tcp_supported {
-                    let mut v = heapless::Vec::new();
-                    unwrap!(v.push(("T", "6")));
-                    v
-                } else {
-                    // Some mDNS responders do not accept empty TXT records
-                    let mut v = heapless::Vec::new();
-                    unwrap!(v.push(("dummy", "dummy")));
-                    v
-                };
-
-                f(&Service {
-                    name: matter_service.name(&mut name_buf),
-                    service: "_matter",
-                    protocol: "_tcp",
-                    service_protocol: "_matter._tcp",
-                    port: matter_port,
-                    service_subtypes: &[],
-                    txt_kvs: txt_kvs.as_slice(),
-                })
-                .await
-            }
-            MatterMdnsService::Commissionable {
-                discriminator,
-                enhanced,
-                ..
-            } => {
-                // "_L{u16}""
-                let mut discr_svc_str = heapless::String::<7>::new();
-                // "_S{u16}""
-                let mut short_discr_svc_str = heapless::String::<7>::new();
-                // "_V{u16}P{u16}""
-                let mut vp_svc_str = heapless::String::<13>::new();
-
-                // "{u16}
-                let mut discr_str = heapless::String::<5>::new();
-                // "{u16}+{u16}"
-                let mut vp_str = heapless::String::<11>::new();
-                // "{u16}"
-                let mut sai_str = heapless::String::<5>::new();
-                // "{u16}"
-                let mut sii_str = heapless::String::<5>::new();
-                // "{u16}"
-                let mut dt_str = heapless::String::<6>::new();
-                // "{u32}"
-                let mut ph_str = heapless::String::<12>::new();
-
-                let mut txt_kvs = heapless::Vec::<_, 10>::new();
-
-                write_unwrap!(&mut discr_svc_str, "_L{}", *discriminator);
-                write_unwrap!(
-                    &mut short_discr_svc_str,
-                    "_S{}",
-                    Self::compute_short_discriminator(*discriminator)
-                );
-                write_unwrap!(&mut vp_svc_str, "_V{}P{}", dev_det.vid, dev_det.pid);
-
-                write_unwrap!(discr_str, "{}", *discriminator);
-                unwrap!(txt_kvs.push(("D", discr_str.as_str())));
-
-                unwrap!(txt_kvs.push(("CM", if *enhanced { "2" } else { "1" })));
-
-                write_unwrap!(&mut vp_str, "{}+{}", dev_det.vid, dev_det.pid);
-                unwrap!(txt_kvs.push(("VP", &vp_str)));
-
-                write_unwrap!(sai_str, "{}", dev_det.sai.unwrap_or(300));
-                unwrap!(txt_kvs.push(("SAI", sai_str.as_str())));
-
-                write_unwrap!(sii_str, "{}", dev_det.sii.unwrap_or(5000));
-                unwrap!(txt_kvs.push(("SII", sii_str.as_str())));
-
-                if !dev_det.device_name.is_empty() {
-                    unwrap!(txt_kvs.push(("DN", dev_det.device_name)));
-                }
-
-                if let Some(device_type) = dev_det.device_type {
-                    write_unwrap!(&mut dt_str, "{}", device_type);
-                    unwrap!(txt_kvs.push(("DT", dt_str.as_str())));
-                }
-
-                if !dev_det.pairing_hint.is_empty() {
-                    write_unwrap!(&mut ph_str, "{}", dev_det.pairing_hint.bits());
-                    unwrap!(txt_kvs.push(("PH", ph_str.as_str())));
-                }
-
-                if !dev_det.pairing_instruction.is_empty() {
-                    unwrap!(txt_kvs.push(("PI", dev_det.pairing_instruction)));
-                }
-
-                // Per Matter Core Spec Section 4.3.1.14, T is a bitmap:
-                // bit 1 (value 2) = TCP client, bit 2 (value 4) = TCP server
-                if dev_det.tcp_supported {
-                    unwrap!(txt_kvs.push(("T", "6")));
-                }
-
-                f(&Service {
-                    name: matter_service.name(&mut name_buf),
-                    service: "_matterc",
-                    protocol: "_udp",
-                    service_protocol: "_matterc._udp",
-                    port: matter_port,
-                    service_subtypes: &[
-                        discr_svc_str.as_str(),
-                        short_discr_svc_str.as_str(),
-                        vp_svc_str.as_str(),
-                        "_CM",
-                    ],
-                    txt_kvs: txt_kvs.as_slice(),
-                })
-                .await
-            }
-        }
-    }
-
-    /// Expand a `MatterMdnsService` into a full service description
-    ///
-    /// # Arguments
-    /// - `matter_service`: The Matter mDNS service to expand.
-    /// - `dev_det`: The device details configuration.
-    /// - `matter_port`: The port number the Matter service is running on.
-    /// - `f`: A closure that takes a reference to the expanded service and returns a result.
-    pub fn call_with<R, F: for<'a> FnOnce(&'a Service<'a>) -> Result<R, Error>>(
-        matter_service: &MatterMdnsService,
-        dev_det: &BasicInfoConfig<'_>,
-        matter_port: u16,
-        f: F,
-    ) -> Result<R, Error> {
-        // Not the most elegant solution to cut down on code duplication,
-        // but works fine because we _know_ the future will resolve immediately,
-        // because the `f` closure does not block and resolves immediately as well.
-        embassy_futures::block_on(Self::async_call_with(
-            matter_service,
-            dev_det,
-            matter_port,
-            async |service| f(service),
-        ))
-    }
-
-    fn compute_short_discriminator(discriminator: u16) -> u16 {
-        const SHORT_DISCRIMINATOR_MASK: u16 = 0xF00;
-        const SHORT_DISCRIMINATOR_SHIFT: u16 = 8;
-
-        (discriminator & SHORT_DISCRIMINATOR_MASK) >> SHORT_DISCRIMINATOR_SHIFT
-    }
+    pub txt_kvs: T,
 }
 
 #[cfg(test)]
@@ -690,11 +700,11 @@ mod tests {
     #[test]
     fn can_compute_short_discriminator() {
         let discriminator: u16 = 0b0000_1111_0000_0000;
-        let short = Service::compute_short_discriminator(discriminator);
+        let short = MatterService::compute_short_discriminator(discriminator);
         assert_eq!(short, 0b1111);
 
         let discriminator: u16 = 840;
-        let short = Service::compute_short_discriminator(discriminator);
+        let short = MatterService::compute_short_discriminator(discriminator);
         assert_eq!(short, 3);
     }
 

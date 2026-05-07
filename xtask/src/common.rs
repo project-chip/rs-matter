@@ -253,7 +253,6 @@ impl ChipBuilder {
     ///
     /// Handles Chip repo setup if required and acitvates the Chip
     /// environment for building
-    #[expect(unused)]
     pub fn build_chip_all_clusters_app(
         &self,
         chip_gitref: Option<&str>,

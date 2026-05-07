@@ -15,7 +15,6 @@
  *    limitations under the License.
  */
 
-use core::fmt::Write;
 use core::net::{Ipv4Addr, Ipv6Addr};
 
 use domain::base::header::Flags;
@@ -24,22 +23,15 @@ use domain::base::message::ShortMessage;
 use domain::base::message_builder::{AdditionalBuilder, AnswerBuilder, PushError};
 use domain::base::name::FromStrError;
 use domain::base::wire::{Composer, ParseError};
-use domain::base::{Message, MessageBuilder, Name, RecordSectionBuilder, Rtype, ToName};
-use domain::dep::octseq::Truncate;
-use domain::dep::octseq::{OctetsBuilder, ShortBuf};
-use domain::rdata::{Aaaa, Ptr, Srv, Txt, A};
+use domain::base::{Message, MessageBuilder, RecordSectionBuilder, Rtype, ToName};
+use domain::dep::octseq::ShortBuf;
+use domain::rdata::{Aaaa, Ptr, Srv, A};
 
 use crate::error::{Error, ErrorCode};
+use crate::transport::network::mdns::builtin::types::{Buf, NameSlice, Txt};
 use crate::utils::bitflags::bitflags;
 
 use super::Service;
-
-/// Internet DNS class with the "Cache Flush" bit set.
-/// See https://datatracker.ietf.org/doc/html/rfc6762#section-10.2 for details.
-fn dns_class_with_flush(dns_class: Class) -> Class {
-    const RESOURCE_RECORD_CACHE_FLUSH_BIT: u16 = 0x8000;
-    Class::from_int(u16::from(dns_class) | RESOURCE_RECORD_CACHE_FLUSH_BIT)
-}
 
 impl From<ShortBuf> for Error {
     fn from(_: ShortBuf) -> Self {
@@ -71,36 +63,6 @@ impl From<ParseError> for Error {
     }
 }
 
-pub trait Services {
-    fn for_each<F>(&self, callback: F) -> Result<(), Error>
-    where
-        F: FnMut(&Service) -> Result<(), Error>;
-}
-
-impl<T> Services for &mut T
-where
-    T: Services,
-{
-    fn for_each<F>(&self, callback: F) -> Result<(), Error>
-    where
-        F: FnMut(&Service) -> Result<(), Error>,
-    {
-        (**self).for_each(callback)
-    }
-}
-
-impl<T> Services for &T
-where
-    T: Services,
-{
-    fn for_each<F>(&self, callback: F) -> Result<(), Error>
-    where
-        F: FnMut(&Service) -> Result<(), Error>,
-    {
-        (**self).for_each(callback)
-    }
-}
-
 // What additional data to be set in the mDNS reply
 bitflags! {
     #[repr(transparent)]
@@ -114,113 +76,168 @@ bitflags! {
 }
 
 pub struct Host<'a> {
-    pub id: u16,
     pub hostname: &'a str,
     pub ip: Ipv4Addr,
     pub ipv6: Ipv6Addr,
+}
+
+/// How a response prepared by [`Host::respond`] should be sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum RespondMode {
+    /// No applicable question was found in the query; nothing should be sent.
+    Skip,
+    /// Send the prepared response via multicast.
+    Multicast {
+        /// Whether to apply a random 20-120 ms delay before sending
+        /// (RFC 6762 §6 — collision avoidance for shared-resource responses).
+        delay: bool,
+    },
+    /// Send the prepared response via unicast back to the query source.
+    ///
+    /// Used for legacy unicast resolvers (RFC 6762 §6.7), where the query
+    /// arrived from a UDP source port other than the mDNS port (5353).
+    Unicast,
 }
 
 impl Host<'_> {
     /// Broadcast an mDNS packet with the host and its services
     ///
     /// Should be done pro-actively every time there is a change in the host
-    /// data itself, or in the data of one of its services
-    pub fn broadcast<T: Services>(
+    /// data itself, or in the data of one of its services.
+    ///
+    /// Per RFC 6762 §18.1 the message ID for unsolicited multicast responses
+    /// is set to zero; per §10.2 records that we are authoritative for carry
+    /// the cache-flush bit.
+    pub fn broadcast<'a, S, T>(
         &self,
-        services: T,
+        service: &Service<'a, S, T>,
         buf: &mut [u8],
-        ttl_sec: u32,
-    ) -> Result<usize, Error> {
-        let buf = Buf(buf, 0);
+        host_ttl_sec: u32,
+        service_ttl_sec: u32,
+    ) -> Result<usize, Error>
+    where
+        S: Iterator<Item = &'a str> + Clone,
+        T: Iterator<Item = (&'a str, &'a str)> + Clone,
+    {
+        let buf = Buf::new(buf);
 
         let message = MessageBuilder::from_target(buf)?;
 
         let mut answer = message.answer();
 
-        self.set_answer_header(&mut answer);
+        Self::set_answer_header(&mut answer, 0);
 
-        self.add_ipv4(&mut answer, ttl_sec)?;
-        self.add_ipv6(&mut answer, ttl_sec)?;
+        let flush = true;
 
-        // The DNS broadcast packet has a fixed buffer (one Matter MTU) so
-        // a host with many services can overflow it — typically when more
-        // than ~4 commissioned fabrics are advertised at once
-        // (TC_CADMIN_1_19 hits this with 5). Treat overflow as
-        // "non-fatal": stop appending, keep whatever already fit, send
-        // that. Controllers that need a service we couldn't fit will
-        // still discover it via the per-instance query path
-        // (`Host::respond`), which only carries one service at a time.
-        //
-        // TODO: per RFC 6762 §17 we should split across multiple packets
-        // (with the TC bit set) and round-robin which services start each
-        // packet so no service is starved. The single-packet truncation
-        // below is the pragmatic fix that gets multi-fabric tests
-        // passing; it relies on solicited responses to fill the gap.
-        let mut overflowed = false;
-        services.for_each(|service| {
-            if overflowed {
-                return Ok(());
-            }
-            let mut try_add = || -> Result<(), Error> {
-                service.add_service(&mut answer, self.hostname, ttl_sec)?;
-                service.add_service_type(&mut answer, ttl_sec)?;
-                service.add_dns_sd_service_type(&mut answer, ttl_sec)?;
-                Ok(())
-            };
-            if let Err(err) = try_add() {
-                if matches!(err.code(), ErrorCode::BufferTooSmall) {
-                    overflowed = true;
-                    Ok(())
-                } else {
-                    Err(err)
-                }
-            } else {
-                Ok(())
-            }
-        })?;
-        if overflowed {
-            warn!(
-                "mDNS broadcast packet overflowed; some service records were dropped (will be served via direct queries)"
-            );
+        self.add_ipv4(&mut answer, host_ttl_sec, flush)?;
+        self.add_ipv6(&mut answer, host_ttl_sec, flush)?;
+
+        service.add_service(&mut answer, self.hostname, service_ttl_sec, flush)?;
+        service.add_service_type(&mut answer, service_ttl_sec)?;
+        service.add_dns_sd_service_type(&mut answer, host_ttl_sec)?;
+
+        for subtype in service.service_subtypes.clone() {
+            service.add_service_subtype(&mut answer, subtype, service_ttl_sec)?;
         }
+
+        service.add_txt(&mut answer, service_ttl_sec, flush)?;
 
         let buf = answer.finish();
 
         Ok(buf.1)
     }
 
-    /// Respond to an mDNS packet as long as it contains at least one question
-    /// which is applicable to the hoswt and its services
+    /// Respond to an mDNS query message.
     ///
-    /// Returns the number of bytes written to the buffer and a boolean indicating
-    /// whether the response should be delayed by a random interval of 20 - 120ms,
-    /// as per the mDNS spec
-    pub fn respond<T: Services>(
+    /// Returns the number of bytes written into `buf` and a [`RespondMode`]
+    /// indicating how the caller should send the response (or skip it).
+    ///
+    /// `legacy_unicast` should be set by the caller when the query arrived
+    /// from a UDP source port other than 5353 — i.e. from a legacy unicast
+    /// resolver (RFC 6762 §6.7). In that case the response:
+    /// - echoes the query's question section
+    /// - reuses the query's transaction ID
+    /// - caps record TTLs to 10 seconds
+    /// - omits the cache-flush bit on records we are authoritative for
+    /// - is sent unicast back to the query source.
+    ///
+    /// For multicast queries the response uses ID 0 (RFC 6762 §18.1), full
+    /// TTLs, and the cache-flush bit on authoritative records.
+    pub fn respond<'a, S, T>(
         &self,
-        services: T,
+        service: &Service<'a, S, T>,
         data: &[u8],
         buf: &mut [u8],
         ttl_sec: u32,
-    ) -> Result<(usize, bool), Error> {
-        let buf = Buf(buf, 0);
+        legacy_unicast: bool,
+    ) -> Result<(usize, RespondMode), Error>
+    where
+        S: Iterator<Item = &'a str> + Clone,
+        T: Iterator<Item = (&'a str, &'a str)> + Clone,
+    {
+        let message_in = Message::from_octets(data)?;
 
-        let message = MessageBuilder::from_target(buf)?;
+        // Only respond to queries (QR bit = 0); ignore responses from other mDNS responders.
+        if message_in.header().flags().qr {
+            return Ok((0, RespondMode::Skip));
+        }
 
-        let mut answer = message.answer();
+        let buf = Buf::new(buf);
+        let builder = MessageBuilder::from_target(buf)?;
+
+        // Cap TTLs at 10s for legacy unicast (RFC 6762 §6.7).
+        let effective_ttl = if legacy_unicast {
+            ttl_sec.min(10)
+        } else {
+            ttl_sec
+        };
+        // Suppress the cache-flush bit for legacy responses (RFC 6762 §10.2 / §6.7).
+        let flush = !legacy_unicast;
+
+        // For legacy responses: echo the original question section and reuse
+        // the query's transaction ID. For multicast responses: skip questions
+        // and use ID 0.
+        let (mut answer, response_id) = if legacy_unicast {
+            let mut qb = builder.question();
+            for question in message_in.question() {
+                let q = question?;
+                qb.push((q.qname(), q.qtype(), q.qclass()))?;
+            }
+            (qb.answer(), message_in.header().id())
+        } else {
+            (builder.answer(), 0)
+        };
+
+        Self::set_answer_header(&mut answer, response_id);
+
         let mut ad = AdditionalData::empty();
         let mut delay = false;
 
-        if self.answer(data, &services, &mut answer, &mut ad, &mut delay, ttl_sec)? {
-            let mut additional = answer.additional();
-
-            self.additional(ad, &services, &mut additional, ttl_sec)?;
-
-            let buf = additional.finish();
-
-            Ok((buf.1, delay))
-        } else {
-            Ok((0, false))
+        if !self.answer(
+            service,
+            &message_in,
+            &mut answer,
+            &mut ad,
+            &mut delay,
+            effective_ttl,
+            flush,
+        )? {
+            return Ok((0, RespondMode::Skip));
         }
+
+        let mut additional = answer.additional();
+        self.additional(service, ad, &mut additional, effective_ttl, flush)?;
+
+        let len = additional.finish().1;
+
+        let mode = if legacy_unicast {
+            RespondMode::Unicast
+        } else {
+            RespondMode::Multicast { delay }
+        };
+
+        Ok((len, mode))
     }
 
     /// Generate answers for queries in the message which are applicable to the host and
@@ -234,28 +251,21 @@ impl Host<'_> {
     /// Updates the `delay` parameter to indicate if the reply should be delayed to avoid
     /// collissions with other mDNS responders
     #[allow(clippy::too_many_arguments)]
-    fn answer<T, F>(
+    fn answer<'a, S, T, C>(
         &self,
-        data: &[u8],
-        services: F,
-        answer: &mut AnswerBuilder<T>,
+        service: &Service<'a, S, T>,
+        message: &Message<&[u8]>,
+        answer: &mut AnswerBuilder<C>,
         ad: &mut AdditionalData,
         delay: &mut bool,
         ttl_sec: u32,
+        flush: bool,
     ) -> Result<bool, Error>
     where
-        T: Composer,
-        F: Services,
+        S: Iterator<Item = &'a str> + Clone,
+        T: Iterator<Item = (&'a str, &'a str)> + Clone,
+        C: Composer,
     {
-        self.set_answer_header(answer);
-
-        let message = Message::from_octets(data)?;
-
-        // Only respond to queries (QR bit = 0), not to responses from other mDNS responders
-        if message.header().flags().qr {
-            return Ok(false);
-        }
-
         let mut replied = false;
 
         for question in message.question() {
@@ -266,11 +276,12 @@ impl Host<'_> {
             replied |= self.answer_one(
                 question.qname(),
                 question.qtype(),
-                &services,
+                service,
                 answer,
                 ad,
                 delay,
                 ttl_sec,
+                flush,
             )?;
         }
 
@@ -286,41 +297,35 @@ impl Host<'_> {
     ///
     /// Given that the additional data section is optional and provisional, this is not expected
     /// to be an issue.
-    fn additional<T, F>(
+    fn additional<'a, S, T, C>(
         &self,
+        service: &Service<'a, S, T>,
         ad: AdditionalData,
-        services: F,
-        additional: &mut AdditionalBuilder<T>,
+        additional: &mut AdditionalBuilder<C>,
         ttl_sec: u32,
+        flush: bool,
     ) -> Result<bool, Error>
     where
-        T: Composer,
-        F: Services,
+        S: Iterator<Item = &'a str> + Clone,
+        T: Iterator<Item = (&'a str, &'a str)> + Clone,
+        C: Composer,
     {
         let mut replied = false;
 
         if ad.contains(AdditionalData::IPS) {
-            self.add_ipv4(additional, ttl_sec)?;
-            self.add_ipv6(additional, ttl_sec)?;
+            self.add_ipv4(additional, ttl_sec, flush)?;
+            self.add_ipv6(additional, ttl_sec, flush)?;
             replied = true;
         }
 
         if ad.contains(AdditionalData::SRV) {
-            services.for_each(|service| {
-                service.add_service(additional, self.hostname, ttl_sec)?;
-                replied = true;
-
-                Ok(())
-            })?;
+            service.add_service(additional, self.hostname, ttl_sec, flush)?;
+            replied = true;
         }
 
         if ad.contains(AdditionalData::TXT) {
-            services.for_each(|service| {
-                service.add_txt(additional, ttl_sec)?;
-                replied = true;
-
-                Ok(())
-            })?;
+            service.add_txt(additional, ttl_sec, flush)?;
+            replied = true;
         }
 
         Ok(replied)
@@ -336,118 +341,137 @@ impl Host<'_> {
     /// (i.e. when answering DNS-SD queries with the DNS-SD FQDN
     /// to avoid collissions with other mDNS responders)
     #[allow(clippy::too_many_arguments)]
-    fn answer_one<N, F, R, T>(
+    fn answer_one<'a, N, R, S, T, C>(
         &self,
         name: N,
         rtype: Rtype,
-        services: F,
+        service: &Service<'a, S, T>,
         answer: &mut R,
         ad: &mut AdditionalData,
         delay: &mut bool,
         ttl_sec: u32,
+        flush: bool,
     ) -> Result<bool, Error>
     where
         N: ToName,
-        F: Services,
-        R: RecordSectionBuilder<T>,
-        T: Composer,
+        R: RecordSectionBuilder<C>,
+        S: Iterator<Item = &'a str> + Clone,
+        T: Iterator<Item = (&'a str, &'a str)> + Clone,
+        C: Composer,
     {
         if matches!(rtype, Rtype::ANY) {
             let mut replied = false;
 
             replied |=
-                self.answer_simple(&name, Rtype::A, &services, answer, ad, delay, ttl_sec)?;
-            replied |=
-                self.answer_simple(&name, Rtype::AAAA, &services, answer, ad, delay, ttl_sec)?;
-            replied |=
-                self.answer_simple(&name, Rtype::PTR, &services, answer, ad, delay, ttl_sec)?;
-            replied |=
-                self.answer_simple(&name, Rtype::SRV, &services, answer, ad, delay, ttl_sec)?;
-            replied |=
-                self.answer_simple(&name, Rtype::TXT, services, answer, ad, delay, ttl_sec)?;
+                self.answer_simple(&name, Rtype::A, service, answer, ad, delay, ttl_sec, flush)?;
+            replied |= self.answer_simple(
+                &name,
+                Rtype::AAAA,
+                service,
+                answer,
+                ad,
+                delay,
+                ttl_sec,
+                flush,
+            )?;
+            replied |= self.answer_simple(
+                &name,
+                Rtype::PTR,
+                service,
+                answer,
+                ad,
+                delay,
+                ttl_sec,
+                flush,
+            )?;
+            replied |= self.answer_simple(
+                &name,
+                Rtype::SRV,
+                service,
+                answer,
+                ad,
+                delay,
+                ttl_sec,
+                flush,
+            )?;
+            replied |= self.answer_simple(
+                &name,
+                Rtype::TXT,
+                service,
+                answer,
+                ad,
+                delay,
+                ttl_sec,
+                flush,
+            )?;
 
             Ok(replied)
         } else {
-            self.answer_simple(name, rtype, services, answer, ad, delay, ttl_sec)
+            self.answer_simple(name, rtype, service, answer, ad, delay, ttl_sec, flush)
         }
     }
 
     /// Same as `answer_question` but does not answer questions of type "Any"
     #[allow(clippy::too_many_arguments)]
-    fn answer_simple<N, F, R, T>(
+    fn answer_simple<'a, N, R, S, T, C>(
         &self,
         name: N,
         rtype: Rtype,
-        services: F,
+        service: &Service<'a, S, T>,
         answer: &mut R,
         ad: &mut AdditionalData,
         delay: &mut bool,
         ttl_sec: u32,
+        flush: bool,
     ) -> Result<bool, Error>
     where
         N: ToName,
-        F: Services,
-        R: RecordSectionBuilder<T>,
-        T: Composer,
+        R: RecordSectionBuilder<C>,
+        S: Iterator<Item = &'a str> + Clone,
+        T: Iterator<Item = (&'a str, &'a str)> + Clone,
+        C: Composer,
     {
         let mut replied = false;
 
         match rtype {
-            Rtype::A if name.name_eq(&Host::host_fqdn(self.hostname, true)?) => {
-                self.add_ipv4(answer, ttl_sec)?;
+            Rtype::A if name.name_eq(&Host::host_fqdn(self.hostname)) => {
+                self.add_ipv4(answer, ttl_sec, flush)?;
                 replied = true;
             }
-            Rtype::AAAA if name.name_eq(&Host::host_fqdn(self.hostname, true)?) => {
-                self.add_ipv6(answer, ttl_sec)?;
+            Rtype::AAAA if name.name_eq(&Host::host_fqdn(self.hostname)) => {
+                self.add_ipv6(answer, ttl_sec, flush)?;
                 replied = true;
             }
-            Rtype::SRV => {
-                services.for_each(|service| {
-                    if name.name_eq(&service.service_fqdn(true)?) {
-                        service.add_service(answer, self.hostname, ttl_sec)?;
-                        *ad |= AdditionalData::IPS;
-                        replied = true;
-                    }
-
-                    Ok(())
-                })?;
+            Rtype::SRV if name.name_eq(&service.service_fqdn()) => {
+                service.add_service(answer, self.hostname, ttl_sec, flush)?;
+                *ad |= AdditionalData::IPS;
+                replied = true;
             }
             Rtype::PTR => {
-                services.for_each(|service| {
-                    if name.name_eq(&Service::dns_sd_fqdn(true)?) {
-                        service.add_dns_sd_service_type(answer, ttl_sec)?;
-                        service.add_dns_sd_service_subtypes(answer, ttl_sec)?;
-                        *ad |= AdditionalData::IPS | AdditionalData::SRV | AdditionalData::TXT;
-                        *delay = true; // As we reply to a shared resource question, hence we need to avoid collissions
-                        replied = true;
-                    } else if name.name_eq(&service.service_type_fqdn(true)?) {
-                        service.add_service_type(answer, ttl_sec)?;
-                        *ad |= AdditionalData::IPS | AdditionalData::SRV | AdditionalData::TXT;
-                        replied = true;
-                    } else {
-                        for subtype in service.service_subtypes {
-                            if name.name_eq(&service.service_subtype_fqdn(subtype, true)?) {
-                                service.add_service_subtype(answer, subtype, ttl_sec)?;
-                                replied = true;
-                                *ad |=
-                                    AdditionalData::IPS | AdditionalData::SRV | AdditionalData::TXT;
-                                break;
-                            }
+                if name.name_eq(&Service::<S, T>::dns_sd_fqdn()) {
+                    service.add_dns_sd_service_type(answer, ttl_sec)?;
+                    service.add_dns_sd_service_subtypes(answer, ttl_sec)?;
+                    *ad |= AdditionalData::IPS | AdditionalData::SRV | AdditionalData::TXT;
+                    *delay = true; // As we reply to a shared resource question, hence we need to avoid collissions
+                    replied = true;
+                } else if name.name_eq(&service.service_type_fqdn()) {
+                    service.add_service_type(answer, ttl_sec)?;
+                    *ad |= AdditionalData::IPS | AdditionalData::SRV | AdditionalData::TXT;
+                    replied = true;
+                } else {
+                    for subtype in service.service_subtypes.clone() {
+                        if name.name_eq(&service.service_subtype_fqdn(subtype)) {
+                            service.add_service_subtype(answer, subtype, ttl_sec)?;
+                            replied = true;
+                            *ad |= AdditionalData::IPS | AdditionalData::SRV | AdditionalData::TXT;
+                            break;
                         }
                     }
-
-                    Ok(())
-                })?;
+                }
             }
-            Rtype::TXT => {
-                services.for_each(|service| {
-                    if name.name_eq(&service.service_fqdn(true)?) {
-                        service.add_txt(answer, ttl_sec)?;
-                        replied = true;
-                    }
-
-                    Ok(())
-                })?;
+            Rtype::TXT if name.name_eq(&service.service_fqdn()) => {
+                service.add_txt(answer, ttl_sec, flush)?;
+                replied = true;
             }
             _ => (),
         }
@@ -455,9 +479,9 @@ impl Host<'_> {
         Ok(replied)
     }
 
-    fn set_answer_header<T: Composer>(&self, answer: &mut AnswerBuilder<T>) {
+    fn set_answer_header<T: Composer>(answer: &mut AnswerBuilder<T>, id: u16) {
         let header = answer.header_mut();
-        header.set_id(self.id);
+        header.set_id(id);
         header.set_opcode(Opcode::QUERY);
         header.set_rcode(Rcode::NOERROR);
 
@@ -467,20 +491,17 @@ impl Host<'_> {
         header.set_flags(flags);
     }
 
-    fn add_ipv4<R, T>(&self, answer: &mut R, ttl_sec: u32) -> Result<(), PushError>
+    fn add_ipv4<R, C>(&self, answer: &mut R, ttl_sec: u32, flush: bool) -> Result<(), PushError>
     where
-        R: RecordSectionBuilder<T>,
-        T: Composer,
+        R: RecordSectionBuilder<C>,
+        C: Composer,
     {
         if !self.ip.is_unspecified() {
             let octets = self.ip.octets();
 
             answer.push((
-                unwrap!(
-                    Self::host_fqdn(self.hostname, false),
-                    "FQDN creation failed"
-                ),
-                dns_class_with_flush(Class::IN),
+                Self::host_fqdn(self.hostname),
+                Self::auth_class(flush),
                 ttl_sec,
                 A::from_octets(octets[0], octets[1], octets[2], octets[3]),
             ))?;
@@ -489,18 +510,15 @@ impl Host<'_> {
         Ok(())
     }
 
-    fn add_ipv6<R, T>(&self, answer: &mut R, ttl_sec: u32) -> Result<(), PushError>
+    fn add_ipv6<R, C>(&self, answer: &mut R, ttl_sec: u32, flush: bool) -> Result<(), PushError>
     where
-        R: RecordSectionBuilder<T>,
-        T: Composer,
+        R: RecordSectionBuilder<C>,
+        C: Composer,
     {
         if !self.ipv6.is_unspecified() {
             answer.push((
-                unwrap!(
-                    Self::host_fqdn(self.hostname, false),
-                    "FQDN creation failed"
-                ),
-                dns_class_with_flush(Class::IN),
+                Self::host_fqdn(self.hostname),
+                Self::auth_class(flush),
                 ttl_sec,
                 Aaaa::new(self.ipv6.octets().into()),
             ))?;
@@ -509,281 +527,181 @@ impl Host<'_> {
         Ok(())
     }
 
-    fn host_fqdn(hostname: &str, suffix: bool) -> Result<impl ToName, FromStrError> {
-        let suffix = if suffix { "." } else { "" };
+    const fn host_fqdn(hostname: &str) -> impl ToName + '_ {
+        NameSlice::new([hostname, "local"])
+    }
 
-        let mut host_fqdn = heapless::String::<60>::new();
-        write_unwrap!(host_fqdn, "{}.local{}", hostname, suffix);
-
-        Name::<heapless::Vec<u8, 64>>::from_chars(host_fqdn.chars())
+    /// Class to use for records we are authoritative for.
+    ///
+    /// `flush=true` sets the cache-flush bit (RFC 6762 §10.2). `flush=false`
+    /// returns plain `IN` — used for legacy unicast responses (RFC 6762 §6.7),
+    /// where setting the cache-flush bit is forbidden.
+    fn auth_class(flush: bool) -> Class {
+        if flush {
+            // Internet DNS class with the "Cache Flush" bit set.
+            // See https://datatracker.ietf.org/doc/html/rfc6762#section-10.2 for details.
+            const RESOURCE_RECORD_CACHE_FLUSH_BIT: u16 = 0x8000;
+            Class::from_int(u16::from(Class::IN) | RESOURCE_RECORD_CACHE_FLUSH_BIT)
+        } else {
+            Class::IN
+        }
     }
 }
 
-impl Service<'_> {
-    fn add_service<R, T>(
+impl<'a, S, T> Service<'a, S, T>
+where
+    S: Iterator<Item = &'a str> + Clone,
+    T: Iterator<Item = (&'a str, &'a str)> + Clone,
+{
+    fn add_service<R, C>(
         &self,
         answer: &mut R,
         hostname: &str,
         ttl_sec: u32,
+        flush: bool,
     ) -> Result<(), PushError>
     where
-        R: RecordSectionBuilder<T>,
-        T: Composer,
+        R: RecordSectionBuilder<C>,
+        C: Composer,
     {
         answer.push((
-            unwrap!(self.service_fqdn(false), "FQDN creation failed"),
-            dns_class_with_flush(Class::IN),
+            self.service_fqdn(),
+            Host::auth_class(flush),
             ttl_sec,
-            Srv::new(
-                0,
-                0,
-                self.port,
-                unwrap!(Host::host_fqdn(hostname, false), "FQDN creation failed"),
-            ),
+            Srv::new(0, 0, self.port, Host::host_fqdn(hostname)),
         ))
     }
 
-    fn add_service_type<R, T>(&self, answer: &mut R, ttl_sec: u32) -> Result<(), PushError>
+    fn add_service_type<R, C>(&self, answer: &mut R, ttl_sec: u32) -> Result<(), PushError>
     where
-        R: RecordSectionBuilder<T>,
-        T: Composer,
+        R: RecordSectionBuilder<C>,
+        C: Composer,
     {
         answer.push((
-            unwrap!(self.service_type_fqdn(false), "FQDN creation failed"),
+            self.service_type_fqdn(),
             Class::IN,
             ttl_sec,
-            Ptr::new(unwrap!(self.service_fqdn(false), "FQDN creation failed")),
+            Ptr::new(self.service_fqdn()),
         ))
     }
 
-    fn add_dns_sd_service_type<R, T>(&self, answer: &mut R, ttl_sec: u32) -> Result<(), PushError>
+    fn add_dns_sd_service_type<R, C>(&self, answer: &mut R, ttl_sec: u32) -> Result<(), PushError>
     where
-        R: RecordSectionBuilder<T>,
-        T: Composer,
+        R: RecordSectionBuilder<C>,
+        C: Composer,
     {
         // Don't set the flush-bit when sending this PTR record, as we're not the
         // authority of dns_sd_fqdn: there may be answers from other devices on
         // the network as well.
         answer.push((
-            unwrap!(Self::dns_sd_fqdn(false), "FQDN creation failed"),
+            Self::dns_sd_fqdn(),
             Class::IN,
             ttl_sec,
-            Ptr::new(unwrap!(
-                self.service_type_fqdn(false),
-                "FQDN creation failed"
-            )),
+            Ptr::new(self.service_type_fqdn()),
         ))
     }
 
     #[allow(unused)]
-    fn add_service_subtypes<R, T>(&self, answer: &mut R, ttl_sec: u32) -> Result<(), PushError>
+    fn add_service_subtypes<R, C>(&self, answer: &mut R, ttl_sec: u32) -> Result<(), PushError>
     where
-        R: RecordSectionBuilder<T>,
-        T: Composer,
+        R: RecordSectionBuilder<C>,
+        C: Composer,
     {
-        for service_subtype in self.service_subtypes {
+        for service_subtype in self.service_subtypes.clone() {
             self.add_service_subtype(answer, service_subtype, ttl_sec)?;
         }
 
         Ok(())
     }
 
-    fn add_dns_sd_service_subtypes<R, T>(
+    fn add_dns_sd_service_subtypes<R, C>(
         &self,
         answer: &mut R,
         ttl_sec: u32,
     ) -> Result<(), PushError>
     where
-        R: RecordSectionBuilder<T>,
-        T: Composer,
+        R: RecordSectionBuilder<C>,
+        C: Composer,
     {
-        for service_subtype in self.service_subtypes {
+        for service_subtype in self.service_subtypes.clone() {
             self.add_dns_sd_service_subtype(answer, service_subtype, ttl_sec)?;
         }
 
         Ok(())
     }
 
-    fn add_service_subtype<R, T>(
+    fn add_service_subtype<R, C>(
         &self,
         answer: &mut R,
         service_subtype: &str,
         ttl_sec: u32,
     ) -> Result<(), PushError>
     where
-        R: RecordSectionBuilder<T>,
-        T: Composer,
+        R: RecordSectionBuilder<C>,
+        C: Composer,
     {
         // Don't set the flush-bit when sending this PTR record, as we're not the
         // authority of dns_sd_fqdn: there may be answers from other devices on
         // the network as well.
         answer.push((
-            unwrap!(
-                self.service_subtype_fqdn(service_subtype, false),
-                "FQDN creation failed"
-            ),
+            self.service_subtype_fqdn(service_subtype),
             Class::IN,
             ttl_sec,
-            Ptr::new(unwrap!(self.service_fqdn(false), "FQDN creation failed")),
+            Ptr::new(self.service_fqdn()),
         ))
     }
 
-    fn add_dns_sd_service_subtype<R, T>(
+    fn add_dns_sd_service_subtype<R, C>(
         &self,
         answer: &mut R,
         service_subtype: &str,
         ttl_sec: u32,
     ) -> Result<(), PushError>
     where
-        R: RecordSectionBuilder<T>,
-        T: Composer,
+        R: RecordSectionBuilder<C>,
+        C: Composer,
     {
         answer.push((
-            unwrap!(Self::dns_sd_fqdn(false), "FQDN creation failed"),
+            Self::dns_sd_fqdn(),
             Class::IN,
             ttl_sec,
-            Ptr::new(unwrap!(
-                self.service_subtype_fqdn(service_subtype, false),
-                "FQDN creation failed"
-            )),
+            Ptr::new(self.service_subtype_fqdn(service_subtype)),
         ))
     }
 
-    fn add_txt<R, T>(&self, answer: &mut R, ttl_sec: u32) -> Result<(), PushError>
+    fn add_txt<R, C>(&self, answer: &mut R, ttl_sec: u32, flush: bool) -> Result<(), PushError>
     where
-        R: RecordSectionBuilder<T>,
-        T: Composer,
+        R: RecordSectionBuilder<C>,
+        C: Composer,
     {
-        if self.txt_kvs.is_empty() {
-            let txt = unwrap!(Txt::from_octets(&[0]), "Failed to create TXT record");
-
-            answer.push((
-                unwrap!(self.service_fqdn(false), "FQDN creation failed"),
-                Class::IN,
-                ttl_sec,
-                txt,
-            ))
-        } else {
-            let mut octets = heapless::Vec::<_, 256>::new();
-
-            // only way I found to create multiple parts in a Txt
-            // each slice is the length and then the data
-            for (k, v) in self.txt_kvs {
-                octets.append_slice(&[(k.len() + v.len() + 1) as u8])?;
-                octets.append_slice(k.as_bytes())?;
-                octets.append_slice(b"=")?;
-                octets.append_slice(v.as_bytes())?;
-            }
-
-            let txt = unwrap!(Txt::from_octets(&octets), "Failed to create TXT record");
-
-            answer.push((
-                unwrap!(self.service_fqdn(false), "FQDN creation failed"),
-                dns_class_with_flush(Class::IN),
-                ttl_sec,
-                txt,
-            ))
-        }
+        answer.push((
+            self.service_fqdn(),
+            Host::auth_class(flush),
+            ttl_sec,
+            Txt::new(self.txt_kvs.clone()),
+        ))
     }
 
-    fn service_fqdn(&self, suffix: bool) -> Result<impl ToName, FromStrError> {
-        let suffix = if suffix { "." } else { "" };
-
-        let mut service_fqdn = heapless::String::<60>::new();
-        write_unwrap!(
-            service_fqdn,
-            "{}.{}.{}.local{}",
-            self.name,
-            self.service,
-            self.protocol,
-            suffix,
-        );
-
-        Name::<heapless::Vec<u8, 64>>::from_chars(service_fqdn.chars())
+    const fn service_fqdn(&self) -> impl ToName + '_ {
+        NameSlice::new([self.name, self.service, self.protocol, "local"])
     }
 
-    fn service_type_fqdn(&self, suffix: bool) -> Result<impl ToName, FromStrError> {
-        let suffix = if suffix { "." } else { "" };
-
-        let mut service_type_fqdn = heapless::String::<60>::new();
-        write_unwrap!(
-            service_type_fqdn,
-            "{}.{}.local{}",
-            self.service,
-            self.protocol,
-            suffix,
-        );
-
-        Name::<heapless::Vec<u8, 64>>::from_chars(service_type_fqdn.chars())
+    const fn service_type_fqdn(&self) -> impl ToName + '_ {
+        NameSlice::new([self.service, self.protocol, "local"])
     }
 
-    fn service_subtype_fqdn(
-        &self,
-        service_subtype: &str,
-        suffix: bool,
-    ) -> Result<impl ToName, FromStrError> {
-        let suffix = if suffix { "." } else { "" };
-
-        let mut service_subtype_fqdn = heapless::String::<40>::new();
-        write_unwrap!(
-            service_subtype_fqdn,
-            "{}._sub.{}.{}.local{}",
+    const fn service_subtype_fqdn<'b>(&'b self, service_subtype: &'b str) -> impl ToName + 'b {
+        NameSlice::new([
             service_subtype,
+            "_sub",
             self.service,
             self.protocol,
-            suffix,
-        );
-
-        Name::<heapless::Vec<u8, 64>>::from_chars(service_subtype_fqdn.chars())
+            "local",
+        ])
     }
 
-    fn dns_sd_fqdn(suffix: bool) -> Result<impl ToName, FromStrError> {
-        Name::<heapless::Vec<u8, 64>>::from_chars(
-            if suffix {
-                "_services._dns-sd._udp.local."
-            } else {
-                "_services._dns-sd._udp.local"
-            }
-            .chars(),
-        )
-    }
-}
-
-pub(super) struct Buf<'a>(pub &'a mut [u8], pub usize);
-
-impl Composer for Buf<'_> {}
-
-impl OctetsBuilder for Buf<'_> {
-    type AppendError = ShortBuf;
-
-    fn append_slice(&mut self, slice: &[u8]) -> Result<(), Self::AppendError> {
-        if self.1 + slice.len() <= self.0.len() {
-            let end = self.1 + slice.len();
-            self.0[self.1..end].copy_from_slice(slice);
-            self.1 = end;
-
-            Ok(())
-        } else {
-            Err(ShortBuf)
-        }
-    }
-}
-
-impl Truncate for Buf<'_> {
-    fn truncate(&mut self, len: usize) {
-        self.1 = len;
-    }
-}
-
-impl AsMut<[u8]> for Buf<'_> {
-    fn as_mut(&mut self) -> &mut [u8] {
-        &mut self.0[..self.1]
-    }
-}
-
-impl AsRef<[u8]> for Buf<'_> {
-    fn as_ref(&self) -> &[u8] {
-        &self.0[..self.1]
+    const fn dns_sd_fqdn() -> impl ToName {
+        NameSlice::new(["_services", "_dns-sd", "_udp", "local"])
     }
 }
 
@@ -793,17 +711,48 @@ mod tests {
 
     use domain::base::header::Flags;
     use domain::base::iana::{Class, Opcode, Rcode};
-    use domain::base::{Message, MessageBuilder, Name, RecordSection, Rtype, ToName};
+    use domain::base::{Message, MessageBuilder, Name, ParsedRecord, Rtype, ToName};
     use domain::rdata::AllRecordData;
 
-    use crate::error::Error;
+    use crate::transport::network::mdns::builtin::types::Buf;
     use crate::transport::network::mdns::Service;
 
-    use super::{Buf, Host, Services};
+    use super::Host;
+
+    /// A test fixture for a service, holding subtypes and TXT records as slices.
+    /// At "use" time, converted to a `Service` with iterator-typed fields.
+    struct TestService<'a> {
+        name: &'a str,
+        service: &'a str,
+        protocol: &'a str,
+        service_protocol: &'a str,
+        port: u16,
+        service_subtypes: &'a [&'a str],
+        txt_kvs: &'a [(&'a str, &'a str)],
+    }
+
+    impl<'a> TestService<'a> {
+        fn as_service(
+            &self,
+        ) -> Service<
+            'a,
+            impl Iterator<Item = &'a str> + Clone + '_,
+            impl Iterator<Item = (&'a str, &'a str)> + Clone + '_,
+        > {
+            Service {
+                name: self.name,
+                service: self.service,
+                protocol: self.protocol,
+                service_protocol: self.service_protocol,
+                port: self.port,
+                service_subtypes: self.service_subtypes.iter().copied(),
+                txt_kvs: self.txt_kvs.iter().copied(),
+            }
+        }
+    }
 
     static TEST_HOST_ONLY: TestRun = TestRun {
         host: Host {
-            id: 0,
             hostname: "foo",
             ip: Ipv4Addr::new(192, 168, 0, 1),
             ipv6: Ipv6Addr::UNSPECIFIED,
@@ -848,13 +797,12 @@ mod tests {
 
     static TEST_SERVICES: TestRun = TestRun {
         host: Host {
-            id: 1,
             hostname: "foo",
             ip: Ipv4Addr::new(192, 168, 0, 1),
             ipv6: Ipv6Addr::new(0xfb, 0, 0, 0, 0, 0, 0, 1),
         },
         services: &[
-            Service {
+            TestService {
                 name: "bar",
                 service: "_matterc",
                 protocol: "_udp",
@@ -863,7 +811,7 @@ mod tests {
                 service_subtypes: &["L", "R"],
                 txt_kvs: &[("a", "b"), ("c", "d")],
             },
-            Service {
+            TestService {
                 name: "ddd",
                 service: "_matter",
                 protocol: "_tcp",
@@ -943,7 +891,10 @@ mod tests {
                         details: AnswerDetails::Ptr("_matter._tcp.local"),
                     },
                 ],
+                // Per-service responses: each service emits its own packet, so
+                // host A/AAAA additionals repeat per service.
                 &[
+                    // Service 1 (bar._matterc._udp): A, AAAA, SRV, TXT
                     Answer {
                         owner: "foo.local",
                         details: AnswerDetails::A(Ipv4Addr::new(192, 168, 0, 1)),
@@ -960,15 +911,24 @@ mod tests {
                         },
                     },
                     Answer {
+                        owner: "bar._matterc._udp.local",
+                        details: AnswerDetails::Txt(&[("a", "b"), ("c", "d")]),
+                    },
+                    // Service 2 (ddd._matter._tcp): A, AAAA, SRV, TXT
+                    Answer {
+                        owner: "foo.local",
+                        details: AnswerDetails::A(Ipv4Addr::new(192, 168, 0, 1)),
+                    },
+                    Answer {
+                        owner: "foo.local",
+                        details: AnswerDetails::Aaaa(Ipv6Addr::new(0xfb, 0, 0, 0, 0, 0, 0, 1)),
+                    },
+                    Answer {
                         owner: "ddd._matter._tcp.local",
                         details: AnswerDetails::Srv {
                             port: 1235,
                             target: "foo.local",
                         },
-                    },
-                    Answer {
-                        owner: "bar._matterc._udp.local",
-                        details: AnswerDetails::Txt(&[("a", "b"), ("c", "d")]),
                     },
                     Answer {
                         owner: "ddd._matter._tcp.local",
@@ -994,13 +954,12 @@ mod tests {
         // Test that a PTR query for a service type FQDN (e.g., _matterc._udp.local)
         // returns PTR records pointing to service instances (not SRV records)
         let host = Host {
-            id: 2,
             hostname: "foo",
             ip: Ipv4Addr::new(192, 168, 0, 1),
             ipv6: Ipv6Addr::new(0xfb, 0, 0, 0, 0, 0, 0, 1),
         };
 
-        let services: &[Service] = &[Service {
+        let services: &[TestService<'_>] = &[TestService {
             name: "bar",
             service: "_matterc",
             protocol: "_udp",
@@ -1055,13 +1014,12 @@ mod tests {
     fn test_response_ignored() {
         // Test that mDNS responses (QR=1) are not replied to
         let host = Host {
-            id: 3,
             hostname: "foo",
             ip: Ipv4Addr::new(192, 168, 0, 1),
             ipv6: Ipv6Addr::UNSPECIFIED,
         };
 
-        let services: &[Service] = &[Service {
+        let test_service = TestService {
             name: "bar",
             service: "_matterc",
             protocol: "_udp",
@@ -1069,12 +1027,13 @@ mod tests {
             port: 1234,
             service_subtypes: &[],
             txt_kvs: &[],
-        }];
+        };
+        let service = test_service.as_service();
 
         // Build a response message (QR=1) with a question that would normally match
         let mut buf1 = [0; 1500];
         let message = unwrap!(
-            MessageBuilder::from_target(Buf(&mut buf1, 0)),
+            MessageBuilder::from_target(Buf::new(&mut buf1)),
             "Failed to create message builder"
         );
         let mut qb = message.question();
@@ -1101,39 +1060,189 @@ mod tests {
         let data = &buf1[..len];
 
         let mut buf2 = [0; 1500];
-        let (response_len, _) = unwrap!(host.respond(services, data, &mut buf2, 0));
+        let (response_len, mode) = unwrap!(host.respond(&service, data, &mut buf2, 0, false));
 
         // Should produce no response since QR=1
         assert_eq!(response_len, 0, "mDNS response should be ignored (QR=1)");
+        assert_eq!(mode, super::RespondMode::Skip);
+    }
+
+    /// RFC 6762 §6.7: legacy unicast resolver — query from non-5353 source port.
+    /// Response must echo the question section, reuse the query's transaction ID,
+    /// cap TTLs at 10s, omit the cache-flush bit, and indicate Unicast mode.
+    #[test]
+    fn test_legacy_unicast_response() {
+        use domain::base::Question as DnsQuestion;
+        use domain::rdata::AllRecordData;
+
+        let host = Host {
+            hostname: "foo",
+            ip: Ipv4Addr::new(192, 168, 0, 1),
+            ipv6: Ipv6Addr::UNSPECIFIED,
+        };
+
+        let test_service = TestService {
+            name: "bar",
+            service: "_matterc",
+            protocol: "_udp",
+            service_protocol: "_matterc._udp",
+            port: 1234,
+            service_subtypes: &[],
+            txt_kvs: &[],
+        };
+        let service = test_service.as_service();
+
+        // Build a legacy-style query: id=0xBEEF, single A question for foo.local.
+        let query_id: u16 = 0xBEEF;
+        let mut qbuf = [0u8; 1500];
+        let qmsg = unwrap!(MessageBuilder::from_target(Buf::new(&mut qbuf)));
+        let mut qb = qmsg.question();
+        let qheader = qb.header_mut();
+        qheader.set_id(query_id);
+        qheader.set_opcode(Opcode::QUERY);
+        let mut qflags = Flags::new();
+        qflags.qr = false;
+        qheader.set_flags(qflags);
+        let qname = unwrap!(Name::<heapless::Vec<u8, 64>>::from_chars(
+            "foo.local".chars()
+        ));
+        unwrap!(qb.push((qname, Rtype::A, Class::IN)));
+        let qlen = qb.finish().as_ref().len();
+        let query = &qbuf[..qlen];
+
+        // Use a generous source TTL to verify the cap kicks in.
+        let mut rbuf = [0u8; 1500];
+        let (rlen, mode) = unwrap!(host.respond(&service, query, &mut rbuf, 600, true));
+
+        assert!(rlen > 0, "expected a response");
+        assert_eq!(mode, super::RespondMode::Unicast);
+
+        let response = unwrap!(Message::from_octets(&rbuf[..rlen]));
+
+        // Header: same id as query, QR=1, AA=1.
+        let h = response.header();
+        assert_eq!(h.id(), query_id, "legacy response must echo query id");
+        assert!(h.flags().qr);
+        assert!(h.flags().aa);
+
+        // Question section must be echoed.
+        let mut questions = response.question();
+        let q: DnsQuestion<_> = unwrap!(unwrap!(questions.next(), "missing echoed question"));
+        assert_eq!(q.qtype(), Rtype::A);
+        assert!(q
+            .qname()
+            .name_eq(&unwrap!(Name::<heapless::Vec<u8, 64>>::from_chars(
+                "foo.local".chars()
+            ))));
+        assert!(questions.next().is_none(), "exactly one echoed question");
+
+        // Answer: A record for foo.local, TTL capped at 10, no cache-flush bit.
+        let mut answers = unwrap!(response.answer());
+        let answer = unwrap!(unwrap!(answers.next(), "missing answer"))
+            .to_any_record::<AllRecordData<_, _>>()
+            .unwrap();
+        assert_eq!(
+            answer.ttl().as_secs(),
+            10,
+            "legacy TTL must be capped at 10s"
+        );
+        assert_eq!(
+            u16::from(answer.class()) & 0x8000,
+            0,
+            "legacy responses must NOT set the cache-flush bit"
+        );
+        match answer.data() {
+            AllRecordData::A(a) => {
+                assert_eq!(
+                    Ipv4Addr::from(a.addr().octets()),
+                    Ipv4Addr::new(192, 168, 0, 1)
+                );
+            }
+            other => panic!("expected A record, got {:?}", debug2format!(&other)),
+        }
+        assert!(answers.next().is_none());
     }
 
     struct TestRun<'a> {
         host: Host<'a>,
-        services: &'a [Service<'a>],
-
+        services: &'a [TestService<'a>],
         tests: &'a [(&'a [Question<'a>], &'a [Answer<'a>], &'a [Answer<'a>])],
     }
 
     impl TestRun<'_> {
         fn run(&self) {
-            let mut buf1 = [0; 1500];
-            let mut buf2 = [0; 1500];
+            let mut query_buf = [0; 1500];
+
+            // One response buffer per service (per the new "one UDP packet per service" design).
+            // Pre-allocate so we can keep all responses alive for combined validation.
+            let mut response_bufs: std::vec::Vec<[u8; 1500]> =
+                self.services.iter().map(|_| [0u8; 1500]).collect();
+            // If there are zero services, we still need at least one slot for the host-only case.
+            if response_bufs.is_empty() {
+                response_bufs.push([0; 1500]);
+            }
 
             for (questions, expected_answers, expected_additional) in self.tests {
-                let data = Question::prep(&mut buf1, self.host.id, questions);
+                // Multicast queries always carry ID 0 (RFC 6762 §18.1).
+                let query = Question::prep(&mut query_buf, 0, questions);
 
-                let (len, _) = unwrap!(self.host.respond(self.services, data, &mut buf2, 0));
+                let mut response_lens: std::vec::Vec<usize> = std::vec::Vec::new();
 
-                if len > 0 {
-                    Answer::validate(
-                        &buf2[..len],
-                        self.host.id,
-                        expected_answers,
-                        expected_additional,
+                if self.services.is_empty() {
+                    // Host-only path: still need to call `respond` once with a synthetic empty service
+                    // so the host machinery has a chance to answer A/AAAA queries.
+                    let synthetic = TestService {
+                        name: "",
+                        service: "_unused",
+                        protocol: "_udp",
+                        service_protocol: "_unused._udp",
+                        port: 0,
+                        service_subtypes: &[],
+                        txt_kvs: &[],
+                    };
+                    let service = synthetic.as_service();
+                    let (len, _) = unwrap!(self.host.respond(
+                        &service,
+                        query,
+                        &mut response_bufs[0],
+                        0,
+                        false
+                    ));
+                    response_lens.push(len);
+                } else {
+                    for (i, ts) in self.services.iter().enumerate() {
+                        let service = ts.as_service();
+                        let (len, _) = unwrap!(self.host.respond(
+                            &service,
+                            query,
+                            &mut response_bufs[i],
+                            0,
+                            false,
+                        ));
+                        response_lens.push(len);
+                    }
+                }
+
+                let messages: std::vec::Vec<&[u8]> = response_lens
+                    .iter()
+                    .zip(response_bufs.iter())
+                    .filter_map(|(&len, buf)| if len > 0 { Some(&buf[..len]) } else { None })
+                    .collect();
+
+                if messages.is_empty() {
+                    assert!(
+                        expected_answers.is_empty(),
+                        "No responses but expected answers: {:?}",
+                        expected_answers
+                    );
+                    assert!(
+                        expected_additional.is_empty(),
+                        "No responses but expected additional: {:?}",
+                        expected_additional
                     );
                 } else {
-                    assert!(expected_answers.is_empty());
-                    assert!(expected_additional.is_empty());
+                    // Multicast responses always carry ID 0 (RFC 6762 §18.1).
+                    Answer::validate_all(&messages, 0, expected_answers, expected_additional);
                 }
             }
         }
@@ -1150,7 +1259,7 @@ mod tests {
     impl Question<'_> {
         fn prep<'b>(buf: &'b mut [u8], id: u16, questions: &[Question]) -> &'b [u8] {
             let message = unwrap!(
-                MessageBuilder::from_target(Buf(buf, 0)),
+                MessageBuilder::from_target(Buf::new(buf)),
                 "Failed to create message builder"
             );
 
@@ -1202,39 +1311,72 @@ mod tests {
     }
 
     impl Answer<'_> {
-        fn validate(
-            data: &[u8],
+        /// Validate that the records produced by responding to a query — possibly spread
+        /// across multiple per-service mDNS response packets — match the expected lists.
+        fn validate_all(
+            messages: &[&[u8]],
             expected_id: u16,
             expected_answers: &[Answer],
             expected_additional: &[Answer],
         ) {
-            let message = unwrap!(
-                Message::from_octets(data),
-                "Failed to convert data to message"
-            );
+            let mut answer_idx = 0;
+            let mut additional_idx = 0;
 
-            let header = message.header();
-            ::core::assert_eq!(header.id(), expected_id);
-            ::core::assert_eq!(header.opcode(), Opcode::QUERY);
-            ::core::assert_eq!(header.rcode(), Rcode::NOERROR);
+            for data in messages {
+                let message = unwrap!(
+                    Message::from_octets(*data),
+                    "Failed to convert data to message"
+                );
 
-            Answer::validate_section(&message.answer().unwrap(), expected_answers);
-            Answer::validate_section(&message.additional().unwrap(), expected_additional);
+                let header = message.header();
+                ::core::assert_eq!(header.id(), expected_id);
+                ::core::assert_eq!(header.opcode(), Opcode::QUERY);
+                ::core::assert_eq!(header.rcode(), Rcode::NOERROR);
+
+                Answer::validate_section_records(
+                    message.answer().unwrap().into_iter(),
+                    expected_answers,
+                    &mut answer_idx,
+                );
+                Answer::validate_section_records(
+                    message.additional().unwrap().into_iter(),
+                    expected_additional,
+                    &mut additional_idx,
+                );
+            }
+
+            if answer_idx < expected_answers.len() {
+                panic!("Missing answer {:?}", expected_answers[answer_idx]);
+            }
+            if additional_idx < expected_additional.len() {
+                panic!(
+                    "Missing additional {:?}",
+                    expected_additional[additional_idx]
+                );
+            }
         }
 
-        fn validate_section(section: &RecordSection<&[u8]>, expected_answers: &[Answer]) {
-            let mut answers = section.peekable();
-            let mut expectations = expected_answers.iter().peekable();
-
-            while answers.peek().is_some() && expectations.peek().is_some() {
-                let answer = answers
-                    .next()
-                    .unwrap()
+        fn validate_section_records<'b, I>(
+            records: I,
+            expected_answers: &[Answer],
+            expected_idx: &mut usize,
+        ) where
+            I: IntoIterator<
+                Item = Result<ParsedRecord<'b, &'b [u8]>, domain::base::wire::ParseError>,
+            >,
+        {
+            for answer_res in records {
+                let answer = answer_res
                     .unwrap()
                     .to_any_record::<AllRecordData<_, _>>()
                     .unwrap();
 
-                let expected = expectations.next().unwrap();
+                if *expected_idx >= expected_answers.len() {
+                    panic!("Unexpected answer {:?}", debug2format!(&answer));
+                }
+
+                let expected = &expected_answers[*expected_idx];
+                *expected_idx += 1;
 
                 assert!(
                     answer.owner().name_eq(
@@ -1307,33 +1449,6 @@ mod tests {
                     other => panic!("Unexpected record type: {:?}", debug2format!(&other)),
                 }
             }
-
-            if let Some(answer) = answers.next() {
-                let answer = unwrap!(
-                    unwrap!(answer, "Failed to unwrap answer")
-                        .to_any_record::<AllRecordData<_, _>>(),
-                    "Failed to convert answer to any record"
-                );
-
-                panic!("Unexpected answer {:?}", debug2format!(&answer));
-            }
-
-            if let Some(expected) = expectations.next() {
-                panic!("Missing answer {:?}", expected);
-            }
-        }
-    }
-
-    impl<'a> Services for &'a [Service<'a>] {
-        fn for_each<F>(&self, mut callback: F) -> Result<(), Error>
-        where
-            F: FnMut(&Service) -> Result<(), Error>,
-        {
-            for service in self.iter() {
-                callback(service)?;
-            }
-
-            Ok(())
         }
     }
 }
