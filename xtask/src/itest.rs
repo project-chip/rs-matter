@@ -223,7 +223,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // Python tests — Device Attestation (commissioning)
     //
     "TC_DA_1_2",
-    // "TC_DA_1_5", // TODO: same setup issue as TC_DA_1_2 — DA test infrastructure needs the attestation invoke path to succeed before any of the cert-chain assertions can run.
+    "TC_DA_1_5",
     // "TC_DA_1_7", // Skipped: requires two distinct discriminators (DUT + reference DUT). The xtask wrapper only commissions one device.
     // "TC_DA_1_9", // TODO: not yet verified
 
