@@ -344,6 +344,12 @@ pub fn handler_adaptor(
                 Ok(())
             }
 
+            fn bump_dataver(&self, ctx: impl #krate::dm::MatchContext) {
+                if ctx.cluster().map(|c| c == #cluster_code).unwrap_or(true) {
+                    self.0.dataver_changed();
+                }
+            }
+
             #run
         }
 

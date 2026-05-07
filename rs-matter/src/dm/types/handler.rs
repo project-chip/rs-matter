@@ -306,16 +306,58 @@ where
     }
 }
 
-/// A context super-type that is passed to the handler when processing an attribute read/write or a command invoke operation.
-pub trait OperationContext: HandlerContext + OwnAttrChangeNotifier + OwnEventEmitter {
-    /// Return the exchange object that is associated with this operation.
-    fn exchange(&self) -> &Exchange<'_>;
-
-    /// Return the endpoint ID that is associated with this operation.
-    fn endpt(&self) -> EndptId;
+/// A context super-type that is passed to the handler when bumping a dataver
+pub trait MatchContext {
+    /// Return the endpoint ID that is associated with context.
+    /// `None` if the context is not associated with a specific endpoint (e.g. a global handler's dataver bump).
+    fn endpt(&self) -> Option<EndptId>;
 
     /// Return the cluster ID that is associated with this operation.
-    fn cluster(&self) -> ClusterId;
+    /// `None` if the context is not associated with a specific cluster (e.g. a global handler's dataver bump).
+    fn cluster(&self) -> Option<ClusterId>;
+}
+
+impl<T> MatchContext for &T
+where
+    T: MatchContext,
+{
+    fn endpt(&self) -> Option<EndptId> {
+        (**self).endpt()
+    }
+
+    fn cluster(&self) -> Option<ClusterId> {
+        (**self).cluster()
+    }
+}
+
+/// A concrete implementation of the `ReadContext` trait
+pub(crate) struct MatchContextInstance {
+    endpt: Option<EndptId>,
+    cluster: Option<ClusterId>,
+}
+
+impl MatchContextInstance {
+    pub(crate) const fn new(endpt: Option<EndptId>, cluster: Option<ClusterId>) -> Self {
+        Self { endpt, cluster }
+    }
+}
+
+impl MatchContext for MatchContextInstance {
+    fn endpt(&self) -> Option<EndptId> {
+        self.endpt
+    }
+
+    fn cluster(&self) -> Option<ClusterId> {
+        self.cluster
+    }
+}
+
+/// A context super-type that is passed to the handler when processing an attribute read/write or a command invoke operation.
+pub trait OperationContext:
+    MatchContext + HandlerContext + OwnAttrChangeNotifier + OwnEventEmitter
+{
+    /// Return the exchange object that is associated with this operation.
+    fn exchange(&self) -> &Exchange<'_>;
 }
 
 impl<T> OperationContext for &T
@@ -324,14 +366,6 @@ where
 {
     fn exchange(&self) -> &Exchange<'_> {
         (**self).exchange()
-    }
-
-    fn endpt(&self) -> EndptId {
-        (**self).endpt()
-    }
-
-    fn cluster(&self) -> ClusterId {
-        (**self).cluster()
     }
 }
 
@@ -503,20 +537,25 @@ where
     }
 }
 
+impl<C> MatchContext for ReadContextInstance<'_, C>
+where
+    C: HandlerContext,
+{
+    fn endpt(&self) -> Option<EndptId> {
+        Some(self.attr.endpoint_id)
+    }
+
+    fn cluster(&self) -> Option<ClusterId> {
+        Some(self.attr.cluster_id)
+    }
+}
+
 impl<C> OperationContext for ReadContextInstance<'_, C>
 where
     C: HandlerContext,
 {
     fn exchange(&self) -> &Exchange<'_> {
         self.exchange
-    }
-
-    fn endpt(&self) -> EndptId {
-        self.attr.endpoint_id
-    }
-
-    fn cluster(&self) -> ClusterId {
-        self.attr.cluster_id
     }
 }
 
@@ -525,15 +564,15 @@ where
     C: HandlerContext,
 {
     fn notify_own_attr_changed(&self, attr_id: AttrId) {
-        self.notify_attr_changed(self.endpt(), self.cluster(), attr_id);
+        self.notify_attr_changed(self.attr.endpoint_id, self.attr.cluster_id, attr_id);
     }
 
     fn notify_own_cluster_changed(&self) {
-        self.notify_cluster_changed(self.endpt(), self.cluster());
+        self.notify_cluster_changed(self.attr.endpoint_id, self.attr.cluster_id);
     }
 
     fn notify_own_endpoint_changed(&self) {
-        self.notify_endpoint_changed(self.endpt());
+        self.notify_endpoint_changed(self.attr.endpoint_id);
     }
 }
 
@@ -550,8 +589,13 @@ where
     where
         F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
     {
-        self.context
-            .emit_event(self.endpt(), self.cluster(), event_id, priority, f)
+        self.context.emit_event(
+            self.attr.endpoint_id,
+            self.attr.cluster_id,
+            event_id,
+            priority,
+            f,
+        )
     }
 }
 
@@ -599,7 +643,7 @@ where
     C: HandlerContext,
 {
     fn matter(&self) -> &Matter<'_> {
-        self.exchange().matter()
+        self.context.matter()
     }
 
     fn crypto(&self) -> impl Crypto + '_ {
@@ -665,20 +709,25 @@ where
     }
 }
 
+impl<C> MatchContext for WriteContextInstance<'_, C>
+where
+    C: HandlerContext,
+{
+    fn endpt(&self) -> Option<EndptId> {
+        Some(self.attr.endpoint_id)
+    }
+
+    fn cluster(&self) -> Option<ClusterId> {
+        Some(self.attr.cluster_id)
+    }
+}
+
 impl<C> OperationContext for WriteContextInstance<'_, C>
 where
     C: HandlerContext,
 {
     fn exchange(&self) -> &Exchange<'_> {
         self.exchange
-    }
-
-    fn endpt(&self) -> EndptId {
-        self.attr.endpoint_id
-    }
-
-    fn cluster(&self) -> ClusterId {
-        self.attr.cluster_id
     }
 }
 
@@ -687,15 +736,15 @@ where
     C: HandlerContext,
 {
     fn notify_own_attr_changed(&self, attr_id: AttrId) {
-        self.notify_attr_changed(self.endpt(), self.cluster(), attr_id);
+        self.notify_attr_changed(self.attr.endpoint_id, self.attr.cluster_id, attr_id);
     }
 
     fn notify_own_cluster_changed(&self) {
-        self.notify_cluster_changed(self.endpt(), self.cluster());
+        self.notify_cluster_changed(self.attr.endpoint_id, self.attr.cluster_id);
     }
 
     fn notify_own_endpoint_changed(&self) {
-        self.notify_endpoint_changed(self.endpt());
+        self.notify_endpoint_changed(self.attr.endpoint_id);
     }
 }
 
@@ -712,8 +761,13 @@ where
     where
         F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
     {
-        self.context
-            .emit_event(self.endpt(), self.cluster(), event_id, priority, f)
+        self.context.emit_event(
+            self.attr.endpoint_id,
+            self.attr.cluster_id,
+            event_id,
+            priority,
+            f,
+        )
     }
 }
 
@@ -765,7 +819,7 @@ where
     C: HandlerContext,
 {
     fn matter(&self) -> &Matter<'_> {
-        self.exchange().matter()
+        self.context.matter()
     }
 
     fn crypto(&self) -> impl Crypto + '_ {
@@ -831,20 +885,25 @@ where
     }
 }
 
+impl<C> MatchContext for InvokeContextInstance<'_, C>
+where
+    C: HandlerContext,
+{
+    fn endpt(&self) -> Option<EndptId> {
+        Some(self.cmd.endpoint_id)
+    }
+
+    fn cluster(&self) -> Option<ClusterId> {
+        Some(self.cmd.cluster_id)
+    }
+}
+
 impl<C> OperationContext for InvokeContextInstance<'_, C>
 where
     C: HandlerContext,
 {
     fn exchange(&self) -> &Exchange<'_> {
         self.exchange
-    }
-
-    fn endpt(&self) -> EndptId {
-        self.cmd.endpoint_id
-    }
-
-    fn cluster(&self) -> ClusterId {
-        self.cmd.cluster_id
     }
 }
 
@@ -853,15 +912,15 @@ where
     C: HandlerContext,
 {
     fn notify_own_attr_changed(&self, attr_id: AttrId) {
-        self.notify_attr_changed(self.endpt(), self.cluster(), attr_id);
+        self.notify_attr_changed(self.cmd.endpoint_id, self.cmd.cluster_id, attr_id);
     }
 
     fn notify_own_cluster_changed(&self) {
-        self.notify_cluster_changed(self.endpt(), self.cluster());
+        self.notify_cluster_changed(self.cmd.endpoint_id, self.cmd.cluster_id);
     }
 
     fn notify_own_endpoint_changed(&self) {
-        self.notify_endpoint_changed(self.endpt());
+        self.notify_endpoint_changed(self.cmd.endpoint_id);
     }
 }
 
@@ -878,8 +937,13 @@ where
     where
         F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
     {
-        self.context
-            .emit_event(self.endpt(), self.cluster(), event_id, priority, f)
+        self.context.emit_event(
+            self.cmd.endpoint_id,
+            self.cmd.cluster_id,
+            event_id,
+            priority,
+            f,
+        )
     }
 }
 
@@ -917,6 +981,10 @@ pub trait Handler {
         Err(ErrorCode::CommandNotFound.into())
     }
 
+    /// Bump the per-cluster `Dataver` for the cluster handler matching
+    /// the supplied context `endpoint_id` / `cluster_id`.
+    fn bump_dataver(&self, ctx: impl MatchContext);
+
     /// A hook (a scheduling facility) for placing handler-impl-specific code that needs to run
     /// asynchronously - forever and in the "background".
     fn run(&self, _ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
@@ -942,6 +1010,10 @@ where
         (**self).invoke(ctx, reply)
     }
 
+    fn bump_dataver(&self, ctx: impl MatchContext) {
+        (**self).bump_dataver(ctx)
+    }
+
     fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
         (**self).run(ctx)
     }
@@ -961,6 +1033,10 @@ where
 
     fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
         (**self).invoke(ctx, reply)
+    }
+
+    fn bump_dataver(&self, ctx: impl MatchContext) {
+        (**self).bump_dataver(ctx)
     }
 
     fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
@@ -992,6 +1068,10 @@ where
         self.1.invoke(ctx, reply)
     }
 
+    fn bump_dataver(&self, ctx: impl MatchContext) {
+        self.1.bump_dataver(ctx)
+    }
+
     fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
         self.1.run(ctx)
     }
@@ -1003,14 +1083,14 @@ impl<M, H> NonBlockingHandler for (M, H) where H: NonBlockingHandler {}
 /// should be invoked for a specific operation.
 pub trait Matcher {
     /// Return `true` if the corresponding handler should be invoked for the provided context.
-    fn matches(&self, ctx: impl OperationContext) -> bool;
+    fn matches(&self, ctx: impl MatchContext) -> bool;
 }
 
 impl<T> Matcher for &T
 where
     T: Matcher,
 {
-    fn matches(&self, ctx: impl OperationContext) -> bool {
+    fn matches(&self, ctx: impl MatchContext) -> bool {
         T::matches(self, ctx)
     }
 }
@@ -1038,17 +1118,11 @@ impl EpClMatcher {
 }
 
 impl Matcher for EpClMatcher {
-    fn matches(&self, ctx: impl OperationContext) -> bool {
-        let ctx_endpoint_id = ctx.endpt();
-        let ctx_cluster_id = ctx.cluster();
-
-        self.endpoint_id
-            .map(|endpoint_id| ctx_endpoint_id == endpoint_id)
-            .unwrap_or(true)
-            && self
-                .cluster_id
-                .map(|cluster_id| ctx_cluster_id == cluster_id)
-                .unwrap_or(true)
+    fn matches(&self, ctx: impl MatchContext) -> bool {
+        (self.endpoint_id.is_none() || ctx.endpt().is_none() || self.endpoint_id == ctx.endpt())
+            && (self.cluster_id.is_none()
+                || ctx.cluster().is_none()
+                || self.cluster_id == ctx.cluster())
     }
 }
 
@@ -1083,6 +1157,10 @@ impl EmptyHandler {
 impl Handler for EmptyHandler {
     fn read(&self, _ctx: impl ReadContext, _reply: impl ReadReply) -> Result<(), Error> {
         Err(ErrorCode::AttributeNotFound.into())
+    }
+
+    fn bump_dataver(&self, _ctx: impl MatchContext) {
+        // No-op since this handler doesn't actually handle any cluster.
     }
 }
 
@@ -1163,6 +1241,15 @@ where
         }
     }
 
+    fn bump_dataver(&self, ctx: impl MatchContext) {
+        if self.matcher.matches(&ctx) {
+            self.handler.bump_dataver(&ctx)
+        }
+
+        // Fall-through to the next handler in the chain since multiple handlers might need to bump dataver for the same operation
+        self.next.bump_dataver(ctx)
+    }
+
     async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
         let mut handler = pin!(self.handler.run(&ctx));
         let mut next = pin!(self.next.run(&ctx));
@@ -1221,7 +1308,7 @@ mod asynch {
     use either::Either;
     use embassy_futures::select::select;
 
-    use crate::dm::{HandlerContext, InvokeReply, Matcher, ReadReply};
+    use crate::dm::{HandlerContext, InvokeReply, MatchContext, Matcher, ReadReply};
     use crate::error::{Error, ErrorCode};
     use crate::utils::future::delayed_ready;
     use crate::utils::select::Coalesce;
@@ -1305,6 +1392,10 @@ mod asynch {
             core::future::ready(Err(ErrorCode::CommandNotFound.into()))
         }
 
+        /// Bump the per-cluster `Dataver` for the cluster handler matching
+        /// the supplied context `endpoint_id` / `cluster_id`.
+        fn bump_dataver(&self, ctx: impl MatchContext);
+
         /// A hook (a scheduling facility) for placing handler-impl-specific code that needs to run
         /// asynchronously - forever and in the "background".
         fn run(&self, _ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
@@ -1350,6 +1441,10 @@ mod asynch {
             (**self).invoke(ctx, reply)
         }
 
+        fn bump_dataver(&self, ctx: impl MatchContext) {
+            (**self).bump_dataver(ctx)
+        }
+
         fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
             (**self).run(ctx)
         }
@@ -1389,6 +1484,10 @@ mod asynch {
             reply: impl InvokeReply,
         ) -> impl Future<Output = Result<(), Error>> {
             (**self).invoke(ctx, reply)
+        }
+
+        fn bump_dataver(&self, ctx: impl MatchContext) {
+            (**self).bump_dataver(ctx)
         }
 
         fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
@@ -1432,6 +1531,10 @@ mod asynch {
             self.1.invoke(ctx, reply)
         }
 
+        fn bump_dataver(&self, ctx: impl MatchContext) {
+            self.1.bump_dataver(ctx)
+        }
+
         fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
             self.1.run(ctx)
         }
@@ -1473,6 +1576,10 @@ mod asynch {
             delayed_ready(|| Handler::invoke(&self.0, ctx, reply))
         }
 
+        fn bump_dataver(&self, ctx: impl MatchContext) {
+            Handler::bump_dataver(&self.0, ctx)
+        }
+
         fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
             Handler::run(&self.0, ctx)
         }
@@ -1497,6 +1604,10 @@ mod asynch {
             _reply: impl ReadReply,
         ) -> impl Future<Output = Result<(), Error>> {
             core::future::ready(Err(ErrorCode::AttributeNotFound.into()))
+        }
+
+        fn bump_dataver(&self, _ctx: impl MatchContext) {
+            // No-op since this handler doesn't actually handle any cluster.
         }
     }
 
@@ -1562,6 +1673,14 @@ mod asynch {
             }
         }
 
+        fn bump_dataver(&self, ctx: impl MatchContext) {
+            if self.matcher.matches(&ctx) {
+                self.handler.bump_dataver(ctx)
+            } else {
+                self.next.bump_dataver(ctx)
+            }
+        }
+
         async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
             let mut handler = pin!(self.handler.run(&ctx));
             let mut next = pin!(self.next.run(&ctx));
@@ -1591,6 +1710,10 @@ mod asynch {
 
         fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
             self.0.invoke(ctx, reply)
+        }
+
+        fn bump_dataver(&self, ctx: impl MatchContext) {
+            self.0.bump_dataver(ctx)
         }
 
         fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {

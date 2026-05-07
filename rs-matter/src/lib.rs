@@ -439,6 +439,16 @@ impl<'a> Matter<'a> {
     ///
     /// # Arguments
     /// - `timeout_secs`: The timeout in seconds for the basic commissioning window
+    ///
+    /// **Note:** This is the low-level building block that mutates PASE
+    /// state and routes a `notify_cluster_changed(...)` to subscribers
+    /// via `notify`, but does **not** bump the per-cluster `Dataver` of
+    /// `AdministratorCommissioning` — a subsequent dataver-filtered
+    /// read could therefore cache-hit and miss the change. Application
+    /// code that holds a `DataModel` should prefer
+    /// [`crate::dm::DataModel::open_basic_comm_window`], which delegates
+    /// here and additionally bumps dataver via its
+    /// [`AttrChangeNotifier`] impl.
     pub fn open_basic_comm_window<C: Crypto>(
         &self,
         timeout_secs: u16,
@@ -472,11 +482,79 @@ impl<'a> Matter<'a> {
     /// Close the commissioning window (basic or other)
     ///
     /// The method will return Ok(false) if there is no active PASE commissioning window to close.
+    ///
+    /// **Note:** As with [`Matter::open_basic_comm_window`], this does
+    /// not bump the per-cluster `Dataver` of
+    /// `AdministratorCommissioning`. Prefer
+    /// [`crate::dm::DataModel::close_comm_window`] when a `DataModel`
+    /// is available.
     pub fn close_comm_window(&self, notify: &dyn AttrChangeNotifier) -> Result<bool, Error> {
         let notify_mdns = || self.notify_mdns_changed();
         let notify_change = |endpt_id, clust_id| notify.notify_cluster_changed(endpt_id, clust_id);
 
         self.with_state(|state| state.pase.close_comm_window(notify_mdns, notify_change))
+    }
+
+    /// Bump `BasicInformation::ConfigurationVersion` by one, persist
+    /// the new value via `kv`, and route an attribute-change
+    /// notification to subscribers via `notify`.
+    ///
+    /// Per Matter Core Spec §7.7.2 / §9.2.11, the device MUST bump
+    /// this attribute on any change to its exposed fixed-quality
+    /// surface (a firmware update that adds or removes functionality,
+    /// internal reconfiguration that changes any `F`-quality attribute,
+    /// bridged-node add/remove on a bridge). `rs-matter` cannot detect
+    /// such events on its own — the application drives the bump.
+    ///
+    /// **Note:** Like the other low-level mutators on `Matter`, this
+    /// does **not** bump the per-cluster `Dataver` of
+    /// `BasicInformation`. A subsequent dataver-filtered read could
+    /// therefore cache-hit and miss the change. Application code that
+    /// holds a `DataModel` should prefer
+    /// [`crate::dm::DataModel::bump_configuration_version`], which
+    /// delegates here and additionally bumps dataver via its
+    /// [`AttrChangeNotifier`] impl.
+    ///
+    /// Returns the new `ConfigurationVersion` value.
+    pub fn bump_configuration_version<S: KvBlobStore>(
+        &self,
+        mut kv: S,
+        buf: &mut [u8],
+        notify: &dyn AttrChangeNotifier,
+    ) -> Result<u32, Error> {
+        use crate::dm::clusters::basic_info::AttributeId;
+        use crate::dm::clusters::basic_info::FULL_CLUSTER as BASIC_INFO_CLUSTER;
+        use crate::dm::endpoints::ROOT_ENDPOINT_ID;
+        use crate::persist::BASIC_INFO_KEY;
+        use crate::tlv::{TLVTag, ToTLV};
+        use crate::utils::storage::WriteBuf;
+
+        let new_v = self.with_state(|state| {
+            Ok::<_, Error>(state.basic_info_settings.bump_configuration_version())
+        })?;
+
+        // Serialise the (mutated) `BasicInfoSettings` blob into the
+        // caller's scratch buffer, then hand the encoded prefix to the
+        // KV store. Same on-disk key (`BASIC_INFO_KEY`) NodeLabel and
+        // friends use, so a future `Matter::load_persist` reads the
+        // bumped value back.
+        let len = self.with_state(|state| {
+            let mut wb = WriteBuf::new(buf);
+            state
+                .basic_info_settings
+                .to_tlv(&TLVTag::Anonymous, &mut wb)?;
+            Ok::<_, Error>(wb.get_tail())
+        })?;
+        let (data, scratch) = buf.split_at_mut(len);
+        kv.store(BASIC_INFO_KEY, data, scratch)?;
+
+        notify.notify_attr_changed(
+            ROOT_ENDPOINT_ID,
+            BASIC_INFO_CLUSTER.id,
+            AttributeId::ConfigurationVersion as crate::dm::AttrId,
+        );
+
+        Ok(new_v)
     }
 
     /// Create a new transport runner instance
