@@ -217,7 +217,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — General Diagnostics (system cluster)
     //
-    // "TC_DGGEN_2_4", // TODO: rs-matter does not advertise `GeneralDiagnostics::UpTime` (returns `UnsupportedAttribute`). Implement the attribute in the diagnostics cluster.
+    "TC_DGGEN_2_4",
     // "TC_DGGEN_3_2", // TODO: requires `BasicInformation::MaxPathsPerInvoke`; same gap as TC_BINFO_3_2 — needs the attribute exposed.
 
     //
