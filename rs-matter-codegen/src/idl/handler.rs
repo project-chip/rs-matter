@@ -326,8 +326,6 @@ pub fn handler_adaptor(
 
                 #write_stream
 
-                self.0.dataver_changed();
-
                 Ok(())
             }
 
@@ -338,8 +336,6 @@ pub fn handler_adaptor(
                 reply: impl #krate::dm::InvokeReply,
             ) -> Result<(), #krate::error::Error> {
                 #invoke_stream
-
-                self.0.dataver_changed();
 
                 Ok(())
             }
@@ -1800,7 +1796,6 @@ mod tests {
                                 );
                             }
                         }
-                        self.0.dataver_changed();
                         Ok(())
                     }
                     #[allow(unreachable_code)]
@@ -1981,8 +1976,12 @@ mod tests {
                                 );
                             }
                         }
-                        self.0.dataver_changed();
                         Ok(())
+                    }
+                    fn bump_dataver(&self, ctx: impl rs_matter_crate::dm::MatchContext) {
+                        if ctx.cluster().map(|c| c == 6u32).unwrap_or(true) {
+                            self.0.dataver_changed();
+                        }
                     }
                 }
                 impl<T, Q> core::fmt::Debug for MetadataDebug<(u16, &HandlerAdaptor<T>, Q)>
