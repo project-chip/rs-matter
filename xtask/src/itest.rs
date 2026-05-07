@@ -82,6 +82,9 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // "TestSystemCommands", // TODO: Error attempting to start secondary device
     // "TestUserLabelCluster", // TODO: User Label cluster not yet implemented
     // "TestUserLabelClusterConstraints", // TODO: User Label cluster not yet implemented
+    // "TestTimeSynchronization", // Skipped: TimeSynchronization cluster not implemented by rs-matter (optional, Matter spec §11.16).
+    // "TestIcdManagementCluster", // Skipped: ICD Management cluster not implemented (rs-matter doesn't ship Intermittently Connected Device support).
+    // "TestUnitTestingClusterMei", // TODO: not yet attempted. Manufacturer-extensible-identifier attribute coverage for the UnitTesting cluster (we expose UnitTesting on endpoint 1).
 
     //
     // Python tests — Interaction Data Model (general Matter protocol)
@@ -107,6 +110,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_ACL_2_9",
     "TC_ACL_2_10",
     // "TC_ACL_2_11", // Skipped: tests the provisional `ManagedAclRestrictions` feature (ARL attribute) and requires manufacturer-specific access restrictions to be pre-configured. rs-matter does not implement this feature.
+    // "TC_AccessChecker", // TODO: not yet attempted. Comprehensive ACE enforcement test that walks every cluster on every endpoint and verifies `View`/`Operate`/`Manage`/`Administer` access checks (runs internal `test_TC_ACE_2_*` variants). rs-matter implements ACL fully; expected to be a high-leverage add.
 
     //
     // Python tests — General & Administrator Commissioning (system clusters)
@@ -214,10 +218,88 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     "TC_G_2_2",
     //
+    // Python tests — Network Commissioning (system cluster)
+    //
+    // "TC_CNET_1_4", // TODO: not yet attempted. Generic NetworkCommissioning attribute test, applies to any network type (Ethernet included). Expected to "just work" against the chip_tool_tests Ethernet DUT.
+    // "TC_CNET_4_1",  // TODO: Wi-Fi network provisioning.
+    // "TC_CNET_4_2",  // TODO: Wi-Fi network provisioning.
+    // "TC_CNET_4_3",  // TODO: Wi-Fi network provisioning.
+    // "TC_CNET_4_4",  // TODO: Thread network provisioning.
+    // "TC_CNET_4_9",  // TODO: Thread network provisioning.
+    // "TC_CNET_4_10", // TODO: Wi-Fi network provisioning.
+    // "TC_CNET_4_12", // TODO: Wi-Fi network provisioning.
+    // "TC_CNET_4_15", // TODO: Wi-Fi network provisioning.
+    // "TC_CNET_4_16", // TODO: Wi-Fi network provisioning.
+    // "TC_CNET_4_22", // TODO: Thread network provisioning.
+
+    //
     // Python tests — General Diagnostics (system cluster)
     //
     "TC_DGGEN_2_4",
     "TC_DGGEN_3_2",
+    // "TC_TestEventTrigger", // TODO: not yet attempted. Tests `GeneralDiagnostics::TestEventTrigger` invocation. rs-matter has the trait method but the example app's `GenDiag` impl doesn't honor a configurable enable-key. Needs `--app-args '--enable-key 000102030405060708090a0b0c0d0e0f'` plumbing on chip_tool_tests + a hook on `GenDiag::test_event_trigger` to verify the key.
+
+    //
+    // Python tests — Software Diagnostics (optional system cluster)
+    //
+    // "TC_DGSW_2_1", // Skipped: SoftwareDiagnostics cluster not implemented by rs-matter (optional, Matter spec §11.13).
+    // "TC_DGSW_2_2", // Skipped: SoftwareDiagnostics cluster not implemented by rs-matter (optional, Matter spec §11.13).
+
+    //
+    // Python tests — Time Synchronization (optional system cluster)
+    //
+    // "TC_TIMESYNC_2_1",  // Skipped: TimeSynchronization cluster not implemented by rs-matter (optional, Matter spec §11.16).
+    // "TC_TIMESYNC_2_2",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
+    // "TC_TIMESYNC_2_4",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
+    // "TC_TIMESYNC_2_5",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
+    // "TC_TIMESYNC_2_6",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
+    // "TC_TIMESYNC_2_7",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
+    // "TC_TIMESYNC_2_8",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
+    // "TC_TIMESYNC_2_9",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
+    // "TC_TIMESYNC_2_10", // Skipped: TimeSynchronization cluster not implemented by rs-matter.
+    // "TC_TIMESYNC_2_11", // Skipped: TimeSynchronization cluster not implemented by rs-matter.
+    // "TC_TIMESYNC_2_12", // Skipped: TimeSynchronization cluster not implemented by rs-matter.
+    // "TC_TIMESYNC_2_13", // Skipped: TimeSynchronization cluster not implemented by rs-matter.
+    // "TC_TIMESYNC_3_1",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
+
+    //
+    // Python tests — ICD Management (optional system cluster)
+    //
+    // "TC_ICDM_2_1", // Skipped: ICD Management cluster not implemented by rs-matter (Intermittently Connected Devices, optional, Matter spec §9.17).
+    // "TC_ICDM_3_1", // Skipped: ICD Management cluster not implemented by rs-matter.
+    // "TC_ICDM_3_2", // Skipped: ICD Management cluster not implemented by rs-matter.
+    // "TC_ICDM_3_3", // Skipped: ICD Management cluster not implemented by rs-matter.
+    // "TC_ICDM_3_4", // Skipped: ICD Management cluster not implemented by rs-matter.
+    // "TC_ICDM_5_1", // Skipped: ICD Management cluster not implemented by rs-matter.
+    // "TC_ICDManagementCluster", // Skipped: ICD Management cluster not implemented by rs-matter.
+
+    //
+    // Python tests — Localization clusters (optional)
+    //
+    // "TC_LCFG_2_1",  // Skipped: LocalizationConfiguration cluster not implemented by rs-matter (optional, Matter spec §11.4).
+    // "TC_LTIME_3_1", // Skipped: TimeFormatLocalization cluster not implemented by rs-matter (optional, Matter spec §11.5).
+    // "TC_LUNIT_3_1", // Skipped: UnitLocalization cluster not implemented by rs-matter (optional, Matter spec §11.6).
+
+    //
+    // Python tests — Power Source (optional system cluster)
+    //
+    // "TC_PS_2_3", // Skipped: PowerSource cluster not implemented by rs-matter (optional, Matter spec §11.7).
+
+    //
+    // Python tests — Fixed Label (optional system cluster)
+    //
+    // "TC_FLABEL_2_1", // Skipped: FixedLabel cluster not implemented by rs-matter (optional, Matter spec §9.8).
+
+    //
+    // Python tests — Bridged Device Basic Information (optional, bridges)
+    //
+    // "TC_BRBINFO_3_2", // Skipped: rs-matter does not implement bridge devices (BridgedDeviceBasicInformation cluster, Matter spec §9.13).
+    // "TC_BRBINFO_4_1", // Skipped: rs-matter does not implement bridge devices.
+
+    //
+    // Python tests — Switch (optional application cluster)
+    //
+    // "TC_SWTCH", // Skipped: Switch cluster not implemented by rs-matter (Matter spec §1.13).
     //
     // Python tests — Device Attestation (commissioning)
     //
