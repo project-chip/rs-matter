@@ -85,7 +85,6 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // "TestTimeSynchronization", // Skipped: TimeSynchronization cluster not implemented by rs-matter (optional, Matter spec §11.16).
     // "TestIcdManagementCluster", // Skipped: ICD Management cluster not implemented (rs-matter doesn't ship Intermittently Connected Device support).
     "TestUnitTestingClusterMei",
-
     //
     // Python tests — Interaction Data Model (general Matter protocol)
     //
@@ -125,7 +124,6 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // `setup_class_helper`'s default to `allow_pase=False`, so the PASE
     // leg never fires and neither failure mode can.
     "TC_AccessChecker",
-
     //
     // Python tests — General & Administrator Commissioning (system clusters)
     //
@@ -252,7 +250,6 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_DGGEN_2_4",
     "TC_DGGEN_3_2",
     "TC_TestEventTrigger",
-
     //
     // Python tests — Software Diagnostics (optional system cluster)
     //
@@ -795,10 +792,7 @@ impl ITests {
             (
                 self.workspace_dir
                     .join("xtask/scripts/no_pase_setup_class_helper.py"),
-                format!(
-                    "RS_MATTER_REAL_TEST_SCRIPT={} ",
-                    script_path.display(),
-                ),
+                format!("RS_MATTER_REAL_TEST_SCRIPT={} ", script_path.display(),),
             )
         } else {
             (script_path.clone(), String::new())
@@ -921,10 +915,24 @@ impl ITests {
     /// from `--script-args`, so `MatterBaseTest` skips its `CommissionDevice`
     /// step and the test body runs against a factory-fresh device.
     fn skip_pre_commissioning(test_name: &str) -> bool {
-        // TC_SC_7_1 only does PASE establishment in the test body and
-        // explicitly asserts that no fabrics exist on the device when
-        // step 1 runs.
-        matches!(test_name, "TC_SC_7_1")
+        match test_name {
+            // TC_SC_7_1 only does PASE establishment in the test body and
+            // explicitly asserts that no fabrics exist on the device when
+            // step 1 runs.
+            "TC_SC_7_1" => true,
+            // TC_DD_1_16_17 doesn't commission at all — both
+            // `test_TC_DD_1_16` and `test_TC_DD_1_17` only mDNS-browse for
+            // the device's commissionable advertisement (`ensure_advertising`
+            // → `DiscoverCommissionableNodes` → `assert_greater_equal(...,
+            // 1)`). Commissioning the DUT first flips its mDNS service
+            // from `Commissionable` to `Commissioned` and the assertion
+            // fails on any host without a stale mDNS cache (CI runners are
+            // exactly that — they nuke their state between jobs). Upstream's
+            // own CI args for this test omit `--commissioning-method` for
+            // the same reason; we match that.
+            "TC_DD_1_16_17" => true,
+            _ => false,
+        }
     }
 
     /// Tests that need the CHIP `chip-all-clusters-app` binary built into
