@@ -20,7 +20,7 @@ use core::num::NonZeroU8;
 use core::pin::pin;
 use core::time::Duration;
 
-use embassy_futures::select::{select, select3};
+use embassy_futures::select::select3;
 use embassy_time::{Instant, Timer};
 
 use crate::acl::Accessor;
@@ -138,12 +138,6 @@ where
         &self.kv
     }
 
-    /// Return a reference to the `ChangeNotify` instance used by this data model for tracking changes in the data model
-    /// and notifying the subscription processing task about them.
-    pub const fn change_notify(&self) -> &dyn DynAttrChangeNotifier {
-        self.subscriptions
-    }
-
     /// Open the basic commissioning window.
     ///
     /// Equivalent to [`Matter::open_basic_comm_window`] but additionally
@@ -193,16 +187,18 @@ where
         // `AttrChangeNotifier` so the cluster's `Dataver` is bumped
         // too (the `Matter`-level call by itself only routes
         // subscribers and persists).
-        self.kv
-            .access(|kvb, buf| self.matter.bump_configuration_version(kvb, buf, self))
+        self.matter.bump_configuration_version(&self.kv, self)
     }
 
     /// Run the Data Model instance.
     pub async fn run(&self) -> Result<(), Error> {
         let mut timeouts = pin!(self.run_timeout_checks());
         let mut handler = pin!(self.handler.run(self));
+        let mut subs = pin!(self.process_subscriptions(self.matter));
 
-        select(&mut timeouts, &mut handler).coalesce().await
+        select3(&mut timeouts, &mut handler, &mut subs)
+            .coalesce()
+            .await
     }
 
     async fn run_timeout_checks(&self) -> Result<(), Error> {
@@ -211,16 +207,14 @@ where
         loop {
             Timer::after_secs(CHECK_INTERVAL_SECS).await;
 
-            self.timeout_checks()?;
+            self.check_timeouts()?;
         }
     }
 
-    fn timeout_checks(&self) -> Result<(), Error> {
+    fn check_timeouts(&self) -> Result<(), Error> {
         let mut notify_mdns = || self.matter.notify_mdns_changed();
-        let mut notify_change = |endpt_id, clust_id| {
-            self.change_notify()
-                .notify_cluster_changed(endpt_id, clust_id)
-        };
+        let mut notify_change =
+            |endpt_id, clust_id| self.notify_cluster_changed(endpt_id, clust_id);
 
         self.matter.with_state(|state| {
             // Disarm the failsafe on timeout
@@ -272,7 +266,7 @@ where
             None
         };
 
-        self.timeout_checks()?;
+        self.check_timeouts()?;
 
         // TODO: Handle the cases where we receive a timeout request
         // before read and subscribe. This is probably not allowed.
@@ -325,9 +319,6 @@ where
 
         let mut wb = WriteBuf::new(&mut tx);
 
-        let metadata = self.handler.lock().await;
-        let node = metadata.node();
-
         // Honor the `fabricFiltered` flag on the originating Read request.
         // When set, fabric-sensitive events emitted on other fabrics are
         // dropped before they reach the wire (Matter Core spec section 8.5.2).
@@ -335,14 +326,14 @@ where
 
         let mut resp = ReportDataResponder::new(
             &req,
-            &node,
             None,
             HandlerInvoker::new(exchange, self),
             EventReader::new(0, u64::MAX, fabric_filtered),
             self.events,
         );
 
-        resp.respond(&mut wb, true, true, |_, _, _| true).await?;
+        resp.respond(&mut wb, true, true, &self.handler, |_, _, _| true)
+            .await?;
 
         Ok(())
     }
@@ -405,12 +396,9 @@ where
 
             let mut wb = WriteBuf::new(&mut tx);
 
-            let metadata = self.handler.lock().await;
-            let node = metadata.node();
+            let mut resp = WriteResponder::new(&req, HandlerInvoker::new(exchange, self));
 
-            let mut resp = WriteResponder::new(&req, &node, HandlerInvoker::new(exchange, self));
-
-            resp.respond(&mut wb, is_groupcast).await?;
+            resp.respond(&mut wb, &self.handler, is_groupcast).await?;
 
             if req.more_chunks()? {
                 // This write request is just one of the chunks, so we need to wait and process
@@ -482,12 +470,9 @@ where
 
         let mut wb = WriteBuf::new(&mut tx);
 
-        let metadata = self.handler.lock().await;
-        let node = metadata.node();
+        let mut resp = InvokeResponder::new(&req, HandlerInvoker::new(exchange, self));
 
-        let mut resp = InvokeResponder::new(&req, &node, HandlerInvoker::new(exchange, self));
-
-        resp.respond(&mut wb, is_groupcast).await
+        resp.respond(&mut wb, &self.handler, is_groupcast).await
     }
 
     /// Respond to a `SubscribeReq` request by priming the subscription (i.e. doing an initial data report)
@@ -503,7 +488,7 @@ where
 
         let accessor = exchange.accessor()?;
 
-        if let Err(err) = self.validate_subscribe(&req, &accessor).await {
+        if let Err(err) = self.validate_subscribe(&req, &accessor) {
             error!("Invalid subscribe request: {:?}", err);
             return Self::send_status(exchange, err.code().into()).await;
         }
@@ -563,7 +548,7 @@ where
     }
 
     /// Validates the subscription request
-    async fn validate_subscribe(
+    fn validate_subscribe(
         &self,
         req: &SubscribeReq<'_>,
         accessor: &Accessor<'_>,
@@ -572,56 +557,54 @@ where
         // contains existing endpoints, clusters and attributes, and if not
         // we should (a bit surprisingly) return InvalidAction
 
-        let metadata = self.handler.lock().await;
+        self.handler.access(|node| {
+            let mut has_attrs = false;
+            let mut has_events = false;
 
-        let node = metadata.node();
+            if let Some(attr_requests) = req.attr_requests()? {
+                has_attrs = true;
 
-        let mut has_attrs = false;
-        let mut has_events = false;
+                for attr_req in attr_requests {
+                    let path = attr_req?;
 
-        if let Some(attr_requests) = req.attr_requests()? {
-            has_attrs = true;
+                    if path.is_wildcard() {
+                        Self::validate_attr_wildcard_path(&path)?;
 
-            for attr_req in attr_requests {
-                let path = attr_req?;
-
-                if path.is_wildcard() {
-                    Self::validate_attr_wildcard_path(&path)?;
-
-                    if !node.has_accessible_attr(&path, accessor) {
-                        return Err(ErrorCode::InvalidAction.into());
+                        if !node.has_accessible_attr(&path, accessor) {
+                            return Err(ErrorCode::InvalidAction.into());
+                        }
+                    } else {
+                        node.validate_attr_path(&path, false, false, accessor)
+                            .map_err(|_| ErrorCode::InvalidAction)?;
                     }
-                } else {
-                    node.validate_attr_path(&path, false, false, accessor)
-                        .map_err(|_| ErrorCode::InvalidAction)?;
                 }
             }
-        }
 
-        if let Some(event_reqs) = req.event_requests()? {
-            has_events = true;
+            if let Some(event_reqs) = req.event_requests()? {
+                has_events = true;
 
-            for event_req in event_reqs {
-                let path = event_req?;
+                for event_req in event_reqs {
+                    let path = event_req?;
 
-                if !path.is_wildcard() {
-                    node.validate_event_path(&path, accessor)
-                        .map_err(|_| ErrorCode::InvalidAction)?;
+                    if !path.is_wildcard() {
+                        node.validate_event_path(&path, accessor)
+                            .map_err(|_| ErrorCode::InvalidAction)?;
+                    }
                 }
             }
-        }
 
-        if !has_attrs && !has_events {
-            // Empty subscribe requests are not allowed either
-            return Err(ErrorCode::InvalidAction.into());
-        }
+            if !has_attrs && !has_events {
+                // Empty subscribe requests are not allowed either
+                return Err(ErrorCode::InvalidAction.into());
+            }
 
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Process all valid subscriptions in an endless loop, checking for changes
     /// and reporting them to the peers.
-    pub async fn process_subscriptions(&self, matter: &Matter<'_>) -> Result<(), Error> {
+    async fn process_subscriptions(&self, matter: &Matter<'_>) -> Result<(), Error> {
         loop {
             // TODO: Un-hardcode these 4 seconds of waiting when the more precise change detection logic is implemented
             let mut timeout = pin!(Timer::after(embassy_time::Duration::from_secs(4)));
@@ -813,9 +796,6 @@ where
             ReportDataReq::SubscribeReport(&sub_req)
         };
 
-        let metadata = self.handler.lock().await;
-        let node = metadata.node();
-
         // Honor the `fabricFiltered` flag on the originating Subscribe request.
         // When set, fabric-sensitive events emitted on other fabrics are
         // dropped before they reach the wire (Matter Core spec section 8.5.2).
@@ -823,7 +803,6 @@ where
 
         let mut resp = ReportDataResponder::new(
             &req,
-            &node,
             Some(rctx.subscription().ids().id),
             HandlerInvoker::new(exchange, self),
             EventReader::new(
@@ -835,9 +814,13 @@ where
         );
 
         let sub_valid = resp
-            .respond(&mut wb, false, rctx.should_send_if_empty(), |e, c, a| {
-                rctx.should_report_attr(e, c, a)
-            })
+            .respond(
+                &mut wb,
+                false,
+                rctx.should_send_if_empty(),
+                &self.handler,
+                |e, c, a| rctx.should_report_attr(e, c, a),
+            )
             .await?;
 
         if !sub_valid {
@@ -996,6 +979,10 @@ where
         &self.networks
     }
 
+    fn metadata(&self) -> impl Metadata + '_ {
+        &self.handler
+    }
+
     fn handler(&self) -> impl AsyncHandler + '_ {
         &self.handler
     }
@@ -1020,7 +1007,7 @@ where
             Some(cluster_id),
         ));
         self.subscriptions
-            .notify_attribute_changed(endpoint_id, cluster_id, attr_id);
+            .notify_attr_changed(endpoint_id, cluster_id, attr_id);
     }
 
     fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
@@ -1029,20 +1016,19 @@ where
             Some(cluster_id),
         ));
         self.subscriptions
-            .notify_cluster_attrs_changed(endpoint_id, cluster_id);
+            .notify_cluster_changed(endpoint_id, cluster_id);
     }
 
     fn notify_endpoint_changed(&self, endpoint_id: EndptId) {
         self.handler
             .bump_dataver(MatchContextInstance::new(Some(endpoint_id), None));
-        self.subscriptions
-            .notify_endpoint_attrs_changed(endpoint_id)
+        self.subscriptions.notify_endpoint_changed(endpoint_id)
     }
 
     fn notify_all_changed(&self) {
         self.handler
             .bump_dataver(MatchContextInstance::new(None, None));
-        self.subscriptions.notify_all_attrs_changed()
+        self.subscriptions.notify_all_changed()
     }
 }
 
@@ -1093,7 +1079,6 @@ pub enum RespondOutcome {
 /// a `Success` response from the peer after each chunk, and then continuing to send the next chunk until all data is sent.
 struct ReportDataResponder<'a, 'b, 'c, const NE: usize, C> {
     req: &'a ReportDataReq<'a>,
-    node: &'a Node<'a>,
     subscription_id: Option<u32>,
     invoker: HandlerInvoker<'b, 'c, C>,
     event_reader: EventReader,
@@ -1111,7 +1096,6 @@ where
     /// Create a new `ReportDataResponder`.
     const fn new(
         req: &'a ReportDataReq<'a>,
-        node: &'a Node<'a>,
         subscription_id: Option<u32>,
         invoker: HandlerInvoker<'b, 'c, C>,
         event_reader: EventReader,
@@ -1119,7 +1103,6 @@ where
     ) -> Self {
         Self {
             req,
-            node,
             subscription_id,
             invoker,
             event_reader,
@@ -1135,25 +1118,30 @@ where
     /// - `suppress_last_resp` - whether to suppress the response from the peer. When multiple Matter messages are
     ///   being sent due to chunking, this is valid for the last chunk only, as the others - by necessity need to have a
     ///   status response by the other peer
-    async fn respond<F>(
+    async fn respond<M, F>(
         &mut self,
         wb: &mut WriteBuf<'_>,
         suppress_last_resp: bool,
         send_if_empty: bool,
+        metadata: M,
         mut filter: F,
     ) -> Result<bool, Error>
     where
+        M: Metadata,
         F: FnMut(EndptId, ClusterId, u32) -> bool,
     {
         let mut empty = true;
 
         self.start_reply(wb)?;
 
-        if !self.report_attributes(wb, &mut empty, &mut filter).await? {
+        if !self
+            .report_attributes(wb, &mut empty, &metadata, &mut filter)
+            .await?
+        {
             return Ok(false);
         }
 
-        if !self.report_events(wb, &mut empty).await? {
+        if !self.report_events(wb, &mut empty, &metadata).await? {
             return Ok(false);
         }
 
@@ -1167,13 +1155,15 @@ where
         }
     }
 
-    async fn report_attributes<F>(
+    async fn report_attributes<M, F>(
         &mut self,
         wb: &mut WriteBuf<'_>,
         empty: &mut bool,
+        metadata: M,
         mut filter: F,
     ) -> Result<bool, Error>
     where
+        M: Metadata,
         F: FnMut(EndptId, ClusterId, u32) -> bool,
     {
         let accessor = self.invoker.exchange().accessor()?;
@@ -1181,7 +1171,7 @@ where
         if self.req.attr_requests()?.is_some() {
             wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))?;
 
-            for item in self.node.read(self.req, &accessor, &mut filter)? {
+            for item in expand_read(&metadata, self.req, &accessor, &mut filter)? {
                 let item = item?;
 
                 *empty = false;
@@ -1196,13 +1186,7 @@ where
                                 attr.list_index.is_none()
                                     // The whole attribute is requested
                                     // Check if it is an array, and if so, send it as individual items instead
-                                    && self
-                                        .node
-                                        .endpoint(attr.endpoint_id)
-                                        .and_then(|e| e.cluster(attr.cluster_id))
-                                        .and_then(|c| c.attribute(attr.attr_id))
-                                        .map(|a| a.quality.contains(Quality::ARRAY))
-                                        .unwrap_or(false)
+                                    && attr.array
                             });
 
                             if let Some(array_attr) = array_attr {
@@ -1232,11 +1216,15 @@ where
         Ok(true)
     }
 
-    async fn report_events(
+    async fn report_events<M>(
         &mut self,
         wb: &mut WriteBuf<'_>,
         empty: &mut bool,
-    ) -> Result<bool, Error> {
+        metadata: M,
+    ) -> Result<bool, Error>
+    where
+        M: Metadata,
+    {
         let accessor = self.invoker.exchange().accessor()?;
 
         if let Some(event_reqs) = self.req.event_requests()? {
@@ -1248,7 +1236,9 @@ where
                 let path = event_req?;
 
                 if !path.is_wildcard() {
-                    if let Err(status) = self.node.validate_event_path(&path, &accessor) {
+                    if let Err(status) =
+                        metadata.access(|node| node.validate_event_path(&path, &accessor))
+                    {
                         if matches!(status, IMStatusCode::UnsupportedEvent) {
                             // Event does not exist on this endpoint
                             // TODO: Look at TestEventsById.yaml
@@ -1285,28 +1275,30 @@ where
 
             loop {
                 let finished = self.events.fetch(|events| {
-                    for event in events {
-                        let result = self.event_reader.process_read(
-                            event,
-                            &event_reqs,
-                            &event_filters,
-                            self.node,
-                            &accessor,
-                            &mut *wb,
-                        );
+                    metadata.access(|node| {
+                        for event in events {
+                            let result = self.event_reader.process_read(
+                                event,
+                                &event_reqs,
+                                &event_filters,
+                                node,
+                                &accessor,
+                                &mut *wb,
+                            );
 
-                        if let Err(e) = &result {
-                            if e.code() == ErrorCode::NoSpace {
-                                return Ok::<_, Error>(false);
+                            if let Err(e) = &result {
+                                if e.code() == ErrorCode::NoSpace {
+                                    return Ok::<_, Error>(false);
+                                }
+                            }
+
+                            if result? {
+                                *empty = false;
                             }
                         }
 
-                        if result? {
-                            *empty = false;
-                        }
-                    }
-
-                    Ok(true)
+                        Ok(true)
+                    })
                 })?;
 
                 if finished {
@@ -1337,7 +1329,7 @@ where
     /// - `wb` - the buffer to use while sending the items
     async fn send_array_items(
         &mut self,
-        attr: &AttrDetails<'_>,
+        attr: &AttrDetails,
         wb: &mut WriteBuf<'_>,
     ) -> Result<bool, Error> {
         let mut attr = attr.clone();
@@ -1550,7 +1542,6 @@ enum ReportDataChunkState {
 /// for all the chunks of the write request, until the `WriteReq::more_chunks()` returns `false`.
 struct WriteResponder<'a, 'b, 'c, C> {
     req: &'a WriteReq<'a>,
-    node: &'a Node<'a>,
     invoker: HandlerInvoker<'b, 'c, C>,
 }
 
@@ -1559,17 +1550,21 @@ where
     C: HandlerContext,
 {
     /// Create a new `WriteResponder`.
-    const fn new(
-        req: &'a WriteReq<'a>,
-        node: &'a Node<'a>,
-        invoker: HandlerInvoker<'b, 'c, C>,
-    ) -> Self {
-        Self { req, node, invoker }
+    const fn new(req: &'a WriteReq<'a>, invoker: HandlerInvoker<'b, 'c, C>) -> Self {
+        Self { req, invoker }
     }
 
     /// Respond to the write request by processing each write attribute in the request
     /// and sending a response back.
-    async fn respond(&mut self, wb: &mut WriteBuf<'_>, suppress_resp: bool) -> Result<(), Error> {
+    async fn respond<M>(
+        &mut self,
+        wb: &mut WriteBuf<'_>,
+        metadata: M,
+        suppress_resp: bool,
+    ) -> Result<(), Error>
+    where
+        M: Metadata,
+    {
         let accessor = self.invoker.exchange().accessor()?;
 
         wb.reset();
@@ -1577,7 +1572,7 @@ where
         wb.start_struct(&TLVTag::Anonymous)?;
         wb.start_array(&TLVTag::Context(WriteRespTag::WriteResponses as u8))?;
 
-        for item in self.node.write(self.req, &accessor)? {
+        for item in expand_write(metadata, self.req, &accessor)? {
             self.invoker.process_write(&item?, &mut *wb).await?;
         }
 
@@ -1607,7 +1602,6 @@ where
 /// the responder will send 3 Matter messages, each containing a single command response.
 struct InvokeResponder<'a, 'b, 'c, C> {
     req: &'a InvReq<'a>,
-    node: &'a Node<'a>,
     invoker: HandlerInvoker<'b, 'c, C>,
 }
 
@@ -1616,17 +1610,21 @@ where
     C: HandlerContext,
 {
     /// Create a new `InvokeResponder`.
-    const fn new(
-        req: &'a InvReq<'a>,
-        node: &'a Node<'a>,
-        invoker: HandlerInvoker<'b, 'c, C>,
-    ) -> Self {
-        Self { req, node, invoker }
+    const fn new(req: &'a InvReq<'a>, invoker: HandlerInvoker<'b, 'c, C>) -> Self {
+        Self { req, invoker }
     }
 
     /// Respond to the invoke request by processing each command in the request
     /// and sending one or more reponses back.
-    async fn respond(&mut self, wb: &mut WriteBuf<'_>, suppress_resp: bool) -> Result<(), Error> {
+    async fn respond<M>(
+        &mut self,
+        wb: &mut WriteBuf<'_>,
+        metadata: M,
+        suppress_resp: bool,
+    ) -> Result<(), Error>
+    where
+        M: Metadata,
+    {
         wb.reset();
 
         wb.start_struct(&TLVTag::Anonymous)?;
@@ -1645,7 +1643,7 @@ where
 
         let accessor = self.invoker.exchange().accessor()?;
 
-        for item in self.node.invoke(self.req, &accessor)? {
+        for item in expand_invoke(metadata, self.req, &accessor)? {
             self.invoker.process_invoke(&item?, &mut *wb).await?;
         }
 

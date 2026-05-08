@@ -55,8 +55,7 @@ use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, WifiNetworks};
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher,
-    Node,
+    Async, DataModel, DataModelHandler, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -197,7 +196,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
 
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, dm.change_notify())?;
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &())?;
 
         // BLE commissioning via BlueZ is Linux-only.
         #[cfg(not(target_os = "linux"))]
@@ -277,7 +276,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     wifi_diag: &'a dyn WifiDiag,
     net_ctl: T,
-) -> impl AsyncMetadata + AsyncHandler + 'a
+) -> impl DataModelHandler + 'a
 where
     T: NetCtl + NetCtlStatus + 'a,
 {

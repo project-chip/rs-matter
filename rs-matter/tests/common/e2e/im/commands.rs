@@ -16,7 +16,7 @@
  */
 
 use rs_matter::crypto::Crypto;
-use rs_matter::dm::{AsyncHandler, AsyncMetadata};
+use rs_matter::dm::DataModelHandler;
 use rs_matter::error::Error;
 use rs_matter::im::{CmdPath, CmdStatus};
 use rs_matter::tlv::{TLVTag, TLVWrite};
@@ -161,7 +161,7 @@ impl<C: Crypto> E2eRunner<C> {
         input: &'a [TestCmdData<'a>],
         expected: &'a [TestCmdResp<'a>],
     ) where
-        H: AsyncHandler + AsyncMetadata,
+        H: DataModelHandler,
     {
         self.test_one(handler, TLVTest::inv_cmds(input, expected))
     }

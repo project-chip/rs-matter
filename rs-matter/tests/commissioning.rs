@@ -56,14 +56,12 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::DummyNetworkAccess;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::dm::endpoints;
 use rs_matter::dm::events::NoEvents;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
-use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher,
-    Node,
+    endpoints, Async, DataModel, DataModelHandler, Dataver, EmptyHandler, Endpoint, EpClMatcher,
+    IMBuffer, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::im::client::ImClient;
@@ -137,7 +135,7 @@ const NODE: Node<'static> = Node {
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
-) -> impl AsyncMetadata + AsyncHandler + 'a {
+) -> impl DataModelHandler + 'a {
     (
         NODE,
         endpoints::with_eth_sys(

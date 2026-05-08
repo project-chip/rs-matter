@@ -22,12 +22,13 @@ use core::fmt::{self, Debug};
 use strum::FromRepr;
 
 use crate::attribute_enum;
+use crate::dm::Metadata;
 use crate::error::{Error, ErrorCode};
 use crate::im::{AttrPath, AttrStatus, IMStatusCode};
 use crate::tlv::{AsNullable, FromTLV, Nullable, TLVBuilder, TLVBuilderParent, TLVElement, TLVTag};
 use crate::utils::maybe::Maybe;
 
-use super::{Access, AttrId, Cluster, ClusterId, EndptId, Node, Quality};
+use super::{Access, AttrId, Cluster, ClusterId, EndptId, Quality};
 
 /// A type modeling the attribute meta-data in the Matter data model.
 #[derive(Debug, Clone)]
@@ -246,9 +247,7 @@ impl<T, E> ArrayAttributeWrite<T, E> {
 /// This type is built by the Data Model during the expansion of the attributes in the `Read` and `Write` IM actions
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct AttrDetails<'a> {
-    /// The node meta-data
-    pub node: &'a Node<'a>,
+pub struct AttrDetails {
     /// The concrete (expanded) endpoint ID
     pub endpoint_id: EndptId,
     /// The concrete (expanded) cluster ID
@@ -257,7 +256,7 @@ pub struct AttrDetails<'a> {
     pub attr_id: AttrId,
     /// List index, if any
     pub list_index: Option<Nullable<u16>>,
-    /// Valid only when the operation is attrubute read of
+    /// Valid only when the operation is attribute read of
     /// an individual array item
     /// When `true`, the path written to the output will contain
     /// `null` as a list index. This is necessary when we are returning
@@ -269,8 +268,10 @@ pub struct AttrDetails<'a> {
     pub fab_filter: bool,
     /// Attribute expected data version (when writing)
     pub dataver: Option<u32>,
-    /// Whether the original attribute was a wildcard one
+    /// Whether the original attribute path was a wildcard one
     pub wildcard: bool,
+    /// Whether the attribute is an array
+    pub array: bool,
     /// Cluster-specific status to stamp into the response `StatusIB.clusterStatus`
     /// for this attribute read or write. `0` means "no cluster status" (the
     /// reserved `kSuccess` value in Matter cluster-status enums).
@@ -284,7 +285,7 @@ pub struct AttrDetails<'a> {
     pub cluster_status: Cell<u8>,
 }
 
-impl AttrDetails<'_> {
+impl AttrDetails {
     /// Return `true` if the attribute is a system one (i.e. a global attribute).
     pub const fn is_system(&self) -> bool {
         Attribute::is_system_attr(self.attr_id)
@@ -312,14 +313,25 @@ impl AttrDetails<'_> {
         }
     }
 
-    pub fn cluster(&self) -> Result<&Cluster<'_>, Error> {
-        self.node
-            .endpoint(self.endpoint_id)
-            .and_then(|endpoint| endpoint.cluster(self.cluster_id))
-            .ok_or_else(|| {
-                error!("Cluster not found");
-                ErrorCode::ClusterNotFound.into()
-            })
+    /// Access the cluster associated with this attribute read/write operation.
+    ///
+    /// Utility method used by the codegen cluster handlers.
+    pub fn cluster<M, F, R>(&self, metadata: M, f: F) -> Result<R, Error>
+    where
+        M: Metadata,
+        F: FnOnce(&Cluster) -> Result<R, Error>,
+    {
+        metadata.access(|node| {
+            let cluster = node
+                .endpoint(self.endpoint_id)
+                .and_then(|endpoint| endpoint.cluster(self.cluster_id))
+                .ok_or_else(|| {
+                    error!("Cluster not found");
+                    Error::new(ErrorCode::ClusterNotFound)
+                })?;
+
+            f(cluster)
+        })
     }
 
     /// Stamp a cluster-specific status code onto this attribute access. The

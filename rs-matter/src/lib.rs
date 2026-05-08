@@ -32,8 +32,11 @@
 use core::future::Future;
 
 use crate::crypto::Crypto;
+use crate::dm::clusters::basic_info::AttributeId;
+use crate::dm::clusters::basic_info::FULL_CLUSTER as BASIC_INFO_CLUSTER;
 use crate::dm::clusters::basic_info::{BasicInfoConfig, BasicInfoSettings};
 use crate::dm::clusters::dev_att::DeviceAttestation;
+use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::AttrChangeNotifier;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::Fabrics;
@@ -43,6 +46,9 @@ use crate::pairing::qr::{
 };
 use crate::pairing::DiscoveryCapabilities;
 use crate::persist::KvBlobStore;
+use crate::persist::KvBlobStoreAccess;
+use crate::persist::Persist;
+use crate::persist::BASIC_INFO_KEY;
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
 use crate::sc::pase::Pase;
 use crate::transport::network::mdns::MatterService;
@@ -498,45 +504,30 @@ impl<'a> Matter<'a> {
     /// [`AttrChangeNotifier`] impl.
     ///
     /// Returns the new `ConfigurationVersion` value.
-    pub fn bump_configuration_version<S: KvBlobStore>(
+    pub fn bump_configuration_version<S: KvBlobStoreAccess>(
         &self,
-        mut kv: S,
-        buf: &mut [u8],
+        kv: S,
         notify: &dyn AttrChangeNotifier,
     ) -> Result<u32, Error> {
-        use crate::dm::clusters::basic_info::AttributeId;
-        use crate::dm::clusters::basic_info::FULL_CLUSTER as BASIC_INFO_CLUSTER;
-        use crate::dm::endpoints::ROOT_ENDPOINT_ID;
-        use crate::persist::BASIC_INFO_KEY;
-        use crate::tlv::{TLVTag, ToTLV};
-        use crate::utils::storage::WriteBuf;
+        let mut persist = Persist::new(kv);
 
-        let new_v = self.with_state(|state| {
-            Ok::<_, Error>(state.basic_info_settings.bump_configuration_version())
+        let new_version = self.with_state(|state| {
+            let new_version = state.basic_info_settings.bump_configuration_version();
+
+            persist.store_tlv(BASIC_INFO_KEY, &state.basic_info_settings)?;
+
+            notify.notify_attr_changed(
+                ROOT_ENDPOINT_ID,
+                BASIC_INFO_CLUSTER.id,
+                AttributeId::ConfigurationVersion as _,
+            );
+
+            Ok::<_, Error>(new_version)
         })?;
 
-        // Serialise the (mutated) `BasicInfoSettings` blob into the
-        // caller's scratch buffer, then hand the encoded prefix to the
-        // KV store. Same on-disk key (`BASIC_INFO_KEY`) NodeLabel and
-        // friends use, so a future `Matter::load_persist` reads the
-        // bumped value back.
-        let len = self.with_state(|state| {
-            let mut wb = WriteBuf::new(buf);
-            state
-                .basic_info_settings
-                .to_tlv(&TLVTag::Anonymous, &mut wb)?;
-            Ok::<_, Error>(wb.get_tail())
-        })?;
-        let (data, scratch) = buf.split_at_mut(len);
-        kv.store(BASIC_INFO_KEY, data, scratch)?;
+        persist.run()?;
 
-        notify.notify_attr_changed(
-            ROOT_ENDPOINT_ID,
-            BASIC_INFO_CLUSTER.id,
-            AttributeId::ConfigurationVersion as crate::dm::AttrId,
-        );
-
-        Ok(new_v)
+        Ok(new_version)
     }
 
     /// Create a new transport runner instance

@@ -189,7 +189,7 @@ fn run() -> Result<(), Error> {
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
 
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, crypto, dm.change_notify())?;
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, crypto, &())?;
     }
 
     let executor = async_executor::Executor::new();

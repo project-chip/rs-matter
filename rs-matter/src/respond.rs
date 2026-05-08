@@ -19,7 +19,7 @@ use core::fmt::Display;
 use core::future::Future;
 use core::pin::pin;
 
-use embassy_futures::select::{select3, select_slice};
+use embassy_futures::select::{select, select_slice};
 
 use crate::crypto::Crypto;
 use crate::dm::clusters::net_comm;
@@ -262,7 +262,7 @@ where
             ChainedExchangeHandler::new(
                 PROTO_ID_INTERACTION_MODEL,
                 data_model,
-                SecureChannel::new(data_model.crypto(), data_model.change_notify()),
+                SecureChannel::new(data_model.crypto(), data_model),
             ),
             data_model.matter(),
             0,
@@ -326,9 +326,8 @@ where
     pub async fn run<const A: usize, const O: usize>(&self) -> Result<(), Error> {
         let mut actual = pin!(self.responder.run::<A>());
         let mut busy = pin!(self.busy_responder.run::<O>());
-        let mut sub = pin!(self.process_subscriptions());
 
-        select3(&mut actual, &mut busy, &mut sub).coalesce().await
+        select(&mut actual, &mut busy).coalesce().await
     }
 
     /// Get a reference to the main responder.
@@ -351,18 +350,5 @@ where
         &self,
     ) -> &Responder<'a, ChainedExchangeHandler<BusyInteractionModel, BusySecureChannel>> {
         &self.busy_responder
-    }
-
-    /// Process subscriptions.
-    ///
-    /// Useful when the user would like to call `process_subscriptions` manually rather than using the `run` method.
-    pub async fn process_subscriptions(&self) -> Result<(), Error> {
-        let mut process = pin!(self
-            .responder
-            .handler()
-            .handler
-            .process_subscriptions(self.responder.matter));
-
-        (&mut process).await
     }
 }

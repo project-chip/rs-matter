@@ -69,6 +69,7 @@
 //! lists.
 
 use core::cell::RefCell;
+use core::future::Future;
 
 use heapless::String as HString;
 
@@ -190,10 +191,7 @@ pub trait CamAvSettingsHooks {
     ///
     /// On `Err` the handler rolls back its internal `MPTZPosition`
     /// snapshot to the prior value.
-    fn mptz_apply(
-        &self,
-        target: &Mptz,
-    ) -> impl core::future::Future<Output = Result<(), CamAvSettingsError>> {
+    fn mptz_apply(&self, target: &Mptz) -> impl Future<Output = Result<(), CamAvSettingsError>> {
         async { Ok(()) }
     }
 
@@ -201,10 +199,7 @@ pub trait CamAvSettingsHooks {
     /// handler has validated `x1<x2`, `y1<y2`. Hardware-specific
     /// per-stream bounds (resolution caps, aspect-ratio constraints)
     /// are the implementation's responsibility.
-    fn dptz_apply(
-        &self,
-        view: &DptzView,
-    ) -> impl core::future::Future<Output = Result<(), CamAvSettingsError>> {
+    fn dptz_apply(&self, view: &DptzView) -> impl Future<Output = Result<(), CamAvSettingsError>> {
         async { Ok(()) }
     }
 
@@ -215,7 +210,7 @@ pub trait CamAvSettingsHooks {
     fn preset_saved(
         &self,
         preset: &MptzPreset,
-    ) -> impl core::future::Future<Output = Result<(), CamAvSettingsError>> {
+    ) -> impl Future<Output = Result<(), CamAvSettingsError>> {
         async { Ok(()) }
     }
 
@@ -223,8 +218,35 @@ pub trait CamAvSettingsHooks {
     fn preset_removed(
         &self,
         preset_id: u8,
-    ) -> impl core::future::Future<Output = Result<(), CamAvSettingsError>> {
+    ) -> impl Future<Output = Result<(), CamAvSettingsError>> {
         async { Ok(()) }
+    }
+}
+
+impl<T> CamAvSettingsHooks for &T
+where
+    T: CamAvSettingsHooks,
+{
+    fn mptz_apply(&self, target: &Mptz) -> impl Future<Output = Result<(), CamAvSettingsError>> {
+        (**self).mptz_apply(target)
+    }
+
+    fn dptz_apply(&self, view: &DptzView) -> impl Future<Output = Result<(), CamAvSettingsError>> {
+        (**self).dptz_apply(view)
+    }
+
+    fn preset_saved(
+        &self,
+        preset: &MptzPreset,
+    ) -> impl Future<Output = Result<(), CamAvSettingsError>> {
+        (**self).preset_saved(preset)
+    }
+
+    fn preset_removed(
+        &self,
+        preset_id: u8,
+    ) -> impl Future<Output = Result<(), CamAvSettingsError>> {
+        (**self).preset_removed(preset_id)
     }
 }
 

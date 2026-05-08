@@ -72,6 +72,7 @@
 //!   Each is a follow-up.
 
 use core::cell::{Cell, RefCell};
+use core::future::Future;
 
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, EndptId, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
@@ -209,10 +210,7 @@ pub trait CameraAvStreamHooks {
     ///
     /// `stream` carries the just-assigned `video_stream_id` and the
     /// validated parameters. `reference_count` is always 0 here.
-    fn allocate_video(
-        &self,
-        stream: &VideoStream,
-    ) -> impl core::future::Future<Output = Result<(), CamAvError>>;
+    fn allocate_video(&self, stream: &VideoStream) -> impl Future<Output = Result<(), CamAvError>>;
 
     /// Called when a controller requests `VideoStreamModify`.
     ///
@@ -226,14 +224,39 @@ pub trait CameraAvStreamHooks {
         video_stream_id: u16,
         watermark_enabled: Option<bool>,
         osd_enabled: Option<bool>,
-    ) -> impl core::future::Future<Output = Result<(), CamAvError>>;
+    ) -> impl Future<Output = Result<(), CamAvError>>;
 
     /// Called when a controller requests `VideoStreamDeallocate` AND
     /// the handler has confirmed the stream's reference count is zero.
     fn deallocate_video(
         &self,
         video_stream_id: u16,
-    ) -> impl core::future::Future<Output = Result<(), CamAvError>>;
+    ) -> impl Future<Output = Result<(), CamAvError>>;
+}
+
+impl<T> CameraAvStreamHooks for &T
+where
+    T: CameraAvStreamHooks,
+{
+    fn allocate_video(&self, stream: &VideoStream) -> impl Future<Output = Result<(), CamAvError>> {
+        (*self).allocate_video(stream)
+    }
+
+    fn modify_video(
+        &self,
+        video_stream_id: u16,
+        watermark_enabled: Option<bool>,
+        osd_enabled: Option<bool>,
+    ) -> impl Future<Output = Result<(), CamAvError>> {
+        (*self).modify_video(video_stream_id, watermark_enabled, osd_enabled)
+    }
+
+    fn deallocate_video(
+        &self,
+        video_stream_id: u16,
+    ) -> impl Future<Output = Result<(), CamAvError>> {
+        (*self).deallocate_video(video_stream_id)
+    }
 }
 
 /// Maximum number of `StreamUsageEnum` entries the handler will hold for

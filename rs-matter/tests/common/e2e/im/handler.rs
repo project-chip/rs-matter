@@ -25,9 +25,8 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints::{with_eth_sys, EthSysHandler, ROOT_ENDPOINT_ID};
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, ChainedHandler, Dataver, EmptyHandler, Endpoint,
-    EpClMatcher, InvokeContext, InvokeReply, MatchContext, Node, ReadContext, ReadReply,
-    WriteContext,
+    Async, AsyncHandler, ChainedHandler, Dataver, EmptyHandler, Endpoint, EpClMatcher,
+    InvokeContext, InvokeReply, MatchContext, Metadata, Node, ReadContext, ReadReply, WriteContext,
 };
 use rs_matter::error::Error;
 use rs_matter::{clusters, handler_chain_type};
@@ -129,14 +128,12 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> AsyncHandler for E2eTestHandler<
     }
 }
 
-impl<'a, OH: OnOffHooks, LH: LevelControlHooks> AsyncMetadata for E2eTestHandler<'a, OH, LH> {
-    type MetadataGuard<'g>
-        = Node<'g>
+impl<'a, OH: OnOffHooks, LH: LevelControlHooks> Metadata for E2eTestHandler<'a, OH, LH> {
+    fn access<F, R>(&self, f: F) -> R
     where
-        Self: 'g;
-
-    async fn lock(&self) -> Self::MetadataGuard<'_> {
-        Self::NODE
+        F: FnOnce(&Node<'_>) -> R,
+    {
+        f(&Self::NODE)
     }
 }
 

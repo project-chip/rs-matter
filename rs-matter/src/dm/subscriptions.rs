@@ -19,9 +19,7 @@ use core::num::NonZeroU8;
 
 use embassy_time::Instant;
 
-use crate::dm::{
-    AttrChangeNotifier, AttrId, ClusterId, EndptId, EventId, EventNumber, IMBuffer, NodeId,
-};
+use crate::dm::{AttrId, ClusterId, EndptId, EventId, EventNumber, IMBuffer, NodeId};
 use crate::fabric::MAX_FABRICS;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -134,7 +132,7 @@ impl<const N: usize> Subscriptions<N> {
     /// - `endpoint_id`: The endpoint ID of the cluster that had changed.
     /// - `cluster_id`: The cluster ID of the cluster that had changed.
     /// - `attr_id`: The attribute ID of the attribute that changed.
-    pub(crate) fn notify_attribute_changed(
+    pub(crate) fn notify_attr_changed(
         &self,
         endpoint_id: EndptId,
         cluster_id: ClusterId,
@@ -157,7 +155,7 @@ impl<const N: usize> Subscriptions<N> {
     /// Record a cluster-wide change. Every attribute of `(endpoint_id,
     /// cluster_id)` is treated as changed for the purposes of subscription
     /// reporting.
-    pub(crate) fn notify_cluster_attrs_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
+    pub(crate) fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
         self.state.lock(|internal| {
             internal
                 .borrow_mut()
@@ -171,7 +169,7 @@ impl<const N: usize> Subscriptions<N> {
     /// Record an endpoint-wide change. Every attribute on every cluster of
     /// `endpoint_id` is treated as changed for the purposes of subscription
     /// reporting.
-    pub(crate) fn notify_endpoint_attrs_changed(&self, endpoint_id: EndptId) {
+    pub(crate) fn notify_endpoint_changed(&self, endpoint_id: EndptId) {
         self.state.lock(|internal| {
             internal
                 .borrow_mut()
@@ -185,7 +183,7 @@ impl<const N: usize> Subscriptions<N> {
     /// Record a fully-global change. Every attribute on every cluster on
     /// every endpoint is treated as changed for the purposes of subscription
     /// reporting. Intended for coarse-grained reset / restart scenarios.
-    pub(crate) fn notify_all_attrs_changed(&self) {
+    pub(crate) fn notify_all_changed(&self) {
         self.state.lock(|internal| {
             internal
                 .borrow_mut()
@@ -413,24 +411,6 @@ impl<const N: usize> Subscriptions<N> {
 impl<const N: usize> Default for Subscriptions<N> {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl<const N: usize> AttrChangeNotifier for Subscriptions<N> {
-    fn notify_attr_changed(&self, endpt: EndptId, clust: ClusterId, attr: AttrId) {
-        Subscriptions::<N>::notify_attribute_changed(self, endpt, clust, attr);
-    }
-
-    fn notify_cluster_changed(&self, endpt: EndptId, clust: ClusterId) {
-        Subscriptions::<N>::notify_cluster_attrs_changed(self, endpt, clust);
-    }
-
-    fn notify_endpoint_changed(&self, endpt: EndptId) {
-        Subscriptions::<N>::notify_endpoint_attrs_changed(self, endpt);
-    }
-
-    fn notify_all_changed(&self) {
-        Subscriptions::<N>::notify_all_attrs_changed(self);
     }
 }
 
@@ -1919,7 +1899,7 @@ mod tests {
 
         let now = Instant::now();
 
-        subs.notify_attribute_changed(1, 2, 3);
+        subs.notify_attr_changed(1, 2, 3);
         {
             let mut rctx = subs
                 .add(
@@ -1946,7 +1926,7 @@ mod tests {
         }
 
         // A new change bumps the watermark and becomes pending.
-        subs.notify_attribute_changed(1, 2, 4);
+        subs.notify_attr_changed(1, 2, 4);
         // `min_int` = 1s has not elapsed at `now`, so the subscription is not
         // yet report-allowed; step past it.
         let later = now + Duration::from_secs(2);
@@ -2063,7 +2043,7 @@ mod tests {
         }
 
         // Record one attribute change — watermark advances to 1.
-        subs.notify_attribute_changed(1, 2, 3);
+        subs.notify_attr_changed(1, 2, 3);
 
         // At the same instant, min_int (1s) has NOT elapsed so the sub is not
         // report-allowed: even though there is a pending change, `report()`
@@ -2287,7 +2267,7 @@ mod tests {
         // Start an incremental report and, while it is "in flight", issue
         // a `remove` that matches the in-flight subscription. Also flip
         // `set_keep` to verify the cancel flag wins over `keep`.
-        subs.notify_attribute_changed(1, 2, 3);
+        subs.notify_attr_changed(1, 2, 3);
         let later = now + Duration::from_secs(2);
         {
             let mut rctx = subs.report(later, 0, &subs_bufs).unwrap();
@@ -2337,7 +2317,7 @@ mod tests {
             rctx.set_keep();
         }
 
-        subs.notify_attribute_changed(1, 2, 3);
+        subs.notify_attr_changed(1, 2, 3);
         let later = now + Duration::from_secs(2);
         {
             let mut rctx = subs.report(later, 0, &subs_bufs).unwrap();
@@ -2379,8 +2359,8 @@ mod tests {
         }
 
         // Record two changes. Watermark becomes 2.
-        subs.notify_attribute_changed(1, 2, 3); // id 1
-        subs.notify_attribute_changed(1, 2, 4); // id 2
+        subs.notify_attr_changed(1, 2, 3); // id 1
+        subs.notify_attr_changed(1, 2, 4); // id 2
 
         // Advance both subs to watermark 2 via two `report` + keep cycles.
         let later = base + Duration::from_secs(2);
@@ -2398,7 +2378,7 @@ mod tests {
         assert!(subs.report(later, 0, &subs_bufs).is_none());
 
         // A brand new change becomes pending again post-purge.
-        subs.notify_attribute_changed(5, 6, 7);
+        subs.notify_attr_changed(5, 6, 7);
         let even_later = later + Duration::from_secs(2);
         {
             let mut rctx = subs.report(even_later, 0, &subs_bufs).unwrap();

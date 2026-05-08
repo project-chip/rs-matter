@@ -468,7 +468,7 @@ fn main() -> ! {
         unwrap!(stack.matter.open_basic_comm_window(
             MAX_COMM_WINDOW_TIMEOUT_SECS,
             crypto,
-            dm.change_notify()
+            &(),
         ));
     }
 

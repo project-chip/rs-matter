@@ -86,7 +86,7 @@ where
 
     pub async fn process_read<T: TLVWrite + Send>(
         &mut self,
-        item: &Result<AttrDetails<'_>, AttrStatus>,
+        item: &Result<AttrDetails, AttrStatus>,
         mut tw: T,
     ) -> Result<(), Error> {
         let tail = tw.get_tail();
@@ -103,7 +103,7 @@ where
 
     async fn do_process_read<T: TLVWrite + Send>(
         &mut self,
-        item: &Result<AttrDetails<'_>, AttrStatus>,
+        item: &Result<AttrDetails, AttrStatus>,
         mut tw: T,
     ) -> Result<(), Error> {
         let result = match item {
@@ -139,7 +139,7 @@ where
 
     pub async fn read<T: TLVWrite + Send>(
         &mut self,
-        attr: &AttrDetails<'_>,
+        attr: &AttrDetails,
         tw: T,
     ) -> Result<(), Error> {
         self.context
@@ -153,7 +153,7 @@ where
 
     pub async fn process_write<T: TLVWrite>(
         &mut self,
-        item: &Result<(AttrDetails<'_>, TLVElement<'_>), AttrStatus>,
+        item: &Result<(AttrDetails, TLVElement<'_>), AttrStatus>,
         mut tw: T,
     ) -> Result<(), Error> {
         let tail = tw.get_tail();
@@ -170,7 +170,7 @@ where
 
     async fn do_process_write<T: TLVWrite>(
         &mut self,
-        item: &Result<(AttrDetails<'_>, TLVElement<'_>), AttrStatus>,
+        item: &Result<(AttrDetails, TLVElement<'_>), AttrStatus>,
         mut tw: T,
     ) -> Result<(), Error> {
         let result = match item {
@@ -216,11 +216,7 @@ where
         }
     }
 
-    pub async fn write(
-        &mut self,
-        attr: &AttrDetails<'_>,
-        data: &TLVElement<'_>,
-    ) -> Result<(), Error> {
+    pub async fn write(&mut self, attr: &AttrDetails, data: &TLVElement<'_>) -> Result<(), Error> {
         self.context
             .handler()
             .write(WriteContextInstance::new(
@@ -234,7 +230,7 @@ where
 
     pub async fn process_invoke<T: TLVWrite + Send>(
         &mut self,
-        item: &Result<(CmdDetails<'_>, TLVElement<'_>), CmdStatus>,
+        item: &Result<(CmdDetails, TLVElement<'_>), CmdStatus>,
         mut tw: T,
     ) -> Result<(), Error> {
         let tail = tw.get_tail();
@@ -251,7 +247,7 @@ where
 
     async fn do_process_invoke<T: TLVWrite + Send>(
         &mut self,
-        item: &Result<(CmdDetails<'_>, TLVElement<'_>), CmdStatus>,
+        item: &Result<(CmdDetails, TLVElement<'_>), CmdStatus>,
         mut tw: T,
     ) -> Result<(), Error> {
         let result = match item {
@@ -293,7 +289,7 @@ where
 
     pub async fn invoke<T: TLVWrite + Send>(
         &mut self,
-        cmd: &CmdDetails<'_>,
+        cmd: &CmdDetails,
         data: &TLVElement<'_>,
         tw: T,
     ) -> Result<(), Error> {

@@ -19,7 +19,7 @@
 
 use core::fmt::Debug;
 
-use crate::dm::{ArrayAttributeRead, Cluster, Dataver, Endpoint, EndptId, ReadContext};
+use crate::dm::{ArrayAttributeRead, Cluster, Dataver, Endpoint, EndptId, Metadata, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVBuilderParent, ToTLVArrayBuilder, ToTLVBuilder};
 use crate::utils::sync::DynBase;
@@ -116,11 +116,19 @@ impl<'a> DescHandler<'a> {
         HandlerAdaptor(self)
     }
 
-    fn endpoint<'b>(ctx: &'b impl ReadContext) -> Result<&'b Endpoint<'b>, Error> {
-        ctx.attr()
-            .node
-            .endpoint(ctx.attr().endpoint_id)
-            .ok_or_else(|| ErrorCode::EndpointNotFound.into())
+    fn with_endpoint<F, R>(ctx: impl ReadContext, f: F) -> Result<R, Error>
+    where
+        F: FnOnce(&Endpoint) -> Result<R, Error>,
+    {
+        let metadata = ctx.metadata();
+
+        metadata.access(|node| {
+            let endpoint = node
+                .endpoint(ctx.attr().endpoint_id)
+                .ok_or_else(|| Error::new(ErrorCode::EndpointNotFound))?;
+
+            f(endpoint)
+        })
     }
 }
 
@@ -140,9 +148,7 @@ impl ClusterHandler for DescHandler<'_> {
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<DeviceTypeStructArrayBuilder<P>, DeviceTypeStructBuilder<P>>,
     ) -> Result<P, Error> {
-        let endpoint = Self::endpoint(&ctx)?;
-
-        match builder {
+        Self::with_endpoint(ctx, |endpoint| match builder {
             ArrayAttributeRead::ReadAll(mut builder) => {
                 for dev_type in endpoint.device_types {
                     builder = builder
@@ -165,7 +171,7 @@ impl ClusterHandler for DescHandler<'_> {
                     .end()
             }
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
+        })
     }
 
     fn server_list<P: TLVBuilderParent>(
@@ -173,9 +179,7 @@ impl ClusterHandler for DescHandler<'_> {
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<ToTLVArrayBuilder<P, u32>, ToTLVBuilder<P, u32>>,
     ) -> Result<P, Error> {
-        let endpoint = Self::endpoint(&ctx)?;
-
-        match builder {
+        Self::with_endpoint(ctx, |endpoint| match builder {
             ArrayAttributeRead::ReadAll(mut builder) => {
                 for cluster in endpoint.clusters {
                     builder = builder.push(&cluster.id)?;
@@ -191,7 +195,7 @@ impl ClusterHandler for DescHandler<'_> {
                 builder.set(&cluster.id)
             }
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
+        })
     }
 
     fn client_list<P: TLVBuilderParent>(
@@ -199,14 +203,14 @@ impl ClusterHandler for DescHandler<'_> {
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<ToTLVArrayBuilder<P, u32>, ToTLVBuilder<P, u32>>,
     ) -> Result<P, Error> {
-        let _endpoint = Self::endpoint(&ctx)?;
-
-        // Client clusters not support yet
-        match builder {
-            ArrayAttributeRead::ReadAll(builder) => builder.end(),
-            ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
+        Self::with_endpoint(ctx, |_| {
+            // Client clusters not support yet
+            match builder {
+                ArrayAttributeRead::ReadAll(builder) => builder.end(),
+                ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
+            }
+        })
     }
 
     fn parts_list<P: TLVBuilderParent>(
@@ -214,30 +218,32 @@ impl ClusterHandler for DescHandler<'_> {
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<ToTLVArrayBuilder<P, u16>, ToTLVBuilder<P, u16>>,
     ) -> Result<P, Error> {
-        let mut ep_ids = ctx
-            .attr()
-            .node
-            .endpoints
-            .iter()
-            .map(|e| e.id)
-            .filter(|e| self.matcher.matches(ctx.attr().endpoint_id, *e));
+        let metadata = ctx.metadata();
 
-        match builder {
-            ArrayAttributeRead::ReadAll(mut builder) => {
-                for id in ep_ids {
-                    builder = builder.push(&id)?;
+        metadata.access(|node| {
+            let mut ep_ids = node
+                .endpoints
+                .iter()
+                .map(|e| e.id)
+                .filter(|e| self.matcher.matches(ctx.attr().endpoint_id, *e));
+
+            match builder {
+                ArrayAttributeRead::ReadAll(mut builder) => {
+                    for id in ep_ids {
+                        builder = builder.push(&id)?;
+                    }
+
+                    builder.end()
                 }
+                ArrayAttributeRead::ReadOne(index, builder) => {
+                    let Some(ep_id) = ep_ids.nth(index as usize) else {
+                        return Err(ErrorCode::ConstraintError.into());
+                    };
 
-                builder.end()
+                    builder.set(&ep_id)
+                }
+                ArrayAttributeRead::ReadNone(builder) => builder.end(),
             }
-            ArrayAttributeRead::ReadOne(index, builder) => {
-                let Some(ep_id) = ep_ids.nth(index as usize) else {
-                    return Err(ErrorCode::ConstraintError.into());
-                };
-
-                builder.set(&ep_id)
-            }
-            ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        }
+        })
     }
 }

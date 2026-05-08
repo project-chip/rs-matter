@@ -47,6 +47,7 @@
 //! * `FOCUS_ZONES` — not yet.
 
 use core::cell::{Cell, RefCell};
+use core::future::Future;
 
 use heapless::String as HString;
 
@@ -120,46 +121,57 @@ pub struct Trigger {
 /// need to override the events they actually care about.
 #[allow(unused_variables)]
 pub trait ZoneMgmtHooks<const NV: usize> {
-    fn zone_created(
-        &self,
-        zone: &Zone<NV>,
-    ) -> impl core::future::Future<Output = Result<(), ZoneError>> {
+    fn zone_created(&self, zone: &Zone<NV>) -> impl Future<Output = Result<(), ZoneError>> {
         async { Ok(()) }
     }
 
-    fn zone_updated(
-        &self,
-        zone: &Zone<NV>,
-    ) -> impl core::future::Future<Output = Result<(), ZoneError>> {
+    fn zone_updated(&self, zone: &Zone<NV>) -> impl Future<Output = Result<(), ZoneError>> {
         async { Ok(()) }
     }
 
-    fn zone_removed(
-        &self,
-        zone_id: u16,
-    ) -> impl core::future::Future<Output = Result<(), ZoneError>> {
+    fn zone_removed(&self, zone_id: u16) -> impl Future<Output = Result<(), ZoneError>> {
         async { Ok(()) }
     }
 
-    fn trigger_set(
-        &self,
-        trigger: &Trigger,
-    ) -> impl core::future::Future<Output = Result<(), ZoneError>> {
+    fn trigger_set(&self, trigger: &Trigger) -> impl Future<Output = Result<(), ZoneError>> {
         async { Ok(()) }
     }
 
-    fn trigger_removed(
-        &self,
-        zone_id: u16,
-    ) -> impl core::future::Future<Output = Result<(), ZoneError>> {
+    fn trigger_removed(&self, zone_id: u16) -> impl Future<Output = Result<(), ZoneError>> {
         async { Ok(()) }
     }
 
-    fn set_sensitivity(
-        &self,
-        value: u8,
-    ) -> impl core::future::Future<Output = Result<(), ZoneError>> {
+    fn set_sensitivity(&self, value: u8) -> impl Future<Output = Result<(), ZoneError>> {
         async { Ok(()) }
+    }
+}
+
+impl<const NV: usize, T> ZoneMgmtHooks<NV> for &T
+where
+    T: ZoneMgmtHooks<NV>,
+{
+    fn zone_created(&self, zone: &Zone<NV>) -> impl Future<Output = Result<(), ZoneError>> {
+        (*self).zone_created(zone)
+    }
+
+    fn zone_updated(&self, zone: &Zone<NV>) -> impl Future<Output = Result<(), ZoneError>> {
+        (*self).zone_updated(zone)
+    }
+
+    fn zone_removed(&self, zone_id: u16) -> impl Future<Output = Result<(), ZoneError>> {
+        (*self).zone_removed(zone_id)
+    }
+
+    fn trigger_set(&self, trigger: &Trigger) -> impl Future<Output = Result<(), ZoneError>> {
+        (*self).trigger_set(trigger)
+    }
+
+    fn trigger_removed(&self, zone_id: u16) -> impl Future<Output = Result<(), ZoneError>> {
+        (*self).trigger_removed(zone_id)
+    }
+
+    fn set_sensitivity(&self, value: u8) -> impl Future<Output = Result<(), ZoneError>> {
+        (*self).set_sensitivity(value)
     }
 }
 

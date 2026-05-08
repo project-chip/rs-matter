@@ -19,7 +19,7 @@ use core::cell::Cell;
 use core::fmt;
 
 use crate::acl::Accessor;
-use crate::dm::{Cluster, Endpoint};
+use crate::dm::{Cluster, Endpoint, Metadata, Quality};
 use crate::error::Error;
 use crate::im::{
     AttrData, AttrPath, AttrStatus, CmdData, CmdStatus, DataVersionFilter, EventPath, GenericPath,
@@ -50,90 +50,6 @@ impl<'a> Node<'a> {
         self.endpoints.iter().find(|endpoint| endpoint.id == id)
     }
 
-    /// Expand (potentially wildcard) read requests into concrete attribute details
-    /// using the node metadata.
-    ///
-    /// As part of the expansion, the method will check whether the attributes are
-    /// accessible by the accessor and whether they should be served based on the
-    /// fabric filtering and dataver filtering rules and filter out the inaccessible ones (wildcard reads)
-    /// or report an error status for the non-wildcard ones.
-    pub fn read<'m, F>(
-        &'m self,
-        req: &'m ReportDataReq,
-        accessor: &'m Accessor<'m>,
-        filter: F,
-    ) -> Result<impl Iterator<Item = Result<Result<AttrDetails<'m>, AttrStatus>, Error>> + 'm, Error>
-    where
-        F: FnMut(EndptId, ClusterId, u32) -> bool + 'm,
-    {
-        let dataver_filters = req.dataver_filters()?;
-        let fabric_filtered = req.fabric_filtered()?;
-
-        Ok(PathExpander::new(
-            self,
-            accessor,
-            false,
-            req.attr_requests()?.map(|reqs| {
-                reqs.into_iter().map(move |path_result| {
-                    path_result.map(|path| AttrReadPath {
-                        path,
-                        dataver_filters: dataver_filters.clone(),
-                        fabric_filtered,
-                    })
-                })
-            }),
-            filter,
-        ))
-    }
-
-    /// Expand (potentially wildcard) write requests into concrete attribute details
-    /// using the node metadata.
-    ///
-    /// As part of the expansion, the method will check whether the attributes are
-    /// accessible by the accessor and filter out the inaccessible ones (wildcard writes)
-    /// or report an error status for the non-wildcard ones.
-    #[allow(clippy::type_complexity)]
-    pub fn write<'m>(
-        &'m self,
-        req: &'m WriteReq,
-        accessor: &'m Accessor<'m>,
-    ) -> Result<
-        impl Iterator<Item = Result<Result<(AttrDetails<'m>, TLVElement<'m>), AttrStatus>, Error>> + 'm,
-        Error,
-    > {
-        Ok(PathExpander::new(
-            self,
-            accessor,
-            req.timed_request()?,
-            Some(req.write_requests()?.into_iter()),
-            |_, _, _| true,
-        ))
-    }
-
-    /// Expand (potentially wildcard) invoke requests into concrete command details
-    /// using the node metadata.
-    ///
-    /// As part of the expansion, the method will check whether the commands are
-    /// accessible by the accessor and filter out the inaccessible ones (wildcard invocations)
-    /// or report an error status for the non-wildcard ones.
-    #[allow(clippy::type_complexity)]
-    pub fn invoke<'m>(
-        &'m self,
-        req: &'m InvReq,
-        accessor: &'m Accessor<'m>,
-    ) -> Result<
-        impl Iterator<Item = Result<Result<(CmdDetails<'m>, TLVElement<'m>), CmdStatus>, Error>> + 'm,
-        Error,
-    > {
-        Ok(PathExpander::new(
-            self,
-            accessor,
-            req.timed_request()?,
-            req.inv_requests()?.map(move |reqs| reqs.into_iter()),
-            |_, _, _| true,
-        ))
-    }
-
     pub(crate) fn validate_attr_path(
         &self,
         path: &AttrPath,
@@ -156,6 +72,73 @@ impl<'a> Node<'a> {
         };
 
         cluster.check_attr_access(accessor, timed, gp, endpoint.device_types, write, attr.id)
+    }
+
+    pub(crate) fn validate_event_path(
+        &self,
+        path: &EventPath,
+        accessor: &Accessor<'_>,
+    ) -> Result<(), IMStatusCode> {
+        if let Some(node_id) = path.node {
+            self.validate_node_id(node_id, accessor)?;
+        }
+
+        let gp = path.to_gp();
+
+        let Some((endpoint, cluster, event_id)) = self.validate_cluster_path(&gp)? else {
+            return Ok(());
+        };
+
+        let Some(event) = cluster.event(event_id) else {
+            return Err(IMStatusCode::UnsupportedEvent);
+        };
+
+        cluster.check_event_access(accessor, gp, endpoint.device_types, event.id)
+    }
+
+    fn validate_cluster_path(
+        &self,
+        path: &GenericPath,
+    ) -> Result<Option<(&Endpoint<'_>, &Cluster<'_>, u32)>, IMStatusCode> {
+        let Some(endpoint_id) = path.endpoint else {
+            return Ok(None);
+        };
+
+        let Some(endpoint) = self.endpoint(endpoint_id) else {
+            // Endpoint does not exist
+            return Err(IMStatusCode::UnsupportedEndpoint);
+        };
+
+        let Some(cluster_id) = path.cluster else {
+            return Ok(None);
+        };
+
+        let Some(cluster) = endpoint.cluster(cluster_id) else {
+            // Cluster does not exist on this endpoint
+            return Err(IMStatusCode::UnsupportedCluster);
+        };
+
+        let Some(leaf_id) = path.leaf else {
+            return Ok(None);
+        };
+
+        Ok(Some((endpoint, cluster, leaf_id)))
+    }
+
+    fn validate_node_id(
+        &self,
+        node_id: NodeId,
+        accessor: &Accessor<'_>,
+    ) -> Result<(), IMStatusCode> {
+        let Some(accessor_node_id) = accessor.node_id() else {
+            return Err(IMStatusCode::UnsupportedNode);
+        };
+
+        if node_id != accessor_node_id {
+            return Err(IMStatusCode::UnsupportedNode);
+        }
+
+        Ok(())
     }
 
     /// Return `true` if at least one attribute matching the (potentially wildcard) path
@@ -202,73 +185,6 @@ impl<'a> Node<'a> {
         }
 
         false
-    }
-
-    pub(crate) fn validate_event_path(
-        &self,
-        path: &EventPath,
-        accessor: &Accessor<'_>,
-    ) -> Result<(), IMStatusCode> {
-        if let Some(node_id) = path.node {
-            self.validate_node_id(node_id, accessor)?;
-        }
-
-        let gp = path.to_gp();
-
-        let Some((endpoint, cluster, event_id)) = self.validate_cluster_path(&gp)? else {
-            return Ok(());
-        };
-
-        let Some(event) = cluster.event(event_id) else {
-            return Err(IMStatusCode::UnsupportedEvent);
-        };
-
-        cluster.check_event_access(accessor, gp, endpoint.device_types, event.id)
-    }
-
-    fn validate_node_id(
-        &self,
-        node_id: NodeId,
-        accessor: &Accessor<'_>,
-    ) -> Result<(), IMStatusCode> {
-        let Some(accessor_node_id) = accessor.node_id() else {
-            return Err(IMStatusCode::UnsupportedNode);
-        };
-
-        if node_id != accessor_node_id {
-            return Err(IMStatusCode::UnsupportedNode);
-        }
-
-        Ok(())
-    }
-
-    fn validate_cluster_path(
-        &self,
-        path: &GenericPath,
-    ) -> Result<Option<(&Endpoint<'_>, &Cluster<'_>, u32)>, IMStatusCode> {
-        let Some(endpoint_id) = path.endpoint else {
-            return Ok(None);
-        };
-
-        let Some(endpoint) = self.endpoint(endpoint_id) else {
-            // Endpoint does not exist
-            return Err(IMStatusCode::UnsupportedEndpoint);
-        };
-
-        let Some(cluster_id) = path.cluster else {
-            return Ok(None);
-        };
-
-        let Some(cluster) = endpoint.cluster(cluster_id) else {
-            // Cluster does not exist on this endpoint
-            return Err(IMStatusCode::UnsupportedCluster);
-        };
-
-        let Some(leaf_id) = path.leaf else {
-            return Ok(None);
-        };
-
-        Ok(Some((endpoint, cluster, leaf_id)))
     }
 }
 
@@ -349,6 +265,97 @@ impl<'a, const N: usize> Default for DynamicNode<'a, N> {
     }
 }
 
+/// Expand (potentially wildcard) read requests into concrete attribute details
+/// using the node metadata.
+///
+/// As part of the expansion, the method will check whether the attributes are
+/// accessible by the accessor and whether they should be served based on the
+/// fabric filtering and dataver filtering rules and filter out the inaccessible ones (wildcard reads)
+/// or report an error status for the non-wildcard ones.
+pub fn expand_read<'m, M, F>(
+    metadata: M,
+    req: &'m ReportDataReq,
+    accessor: &'m Accessor<'m>,
+    filter: F,
+) -> Result<impl Iterator<Item = Result<Result<AttrDetails, AttrStatus>, Error>> + 'm, Error>
+where
+    M: Metadata + 'm,
+    F: FnMut(EndptId, ClusterId, u32) -> bool + 'm,
+{
+    let dataver_filters = req.dataver_filters()?;
+    let fabric_filtered = req.fabric_filtered()?;
+
+    Ok(PathExpanderIterator::new(
+        metadata,
+        accessor,
+        false,
+        req.attr_requests()?.map(|reqs| {
+            reqs.into_iter().map(move |path_result| {
+                path_result.map(|path| AttrReadPath {
+                    path,
+                    dataver_filters: dataver_filters.clone(),
+                    fabric_filtered,
+                })
+            })
+        }),
+        filter,
+    ))
+}
+
+/// Expand (potentially wildcard) write requests into concrete attribute details
+/// using the node metadata.
+///
+/// As part of the expansion, the method will check whether the attributes are
+/// accessible by the accessor and filter out the inaccessible ones (wildcard writes)
+/// or report an error status for the non-wildcard ones.
+#[allow(clippy::type_complexity)]
+pub fn expand_write<'m, M>(
+    metadata: M,
+    req: &'m WriteReq,
+    accessor: &'m Accessor<'m>,
+) -> Result<
+    impl Iterator<Item = Result<Result<(AttrDetails, TLVElement<'m>), AttrStatus>, Error>> + 'm,
+    Error,
+>
+where
+    M: Metadata + 'm,
+{
+    Ok(PathExpanderIterator::new(
+        metadata,
+        accessor,
+        req.timed_request()?,
+        Some(req.write_requests()?.into_iter()),
+        |_, _, _| true,
+    ))
+}
+
+/// Expand (potentially wildcard) invoke requests into concrete command details
+/// using the node metadata.
+///
+/// As part of the expansion, the method will check whether the commands are
+/// accessible by the accessor and filter out the inaccessible ones (wildcard invocations)
+/// or report an error status for the non-wildcard ones.
+#[allow(clippy::type_complexity)]
+pub fn expand_invoke<'m, M>(
+    metadata: M,
+    req: &'m InvReq,
+    accessor: &'m Accessor<'m>,
+) -> Result<
+    impl Iterator<Item = Result<Result<(CmdDetails, TLVElement<'m>), CmdStatus>, Error>> + 'm,
+    Error,
+>
+where
+    M: Metadata + 'm,
+{
+    Ok(PathExpanderIterator::new(
+        metadata,
+        accessor,
+        req.timed_request()?,
+        req.inv_requests()?.map(move |reqs| reqs.into_iter()),
+        |_, _, _| true,
+    ))
+}
+
 /// A helper type for `AttrPath` that enriches it with the request-scope information
 /// of whether the attributes served as part of that request should be fabric filtered
 /// as well as with information which attributes should only be served if their
@@ -393,11 +400,11 @@ trait PathExpansionItem<'a> {
     /// as the original ones might be wildcarded.
     fn expand(
         &self,
-        node: &'a Node<'a>,
-        accessor: &'a Accessor<'a>,
+        accessor: &Accessor<'_>,
         endpoint_id: EndptId,
         cluster_id: ClusterId,
         leaf_id: u32,
+        array: bool,
     ) -> Result<Self::Expanded<'a>, Error>;
 
     /// Convert the item into an error status if the expansion failed.
@@ -408,7 +415,7 @@ trait PathExpansionItem<'a> {
 impl<'a> PathExpansionItem<'a> for AttrReadPath<'a> {
     const OPERATION: Operation = Operation::Read;
 
-    type Expanded<'n> = AttrDetails<'n>;
+    type Expanded<'n> = AttrDetails;
     type Status = AttrStatus;
 
     fn path(&self) -> GenericPath {
@@ -417,14 +424,13 @@ impl<'a> PathExpansionItem<'a> for AttrReadPath<'a> {
 
     fn expand(
         &self,
-        node: &'a Node<'a>,
-        accessor: &'a Accessor<'a>,
+        accessor: &Accessor<'_>,
         endpoint_id: EndptId,
         cluster_id: ClusterId,
         leaf_id: u32,
+        array: bool,
     ) -> Result<Self::Expanded<'a>, Error> {
         Ok(AttrDetails {
-            node,
             endpoint_id,
             cluster_id,
             attr_id: leaf_id as _,
@@ -434,6 +440,7 @@ impl<'a> PathExpansionItem<'a> for AttrReadPath<'a> {
             fab_idx: accessor.fab_idx,
             fab_filter: self.fabric_filtered,
             dataver: dataver(self.dataver_filters.as_ref(), endpoint_id, cluster_id)?,
+            array,
             cluster_status: Cell::new(0),
         })
     }
@@ -447,7 +454,7 @@ impl<'a> PathExpansionItem<'a> for AttrReadPath<'a> {
 impl<'a> PathExpansionItem<'a> for AttrData<'a> {
     const OPERATION: Operation = Operation::Write;
 
-    type Expanded<'n> = (AttrDetails<'n>, TLVElement<'n>);
+    type Expanded<'n> = (AttrDetails, TLVElement<'n>);
     type Status = AttrStatus;
 
     fn path(&self) -> GenericPath {
@@ -456,15 +463,14 @@ impl<'a> PathExpansionItem<'a> for AttrData<'a> {
 
     fn expand(
         &self,
-        node: &'a Node<'a>,
-        accessor: &'a Accessor<'a>,
+        accessor: &Accessor<'_>,
         endpoint_id: EndptId,
         cluster_id: ClusterId,
         leaf_id: u32,
+        array: bool,
     ) -> Result<Self::Expanded<'a>, Error> {
         let expanded = (
             AttrDetails {
-                node,
                 endpoint_id,
                 cluster_id,
                 attr_id: leaf_id as _,
@@ -476,6 +482,7 @@ impl<'a> PathExpansionItem<'a> for AttrData<'a> {
                 // are assumed to be always fabric-filtered
                 fab_filter: true,
                 dataver: self.data_ver,
+                array,
                 cluster_status: Cell::new(0),
             },
             self.data.clone(),
@@ -493,7 +500,7 @@ impl<'a> PathExpansionItem<'a> for AttrData<'a> {
 impl<'a> PathExpansionItem<'a> for CmdData<'a> {
     const OPERATION: Operation = Operation::Invoke;
 
-    type Expanded<'n> = (CmdDetails<'n>, TLVElement<'n>);
+    type Expanded<'n> = (CmdDetails, TLVElement<'n>);
     type Status = CmdStatus;
 
     fn path(&self) -> GenericPath {
@@ -502,15 +509,14 @@ impl<'a> PathExpansionItem<'a> for CmdData<'a> {
 
     fn expand(
         &self,
-        node: &'a Node<'a>,
-        accessor: &'a Accessor<'a>,
+        accessor: &Accessor<'_>,
         endpoint_id: EndptId,
         cluster_id: ClusterId,
         leaf_id: u32,
+        _array: bool,
     ) -> Result<Self::Expanded<'a>, Error> {
         let expanded = (
             CmdDetails::new(
-                node,
                 endpoint_id,
                 cluster_id,
                 leaf_id,
@@ -534,12 +540,7 @@ impl<'a> PathExpansionItem<'a> for CmdData<'a> {
 /// While the iterator can be (and used to be) implemented by using monadic combinators,
 /// this implementation is done in a more imperative way to avoid the overhead of monadic
 /// combinators in terms of memory size.
-struct PathExpander<'a, T, I, F>
-where
-    I: Iterator<Item = Result<T, Error>>,
-{
-    /// The metatdata node to expand the paths on.
-    node: &'a Node<'a>,
+struct PathExpander<'a, T, I, F> {
     /// The accessor to check the access rights.
     accessor: &'a Accessor<'a>,
     /// Where the paths are part of a timed interaction
@@ -589,16 +590,9 @@ where
     T: PathExpansionItem<'a>,
     F: FnMut(EndptId, ClusterId, u32) -> bool,
 {
-    /// Create a new path expander with the given node, accessor, and paths.
-    pub const fn new(
-        node: &'a Node<'a>,
-        accessor: &'a Accessor<'a>,
-        timed: bool,
-        paths: Option<I>,
-        filter: F,
-    ) -> Self {
+    /// Create a new path expander with the given accessor and paths.
+    pub const fn new(accessor: &'a Accessor<'a>, timed: bool, paths: Option<I>, filter: F) -> Self {
         Self {
-            node,
             accessor,
             timed,
             items: paths,
@@ -611,6 +605,60 @@ where
         }
     }
 
+    #[allow(clippy::type_complexity)]
+    fn next(
+        &mut self,
+        node: &Node<'_>,
+    ) -> Option<Result<Result<T::Expanded<'a>, T::Status>, Error>> {
+        loop {
+            // Fetch an item to expand if not already there
+            if self.item.is_none() {
+                let item = self.items.as_mut().and_then(|items| items.next())?;
+
+                match item {
+                    Err(err) => break Some(Err(err)),
+                    Ok(item) => self.item = Some(item),
+                }
+
+                self.endpoint_index = 0;
+                self.cluster_index = 0;
+                self.leaf_index = 0;
+            }
+
+            // From here on, we do have a valid `self.item` to expand
+
+            // Step on the first/next expanded path of the item
+            match self.next_for_path(node) {
+                Ok(Some((endpoint_id, cluster_id, leaf_id, array))) => {
+                    // Next expansion of the path
+
+                    let expanded = unwrap!(self.item.as_ref()).expand(
+                        self.accessor,
+                        endpoint_id,
+                        cluster_id,
+                        leaf_id,
+                        array,
+                    );
+
+                    if !unwrap!(self.item.as_ref()).path().is_wildcard() {
+                        // Non-wildcard path, remove the current item
+                        self.item = None;
+                    }
+
+                    break Some(expanded.map(Ok));
+                }
+                Ok(None) => {
+                    // This path is exhausted, time to move to the next one
+                    self.item = None;
+                }
+                Err(status) => {
+                    // Report an error status and remove the current item
+                    break Some(Ok(Err(unwrap!(self.item.take()).into_status(status))));
+                }
+            }
+        }
+    }
+
     /// Move to the next (endpoint, cluster, leaf) triple that matches the path
     /// of the current item.
     ///
@@ -618,13 +666,17 @@ where
     /// whether the endpoint, the cluster, or the leaf is not matching.
     ///
     /// This method should only be called when `self.item` is `Some` or else it will panic.
-    fn next_for_path(&mut self) -> Result<Option<(EndptId, ClusterId, u32)>, IMStatusCode> {
+    fn next_for_path(
+        &mut self,
+        node: &Node<'_>,
+    ) -> Result<Option<(EndptId, ClusterId, u32, bool)>, IMStatusCode> {
         let path = unwrap!(self.item.as_ref().map(PathExpansionItem::path));
 
         let command = matches!(T::OPERATION, Operation::Invoke);
+        let attr_read = matches!(T::OPERATION, Operation::Read);
 
         // Do some basic checks on wildcards, as not all wildcards are supported for each type of operation
-        if !matches!(T::OPERATION, Operation::Read) {
+        if !attr_read {
             if path.cluster.is_none() {
                 return Err(IMStatusCode::UnsupportedCluster);
             }
@@ -634,8 +686,8 @@ where
             }
         }
 
-        while (self.endpoint_index as usize) < self.node.endpoints.len() {
-            let endpoint = &self.node.endpoints[self.endpoint_index as usize];
+        while (self.endpoint_index as usize) < node.endpoints.len() {
+            let endpoint = &node.endpoints[self.endpoint_index as usize];
 
             if (path.endpoint.is_none() || path.endpoint == Some(endpoint.id))
                 && self.accessor.is_endpoint_accessible(endpoint.id)
@@ -676,7 +728,7 @@ where
                                         == Some((endpoint.id, cluster.id, leaf_id))
                                     {
                                         Ok(true)
-                                    } else if matches!(T::OPERATION, Operation::Invoke) {
+                                    } else if command {
                                         cluster
                                             .check_cmd_access(
                                                 self.accessor,
@@ -707,7 +759,7 @@ where
                                                     Some(leaf_id),
                                                 ),
                                                 endpoint.device_types,
-                                                matches!(T::OPERATION, Operation::Write),
+                                                !attr_read,
                                                 unwrap!(cluster
                                                     .attributes()
                                                     .map(|attr| attr.id)
@@ -735,7 +787,13 @@ where
                                         self.last_authorized =
                                             Some((endpoint.id, cluster.id, leaf_id));
 
-                                        return Ok(Some((endpoint.id, cluster.id, leaf_id)));
+                                        let array = !command
+                                            && cluster
+                                                .attribute(leaf_id)
+                                                .map(|attr| attr.quality.contains(Quality::ARRAY))
+                                                .unwrap_or(false);
+
+                                        return Ok(Some((endpoint.id, cluster.id, leaf_id, array)));
                                     }
                                     Ok(false) => {
                                         // Filtered out. For a non-wildcard path the
@@ -793,8 +851,36 @@ where
     }
 }
 
-impl<'a, T, I, F> Iterator for PathExpander<'a, T, I, F>
+struct PathExpanderIterator<'a, M, T, I, F> {
+    metadata: M,
+    expander: PathExpander<'a, T, I, F>,
+}
+
+impl<'a, M, T, I, F> PathExpanderIterator<'a, M, T, I, F>
 where
+    M: Metadata,
+    I: Iterator<Item = Result<T, Error>>,
+    T: PathExpansionItem<'a>,
+    F: FnMut(EndptId, ClusterId, u32) -> bool,
+{
+    /// Create a new path expander iterator with the given metadata, accessor and paths.
+    pub const fn new(
+        metadata: M,
+        accessor: &'a Accessor<'a>,
+        timed: bool,
+        paths: Option<I>,
+        filter: F,
+    ) -> Self {
+        Self {
+            metadata,
+            expander: PathExpander::new(accessor, timed, paths, filter),
+        }
+    }
+}
+
+impl<'a, M, T, I, F> Iterator for PathExpanderIterator<'a, M, T, I, F>
+where
+    M: Metadata,
     I: Iterator<Item = Result<T, Error>>,
     T: PathExpansionItem<'a>,
     F: FnMut(EndptId, ClusterId, u32) -> bool,
@@ -802,53 +888,10 @@ where
     type Item = Result<Result<T::Expanded<'a>, T::Status>, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            // Fetch an item to expand if not already there
-            if self.item.is_none() {
-                let item = self.items.as_mut().and_then(|items| items.next())?;
+        let metadata = &self.metadata;
+        let expander = &mut self.expander;
 
-                match item {
-                    Err(err) => break Some(Err(err)),
-                    Ok(item) => self.item = Some(item),
-                }
-
-                self.endpoint_index = 0;
-                self.cluster_index = 0;
-                self.leaf_index = 0;
-            }
-
-            // From here on, we do have a valid `self.item` to expand
-
-            // Step on the first/next expanded path of the item
-            match self.next_for_path() {
-                Ok(Some((endpoint_id, cluster_id, leaf_id))) => {
-                    // Next expansion of the path
-
-                    let expanded = unwrap!(self.item.as_ref()).expand(
-                        self.node,
-                        self.accessor,
-                        endpoint_id,
-                        cluster_id,
-                        leaf_id,
-                    );
-
-                    if !unwrap!(self.item.as_ref()).path().is_wildcard() {
-                        // Non-wildcard path, remove the current item
-                        self.item = None;
-                    }
-
-                    break Some(expanded.map(Ok));
-                }
-                Ok(None) => {
-                    // This path is exhausted, time to move to the next one
-                    self.item = None;
-                }
-                Err(status) => {
-                    // Report an error status and remove the current item
-                    break Some(Ok(Err(unwrap!(self.item.take()).into_status(status))));
-                }
-            }
-        }
+        metadata.access(|node| expander.next(node))
     }
 }
 
@@ -883,7 +926,7 @@ mod test {
     use crate::im::IMStatusCode;
     use crate::test::test_matter;
 
-    use super::{Node, Operation, PathExpander, PathExpansionItem};
+    use super::{Node, Operation, PathExpanderIterator, PathExpansionItem};
 
     // For tests
     impl<'a> PathExpansionItem<'a> for GenericPath {
@@ -898,11 +941,11 @@ mod test {
 
         fn expand(
             &self,
-            _node: &'a Node<'a>,
-            _accessor: &'a Accessor<'a>,
+            _accessor: &Accessor<'_>,
             endpoint_id: EndptId,
             cluster_id: ClusterId,
             leaf_id: u32,
+            _array: bool,
         ) -> Result<Self::Expanded<'a>, Error> {
             Ok(GenericPath::new(
                 Some(endpoint_id),
@@ -936,7 +979,7 @@ mod test {
         let matter = test_matter();
         let accessor = Accessor::new(0, AccessorSubjects::new(0), Some(AuthMode::Pase), &matter);
 
-        let expander = PathExpander::new(
+        let expander = PathExpanderIterator::new(
             node,
             &accessor,
             false,

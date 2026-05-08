@@ -225,6 +225,53 @@ pub trait PushAvStreamHooks {
     }
 }
 
+impl<T> PushAvStreamHooks for &T
+where
+    T: PushAvStreamHooks,
+{
+    fn on_allocate(
+        &self,
+        connection_id: u16,
+        fabric_index: FabricIndex,
+        request: &AllocatePushTransportRequest<'_>,
+    ) -> impl core::future::Future<Output = Result<(), PushAvError>> {
+        (*self).on_allocate(connection_id, fabric_index, request)
+    }
+
+    fn on_deallocate(
+        &self,
+        connection_id: u16,
+    ) -> impl core::future::Future<Output = Result<(), PushAvError>> {
+        (*self).on_deallocate(connection_id)
+    }
+
+    fn on_modify(
+        &self,
+        connection_id: u16,
+        request: &ModifyPushTransportRequest<'_>,
+    ) -> impl core::future::Future<Output = Result<(), PushAvError>> {
+        (*self).on_modify(connection_id, request)
+    }
+
+    fn on_set_status(
+        &self,
+        connection_id: Option<u16>,
+        status: TransportStatusEnum,
+    ) -> impl core::future::Future<Output = Result<(), PushAvError>> {
+        (*self).on_set_status(connection_id, status)
+    }
+
+    fn on_manually_trigger(
+        &self,
+        connection_id: u16,
+        activation_reason: TriggerActivationReasonEnum,
+        time_control: Option<TransportMotionTriggerTimeControlStruct<'_>>,
+        user_defined: Option<&[u8]>,
+    ) -> impl core::future::Future<Output = Result<(), PushAvError>> {
+        (*self).on_manually_trigger(connection_id, activation_reason, time_control, user_defined)
+    }
+}
+
 struct State<const NC: usize> {
     connections: Vec<PushConnection, NC>,
 }

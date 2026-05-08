@@ -37,23 +37,20 @@ use rs_matter::crypto::{default_crypto, Crypto};
 //
 // User needs to implement the `ClusterAsyncHandler` trait or the `ClusterHandler` trait
 // so as to handle the requests from the controller.
+use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
+use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::decl::content_launcher::{
     self, ClusterAsyncHandler as _, LaunchContentRequest, LaunchURLRequest,
     LauncherResponseBuilder, SupportedProtocolsBitmap,
 };
-
 use rs_matter::dm::clusters::decl::keypad_input::{
     self, ClusterAsyncHandler as _, SendKeyRequest, SendKeyResponseBuilder,
 };
-
 use rs_matter::dm::clusters::decl::media_playback::{
     self, ActivateAudioTrackRequest, ActivateTextTrackRequest, ClusterAsyncHandler as _,
     FastForwardRequest, PlaybackResponseBuilder, PlaybackStateEnum, RewindRequest, SeekRequest,
     SkipBackwardRequest, SkipForwardRequest, StatusEnum,
 };
-
-use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
-use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
@@ -64,8 +61,8 @@ use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
-    ArrayAttributeRead, Async, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver,
-    EmptyHandler, Endpoint, EpClMatcher, InvokeContext, Node, ReadContext,
+    ArrayAttributeRead, Async, Cluster, DataModel, DataModelHandler, Dataver, EmptyHandler,
+    Endpoint, EpClMatcher, InvokeContext, Node, ReadContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::qr::QrTextType;
@@ -154,7 +151,7 @@ fn main() -> Result<(), Error> {
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
 
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, dm.change_notify())?;
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &())?;
     }
 
     // Combine all async tasks in a single one
@@ -187,7 +184,7 @@ const NODE: Node<'static> = Node {
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
-) -> impl AsyncMetadata + AsyncHandler + 'a {
+) -> impl DataModelHandler + 'a {
     (
         NODE,
         endpoints::with_eth_sys(

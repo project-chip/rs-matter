@@ -17,86 +17,32 @@
 
 use crate::dm::Node;
 
-pub use asynch::*;
-
 use super::Async;
 
-pub trait MetadataGuard {
-    fn node(&self) -> Node<'_>;
-}
-
-impl<T> MetadataGuard for &T
-where
-    T: MetadataGuard,
-{
-    fn node(&self) -> Node<'_> {
-        (**self).node()
-    }
-}
-
-impl<T> MetadataGuard for &mut T
-where
-    T: MetadataGuard,
-{
-    fn node(&self) -> Node<'_> {
-        (**self).node()
-    }
-}
-
 pub trait Metadata {
-    type MetadataGuard<'a>: MetadataGuard
+    fn access<F, R>(&self, f: F) -> R
     where
-        Self: 'a;
-
-    fn lock(&self) -> Self::MetadataGuard<'_>;
+        F: FnOnce(&Node<'_>) -> R;
 }
 
 impl<T> Metadata for &T
 where
     T: Metadata,
 {
-    type MetadataGuard<'a>
-        = T::MetadataGuard<'a>
+    fn access<F, R>(&self, f: F) -> R
     where
-        Self: 'a;
-
-    fn lock(&self) -> Self::MetadataGuard<'_> {
-        (**self).lock()
-    }
-}
-
-impl<T> Metadata for &mut T
-where
-    T: Metadata,
-{
-    type MetadataGuard<'a>
-        = T::MetadataGuard<'a>
-    where
-        Self: 'a;
-
-    fn lock(&self) -> Self::MetadataGuard<'_> {
-        (**self).lock()
-    }
-}
-
-impl MetadataGuard for Node<'_> {
-    fn node(&self) -> Node<'_> {
-        Node {
-            endpoints: self.endpoints,
-        }
+        F: FnOnce(&Node<'_>) -> R,
+    {
+        (**self).access(f)
     }
 }
 
 impl Metadata for Node<'_> {
-    type MetadataGuard<'g>
-        = Node<'g>
+    fn access<F, R>(&self, f: F) -> R
     where
-        Self: 'g;
-
-    fn lock(&self) -> Self::MetadataGuard<'_> {
-        Node {
-            endpoints: self.endpoints,
-        }
+        F: FnOnce(&Node<'_>) -> R,
+    {
+        f(self)
     }
 }
 
@@ -104,13 +50,11 @@ impl<M, H> Metadata for (M, H)
 where
     M: Metadata,
 {
-    type MetadataGuard<'a>
-        = M::MetadataGuard<'a>
+    fn access<F, R>(&self, f: F) -> R
     where
-        Self: 'a;
-
-    fn lock(&self) -> Self::MetadataGuard<'_> {
-        self.0.lock()
+        F: FnOnce(&Node<'_>) -> R,
+    {
+        self.0.access(f)
     }
 }
 
@@ -118,97 +62,10 @@ impl<T> Metadata for Async<T>
 where
     T: Metadata,
 {
-    type MetadataGuard<'a>
-        = T::MetadataGuard<'a>
+    fn access<F, R>(&self, f: F) -> R
     where
-        Self: 'a;
-
-    fn lock(&self) -> Self::MetadataGuard<'_> {
-        self.0.lock()
-    }
-}
-
-mod asynch {
-    use core::future::Future;
-
-    use crate::dm::{Async, Node};
-
-    use super::{Metadata, MetadataGuard};
-
-    pub trait AsyncMetadata {
-        type MetadataGuard<'a>: MetadataGuard
-        where
-            Self: 'a;
-
-        async fn lock(&self) -> Self::MetadataGuard<'_>;
-    }
-
-    impl<T> AsyncMetadata for &T
-    where
-        T: AsyncMetadata,
+        F: FnOnce(&Node<'_>) -> R,
     {
-        type MetadataGuard<'a>
-            = T::MetadataGuard<'a>
-        where
-            Self: 'a;
-
-        fn lock(&self) -> impl Future<Output = Self::MetadataGuard<'_>> {
-            (**self).lock()
-        }
-    }
-
-    impl<T> AsyncMetadata for &mut T
-    where
-        T: AsyncMetadata,
-    {
-        type MetadataGuard<'a>
-            = T::MetadataGuard<'a>
-        where
-            Self: 'a;
-
-        fn lock(&self) -> impl Future<Output = Self::MetadataGuard<'_>> {
-            (**self).lock()
-        }
-    }
-
-    impl AsyncMetadata for Node<'_> {
-        type MetadataGuard<'g>
-            = Node<'g>
-        where
-            Self: 'g;
-
-        async fn lock(&self) -> Self::MetadataGuard<'_> {
-            Node {
-                endpoints: self.endpoints,
-            }
-        }
-    }
-
-    impl<M, H> AsyncMetadata for (M, H)
-    where
-        M: AsyncMetadata,
-    {
-        type MetadataGuard<'a>
-            = M::MetadataGuard<'a>
-        where
-            Self: 'a;
-
-        fn lock(&self) -> impl Future<Output = Self::MetadataGuard<'_>> {
-            self.0.lock()
-        }
-    }
-
-    impl<T> AsyncMetadata for Async<T>
-    where
-        T: Metadata,
-    {
-        type MetadataGuard<'a>
-            = T::MetadataGuard<'a>
-        where
-            Self: 'a;
-
-        async fn lock(&self) -> Self::MetadataGuard<'_> {
-            self.0.lock()
-        }
+        self.0.access(f)
     }
 }
