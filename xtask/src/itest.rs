@@ -84,7 +84,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // "TestUserLabelClusterConstraints", // TODO: User Label cluster not yet implemented
     // "TestTimeSynchronization", // Skipped: TimeSynchronization cluster not implemented by rs-matter (optional, Matter spec §11.16).
     // "TestIcdManagementCluster", // Skipped: ICD Management cluster not implemented (rs-matter doesn't ship Intermittently Connected Device support).
-    // "TestUnitTestingClusterMei", // TODO: not yet attempted. Manufacturer-extensible-identifier attribute coverage for the UnitTesting cluster (we expose UnitTesting on endpoint 1).
+    "TestUnitTestingClusterMei",
 
     //
     // Python tests — Interaction Data Model (general Matter protocol)
@@ -110,7 +110,21 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_ACL_2_9",
     "TC_ACL_2_10",
     // "TC_ACL_2_11", // Skipped: tests the provisional `ManagedAclRestrictions` feature (ARL attribute) and requires manufacturer-specific access restrictions to be pre-configured. rs-matter does not implement this feature.
-    // "TC_AccessChecker", // TODO: not yet attempted. Comprehensive ACE enforcement test that walks every cluster on every endpoint and verifies `View`/`Operate`/`Manage`/`Administer` access checks (runs internal `test_TC_ACE_2_*` variants). rs-matter implements ACL fully; expected to be a high-leverage add.
+    // TC_AccessChecker subclasses `BasicCompositionTests` and calls
+    // `setup_class_helper()` with the default `allow_pase=True`. The
+    // resulting PASE+CASE race is fragile against a recently-commissioned
+    // rs-matter DUT regardless of BLE/BlueZ availability: with no BlueZ it
+    // hangs ~25 s on `org.bluez` D-Bus activation; with BlueZ active it
+    // discovers via mDNS, sends a `PBKDFParamRequest`, gets silently
+    // dropped (closed-window — needed for TC_CADMIN_1_5), and the
+    // controller leaks a stale "in-progress PASE" entry which a later
+    // `GetConnectedDevice(allowPASE=True)` picks up. Either path lands at
+    // `CHIP Error 0x00000048: Not connected` in the test body. We route
+    // this test through `xtask/scripts/no_pase_setup_class_helper.py`
+    // (see `Self::needs_no_pase_shim`) which monkey-patches
+    // `setup_class_helper`'s default to `allow_pase=False`, so the PASE
+    // leg never fires and neither failure mode can.
+    "TC_AccessChecker",
 
     //
     // Python tests — General & Administrator Commissioning (system clusters)
@@ -220,7 +234,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Network Commissioning (system cluster)
     //
-    // "TC_CNET_1_4", // TODO: not yet attempted. Generic NetworkCommissioning attribute test, applies to any network type (Ethernet included). Expected to "just work" against the chip_tool_tests Ethernet DUT.
+    "TC_CNET_1_4",
     // "TC_CNET_4_1",  // TODO: Wi-Fi network provisioning.
     // "TC_CNET_4_2",  // TODO: Wi-Fi network provisioning.
     // "TC_CNET_4_3",  // TODO: Wi-Fi network provisioning.
@@ -237,7 +251,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     "TC_DGGEN_2_4",
     "TC_DGGEN_3_2",
-    // "TC_TestEventTrigger", // TODO: not yet attempted. Tests `GeneralDiagnostics::TestEventTrigger` invocation. rs-matter has the trait method but the example app's `GenDiag` impl doesn't honor a configurable enable-key. Needs `--app-args '--enable-key 000102030405060708090a0b0c0d0e0f'` plumbing on chip_tool_tests + a hook on `GenDiag::test_event_trigger` to verify the key.
+    "TC_TestEventTrigger",
 
     //
     // Python tests — Software Diagnostics (optional system cluster)
@@ -329,7 +343,12 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // "TC_DeviceBasicComposition",
     //   // Bundles several MatterBaseTests run after a single wildcard read.
-    //   // Multiple independent gaps hit at once:
+    //   // The `BasicCompositionTests.setup_class_helper()` PASE blocker that
+    //   // hits TC_AccessChecker is already worked around for this test too
+    //   // (added to `Self::needs_no_pase_shim` — re-enable here when the
+    //   // gaps below are closed and the PASE shim already routes setup
+    //   // through `xtask/scripts/no_pase_setup_class_helper.py`). The
+    //   // remaining independent gaps:
     //   //
     //   // 1. `test_TC_DESC_2_2` — checks `Descriptor::TagList` /
     //   //    `EndpointUniqueID` semantic-tag attributes per Matter Core
@@ -347,8 +366,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //   //    They're spec-mandated to error out (test fixtures for cluster
     //   //    error handling), but `TC_IDM_12_1`'s JSON dump records them as
     //   //    `49:ERROR` / `50:ERROR` and the surrounding tests treat the
-    //   //    decode failures as device problems. Re-enable once 1 and 2
-    //   //    are addressed.
+    //   //    decode failures as device problems.
     // "TC_DeviceConformance",      // TODO: device type revisions on the example endpoints don't match the spec-mandated values for the device types being advertised. Update the example apps' device-type revisions.
 ];
 
@@ -763,6 +781,29 @@ impl ITests {
             None => String::new(),
         };
 
+        // For tests that subclass `BasicCompositionTests` and call its
+        // `setup_class_helper()` *with* the default `allow_pase=True`, the
+        // PASE leg races CASE in a way that hangs on BlueZ D-Bus activation
+        // (~25 s) and corrupts the controller's CASE session by the time
+        // the unexpected PASE-completion callback fires. We route those
+        // tests through a vendored shim that monkey-patches
+        // `BasicCompositionTests.setup_class_helper` to default
+        // `allow_pase=False`, then `runpy`s the real script as `__main__`.
+        // See `xtask/scripts/no_pase_setup_class_helper.py` for the full
+        // explanation and `Self::needs_no_pase_shim` for the test list.
+        let (effective_script, real_script_env) = if Self::needs_no_pase_shim(test_name) {
+            (
+                self.workspace_dir
+                    .join("xtask/scripts/no_pase_setup_class_helper.py"),
+                format!(
+                    "RS_MATTER_REAL_TEST_SCRIPT={} ",
+                    script_path.display(),
+                ),
+            )
+        } else {
+            (script_path.clone(), String::new())
+        };
+
         // Block the runner until the rs-matter app has actually started
         // serving on the wire before it is allowed to SIGTERM the previous
         // instance during `request_device_reboot()`. Without this the
@@ -776,15 +817,34 @@ impl ITests {
         // `info!("Running Matter transport")` line emitted from
         // `rs_matter::transport::TransportRunner::run`.
         Ok(format!(
-            "timeout --kill-after=10s {timeout_secs}s \
+            "{real_script_env}timeout --kill-after=10s {timeout_secs}s \
              {} --app '{}'{} --app-ready-pattern 'Running Matter transport' \
              --factory-reset --script {} --script-args \"{}\"",
             runner_path.display(),
             test_exe_path.display(),
             app_args_clause,
-            script_path.display(),
+            effective_script.display(),
             script_args,
         ))
+    }
+
+    /// Tests whose `setup_class_helper()` PASE leg has to be force-disabled
+    /// via the vendored monkey-patching wrapper at
+    /// `xtask/scripts/no_pase_setup_class_helper.py`. Each of these tests
+    /// inherits from `BasicCompositionTests` and calls the helper with the
+    /// default `allow_pase=True`, which on `v1.5-branch` triggers a fresh
+    /// `EstablishPASESession` against a closed-window DUT and either hangs
+    /// 25 s on BlueZ activation or leaks a stale "in-progress PASE" entry
+    /// in the controller. Upstream fix `b180d46945` (PR #41712) on `master`
+    /// switches to `FindOrEstablishPASESession`; once that lands on
+    /// `v1.5-branch` (or we move to a newer chip gitref), this shim and
+    /// the entire `xtask/scripts/no_pase_setup_class_helper.py` wrapper
+    /// can be retired. See the script's docstring for the full diagnosis.
+    fn needs_no_pase_shim(test_name: &str) -> bool {
+        matches!(
+            test_name,
+            "TC_AccessChecker" | "TC_DeviceBasicComposition" | "TC_DeviceConformance"
+        )
     }
 
     /// Test-specific timeout override (in seconds) for tests that legitimately
@@ -913,6 +973,15 @@ impl ITests {
             // pipe and the DUT translates that into a
             // `DataModel::bump_configuration_version` call.
             "TC_BINFO_3_2" => Some("--app-pipe /tmp/rs_matter_bin_info_3_2_fifo"),
+            // TC_TestEventTrigger validates `GeneralDiagnostics::TestEventTrigger`
+            // key/trigger handling — needs the canonical CHIP enable-key
+            // 000102030405060708090a0b0c0d0e0f plumbed through to the device's
+            // `GenDiag::test_event_trigger` impl. The chip_tool_tests app
+            // accepts `--enable-key <hex32>` (see `parse_enable_key_override`
+            // in that binary) and wires it into a `TestEventTriggerDiag`
+            // wrapper around `()` that flips `TestEventTriggersEnabled` to
+            // true and validates the key/trigger per spec §11.12.7.1.
+            "TC_TestEventTrigger" => Some("--enable-key 000102030405060708090a0b0c0d0e0f"),
             _ => None,
         }
     }
@@ -1020,6 +1089,7 @@ impl ITests {
             // DGGEN (General Diagnostics) lives on the root endpoint.
             | "TC_DGGEN_2_4"
             | "TC_DGGEN_3_2"
+            | "TC_TestEventTrigger"
             // Groups (TC_G_2_2) defaults to endpoint 0 if not provided.
             | "TC_G_2_2" => " --endpoint 0",
             // TC_DA_1_7 ("device attestation: distinct keys per DUT") normally

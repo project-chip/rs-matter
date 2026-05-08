@@ -45,7 +45,7 @@ use rs_matter::dm::clusters::basic_info::{
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::eth_diag::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::gen_comm::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::gen_diag::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::gen_diag::{self, ClusterHandler as _, GenDiag};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::grp_key_mgmt::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::{self, SharedNetworks};
@@ -92,6 +92,7 @@ static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
 static EVENTS: StaticCell<Events> = StaticCell::new();
 static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
+static GEN_DIAG: StaticCell<TestEventTriggerDiag> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     // Enable detailed backtraces for debugging test failures
@@ -192,6 +193,18 @@ fn main() -> Result<(), Error> {
         &NODE
     };
 
+    // Optional `--enable-key <hex32>` plumbing for `TC_TestEventTrigger`.
+    // When present, the device flips `GeneralDiagnostics::TestEventTriggersEnabled`
+    // to true and validates the `TestEventTrigger` invoke key against the
+    // supplied bytes. Without it, the default `()` `GenDiag` impl reports
+    // disabled and rejects every trigger.
+    let gen_diag: &'static dyn GenDiag = if let Some(key) = parse_enable_key_override() {
+        info!("TestEventTrigger enabled with configured 16-byte key");
+        GEN_DIAG.init(TestEventTriggerDiag { enable_key: key })
+    } else {
+        &()
+    };
+
     // Create the Data Model instance
     let dm = DataModel::new(
         matter,
@@ -201,6 +214,7 @@ fn main() -> Result<(), Error> {
         events,
         dm_handler(
             node,
+            gen_diag,
             rand,
             unit_testing_data,
             &on_off_handler_1,
@@ -452,6 +466,7 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
 /// The handler is the root endpoint 0 handler plus the on-off and unit testing handlers.
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     node: &'static Node<'static>,
+    gen_diag: &'a dyn GenDiag,
     mut rand: impl RngCore + Copy,
     unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
     on_off_1: &'a OnOffHandler<'a, OH, LH>,
@@ -461,7 +476,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
         node,
         endpoints::with_eth_sys(
             &false,
-            &(),
+            gen_diag,
             &SysNetifs,
             rand,
             EmptyHandler
@@ -545,6 +560,68 @@ fn parse_port_override() -> u16 {
 /// an OS-thread reader to act on them.
 fn parse_app_pipe_override() -> Option<String> {
     parse_arg_opt_override("--app-pipe", |s| s.to_string())
+}
+
+/// Parse an optional `--enable-key <hex>` CLI override. The argument is a
+/// 32-character hex string (16 bytes) that the device will accept as the
+/// `TestEventTrigger` enable-key. Used by `TC_TestEventTrigger`.
+fn parse_enable_key_override() -> Option<[u8; 16]> {
+    parse_arg_opt_override("--enable-key", |s| s.to_string()).and_then(|hex| {
+        if hex.len() != 32 {
+            return None;
+        }
+        let mut out = [0u8; 16];
+        for i in 0..16 {
+            out[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+        }
+        Some(out)
+    })
+}
+
+/// `GenDiag` implementation that ties `TestEventTriggersEnabled` and
+/// `TestEventTrigger` to a configured 16-byte enable key. Uptime falls back
+/// to the library default impl on `()`. Per Matter Core spec §11.12.7.1, the
+/// command must:
+///
+/// - reject an all-zero `enableKey` with `ConstraintError`,
+/// - reject a key mismatch with `ConstraintError`,
+/// - reject an unrecognised `eventTrigger` with `InvalidCommand`.
+///
+/// We accept the canonical CHIP test trigger `0xFFFF_FFFF_FFF1_0000` (mirrors
+/// the Linux `SampleTestEventTriggerDelegate` so `TC_TestEventTrigger` step
+/// `correct_key_valid_code` succeeds).
+struct TestEventTriggerDiag {
+    enable_key: [u8; 16],
+}
+
+impl rs_matter::utils::sync::DynBase for TestEventTriggerDiag {}
+
+impl GenDiag for TestEventTriggerDiag {
+    fn reboot_count(&self) -> Result<u16, Error> {
+        ().reboot_count()
+    }
+
+    fn uptime_ms(&self) -> Result<u64, Error> {
+        ().uptime_ms()
+    }
+
+    fn test_event_triggers_enabled(&self) -> Result<bool, Error> {
+        Ok(true)
+    }
+
+    fn test_event_trigger(&self, key: &[u8], trigger: u64) -> Result<(), Error> {
+        if key.iter().all(|&b| b == 0) || key != self.enable_key {
+            return Err(rs_matter::error::ErrorCode::ConstraintError.into());
+        }
+        // Mirror CHIP's `SampleTestEventTriggerDelegate`: only the canonical
+        // CHIP test trigger code is recognised.
+        const VALID_TRIGGER: u64 = 0xFFFF_FFFF_FFF1_0000;
+        if trigger == VALID_TRIGGER {
+            Ok(())
+        } else {
+            Err(rs_matter::error::ErrorCode::InvalidCommand.into())
+        }
+    }
 }
 
 fn parse_arg_opt_override<T>(opt: &str, conv: impl FnOnce(&str) -> T) -> Option<T> {
