@@ -384,47 +384,62 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //   // the suite is invoked with
     //   // `--bool-arg ignore_in_progress:True allow_provisional:True`
     //   // plus `--PICS .../ci-pics-values` (see
-    //   // `Self::extra_python_script_args`). With those workarounds in
-    //   // place plus the GenComm TC fix in `gen_comm.rs:220`
-    //   // (`with_cmds(except!(CommandId::SetTCAcknowledgements))` —
-    //   // drops the TC-feature-gated commands from
-    //   // `AcceptedCommandList` per Matter Core spec §11.10.5), 4 of 6
-    //   // sub-tests pass (DESC_2_3, IDM_10_2, IDM_10_3, IDM_14_1) and
-    //   // 2 fail. The remaining failures all stem from gaps in the
-    //   // example app's device composition, *not* from a framework
-    //   // problem:
+    //   // `Self::extra_python_script_args`).
     //   //
-    //   // 1. `test_TC_IDM_10_5` ("Problems with Device type conformance"):
-    //   //    (FIXED — see `chip_tool_tests.rs`'s `NODE`.) The root
-    //   //    endpoint used to advertise Groups (0x0004), which Root Node
-    //   //    device type (0x0016, Matter Core spec §9.11) doesn't list.
-    //   //    `chip_tool_tests` now uses `root_endpoint!(eth)` (no `g`)
-    //   //    and `NODE_BINFO_CV_EXPOSED` drops `GroupsHandler::CLUSTER`
-    //   //    from the manually inlined list — Groups stays where it
-    //   //    belongs on EP1/EP2 under the On/Off Light device type.
-    //   //    `TC_G_2_2` was retargeted to `--endpoint 1` to match.
-    //   //    The remaining IDM_10_5 findings concern On/Off Light's
-    //   //    mandatory cluster set: device type 0x0100 requires three
-    //   //    things that `chip_tool_tests` EP1/EP2 don't provide:
-    //   //      - mandatory `Identify` cluster on each On/Off Light
-    //   //        endpoint (rs-matter has an Identify cluster handler;
-    //   //        wire it onto the example endpoints);
-    //   //      - mandatory `Scenes Management` cluster on each On/Off
-    //   //        Light endpoint (Scenes Management is not currently
-    //   //        implemented in rs-matter);
-    //   //      - `LT` feature bit 0 set in the OnOff cluster's
-    //   //        FeatureMap on each On/Off Light endpoint.
+    //   // Current status: **5 of 6 sub-tests pass**
+    //   //   - DESC_2_3 ✓
+    //   //   - IDM_10_2 ✓ (cleared by `gen_comm.rs:220`'s
+    //   //     `with_cmds(except!(CommandId::SetTCAcknowledgements))` —
+    //   //     drops the TC-feature-gated commands from
+    //   //     `AcceptedCommandList` per Matter Core spec §11.10.5)
+    //   //   - IDM_10_3 ✓
+    //   //   - IDM_10_5 ✗ (the only remaining failure — see below)
+    //   //   - IDM_10_6 ✓ (cleared by bumping `DEV_TYPE_ROOT_NODE.drev`
+    //   //     1→4 and `DEV_TYPE_ON_OFF_LIGHT.drev` 2→3 in
+    //   //     `rs-matter/src/dm/devices.rs`; rev-4 Root Node additions
+    //   //     are all conditional/optional, rev-3 On/Off Light just
+    //   //     swaps deprecated Scenes 0x0005 for Scenes Management
+    //   //     0x0062 — see Device Library §2.1.1 / §4.1.1)
+    //   //   - IDM_14_1 ✓
     //   //
-    //   // 2. `test_TC_IDM_10_6` ("Problems with Device type revisions"):
-    //   //    Matter 1.5 spec mandates Root Node revision 4 and On/Off
-    //   //    Light revision 3, but `rs-matter/src/dm/devices.rs` still
-    //   //    advertises revision 1 and 2 respectively (bumping the
-    //   //    revisions requires an audit pass over each device type to
-    //   //    confirm the rs-matter implementation actually matches the
-    //   //    bumped spec revision's mandatory cluster set).
+    //   // `test_TC_IDM_10_5` (device-type conformance) still fails on
+    //   // five problem entries:
     //   //
-    //   // Re-enable once (1)-(2) are addressed in `chip_tool_tests` and
-    //   // the supporting rs-matter code.
+    //   //   a. **Groups on EP0** (1 problem, deliberate). The
+    //   //      `chip_tool_tests` fixture re-adds Groups at root for
+    //   //      the `TestGroupMessaging` YAML test (group-addressed
+    //   //      writes to `BasicInformation::NodeLabel` need EP0 to be
+    //   //      a member of a multicast group, which only works via
+    //   //      per-endpoint Groups membership per App Cluster §1.3).
+    //   //      Matter Core §7.16.4 explicitly permits extra clusters
+    //   //      on an endpoint, but the conformance checker takes a
+    //   //      strict view. See the `NODE` doc comment in
+    //   //      `examples/src/bin/chip_tool_tests.rs` for the full
+    //   //      rationale; the library-level `with_*_sys()` chain and
+    //   //      the `g*` macro variants no longer add Groups at root,
+    //   //      so device-type-pure compositions are the *default*.
+    //   //
+    //   //   b. **Identify cluster** missing on EP1/EP2 (2 problems).
+    //   //      On/Off Light device type (Device Library §4.1.4)
+    //   //      mandates Identify (0x0003). rs-matter has the generated
+    //   //      `decl::identify` module but no handler implementation
+    //   //      yet — adding one (with state for `IdentifyTime`,
+    //   //      `IdentifyType`, plus stubs for `Identify` and
+    //   //      `TriggerEffect` commands) is bounded but non-trivial
+    //   //      work. Note: Identify alone won't unblock this test —
+    //   //      see (c).
+    //   //
+    //   //   c. **Scenes Management cluster** missing on EP1/EP2
+    //   //      (2 problems). On/Off Light at rev 3 mandates Scenes
+    //   //      Management (0x0062). This is a substantial new cluster
+    //   //      implementation (multiple commands — `AddScene`,
+    //   //      `ViewScene`, `RemoveScene`, `RemoveAllScenes`,
+    //   //      `StoreScene`, `RecallScene`, `GetSceneMembership`,
+    //   //      `CopyScene` — plus persistent scene-table storage).
+    //   //      Tracked separately as a future workstream.
+    //   //
+    //   // Re-enable once Scenes Management is implemented (and
+    //   // optionally Identify, to fully clear IDM_10_5).
 ];
 
 /// Camera cluster tests — run against the `camera_tests` example.
