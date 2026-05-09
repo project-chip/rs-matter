@@ -154,7 +154,7 @@ fn main() -> Result<(), Error> {
 const NODE: Node<'static> = Node {
     endpoints: &[
         // The root (0) endpoint - as usual.
-        root_endpoint!(geth),
+        root_endpoint!(eth),
         // When the node contains one or more bridged endpoints, we need
         // at least one endpoint that would serve as the aggregator endpoint and will thus
         // enumerate all bridged endpoints which are bridged e.g. using the same technology.

@@ -393,47 +393,25 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //   // problem:
     //   //
     //   // 1. `test_TC_IDM_10_5` ("Problems with Device type conformance"):
-    //   //    a. The root endpoint (EP0) advertises the Groups cluster
-    //   //       (0x0004), but Root Node device type (0x0016) is a purely
-    //   //       utility device type whose Matter Core spec §9.11
-    //   //       cluster list is fixed (BasicInfo, AccessControl,
-    //   //       GroupKeyManagement, GeneralCommissioning, NetworkComm,
-    //   //       GeneralDiagnostics, AdminComm, OperationalCredentials,
-    //   //       plus diagnostics) — Groups is not in that list, so the
-    //   //       conformance checker reports it as
-    //   //       "Extra cluster found on endpoint with device types
-    //   //        [DeviceTypeStruct(deviceType=22, revision=1)]".
-    //   //       Semantically the Root Node never receives group-addressed
-    //   //       traffic (it has no application clusters that could
-    //   //       respond to group commands); Groups belongs on the
-    //   //       application endpoints (EP1/EP2 here, where it's already
-    //   //       wired and is in fact mandatory for the On/Off Light
-    //   //       device type — see (1b) below). The bug is in the example
-    //   //       app's choice of root-endpoint preset: `chip_tool_tests`
-    //   //       uses `root_endpoint!(geth)`, where the leading `g` in
-    //   //       `geth;` causes the `clusters!` macro
-    //   //       (`rs-matter/src/dm/types/cluster.rs:597`) to splice
-    //   //       `GroupsHandler::CLUSTER` into the root endpoint's
-    //   //       cluster list. Switching to `root_endpoint!(eth)` (no `g`)
-    //   //       drops that, matches the spec, and doesn't break anything
-    //   //       on EP1/EP2 because they wire their own
-    //   //       `GroupsHandler::CLUSTER` independently. The same applies
-    //   //       to `NODE_BINFO_CV_EXPOSED`, which manually inlines
-    //   //       `GroupsHandler::CLUSTER` in EP0's cluster list — drop
-    //   //       that line too (and the parallel
-    //   //       `EpClMatcher::new(Some(ROOT_ENDPOINT_ID), ...)` Groups
-    //   //       handler binding in `endpoints.rs:224`, or guard it
-    //   //       behind a new non-`g` preset).
-    //   //    b. On/Off Light (device type 0x0100) requires three things
-    //   //       that `chip_tool_tests` EP1/EP2 don't provide:
-    //   //         - mandatory `Identify` cluster on each On/Off Light
-    //   //           endpoint (rs-matter has an Identify cluster handler;
-    //   //           wire it onto the example endpoints);
-    //   //         - mandatory `Scenes Management` cluster on each On/Off
-    //   //           Light endpoint (Scenes Management is not currently
-    //   //           implemented in rs-matter);
-    //   //         - `LT` feature bit 0 set in the OnOff cluster's
-    //   //           FeatureMap on each On/Off Light endpoint.
+    //   //    (FIXED — see `chip_tool_tests.rs`'s `NODE`.) The root
+    //   //    endpoint used to advertise Groups (0x0004), which Root Node
+    //   //    device type (0x0016, Matter Core spec §9.11) doesn't list.
+    //   //    `chip_tool_tests` now uses `root_endpoint!(eth)` (no `g`)
+    //   //    and `NODE_BINFO_CV_EXPOSED` drops `GroupsHandler::CLUSTER`
+    //   //    from the manually inlined list — Groups stays where it
+    //   //    belongs on EP1/EP2 under the On/Off Light device type.
+    //   //    `TC_G_2_2` was retargeted to `--endpoint 1` to match.
+    //   //    The remaining IDM_10_5 findings concern On/Off Light's
+    //   //    mandatory cluster set: device type 0x0100 requires three
+    //   //    things that `chip_tool_tests` EP1/EP2 don't provide:
+    //   //      - mandatory `Identify` cluster on each On/Off Light
+    //   //        endpoint (rs-matter has an Identify cluster handler;
+    //   //        wire it onto the example endpoints);
+    //   //      - mandatory `Scenes Management` cluster on each On/Off
+    //   //        Light endpoint (Scenes Management is not currently
+    //   //        implemented in rs-matter);
+    //   //      - `LT` feature bit 0 set in the OnOff cluster's
+    //   //        FeatureMap on each On/Off Light endpoint.
     //   //
     //   // 2. `test_TC_IDM_10_6` ("Problems with Device type revisions"):
     //   //    Matter 1.5 spec mandates Root Node revision 4 and On/Off
@@ -843,10 +821,15 @@ impl ITests {
         } else {
             String::new()
         };
+        let extra_args_clause = if extra_args.is_empty() {
+            String::new()
+        } else {
+            format!(" {extra_args}")
+        };
         let script_args = format!(
             "--storage-path /tmp/rs_matter_python_test_storage.json \
              {commissioning_method}{commissioning_args} --endpoint 1 \
-             --paa-trust-store-path credentials/development/paa-root-certs{extra_args}{th_server_arg}"
+             --paa-trust-store-path credentials/development/paa-root-certs{extra_args_clause}{th_server_arg}"
         );
 
         // Optional `--app-args` passed through to `chip_tool_tests`. Used by
@@ -1128,7 +1111,7 @@ impl ITests {
             // hosts the OnOff cluster on a `DEV_TYPE_ON_OFF_LIGHT` (device type
             // 0x0100 == 256).
             "TC_ACE_1_4" => {
-                " --int-arg PIXIT.ACE.APPENDPOINT:1 \
+                "--int-arg PIXIT.ACE.APPENDPOINT:1 \
                  --string-arg PIXIT.ACE.APPCLUSTER:OnOff \
                  --string-arg PIXIT.ACE.APPATTRIBUTE:OnOff \
                  --int-arg PIXIT.ACE.APPDEVTYPEID:256"
@@ -1139,7 +1122,7 @@ impl ITests {
             // `get_latest_event_number` at endpoint 1, where there are no
             // ACL events. argparse keeps the last `--endpoint`, so appending
             // here wins.
-            "TC_ACL_2_6" | "TC_ACL_2_7" | "TC_ACL_2_8" => " --endpoint 0",
+            "TC_ACL_2_6" | "TC_ACL_2_7" | "TC_ACL_2_8" => "--endpoint 0",
             // TC_CGEN_2_2 lives on the root endpoint (GeneralCommissioning /
             // OperationalCredentials clusters) and uses
             // `PIXIT.CGEN.FailsafeExpiryLengthSeconds` to bound the fail-safe
@@ -1163,10 +1146,10 @@ impl ITests {
             // see the still-armed pending root cert. CI mode covers the same
             // attribute / command surface without that assumption.
             "TC_CGEN_2_2" => {
-                " --endpoint 0 --int-arg PIXIT.CGEN.FailsafeExpiryLengthSeconds:10 \
+                "--endpoint 0 --int-arg PIXIT.CGEN.FailsafeExpiryLengthSeconds:10 \
                  --PICS src/app/tests/suites/certification/ci-pics-values"
             }
-            "TC_CGEN_2_4" => " --endpoint 0",
+            "TC_CGEN_2_4" => "--endpoint 0",
             // TC_CGEN_2_5..2_11 verify the General Commissioning
             // *Terms-and-Conditions* (TC, Matter 1.4+, `CGEN.S.F00`)
             // feature. rs-matter does not implement TC, and each test body
@@ -1188,7 +1171,7 @@ impl ITests {
             | "TC_CGEN_2_9"
             | "TC_CGEN_2_10"
             | "TC_CGEN_2_11" => {
-                " --endpoint 0 \
+                "--endpoint 0 \
                  --int-arg PIXIT.CGEN.FailsafeExpiryLengthSeconds:900 \
                  --int-arg PIXIT.CGEN.TCRevision:1 \
                  --int-arg PIXIT.CGEN.RequiredTCAcknowledgements:1"
@@ -1199,7 +1182,7 @@ impl ITests {
             // `PICS_SDK_CI_ONLY=1`. The matching `--app-pipe` path is
             // mirrored on the DUT side via `app_args_override`.
             "TC_BINFO_3_2" => {
-                " --endpoint 0 \
+                "--endpoint 0 \
                  --PICS src/app/tests/suites/certification/ci-pics-values \
                  --app-pipe /tmp/rs_matter_bin_info_3_2_fifo"
             }
@@ -1212,11 +1195,11 @@ impl ITests {
             // `default_timeout` (90 s) past the per_endpoint_runner
             // wait_for is enough to let the chunked transfers finish; the
             // test passes in well under 30 s on release.
-            "TC_OPCREDS_3_8" => " --endpoint 0 --timeout 240",
+            "TC_OPCREDS_3_8" => "--endpoint 0 --timeout 240",
             // TC_SC_4_1: setup payload is supplied via
             // `setup_payload_override`; this entry just routes it to
             // endpoint 0 like the other root-endpoint tests.
-            "TC_SC_4_1" => " --endpoint 0",
+            "TC_SC_4_1" => "--endpoint 0",
             // CADMIN (Administrator Commissioning) tests target the root
             // endpoint via `@run_if_endpoint_matches(has_cluster(...))`.
             "TC_CADMIN_1_3_4"
@@ -1244,23 +1227,30 @@ impl ITests {
             // DGGEN (General Diagnostics) lives on the root endpoint.
             | "TC_DGGEN_2_4"
             | "TC_DGGEN_3_2"
-            | "TC_TestEventTrigger"
-            // Groups (TC_G_2_2) defaults to endpoint 0 if not provided.
-            | "TC_G_2_2" => " --endpoint 0",
+            | "TC_TestEventTrigger" => "--endpoint 0",
+            // TC_G_2_2 sends Groups commands against
+            // `self.matter_test_config.endpoint` (e.g. lines 125/133/172/197)
+            // while `GroupKeyManagement` reads stay hard-coded at EP0.
+            // `chip_tool_tests` no longer advertises Groups at the root
+            // endpoint (Matter Core spec §9.11 — Root Node device type
+            // doesn't list Groups, see the comment on `NODE` in
+            // `chip_tool_tests.rs`); Groups now lives on EP1/EP2 under the
+            // On/Off Light device type, so target EP1.
+            "TC_G_2_2" => "--endpoint 1",
             // TC_DA_1_7 ("device attestation: distinct keys per DUT") normally
             // requires two distinct DUTs with different DAC keys. The test
             // also supports a single-DUT mode for CI when `allow_sdk_dac:true`
             // is passed: it then runs steps 1.x against one device and skips
             // the two-DUT public-key inequality check at step 3 (the inner
             // PAI-AKID denylist check is also skipped under that flag).
-            "TC_DA_1_7" => " --endpoint 0 --bool-arg allow_sdk_dac:true",
+            "TC_DA_1_7" => "--endpoint 0 --bool-arg allow_sdk_dac:true",
             // TC_SC_3_5 needs `is_pics_sdk_ci_only=True` so the
             // DUT_Commissioner steps short-circuit to "Y" — see the
             // explanatory comment in `SYS_TESTS` above. Without the CI PICS
             // file the test hangs on `wait_for_user_input` waiting for an
             // operator to commission the DUT_Commissioner from chip_tool_tests
             // (which doesn't act as a commissioner).
-            "TC_SC_3_5" => " --PICS src/app/tests/suites/certification/ci-pics-values",
+            "TC_SC_3_5" => "--PICS src/app/tests/suites/certification/ci-pics-values",
             // TC_DA_1_9 ("device attestation: revocation [DUT-Commissioner]")
             // is a commissioner-side test: it spawns `chip-all-clusters-app`
             // with a series of revoked DAC/PAI configurations and uses the
@@ -1272,7 +1262,7 @@ impl ITests {
             // per-test timeout (default 90 s) past the seven 30-s commission
             // attempts the test performs.
             "TC_DA_1_9" => {
-                " --PICS src/app/tests/suites/certification/ci-pics-values \
+                "--PICS src/app/tests/suites/certification/ci-pics-values \
                  --string-arg app_path:out/host/chip-all-clusters-app \
                  --string-arg dac_provider_base_path:credentials/test/revoked-attestation-certificates/dac-provider-test-vectors \
                  --string-arg revocation_set_base_path:credentials/test/revoked-attestation-certificates/revocation-sets \
@@ -1288,7 +1278,7 @@ impl ITests {
             // `is_pics_sdk_ci_only` to true and the rest of the cert-chain
             // assertions still exercise the attestation invoke surface.
             "TC_DA_1_2" | "TC_DA_1_5" => {
-                " --endpoint 0 \
+                "--endpoint 0 \
                  --PICS src/app/tests/suites/certification/ci-pics-values"
             }
             // TC_SC_7_1 supports a "post-cert" single-DUT mode that swaps
@@ -1297,7 +1287,7 @@ impl ITests {
             // sole DUT. Without `post_cert_test:true` the test bails out
             // before step 1 demanding a second discriminator. Routes to
             // endpoint 0 like the other root-endpoint SC tests.
-            "TC_SC_7_1" => " --bool-arg post_cert_test:true --endpoint 0",
+            "TC_SC_7_1" => "--bool-arg post_cert_test:true --endpoint 0",
             _ => "",
         }
     }

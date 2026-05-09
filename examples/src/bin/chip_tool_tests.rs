@@ -368,9 +368,17 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 };
 
 /// The Node meta-data describing our Matter device.
+///
+/// The root endpoint uses `root_endpoint!(eth)` (not `geth`) so the
+/// Groups cluster is *not* advertised at EP0: per Matter Core spec
+/// §9.11 the Root Node device type (0x0016) does not list Groups, and
+/// `TC_DeviceConformance::test_TC_IDM_10_5` flags any extra cluster as
+/// a device-type conformance violation. Groups belongs on the
+/// application endpoints (EP1 / EP2), where it is mandatory for the
+/// On/Off Light device type.
 const NODE: Node<'static> = Node {
     endpoints: &[
-        root_endpoint!(geth),
+        root_endpoint!(eth),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
@@ -423,9 +431,11 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
         Endpoint {
             id: ROOT_ENDPOINT_ID,
             device_types: devices!(DEV_TYPE_ROOT_NODE),
-            // Manually expanded `clusters!(geth;)` with `BasicInfoHandler::CLUSTER`
+            // Manually expanded `clusters!(eth;)` with `BasicInfoHandler::CLUSTER`
             // replaced by `BASIC_INFO_CLUSTER_CV_EXPOSED`. Keep this in sync
-            // with `clusters!(geth;)` in `rs-matter/src/dm/types/cluster.rs`.
+            // with `clusters!(eth;)` in `rs-matter/src/dm/types/cluster.rs`.
+            // Groups is intentionally omitted at the root endpoint — see the
+            // comment on `NODE` above.
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 acl::AclHandler::CLUSTER,
@@ -435,7 +445,6 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
                 adm_comm::AdminCommHandler::CLUSTER,
                 noc::NocHandler::CLUSTER,
                 grp_key_mgmt::GrpKeyMgmtHandler::CLUSTER,
-                groups::GroupsHandler::CLUSTER,
                 net_comm::NetworkType::Ethernet.cluster(),
                 eth_diag::EthDiagHandler::CLUSTER,
             ),

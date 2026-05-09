@@ -252,7 +252,7 @@ fn run() -> Result<(), Error> {
 /// The Node meta-data describing our Matter device.
 const NODE: Node<'static> = Node {
     endpoints: &[
-        root_endpoint!(geth),
+        root_endpoint!(eth),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_DIMMABLE_LIGHT),

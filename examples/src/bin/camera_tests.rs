@@ -644,7 +644,7 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 
 const NODE: Node<'static> = Node {
     endpoints: &[
-        root_endpoint!(geth),
+        root_endpoint!(eth),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_MATTER_CAMERA),

@@ -582,50 +582,20 @@ impl defmt::Format for Cluster<'_> {
 /// - `eth;` - includes all system model clusters + the Ethernet Network Diagnostics cluster.
 /// - `wifi;` - includes all system model clusters + the Wi-Fi Network Diagnostics cluster.
 /// - `thread;` - includes all system model clusters + the Thread Network Diagnostics cluster.
-/// - `gsys;` - like `sys;` but also includes support for the Groups cluster, which is required for group messaging
-///   and is thus needed by all devices supporting group messaging. Typically, you would prefer to use
-///   `geth;`, `gwifi;` or `gthread;` instead of `gsys;`, which do include the appropriate Network Diagnostics cluster based on the network type.
-/// - `geth;` - like `eth;` but also includes support for the Groups cluster.
-/// - `gwifi;` - like `wifi;` but also includes support for the Groups cluster.
-/// - `gthread;` - like `thread;` but also includes support for the Groups cluster.
 ///
 /// You can also specify additional clusters to be included in the generated list of clusters by passing them as arguments to the macro, for example:
 /// `clusters!(eth; custom_cluster1, custom_cluster2)` - includes all system model clusters +
 /// the Ethernet Network Diagnostics cluster + `custom_cluster1` and `custom_cluster2`.
+///
+/// Note: the Groups cluster is intentionally *not* included in any of these
+/// presets, because the Root Node device type (Matter Device Library §2.1.5)
+/// does not list Groups, and the Groups cluster is scoped to per-endpoint
+/// group membership (Matter Application Cluster Specification §1.3) which has
+/// no defined behavior on the Root Node. Wire `GroupsHandler::CLUSTER` onto
+/// the application endpoint(s) where it actually has meaning instead.
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! clusters {
-    (gsys; $($cluster:expr $(,)?)*) => {
-        $crate::clusters!(
-            sys;
-            <$crate::dm::clusters::groups::GroupsHandler as $crate::dm::clusters::groups::ClusterHandler>::CLUSTER,
-            $($cluster,)*
-        )
-    };
-    (geth; $($cluster:expr $(,)?)*) => {
-        $crate::clusters!(
-            gsys;
-            $crate::dm::clusters::net_comm::NetworkType::Ethernet.cluster(),
-            <$crate::dm::clusters::eth_diag::EthDiagHandler as $crate::dm::clusters::eth_diag::ClusterHandler>::CLUSTER,
-            $($cluster,)*
-        )
-    };
-    (gthread; $($cluster:expr $(,)?)*) => {
-        $crate::clusters!(
-            gsys;
-            $crate::dm::clusters::net_comm::NetworkType::Thread.cluster(),
-            <$crate::dm::clusters::thread_diag::ThreadDiagHandler as $crate::dm::clusters::thread_diag::ClusterHandler>::CLUSTER,
-            $($cluster,)*
-        )
-    };
-    (gwifi; $($cluster:expr $(,)?)*) => {
-        $crate::clusters!(
-            gsys;
-            $crate::dm::clusters::net_comm::NetworkType::Wifi.cluster(),
-            <$crate::dm::clusters::wifi_diag::WifiDiagHandler as $crate::dm::clusters::wifi_diag::ClusterHandler>::CLUSTER,
-            $($cluster,)*
-        )
-    };
     (sys; $($cluster:expr $(,)?)*) => {
         $crate::clusters!(
             <$crate::dm::clusters::desc::DescHandler as $crate::dm::clusters::desc::ClusterHandler>::CLUSTER,
