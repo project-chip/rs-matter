@@ -364,7 +364,102 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //   //    error handling), but `TC_IDM_12_1`'s JSON dump records them as
     //   //    `49:ERROR` / `50:ERROR` and the surrounding tests treat the
     //   //    decode failures as device problems.
-    // "TC_DeviceConformance",      // TODO: device type revisions on the example endpoints don't match the spec-mandated values for the device types being advertised. Update the example apps' device-type revisions.
+    //
+    // "TC_DeviceConformance",
+    //   // Runs the upstream device-conformance suite (six sub-tests:
+    //   // `test_TC_DESC_2_3`, `test_TC_IDM_10_2`/`_3`/`_5`/`_6`,
+    //   // `test_TC_IDM_14_1`) after a wildcard read of the full
+    //   // attribute/command surface. The PASE+CASE race in
+    //   // `BasicCompositionTests.setup_class_helper` is already worked
+    //   // around via `Self::needs_no_pase_shim` (which routes setup
+    //   // through `xtask/scripts/no_pase_setup_class_helper.py`), and
+    //   // the suite is invoked with
+    //   // `--bool-arg ignore_in_progress:True allow_provisional:True`
+    //   // plus `--PICS .../ci-pics-values` (see
+    //   // `Self::extra_python_script_args`). With those workarounds in
+    //   // place, 3 of 6 sub-tests pass (DESC_2_3, IDM_10_3, IDM_14_1) and
+    //   // 3 fail. The failures all stem from gaps in the example app's
+    //   // device composition, *not* from a framework problem:
+    //   //
+    //   // 1. `test_TC_IDM_10_2` ("Problems with conformance"):
+    //   //    a. GeneralCommissioning commands `0x06 SetTCAcknowledgements`
+    //   //       and `0x07 SetTCAcknowledgementsResponse` are gated on the
+    //   //       `TC` (Terms-and-Conditions, Matter 1.4+) feature per
+    //   //       Matter Core spec §11.10.5: their conformance column is
+    //   //       just "TC", so they MUST NOT appear in the AcceptedCommands
+    //   //       / GeneratedCommands lists when the TC bit isn't set in
+    //   //       the cluster's FeatureMap. rs-matter does not implement
+    //   //       the TC feature (no `TCAcceptedVersion`,
+    //   //       `TCAcknowledgements`, etc. attributes; FeatureMap is 0),
+    //   //       yet `GenCommHandler::CLUSTER` declares the cluster as
+    //   //       `FULL_CLUSTER.with_attrs(with!(required))`
+    //   //       (`gen_comm.rs:220`). The `with_attrs(with!(required))`
+    //   //       call correctly drops the TC-only attributes, but it
+    //   //       leaves the command set untouched, so the
+    //   //       TC-conditional commands stay in the metadata. Fix is to
+    //   //       chain `.with_cmds(with!(required))` (or
+    //   //       `.with_cmds(except!(GenCommCommandId::SetTCAcknowledgements
+    //   //       | GenCommCommandId::SetTCAcknowledgementsResponse))`) so
+    //   //       the same conformance filter applies to commands. The
+    //   //       handler stubs in `handle_set_tc_acknowledgements`
+    //   //       (`gen_comm.rs:463`) become dead code on this path and
+    //   //       can be removed alongside the metadata change, or left
+    //   //       in place for downstream users that expose the TC
+    //   //       feature via custom metadata.
+    //   //    b. The root endpoint (EP0) advertises the Groups cluster
+    //   //       (0x0004), but Root Node device type (0x0016) is a purely
+    //   //       utility device type whose Matter Core spec §9.11
+    //   //       cluster list is fixed (BasicInfo, AccessControl,
+    //   //       GroupKeyManagement, GeneralCommissioning, NetworkComm,
+    //   //       GeneralDiagnostics, AdminComm, OperationalCredentials,
+    //   //       plus diagnostics) — Groups is not in that list, so the
+    //   //       conformance checker reports it as
+    //   //       "Extra cluster found on endpoint with device types
+    //   //        [DeviceTypeStruct(deviceType=22, revision=1)]".
+    //   //       Semantically the Root Node never receives group-addressed
+    //   //       traffic (it has no application clusters that could
+    //   //       respond to group commands); Groups belongs on the
+    //   //       application endpoints (EP1/EP2 here, where it's already
+    //   //       wired and is in fact mandatory for the On/Off Light
+    //   //       device type — see (2) below). The bug is in the example
+    //   //       app's choice of root-endpoint preset: `chip_tool_tests`
+    //   //       uses `root_endpoint!(geth)`, where the leading `g` in
+    //   //       `geth;` causes the `clusters!` macro
+    //   //       (`rs-matter/src/dm/types/cluster.rs:597`) to splice
+    //   //       `GroupsHandler::CLUSTER` into the root endpoint's
+    //   //       cluster list. Switching to `root_endpoint!(eth)` (no `g`)
+    //   //       drops that, matches the spec, and doesn't break anything
+    //   //       on EP1/EP2 because they wire their own
+    //   //       `GroupsHandler::CLUSTER` independently. The same applies
+    //   //       to `NODE_BINFO_CV_EXPOSED`, which manually inlines
+    //   //       `GroupsHandler::CLUSTER` in EP0's cluster list — drop
+    //   //       that line too (and the parallel
+    //   //       `EpClMatcher::new(Some(ROOT_ENDPOINT_ID), ...)` Groups
+    //   //       handler binding in `endpoints.rs:224`, or guard it
+    //   //       behind a new non-`g` preset).
+    //   //
+    //   // 2. `test_TC_IDM_10_5` ("Problems with Device type conformance"):
+    //   //    On/Off Light (device type 0x0100) requires three things that
+    //   //    `chip_tool_tests` EP1/EP2 don't provide:
+    //   //      - mandatory `Identify` cluster on each On/Off Light
+    //   //        endpoint (rs-matter has an Identify cluster handler;
+    //   //        wire it onto the example endpoints);
+    //   //      - mandatory `Scenes Management` cluster on each On/Off
+    //   //        Light endpoint (Scenes Management is not currently
+    //   //        implemented in rs-matter);
+    //   //      - `LT` feature bit 0 set in the OnOff cluster's FeatureMap
+    //   //        on each On/Off Light endpoint.
+    //   //
+    //   // 3. `test_TC_IDM_10_6` ("Problems with Device type revisions"):
+    //   //    Matter 1.5 spec mandates Root Node revision 4 and On/Off
+    //   //    Light revision 3, but `rs-matter/src/dm/devices.rs` still
+    //   //    advertises revision 1 and 2 respectively (reverting the bump
+    //   //    requires an audit pass over each device type to confirm the
+    //   //    rs-matter implementation actually matches the bumped spec
+    //   //    revision's mandatory cluster set).
+    //   //
+    //   // Re-enable once (1)-(3) are addressed in `chip_tool_tests` and
+    //   // the supporting rs-matter code.
 ];
 
 /// Camera cluster tests — run against the `camera_tests` example.

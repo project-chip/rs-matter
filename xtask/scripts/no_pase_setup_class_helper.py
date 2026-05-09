@@ -107,7 +107,13 @@ BasicCompositionTests.setup_class_helper = _setup_class_helper_no_pase
 
 # Run the real test script as `__main__`. Without rewriting `sys.argv[0]`
 # the framework's debug output would point at this wrapper instead of the
-# real script, so we patch that up too.
+# real script, so we patch that up too. Crucially we also have to swap
+# `sys.path[0]` from this wrapper's directory (`xtask/scripts/`) to the
+# real script's directory: tests like `TC_DeviceConformance.py` depend on
+# sibling helper packages such as `test_testing.DeviceConformanceTests`
+# that are only resolvable via the script-directory entry that Python
+# normally inserts into `sys.path[0]` when invoking a script directly.
+# `runpy.run_path` does not perform that insertion automatically.
 real_script = os.environ.get("RS_MATTER_REAL_TEST_SCRIPT")
 if not real_script:
     print(
@@ -117,4 +123,5 @@ if not real_script:
     sys.exit(2)
 
 sys.argv[0] = real_script
+sys.path.insert(0, os.path.dirname(os.path.abspath(real_script)))
 runpy.run_path(real_script, run_name="__main__")
