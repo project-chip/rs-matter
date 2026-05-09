@@ -163,14 +163,20 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_CGEN_2_1",
     "TC_CGEN_2_2",
     "TC_CGEN_2_4",
-    // "TC_CGEN_2_5",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
-    // "TC_CGEN_2_6",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
-    // "TC_CGEN_2_7",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
-    // "TC_CGEN_2_8",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
-    // "TC_CGEN_2_9",  // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
-    // "TC_CGEN_2_10", // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
-    // "TC_CGEN_2_11", // Skipped: requires `CGEN.S.F00` (TermsAndConditions feature); rs-matter does not implement TC.
-
+    // TC_CGEN_2_5..2_11 verify the TermsAndConditions feature (Matter 1.4+,
+    // `CGEN.S.F00`). rs-matter does not implement TC and each test body
+    // gates itself on `check_pics("CGEN.S.F00")` to skip cleanly. We route
+    // them through the `no_fail_on_skipped.py` wrapper (see
+    // `Self::needs_no_fail_on_skipped`) so the framework's hardcoded
+    // `--fail-on-skipped` does not flip a clean skip into a runner failure.
+    // PIXIT.CGEN.* dummy values are supplied via `extra_python_script_args`.
+    "TC_CGEN_2_5",
+    "TC_CGEN_2_6",
+    "TC_CGEN_2_7",
+    "TC_CGEN_2_8",
+    "TC_CGEN_2_9",
+    "TC_CGEN_2_10",
+    "TC_CGEN_2_11",
     //
     // Python tests — Operational Credentials (system cluster)
     //
@@ -377,36 +383,17 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //   // `--bool-arg ignore_in_progress:True allow_provisional:True`
     //   // plus `--PICS .../ci-pics-values` (see
     //   // `Self::extra_python_script_args`). With those workarounds in
-    //   // place, 3 of 6 sub-tests pass (DESC_2_3, IDM_10_3, IDM_14_1) and
-    //   // 3 fail. The failures all stem from gaps in the example app's
-    //   // device composition, *not* from a framework problem:
+    //   // place plus the GenComm TC fix in `gen_comm.rs:220`
+    //   // (`with_cmds(except!(CommandId::SetTCAcknowledgements))` —
+    //   // drops the TC-feature-gated commands from
+    //   // `AcceptedCommandList` per Matter Core spec §11.10.5), 4 of 6
+    //   // sub-tests pass (DESC_2_3, IDM_10_2, IDM_10_3, IDM_14_1) and
+    //   // 2 fail. The remaining failures all stem from gaps in the
+    //   // example app's device composition, *not* from a framework
+    //   // problem:
     //   //
-    //   // 1. `test_TC_IDM_10_2` ("Problems with conformance"):
-    //   //    a. GeneralCommissioning commands `0x06 SetTCAcknowledgements`
-    //   //       and `0x07 SetTCAcknowledgementsResponse` are gated on the
-    //   //       `TC` (Terms-and-Conditions, Matter 1.4+) feature per
-    //   //       Matter Core spec §11.10.5: their conformance column is
-    //   //       just "TC", so they MUST NOT appear in the AcceptedCommands
-    //   //       / GeneratedCommands lists when the TC bit isn't set in
-    //   //       the cluster's FeatureMap. rs-matter does not implement
-    //   //       the TC feature (no `TCAcceptedVersion`,
-    //   //       `TCAcknowledgements`, etc. attributes; FeatureMap is 0),
-    //   //       yet `GenCommHandler::CLUSTER` declares the cluster as
-    //   //       `FULL_CLUSTER.with_attrs(with!(required))`
-    //   //       (`gen_comm.rs:220`). The `with_attrs(with!(required))`
-    //   //       call correctly drops the TC-only attributes, but it
-    //   //       leaves the command set untouched, so the
-    //   //       TC-conditional commands stay in the metadata. Fix is to
-    //   //       chain `.with_cmds(with!(required))` (or
-    //   //       `.with_cmds(except!(GenCommCommandId::SetTCAcknowledgements
-    //   //       | GenCommCommandId::SetTCAcknowledgementsResponse))`) so
-    //   //       the same conformance filter applies to commands. The
-    //   //       handler stubs in `handle_set_tc_acknowledgements`
-    //   //       (`gen_comm.rs:463`) become dead code on this path and
-    //   //       can be removed alongside the metadata change, or left
-    //   //       in place for downstream users that expose the TC
-    //   //       feature via custom metadata.
-    //   //    b. The root endpoint (EP0) advertises the Groups cluster
+    //   // 1. `test_TC_IDM_10_5` ("Problems with Device type conformance"):
+    //   //    a. The root endpoint (EP0) advertises the Groups cluster
     //   //       (0x0004), but Root Node device type (0x0016) is a purely
     //   //       utility device type whose Matter Core spec §9.11
     //   //       cluster list is fixed (BasicInfo, AccessControl,
@@ -421,7 +408,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //   //       respond to group commands); Groups belongs on the
     //   //       application endpoints (EP1/EP2 here, where it's already
     //   //       wired and is in fact mandatory for the On/Off Light
-    //   //       device type — see (2) below). The bug is in the example
+    //   //       device type — see (1b) below). The bug is in the example
     //   //       app's choice of root-endpoint preset: `chip_tool_tests`
     //   //       uses `root_endpoint!(geth)`, where the leading `g` in
     //   //       `geth;` causes the `clusters!` macro
@@ -437,28 +424,26 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //   //       `EpClMatcher::new(Some(ROOT_ENDPOINT_ID), ...)` Groups
     //   //       handler binding in `endpoints.rs:224`, or guard it
     //   //       behind a new non-`g` preset).
+    //   //    b. On/Off Light (device type 0x0100) requires three things
+    //   //       that `chip_tool_tests` EP1/EP2 don't provide:
+    //   //         - mandatory `Identify` cluster on each On/Off Light
+    //   //           endpoint (rs-matter has an Identify cluster handler;
+    //   //           wire it onto the example endpoints);
+    //   //         - mandatory `Scenes Management` cluster on each On/Off
+    //   //           Light endpoint (Scenes Management is not currently
+    //   //           implemented in rs-matter);
+    //   //         - `LT` feature bit 0 set in the OnOff cluster's
+    //   //           FeatureMap on each On/Off Light endpoint.
     //   //
-    //   // 2. `test_TC_IDM_10_5` ("Problems with Device type conformance"):
-    //   //    On/Off Light (device type 0x0100) requires three things that
-    //   //    `chip_tool_tests` EP1/EP2 don't provide:
-    //   //      - mandatory `Identify` cluster on each On/Off Light
-    //   //        endpoint (rs-matter has an Identify cluster handler;
-    //   //        wire it onto the example endpoints);
-    //   //      - mandatory `Scenes Management` cluster on each On/Off
-    //   //        Light endpoint (Scenes Management is not currently
-    //   //        implemented in rs-matter);
-    //   //      - `LT` feature bit 0 set in the OnOff cluster's FeatureMap
-    //   //        on each On/Off Light endpoint.
-    //   //
-    //   // 3. `test_TC_IDM_10_6` ("Problems with Device type revisions"):
+    //   // 2. `test_TC_IDM_10_6` ("Problems with Device type revisions"):
     //   //    Matter 1.5 spec mandates Root Node revision 4 and On/Off
     //   //    Light revision 3, but `rs-matter/src/dm/devices.rs` still
-    //   //    advertises revision 1 and 2 respectively (reverting the bump
-    //   //    requires an audit pass over each device type to confirm the
-    //   //    rs-matter implementation actually matches the bumped spec
-    //   //    revision's mandatory cluster set).
+    //   //    advertises revision 1 and 2 respectively (bumping the
+    //   //    revisions requires an audit pass over each device type to
+    //   //    confirm the rs-matter implementation actually matches the
+    //   //    bumped spec revision's mandatory cluster set).
     //   //
-    //   // Re-enable once (1)-(3) are addressed in `chip_tool_tests` and
+    //   // Re-enable once (1)-(2) are addressed in `chip_tool_tests` and
     //   // the supporting rs-matter code.
 ];
 
@@ -873,20 +858,33 @@ impl ITests {
             None => String::new(),
         };
 
-        // For tests that subclass `BasicCompositionTests` and call its
-        // `setup_class_helper()` *with* the default `allow_pase=True`, the
-        // PASE leg races CASE in a way that hangs on BlueZ D-Bus activation
-        // (~25 s) and corrupts the controller's CASE session by the time
-        // the unexpected PASE-completion callback fires. We route those
-        // tests through a vendored shim that monkey-patches
-        // `BasicCompositionTests.setup_class_helper` to default
-        // `allow_pase=False`, then `runpy`s the real script as `__main__`.
-        // See `xtask/scripts/no_pase_setup_class_helper.py` for the full
-        // explanation and `Self::needs_no_pase_shim` for the test list.
+        // Some tests need a vendored Python wrapper substituted in place of
+        // the real test script — the wrapper monkey-patches state /
+        // sys.argv, then `runpy`s the real script as `__main__`. The real
+        // path is communicated via the `RS_MATTER_REAL_TEST_SCRIPT` env var.
+        //
+        //  * `no_pase_setup_class_helper.py` — flips
+        //    `BasicCompositionTests.setup_class_helper`'s `allow_pase`
+        //    default to `False` (see `Self::needs_no_pase_shim`).
+        //
+        //  * `no_fail_on_skipped.py` — strips `--fail-on-skipped` from
+        //    `sys.argv` so test bodies that gracefully skip on a missing
+        //    optional feature (e.g. TC) don't flip the run exit code (see
+        //    `Self::needs_no_fail_on_skipped`).
+        //
+        // The two are mutually exclusive in the current test list; if a
+        // future test ever needs both, write a combined shim rather than
+        // chaining them.
         let (effective_script, real_script_env) = if Self::needs_no_pase_shim(test_name) {
             (
                 self.workspace_dir
                     .join("xtask/scripts/no_pase_setup_class_helper.py"),
+                format!("RS_MATTER_REAL_TEST_SCRIPT={} ", script_path.display(),),
+            )
+        } else if Self::needs_no_fail_on_skipped(test_name) {
+            (
+                self.workspace_dir
+                    .join("xtask/scripts/no_fail_on_skipped.py"),
                 format!("RS_MATTER_REAL_TEST_SCRIPT={} ", script_path.display(),),
             )
         } else {
@@ -933,6 +931,34 @@ impl ITests {
         matches!(
             test_name,
             "TC_AccessChecker" | "TC_DeviceBasicComposition" | "TC_DeviceConformance"
+        )
+    }
+
+    /// Tests whose bodies legitimately call `asserts.skip(...)` because the
+    /// device under test correctly does not implement the optional feature
+    /// the test exercises. Without intervention, CHIP's
+    /// `run_python_test.py` hardcodes `--fail-on-skipped`, which the matter
+    /// testing framework converts into a non-zero exit on any skipped
+    /// result — even though the test bodies completed cleanly. We route
+    /// these through `xtask/scripts/no_fail_on_skipped.py`, which strips
+    /// the flag from `sys.argv` before `runpy`-ing the real script. See
+    /// the wrapper's docstring for the full diagnosis.
+    ///
+    /// The TC_CGEN_2_5..2_11 tests all gate their bodies on the
+    /// `CGEN.S.F00` (TermsAndConditions) PICS check; rs-matter does not
+    /// claim TC and the tests skip cleanly. They still need their
+    /// PIXIT.CGEN.* parameters supplied (the lookups happen *before* the
+    /// PICS gate) — see `Self::extra_python_script_args`.
+    fn needs_no_fail_on_skipped(test_name: &str) -> bool {
+        matches!(
+            test_name,
+            "TC_CGEN_2_5"
+                | "TC_CGEN_2_6"
+                | "TC_CGEN_2_7"
+                | "TC_CGEN_2_8"
+                | "TC_CGEN_2_9"
+                | "TC_CGEN_2_10"
+                | "TC_CGEN_2_11"
         )
     }
 
@@ -1141,6 +1167,32 @@ impl ITests {
                  --PICS src/app/tests/suites/certification/ci-pics-values"
             }
             "TC_CGEN_2_4" => " --endpoint 0",
+            // TC_CGEN_2_5..2_11 verify the General Commissioning
+            // *Terms-and-Conditions* (TC, Matter 1.4+, `CGEN.S.F00`)
+            // feature. rs-matter does not implement TC, and each test body
+            // gates itself on `check_pics("CGEN.S.F00")` to skip cleanly
+            // when the device doesn't claim the feature. We deliberately
+            // do *not* pass `--PICS`: with an empty PICS dict
+            // `check_pics()` returns False (`matter_testing.py:709`), the
+            // bodies skip before any TC assertion runs, and the
+            // `no_fail_on_skipped.py` wrapper (see
+            // `Self::needs_no_fail_on_skipped`) keeps the runner from
+            // turning that clean skip into a non-zero exit. The
+            // PIXIT.CGEN.* lookups happen *before* the PICS gate in 5/7
+            // of the tests (only 2_6 and 2_10 PICS-check first), so we
+            // supply dummy values uniformly — they're never used.
+            "TC_CGEN_2_5"
+            | "TC_CGEN_2_6"
+            | "TC_CGEN_2_7"
+            | "TC_CGEN_2_8"
+            | "TC_CGEN_2_9"
+            | "TC_CGEN_2_10"
+            | "TC_CGEN_2_11" => {
+                " --endpoint 0 \
+                 --int-arg PIXIT.CGEN.FailsafeExpiryLengthSeconds:900 \
+                 --int-arg PIXIT.CGEN.TCRevision:1 \
+                 --int-arg PIXIT.CGEN.RequiredTCAcknowledgements:1"
+            }
             // TC_BINFO_3_2 (BasicInformation::ConfigurationVersion) takes the
             // simulated-bump path only when `is_pics_sdk_ci_only` is True, so
             // we must hand the controller a PICS file that sets

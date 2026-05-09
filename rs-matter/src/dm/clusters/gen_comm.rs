@@ -30,7 +30,7 @@ use crate::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use crate::tlv::TLVBuilderParent;
 use crate::transport::session::SessionMode;
 use crate::utils::sync::DynBase;
-use crate::{with, MatterState};
+use crate::{except, with, MatterState};
 
 pub use crate::dm::clusters::decl::general_commissioning::*;
 
@@ -217,7 +217,9 @@ impl<'a> GenCommHandler<'a> {
 }
 
 impl ClusterHandler for GenCommHandler<'_> {
-    const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER
+        .with_attrs(with!(required))
+        .with_cmds(except!(CommandId::SetTCAcknowledgements));
 
     fn dataver(&self) -> u32 {
         self.dataver.get()
@@ -464,10 +466,9 @@ impl ClusterHandler for GenCommHandler<'_> {
         &self,
         _ctx: impl InvokeContext,
         _request: SetTCAcknowledgementsRequest<'_>,
-        response: SetTCAcknowledgementsResponseBuilder<P>,
+        _response: SetTCAcknowledgementsResponseBuilder<P>,
     ) -> Result<P, Error> {
-        // TODO
-        response.error_code(CommissioningErrorEnum::OK)?.end()
+        Err(ErrorCode::CommandNotFound.into())
     }
 }
 
