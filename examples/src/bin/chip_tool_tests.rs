@@ -76,7 +76,7 @@ use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::BasicCommData;
-use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
 
@@ -369,16 +369,35 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 
 /// The Node meta-data describing our Matter device.
 ///
-/// The root endpoint uses `root_endpoint!(eth)` (not `geth`) so the
-/// Groups cluster is *not* advertised at EP0: per Matter Core spec
-/// §9.11 the Root Node device type (0x0016) does not list Groups, and
-/// `TC_DeviceConformance::test_TC_IDM_10_5` flags any extra cluster as
-/// a device-type conformance violation. Groups belongs on the
-/// application endpoints (EP1 / EP2), where it is mandatory for the
-/// On/Off Light device type.
+/// EP0 uses `clusters!(eth;)` for the Root Node system cluster set
+/// (Matter Core spec §9.11 / Device Library §2.1.5: Root Node device
+/// type 0x0016 does not list Groups). Groups is then *manually
+/// re-added* at EP0 because the YAML test `TestGroupMessaging`
+/// exercises group-addressed writes against root-endpoint attributes
+/// like `BasicInformation::NodeLabel`, which require the device's
+/// Root Node endpoint to be a member of a multicast group — and the
+/// only way to achieve that is per-endpoint Groups membership (App
+/// Cluster spec §1.3). The matching runtime handler binding for
+/// Groups at `ROOT_ENDPOINT_ID` is wired in `with_eth_sys` below; the
+/// library-level `with_*_sys` chain no longer adds it.
+///
+/// Spec note: Matter Core §7.16.4 says extra clusters MAY be present
+/// on an endpoint and clients MAY ignore them — i.e. having Groups on
+/// EP0 is permitted but does mean a strict device-type-conformance
+/// run (`TC_DeviceConformance::test_TC_IDM_10_5`) would flag it as an
+/// "extra cluster". That test is not on `chip_tool_tests`'s active
+/// run list (see the `TC_DeviceConformance` skip comment in
+/// `xtask/src/itest.rs`). The library-level `g*` macro variants and
+/// the Groups EpClMatcher in `with_sys()` were dropped to keep
+/// device-type-pure compositions the *default* — having Groups on
+/// EP0 here is a deliberate per-fixture exception.
 const NODE: Node<'static> = Node {
     endpoints: &[
-        root_endpoint!(eth),
+        Endpoint {
+            id: ROOT_ENDPOINT_ID,
+            device_types: devices!(DEV_TYPE_ROOT_NODE),
+            clusters: clusters!(eth; groups::GroupsHandler::CLUSTER),
+        },
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
@@ -434,8 +453,8 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
             // Manually expanded `clusters!(eth;)` with `BasicInfoHandler::CLUSTER`
             // replaced by `BASIC_INFO_CLUSTER_CV_EXPOSED`. Keep this in sync
             // with `clusters!(eth;)` in `rs-matter/src/dm/types/cluster.rs`.
-            // Groups is intentionally omitted at the root endpoint — see the
-            // comment on `NODE` above.
+            // `GroupsHandler::CLUSTER` is included for the same
+            // `TestGroupMessaging` reason documented on `NODE`.
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 acl::AclHandler::CLUSTER,
@@ -445,6 +464,7 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
                 adm_comm::AdminCommHandler::CLUSTER,
                 noc::NocHandler::CLUSTER,
                 grp_key_mgmt::GrpKeyMgmtHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
                 net_comm::NetworkType::Ethernet.cluster(),
                 eth_diag::EthDiagHandler::CLUSTER,
             ),
@@ -489,6 +509,25 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             &SysNetifs,
             rand,
             EmptyHandler
+                // Groups handler at the root endpoint. The library-level
+                // `with_*_sys()` chain in `rs-matter/src/dm/endpoints.rs`
+                // intentionally does *not* bind Groups at root anymore —
+                // Groups is not part of the Root Node device type
+                // (Matter Device Library §2.1.5). We re-add it here
+                // because the `TestGroupMessaging` YAML test exercises
+                // group-addressed writes against root-endpoint
+                // attributes (e.g. `BasicInformation::NodeLabel`), which
+                // requires this endpoint to be a member of the target
+                // multicast group via per-endpoint Groups membership
+                // (App Cluster spec §1.3). The matching metadata entry
+                // is in `NODE` and `NODE_BINFO_CV_EXPOSED` above.
+                .chain(
+                    EpClMatcher::new(
+                        Some(ROOT_ENDPOINT_ID),
+                        Some(groups::GroupsHandler::CLUSTER.id),
+                    ),
+                    Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                )
                 // Clusters for Endpoint 1
                 .chain(
                     EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
