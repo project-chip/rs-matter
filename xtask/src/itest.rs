@@ -102,7 +102,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_ACL_2_2",
     // "TC_ACL_2_3", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
     "TC_ACL_2_4",
-    // "TC_ACL_2_5", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
+    "TC_ACL_2_5", // Tests the optional `AccessControlExtension` feature (Extension attribute) — `@run_if_endpoint_matches(has_attribute(AccessControl.Extension))` skips cleanly via `no_fail_on_skipped.py`.
     "TC_ACL_2_6",
     // "TC_ACL_2_7", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
     // "TC_ACL_2_8", // Skipped: the test re-runs itself internally with legacy list encoding after the modern-encoding pass. The Python framework's between-runs controller cleanup is buggy (`object NoneType can't be used in 'await' expression`) and leaves stale fabrics on the DUT, so the second commissioning fails with `Incorrect state`. The modern-encoding pass — including fabric-scoped event filtering — is exercised end-to-end and passes.
@@ -259,13 +259,15 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Software Diagnostics (optional system cluster)
     //
-    // "TC_DGSW_2_1", // Skipped: SoftwareDiagnostics cluster not implemented by rs-matter (optional, Matter spec §11.13).
-    // "TC_DGSW_2_2", // Skipped: SoftwareDiagnostics cluster not implemented by rs-matter (optional, Matter spec §11.13).
-
+    // SoftwareDiagnostics cluster not implemented by rs-matter (optional, Matter spec §11.13);
+    // both tests use `@run_if_endpoint_matches(has_cluster(SoftwareDiagnostics))` which skips cleanly
+    // via `no_fail_on_skipped.py`.
+    "TC_DGSW_2_1",
+    "TC_DGSW_2_2",
     //
     // Python tests — Time Synchronization (optional system cluster)
     //
-    // "TC_TIMESYNC_2_1",  // Skipped: TimeSynchronization cluster not implemented by rs-matter (optional, Matter spec §11.16).
+    "TC_TIMESYNC_2_1", // TimeSynchronization not implemented (optional, Matter spec §11.16); `@run_if_endpoint_matches(has_cluster(TimeSynchronization) and has_attribute(TimeSource))` skips cleanly via `no_fail_on_skipped.py`.
     // "TC_TIMESYNC_2_2",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
     // "TC_TIMESYNC_2_4",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
     // "TC_TIMESYNC_2_5",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
@@ -293,10 +295,11 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Localization clusters (optional)
     //
-    // "TC_LCFG_2_1",  // Skipped: LocalizationConfiguration cluster not implemented by rs-matter (optional, Matter spec §11.4).
-    // "TC_LTIME_3_1", // Skipped: TimeFormatLocalization cluster not implemented by rs-matter (optional, Matter spec §11.5).
-    // "TC_LUNIT_3_1", // Skipped: UnitLocalization cluster not implemented by rs-matter (optional, Matter spec §11.6).
-
+    // Localization clusters not implemented by rs-matter (optional, Matter spec §11.4–11.6);
+    // each test uses `@run_if_endpoint_matches(has_cluster(...))` which skips cleanly via `no_fail_on_skipped.py`.
+    "TC_LCFG_2_1",
+    "TC_LTIME_3_1",
+    "TC_LUNIT_3_1",
     //
     // Python tests — Power Source (optional system cluster)
     //
@@ -305,8 +308,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Fixed Label (optional system cluster)
     //
-    // "TC_FLABEL_2_1", // Skipped: FixedLabel cluster not implemented by rs-matter (optional, Matter spec §9.8).
-
+    "TC_FLABEL_2_1", // FixedLabel not implemented (optional, Matter spec §9.8); `@run_if_endpoint_matches(has_attribute(FixedLabel.LabelList))` skips cleanly via `no_fail_on_skipped.py`.
     //
     // Python tests — Bridged Device Basic Information (optional, bridges)
     //
@@ -316,7 +318,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Switch (optional application cluster)
     //
-    // "TC_SWTCH", // Skipped: Switch cluster not implemented by rs-matter (Matter spec §1.13).
+    "TC_SWTCH", // Switch cluster not implemented (Matter spec §1.13); 5 inner test methods, each `@run_if_endpoint_matches(has_feature(Switch, ...))`, all skip cleanly via `no_fail_on_skipped.py`.
     //
     // Python tests — Device Attestation (commissioning)
     //
@@ -927,14 +929,29 @@ impl ITests {
     /// the flag from `sys.argv` before `runpy`-ing the real script. See
     /// the wrapper's docstring for the full diagnosis.
     ///
-    /// The TC_CGEN_2_5..2_11 tests all gate their bodies on the
-    /// `CGEN.S.F00` (TermsAndConditions) PICS check; rs-matter does not
-    /// claim TC and the tests skip cleanly. They still need their
-    /// PIXIT.CGEN.* parameters supplied (the lookups happen *before* the
-    /// PICS gate) — see `Self::extra_python_script_args`.
+    /// Two patterns produce a clean skip on rs-matter:
+    ///
+    /// 1. **Body-level PICS gate**: the test starts with
+    ///    `if not self.check_pics(<feature>): asserts.skip(...); return`.
+    ///    With our PICS dict empty for the unimplemented feature,
+    ///    `check_pics()` returns False and the body never runs. Example:
+    ///    `TC_CGEN_2_5..2_11` (TermsAndConditions, `CGEN.S.F00`). These
+    ///    tests still need any PIXIT.* values that they read *before*
+    ///    the PICS gate — see `Self::extra_python_script_args`.
+    ///
+    /// 2. **`@run_if_endpoint_matches(...)` decorator**: the matter
+    ///    testing framework's decorator (`matter/testing/decorators.py`)
+    ///    pre-reads the device's wildcard composition and, if no endpoint
+    ///    on the DUT satisfies the predicate, calls `asserts.skip(...)`
+    ///    before the test body ever runs. Tests targeting a cluster that
+    ///    rs-matter does not implement *anywhere* (e.g.
+    ///    `TimeSynchronization`, `SoftwareDiagnostics`,
+    ///    `LocalizationConfiguration`, `Switch`, ...) match no endpoint
+    ///    and skip cleanly without needing any PIXIT supply.
     fn needs_no_fail_on_skipped(test_name: &str) -> bool {
         matches!(
             test_name,
+            // Pattern 1: body-level PICS gate (CGEN TermsAndConditions feature).
             "TC_CGEN_2_5"
                 | "TC_CGEN_2_6"
                 | "TC_CGEN_2_7"
@@ -942,6 +959,17 @@ impl ITests {
                 | "TC_CGEN_2_9"
                 | "TC_CGEN_2_10"
                 | "TC_CGEN_2_11"
+                // Pattern 2: `@run_if_endpoint_matches(...)` against clusters/
+                // features rs-matter does not implement on any endpoint.
+                | "TC_TIMESYNC_2_1"  // has_cluster(TimeSynchronization) and has_attribute(TimeSource)
+                | "TC_DGSW_2_1"      // has_cluster(SoftwareDiagnostics)
+                | "TC_DGSW_2_2"      // has_cluster(SoftwareDiagnostics)
+                | "TC_FLABEL_2_1"    // has_attribute(FixedLabel.LabelList)
+                | "TC_LCFG_2_1"      // has_cluster(LocalizationConfiguration)
+                | "TC_LTIME_3_1"     // has_cluster(TimeFormatLocalization)
+                | "TC_LUNIT_3_1"     // has_cluster(UnitLocalization) and has_attribute(TemperatureUnit)
+                | "TC_SWTCH"         // 5 inner methods, each has_feature(Switch, ...)
+                | "TC_ACL_2_5" // has_attribute(AccessControl.Extension)
         )
     }
 
