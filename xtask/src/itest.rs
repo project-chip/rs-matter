@@ -879,13 +879,13 @@ impl ITests {
             (
                 self.workspace_dir
                     .join("xtask/scripts/no_pase_setup_class_helper.py"),
-                format!("RS_MATTER_REAL_TEST_SCRIPT={} ", script_path.display(),),
+                format!("RS_MATTER_REAL_TEST_SCRIPT='{}' ", script_path.display(),),
             )
         } else if Self::needs_no_fail_on_skipped(test_name) {
             (
                 self.workspace_dir
                     .join("xtask/scripts/no_fail_on_skipped.py"),
-                format!("RS_MATTER_REAL_TEST_SCRIPT={} ", script_path.display(),),
+                format!("RS_MATTER_REAL_TEST_SCRIPT='{}' ", script_path.display(),),
             )
         } else {
             (script_path.clone(), String::new())
@@ -906,7 +906,7 @@ impl ITests {
         Ok(format!(
             "{real_script_env}timeout --kill-after=10s {timeout_secs}s \
              {} --app '{}'{} --app-ready-pattern 'Running Matter transport' \
-             --factory-reset --script {} --script-args \"{}\"",
+             --factory-reset --script '{}' --script-args \"{}\"",
             runner_path.display(),
             test_exe_path.display(),
             app_args_clause,
