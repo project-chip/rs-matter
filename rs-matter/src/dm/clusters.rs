@@ -32,6 +32,7 @@ pub mod gen_comm;
 pub mod gen_diag;
 pub mod groups;
 pub mod grp_key_mgmt;
+pub mod identify;
 pub mod net_comm;
 pub mod noc;
 pub mod thread_diag;

@@ -69,7 +69,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestGroupMessaging",
     "TestGroupsCluster",
     "TestGroupKeyManagementCluster",
-    // "TestIdentifyCluster", // TODO: Identify cluster not yet implemented
+    "TestIdentifyCluster",
     "TestLogCommands",
     "TestMultiAdmin",
     "TestOperationalCredentialsCluster",
@@ -403,7 +403,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //   //   - IDM_14_1 ✓
     //   //
     //   // `test_TC_IDM_10_5` (device-type conformance) still fails on
-    //   // five problem entries:
+    //   // two problem entries:
     //   //
     //   //   a. **Groups on EP0** (1 problem, deliberate). The
     //   //      `chip_tool_tests` fixture re-adds Groups at root for
@@ -419,17 +419,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //   //      the `g*` macro variants no longer add Groups at root,
     //   //      so device-type-pure compositions are the *default*.
     //   //
-    //   //   b. **Identify cluster** missing on EP1/EP2 (2 problems).
-    //   //      On/Off Light device type (Device Library §4.1.4)
-    //   //      mandates Identify (0x0003). rs-matter has the generated
-    //   //      `decl::identify` module but no handler implementation
-    //   //      yet — adding one (with state for `IdentifyTime`,
-    //   //      `IdentifyType`, plus stubs for `Identify` and
-    //   //      `TriggerEffect` commands) is bounded but non-trivial
-    //   //      work. Note: Identify alone won't unblock this test —
-    //   //      see (c).
-    //   //
-    //   //   c. **Scenes Management cluster** missing on EP1/EP2
+    //   //   b. **Scenes Management cluster** missing on EP1/EP2
     //   //      (2 problems). On/Off Light at rev 3 mandates Scenes
     //   //      Management (0x0062). This is a substantial new cluster
     //   //      implementation (multiple commands — `AddScene`,
@@ -438,8 +428,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //   //      `CopyScene` — plus persistent scene-table storage).
     //   //      Tracked separately as a future workstream.
     //   //
-    //   // Re-enable once Scenes Management is implemented (and
-    //   // optionally Identify, to fully clear IDM_10_5).
+    //   // Re-enable once Scenes Management is implemented.
 ];
 
 /// Camera cluster tests — run against the `camera_tests` example.
