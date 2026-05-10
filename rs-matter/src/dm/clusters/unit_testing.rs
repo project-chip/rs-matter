@@ -3002,13 +3002,20 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_different_vendor_mei_request<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: TestDifferentVendorMeiRequestRequest<'_>,
         response: TestDifferentVendorMeiResponseBuilder<P>,
     ) -> Result<P, Error> {
         let arg = request.arg_1()?;
 
-        response.arg_1(arg)?.event_number(0)?.end()
+        // Per the cluster spec, this command echoes `arg1` and emits a
+        // `TestDifferentVendorMeiEvent` whose `arg1` carries the same value;
+        // the response then surfaces the event's number for the caller to
+        // read back via `readEvent`. `TestUnitTestingClusterMei` step 7/8
+        // depend on the event being emitted with a non-zero (real) number.
+        let event_no = TestDifferentVendorMeiEvent::emit(&ctx, |tw| tw.arg_1(arg)?.end())?;
+
+        response.arg_1(arg)?.event_number(event_no)?.end()
     }
 
     fn handle_string_echo_request<P: TLVBuilderParent>(

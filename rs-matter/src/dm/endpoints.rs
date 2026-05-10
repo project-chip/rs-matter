@@ -26,7 +26,6 @@ use super::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use super::clusters::eth_diag::{self, ClusterHandler as _, EthDiagHandler};
 use super::clusters::gen_comm::{self, ClusterHandler as _, CommPolicy, GenCommHandler};
 use super::clusters::gen_diag::{self, ClusterHandler as _, GenDiag, GenDiagHandler, NetifDiag};
-use super::clusters::groups::{self, ClusterHandler as _, GroupsHandler};
 use super::clusters::grp_key_mgmt::{self, ClusterHandler as _, GrpKeyMgmtHandler};
 use super::clusters::net_comm::{
     self, ClusterAsyncHandler as _, NetCommHandler, NetCtl, NetCtlStatus,
@@ -46,12 +45,11 @@ use super::types::{Async, ChainedHandler, Dataver, EndptId, EpClMatcher};
 /// - `eth` - includes all system model clusters + the Ethernet Network Diagnostics cluster.
 /// - `wifi` - includes all system model clusters + the Wi-Fi Network Diagnostics cluster.
 /// - `thread` - includes all system model clusters + the Thread Network Diagnostics cluster.
-/// - `gsys` - like `sys` but also includes support for the Groups cluster, which is required for group messaging
-///   and is thus needed by all devices supporting group messaging. Typically, you would prefer to use
-///   `geth`, `gwifi` or `gthread` instead of `gsys`, which do include the appropriate Network Diagnostics cluster based on the network type.
-/// - `geth` - like `eth` but also includes support for the Groups cluster.
-/// - `gwifi` - like `wifi` but also includes support for the Groups cluster.
-/// - `gthread` - like `thread` but also includes support for the Groups cluster.
+///
+/// The Groups cluster is intentionally not part of any of these presets — it
+/// is not a Root Node device-type cluster and has no defined behavior on the
+/// root endpoint. Add `GroupsHandler::CLUSTER` to the application endpoint(s)
+/// where group-addressed traffic is actually meaningful.
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! root_endpoint {
@@ -91,7 +89,6 @@ pub type SysHandler<'a, T, H> = handler_chain_type!(
     EpClMatcher => Async<noc::HandlerAdaptor<NocHandler>>,
     EpClMatcher => Async<acl::HandlerAdaptor<acl::AclHandler>>,
     EpClMatcher => Async<grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>,
-    EpClMatcher => Async<groups::HandlerAdaptor<GroupsHandler>>,
     EpClMatcher => Async<gen_diag::HandlerAdaptor<GenDiagHandler<'a>>>,
     EpClMatcher => net_comm::HandlerAsyncAdaptor<NetCommHandler<T>>
     | H
@@ -219,10 +216,6 @@ where
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GenDiagHandler::CLUSTER.id)),
         Async(GenDiagHandler::new(Dataver::new_rand(&mut rand), gen_diag, netif_diag).adapt()),
-    )
-    .chain(
-        EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GroupsHandler::CLUSTER.id)),
-        Async(GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GrpKeyMgmtHandler::CLUSTER.id)),

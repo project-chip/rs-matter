@@ -1112,6 +1112,7 @@ pub mod test {
         EffectVariantEnum, OnOffHooks, OutOfBandMessage, StartUpOnOffEnum,
     };
     use crate::dm::clusters::decl::on_off as on_off_cluster;
+    use crate::dm::clusters::decl::on_off::Feature;
     use crate::dm::Cluster;
     use crate::error::Error;
     use crate::tlv::Nullable;
@@ -1152,16 +1153,31 @@ pub mod test {
     }
 
     impl OnOffHooks for TestOnOffDeviceLogic {
+        // The On/Off Light device type (Matter Device Library §4.1.5) requires
+        // the `LT` (Lighting) feature on the OnOff cluster, which gates the
+        // `GlobalSceneControl`/`OnTime`/`OffWaitTime`/`StartUpOnOff` attributes
+        // and the `OffWithEffect`/`OnWithRecallGlobalScene`/`OnWithTimedOff`
+        // commands. The library `OnOffHandler` already implements all of
+        // these — we just opt in via the cluster metadata. Matches the
+        // FeatureMap conformance check in `TC_DeviceConformance::test_TC_IDM_10_5`.
         const CLUSTER: Cluster<'static> = on_off_cluster::FULL_CLUSTER
             .with_revision(6)
+            .with_features(Feature::LIGHTING.bits())
             .with_attrs(with!(
                 required;
                 on_off_cluster::AttributeId::OnOff
+                    | on_off_cluster::AttributeId::GlobalSceneControl
+                    | on_off_cluster::AttributeId::OnTime
+                    | on_off_cluster::AttributeId::OffWaitTime
+                    | on_off_cluster::AttributeId::StartUpOnOff
             ))
             .with_cmds(with!(
                 on_off_cluster::CommandId::Off
                     | on_off_cluster::CommandId::On
                     | on_off_cluster::CommandId::Toggle
+                    | on_off_cluster::CommandId::OffWithEffect
+                    | on_off_cluster::CommandId::OnWithRecallGlobalScene
+                    | on_off_cluster::CommandId::OnWithTimedOff
             ));
 
         fn on_off(&self) -> bool {

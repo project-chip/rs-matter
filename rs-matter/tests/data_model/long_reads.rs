@@ -174,6 +174,10 @@ static ATTR_RESPS: &[TestAttrResp<'static>] = &[
     attr_data!(1, 29, GlobalElements::FeatureMap, None),
     attr_data!(1, 29, GlobalElements::ClusterRevision, None),
     attr_data!(1, 6, on_off::AttributeId::OnOff, None),
+    attr_data!(1, 6, on_off::AttributeId::GlobalSceneControl, None),
+    attr_data!(1, 6, on_off::AttributeId::OnTime, None),
+    attr_data!(1, 6, on_off::AttributeId::OffWaitTime, None),
+    attr_data!(1, 6, on_off::AttributeId::StartUpOnOff, None),
     attr_data!(1, 6, GlobalElements::GeneratedCmdList, None),
     attr_data!(1, 6, GlobalElements::AcceptedCmdList, None),
     attr_data!(1, 6, GlobalElements::AttributeList, None),
@@ -330,6 +334,10 @@ static ATTR_SUBSCR_RESPS: &[TestAttrResp<'static>] = &[
     attr_data!(1, 29, GlobalElements::FeatureMap, None),
     attr_data!(1, 29, GlobalElements::ClusterRevision, None),
     attr_data!(1, 6, on_off::AttributeId::OnOff, None),
+    attr_data!(1, 6, on_off::AttributeId::GlobalSceneControl, None),
+    attr_data!(1, 6, on_off::AttributeId::OnTime, None),
+    attr_data!(1, 6, on_off::AttributeId::OffWaitTime, None),
+    attr_data!(1, 6, on_off::AttributeId::StartUpOnOff, None),
     attr_data!(1, 6, GlobalElements::GeneratedCmdList, None),
     attr_data!(1, 6, GlobalElements::AcceptedCmdList, None),
     attr_data!(1, 6, GlobalElements::AttributeList, None),
@@ -351,7 +359,7 @@ fn test_long_read_success() {
     const PART_1: usize = 38;
     const PART_2: usize = 37;
     const PART_3: usize = 37;
-    const PART_4: usize = 30;
+    const PART_4: usize = 34;
 
     // Read the entire attribute database, which requires multiple reads to complete
     init_env_logger();
@@ -415,7 +423,7 @@ fn test_long_read_subscription_success() {
     const PART_1: usize = 38;
     const PART_2: usize = 37;
     const PART_3: usize = 37;
-    const PART_4: usize = 30;
+    const PART_4: usize = 34;
 
     // Subscribe to the entire attribute database, which requires multiple reads to complete
     init_env_logger();

@@ -45,7 +45,7 @@ use rs_matter::dm::clusters::basic_info::{
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::eth_diag::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::gen_comm::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::gen_diag::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::gen_diag::{self, ClusterHandler as _, GenDiag};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::grp_key_mgmt::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::{self, SharedNetworks};
@@ -76,7 +76,7 @@ use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::BasicCommData;
-use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
 
@@ -92,6 +92,7 @@ static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
 static EVENTS: StaticCell<Events> = StaticCell::new();
 static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
+static GEN_DIAG: StaticCell<TestEventTriggerDiag> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     // Enable detailed backtraces for debugging test failures
@@ -192,6 +193,18 @@ fn main() -> Result<(), Error> {
         &NODE
     };
 
+    // Optional `--enable-key <hex32>` plumbing for `TC_TestEventTrigger`.
+    // When present, the device flips `GeneralDiagnostics::TestEventTriggersEnabled`
+    // to true and validates the `TestEventTrigger` invoke key against the
+    // supplied bytes. Without it, the default `()` `GenDiag` impl reports
+    // disabled and rejects every trigger.
+    let gen_diag: &'static dyn GenDiag = if let Some(key) = parse_enable_key_override() {
+        info!("TestEventTrigger enabled with configured 16-byte key");
+        GEN_DIAG.init(TestEventTriggerDiag { enable_key: key })
+    } else {
+        &()
+    };
+
     // Create the Data Model instance
     let dm = DataModel::new(
         matter,
@@ -201,6 +214,7 @@ fn main() -> Result<(), Error> {
         events,
         dm_handler(
             node,
+            gen_diag,
             rand,
             unit_testing_data,
             &on_off_handler_1,
@@ -354,9 +368,36 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 };
 
 /// The Node meta-data describing our Matter device.
+///
+/// EP0 uses `clusters!(eth;)` for the Root Node system cluster set
+/// (Matter Core spec §9.11 / Device Library §2.1.5: Root Node device
+/// type 0x0016 does not list Groups). Groups is then *manually
+/// re-added* at EP0 because the YAML test `TestGroupMessaging`
+/// exercises group-addressed writes against root-endpoint attributes
+/// like `BasicInformation::NodeLabel`, which require the device's
+/// Root Node endpoint to be a member of a multicast group — and the
+/// only way to achieve that is per-endpoint Groups membership (App
+/// Cluster spec §1.3). The matching runtime handler binding for
+/// Groups at `ROOT_ENDPOINT_ID` is wired in `with_eth_sys` below; the
+/// library-level `with_*_sys` chain no longer adds it.
+///
+/// Spec note: Matter Core §7.16.4 says extra clusters MAY be present
+/// on an endpoint and clients MAY ignore them — i.e. having Groups on
+/// EP0 is permitted but does mean a strict device-type-conformance
+/// run (`TC_DeviceConformance::test_TC_IDM_10_5`) would flag it as an
+/// "extra cluster". That test is not on `chip_tool_tests`'s active
+/// run list (see the `TC_DeviceConformance` skip comment in
+/// `xtask/src/itest.rs`). The library-level `g*` macro variants and
+/// the Groups EpClMatcher in `with_sys()` were dropped to keep
+/// device-type-pure compositions the *default* — having Groups on
+/// EP0 here is a deliberate per-fixture exception.
 const NODE: Node<'static> = Node {
     endpoints: &[
-        root_endpoint!(geth),
+        Endpoint {
+            id: ROOT_ENDPOINT_ID,
+            device_types: devices!(DEV_TYPE_ROOT_NODE),
+            clusters: clusters!(eth; groups::GroupsHandler::CLUSTER),
+        },
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
@@ -409,9 +450,11 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
         Endpoint {
             id: ROOT_ENDPOINT_ID,
             device_types: devices!(DEV_TYPE_ROOT_NODE),
-            // Manually expanded `clusters!(geth;)` with `BasicInfoHandler::CLUSTER`
+            // Manually expanded `clusters!(eth;)` with `BasicInfoHandler::CLUSTER`
             // replaced by `BASIC_INFO_CLUSTER_CV_EXPOSED`. Keep this in sync
-            // with `clusters!(geth;)` in `rs-matter/src/dm/types/cluster.rs`.
+            // with `clusters!(eth;)` in `rs-matter/src/dm/types/cluster.rs`.
+            // `GroupsHandler::CLUSTER` is included for the same
+            // `TestGroupMessaging` reason documented on `NODE`.
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 acl::AclHandler::CLUSTER,
@@ -452,6 +495,7 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
 /// The handler is the root endpoint 0 handler plus the on-off and unit testing handlers.
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     node: &'static Node<'static>,
+    gen_diag: &'a dyn GenDiag,
     mut rand: impl RngCore + Copy,
     unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
     on_off_1: &'a OnOffHandler<'a, OH, LH>,
@@ -461,10 +505,29 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
         node,
         endpoints::with_eth_sys(
             &false,
-            &(),
+            gen_diag,
             &SysNetifs,
             rand,
             EmptyHandler
+                // Groups handler at the root endpoint. The library-level
+                // `with_*_sys()` chain in `rs-matter/src/dm/endpoints.rs`
+                // intentionally does *not* bind Groups at root anymore —
+                // Groups is not part of the Root Node device type
+                // (Matter Device Library §2.1.5). We re-add it here
+                // because the `TestGroupMessaging` YAML test exercises
+                // group-addressed writes against root-endpoint
+                // attributes (e.g. `BasicInformation::NodeLabel`), which
+                // requires this endpoint to be a member of the target
+                // multicast group via per-endpoint Groups membership
+                // (App Cluster spec §1.3). The matching metadata entry
+                // is in `NODE` and `NODE_BINFO_CV_EXPOSED` above.
+                .chain(
+                    EpClMatcher::new(
+                        Some(ROOT_ENDPOINT_ID),
+                        Some(groups::GroupsHandler::CLUSTER.id),
+                    ),
+                    Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                )
                 // Clusters for Endpoint 1
                 .chain(
                     EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
@@ -545,6 +608,68 @@ fn parse_port_override() -> u16 {
 /// an OS-thread reader to act on them.
 fn parse_app_pipe_override() -> Option<String> {
     parse_arg_opt_override("--app-pipe", |s| s.to_string())
+}
+
+/// Parse an optional `--enable-key <hex>` CLI override. The argument is a
+/// 32-character hex string (16 bytes) that the device will accept as the
+/// `TestEventTrigger` enable-key. Used by `TC_TestEventTrigger`.
+fn parse_enable_key_override() -> Option<[u8; 16]> {
+    parse_arg_opt_override("--enable-key", |s| s.to_string()).and_then(|hex| {
+        if hex.len() != 32 {
+            return None;
+        }
+        let mut out = [0u8; 16];
+        for i in 0..16 {
+            out[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+        }
+        Some(out)
+    })
+}
+
+/// `GenDiag` implementation that ties `TestEventTriggersEnabled` and
+/// `TestEventTrigger` to a configured 16-byte enable key. Uptime falls back
+/// to the library default impl on `()`. Per Matter Core spec §11.12.7.1, the
+/// command must:
+///
+/// - reject an all-zero `enableKey` with `ConstraintError`,
+/// - reject a key mismatch with `ConstraintError`,
+/// - reject an unrecognised `eventTrigger` with `InvalidCommand`.
+///
+/// We accept the canonical CHIP test trigger `0xFFFF_FFFF_FFF1_0000` (mirrors
+/// the Linux `SampleTestEventTriggerDelegate` so `TC_TestEventTrigger` step
+/// `correct_key_valid_code` succeeds).
+struct TestEventTriggerDiag {
+    enable_key: [u8; 16],
+}
+
+impl rs_matter::utils::sync::DynBase for TestEventTriggerDiag {}
+
+impl GenDiag for TestEventTriggerDiag {
+    fn reboot_count(&self) -> Result<u16, Error> {
+        ().reboot_count()
+    }
+
+    fn uptime_ms(&self) -> Result<u64, Error> {
+        ().uptime_ms()
+    }
+
+    fn test_event_triggers_enabled(&self) -> Result<bool, Error> {
+        Ok(true)
+    }
+
+    fn test_event_trigger(&self, key: &[u8], trigger: u64) -> Result<(), Error> {
+        if key.iter().all(|&b| b == 0) || key != self.enable_key {
+            return Err(rs_matter::error::ErrorCode::ConstraintError.into());
+        }
+        // Mirror CHIP's `SampleTestEventTriggerDelegate`: only the canonical
+        // CHIP test trigger code is recognised.
+        const VALID_TRIGGER: u64 = 0xFFFF_FFFF_FFF1_0000;
+        if trigger == VALID_TRIGGER {
+            Ok(())
+        } else {
+            Err(rs_matter::error::ErrorCode::InvalidCommand.into())
+        }
+    }
 }
 
 fn parse_arg_opt_override<T>(opt: &str, conv: impl FnOnce(&str) -> T) -> Option<T> {
