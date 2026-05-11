@@ -37,6 +37,7 @@ pub mod net_comm;
 pub mod noc;
 pub mod thread_diag;
 pub mod unit_testing;
+pub mod user_label;
 pub mod wifi_diag;
 
 /// Generated cluster declarations from Matter IDL (via build.rs).

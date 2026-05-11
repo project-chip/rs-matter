@@ -54,6 +54,7 @@ use rs_matter::dm::clusters::noc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
 };
+use rs_matter::dm::clusters::user_label::{self, UserLabelHandler};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
@@ -392,12 +393,19 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 /// the Groups EpClMatcher in `with_sys()` were dropped to keep
 /// device-type-pure compositions the *default* — having Groups on
 /// EP0 here is a deliberate per-fixture exception.
+///
+/// `UserLabel` (cluster ID 0x0041) is also wired onto EP0 even though
+/// it isn't part of the Root Node device type — the
+/// `TestUserLabelClusterConstraints` YAML test targets `endpoint: 0`
+/// and exercises the `LabelList` length-constraint behaviour. Same
+/// rationale as Groups: Matter Core §7.16.4 permits extras, our
+/// device-type-conformance test is already on the skip list.
 const NODE: Node<'static> = Node {
     endpoints: &[
         Endpoint {
             id: ROOT_ENDPOINT_ID,
             device_types: devices!(DEV_TYPE_ROOT_NODE),
-            clusters: clusters!(eth; groups::GroupsHandler::CLUSTER),
+            clusters: clusters!(eth; groups::GroupsHandler::CLUSTER, user_label::CLUSTER),
         },
         Endpoint {
             id: 1,
@@ -456,8 +464,9 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
             // Manually expanded `clusters!(eth;)` with `BasicInfoHandler::CLUSTER`
             // replaced by `BASIC_INFO_CLUSTER_CV_EXPOSED`. Keep this in sync
             // with `clusters!(eth;)` in `rs-matter/src/dm/types/cluster.rs`.
-            // `GroupsHandler::CLUSTER` is included for the same
-            // `TestGroupMessaging` reason documented on `NODE`.
+            // `GroupsHandler::CLUSTER` and `user_label::CLUSTER` are
+            // included for the same `TestGroupMessaging` /
+            // `TestUserLabelClusterConstraints` reasons documented on `NODE`.
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 acl::AclHandler::CLUSTER,
@@ -468,6 +477,7 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
                 noc::NocHandler::CLUSTER,
                 grp_key_mgmt::GrpKeyMgmtHandler::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
+                user_label::CLUSTER,
                 net_comm::NetworkType::Ethernet.cluster(),
                 eth_diag::EthDiagHandler::CLUSTER,
             ),
@@ -532,6 +542,15 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                         Some(groups::GroupsHandler::CLUSTER.id),
                     ),
                     Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                )
+                // UserLabel handler at the root endpoint. Wired here for
+                // the same per-fixture-exception reason as Groups above:
+                // `TestUserLabelClusterConstraints` writes / reads the
+                // cluster at `endpoint: 0`. The handler uses bounded
+                // in-memory storage with `N = 4` (default).
+                .chain(
+                    EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(user_label::CLUSTER.id)),
+                    Async(UserLabelHandler::<4>::new(Dataver::new_rand(&mut rand)).adapt()),
                 )
                 // Clusters for Endpoint 1
                 .chain(

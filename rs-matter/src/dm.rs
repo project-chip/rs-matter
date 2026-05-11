@@ -57,12 +57,6 @@ pub mod subscriptions;
 
 mod types;
 
-/// The Maximum number of expanded writer request per transaction
-///
-/// The write requests are first wildcard-expanded, and these many number of
-/// write requests per-transaction will be supported.
-const MAX_WRITE_ATTRS_IN_ONE_TRANS: usize = 15;
-
 pub type IMBuffer = crate::utils::storage::Vec<u8, MAX_EXCHANGE_RX_BUF_SIZE>;
 
 /// An `ExchangeHandler` implementation capable of handling responder exchanges for the Interaction Model protocol.
@@ -1583,20 +1577,7 @@ where
         wb.start_struct(&TLVTag::Anonymous)?;
         wb.start_array(&TLVTag::Context(WriteRespTag::WriteResponses as u8))?;
 
-        // The spec expects that a single write request like DeleteList + AddItem
-        // should cause all ACLs of that fabric to be deleted and the new one to be added (Case 1).
-        //
-        // This is in conflict with the immediate-effect expectation of ACL: an ACL
-        // write should instantaneously update the ACL so that immediate next WriteAttribute
-        // *in the same WriteRequest* should see that effect (Case 2).
-        //
-        // As with the C++ SDK, here we do all the ACLs checks first, before any write begins.
-        // Thus we support the Case1 by doing this. It does come at the cost of maintaining an
-        // additional list of expanded write requests as we start processing those.
-        let write_attrs: heapless::Vec<_, MAX_WRITE_ATTRS_IN_ONE_TRANS> =
-            self.node.write(self.req, &accessor)?.collect();
-
-        for item in write_attrs {
+        for item in self.node.write(self.req, &accessor)? {
             self.invoker.process_write(&item?, &mut *wb).await?;
         }
 

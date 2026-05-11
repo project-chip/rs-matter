@@ -556,6 +556,31 @@ where
     leaf_index: u16,
     /// Filter the expanded item or not
     filter: F,
+    /// Last concrete `(endpoint_id, cluster_id, leaf_id)` triple whose
+    /// access check succeeded during this expansion run. When the next
+    /// expanded leaf matches this triple, the access check is bypassed.
+    ///
+    /// This is the mechanism that resolves the "DeleteAll + Add×N on the
+    /// ACL cluster within one WriteRequest" tension (Matter Core spec
+    /// §10.6.4): chip-tool serializes a list-replace as `DeleteAll`
+    /// followed by N per-element `Add`s, all targeting the **same**
+    /// concrete attribute path. The first op authorizes against the
+    /// fabric's current ACL; subsequent same-path ops cache-hit and
+    /// bypass the re-check — so an admin's permission isn't accidentally
+    /// revoked midway through replacing their own ACL with a new entry.
+    /// Mirrors `mLastSuccessfullyWrittenPath` in CHIP's `WriteHandler`.
+    ///
+    /// Soundness: the required privilege for a given concrete path is
+    /// constant (cluster-metadata-defined), and the accessor / session
+    /// doesn't change within an expansion, so re-using a prior
+    /// authorization for the same path is safe. The cache is **not**
+    /// reset when advancing to a new item from `items` — that's
+    /// deliberate: `DeleteAll + Add×N` arrives as N+1 separate
+    /// `AttrData` items in the same WriteRequest, and they all need
+    /// to share one access decision for the operation to be atomic.
+    /// A different concrete `(endpoint, cluster, leaf)` triple simply
+    /// misses the cache and re-runs the check.
+    last_authorized: Option<(EndptId, ClusterId, u32)>,
 }
 
 impl<'a, T, I, F> PathExpander<'a, T, I, F>
@@ -582,6 +607,7 @@ where
             cluster_index: 0,
             leaf_index: 0,
             filter,
+            last_authorized: None,
         }
     }
 
@@ -641,42 +667,54 @@ where
                                 // Leaf found, filter and check its access rights
 
                                 let check = if (self.filter)(endpoint.id, cluster.id, leaf_id) {
-                                    if matches!(T::OPERATION, Operation::Invoke) {
-                                        cluster.check_cmd_access(
-                                            self.accessor,
-                                            self.timed,
-                                            GenericPath::new(
-                                                Some(endpoint.id),
-                                                Some(cluster.id),
-                                                Some(leaf_id),
-                                            ),
-                                            endpoint.device_types,
-                                            unwrap!(cluster
-                                                .commands()
-                                                .map(|cmd| cmd.id)
-                                                .nth(self.leaf_index as usize)),
-                                        )
+                                    // Cache hit: this concrete triple was just
+                                    // authorized within the same expansion run.
+                                    // Skip the access re-check — see the
+                                    // `last_authorized` field doc on
+                                    // `PathExpander` for the rationale.
+                                    if self.last_authorized
+                                        == Some((endpoint.id, cluster.id, leaf_id))
+                                    {
+                                        Ok(true)
+                                    } else if matches!(T::OPERATION, Operation::Invoke) {
+                                        cluster
+                                            .check_cmd_access(
+                                                self.accessor,
+                                                self.timed,
+                                                GenericPath::new(
+                                                    Some(endpoint.id),
+                                                    Some(cluster.id),
+                                                    Some(leaf_id),
+                                                ),
+                                                endpoint.device_types,
+                                                unwrap!(cluster
+                                                    .commands()
+                                                    .map(|cmd| cmd.id)
+                                                    .nth(self.leaf_index as usize)),
+                                            )
+                                            .map(|_| true)
                                     } else {
                                         // TODO: Need to also check that the code is not trying to access an element of an array
                                         // when the attribute is not an array
 
-                                        cluster.check_attr_access(
-                                            self.accessor,
-                                            self.timed,
-                                            GenericPath::new(
-                                                Some(endpoint.id),
-                                                Some(cluster.id),
-                                                Some(leaf_id),
-                                            ),
-                                            endpoint.device_types,
-                                            matches!(T::OPERATION, Operation::Write),
-                                            unwrap!(cluster
-                                                .attributes()
-                                                .map(|attr| attr.id)
-                                                .nth(self.leaf_index as usize)),
-                                        )
+                                        cluster
+                                            .check_attr_access(
+                                                self.accessor,
+                                                self.timed,
+                                                GenericPath::new(
+                                                    Some(endpoint.id),
+                                                    Some(cluster.id),
+                                                    Some(leaf_id),
+                                                ),
+                                                endpoint.device_types,
+                                                matches!(T::OPERATION, Operation::Write),
+                                                unwrap!(cluster
+                                                    .attributes()
+                                                    .map(|attr| attr.id)
+                                                    .nth(self.leaf_index as usize)),
+                                            )
+                                            .map(|_| true)
                                     }
-                                    .map(|_| true)
                                 } else {
                                     Ok(false)
                                 };
@@ -686,6 +724,16 @@ where
                                         // Because on the next call we should start from the next leaf or if leaves
                                         // are over, from the next cluster and so on
                                         self.leaf_index += 1;
+
+                                        // Cache this concrete triple as the
+                                        // last-authorized one. The next
+                                        // expansion that lands on the same
+                                        // (endpoint, cluster, leaf) — typical
+                                        // for chip-tool's list-write
+                                        // `DeleteAll + Add×N` encoding — will
+                                        // bypass the access re-check above.
+                                        self.last_authorized =
+                                            Some((endpoint.id, cluster.id, leaf_id));
 
                                         return Ok(Some((endpoint.id, cluster.id, leaf_id)));
                                     }
