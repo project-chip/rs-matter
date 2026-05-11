@@ -29,6 +29,7 @@ use log::{Level, LevelFilter};
 use crate::itest::{ITests, TestSuite};
 
 mod common;
+mod copyright;
 mod itest;
 mod tlv;
 
@@ -82,6 +83,13 @@ enum Command {
     ItestTools,
     /// Print Chip integration test packages information
     ItestPackages,
+    /// Update / verify the `Copyright (c) ... Project CHIP Authors` header in
+    /// every tracked `.rs` source file based on git history. With no
+    /// subcommand, runs `check`.
+    Copyright {
+        #[command(subcommand)]
+        action: Option<copyright::Action>,
+    },
     /// Decode TLV octets
     Tlv {
         /// The TLV octets are decimal
@@ -164,6 +172,9 @@ impl Command {
                     &build_args.profile,
                     &resolved_target,
                 )
+            }
+            Command::Copyright { action } => {
+                copyright::run(action.unwrap_or(copyright::Action::Check))
             }
             Command::Tlv {
                 dec,
