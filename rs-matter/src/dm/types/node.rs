@@ -32,10 +32,27 @@ use crate::utils::storage::Vec;
 use super::{AttrDetails, ClusterId, CmdDetails, EndptId};
 
 /// The main Matter metadata type describing a Matter Node.
+///
+/// # Invariants
+///
+/// 1. Endpoints must be in **strictly increasing order** of `Endpoint::id`.
+/// 2. Per-endpoint shape is **stable for the endpoint's lifetime**.
+///    Once an endpoint with a given id has been added to a `Node`, its
+///    `clusters` slice and each cluster's attribute / command / event
+///    lists must not change. Whole endpoints may still be added or
+///    removed at runtime. Mutating a cluster's attribute or server
+///    list is a change to F-quality metadata (Matter Core spec
+///    §7.13.2.2 `AttributeList`, §7.13.2.4 `ServerList`) and must be
+///    accompanied by a `ConfigurationVersion` bump, which in practice
+///    means a restart of the `rs-matter` service and likely - of the
+///    whole process anyway.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Node<'a> {
     /// The endpoints of the (one and only) node in the Interaction & Data Model.
+    ///
+    /// See the [`Node`] type-level docs for the invariants this slice
+    /// must satisfy.
     pub endpoints: &'a [Endpoint<'a>],
 }
 
@@ -229,27 +246,24 @@ impl<'a, const N: usize> DynamicNode<'a, N> {
     }
 
     /// Add an endpoint to the dynamic node.
+    ///
+    /// The endpoint is inserted so that [`Node::endpoints`] stays
+    /// sorted by id (see the [`Node`] invariants).
     pub fn add(&mut self, endpoint: Endpoint<'a>) -> Result<(), Endpoint<'a>> {
-        if !self.endpoints.iter().any(|ep| ep.id == endpoint.id) {
-            self.endpoints.push(endpoint)
-        } else {
-            Err(endpoint)
+        match self.endpoints.iter().position(|ep| ep.id >= endpoint.id) {
+            Some(i) if self.endpoints[i].id == endpoint.id => Err(endpoint),
+            Some(i) => self.endpoints.insert(i, endpoint),
+            None => self.endpoints.push(endpoint),
         }
     }
 
     /// Remove an endpoint from the dynamic node.
+    ///
+    /// Uses an order-preserving `remove` (rather than `swap_remove`)
+    /// to keep [`Node::endpoints`] sorted by id.
     pub fn remove(&mut self, endpoint_id: u16) -> Option<Endpoint<'a>> {
-        let index = self
-            .endpoints
-            .iter()
-            .enumerate()
-            .find_map(|(index, ep)| (ep.id == endpoint_id).then_some(index));
-
-        if let Some(index) = index {
-            Some(self.endpoints.swap_remove(index))
-        } else {
-            None
-        }
+        let index = self.endpoints.iter().position(|ep| ep.id == endpoint_id)?;
+        Some(self.endpoints.remove(index))
     }
 }
 
@@ -549,11 +563,37 @@ struct PathExpander<'a, T, I, F> {
     items: Option<I>,
     /// The current path item being expanded.
     item: Option<T>,
-    /// The current endpoint index if the path is a wildcard one.
-    endpoint_index: u32,
-    /// The current cluster index.
+    /// The id of the endpoint currently anchoring the scan, or `None`
+    /// before the first endpoint has been entered (or right after the
+    /// item changes / the previous endpoint has been exhausted). This
+    /// is the *only* state needed to resume correctly across
+    /// metadata-lock releases:
+    ///
+    /// At the top of every `next_for_path` call we look the id up in
+    /// `Node::endpoints` via `binary_search_by_key`:
+    /// - `Ok(i)` — endpoint is still there (possibly at a different
+    ///   index); use `i` as `endpoint_index` and trust the existing
+    ///   `cluster_index` / `leaf_index` (Node-level invariant: an
+    ///   endpoint's cluster shape is stable for its lifetime).
+    /// - `Err(i)` — endpoint is gone; resume at `endpoint_index = i`
+    ///   (the insertion point — strictly past everything we've already
+    ///   yielded, because endpoints are sorted ascending by id) with
+    ///   `cluster_index` / `leaf_index` zeroed.
+    ///
+    /// `cluster_index` / `leaf_index` are not separately mirrored by
+    /// id: the per-endpoint shape invariant means the array slot we
+    /// were about to read next is still the right one, so positional
+    /// indices suffice once the endpoint is re-anchored.
+    ///
+    /// The endpoint array *index* is not held on `self` at all — it
+    /// is derived fresh at the top of every `next_for_path` call from
+    /// this id (via `binary_search_by_key`), since the array layout
+    /// can shift between calls. Within a single call it lives on the
+    /// stack as the outer-loop counter.
+    endpoint_id: Option<EndptId>,
+    /// The current cluster index within the anchored endpoint.
     cluster_index: u16,
-    /// The current leaf index.
+    /// The current leaf index within the anchored cluster.
     leaf_index: u16,
     /// Filter the expanded item or not
     filter: F,
@@ -597,7 +637,7 @@ where
             timed,
             items: paths,
             item: None,
-            endpoint_index: 0,
+            endpoint_id: None,
             cluster_index: 0,
             leaf_index: 0,
             filter,
@@ -620,7 +660,9 @@ where
                     Ok(item) => self.item = Some(item),
                 }
 
-                self.endpoint_index = 0;
+                // Each new item starts expansion from scratch; the
+                // endpoint-id resume anchor is per-item.
+                self.endpoint_id = None;
                 self.cluster_index = 0;
                 self.leaf_index = 0;
             }
@@ -686,8 +728,19 @@ where
             }
         }
 
-        while (self.endpoint_index as usize) < node.endpoints.len() {
-            let endpoint = &node.endpoints[self.endpoint_index as usize];
+        // Re-anchor the scan against the *current* Node before
+        // resuming. If the Node hasn't changed since the previous
+        // call this is an O(log N) check; otherwise we recover by
+        // looking up the endpoint id we were last anchored at.
+        // See the `endpoint_id` field doc-comment for semantics.
+        let mut endpoint_index = self.resume_endpoint_index(node);
+
+        while endpoint_index < node.endpoints.len() {
+            let endpoint = &node.endpoints[endpoint_index];
+            // Remember the id of the endpoint we're entering so the
+            // next `next_for_path` call can re-anchor against it even
+            // if the underlying `Node` has been swapped in between.
+            self.endpoint_id = Some(endpoint.id);
 
             if (path.endpoint.is_none() || path.endpoint == Some(endpoint.id))
                 && self.accessor.is_endpoint_accessible(endpoint.id)
@@ -718,12 +771,8 @@ where
                             if path.leaf.is_none() || path.leaf == Some(leaf_id as _) {
                                 // Leaf found, filter and check its access rights
 
+                                #[allow(clippy::if_same_then_else)]
                                 let check = if (self.filter)(endpoint.id, cluster.id, leaf_id) {
-                                    // Cache hit: this concrete triple was just
-                                    // authorized within the same expansion run.
-                                    // Skip the access re-check — see the
-                                    // `last_authorized` field doc on
-                                    // `PathExpander` for the rationale.
                                     if self.last_authorized
                                         == Some((endpoint.id, cluster.id, leaf_id))
                                     {
@@ -774,7 +823,10 @@ where
                                 match check {
                                     Ok(true) => {
                                         // Because on the next call we should start from the next leaf or if leaves
-                                        // are over, from the next cluster and so on
+                                        // are over, from the next cluster and so on. `endpoint_id` is
+                                        // already set to `endpoint.id` at the top of the outer loop,
+                                        // which is how the next call re-anchors to this endpoint even
+                                        // if the underlying Node has been mutated in between.
                                         self.leaf_index += 1;
 
                                         // Cache this concrete triple as the
@@ -840,13 +892,64 @@ where
                 self.cluster_index = 0;
             }
 
-            self.endpoint_index += 1;
+            endpoint_index += 1;
         }
 
         if !path.is_wildcard() {
             Err(IMStatusCode::UnsupportedEndpoint)
         } else {
             Ok(None)
+        }
+    }
+
+    /// Compute the starting `endpoint_index` for the outer loop in
+    /// `next_for_path` by re-anchoring against the *current* `node`
+    /// using the `endpoint_id` we last entered. Called once at the
+    /// top of every `next_for_path` so the scan resumes correctly
+    /// even if the underlying `Node` has been swapped or mutated
+    /// since the last `next` call.
+    ///
+    /// Relies on the [`Node`]-level invariants:
+    /// - **`endpoints` sorted ascending by id, no duplicates** —
+    ///   enables `binary_search_by_key` and means the insertion point
+    ///   on a miss is strictly past everything we've already yielded.
+    /// - **Per-endpoint shape is stable for the endpoint's lifetime**
+    ///   — means `cluster_index` and `leaf_index` are still valid
+    ///   positional cursors whenever the endpoint is found again.
+    ///
+    /// Returns `0` when `endpoint_id` is `None` (we haven't entered
+    /// any endpoint yet for the current item; the cluster / leaf
+    /// cursors are already at `0/0`).
+    fn resume_endpoint_index(&mut self, node: &Node<'_>) -> usize {
+        let Some(ep_id) = self.endpoint_id else {
+            return 0;
+        };
+
+        debug_assert!(
+            node.endpoints.windows(2).all(|w| w[0].id < w[1].id),
+            "Node::endpoints must be sorted ascending by id and contain no duplicates",
+        );
+
+        match node.endpoints.binary_search_by_key(&ep_id, |e| e.id) {
+            // Same endpoint, possibly at a different slot. The
+            // per-endpoint shape invariant means `cluster_index` and
+            // `leaf_index` still point at the array slot we were
+            // going to read next, so leave them alone.
+            Ok(i) => i,
+            Err(i) => {
+                // Endpoint is gone. The insertion point `i` is the
+                // index of the first remaining endpoint whose id is
+                // strictly greater than ours — i.e. one we have not
+                // yielded yet (would have come after the lost
+                // endpoint in the previous-Node iteration order).
+                // Reset the cluster / leaf cursors and clear the
+                // anchor so the outer loop reads the new endpoint
+                // fresh.
+                self.cluster_index = 0;
+                self.leaf_index = 0;
+                self.endpoint_id = None;
+                i
+            }
         }
     }
 }
@@ -1332,5 +1435,337 @@ mod test {
             |_ep, _cl, leaf| leaf != 1,
             &[Ok(Ok(GenericPath::new(Some(0), Some(1), Some(2))))],
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Recovery from concurrent Node mutations between `next()` calls.
+    //
+    // The `Metadata` lock is now acquired afresh per `next()` call (see
+    // `PathExpanderIterator`), so the application is free to swap in a
+    // different `Node` between iterations. `PathExpander` is expected
+    // to recover by ID — these tests pin down the behaviour:
+    // - stable Node                                  → unchanged output
+    // - endpoint added/removed between iterations    → graceful advance
+    // - cluster added/removed                        → graceful advance
+    // - attribute added/removed                      → graceful advance
+    // - whole Node swapped                           → best-effort
+    // -----------------------------------------------------------------
+
+    use core::cell::Cell;
+
+    use crate::dm::Metadata;
+
+    /// A `Metadata` impl whose backing `Node` can be hot-swapped between
+    /// `access` calls — the test simulator for concurrent application
+    /// mutations.
+    struct SwappableMetadata {
+        current: Cell<&'static Node<'static>>,
+    }
+
+    impl SwappableMetadata {
+        fn new(node: &'static Node<'static>) -> Self {
+            Self {
+                current: Cell::new(node),
+            }
+        }
+
+        fn swap(&self, new_node: &'static Node<'static>) {
+            self.current.set(new_node);
+        }
+    }
+
+    impl Metadata for SwappableMetadata {
+        fn access<F, R>(&self, f: F) -> R
+        where
+            F: FnOnce(&Node<'_>) -> R,
+        {
+            f(self.current.get())
+        }
+    }
+
+    /// Run the expander interactively, invoking `after_yield(i, &metadata)`
+    /// after each `next()` result so the test can swap the Node in
+    /// between iterations. Compares the cumulative output to `expected`.
+    fn test_swap(
+        initial: &'static Node<'static>,
+        input: &[GenericPath],
+        mut after_yield: impl FnMut(usize, &SwappableMetadata),
+        expected: &[Result<Result<GenericPath, IMStatusCode>, ErrorCode>],
+    ) {
+        let matter = test_matter();
+        let accessor = Accessor::new(0, AccessorSubjects::new(0), Some(AuthMode::Pase), &matter);
+
+        let metadata = SwappableMetadata::new(initial);
+
+        let mut expander = PathExpanderIterator::new(
+            &metadata,
+            &accessor,
+            false,
+            Some(input.iter().cloned().map(Ok::<_, Error>)),
+            |_, _, _| true,
+        );
+
+        let mut actual: alloc::vec::Vec<_> = alloc::vec::Vec::new();
+        let mut i = 0;
+        while let Some(result) = expander.next() {
+            actual.push(result.map_err(|e| e.code()));
+            after_yield(i, &metadata);
+            i += 1;
+        }
+
+        assert_eq!(actual.as_slice(), expected);
+    }
+
+    // ---- Fixtures used across the recovery tests ------------------------
+
+    /// Sanity check: with no mutations the swap-aware test path matches
+    /// the static-Node test path.
+    #[test]
+    fn recovery_stable_node() {
+        static EP0_C1_A12: [Cluster; 1] = [make_cluster_const(1, &[1, 2])];
+        static NODE: Node = Node::new(&[Endpoint::new(0, &[], &EP0_C1_A12)]);
+
+        test_swap(
+            &NODE,
+            &[GenericPath::new(None, None, None)],
+            |_, _| {}, // no swap
+            &[
+                Ok(Ok(GenericPath::new(Some(0), Some(1), Some(1)))),
+                Ok(Ok(GenericPath::new(Some(0), Some(1), Some(2)))),
+            ],
+        );
+    }
+
+    /// New endpoint inserted *after* the yielded one. We must continue
+    /// from where we left off and then also visit the newcomer.
+    #[test]
+    fn recovery_endpoint_inserted_after_yield() {
+        static EP0_C1_A1: [Cluster; 1] = [make_cluster_const(1, &[1])];
+        static EP7_C1_A1: [Cluster; 1] = [make_cluster_const(1, &[1])];
+
+        static ONE_EP: [Endpoint; 1] = [Endpoint::new(0, &[], &EP0_C1_A1)];
+        static TWO_EPS: [Endpoint; 2] = [
+            Endpoint::new(0, &[], &EP0_C1_A1),
+            Endpoint::new(7, &[], &EP7_C1_A1),
+        ];
+
+        static NODE_BEFORE: Node = Node::new(&ONE_EP);
+        static NODE_AFTER: Node = Node::new(&TWO_EPS);
+
+        test_swap(
+            &NODE_BEFORE,
+            &[GenericPath::new(None, None, None)],
+            |i, m| {
+                // After the first yield, swap in the larger Node.
+                if i == 0 {
+                    m.swap(&NODE_AFTER);
+                }
+            },
+            &[
+                Ok(Ok(GenericPath::new(Some(0), Some(1), Some(1)))),
+                Ok(Ok(GenericPath::new(Some(7), Some(1), Some(1)))),
+            ],
+        );
+    }
+
+    /// Endpoint *removed* between two yields (the one we just yielded
+    /// against): we must still visit the remaining endpoints exactly
+    /// once each.
+    #[test]
+    fn recovery_endpoint_removed_after_yield() {
+        static EP0_C1_A1: [Cluster; 1] = [make_cluster_const(1, &[1])];
+        static EP5_C1_A1: [Cluster; 1] = [make_cluster_const(1, &[1])];
+        static EP7_C1_A1: [Cluster; 1] = [make_cluster_const(1, &[1])];
+
+        static THREE_EPS: [Endpoint; 3] = [
+            Endpoint::new(0, &[], &EP0_C1_A1),
+            Endpoint::new(5, &[], &EP5_C1_A1),
+            Endpoint::new(7, &[], &EP7_C1_A1),
+        ];
+        // After yield #1 we remove endpoint 5 (which was at index 1).
+        // Endpoint 7 shifts to index 1.
+        static TWO_EPS: [Endpoint; 2] = [
+            Endpoint::new(0, &[], &EP0_C1_A1),
+            Endpoint::new(7, &[], &EP7_C1_A1),
+        ];
+
+        static NODE_BEFORE: Node = Node::new(&THREE_EPS);
+        static NODE_AFTER: Node = Node::new(&TWO_EPS);
+
+        test_swap(
+            &NODE_BEFORE,
+            &[GenericPath::new(None, None, None)],
+            |i, m| {
+                // After yielding ep=0, drop ep=5. `binary_search` for
+                // ep_id=0 still finds it at slot 0; we exhaust it,
+                // advance to slot 1 — now ep=7 in the new array — and
+                // yield once from there. ep=5 is never re-visited.
+                if i == 0 {
+                    m.swap(&NODE_AFTER);
+                }
+            },
+            &[
+                Ok(Ok(GenericPath::new(Some(0), Some(1), Some(1)))),
+                Ok(Ok(GenericPath::new(Some(7), Some(1), Some(1)))),
+            ],
+        );
+    }
+
+    /// Cluster removed from the endpoint we're currently iterating
+    /// after we yielded against it. NB: this scenario *violates* the
+    /// [`Node`] per-endpoint-shape-stability invariant — once an
+    /// endpoint with a given id is exposed, its cluster slice must
+    /// not change. The test stays in place as defence-in-depth:
+    /// even under that contract violation the expander must not
+    /// panic or duplicate yields, it just exits gracefully when the
+    /// cluster array turns out shorter than the cursor.
+    #[test]
+    fn recovery_cluster_removed_after_yield() {
+        static C1_A1: [Cluster; 1] = [make_cluster_const(1, &[1])];
+        static C1_C10: [Cluster; 2] = [make_cluster_const(1, &[1]), make_cluster_const(10, &[1])];
+
+        static EP_BEFORE: [Endpoint; 1] = [Endpoint::new(0, &[], &C1_C10)];
+        // After yield #1 we drop cluster 10. Cluster 1 is still there.
+        static EP_AFTER: [Endpoint; 1] = [Endpoint::new(0, &[], &C1_A1)];
+
+        static NODE_BEFORE: Node = Node::new(&EP_BEFORE);
+        static NODE_AFTER: Node = Node::new(&EP_AFTER);
+
+        test_swap(
+            &NODE_BEFORE,
+            &[GenericPath::new(None, None, None)],
+            |i, m| {
+                if i == 0 {
+                    // We just yielded (ep=0, cluster=1, attr=1).
+                    // Now remove cluster 10. The expander should
+                    // notice the cluster array shortened and exit
+                    // gracefully.
+                    m.swap(&NODE_AFTER);
+                }
+            },
+            &[Ok(Ok(GenericPath::new(Some(0), Some(1), Some(1))))],
+        );
+    }
+
+    /// Attribute appended to the cluster after the slot we just
+    /// yielded against. As with `recovery_cluster_removed_after_yield`,
+    /// this scenario *violates* the [`Node`] per-endpoint-shape-stability
+    /// invariant; the test remains as defence-in-depth, documenting that
+    /// the expander deterministically picks up an extended attribute
+    /// list rather than panicking or skipping.
+    #[test]
+    fn recovery_attribute_appended() {
+        static C1_A1: [Cluster; 1] = [make_cluster_const(1, &[1])];
+        static C1_A1_A2: [Cluster; 1] = [make_cluster_const(1, &[1, 2])];
+
+        static EP_BEFORE: [Endpoint; 1] = [Endpoint::new(0, &[], &C1_A1)];
+        static EP_AFTER: [Endpoint; 1] = [Endpoint::new(0, &[], &C1_A1_A2)];
+
+        static NODE_BEFORE: Node = Node::new(&EP_BEFORE);
+        static NODE_AFTER: Node = Node::new(&EP_AFTER);
+
+        test_swap(
+            &NODE_BEFORE,
+            &[GenericPath::new(None, None, None)],
+            |i, m| {
+                if i == 0 {
+                    // Append attribute id=2 to cluster 1 after we
+                    // yielded attribute id=1.
+                    m.swap(&NODE_AFTER);
+                }
+            },
+            &[
+                Ok(Ok(GenericPath::new(Some(0), Some(1), Some(1)))),
+                // The newly-appended attribute is picked up.
+                Ok(Ok(GenericPath::new(Some(0), Some(1), Some(2)))),
+            ],
+        );
+    }
+
+    /// Whole Node replaced after the first yield — best-effort
+    /// continuation. Documents the observable behaviour rather than
+    /// asserting a specific "right" answer; the contract is that the
+    /// expander does not panic and does not infinite-loop.
+    #[test]
+    fn recovery_whole_node_swapped() {
+        static C1_A1: [Cluster; 1] = [make_cluster_const(1, &[1])];
+        static EP0_ORIG: [Endpoint; 1] = [Endpoint::new(0, &[], &C1_A1)];
+        static EP99_NEW: [Endpoint; 1] = [Endpoint::new(99, &[], &C1_A1)];
+
+        static NODE_BEFORE: Node = Node::new(&EP0_ORIG);
+        static NODE_AFTER: Node = Node::new(&EP99_NEW);
+
+        test_swap(
+            &NODE_BEFORE,
+            &[GenericPath::new(None, None, None)],
+            |i, m| {
+                if i == 0 {
+                    m.swap(&NODE_AFTER);
+                }
+            },
+            // After yielding (0, 1, 1) we swap to a Node whose only
+            // endpoint is id=99. `binary_search` for ep_id=0 in [99]
+            // returns `Err(0)` — the insertion point is index 0, so
+            // we resume there onto the new endpoint with the cluster /
+            // leaf cursors reset to 0.
+            &[
+                Ok(Ok(GenericPath::new(Some(0), Some(1), Some(1)))),
+                Ok(Ok(GenericPath::new(Some(99), Some(1), Some(1)))),
+            ],
+        );
+    }
+
+    /// Helper: `const fn` wrapper around `Cluster::new` for use inside
+    /// `static` initializers. Equivalent to the `make_cluster` runtime
+    /// helper but evaluable at compile time, which is what `static`
+    /// arrays require.
+    const fn make_cluster_const(id: ClusterId, attr_ids: &[u32]) -> Cluster<'static> {
+        // Specialised for the attribute layouts we use in recovery
+        // fixtures: [1], [1, 2], [1, 2, 3], [10], [20].
+        static ATTRS_1: [Attribute; 1] = [Attribute::new(1, Access::all(), Quality::all())];
+        static ATTRS_10: [Attribute; 1] = [Attribute::new(10, Access::all(), Quality::all())];
+        static ATTRS_20: [Attribute; 1] = [Attribute::new(20, Access::all(), Quality::all())];
+        static ATTRS_1_2: [Attribute; 2] = [
+            Attribute::new(1, Access::all(), Quality::all()),
+            Attribute::new(2, Access::all(), Quality::all()),
+        ];
+        static ATTRS_1_2_3: [Attribute; 3] = [
+            Attribute::new(1, Access::all(), Quality::all()),
+            Attribute::new(2, Access::all(), Quality::all()),
+            Attribute::new(3, Access::all(), Quality::all()),
+        ];
+
+        let slice: &[Attribute] = if attr_ids.len() == 1 {
+            match attr_ids[0] {
+                1 => &ATTRS_1,
+                10 => &ATTRS_10,
+                20 => &ATTRS_20,
+                _ => panic!("unsupported single-attr fixture"),
+            }
+        } else if attr_ids.len() == 2 {
+            match (attr_ids[0], attr_ids[1]) {
+                (1, 2) => &ATTRS_1_2,
+                _ => panic!("unsupported two-attr fixture"),
+            }
+        } else if attr_ids.len() == 3 {
+            match (attr_ids[0], attr_ids[1], attr_ids[2]) {
+                (1, 2, 3) => &ATTRS_1_2_3,
+                _ => panic!("unsupported three-attr fixture"),
+            }
+        } else {
+            panic!("unsupported attr_ids len");
+        };
+
+        Cluster::new(
+            id,
+            1,
+            0,
+            slice,
+            &[],
+            &[],
+            |_, _, _| true,
+            |_, _, _| true,
+            |_, _, _| true,
+        )
     }
 }
