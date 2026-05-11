@@ -209,11 +209,14 @@ fn process_file(repo_root: &Path, rel: &Path, abs: &Path, mode: Action) -> anyho
 
 /// Inspect the file content and decide which `Plan` applies.
 fn decide(content: &str, target_years: &str) -> anyhow::Result<Plan> {
-    let head: String = content
-        .lines()
-        .take(HEADER_SCAN_LINES)
-        .collect::<Vec<_>>()
-        .join("\n");
+    // Borrow a slice covering the first `HEADER_SCAN_LINES` lines instead of
+    // allocating a new `String`.
+    let head_end = content
+        .match_indices('\n')
+        .nth(HEADER_SCAN_LINES)
+        .map(|(i, _)| i)
+        .unwrap_or(content.len());
+    let head = &content[..head_end];
 
     if !head.contains(HEADER_MARKER) {
         return Ok(Plan::InsertHeader {
@@ -221,7 +224,7 @@ fn decide(content: &str, target_years: &str) -> anyhow::Result<Plan> {
         });
     }
 
-    let existing = extract_year_span(&head)
+    let existing = extract_year_span(head)
         .ok_or_else(|| anyhow!("header present but year span could not be parsed"))?;
 
     if existing == target_years {
@@ -267,11 +270,17 @@ fn is_valid_year_span(s: &str) -> bool {
 }
 
 /// Replace just the year span on the existing copyright line.
+///
+/// Iterates lines with `split_inclusive('\n')` so the original line terminator
+/// (LF or CRLF) is preserved on each line we copy through. Once the header
+/// line has been rewritten we stop scanning and append the rest of the file
+/// as a single slice.
 fn rewrite_existing(content: &str, target_years: &str) -> anyhow::Result<String> {
     let mut out = String::with_capacity(content.len());
+    let mut consumed = 0usize;
     let mut replaced = false;
 
-    for (idx, line) in content.lines().enumerate() {
+    for (idx, line) in content.split_inclusive('\n').enumerate() {
         if !replaced && idx < HEADER_SCAN_LINES && line.contains(HEADER_MARKER) {
             let (prefix, after) = line
                 .split_once("Copyright (c) ")
@@ -285,23 +294,21 @@ fn rewrite_existing(content: &str, target_years: &str) -> anyhow::Result<String>
             out.push_str(target_years);
             out.push_str(" Project CHIP Authors");
             out.push_str(suffix);
-            out.push('\n');
 
+            consumed += line.len();
             replaced = true;
-        } else {
-            out.push_str(line);
-            out.push('\n');
+            break;
         }
+
+        out.push_str(line);
+        consumed += line.len();
     }
 
     if !replaced {
         bail!("copyright line not found while rewriting");
     }
 
-    // Preserve absence of trailing newline if the source didn't have one.
-    if !content.ends_with('\n') {
-        out.pop();
-    }
+    out.push_str(&content[consumed..]);
 
     Ok(out)
 }
@@ -604,6 +611,27 @@ mod tests {
 
         assert!(out.contains("Copyright (c) 2020-2026 Project CHIP Authors"));
         assert!(out.ends_with("fn main() {}\n"));
+    }
+
+    #[test]
+    fn rewrite_existing_preserves_crlf_line_endings() {
+        let src = "/*\r\n *\r\n *    Copyright (c) 2020-2022 Project CHIP Authors\r\n */\r\n\r\nfn main() {}\r\n";
+
+        let out = rewrite_existing(src, "2020-2026").unwrap();
+
+        assert!(out.contains("Copyright (c) 2020-2026 Project CHIP Authors\r\n"));
+        assert!(out.ends_with("fn main() {}\r\n"));
+        assert!(!out.contains("Authors\n "));
+    }
+
+    #[test]
+    fn rewrite_existing_preserves_missing_trailing_newline() {
+        let src = "/*\n *    Copyright (c) 2020-2022 Project CHIP Authors\n */\nfn main() {}";
+
+        let out = rewrite_existing(src, "2026").unwrap();
+
+        assert!(out.ends_with("fn main() {}"));
+        assert!(!out.ends_with('\n'));
     }
 
     #[test]
