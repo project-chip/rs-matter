@@ -48,6 +48,7 @@ use rs_matter::dm::clusters::gen_comm::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::gen_diag::{self, ClusterHandler as _, GenDiag};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::grp_key_mgmt::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
 use rs_matter::dm::clusters::net_comm::{self, SharedNetworks};
 use rs_matter::dm::clusters::noc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::unit_testing::{
@@ -403,6 +404,7 @@ const NODE: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
+                identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER,
                 UnitTestingHandler::CLUSTER
@@ -413,6 +415,7 @@ const NODE: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
+                identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER
             ),
@@ -474,6 +477,7 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
+                identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER,
                 UnitTestingHandler::CLUSTER
@@ -484,6 +488,7 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
+                identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER
             ),
@@ -534,6 +539,10 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                     Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                 )
                 .chain(
+                    EpClMatcher::new(Some(1), Some(identify::CLUSTER.id)),
+                    Async(IdentifyHandler::new(Dataver::new_rand(&mut rand))),
+                )
+                .chain(
                     EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
                     Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
                 )
@@ -552,6 +561,10 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 .chain(
                     EpClMatcher::new(Some(2), Some(desc::DescHandler::CLUSTER.id)),
                     Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                )
+                .chain(
+                    EpClMatcher::new(Some(2), Some(identify::CLUSTER.id)),
+                    Async(IdentifyHandler::new(Dataver::new_rand(&mut rand))),
                 )
                 .chain(
                     EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
