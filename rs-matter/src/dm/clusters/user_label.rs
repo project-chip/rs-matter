@@ -195,22 +195,17 @@ impl<const E: usize, const N: usize> UserLabels<E, N> {
         mut store: S,
         buf: &mut [u8],
     ) -> Result<(), Error> {
-        self.state.lock(|cell| cell.borrow_mut().clear());
-
         let Some(data) = store.load(USER_LABELS_KEY, buf)? else {
+            // No prior persistence — reset to empty so re-calling
+            // `load_persist` after a `remove` of the key behaves
+            // deterministically.
+            self.state.lock(|cell| cell.borrow_mut().clear());
             return Ok(());
         };
 
         let loaded = Vec::<EndpointLabels<N>, E>::from_tlv(&TLVElement::new(data))?;
 
-        self.state.lock(|cell| {
-            let mut state = cell.borrow_mut();
-            state.clear();
-            for slot in loaded {
-                state.push(slot).map_err(|_| ErrorCode::ResourceExhausted)?;
-            }
-            Ok::<_, Error>(())
-        })?;
+        self.state.lock(|cell| *cell.borrow_mut() = loaded);
 
         info!("Loaded UserLabel entries for all endpoints from storage");
 
@@ -340,19 +335,10 @@ impl<const E: usize, const N: usize> UserLabels<E, N> {
     /// Push a `(label, value)` pair into a bounded vec. Returns
     /// `ResourceExhausted` when the vec is full.
     fn push_into(list: &mut Vec<LabelEntry, N>, label: &str, value: &str) -> Result<(), Error> {
-        let mut entry = LabelEntry {
-            label: heapless::String::new(),
-            value: heapless::String::new(),
-        };
-        entry
-            .label
-            .push_str(label)
-            .map_err(|_| ErrorCode::ConstraintError)?;
-        entry
-            .value
-            .push_str(value)
-            .map_err(|_| ErrorCode::ConstraintError)?;
-        list.push(entry).map_err(|_| ErrorCode::ResourceExhausted)?;
+        let label = heapless::String::try_from(label).map_err(|_| ErrorCode::ConstraintError)?;
+        let value = heapless::String::try_from(value).map_err(|_| ErrorCode::ConstraintError)?;
+        list.push(LabelEntry { label, value })
+            .map_err(|_| ErrorCode::ResourceExhausted)?;
         Ok(())
     }
 }
