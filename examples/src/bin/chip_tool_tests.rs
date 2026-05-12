@@ -44,6 +44,7 @@ use rs_matter::dm::clusters::basic_info::{
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::eth_diag::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::fixed_label::{self, FixedLabelEntry, FixedLabelHandler};
 use rs_matter::dm::clusters::gen_comm::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::gen_diag::{self, ClusterHandler as _, GenDiag};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
@@ -54,7 +55,7 @@ use rs_matter::dm::clusters::noc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
 };
-use rs_matter::dm::clusters::user_label::{self, UserLabelHandler};
+use rs_matter::dm::clusters::user_label::{self, UserLabelHandler, UserLabels};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
@@ -94,6 +95,9 @@ static EVENTS: StaticCell<Events> = StaticCell::new();
 static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 static GEN_DIAG: StaticCell<TestEventTriggerDiag> = StaticCell::new();
+// UserLabel registry — host endpoints and labels-per-endpoint counts
+// match `dm_handler`'s `UserLabelHandler<'_, E, N>` parameterisation.
+static USER_LABELS: StaticCell<UserLabels<1, 4>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     // Enable detailed backtraces for debugging test failures
@@ -176,6 +180,19 @@ fn main() -> Result<(), Error> {
         TestOnOffDeviceLogic::new(false),
     );
 
+    // Shared UserLabel registry. We only host the UserLabel cluster on
+    // the root endpoint here, so `E = 1` is enough (raise it if more
+    // endpoints later acquire the cluster). Loaded from
+    // KV *before* the data model accepts commissioner traffic so the
+    // post-reboot `Verify User Label List after reboot` step of the
+    // `TestUserLabelCluster` YAML test sees the labels the previous
+    // boot wrote.
+    let user_labels = USER_LABELS.uninit().init_with(UserLabels::init());
+    futures_lite::future::block_on(user_labels.load_persist(&mut kv, kv_buf))?;
+
+    let user_label_handler =
+        UserLabelHandler::new(Dataver::new_rand(&mut rand), ROOT_ENDPOINT_ID, user_labels);
+
     // Our unit testing cluster data
     let unit_testing_data = UNIT_TESTING_DATA
         .uninit()
@@ -220,6 +237,7 @@ fn main() -> Result<(), Error> {
             unit_testing_data,
             &on_off_handler_1,
             &on_off_handler_2,
+            &user_label_handler,
         ),
         SharedKvBlobStore::new(kv, kv_buf),
         SharedNetworks::new(EthNetwork::new_default()),
@@ -399,6 +417,21 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 /// and exercises the `LabelList` length-constraint behaviour. Same
 /// rationale as Groups: Matter Core §7.16.4 permits extras, our
 /// device-type-conformance test is already on the skip list.
+/// Static fixed-label data exposed by EP1's `FixedLabel` cluster.
+/// `TC_FLABEL_2_1` step 2 asserts every entry's `label`/`value` is a
+/// string ≤ 16 bytes (Matter Application Cluster spec §9.6.4); both
+/// pairs below satisfy that constraint.
+const FIXED_LABELS_EP1: &[FixedLabelEntry<'static>] = &[
+    FixedLabelEntry {
+        label: "room",
+        value: "test",
+    },
+    FixedLabelEntry {
+        label: "orientation",
+        value: "north",
+    },
+];
+
 const NODE: Node<'static> = Node {
     endpoints: &[
         Endpoint {
@@ -409,10 +442,16 @@ const NODE: Node<'static> = Node {
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
+            // `FixedLabel` (cluster ID 0x0040) is wired on EP1 because
+            // `TC_FLABEL_2_1` runs with `--endpoint 1` and skips cleanly
+            // via `has_attribute(FixedLabel.LabelList)` when the cluster
+            // is absent; adding it here turns the skip into an actual
+            // content + read-only-write check.
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
+                fixed_label::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER,
                 UnitTestingHandler::CLUSTER
             ),
@@ -484,10 +523,16 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
+            // `FixedLabel` (cluster ID 0x0040) is wired on EP1 because
+            // `TC_FLABEL_2_1` runs with `--endpoint 1` and skips cleanly
+            // via `has_attribute(FixedLabel.LabelList)` when the cluster
+            // is absent; adding it here turns the skip into an actual
+            // content + read-only-write check.
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
+                fixed_label::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER,
                 UnitTestingHandler::CLUSTER
             ),
@@ -514,6 +559,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
     on_off_1: &'a OnOffHandler<'a, OH, LH>,
     on_off_2: &'a OnOffHandler<'a, OH, LH>,
+    user_label_handler: &'a UserLabelHandler<'a, 1, 4>,
 ) -> impl DataModelHandler + 'a {
     (
         node,
@@ -544,12 +590,16 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 )
                 // UserLabel handler at the root endpoint. Wired here for
                 // the same per-fixture-exception reason as Groups above:
-                // `TestUserLabelClusterConstraints` writes / reads the
-                // cluster at `endpoint: 0`. The handler uses bounded
-                // in-memory storage with `N = 4` (default).
+                // `TestUserLabelClusterConstraints` and the persistence-
+                // focused `TestUserLabelCluster` write / read the cluster
+                // at `endpoint: 0`. The handler is owned by `main` so we
+                // can call `load_persist` *before* the data model is
+                // exposed; we hand it in by reference here and wrap it
+                // with `user_label::HandlerAdaptor` (rather than the
+                // owning-`.adapt()`) so the chain doesn't take ownership.
                 .chain(
                     EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(user_label::CLUSTER.id)),
-                    Async(UserLabelHandler::<4>::new(Dataver::new_rand(&mut rand)).adapt()),
+                    Async(user_label::HandlerAdaptor(user_label_handler)),
                 )
                 // Clusters for Endpoint 1
                 .chain(
@@ -563,6 +613,13 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 .chain(
                     EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
                     Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(fixed_label::CLUSTER.id)),
+                    Async(
+                        FixedLabelHandler::new(Dataver::new_rand(&mut rand), FIXED_LABELS_EP1)
+                            .adapt(),
+                    ),
                 )
                 .chain(
                     EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
