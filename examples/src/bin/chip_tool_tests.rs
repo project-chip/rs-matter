@@ -54,7 +54,7 @@ use rs_matter::dm::clusters::noc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
 };
-use rs_matter::dm::clusters::user_label::{self, UserLabelHandler};
+use rs_matter::dm::clusters::user_label::{self, UserLabelHandler, UserLabels};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
@@ -94,6 +94,9 @@ static EVENTS: StaticCell<Events> = StaticCell::new();
 static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 static GEN_DIAG: StaticCell<TestEventTriggerDiag> = StaticCell::new();
+// UserLabel registry — host endpoints and labels-per-endpoint counts
+// match `dm_handler`'s `UserLabelHandler<'_, E, N>` parameterisation.
+static USER_LABELS: StaticCell<UserLabels<1, 4>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     // Enable detailed backtraces for debugging test failures
@@ -176,6 +179,19 @@ fn main() -> Result<(), Error> {
         TestOnOffDeviceLogic::new(false),
     );
 
+    // Shared UserLabel registry. We only host the UserLabel cluster on
+    // the root endpoint here, so `E = 1` is enough (raise it if more
+    // endpoints later acquire the cluster). Loaded from
+    // KV *before* the data model accepts commissioner traffic so the
+    // post-reboot `Verify User Label List after reboot` step of the
+    // `TestUserLabelCluster` YAML test sees the labels the previous
+    // boot wrote.
+    let user_labels = USER_LABELS.uninit().init_with(UserLabels::init());
+    futures_lite::future::block_on(user_labels.load_persist(&mut kv, kv_buf))?;
+
+    let user_label_handler =
+        UserLabelHandler::new(Dataver::new_rand(&mut rand), ROOT_ENDPOINT_ID, user_labels);
+
     // Our unit testing cluster data
     let unit_testing_data = UNIT_TESTING_DATA
         .uninit()
@@ -220,6 +236,7 @@ fn main() -> Result<(), Error> {
             unit_testing_data,
             &on_off_handler_1,
             &on_off_handler_2,
+            &user_label_handler,
         ),
         SharedKvBlobStore::new(kv, kv_buf),
         SharedNetworks::new(EthNetwork::new_default()),
@@ -514,6 +531,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
     on_off_1: &'a OnOffHandler<'a, OH, LH>,
     on_off_2: &'a OnOffHandler<'a, OH, LH>,
+    user_label_handler: &'a UserLabelHandler<'a, 1, 4>,
 ) -> impl DataModelHandler + 'a {
     (
         node,
@@ -544,12 +562,16 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 )
                 // UserLabel handler at the root endpoint. Wired here for
                 // the same per-fixture-exception reason as Groups above:
-                // `TestUserLabelClusterConstraints` writes / reads the
-                // cluster at `endpoint: 0`. The handler uses bounded
-                // in-memory storage with `N = 4` (default).
+                // `TestUserLabelClusterConstraints` and the persistence-
+                // focused `TestUserLabelCluster` write / read the cluster
+                // at `endpoint: 0`. The handler is owned by `main` so we
+                // can call `load_persist` *before* the data model is
+                // exposed; we hand it in by reference here and wrap it
+                // with `user_label::HandlerAdaptor` (rather than the
+                // owning-`.adapt()`) so the chain doesn't take ownership.
                 .chain(
                     EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(user_label::CLUSTER.id)),
-                    Async(UserLabelHandler::<4>::new(Dataver::new_rand(&mut rand)).adapt()),
+                    Async(user_label::HandlerAdaptor(user_label_handler)),
                 )
                 // Clusters for Endpoint 1
                 .chain(

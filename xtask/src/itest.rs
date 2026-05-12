@@ -80,15 +80,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestSubscribe_AdministratorCommissioning",
     "TestSubscribe_OnOff",
     // "TestSystemCommands", // TODO: Error attempting to start secondary device
-    // "TestUserLabelCluster", // Skipped: the test issues a SystemCommands `Reboot`
-    //                          // and reads the LabelList back to verify persistence.
-    //                          // The reboot step shares the limitation that gates
-    //                          // `TestSystemCommands` (we don't yet survive
-    //                          // chip-tool-driven restarts), and the
-    //                          // `UserLabelHandler` we ship today stores entries
-    //                          // in-memory only — persistence is a separate
-    //                          // workstream. The pre-reboot steps (write / read /
-    //                          // clear) would all pass against the current handler.
+    "TestUserLabelCluster",
     "TestUserLabelClusterConstraints",
     // "TestTimeSynchronization", // Skipped: TimeSynchronization cluster not implemented by rs-matter (optional, Matter spec §11.16).
     // "TestIcdManagementCluster", // Skipped: ICD Management cluster not implemented (rs-matter doesn't ship Intermittently Connected Device support).

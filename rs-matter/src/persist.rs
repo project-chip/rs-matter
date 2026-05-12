@@ -41,7 +41,11 @@ pub const BASIC_INFO_KEY: u16 = FABRIC_KEYS_START + 256;
 pub const EVENT_EPOCH_KEY: u16 = BASIC_INFO_KEY + 1;
 
 /// The key used for storing the wireless networks state.
-pub const NETWORKS_KEY: u16 = BASIC_INFO_KEY + 2;
+pub const NETWORKS_KEY: u16 = EVENT_EPOCH_KEY + 1;
+
+/// The key used for storing all UserLabel `LabelList` data across every
+/// endpoint that hosts the UserLabel cluster.
+pub const USER_LABELS_KEY: u16 = NETWORKS_KEY + 1;
 
 /// A trait representing a key-value BLOB storage.
 ///

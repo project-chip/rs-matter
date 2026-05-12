@@ -100,21 +100,13 @@ pub enum IdentifyAction {
 pub trait IdentifyHooks {
     /// Return the kind of identification mechanism this endpoint provides.
     /// Reported as the `IdentifyType` attribute (per App Cluster spec
-    /// §1.2.5.2). The default is [`IdentifyTypeEnum::None`] which means
-    /// "no physical mechanism."
-    fn identify_type(&self) -> IdentifyTypeEnum {
-        IdentifyTypeEnum::None
-    }
+    /// §1.2.5.2).
+    fn identify_type(&self) -> IdentifyTypeEnum;
 
     /// Drive the application's identify hardware in response to a state
-    /// transition. The default implementation is a no-op — useful for
-    /// headless test fixtures.
-    fn identify(&self, action: IdentifyAction) {
-        let _ = action;
-    }
+    /// transition.
+    fn identify(&self, action: IdentifyAction);
 }
-
-impl IdentifyHooks for () {}
 
 impl<T> IdentifyHooks for &T
 where
@@ -126,6 +118,16 @@ where
 
     fn identify(&self, action: IdentifyAction) {
         (*self).identify(action)
+    }
+}
+
+impl IdentifyHooks for () {
+    fn identify_type(&self) -> IdentifyTypeEnum {
+        IdentifyTypeEnum::None
+    }
+
+    fn identify(&self, action: IdentifyAction) {
+        let _ = action;
     }
 }
 
