@@ -120,6 +120,22 @@ pub fn run(mode: Action) -> anyhow::Result<()> {
     let repo_root = repo_root()?;
     debug!("repo root: {}", repo_root.display());
 
+    // A shallow clone (typical of `actions/checkout` with the default
+    // `fetch-depth: 1`, especially on `pull_request` runs where the
+    // checkout is a synthetic merge commit) collapses every file's
+    // `git log --follow` to one commit — the year span would be wrong
+    // for every file. Fail fast with an actionable message rather than
+    // producing nonsensical diffs.
+    if is_shallow_repo(&repo_root)? {
+        bail!(
+            "git repository at {} is a shallow clone — `cargo xtask copyright` \
+             needs full history to derive year spans from `git log --follow`. \
+             In GitHub Actions, set `fetch-depth: 0` on `actions/checkout`; \
+             locally, run `git fetch --unshallow`.",
+            repo_root.display(),
+        );
+    }
+
     let crate_roots = discover_crate_roots(&repo_root)?;
     if crate_roots.is_empty() {
         bail!(
@@ -449,6 +465,14 @@ fn repo_root() -> anyhow::Result<PathBuf> {
     let out = run_git(Path::new("."), &["rev-parse", "--show-toplevel"])?;
 
     Ok(PathBuf::from(out.trim()))
+}
+
+/// Detect whether the repository at `repo_root` is a shallow clone.
+///
+/// `git rev-parse --is-shallow-repository` prints `true` / `false`.
+fn is_shallow_repo(repo_root: &Path) -> anyhow::Result<bool> {
+    let out = run_git(repo_root, &["rev-parse", "--is-shallow-repository"])?;
+    Ok(out.trim() == "true")
 }
 
 /// Find every directory containing a tracked `Cargo.toml`. Each such directory
