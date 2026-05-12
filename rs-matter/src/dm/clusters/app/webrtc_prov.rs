@@ -73,10 +73,8 @@
 //!   [`OutboundWork::End`] (camera-initiated teardown) are driven from
 //!   [`WebRtcProvHandler::run`] via [`WebRtcHooks::next_outbound`].
 
-#[allow(unused_imports)]
-pub use crate::dm::clusters::decl::web_rtc_transport_provider::*;
-
 use core::cell::{Cell, RefCell};
+use core::future::Future;
 
 use crate::dm::clusters::decl::globals::{
     ICECandidateStruct, ICECandidateStructArrayBuilder, StreamUsageEnum, WebRTCEndReasonEnum,
@@ -95,6 +93,9 @@ use crate::with;
 
 use super::super::decl::web_rtc_transport_provider as decl;
 use super::super::decl::web_rtc_transport_requestor as req_decl;
+
+#[allow(unused_imports)]
+pub use crate::dm::clusters::decl::web_rtc_transport_provider::*;
 
 /// Cluster ID of `WebRTCTransportRequestor` (spec 1.5, §1.16), the peer
 /// cluster we invoke for outbound trickle-ICE and session-end pushes.
@@ -351,6 +352,80 @@ pub trait WebRtcHooks {
         _sdp_out: &mut [u8],
     ) -> Result<usize, WebRtcError> {
         Err(WebRtcError::InvalidInState)
+    }
+}
+
+impl<T> WebRtcHooks for &T
+where
+    T: WebRtcHooks,
+{
+    fn on_solicit_offer(
+        &self,
+        session_id: u16,
+        params: &OfferParams,
+    ) -> impl Future<Output = Result<SolicitOutcome, WebRtcError>> {
+        (*self).on_solicit_offer(session_id, params)
+    }
+
+    fn on_offer(
+        &self,
+        session_id: u16,
+        sdp: &str,
+        params: &OfferParams,
+    ) -> impl Future<Output = Result<AnswerOutcome, WebRtcError>> {
+        (*self).on_offer(session_id, sdp, params)
+    }
+
+    fn on_answer(
+        &self,
+        session_id: u16,
+        sdp: &str,
+    ) -> impl Future<Output = Result<(), WebRtcError>> {
+        (*self).on_answer(session_id, sdp)
+    }
+
+    fn on_ice_candidates(
+        &self,
+        session_id: u16,
+        candidates: &TLVArray<'_, ICECandidateStruct<'_>>,
+    ) -> impl Future<Output = Result<(), WebRtcError>> {
+        (*self).on_ice_candidates(session_id, candidates)
+    }
+
+    fn on_end_session(
+        &self,
+        session_id: u16,
+        reason: WebRTCEndReasonEnum,
+    ) -> impl Future<Output = Result<(), WebRtcError>> {
+        (*self).on_end_session(session_id, reason)
+    }
+
+    fn next_outbound(&self) -> impl Future<Output = OutboundWork> {
+        (*self).next_outbound()
+    }
+
+    fn fill_ice_candidates<P: TLVBuilderParent>(
+        &self,
+        session_id: u16,
+        candidates: ICECandidateStructArrayBuilder<P>,
+    ) -> impl Future<Output = Result<P, Error>> {
+        (*self).fill_ice_candidates(session_id, candidates)
+    }
+
+    fn take_answer_sdp(
+        &self,
+        session_id: u16,
+        sdp_out: &mut [u8],
+    ) -> impl Future<Output = Result<usize, WebRtcError>> {
+        (*self).take_answer_sdp(session_id, sdp_out)
+    }
+
+    fn take_offer_sdp(
+        &self,
+        session_id: u16,
+        sdp_out: &mut [u8],
+    ) -> impl Future<Output = Result<usize, WebRtcError>> {
+        (*self).take_offer_sdp(session_id, sdp_out)
     }
 }
 

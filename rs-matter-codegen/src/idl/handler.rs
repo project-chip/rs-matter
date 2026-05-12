@@ -304,7 +304,7 @@ pub fn handler_adaptor(
             ) -> Result<(), #krate::error::Error> {
                 if let Some(mut writer) = reply.with_dataver(self.0.dataver())? {
                     if ctx.attr().is_system() {
-                        ctx.attr().cluster()?.read(ctx.attr(), writer)
+                        ctx.attr().cluster(ctx.metadata(), |cluster| cluster.read(ctx.attr(), writer))
                     } else {
                         #read_stream
                     }
@@ -445,13 +445,13 @@ fn handler_attribute(
             if asynch {
                 quote!(
                     fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> impl core::future::Future<Output = Result<P, #krate::error::Error>> {
-                        core::future::ready(Err(#krate::error::ErrorCode::InvalidAction.into()))
+                        core::future::ready(Err(#krate::error::ErrorCode::AttributeNotFound.into()))
                     }
                 )
             } else {
                 quote!(
                     #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> Result<P, #krate::error::Error> {
-                        Err(#krate::error::ErrorCode::InvalidAction.into())
+                        Err(#krate::error::ErrorCode::AttributeNotFound.into())
                     }
                 )
             }
@@ -478,13 +478,13 @@ fn handler_attribute(
         if asynch {
             quote!(
                 fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> impl core::future::Future<Output = Result<#attr_type, #krate::error::Error>> {
-                    core::future::ready(Err(#krate::error::ErrorCode::InvalidAction.into()))
+                    core::future::ready(Err(#krate::error::ErrorCode::AttributeNotFound.into()))
                 }
             )
         } else {
             quote!(
                 #pasync fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> Result<#attr_type, #krate::error::Error> {
-                    Err(#krate::error::ErrorCode::InvalidAction.into())
+                    Err(#krate::error::ErrorCode::AttributeNotFound.into())
                 }
             )
         }
@@ -564,13 +564,13 @@ fn handler_attribute_write(
         if asynch {
             quote!(
                 fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
-                    core::future::ready(Err(#krate::error::ErrorCode::InvalidAction.into()))
+                    core::future::ready(Err(#krate::error::ErrorCode::AttributeNotFound.into()))
                 }
             )
         } else {
             quote!(
                 #pasync fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> Result<(), #krate::error::Error> {
-                    Err(#krate::error::ErrorCode::InvalidAction.into())
+                    Err(#krate::error::ErrorCode::AttributeNotFound.into())
                 }
             )
         }
@@ -1319,19 +1319,19 @@ mod tests {
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<bool, rs_matter_crate::error::Error> {
-                        Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+                        Err(rs_matter_crate::error::ErrorCode::AttributeNotFound.into())
                     }
                     fn on_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<u16, rs_matter_crate::error::Error> {
-                        Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+                        Err(rs_matter_crate::error::ErrorCode::AttributeNotFound.into())
                     }
                     fn off_wait_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<u16, rs_matter_crate::error::Error> {
-                        Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+                        Err(rs_matter_crate::error::ErrorCode::AttributeNotFound.into())
                     }
                     fn start_up_on_off(
                         &self,
@@ -1340,28 +1340,28 @@ mod tests {
                         rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
                         rs_matter_crate::error::Error,
                     > {
-                        Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+                        Err(rs_matter_crate::error::ErrorCode::AttributeNotFound.into())
                     }
                     fn set_on_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
                         value: u16,
                     ) -> Result<(), rs_matter_crate::error::Error> {
-                        Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+                        Err(rs_matter_crate::error::ErrorCode::AttributeNotFound.into())
                     }
                     fn set_off_wait_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
                         value: u16,
                     ) -> Result<(), rs_matter_crate::error::Error> {
-                        Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+                        Err(rs_matter_crate::error::ErrorCode::AttributeNotFound.into())
                     }
                     fn set_start_up_on_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
                         value: rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
-                        Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+                        Err(rs_matter_crate::error::ErrorCode::AttributeNotFound.into())
                     }
                     fn handle_off(
                         &self,
@@ -1534,7 +1534,9 @@ mod tests {
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         if let Some(mut writer) = reply.with_dataver(self.0.dataver())? {
                             if ctx.attr().is_system() {
-                                ctx.attr().cluster()?.read(ctx.attr(), writer)
+                                ctx.attr().cluster(ctx.metadata(), |cluster| {
+                                    cluster.read(ctx.attr(), writer)
+                                })
                             } else {
                                 match AttributeId::try_from(ctx.attr().attr_id)? {
                                     AttributeId::OnOff => {

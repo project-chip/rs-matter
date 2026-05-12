@@ -113,9 +113,7 @@ use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::DeviceType;
 use rs_matter::dm::IMBuffer;
-use rs_matter::dm::{
-    AsyncHandler, AsyncMetadata, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
-};
+use rs_matter::dm::{DataModelHandler, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node};
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -1346,7 +1344,7 @@ fn main() -> Result<(), Error> {
     if !matter.is_commissioned() {
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, dm.change_notify())?;
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &())?;
     }
 
     let matter_core = select4(&mut transport, &mut mdns, &mut respond, &mut dm_job).coalesce();
@@ -1395,7 +1393,7 @@ fn dm_handler<'a>(
         CAM_AV_SETTINGS_NS,
     >,
     zone_mgmt: &'a ZoneMgmtHandler<DemoZoneHooks, ZONE_NZ, ZONE_NV, ZONE_NT>,
-) -> impl AsyncMetadata + AsyncHandler + 'a {
+) -> impl DataModelHandler + 'a {
     (
         NODE,
         endpoints::with_eth_sys(

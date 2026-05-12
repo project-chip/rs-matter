@@ -55,7 +55,7 @@ impl AclHandler {
     fn acl<P: TLVBuilderParent>(
         &self,
         fabrics: &Fabrics,
-        attr: &AttrDetails<'_>,
+        attr: &AttrDetails,
         builder: ArrayAttributeRead<
             AccessControlEntryStructArrayBuilder<P>,
             AccessControlEntryStructBuilder<P>,
@@ -369,8 +369,8 @@ mod tests {
         AccessControlEntryStruct, AccessControlEntryStructArrayBuilder, Dataver,
     };
     use crate::dm::{
-        ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, AttrReadReplyInstance, Node,
-        Privilege, ReadReply, ReadReplyInstance, Reply,
+        ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, AttrReadReplyInstance, Privilege,
+        ReadReply, ReadReplyInstance, Reply,
     };
     use crate::fabric::Fabrics;
     use crate::tlv::{get_root_node_struct, TLVElement, TLVTag, TLVWriteParent, ToTLV};
@@ -537,7 +537,6 @@ mod tests {
         // Test 1, all 3 entries are read in the response without fabric filtering
         {
             let attr = AttrDetails {
-                node: &Node { endpoints: &[] },
                 endpoint_id: 0,
                 cluster_id: 0,
                 attr_id: 0,
@@ -547,6 +546,7 @@ mod tests {
                 fab_filter: false,
                 dataver: None,
                 wildcard: false,
+                array: false,
                 cluster_status: Cell::new(0),
             };
 
@@ -565,7 +565,6 @@ mod tests {
         // Test 2, only single entry is read in the response with fabric filtering and fabric idx 1
         {
             let attr = AttrDetails {
-                node: &Node { endpoints: &[] },
                 endpoint_id: 0,
                 cluster_id: 0,
                 attr_id: 0,
@@ -575,6 +574,7 @@ mod tests {
                 fab_filter: true,
                 dataver: None,
                 wildcard: false,
+                array: false,
                 cluster_status: Cell::new(0),
             };
 
@@ -592,7 +592,6 @@ mod tests {
         // Test 3, only single entry is read in the response with fabric filtering and fabric idx 2
         {
             let attr = AttrDetails {
-                node: &Node { endpoints: &[] },
                 endpoint_id: 0,
                 cluster_id: 0,
                 attr_id: 0,
@@ -602,6 +601,7 @@ mod tests {
                 fab_filter: true,
                 dataver: None,
                 wildcard: false,
+                array: false,
                 cluster_status: Cell::new(0),
             };
 
@@ -617,12 +617,7 @@ mod tests {
         }
     }
 
-    fn acl_read(
-        acl: &AclHandler,
-        fabrics: &Fabrics,
-        attr: &AttrDetails<'_>,
-        tw: &mut WriteBuf<'_>,
-    ) {
+    fn acl_read(acl: &AclHandler, fabrics: &Fabrics, attr: &AttrDetails, tw: &mut WriteBuf<'_>) {
         let encoder = ReadReplyInstance::new(attr, &mut *tw);
         let mut writer = unwrap!(unwrap!(encoder.with_dataver(acl.dataver.get())));
         let build_root = TLVWriteParent::new((), writer.writer());

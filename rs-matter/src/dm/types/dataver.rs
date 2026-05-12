@@ -21,7 +21,6 @@ use core::num::Wrapping;
 
 use rand_core::RngCore;
 
-use crate::dm::{AttrChangeNotifier, AttrId, ClusterId, EndptId};
 use crate::utils::sync::blocking::Mutex;
 
 pub struct Dataver(Mutex<Cell<Wrapping<u32>>>);
@@ -45,51 +44,6 @@ impl Dataver {
 
             state.get().0
         })
-    }
-
-    /// Bump the cluster data version and notify any subscribers that the
-    /// given attribute has changed.
-    ///
-    /// This is the preferred way to signal an attribute mutation that happens
-    /// outside the normal write/invoke dispatch path (e.g. from a timer, an
-    /// async I/O completion, or a state-machine transition), because it keeps
-    /// the cluster data version and the subscription notification in lockstep.
-    ///
-    /// For mutations that happen *inside* the normal write/invoke dispatch
-    /// path, the generated `HandlerAdaptor` already bumps the data version;
-    /// call [`AttrChangeNotifier::notify_attr_changed`] directly in that case.
-    pub fn changed_and_notify_attr<N>(
-        &self,
-        notifier: N,
-        endpoint_id: EndptId,
-        cluster_id: ClusterId,
-        attr_id: AttrId,
-    ) -> u32
-    where
-        N: AttrChangeNotifier,
-    {
-        let v = self.changed();
-        notifier.notify_attr_changed(endpoint_id, cluster_id, attr_id);
-        v
-    }
-
-    /// Bump the cluster data version and notify any subscribers that every
-    /// attribute on the given cluster may have changed.
-    ///
-    /// Use this when a single operation mutates many attributes of the same
-    /// cluster and enumerating them would be cumbersome or error-prone.
-    pub fn changed_and_notify_cluster<N>(
-        &self,
-        notifier: N,
-        endpoint_id: EndptId,
-        cluster_id: ClusterId,
-    ) -> u32
-    where
-        N: AttrChangeNotifier,
-    {
-        let v = self.changed();
-        notifier.notify_cluster_changed(endpoint_id, cluster_id);
-        v
     }
 }
 

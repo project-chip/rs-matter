@@ -23,7 +23,7 @@ use embassy_futures::select::select;
 use crate::crypto::Crypto;
 use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::dm::events::EventTLVWrite;
-use crate::dm::{EventId, IMBuffer};
+use crate::dm::{EventId, IMBuffer, Metadata};
 use crate::error::{Error, ErrorCode};
 use crate::im::{EventNumber, EventPriority};
 use crate::persist::KvBlobStoreAccess;
@@ -264,6 +264,9 @@ pub trait HandlerContext: AttrChangeNotifier + EventEmitter {
     /// Return the networks access object.
     fn networks(&self) -> impl NetworksAccess + '_;
 
+    /// Return the metadata of the node that is associated with this handler.
+    fn metadata(&self) -> impl Metadata + '_;
+
     /// Return the global handler that this handler is part of.
     ///
     /// Useful in case a concrete cluster handler (say, the Scenes one) needs to
@@ -295,6 +298,10 @@ where
 
     fn networks(&self) -> impl NetworksAccess + '_ {
         (**self).networks()
+    }
+
+    fn metadata(&self) -> impl Metadata + '_ {
+        (**self).metadata()
     }
 
     fn handler(&self) -> impl AsyncHandler + '_ {
@@ -372,14 +379,14 @@ where
 /// A context type that is passed to the handler when processing an attribute Read operation.
 pub trait ReadContext: OperationContext {
     /// Return the attribute object that is associated with this read operation.
-    fn attr(&self) -> &AttrDetails<'_>;
+    fn attr(&self) -> &AttrDetails;
 }
 
 impl<T> ReadContext for &T
 where
     T: ReadContext,
 {
-    fn attr(&self) -> &AttrDetails<'_> {
+    fn attr(&self) -> &AttrDetails {
         (**self).attr()
     }
 }
@@ -387,7 +394,7 @@ where
 /// A context type that is passed to the handler when processing an attribute Write operation.
 pub trait WriteContext: OperationContext {
     /// Return the attribute object that is associated with this write operation.
-    fn attr(&self) -> &AttrDetails<'_>;
+    fn attr(&self) -> &AttrDetails;
 
     /// Return the attribute data that is associated with this write operation.
     fn data(&self) -> &TLVElement<'_>;
@@ -406,7 +413,7 @@ impl<T> WriteContext for &T
 where
     T: WriteContext,
 {
-    fn attr(&self) -> &AttrDetails<'_> {
+    fn attr(&self) -> &AttrDetails {
         (**self).attr()
     }
 
@@ -421,7 +428,7 @@ where
 
 pub trait InvokeContext: OperationContext {
     /// Return the command object that is associated with this invoke operation.
-    fn cmd(&self) -> &CmdDetails<'_>;
+    fn cmd(&self) -> &CmdDetails;
 
     /// Return the command data that is associated with this invoke operation.
     fn data(&self) -> &TLVElement<'_>;
@@ -431,7 +438,7 @@ impl<T> InvokeContext for &T
 where
     T: InvokeContext,
 {
-    fn cmd(&self) -> &CmdDetails<'_> {
+    fn cmd(&self) -> &CmdDetails {
         (**self).cmd()
     }
 
@@ -444,7 +451,7 @@ where
 pub(crate) struct ReadContextInstance<'a, C> {
     exchange: &'a Exchange<'a>,
     context: C,
-    attr: &'a AttrDetails<'a>,
+    attr: &'a AttrDetails,
 }
 
 impl<'a, C> ReadContextInstance<'a, C>
@@ -453,11 +460,7 @@ where
 {
     /// Construct a new instance.
     #[inline(always)]
-    pub(crate) const fn new(
-        exchange: &'a Exchange<'a>,
-        context: C,
-        attr: &'a AttrDetails<'a>,
-    ) -> Self {
+    pub(crate) const fn new(exchange: &'a Exchange<'a>, context: C, attr: &'a AttrDetails) -> Self {
         Self {
             exchange,
             context,
@@ -484,6 +487,10 @@ where
 
     fn networks(&self) -> impl NetworksAccess + '_ {
         self.context.networks()
+    }
+
+    fn metadata(&self) -> impl Metadata + '_ {
+        self.context.metadata()
     }
 
     fn handler(&self) -> impl AsyncHandler + '_ {
@@ -603,7 +610,7 @@ impl<C> ReadContext for ReadContextInstance<'_, C>
 where
     C: HandlerContext,
 {
-    fn attr(&self) -> &AttrDetails<'_> {
+    fn attr(&self) -> &AttrDetails {
         self.attr
     }
 }
@@ -612,7 +619,7 @@ where
 pub(crate) struct WriteContextInstance<'a, C> {
     exchange: &'a Exchange<'a>,
     context: C,
-    attr: &'a AttrDetails<'a>,
+    attr: &'a AttrDetails,
     data: &'a TLVElement<'a>,
 }
 
@@ -626,7 +633,7 @@ where
     pub(crate) const fn new(
         exchange: &'a Exchange<'a>,
         context: C,
-        attr: &'a AttrDetails<'a>,
+        attr: &'a AttrDetails,
         data: &'a TLVElement<'a>,
     ) -> Self {
         Self {
@@ -656,6 +663,10 @@ where
 
     fn networks(&self) -> impl NetworksAccess + '_ {
         self.context.networks()
+    }
+
+    fn metadata(&self) -> impl Metadata + '_ {
+        self.context.metadata()
     }
 
     fn handler(&self) -> impl AsyncHandler + '_ {
@@ -775,7 +786,7 @@ impl<C> WriteContext for WriteContextInstance<'_, C>
 where
     C: HandlerContext,
 {
-    fn attr(&self) -> &AttrDetails<'_> {
+    fn attr(&self) -> &AttrDetails {
         self.attr
     }
 
@@ -788,7 +799,7 @@ where
 pub(crate) struct InvokeContextInstance<'a, C> {
     exchange: &'a Exchange<'a>,
     context: C,
-    cmd: &'a CmdDetails<'a>,
+    cmd: &'a CmdDetails,
     data: &'a TLVElement<'a>,
 }
 
@@ -802,7 +813,7 @@ where
     pub(crate) const fn new(
         exchange: &'a Exchange<'a>,
         context: C,
-        cmd: &'a CmdDetails<'a>,
+        cmd: &'a CmdDetails,
         data: &'a TLVElement<'a>,
     ) -> Self {
         Self {
@@ -832,6 +843,10 @@ where
 
     fn networks(&self) -> impl NetworksAccess + '_ {
         self.context.networks()
+    }
+
+    fn metadata(&self) -> impl Metadata + '_ {
+        self.context.metadata()
     }
 
     fn handler(&self) -> impl AsyncHandler + '_ {
@@ -951,7 +966,7 @@ impl<C> InvokeContext for InvokeContextInstance<'_, C>
 where
     C: HandlerContext,
 {
-    fn cmd(&self) -> &CmdDetails<'_> {
+    fn cmd(&self) -> &CmdDetails {
         self.cmd
     }
 
@@ -960,8 +975,8 @@ where
     }
 }
 
-pub trait DataModelHandler: super::AsyncMetadata + AsyncHandler {}
-impl<T> DataModelHandler for T where T: super::AsyncMetadata + AsyncHandler {}
+pub trait DataModelHandler: Metadata + AsyncHandler {}
+impl<T> DataModelHandler for T where T: Metadata + AsyncHandler {}
 
 /// A version of the `AsyncHandler` trait that never awaits any operation.
 ///
@@ -1156,7 +1171,23 @@ impl EmptyHandler {
 
 impl Handler for EmptyHandler {
     fn read(&self, _ctx: impl ReadContext, _reply: impl ReadReply) -> Result<(), Error> {
-        Err(ErrorCode::AttributeNotFound.into())
+        // The empty handler sits at the end of every `ChainedHandler`
+        // chain; reaching it means no matcher in the chain claimed
+        // the requested `(endpoint, cluster)`. That can happen either
+        // because the handler genuinely doesn't service the endpoint,
+        // or because the handler shape changed between path expansion
+        // (under the metadata lock) and dispatch (lock released). In
+        // both cases the safest, most informative IM status is
+        // `UnsupportedEndpoint`.
+        Err(ErrorCode::EndpointNotFound.into())
+    }
+
+    fn write(&self, _ctx: impl WriteContext) -> Result<(), Error> {
+        Err(ErrorCode::EndpointNotFound.into())
+    }
+
+    fn invoke(&self, _ctx: impl InvokeContext, _reply: impl InvokeReply) -> Result<(), Error> {
+        Err(ErrorCode::EndpointNotFound.into())
     }
 
     fn bump_dataver(&self, _ctx: impl MatchContext) {
@@ -1603,7 +1634,22 @@ mod asynch {
             _ctx: impl ReadContext,
             _reply: impl ReadReply,
         ) -> impl Future<Output = Result<(), Error>> {
-            core::future::ready(Err(ErrorCode::AttributeNotFound.into()))
+            // See the blocking-`Handler` impl for the rationale on
+            // returning `EndpointNotFound` rather than
+            // `AttributeNotFound` here.
+            core::future::ready(Err(ErrorCode::EndpointNotFound.into()))
+        }
+
+        fn write(&self, _ctx: impl WriteContext) -> impl Future<Output = Result<(), Error>> {
+            core::future::ready(Err(ErrorCode::EndpointNotFound.into()))
+        }
+
+        fn invoke(
+            &self,
+            _ctx: impl InvokeContext,
+            _reply: impl InvokeReply,
+        ) -> impl Future<Output = Result<(), Error>> {
+            core::future::ready(Err(ErrorCode::EndpointNotFound.into()))
         }
 
         fn bump_dataver(&self, _ctx: impl MatchContext) {

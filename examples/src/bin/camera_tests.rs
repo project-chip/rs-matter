@@ -72,14 +72,14 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
-use rs_matter::dm::endpoints;
 use rs_matter::dm::events::NoEvents;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
+use rs_matter::dm::{endpoints, DataModel};
 use rs_matter::dm::{
-    ArrayAttributeRead, Async, AsyncHandler, AsyncMetadata, DataModel, Dataver, DeviceType,
-    EmptyHandler, Endpoint, EpClMatcher, InvokeContext, Node, ReadContext, WriteContext,
+    ArrayAttributeRead, Async, DataModelHandler, Dataver, DeviceType, EmptyHandler, Endpoint,
+    EpClMatcher, InvokeContext, Node, ReadContext, WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::FabricIndex;
@@ -602,7 +602,7 @@ fn main() -> Result<(), Error> {
 
     if !matter.is_commissioned() {
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, dm.change_notify())?;
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &())?;
     }
 
     #[cfg(not(windows))]
@@ -678,7 +678,7 @@ fn dm_handler<'a>(
     zone_mgmt: &'a ZoneMgmtHandler<StubZoneHooks, ZONE_NZ, ZONE_NV, ZONE_NT>,
     push_av: &'a PushAvStreamHandler<'static, StubPushHooks, PUSH_NC>,
     chime: ChimeHandler,
-) -> impl AsyncMetadata + AsyncHandler + 'a {
+) -> impl DataModelHandler + 'a {
     (
         NODE,
         endpoints::with_eth_sys(

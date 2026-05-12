@@ -171,7 +171,7 @@ impl ClusterHandler for WifiDiagHandler<'_> {
     }
 
     fn handle_reset_counts(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
-        Err(ErrorCode::InvalidAction.into())
+        Err(ErrorCode::CommandNotFound.into())
     }
 }
 

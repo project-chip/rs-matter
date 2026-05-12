@@ -23,7 +23,7 @@ use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 
 use rs_matter::crypto::Crypto;
-use rs_matter::dm::{AsyncHandler, AsyncMetadata};
+use rs_matter::dm::DataModelHandler;
 use rs_matter::error::Error;
 use rs_matter::transport::exchange::{Exchange, MessageMeta};
 use rs_matter::utils::select::Coalesce;
@@ -91,7 +91,7 @@ impl<C: Crypto> E2eRunner<C> {
     /// until the test completes or fails.
     pub fn test_one<H, T>(&self, handler: H, test: T)
     where
-        H: AsyncHandler + AsyncMetadata,
+        H: DataModelHandler,
         T: E2eTest,
     {
         self.test_all(handler, core::iter::once(test))
@@ -101,7 +101,7 @@ impl<C: Crypto> E2eRunner<C> {
     /// until all tests complete or the first one fails.
     pub fn test_all<H, I, T>(&self, handler: H, tests: I)
     where
-        H: AsyncHandler + AsyncMetadata,
+        H: DataModelHandler,
         I: IntoIterator<Item = T>,
         T: E2eTest,
     {

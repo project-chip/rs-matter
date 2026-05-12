@@ -20,7 +20,7 @@ use core::fmt;
 
 use crate::im::{CmdPath, CmdStatus, IMStatusCode};
 
-use super::{Access, ClusterId, CmdId, EndptId, Node};
+use super::{Access, ClusterId, CmdId, EndptId};
 
 /// A type modeling the command meta-data in the Matter data model.
 #[derive(Debug, Clone)]
@@ -82,9 +82,7 @@ macro_rules! command_enum {
 /// This type is built by the Data Model during the expansion of the commands in the `Invoke` IM action
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct CmdDetails<'a> {
-    /// The node meta-data
-    pub node: &'a Node<'a>,
+pub struct CmdDetails {
     /// The concrete (expanded) endpoint ID
     pub endpoint_id: EndptId,
     /// The concrete (expanded) cluster ID
@@ -106,14 +104,13 @@ pub struct CmdDetails<'a> {
     /// before returning an error. Stored here as a `Cell<u8>` rather than
     /// on `Error` so that `Result<T, Error>` keeps its compact 1-byte error
     /// payload across the codebase.
-    cluster_status: Cell<u8>,
+    pub cluster_status: Cell<u8>,
 }
 
-impl<'a> CmdDetails<'a> {
+impl CmdDetails {
     /// Construct a new `CmdDetails`. Initializes `cluster_status` to `0`
     /// (no cluster-specific status to report).
     pub const fn new(
-        node: &'a Node<'a>,
         endpoint_id: EndptId,
         cluster_id: ClusterId,
         cmd_id: CmdId,
@@ -122,7 +119,6 @@ impl<'a> CmdDetails<'a> {
         command_ref: Option<u16>,
     ) -> Self {
         Self {
-            node,
             endpoint_id,
             cluster_id,
             cmd_id,
@@ -149,7 +145,7 @@ impl<'a> CmdDetails<'a> {
     }
 }
 
-impl CmdDetails<'_> {
+impl CmdDetails {
     /// Return the path with which this command invocation request
     /// should be replied, for the case where the command generates a simple
     /// status message as opposed to a true command reply.

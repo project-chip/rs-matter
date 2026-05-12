@@ -19,6 +19,7 @@ use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use core::num::NonZeroU8;
 
 use embassy_futures::select::select4;
+
 use embassy_sync::zerocopy_channel::{Channel, Receiver, Sender};
 
 use rs_matter::acl::{AclEntry, AuthMode};
@@ -27,8 +28,7 @@ use rs_matter::dm::clusters::net_comm::DummyNetworkAccess;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::events::Events;
 use rs_matter::dm::subscriptions::Subscriptions;
-use rs_matter::dm::{AsyncHandler, AsyncMetadata, Privilege};
-use rs_matter::dm::{DataModel, IMBuffer};
+use rs_matter::dm::{DataModel, DataModelHandler, IMBuffer, Privilege};
 use rs_matter::error::Error;
 use rs_matter::persist::DummyKvBlobStoreAccess;
 use rs_matter::respond::Responder;
@@ -167,7 +167,7 @@ impl<C: Crypto> E2eRunner<C> {
     /// drive the tests (i.e. it does not have any server clusters and such).
     pub async fn run<H>(&self, handler: H) -> Result<(), Error>
     where
-        H: AsyncHandler + AsyncMetadata,
+        H: DataModelHandler,
     {
         self.init()?;
 
@@ -209,7 +209,7 @@ impl<C: Crypto> E2eRunner<C> {
                 NoNetwork,
             ),
             responder.run::<4>(),
-            dm.process_subscriptions(&self.matter),
+            dm.run(),
         )
         .coalesce()
         .await

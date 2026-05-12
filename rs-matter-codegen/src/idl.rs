@@ -24811,25 +24811,25 @@ pub mod unit_testing {
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<bool, rs_matter_crate::error::Error> {
-            Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+            Err(rs_matter_crate::error::ErrorCode::AttributeNotFound.into())
         }
         fn unsupported(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<bool, rs_matter_crate::error::Error> {
-            Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+            Err(rs_matter_crate::error::ErrorCode::AttributeNotFound.into())
         }
         fn read_failure_code(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u8, rs_matter_crate::error::Error> {
-            Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+            Err(rs_matter_crate::error::ErrorCode::AttributeNotFound.into())
         }
         fn failure_int_32_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u32, rs_matter_crate::error::Error> {
-            Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+            Err(rs_matter_crate::error::ErrorCode::AttributeNotFound.into())
         }
         fn nullable_boolean(
             &self,
@@ -25253,28 +25253,28 @@ pub mod unit_testing {
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
-            Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+            Err(rs_matter_crate::error::ErrorCode::AttributeNotFound.into())
         }
         fn set_unsupported(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
-            Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+            Err(rs_matter_crate::error::ErrorCode::AttributeNotFound.into())
         }
         fn set_read_failure_code(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
-            Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+            Err(rs_matter_crate::error::ErrorCode::AttributeNotFound.into())
         }
         fn set_failure_int_32_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u32,
         ) -> Result<(), rs_matter_crate::error::Error> {
-            Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+            Err(rs_matter_crate::error::ErrorCode::AttributeNotFound.into())
         }
         fn set_nullable_boolean(
             &self,
@@ -25446,7 +25446,7 @@ pub mod unit_testing {
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
-            Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+            Err(rs_matter_crate::error::ErrorCode::AttributeNotFound.into())
         }
         fn set_nullable_global_enum(
             &self,
@@ -27104,7 +27104,9 @@ pub mod unit_testing {
         ) -> Result<(), rs_matter_crate::error::Error> {
             if let Some(mut writer) = reply.with_dataver(self.0.dataver())? {
                 if ctx.attr().is_system() {
-                    ctx.attr().cluster()?.read(ctx.attr(), writer)
+                    ctx.attr().cluster(ctx.metadata(), |cluster| {
+                        cluster.read(ctx.attr(), writer)
+                    })
                 } else {
                     match AttributeId::try_from(ctx.attr().attr_id)? {
                         AttributeId::Boolean => {

@@ -16,7 +16,7 @@
  */
 
 use rs_matter::crypto::Crypto;
-use rs_matter::dm::{AsyncHandler, AsyncMetadata};
+use rs_matter::dm::DataModelHandler;
 use rs_matter::error::Error;
 use rs_matter::im::GenericPath;
 use rs_matter::im::{AttrPath, AttrStatus};
@@ -246,7 +246,7 @@ impl<C: Crypto> E2eRunner<C> {
         input: &'a [AttrPath],
         expected: &'a [TestAttrResp<'a>],
     ) where
-        H: AsyncHandler + AsyncMetadata,
+        H: DataModelHandler,
     {
         self.test_one(handler, TLVTest::read_attrs(input, expected))
     }
@@ -258,7 +258,7 @@ impl<C: Crypto> E2eRunner<C> {
         input: &'a [TestAttrData<'a>],
         expected: &'a [AttrStatus],
     ) where
-        H: AsyncHandler + AsyncMetadata,
+        H: DataModelHandler,
     {
         self.test_one(handler, TLVTest::write_attrs(input, expected))
     }
