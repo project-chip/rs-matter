@@ -14,4 +14,4 @@ runs:
     shell: bash
     env:
       GH_CONTEXT: ${{ inputs.gh-context }}
-    run: python scripts/memory/gh_sizes_environment.py "${GH_CONTEXT}"
+    run: python .github/scripts/memory/gh_sizes_environment.py "${GH_CONTEXT}"
