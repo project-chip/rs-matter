@@ -1171,7 +1171,23 @@ impl EmptyHandler {
 
 impl Handler for EmptyHandler {
     fn read(&self, _ctx: impl ReadContext, _reply: impl ReadReply) -> Result<(), Error> {
-        Err(ErrorCode::AttributeNotFound.into())
+        // The empty handler sits at the end of every `ChainedHandler`
+        // chain; reaching it means no matcher in the chain claimed
+        // the requested `(endpoint, cluster)`. That can happen either
+        // because the handler genuinely doesn't service the endpoint,
+        // or because the handler shape changed between path expansion
+        // (under the metadata lock) and dispatch (lock released). In
+        // both cases the safest, most informative IM status is
+        // `UnsupportedEndpoint`.
+        Err(ErrorCode::EndpointNotFound.into())
+    }
+
+    fn write(&self, _ctx: impl WriteContext) -> Result<(), Error> {
+        Err(ErrorCode::EndpointNotFound.into())
+    }
+
+    fn invoke(&self, _ctx: impl InvokeContext, _reply: impl InvokeReply) -> Result<(), Error> {
+        Err(ErrorCode::EndpointNotFound.into())
     }
 
     fn bump_dataver(&self, _ctx: impl MatchContext) {
@@ -1618,7 +1634,22 @@ mod asynch {
             _ctx: impl ReadContext,
             _reply: impl ReadReply,
         ) -> impl Future<Output = Result<(), Error>> {
-            core::future::ready(Err(ErrorCode::AttributeNotFound.into()))
+            // See the blocking-`Handler` impl for the rationale on
+            // returning `EndpointNotFound` rather than
+            // `AttributeNotFound` here.
+            core::future::ready(Err(ErrorCode::EndpointNotFound.into()))
+        }
+
+        fn write(&self, _ctx: impl WriteContext) -> impl Future<Output = Result<(), Error>> {
+            core::future::ready(Err(ErrorCode::EndpointNotFound.into()))
+        }
+
+        fn invoke(
+            &self,
+            _ctx: impl InvokeContext,
+            _reply: impl InvokeReply,
+        ) -> impl Future<Output = Result<(), Error>> {
+            core::future::ready(Err(ErrorCode::EndpointNotFound.into()))
         }
 
         fn bump_dataver(&self, _ctx: impl MatchContext) {

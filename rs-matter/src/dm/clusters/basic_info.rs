@@ -637,7 +637,7 @@ impl ClusterHandler for BasicInfoHandler {
     }
 
     fn handle_mfg_specific_ping(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
-        Err(ErrorCode::InvalidAction.into())
+        Err(ErrorCode::CommandNotFound.into())
     }
 
     fn manufacturing_date<P: TLVBuilderParent>(

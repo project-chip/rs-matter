@@ -1532,7 +1532,7 @@ where
         _request: QueryIdentityRequest<'_>,
         _response: QueryIdentityResponseBuilder<P>,
     ) -> impl Future<Output = Result<P, Error>> {
-        ready(Err(ErrorCode::InvalidAction.into()))
+        ready(Err(ErrorCode::CommandNotFound.into()))
     }
 }
 

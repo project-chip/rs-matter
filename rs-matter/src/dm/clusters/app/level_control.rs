@@ -1642,12 +1642,12 @@ pub trait LevelControlHooks {
     /// Raw start_up_current_level getter.
     /// This value should persist across reboots.
     fn start_up_current_level(&self) -> Result<Option<u8>, Error> {
-        Err(ErrorCode::InvalidAction.into())
+        Err(ErrorCode::AttributeNotFound.into())
     }
     /// Raw start_up_current_level setter.
     /// This value should persist across reboots.
     fn set_start_up_current_level(&self, _value: Option<u8>) -> Result<(), Error> {
-        Err(ErrorCode::InvalidAction.into())
+        Err(ErrorCode::AttributeNotFound.into())
     }
 
     /// Background task for out-of-band notifications to the handler.

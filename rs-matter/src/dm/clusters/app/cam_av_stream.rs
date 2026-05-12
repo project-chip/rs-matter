@@ -1067,7 +1067,7 @@ where
         _request: AudioStreamAllocateRequest<'_>,
         _response: AudioStreamAllocateResponseBuilder<P>,
     ) -> Result<P, Error> {
-        Err(ErrorCode::InvalidAction.into())
+        Err(ErrorCode::CommandNotFound.into())
     }
 
     async fn handle_audio_stream_deallocate(
@@ -1075,7 +1075,7 @@ where
         _ctx: impl InvokeContext,
         _request: AudioStreamDeallocateRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::InvalidAction.into())
+        Err(ErrorCode::CommandNotFound.into())
     }
 
     async fn handle_snapshot_stream_allocate<P: TLVBuilderParent>(
@@ -1084,7 +1084,7 @@ where
         _request: SnapshotStreamAllocateRequest<'_>,
         _response: SnapshotStreamAllocateResponseBuilder<P>,
     ) -> Result<P, Error> {
-        Err(ErrorCode::InvalidAction.into())
+        Err(ErrorCode::CommandNotFound.into())
     }
 
     async fn handle_snapshot_stream_modify(
@@ -1092,7 +1092,7 @@ where
         _ctx: impl InvokeContext,
         _request: SnapshotStreamModifyRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::InvalidAction.into())
+        Err(ErrorCode::CommandNotFound.into())
     }
 
     async fn handle_snapshot_stream_deallocate(
@@ -1100,7 +1100,7 @@ where
         _ctx: impl InvokeContext,
         _request: SnapshotStreamDeallocateRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::InvalidAction.into())
+        Err(ErrorCode::CommandNotFound.into())
     }
 
     async fn handle_capture_snapshot<P: TLVBuilderParent>(
@@ -1109,7 +1109,7 @@ where
         _request: CaptureSnapshotRequest<'_>,
         _response: CaptureSnapshotResponseBuilder<P>,
     ) -> Result<P, Error> {
-        Err(ErrorCode::InvalidAction.into())
+        Err(ErrorCode::CommandNotFound.into())
     }
 }
 
