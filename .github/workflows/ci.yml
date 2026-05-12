@@ -42,22 +42,22 @@ jobs:
         run: sudo apt-get install -y libdbus-1-dev
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          # `cargo xtask copyright` walks `git log --follow` per file
+          # to derive each header's first/last-edit year span. With the
+          # default shallow clone (`fetch-depth: 1`) only the synthetic
+          # PR merge commit is reachable, so every file collapses to
+          # "today" and the check fails on every PR. `0` = full history.
+          fetch-depth: 0
 
       - name: Fmt
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
         run: cargo fmt -- --check
 
-# Cannot really be part of the CI because the moment a file's wrong copyright
-# is updated, the CI will fail *IF* the copyright's derived last modification
-# happens to be earlier than the current year.
-#
-# What we need is a way to disregard changes to files which only affect the time span
-# in the copyright header, but that's a bit too much for now.
-# Until then, we can just run this locally before pushing.
-#      - name: Copyright
-#        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
-#        run: cargo xtask copyright
+      - name: Copyright
+        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
+        run: cargo xtask copyright
 
       - name: Xtask Fmt
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
