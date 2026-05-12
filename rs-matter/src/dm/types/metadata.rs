@@ -19,7 +19,12 @@ use crate::dm::Node;
 
 use super::Async;
 
+/// A trait for types that can provide access to a `Node` for the purpose of metadata retrieval.
 pub trait Metadata {
+    /// Access the `Node` associated with this metadata provider.
+    ///
+    /// # Arguments
+    /// - `f`: A closure that takes a reference to a `Node` and returns a value of type `R`.
     fn access<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&Node<'_>) -> R;
