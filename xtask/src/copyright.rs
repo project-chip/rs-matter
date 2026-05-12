@@ -62,6 +62,28 @@ const HEADER_MARKER: &str = "Project CHIP Authors";
 /// Headers always live at the top of the file.
 const HEADER_SCAN_LINES: usize = 25;
 
+/// Commits whose touches to a file should be ignored for the purpose of
+/// computing its copyright year span. Each entry is the full 40-character
+/// SHA-1.
+///
+/// The motivating case is the bulk rewrite that fixed *previously
+/// wrong* headers across the tree: that commit's mtime year (and so the
+/// year it would feed into `git log`) does not represent a real edit to
+/// the file content, so counting it would force every file forward to
+/// the rewrite year regardless of whether it has actually been touched
+/// since.
+///
+/// If filtering these commits out leaves no history at all (e.g. a file
+/// that was *introduced* in one of the ignored commits), `file_years`
+/// silently falls back to the unfiltered history so the file still gets
+/// a sensible year.
+const IGNORED_COMMITS: &[&str] = &[
+    // "Fix all copyright headers to have correct time span" — bulk
+    // rewrite of every file's header to its real first/last-edit span
+    // on 2026-05-12. Not a content edit.
+    "fb038a3897d933c604b369280d7ad55693970a05",
+];
+
 /// Operating mode for the `copyright` subcommand.
 #[derive(Copy, Clone, Debug, Subcommand)]
 pub enum Action {
@@ -538,6 +560,11 @@ fn is_in_scope(rel: &Path) -> bool {
 /// edits in the same commit it was renamed in. Per the user's stated
 /// preference, when in doubt we err on the side of a wider year span (i.e.
 /// keep following) rather than a narrower one.
+///
+/// Commits listed in [`IGNORED_COMMITS`] are filtered out of the history
+/// before deriving the span (see the constant's doc comment for the
+/// motivation). If filtering empties the history, we fall back to the
+/// unfiltered list so the file still gets a year.
 fn file_years(repo_root: &Path, rel: &Path) -> anyhow::Result<(u32, u32)> {
     let rel_str = rel.to_string_lossy().to_string();
 
@@ -547,21 +574,42 @@ fn file_years(repo_root: &Path, rel: &Path) -> anyhow::Result<(u32, u32)> {
             "log",
             "--follow",
             "-M85%",
-            "--format=%ad",
+            // `%H %ad` lets us drop commits by hash before parsing the
+            // year. `%ad` with `--date=format:%Y` emits a 4-digit year.
+            "--format=%H %ad",
             "--date=format:%Y",
             "--",
             &rel_str,
         ],
     )?;
 
-    let years: Vec<u32> = out
+    let entries: Vec<(&str, u32)> = out
         .lines()
-        .filter_map(|l| l.trim().parse::<u32>().ok())
+        .filter_map(|l| {
+            let (hash, year) = l.trim().split_once(' ')?;
+            let year = year.trim().parse::<u32>().ok()?;
+            Some((hash, year))
+        })
         .collect();
 
-    if years.is_empty() {
+    if entries.is_empty() {
         bail!("no git history for {}", rel.display());
     }
+
+    let filtered: Vec<u32> = entries
+        .iter()
+        .filter(|(hash, _)| !IGNORED_COMMITS.iter().any(|ignored| *ignored == *hash))
+        .map(|(_, year)| *year)
+        .collect();
+
+    // Defensive: if filtering removed everything (e.g. a file that
+    // was *introduced* in an ignored commit), keep the unfiltered
+    // history so the file still gets a sensible span.
+    let years: Vec<u32> = if filtered.is_empty() {
+        entries.into_iter().map(|(_, year)| year).collect()
+    } else {
+        filtered
+    };
 
     // `git log` is newest-first.
     let last = *years.first().unwrap();
