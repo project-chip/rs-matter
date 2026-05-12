@@ -43,7 +43,7 @@ jobs:
         gh-context: ${{ toJson(github) }}
     - name: Report
       run: |
-        python scripts/memory/gh_report.py \
+        python .github/scripts/memory/gh_report.py \
           --verbose \
           --report-increases 0.2 \
           --report-pr \

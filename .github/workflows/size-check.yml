@@ -72,35 +72,35 @@ jobs:
 
       - name: Prepare bloat report from the previous builds
         run: |
-            python scripts/memory/gh_sizes.py \
+            python .github/scripts/memory/gh_sizes.py \
               "(core)" infologs-optz-ltofat x86_64-unknown-linux-gnu \
               bloat-check/target/release/bloat-check \
               /tmp/bloat_reports/
-            python scripts/memory/gh_sizes.py \
+            python .github/scripts/memory/gh_sizes.py \
               "(core)" infodefmt-optz-ltofat thumbv6m-none-eabi \
               bloat-check/target/thumbv6m-none-eabi/release/bloat-check \
               /tmp/bloat_reports/
-            python scripts/memory/gh_sizes.py \
+            python .github/scripts/memory/gh_sizes.py \
               "(core)" infodefmt-optz-ltofat thumbv7em-none-eabi \
               bloat-check/target/thumbv7em-none-eabi/release/bloat-check \
               /tmp/bloat_reports/
-            python scripts/memory/gh_sizes.py \
+            python .github/scripts/memory/gh_sizes.py \
               "(core)" infodefmt-optz-ltofat riscv32imac-unknown-none-elf \
               bloat-check/target/riscv32imac-unknown-none-elf/release/bloat-check \
               /tmp/bloat_reports/
-            python scripts/memory/gh_sizes.py \
+            python .github/scripts/memory/gh_sizes.py \
               onoff-light infologs-optz-ltofat x86_64-unknown-linux-gnu \
               target/release/onoff_light \
               /tmp/bloat_reports/
-            python scripts/memory/gh_sizes.py \
+            python .github/scripts/memory/gh_sizes.py \
               onoff-light-bt infologs-optz-ltofat x86_64-unknown-linux-gnu \
               target/release/onoff_light_bt \
               /tmp/bloat_reports/
-            python scripts/memory/gh_sizes.py \
+            python .github/scripts/memory/gh_sizes.py \
               dimmable-light infologs-optz-ltofat x86_64-unknown-linux-gnu \
               target/release/dimmable_light \
               /tmp/bloat_reports/
-            python scripts/memory/gh_sizes.py \
+            python .github/scripts/memory/gh_sizes.py \
               speaker infologs-optz-ltofat x86_64-unknown-linux-gnu \
               target/release/speaker \
               /tmp/bloat_reports/
