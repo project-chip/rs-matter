@@ -598,8 +598,7 @@ fn file_years(repo_root: &Path, rel: &Path) -> anyhow::Result<(u32, u32)> {
 
     let filtered: Vec<u32> = entries
         .iter()
-        .filter(|(hash, _)| !IGNORED_COMMITS.iter().any(|ignored| *ignored == *hash))
-        .map(|(_, year)| *year)
+        .filter_map(|(hash, year)| (!IGNORED_COMMITS.contains(hash)).then_some(*year))
         .collect();
 
     // Defensive: if filtering removed everything (e.g. a file that
