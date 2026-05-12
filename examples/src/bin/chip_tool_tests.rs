@@ -44,6 +44,7 @@ use rs_matter::dm::clusters::basic_info::{
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::eth_diag::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::fixed_label::{self, FixedLabelEntry, FixedLabelHandler};
 use rs_matter::dm::clusters::gen_comm::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::gen_diag::{self, ClusterHandler as _, GenDiag};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
@@ -416,6 +417,21 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 /// and exercises the `LabelList` length-constraint behaviour. Same
 /// rationale as Groups: Matter Core §7.16.4 permits extras, our
 /// device-type-conformance test is already on the skip list.
+/// Static fixed-label data exposed by EP1's `FixedLabel` cluster.
+/// `TC_FLABEL_2_1` step 2 asserts every entry's `label`/`value` is a
+/// string ≤ 16 bytes (Matter Application Cluster spec §9.6.4); both
+/// pairs below satisfy that constraint.
+const FIXED_LABELS_EP1: &[FixedLabelEntry<'static>] = &[
+    FixedLabelEntry {
+        label: "room",
+        value: "test",
+    },
+    FixedLabelEntry {
+        label: "orientation",
+        value: "north",
+    },
+];
+
 const NODE: Node<'static> = Node {
     endpoints: &[
         Endpoint {
@@ -426,10 +442,16 @@ const NODE: Node<'static> = Node {
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
+            // `FixedLabel` (cluster ID 0x0040) is wired on EP1 because
+            // `TC_FLABEL_2_1` runs with `--endpoint 1` and skips cleanly
+            // via `has_attribute(FixedLabel.LabelList)` when the cluster
+            // is absent; adding it here turns the skip into an actual
+            // content + read-only-write check.
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
+                fixed_label::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER,
                 UnitTestingHandler::CLUSTER
             ),
@@ -501,10 +523,16 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
+            // `FixedLabel` (cluster ID 0x0040) is wired on EP1 because
+            // `TC_FLABEL_2_1` runs with `--endpoint 1` and skips cleanly
+            // via `has_attribute(FixedLabel.LabelList)` when the cluster
+            // is absent; adding it here turns the skip into an actual
+            // content + read-only-write check.
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
+                fixed_label::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER,
                 UnitTestingHandler::CLUSTER
             ),
@@ -585,6 +613,13 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 .chain(
                     EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
                     Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(fixed_label::CLUSTER.id)),
+                    Async(
+                        FixedLabelHandler::new(Dataver::new_rand(&mut rand), FIXED_LABELS_EP1)
+                            .adapt(),
+                    ),
                 )
                 .chain(
                     EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),

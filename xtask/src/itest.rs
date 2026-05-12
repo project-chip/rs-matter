@@ -308,7 +308,10 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Fixed Label (optional system cluster)
     //
-    "TC_FLABEL_2_1", // FixedLabel not implemented (optional, Matter spec §9.8); `@run_if_endpoint_matches(has_attribute(FixedLabel.LabelList))` skips cleanly via `no_fail_on_skipped.py`.
+    "TC_FLABEL_2_1", // FixedLabel wired on EP1 of `chip_tool_tests` with two static
+    //                  spec-conformant entries (see `FIXED_LABELS_EP1`). The test reads
+    //                  the list, attempts a write (expected `UnsupportedWrite` since
+    //                  `LabelList` is read-only), and re-reads to confirm stability.
     //
     // Python tests — Bridged Device Basic Information (optional, bridges)
     //
@@ -968,7 +971,6 @@ impl ITests {
                 | "TC_TIMESYNC_2_1"  // has_cluster(TimeSynchronization) and has_attribute(TimeSource)
                 | "TC_DGSW_2_1"      // has_cluster(SoftwareDiagnostics)
                 | "TC_DGSW_2_2"      // has_cluster(SoftwareDiagnostics)
-                | "TC_FLABEL_2_1"    // has_attribute(FixedLabel.LabelList)
                 | "TC_LCFG_2_1"      // has_cluster(LocalizationConfiguration)
                 | "TC_LTIME_3_1"     // has_cluster(TimeFormatLocalization)
                 | "TC_LUNIT_3_1"     // has_cluster(UnitLocalization) and has_attribute(TemperatureUnit)

@@ -28,6 +28,7 @@ pub mod basic_info;
 pub mod desc;
 pub mod dev_att;
 pub mod eth_diag;
+pub mod fixed_label;
 pub mod gen_comm;
 pub mod gen_diag;
 pub mod groups;
