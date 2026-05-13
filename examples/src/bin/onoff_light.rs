@@ -192,15 +192,15 @@ fn run() -> Result<(), Error> {
 const NODE: Node<'static> = Node {
     endpoints: &[
         root_endpoint!(eth),
-        Endpoint {
-            id: 1,
-            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
-            clusters: clusters!(
+        Endpoint::new(
+            1,
+            devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters!(
                 desc::DescHandler::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER
             ),
-        },
+        ),
     ],
 };
 

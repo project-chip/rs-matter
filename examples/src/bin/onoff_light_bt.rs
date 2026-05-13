@@ -257,15 +257,15 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
 const NODE: Node<'static> = Node {
     endpoints: &[
         root_endpoint!(wifi),
-        Endpoint {
-            id: 1,
-            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
-            clusters: clusters!(
+        Endpoint::new(
+            1,
+            devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters!(
                 desc::DescHandler::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 on_off::test::TestOnOffDeviceLogic::CLUSTER
             ),
-        },
+        ),
     ],
 };
 

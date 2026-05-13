@@ -633,14 +633,14 @@ fn report_total_size(total_size: usize) {
 const NODE: Node<'static> = Node {
     endpoints: &[
         root_endpoint!(wifi),
-        Endpoint {
-            id: 1,
-            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
-            clusters: clusters!(
+        Endpoint::new(
+            1,
+            devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters!(
                 desc::DescHandler::CLUSTER,
                 on_off::test::TestOnOffDeviceLogic::CLUSTER
             ),
-        },
+        ),
     ],
 };
 

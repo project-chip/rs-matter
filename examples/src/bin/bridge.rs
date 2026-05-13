@@ -162,41 +162,41 @@ const NODE: Node<'static> = Node {
         // Optionally, the aggregator can declare and implement the `Actions` cluster
         // (see below in the handler the meaning of this cluster).
         // In any case, this endpoint must be of the Aggregator device type.
-        Endpoint {
-            id: 1,
-            device_types: devices!(DEV_TYPE_AGGREGATOR),
-            clusters: clusters!(desc::DescHandler::CLUSTER),
-        },
+        Endpoint::new(
+            1,
+            devices!(DEV_TYPE_AGGREGATOR),
+            clusters!(desc::DescHandler::CLUSTER),
+        ),
         // This is the first bridged device. It could have any ID as long as it is not 0 or 1.
         //
         // The Matter Bridge needs to declare as many endpoints as there are bridged devices.
         // If the bridged devices can vary over time, rather than using a static `Node`
         // definition, one could use an `(Async)MetaData` implementation that returns a node
         // which references the endpoints off from a `Vec` or a `heapless::Vec`.
-        Endpoint {
-            id: 2,
-            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_BRIDGED_NODE),
-            clusters: clusters!(
+        Endpoint::new(
+            2,
+            devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_BRIDGED_NODE),
+            clusters!(
                 desc::DescHandler::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 BridgedHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER
             ),
-        },
+        ),
         // This is the second bridged device.
         //
         // It could have a completely different device type, yet here - for simplicity - we
         // just declare another lamp.
-        Endpoint {
-            id: 3,
-            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_BRIDGED_NODE),
-            clusters: clusters!(
+        Endpoint::new(
+            3,
+            devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_BRIDGED_NODE),
+            clusters!(
                 desc::DescHandler::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 BridgedHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER
             ),
-        },
+        ),
     ],
 };
 

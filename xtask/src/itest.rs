@@ -47,7 +47,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestArmFailSafe",
     "TestAttributesById",
     "TestBasicInformation",
-    // "TestBinding", // TODO: Binding cluster not yet implemented
+    "TestBinding",
     "TestCASERecovery",
     "TestCluster",
     "TestClusterComplexTypes",

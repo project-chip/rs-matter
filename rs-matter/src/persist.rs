@@ -47,6 +47,10 @@ pub const NETWORKS_KEY: u16 = EVENT_EPOCH_KEY + 1;
 /// endpoint that hosts the UserLabel cluster.
 pub const USER_LABELS_KEY: u16 = NETWORKS_KEY + 1;
 
+/// The key used for storing all Binding entries across every
+/// endpoint+fabric pair that hosts the Binding cluster.
+pub const BINDINGS_KEY: u16 = USER_LABELS_KEY + 1;
+
 /// A trait representing a key-value BLOB storage.
 ///
 /// NOTE: For now, the trait is deliberately modeled as non-async, so that it can be used from

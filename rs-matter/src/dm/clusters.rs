@@ -25,6 +25,7 @@ pub mod acl;
 pub mod adm_comm;
 pub mod app;
 pub mod basic_info;
+pub mod binding;
 pub mod desc;
 pub mod dev_att;
 pub mod eth_diag;
