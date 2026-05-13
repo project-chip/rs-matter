@@ -226,7 +226,7 @@ impl ImClient {
     pub async fn read_with<B, F>(
         exchange: &mut Exchange<'_>,
         mut build: B,
-        mut on_report: F,
+        on_report: F,
     ) -> Result<(), Error>
     where
         B: FnMut(&mut WriteBuf) -> Result<(), Error>,
@@ -244,6 +244,44 @@ impl ImClient {
             })
             .await?;
 
+        Self::recv_read_chunks(exchange, on_report).await
+    }
+
+    /// Async-build counterpart to [`read_with`](Self::read_with).
+    /// See [`write_with_async`](Self::write_with_async) for the
+    /// TX-slot-lifetime caveat and the strengthened idempotency
+    /// contract that apply to any async-build IM client path.
+    pub async fn read_with_async<B, F>(
+        exchange: &mut Exchange<'_>,
+        mut build: B,
+        on_report: F,
+    ) -> Result<(), Error>
+    where
+        B: AsyncFnMut(&mut WriteBuf<'_>) -> Result<(), Error>,
+        F: AsyncFnMut(&ReportDataResp<'_>) -> Result<(), Error>,
+    {
+        debug!(
+            "ImClient::read - Sending ReadRequest (async build) on exchange {}",
+            exchange.id()
+        );
+
+        exchange
+            .send_with_async(async |_, wb| {
+                build(wb).await?;
+                Ok(Some(OpCode::ReadRequest.into()))
+            })
+            .await?;
+
+        Self::recv_read_chunks(exchange, on_report).await
+    }
+
+    /// Shared chunked-response loop for the read APIs. Both the
+    /// sync-build and async-build variants enter this loop after
+    /// the initial `ReadRequest` is on the wire.
+    async fn recv_read_chunks<F>(exchange: &mut Exchange<'_>, mut on_report: F) -> Result<(), Error>
+    where
+        F: AsyncFnMut(&ReportDataResp<'_>) -> Result<(), Error>,
+    {
         loop {
             exchange.recv_fetch().await?;
 
@@ -402,7 +440,7 @@ impl ImClient {
         exchange: &mut Exchange<'_>,
         timed_timeout_ms: Option<u16>,
         mut build: B,
-        mut on_response: F,
+        on_response: F,
     ) -> Result<(), Error>
     where
         B: FnMut(&mut WriteBuf) -> Result<(), Error>,
@@ -424,6 +462,54 @@ impl ImClient {
             })
             .await?;
 
+        Self::recv_invoke_chunks(exchange, on_response).await
+    }
+
+    /// Async-build counterpart to [`invoke_with`](Self::invoke_with).
+    /// The genuine MCU win for client clusters: a command-request
+    /// build that needs to await (binding lookup, async telemetry,
+    /// crypto sign) can do so directly into the TX buffer without
+    /// a sibling buffer. See [`write_with_async`](Self::write_with_async)
+    /// for the slot-lifetime and idempotency caveats.
+    pub async fn invoke_with_async<B, F>(
+        exchange: &mut Exchange<'_>,
+        timed_timeout_ms: Option<u16>,
+        mut build: B,
+        on_response: F,
+    ) -> Result<(), Error>
+    where
+        B: AsyncFnMut(&mut WriteBuf<'_>) -> Result<(), Error>,
+        F: AsyncFnMut(&InvokeResp<'_>) -> Result<(), Error>,
+    {
+        debug!(
+            "ImClient::invoke - Starting invoke (async build) on exchange {}",
+            exchange.id()
+        );
+
+        if let Some(timeout_ms) = timed_timeout_ms {
+            Self::send_timed_request(exchange, timeout_ms).await?;
+        }
+
+        exchange
+            .send_with_async(async |_, wb| {
+                build(wb).await?;
+                Ok(Some(OpCode::InvokeRequest.into()))
+            })
+            .await?;
+
+        Self::recv_invoke_chunks(exchange, on_response).await
+    }
+
+    /// Shared chunked-response loop for the invoke APIs. Both the
+    /// sync-build and async-build variants enter this loop after
+    /// the initial `InvokeRequest` is on the wire.
+    async fn recv_invoke_chunks<F>(
+        exchange: &mut Exchange<'_>,
+        mut on_response: F,
+    ) -> Result<(), Error>
+    where
+        F: AsyncFnMut(&InvokeResp<'_>) -> Result<(), Error>,
+    {
         loop {
             exchange.recv_fetch().await?;
 
@@ -605,6 +691,57 @@ impl ImClient {
             })
             .await?;
 
+        Self::recv_write_response(exchange).await
+    }
+
+    /// Async-build counterpart to [`write_with`](Self::write_with).
+    ///
+    /// The `build` closure is `AsyncFnMut` and may `.await` while
+    /// holding the `&mut WriteBuf` — useful when the attribute
+    /// values must themselves be fetched asynchronously (KV lookup,
+    /// sensor read, async crypto, …).
+    ///
+    /// **TX-slot lifetime caveat**: the underlying transport's TX
+    /// buffer slot stays reserved for the entire duration of one
+    /// closure invocation, including the time spent inside any
+    /// `.await`. With a small TX-buffer pool, a slow-awaiting build
+    /// can starve other concurrent exchanges. See
+    /// [`Exchange::send_with_async`] for the full discussion. Prefer
+    /// the sync [`write_with`](Self::write_with) when the build is
+    /// already a pure TLV serialisation.
+    ///
+    /// **Idempotency**: same contract as [`write_with`]'s sync
+    /// version — strengthened because the closure can now suspend
+    /// and observe possibly-different external state on retransmit.
+    /// Output must remain identical across retransmits.
+    pub async fn write_with_async<'a, F>(
+        exchange: &'a mut Exchange<'_>,
+        timed_timeout_ms: Option<u16>,
+        mut build: F,
+    ) -> Result<WriteResp<'a>, Error>
+    where
+        F: AsyncFnMut(&mut WriteBuf<'_>) -> Result<(), Error>,
+    {
+        if let Some(timeout_ms) = timed_timeout_ms {
+            Self::send_timed_request(exchange, timeout_ms).await?;
+        }
+
+        exchange
+            .send_with_async(async |_, wb| {
+                build(wb).await?;
+                Ok(Some(OpCode::WriteRequest.into()))
+            })
+            .await?;
+
+        Self::recv_write_response(exchange).await
+    }
+
+    /// Shared response-handling tail for [`write_with`] and
+    /// [`write_with_async`] — extracted so both call sites stay
+    /// identical and any future fix lands once.
+    async fn recv_write_response<'a>(
+        exchange: &'a mut Exchange<'_>,
+    ) -> Result<WriteResp<'a>, Error> {
         exchange.recv_fetch().await?;
 
         {
