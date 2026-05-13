@@ -18,6 +18,8 @@
 //! A dedicated Matter device for ConnectedHomeIP YAML integration tests.
 //! Implements On/Off and Unit Testing clusters over Ethernet.
 
+#![recursion_limit = "256"]
+
 use core::pin::pin;
 
 use std::net::UdpSocket;

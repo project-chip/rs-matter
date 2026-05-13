@@ -170,17 +170,20 @@ impl<const N: usize> Bindings<N> {
         let endpoint = t.endpoint()?;
         let cluster = t.cluster()?;
 
-        // Spec §9.6.5.1:
-        // - Group and Endpoint MUST NOT both be present.
-        // - Node SHALL be present when Endpoint is present.
-        // - At least one of (Node+Endpoint) or Group must identify a target.
+        // Spec §9.6.5.1 — the conformance columns say Group is
+        // `!Endpoint` and Endpoint is `!Group`, so **exactly one** of
+        // them must identify the target. Node's conformance is
+        // `Endpoint`, i.e. Node is mandatory whenever Endpoint is
+        // present (it names the remote node for the unicast target).
         if group.is_some() && endpoint.is_some() {
             return Err(ErrorCode::ConstraintError.into());
         }
-        if endpoint.is_some() && node.is_none() {
+        if group.is_none() && endpoint.is_none() {
+            // Rejects both "all fields missing" and "only Node
+            // present" (no destination at all).
             return Err(ErrorCode::ConstraintError.into());
         }
-        if group.is_none() && node.is_none() && endpoint.is_none() {
+        if endpoint.is_some() && node.is_none() {
             return Err(ErrorCode::ConstraintError.into());
         }
 
@@ -215,18 +218,9 @@ impl<const N: usize> Bindings<N> {
 
         self.state.lock(|cell| {
             let mut state = cell.borrow_mut();
-            // Drop every existing entry on this (endpoint, fabric).
-            // Iterate-by-index because `retain` doesn't compose with
-            // our bounded Vec API the same way.
-            let mut i = 0;
-            while i < state.len() {
-                let e = &state[i];
-                if e.endpoint_id == endpoint_id && e.fab_idx == fab_idx {
-                    state.remove(i);
-                } else {
-                    i += 1;
-                }
-            }
+            // Drop every existing entry on this (endpoint, fabric)
+            // in O(N) — one pass, in-place shift.
+            state.retain(|e| !(e.endpoint_id == endpoint_id && e.fab_idx == fab_idx));
             // Now bulk-insert the validated list. Capacity-exhausted
             // here means the *combined* fabric counts exceeded `N`.
             for sb in parsed {
