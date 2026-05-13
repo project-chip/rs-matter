@@ -66,7 +66,7 @@
 //! ```ignore
 //! exchange.send_with(|_, wb| {
 //!     let parent = TLVWriteParent::new("WriteRequest", wb);
-//!     WriteRequestMessageBuilder::new(parent)?
+//!     WriteReqBuilder::new(parent)?
 //!         // SuppressResponse + TimedRequest implicitly skipped:
 //!         .write_requests()?
 //!             .push()?
@@ -86,7 +86,7 @@
 //! still matches the spec field order:
 //!
 //! ```ignore
-//! WriteRequestMessageBuilder::new(parent)?
+//! WriteReqBuilder::new(parent)?
 //!     .timed_request(true)?            // SuppressResponse skipped
 //!     .write_requests()?
 //!         .push()?
@@ -103,24 +103,8 @@ use core::marker::PhantomData;
 
 use crate::dm::{AttrId, ClusterId, EndptId};
 use crate::error::Error;
-use crate::im::{AttrDataTag, WriteReqTag};
-use crate::tlv::{TLVBuilderParent, TLVTag, TLVWrite};
-
-/// Context tags for the fields of `AttributePathIB` (Matter Core spec
-/// §10.6.2). `AttrPath` is encoded as a TLV *list* with positional
-/// context tags 0..5; this enum mirrors the field positions of
-/// [`crate::im::AttrPath`]. Kept private to this module since the
-/// builder is currently the only consumer; promote to a public
-/// `pub enum AttrPathTag` if/when other call sites need it.
-#[repr(u8)]
-enum AttrPathTag {
-    _TagCompression = 0,
-    _Node = 1,
-    Endpoint = 2,
-    Cluster = 3,
-    Attribute = 4,
-    _ListIndex = 5,
-}
+use crate::im::{AttrDataTag, AttrPathTag, WriteReqTag};
+use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite};
 
 /// Streaming builder for a `WriteRequestMessage`. Type-state-tagged
 /// so the compiler enforces in-order field writes. Optional fields
@@ -135,152 +119,155 @@ enum AttrPathTag {
 /// - `3`: past `WriteRequests` array (closed)
 /// - `4`: past `MoreChunkedMessages`
 ///
-/// In practice almost every call is `WriteRequestMessageBuilder::new(p)?
+/// In practice almost every call is `WriteReqBuilder::new(p)?
 /// .write_requests()? … .end()?` — `SuppressResponse` and
 /// `MoreChunkedMessages` default to absent (= false on the wire),
 /// `TimedRequest` is only set when issuing a timed write.
-pub struct WriteRequestMessageBuilder<P, const F: usize> {
+pub struct WriteReqBuilder<P, const F: usize> {
     p: P,
 }
 
-impl<P> WriteRequestMessageBuilder<P, 0>
+impl<P> WriteReqBuilder<P, 0>
 where
     P: TLVBuilderParent,
 {
-    /// Begin a new `WriteRequestMessage` — opens an anonymous struct
-    /// on the parent's writer.
-    pub fn new(mut p: P) -> Result<Self, Error> {
-        p.writer().start_struct(&TLVTag::Anonymous)?;
+    /// Begin a new `WriteRequestMessage` — opens a struct at the
+    /// given tag on the parent's writer. For top-level use (the
+    /// usual case) pass `&TLVTag::Anonymous`.
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+        p.writer().start_struct(tag)?;
         Ok(Self { p })
+    }
+}
+
+impl<P> TLVBuilder<P> for WriteReqBuilder<P, 0>
+where
+    P: TLVBuilderParent,
+{
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+        Self::new(parent, tag)
+    }
+
+    fn unchecked_into_parent(self) -> P {
+        self.p
     }
 }
 
 // ---------------------------------------------------------------------
 // `suppress_response` — settable from state 0; advances to state 1.
 // ---------------------------------------------------------------------
-impl<P> WriteRequestMessageBuilder<P, 0>
+impl<P> WriteReqBuilder<P, 0>
 where
     P: TLVBuilderParent,
 {
     /// Write the optional `SuppressResponse` field. Omit (don't call)
     /// to leave the field absent on the wire.
-    pub fn suppress_response(
-        mut self,
-        value: bool,
-    ) -> Result<WriteRequestMessageBuilder<P, 1>, Error> {
+    pub fn suppress_response(mut self, value: bool) -> Result<WriteReqBuilder<P, 1>, Error> {
         self.p
             .writer()
             .bool(&TLVTag::Context(WriteReqTag::SuppressResponse as u8), value)?;
-        Ok(WriteRequestMessageBuilder { p: self.p })
+        Ok(WriteReqBuilder { p: self.p })
     }
 }
 
 // ---------------------------------------------------------------------
 // `timed_request` — settable from state 0 or 1; advances to state 2.
 // ---------------------------------------------------------------------
-impl<P> WriteRequestMessageBuilder<P, 0>
+impl<P> WriteReqBuilder<P, 0>
 where
     P: TLVBuilderParent,
 {
     /// Write the optional `TimedRequest` field. Calling this from
     /// state 0 implicitly skips `SuppressResponse`.
-    pub fn timed_request(self, value: bool) -> Result<WriteRequestMessageBuilder<P, 2>, Error> {
-        WriteRequestMessageBuilder::<P, 1> { p: self.p }.timed_request(value)
+    pub fn timed_request(self, value: bool) -> Result<WriteReqBuilder<P, 2>, Error> {
+        WriteReqBuilder::<P, 1> { p: self.p }.timed_request(value)
     }
 }
 
-impl<P> WriteRequestMessageBuilder<P, 1>
+impl<P> WriteReqBuilder<P, 1>
 where
     P: TLVBuilderParent,
 {
     /// Write the optional `TimedRequest` field.
-    pub fn timed_request(mut self, value: bool) -> Result<WriteRequestMessageBuilder<P, 2>, Error> {
+    pub fn timed_request(mut self, value: bool) -> Result<WriteReqBuilder<P, 2>, Error> {
         self.p
             .writer()
             .bool(&TLVTag::Context(WriteReqTag::TimedRequest as u8), value)?;
-        Ok(WriteRequestMessageBuilder { p: self.p })
+        Ok(WriteReqBuilder { p: self.p })
     }
 }
 
 // ---------------------------------------------------------------------
 // `write_requests` — required; openable from state 0, 1, or 2.
 // ---------------------------------------------------------------------
-impl<P> WriteRequestMessageBuilder<P, 0>
+impl<P> WriteReqBuilder<P, 0>
 where
     P: TLVBuilderParent,
 {
     /// Open the `WriteRequests` array. Calling from state 0
     /// implicitly skips both `SuppressResponse` and `TimedRequest`.
-    pub fn write_requests(
-        self,
-    ) -> Result<AttrDataArrayBuilder<WriteRequestMessageBuilder<P, 3>>, Error> {
-        WriteRequestMessageBuilder::<P, 2> { p: self.p }.write_requests()
+    pub fn write_requests(self) -> Result<AttrDataArrayBuilder<WriteReqBuilder<P, 3>>, Error> {
+        WriteReqBuilder::<P, 2> { p: self.p }.write_requests()
     }
 }
 
-impl<P> WriteRequestMessageBuilder<P, 1>
+impl<P> WriteReqBuilder<P, 1>
 where
     P: TLVBuilderParent,
 {
     /// Open the `WriteRequests` array, implicitly skipping `TimedRequest`.
-    pub fn write_requests(
-        self,
-    ) -> Result<AttrDataArrayBuilder<WriteRequestMessageBuilder<P, 3>>, Error> {
-        WriteRequestMessageBuilder::<P, 2> { p: self.p }.write_requests()
+    pub fn write_requests(self) -> Result<AttrDataArrayBuilder<WriteReqBuilder<P, 3>>, Error> {
+        WriteReqBuilder::<P, 2> { p: self.p }.write_requests()
     }
 }
 
-impl<P> WriteRequestMessageBuilder<P, 2>
+impl<P> WriteReqBuilder<P, 2>
 where
     P: TLVBuilderParent,
 {
     /// Open the `WriteRequests` array. Each `.push()` on the returned
     /// builder starts one `AttrData` entry; close with `.end()` to
     /// return to the message builder.
-    pub fn write_requests(
-        mut self,
-    ) -> Result<AttrDataArrayBuilder<WriteRequestMessageBuilder<P, 3>>, Error> {
-        self.p
-            .writer()
-            .start_array(&TLVTag::Context(WriteReqTag::WriteRequests as u8))?;
-        Ok(AttrDataArrayBuilder {
-            p: WriteRequestMessageBuilder { p: self.p },
-        })
+    pub fn write_requests(self) -> Result<AttrDataArrayBuilder<WriteReqBuilder<P, 3>>, Error> {
+        AttrDataArrayBuilder::new(
+            WriteReqBuilder { p: self.p },
+            &TLVTag::Context(WriteReqTag::WriteRequests as u8),
+        )
     }
 }
 
 // ---------------------------------------------------------------------
 // `more_chunks` — settable from state 3; advances to state 4.
 // ---------------------------------------------------------------------
-impl<P> WriteRequestMessageBuilder<P, 3>
+impl<P> WriteReqBuilder<P, 3>
 where
     P: TLVBuilderParent,
 {
     /// Write the optional `MoreChunkedMessages` field. Omit (don't
     /// call — go straight to `.end()`) for single-chunk writes.
-    pub fn more_chunks(mut self, value: bool) -> Result<WriteRequestMessageBuilder<P, 4>, Error> {
+    pub fn more_chunks(mut self, value: bool) -> Result<WriteReqBuilder<P, 4>, Error> {
         self.p
             .writer()
             .bool(&TLVTag::Context(WriteReqTag::MoreChunked as u8), value)?;
-        Ok(WriteRequestMessageBuilder { p: self.p })
+        Ok(WriteReqBuilder { p: self.p })
     }
 }
 
 // ---------------------------------------------------------------------
 // `end` — closable from state 3 or 4.
 // ---------------------------------------------------------------------
-impl<P> WriteRequestMessageBuilder<P, 3>
+impl<P> WriteReqBuilder<P, 3>
 where
     P: TLVBuilderParent,
 {
     /// Close the message struct, implicitly skipping
     /// `MoreChunkedMessages`. Returns the parent.
     pub fn end(self) -> Result<P, Error> {
-        WriteRequestMessageBuilder::<P, 4> { p: self.p }.end()
+        WriteReqBuilder::<P, 4> { p: self.p }.end()
     }
 }
 
-impl<P> WriteRequestMessageBuilder<P, 4>
+impl<P> WriteReqBuilder<P, 4>
 where
     P: TLVBuilderParent,
 {
@@ -291,10 +278,10 @@ where
     }
 }
 
-// Bridge: the `WriteRequestMessageBuilder<P, F>` is itself a parent
+// Bridge: the `WriteReqBuilder<P, F>` is itself a parent
 // for sub-builders (the array of AttrData). Forward `writer()` to the
 // inner parent.
-impl<P, const F: usize> TLVBuilderParent for WriteRequestMessageBuilder<P, F>
+impl<P, const F: usize> TLVBuilderParent for WriteReqBuilder<P, F>
 where
     P: TLVBuilderParent,
 {
@@ -305,7 +292,7 @@ where
     }
 }
 
-impl<P, const F: usize> core::fmt::Debug for WriteRequestMessageBuilder<P, F>
+impl<P, const F: usize> core::fmt::Debug for WriteReqBuilder<P, F>
 where
     P: core::fmt::Debug,
 {
@@ -315,7 +302,7 @@ where
 }
 
 #[cfg(feature = "defmt")]
-impl<P, const F: usize> defmt::Format for WriteRequestMessageBuilder<P, F>
+impl<P, const F: usize> defmt::Format for WriteReqBuilder<P, F>
 where
     P: defmt::Format,
 {
@@ -336,21 +323,38 @@ impl<P> AttrDataArrayBuilder<P>
 where
     P: TLVBuilderParent,
 {
+    /// Begin a new `AttrData` array — opens an array at the given
+    /// tag on the parent's writer. Use the [`TLVBuilder`] trait
+    /// constructor for the standard call.
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+        p.writer().start_array(tag)?;
+        Ok(Self { p })
+    }
+
     /// Start a new `AttrData` entry. The returned [`AttrDataBuilder`]
     /// terminates with `.end()` which returns this array builder.
-    pub fn push(mut self) -> Result<AttrDataBuilder<Self, 0>, Error> {
+    pub fn push(self) -> Result<AttrDataBuilder<Self, 0>, Error> {
         // Each AttrData is an anonymous-tagged struct (we're inside an array).
-        self.p.writer().start_struct(&TLVTag::Anonymous)?;
-        Ok(AttrDataBuilder {
-            p: self,
-            _f: PhantomData,
-        })
+        AttrDataBuilder::new(self, &TLVTag::Anonymous)
     }
 
     /// Close the array and return the message builder.
     pub fn end(mut self) -> Result<P, Error> {
         self.p.writer().end_container()?;
         Ok(self.p)
+    }
+}
+
+impl<P> TLVBuilder<P> for AttrDataArrayBuilder<P>
+where
+    P: TLVBuilderParent,
+{
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+        Self::new(parent, tag)
+    }
+
+    fn unchecked_into_parent(self) -> P {
+        self.p
     }
 }
 
@@ -395,6 +399,32 @@ where
 pub struct AttrDataBuilder<P, const F: usize> {
     p: P,
     _f: PhantomData<[(); F]>,
+}
+
+impl<P> AttrDataBuilder<P, 0>
+where
+    P: TLVBuilderParent,
+{
+    /// Begin a new `AttrData` entry — opens a struct at the given
+    /// tag. Use `&TLVTag::Anonymous` when pushed into the
+    /// `WriteRequests` array (the typical case).
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+        p.writer().start_struct(tag)?;
+        Ok(Self { p, _f: PhantomData })
+    }
+}
+
+impl<P> TLVBuilder<P> for AttrDataBuilder<P, 0>
+where
+    P: TLVBuilderParent,
+{
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+        Self::new(parent, tag)
+    }
+
+    fn unchecked_into_parent(self) -> P {
+        self.p
+    }
 }
 
 // ---------------------------------------------------------------------

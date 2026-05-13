@@ -48,6 +48,22 @@ pub struct AttrPath {
     pub list_index: Option<Nullable<u16>>,
 }
 
+/// Tags corresponding to the fields in the `AttributePathIB` TLV
+/// structure (Matter Core spec §10.6.2). `AttrPath` is encoded as a
+/// TLV *list* with positional context tags 0..5. Used by callers that
+/// need to perform low-level TLV serde on `AttrPath` data.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(u8)]
+pub enum AttrPathTag {
+    TagCompression = 0,
+    Node = 1,
+    Endpoint = 2,
+    Cluster = 3,
+    Attribute = 4,
+    ListIndex = 5,
+}
+
 impl AttrPath {
     /// Create a new `AttrPath` from the provided `GenericPath`,
     /// filling all fields which are not provided with their default values.

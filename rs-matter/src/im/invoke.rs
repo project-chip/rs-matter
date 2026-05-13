@@ -39,6 +39,19 @@ pub struct CmdPath {
     pub cmd: Option<CmdId>,
 }
 
+/// Tags corresponding to the fields in the `CommandPathIB` TLV
+/// structure (Matter Core spec §10.6.7). `CmdPath` is encoded as a
+/// TLV *list* with positional context tags 0..2. Used by callers that
+/// need to perform low-level TLV serde on `CmdPath` data.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(u8)]
+pub enum CmdPathTag {
+    Endpoint = 0,
+    Cluster = 1,
+    Command = 2,
+}
+
 impl CmdPath {
     /// Create a new instance from the given IDs.
     pub const fn new(

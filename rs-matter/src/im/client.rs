@@ -27,11 +27,21 @@ use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWriteParent, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::utils::storage::WriteBuf;
 
+/// Root [`TLVBuilderParent`] type the IM client builders run against.
+/// The user's `*_with` closure receives a message builder
+/// parameterised by this parent type and must return it (via `.end()`
+/// on the message builder) as proof that the TLV write is complete
+/// and well-formed.
+///
+/// The HRTB on the two lifetimes is what lets the same closure work
+/// for whichever TX buffer the transport hands us on each call —
+/// neither lifetime is observable in user code.
+pub type ImBuildRootParent<'wb, 'buf> = TLVWriteParent<&'static str, &'wb mut WriteBuf<'buf>>;
+
 use super::{
     AttrData, AttrDataTag, AttrPath, AttrResp, CmdData, CmdDataTag, CmdPath, CmdResp,
-    DataVersionFilter, EventFilter, EventPath, IMStatusCode, InvokeRequestMessageBuilder,
-    InvokeResp, OpCode, ReadRequestMessageBuilder, ReportDataResp, StatusResp, TimedReq,
-    WriteRequestMessageBuilder, WriteResp,
+    DataVersionFilter, EventFilter, EventPath, IMStatusCode, InvReqBuilder, InvokeResp, OpCode,
+    ReadReqBuilder, ReportDataResp, StatusResp, TimedReq, WriteReqBuilder, WriteResp,
 };
 
 /// Builder for constructing ReadRequest messages.
@@ -183,15 +193,12 @@ impl ImClient {
     {
         Self::read_with(
             exchange,
-            |wb| {
+            |msg| {
                 // Bridge the snapshot-style API onto the streaming
                 // builder: one TLV encoding path for both call shapes.
-                let parent = TLVWriteParent::new("ReadRequest", wb);
-                ReadRequestMessageBuilder::new(parent)?
-                    .attr_requests_from(attr_paths)?
+                msg.attr_requests_from(attr_paths)?
                     .fabric_filtered(fabric_filtered)?
-                    .end()?;
-                Ok(())
+                    .end()
             },
             // Adapt the caller's sync FnMut callback into the
             // `AsyncFnMut` surface `read_with` expects: run the user
@@ -204,17 +211,20 @@ impl ImClient {
 
     /// Streaming counterpart to [`read`](Self::read).
     ///
-    /// `build` is invoked to fill the `ReadRequestMessage` directly
-    /// into the outbound TX buffer via
-    /// [`ReadRequestMessageBuilder`] — no intermediate `Vec<AttrPath>`
-    /// is allocated. `on_report` is then invoked for each
-    /// `ReportData` chunk the server returns; chunking flow control
-    /// (ACK each chunk with `StatusResponse(SUCCESS)`, abort on
-    /// callback error) is handled internally.
+    /// `build` is invoked with a typed
+    /// [`ReadReqBuilder`] already opened on the outbound
+    /// TX buffer; the closure must return the [`ImBuildRootParent`]
+    /// produced by `ReadReqBuilder::end()` as the
+    /// type-system proof that every container the builder opened has
+    /// been closed. No intermediate `Vec<AttrPath>` is allocated.
+    /// `on_report` is then invoked for each `ReportData` chunk the
+    /// server returns; chunking flow control (ACK each chunk with
+    /// `StatusResponse(SUCCESS)`, abort on callback error) is handled
+    /// internally.
     ///
     /// `build` is `FnMut` and must be idempotent — the MRP layer may
     /// retransmit the request and re-invoke the closure with a fresh
-    /// `WriteBuf` on each attempt. See
+    /// builder on each attempt. See
     /// [`write_with`](Self::write_with) for the rationale.
     ///
     /// `on_report` is `AsyncFnMut` so callers can `.await` while
@@ -229,7 +239,9 @@ impl ImClient {
         on_report: F,
     ) -> Result<(), Error>
     where
-        B: FnMut(&mut WriteBuf) -> Result<(), Error>,
+        B: for<'wb, 'buf> FnMut(
+            ReadReqBuilder<ImBuildRootParent<'wb, 'buf>, 0>,
+        ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
         F: AsyncFnMut(&ReportDataResp<'_>) -> Result<(), Error>,
     {
         debug!(
@@ -239,7 +251,9 @@ impl ImClient {
 
         exchange
             .send_with(|_, wb| {
-                build(wb)?;
+                let parent = TLVWriteParent::new("ReadRequest", wb);
+                let builder = ReadReqBuilder::new(parent, &TLVTag::Anonymous)?;
+                let _root = build(builder)?;
                 Ok(Some(OpCode::ReadRequest.into()))
             })
             .await?;
@@ -257,7 +271,9 @@ impl ImClient {
         on_report: F,
     ) -> Result<(), Error>
     where
-        B: AsyncFnMut(&mut WriteBuf<'_>) -> Result<(), Error>,
+        B: for<'wb, 'buf> AsyncFnMut(
+            ReadReqBuilder<ImBuildRootParent<'wb, 'buf>, 0>,
+        ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
         F: AsyncFnMut(&ReportDataResp<'_>) -> Result<(), Error>,
     {
         debug!(
@@ -267,7 +283,9 @@ impl ImClient {
 
         exchange
             .send_with_async(async |_, wb| {
-                build(wb).await?;
+                let parent = TLVWriteParent::new("ReadRequest", wb);
+                let builder = ReadReqBuilder::new(parent, &TLVTag::Anonymous)?;
+                let _root = build(builder).await?;
                 Ok(Some(OpCode::ReadRequest.into()))
             })
             .await?;
@@ -386,12 +404,11 @@ impl ImClient {
         Self::invoke_with(
             exchange,
             timed_timeout_ms,
-            |wb| {
+            |msg| {
                 // Bridge: re-emit the pre-built `&[CmdData]` through
                 // the streaming builder so both call shapes share one
                 // TLV encoding path.
-                let parent = TLVWriteParent::new("InvokeRequest", wb);
-                let mut entries = InvokeRequestMessageBuilder::new(parent)?
+                let mut entries = msg
                     .suppress_response(false)?
                     .timed_request(timed_timeout_ms.is_some())?
                     .invoke_requests()?;
@@ -405,8 +422,7 @@ impl ImClient {
                         None => entry.end()?,
                     };
                 }
-                entries.end()?.end()?;
-                Ok(())
+                entries.end()?.end()
             },
             // Sync→async adapter for the caller's `FnMut` callback;
             // see `read`'s mirror site for the rationale.
@@ -420,16 +436,19 @@ impl ImClient {
     /// Where [`invoke`](Self::invoke) takes a pre-built `&[CmdData]`
     /// (each entry carrying a `TLVElement` for the command request
     /// body — meaning the body had to be serialised into a sibling
-    /// buffer first), `invoke_with` hands the caller the outbound TX
-    /// buffer and lets them stream the `InvokeRequestMessage`
-    /// directly via [`InvokeRequestMessageBuilder`]. This is the
-    /// MCU-friendly path for client clusters that send commands —
-    /// the typed request-builder writes straight into the TX buffer,
-    /// no out-of-band payload buffer needed.
+    /// buffer first), `invoke_with` hands the caller a typed
+    /// [`InvReqBuilder`] already opened on the outbound
+    /// TX buffer and lets them stream the `InvokeRequestMessage`
+    /// directly. The closure must return the [`ImBuildRootParent`]
+    /// produced by `InvReqBuilder::end()` as the
+    /// type-system proof of completeness. This is the MCU-friendly
+    /// path for client clusters that send commands — the typed
+    /// request-builder writes straight into the TX buffer, no
+    /// out-of-band payload buffer needed.
     ///
     /// `build` is `FnMut` and must be idempotent — the MRP layer may
     /// retransmit the request and re-invoke the closure with a fresh
-    /// `WriteBuf` on each attempt.
+    /// builder on each attempt.
     ///
     /// `on_response` is invoked per `InvokeResponseMessage` chunk
     /// (see Matter Core spec §10.7.10 for when invoke responses
@@ -443,7 +462,9 @@ impl ImClient {
         on_response: F,
     ) -> Result<(), Error>
     where
-        B: FnMut(&mut WriteBuf) -> Result<(), Error>,
+        B: for<'wb, 'buf> FnMut(
+            InvReqBuilder<ImBuildRootParent<'wb, 'buf>, 0>,
+        ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
         F: AsyncFnMut(&InvokeResp<'_>) -> Result<(), Error>,
     {
         debug!(
@@ -457,7 +478,9 @@ impl ImClient {
 
         exchange
             .send_with(|_, wb| {
-                build(wb)?;
+                let parent = TLVWriteParent::new("InvokeRequest", wb);
+                let builder = InvReqBuilder::new(parent, &TLVTag::Anonymous)?;
+                let _root = build(builder)?;
                 Ok(Some(OpCode::InvokeRequest.into()))
             })
             .await?;
@@ -478,7 +501,9 @@ impl ImClient {
         on_response: F,
     ) -> Result<(), Error>
     where
-        B: AsyncFnMut(&mut WriteBuf<'_>) -> Result<(), Error>,
+        B: for<'wb, 'buf> AsyncFnMut(
+            InvReqBuilder<ImBuildRootParent<'wb, 'buf>, 0>,
+        ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
         F: AsyncFnMut(&InvokeResp<'_>) -> Result<(), Error>,
     {
         debug!(
@@ -492,7 +517,9 @@ impl ImClient {
 
         exchange
             .send_with_async(async |_, wb| {
-                build(wb).await?;
+                let parent = TLVWriteParent::new("InvokeRequest", wb);
+                let builder = InvReqBuilder::new(parent, &TLVTag::Anonymous)?;
+                let _root = build(builder).await?;
                 Ok(Some(OpCode::InvokeRequest.into()))
             })
             .await?;
@@ -599,13 +626,12 @@ impl ImClient {
         attr_data: &[AttrData<'_>],
         timed_timeout_ms: Option<u16>,
     ) -> Result<WriteResp<'a>, Error> {
-        Self::write_with(exchange, timed_timeout_ms, |wb| {
+        Self::write_with(exchange, timed_timeout_ms, |msg| {
             // Bridge the snapshot-style API to the streaming one: the
             // pre-collected `&[AttrData]` is re-emitted entry-by-entry
             // through the streaming builder, so both code paths share
             // exactly one TLV encoding implementation.
-            let parent = TLVWriteParent::new("WriteRequest", wb);
-            let msg = WriteRequestMessageBuilder::new(parent)?;
+            //
             // `SuppressResponse` is implicitly omitted (the legacy
             // snapshot did the same — `None` for that field). The
             // legacy snapshot also wrote `TimedRequest` only when
@@ -630,9 +656,10 @@ impl ImClient {
                 .end()?;
             }
             // `.end()` on the array closes it; the next `.end()` on
-            // the message implicitly skips `MoreChunkedMessages`.
-            entries.end()?.end()?;
-            Ok(())
+            // the message implicitly skips `MoreChunkedMessages` and
+            // yields the root parent — proof that the message is
+            // well-formed.
+            entries.end()?.end()
         })
         .await
     }
@@ -641,21 +668,21 @@ impl ImClient {
     ///
     /// Where [`write`](Self::write) takes a pre-built `&[AttrData]`
     /// slice (which means every attribute value had to be serialised
-    /// into a sibling buffer first), `write_with` hands the caller
-    /// the outgoing TX buffer and lets them stream the
-    /// `WriteRequestMessage` directly using
-    /// [`WriteRequestMessageBuilder`]. No intermediate `Vec`, no
+    /// into a sibling buffer first), `write_with` hands the caller a
+    /// typed [`WriteReqBuilder`] already opened on the
+    /// outgoing TX buffer and lets them stream the
+    /// `WriteRequestMessage` directly. No intermediate `Vec`, no
     /// out-of-band payload buffer — every byte ends up in the TX
     /// buffer exactly once. This is what the "Tier-2" / power-user
     /// streaming client APIs use.
     ///
-    /// The closure is given a `&mut WriteBuf` already prepared for
-    /// the request opcode. The caller is responsible for:
-    /// - opening exactly one `WriteRequestMessageBuilder` over the
-    ///   buffer,
-    /// - emitting every `AttrData` entry inside the array,
-    /// - closing the array and the outer struct (the typestate
-    ///   machine enforces this at compile time).
+    /// The closure receives the message builder at typestate `0` and
+    /// must return the [`ImBuildRootParent`] that
+    /// `WriteReqBuilder::end()` produces — this is the
+    /// type-system proof that the caller closed every container the
+    /// builder opened (`.end()` on the array, then `.end()` on the
+    /// message). Forgetting to close one is a compile error, not a
+    /// runtime malformed-TLV bug.
     ///
     /// When `timed_timeout_ms` is `Some`, this method sends the
     /// `TimedRequest` handshake before the write — the caller's
@@ -665,20 +692,23 @@ impl ImClient {
     ///
     /// `build` is `FnMut` because Matter's reliable-messaging layer
     /// (MRP) may retransmit the request multiple times — each
-    /// retransmit invokes the closure again on a fresh `WriteBuf`.
-    /// The closure **must** produce the same TLV output on every
-    /// call (i.e. its writes must be a pure function of any captured
-    /// state, and that state must not be moved out / consumed by the
-    /// first invocation). The typical idiomatic shape — build through
-    /// the streaming `WriteRequestMessageBuilder` from values captured
-    /// by reference — is naturally idempotent.
+    /// retransmit invokes the closure again on a fresh builder over
+    /// a fresh TX buffer. The closure **must** produce the same TLV
+    /// output on every call (i.e. its writes must be a pure function
+    /// of any captured state, and that state must not be moved out /
+    /// consumed by the first invocation). The typical idiomatic
+    /// shape — build through the streaming
+    /// `WriteReqBuilder` from values captured by
+    /// reference — is naturally idempotent.
     pub async fn write_with<'a, F>(
         exchange: &'a mut Exchange<'_>,
         timed_timeout_ms: Option<u16>,
         mut build: F,
     ) -> Result<WriteResp<'a>, Error>
     where
-        F: FnMut(&mut WriteBuf) -> Result<(), Error>,
+        F: for<'wb, 'buf> FnMut(
+            WriteReqBuilder<ImBuildRootParent<'wb, 'buf>, 0>,
+        ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
     {
         if let Some(timeout_ms) = timed_timeout_ms {
             Self::send_timed_request(exchange, timeout_ms).await?;
@@ -686,7 +716,9 @@ impl ImClient {
 
         exchange
             .send_with(|_, wb| {
-                build(wb)?;
+                let parent = TLVWriteParent::new("WriteRequest", wb);
+                let builder = WriteReqBuilder::new(parent, &TLVTag::Anonymous)?;
+                let _root = build(builder)?;
                 Ok(Some(OpCode::WriteRequest.into()))
             })
             .await?;
@@ -697,9 +729,11 @@ impl ImClient {
     /// Async-build counterpart to [`write_with`](Self::write_with).
     ///
     /// The `build` closure is `AsyncFnMut` and may `.await` while
-    /// holding the `&mut WriteBuf` — useful when the attribute
-    /// values must themselves be fetched asynchronously (KV lookup,
-    /// sensor read, async crypto, …).
+    /// holding the typed [`WriteReqBuilder`] — useful when
+    /// the attribute values must themselves be fetched asynchronously
+    /// (KV lookup, sensor read, async crypto, …). Returns the
+    /// [`ImBuildRootParent`] as the same proof-of-completeness as
+    /// [`write_with`](Self::write_with).
     ///
     /// **TX-slot lifetime caveat**: the underlying transport's TX
     /// buffer slot stays reserved for the entire duration of one
@@ -720,7 +754,9 @@ impl ImClient {
         mut build: F,
     ) -> Result<WriteResp<'a>, Error>
     where
-        F: AsyncFnMut(&mut WriteBuf<'_>) -> Result<(), Error>,
+        F: for<'wb, 'buf> AsyncFnMut(
+            WriteReqBuilder<ImBuildRootParent<'wb, 'buf>, 0>,
+        ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
     {
         if let Some(timeout_ms) = timed_timeout_ms {
             Self::send_timed_request(exchange, timeout_ms).await?;
@@ -728,7 +764,9 @@ impl ImClient {
 
         exchange
             .send_with_async(async |_, wb| {
-                build(wb).await?;
+                let parent = TLVWriteParent::new("WriteRequest", wb);
+                let builder = WriteReqBuilder::new(parent, &TLVTag::Anonymous)?;
+                let _root = build(builder).await?;
                 Ok(Some(OpCode::WriteRequest.into()))
             })
             .await?;

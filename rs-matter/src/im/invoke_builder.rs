@@ -60,7 +60,7 @@
 //! ```ignore
 //! exchange.send_with(|_, wb| {
 //!     let parent = TLVWriteParent::new("InvokeRequest", wb);
-//!     InvokeRequestMessageBuilder::new(parent)?
+//!     InvReqBuilder::new(parent)?
 //!         .suppress_response(false)?
 //!         .timed_request(false)?
 //!         .invoke_requests()?
@@ -82,31 +82,8 @@ use core::marker::PhantomData;
 
 use crate::dm::{ClusterId, CmdId, EndptId};
 use crate::error::Error;
-use crate::im::CmdDataTag;
-use crate::tlv::{TLVBuilderParent, TLVTag, TLVWrite, ToTLV};
-
-/// Context tags for the three top-level fields of
-/// `InvokeRequestMessage`. The crate doesn't yet export a public
-/// `InvokeReqTag` enum because the snapshot-style
-/// `InvokeRequestBuilder` writes via `derive(ToTLV)` and never names
-/// the tags directly; defining them here mirrors the same field
-/// positions the derive emits.
-#[repr(u8)]
-enum InvokeReqTag {
-    SuppressResponse = 0,
-    TimedRequest = 1,
-    InvokeRequests = 2,
-}
-
-/// Context tags for the fields of `CommandPathIB` (Matter Core spec
-/// §10.6.7). `CmdPath` is encoded as a TLV *list* with positional
-/// context tags 0..2 — module-local mirror of [`crate::im::CmdPath`].
-#[repr(u8)]
-enum CmdPathTag {
-    Endpoint = 0,
-    Cluster = 1,
-    Command = 2,
-}
+use crate::im::{CmdDataTag, CmdPathTag, InvReqTag};
+use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite, ToTLV};
 
 /// Streaming builder for an `InvokeRequestMessage`. Type-state-tagged
 /// so the compiler enforces in-order field writes.
@@ -123,74 +100,77 @@ enum CmdPathTag {
 /// - `1`: past `SuppressResponse`
 /// - `2`: past `TimedRequest`
 /// - `3`: past `InvokeRequests` array
-pub struct InvokeRequestMessageBuilder<P, const F: usize> {
+pub struct InvReqBuilder<P, const F: usize> {
     p: P,
 }
 
-impl<P> InvokeRequestMessageBuilder<P, 0>
+impl<P> InvReqBuilder<P, 0>
 where
     P: TLVBuilderParent,
 {
-    /// Begin a new `InvokeRequestMessage` — opens an anonymous struct
-    /// on the parent's writer.
-    pub fn new(mut p: P) -> Result<Self, Error> {
-        p.writer().start_struct(&TLVTag::Anonymous)?;
+    /// Begin a new `InvokeRequestMessage` — opens a struct at the
+    /// given tag. For top-level use (the usual case) pass
+    /// `&TLVTag::Anonymous`.
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+        p.writer().start_struct(tag)?;
         Ok(Self { p })
     }
 
     /// Write the mandatory `SuppressResponse` field. `false` is the
     /// typical value — most commands have a response and the client
     /// wants to receive it.
-    pub fn suppress_response(
-        mut self,
-        value: bool,
-    ) -> Result<InvokeRequestMessageBuilder<P, 1>, Error> {
-        self.p.writer().bool(
-            &TLVTag::Context(InvokeReqTag::SuppressResponse as u8),
-            value,
-        )?;
-        Ok(InvokeRequestMessageBuilder { p: self.p })
+    pub fn suppress_response(mut self, value: bool) -> Result<InvReqBuilder<P, 1>, Error> {
+        self.p
+            .writer()
+            .bool(&TLVTag::Context(InvReqTag::SupressResponse as u8), value)?;
+        Ok(InvReqBuilder { p: self.p })
     }
 }
 
-impl<P> InvokeRequestMessageBuilder<P, 1>
+impl<P> TLVBuilder<P> for InvReqBuilder<P, 0>
+where
+    P: TLVBuilderParent,
+{
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+        Self::new(parent, tag)
+    }
+
+    fn unchecked_into_parent(self) -> P {
+        self.p
+    }
+}
+
+impl<P> InvReqBuilder<P, 1>
 where
     P: TLVBuilderParent,
 {
     /// Write the mandatory `TimedRequest` field. Set to `true` only
     /// when the surrounding flow sent a `TimedRequest` IM message
     /// first (some commands like ACL writes require this).
-    pub fn timed_request(
-        mut self,
-        value: bool,
-    ) -> Result<InvokeRequestMessageBuilder<P, 2>, Error> {
+    pub fn timed_request(mut self, value: bool) -> Result<InvReqBuilder<P, 2>, Error> {
         self.p
             .writer()
-            .bool(&TLVTag::Context(InvokeReqTag::TimedRequest as u8), value)?;
-        Ok(InvokeRequestMessageBuilder { p: self.p })
+            .bool(&TLVTag::Context(InvReqTag::TimedReq as u8), value)?;
+        Ok(InvReqBuilder { p: self.p })
     }
 }
 
-impl<P> InvokeRequestMessageBuilder<P, 2>
+impl<P> InvReqBuilder<P, 2>
 where
     P: TLVBuilderParent,
 {
     /// Open the mandatory `InvokeRequests` array. Each `.push()`
     /// starts one [`CmdDataBuilder`]; close with `.end()` to return
     /// to the message builder.
-    pub fn invoke_requests(
-        mut self,
-    ) -> Result<CmdDataArrayBuilder<InvokeRequestMessageBuilder<P, 3>>, Error> {
-        self.p
-            .writer()
-            .start_array(&TLVTag::Context(InvokeReqTag::InvokeRequests as u8))?;
-        Ok(CmdDataArrayBuilder {
-            p: InvokeRequestMessageBuilder { p: self.p },
-        })
+    pub fn invoke_requests(self) -> Result<CmdDataArrayBuilder<InvReqBuilder<P, 3>>, Error> {
+        CmdDataArrayBuilder::new(
+            InvReqBuilder { p: self.p },
+            &TLVTag::Context(InvReqTag::InvokeRequests as u8),
+        )
     }
 }
 
-impl<P> InvokeRequestMessageBuilder<P, 3>
+impl<P> InvReqBuilder<P, 3>
 where
     P: TLVBuilderParent,
 {
@@ -201,7 +181,7 @@ where
     }
 }
 
-impl<P, const F: usize> TLVBuilderParent for InvokeRequestMessageBuilder<P, F>
+impl<P, const F: usize> TLVBuilderParent for InvReqBuilder<P, F>
 where
     P: TLVBuilderParent,
 {
@@ -212,7 +192,7 @@ where
     }
 }
 
-impl<P, const F: usize> core::fmt::Debug for InvokeRequestMessageBuilder<P, F>
+impl<P, const F: usize> core::fmt::Debug for InvReqBuilder<P, F>
 where
     P: core::fmt::Debug,
 {
@@ -222,7 +202,7 @@ where
 }
 
 #[cfg(feature = "defmt")]
-impl<P, const F: usize> defmt::Format for InvokeRequestMessageBuilder<P, F>
+impl<P, const F: usize> defmt::Format for InvReqBuilder<P, F>
 where
     P: defmt::Format,
 {
@@ -236,7 +216,7 @@ where
 // =====================================================================
 
 /// Array builder for the `InvokeRequests` field. Opened by
-/// [`InvokeRequestMessageBuilder::invoke_requests`]; close with
+/// [`InvReqBuilder::invoke_requests`]; close with
 /// `.end()` to return to the message builder.
 pub struct CmdDataArrayBuilder<P> {
     p: P,
@@ -246,20 +226,35 @@ impl<P> CmdDataArrayBuilder<P>
 where
     P: TLVBuilderParent,
 {
+    /// Begin a new `CmdData` array — opens an array at the given tag.
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+        p.writer().start_array(tag)?;
+        Ok(Self { p })
+    }
+
     /// Start a new `CmdData` entry. The returned [`CmdDataBuilder`]
     /// terminates with `.end()` which returns this array builder.
-    pub fn push(mut self) -> Result<CmdDataBuilder<Self, 0>, Error> {
-        self.p.writer().start_struct(&TLVTag::Anonymous)?;
-        Ok(CmdDataBuilder {
-            p: self,
-            _f: PhantomData,
-        })
+    pub fn push(self) -> Result<CmdDataBuilder<Self, 0>, Error> {
+        CmdDataBuilder::new(self, &TLVTag::Anonymous)
     }
 
     /// Close the array and return the message builder.
     pub fn end(mut self) -> Result<P, Error> {
         self.p.writer().end_container()?;
         Ok(self.p)
+    }
+}
+
+impl<P> TLVBuilder<P> for CmdDataArrayBuilder<P>
+where
+    P: TLVBuilderParent,
+{
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+        Self::new(parent, tag)
+    }
+
+    fn unchecked_into_parent(self) -> P {
+        self.p
     }
 }
 
@@ -308,6 +303,32 @@ where
 pub struct CmdDataBuilder<P, const F: usize> {
     p: P,
     _f: PhantomData<[(); F]>,
+}
+
+impl<P> CmdDataBuilder<P, 0>
+where
+    P: TLVBuilderParent,
+{
+    /// Begin a new `CmdData` entry — opens a struct at the given tag.
+    /// Use `&TLVTag::Anonymous` when pushed into an `InvokeRequests`
+    /// array (the typical case).
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+        p.writer().start_struct(tag)?;
+        Ok(Self { p, _f: PhantomData })
+    }
+}
+
+impl<P> TLVBuilder<P> for CmdDataBuilder<P, 0>
+where
+    P: TLVBuilderParent,
+{
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+        Self::new(parent, tag)
+    }
+
+    fn unchecked_into_parent(self) -> P {
+        self.p
+    }
 }
 
 // ---- path ------------------------------------------------------------
