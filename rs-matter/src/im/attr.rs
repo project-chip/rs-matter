@@ -22,12 +22,16 @@ use crate::tlv::{FromTLV, Nullable, TLVArray, TLVElement, ToTLV};
 use super::{AttrId, ClusterId, EndptId, EventPath, EventResp, GenericPath, IMStatusCode, Status};
 
 pub use read::*;
+pub use read_builder::*;
 pub use subscribe::*;
 pub use write::*;
+pub use write_builder::*;
 
 mod read;
+mod read_builder;
 mod subscribe;
 mod write;
+mod write_builder;
 
 /// A path to an attribute in the Interaction Model.
 ///
