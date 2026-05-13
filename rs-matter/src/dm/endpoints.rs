@@ -58,6 +58,7 @@ macro_rules! root_endpoint {
             id: $crate::dm::endpoints::ROOT_ENDPOINT_ID,
             device_types: $crate::devices!($crate::dm::devices::DEV_TYPE_ROOT_NODE),
             clusters: $crate::clusters!($t;),
+            client_clusters: &[],
         }
     }
 }

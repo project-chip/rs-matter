@@ -1368,10 +1368,10 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 const NODE: Node<'static> = Node {
     endpoints: &[
         root_endpoint!(eth),
-        Endpoint {
-            id: 1,
-            device_types: devices!(DEV_TYPE_MATTER_CAMERA),
-            clusters: clusters!(
+        Endpoint::new(
+            1,
+            devices!(DEV_TYPE_MATTER_CAMERA),
+            clusters!(
                 desc::DescHandler::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 CameraAvStreamHandler::<Str0mCamHooks, CAM_AV_NV>::CLUSTER,
@@ -1379,7 +1379,7 @@ const NODE: Node<'static> = Node {
                 ZoneMgmtHandler::<DemoZoneHooks, ZONE_NZ, ZONE_NV, ZONE_NT>::CLUSTER,
                 WebRtc::CLUSTER
             ),
-        },
+        ),
     ],
 };
 

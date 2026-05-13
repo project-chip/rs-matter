@@ -203,13 +203,20 @@ impl ClusterHandler for DescHandler<'_> {
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<ToTLVArrayBuilder<P, u32>, ToTLVBuilder<P, u32>>,
     ) -> Result<P, Error> {
-        Self::with_endpoint(ctx, |_| {
-            // Client clusters not support yet
-            match builder {
-                ArrayAttributeRead::ReadAll(builder) => builder.end(),
-                ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
-                ArrayAttributeRead::ReadNone(builder) => builder.end(),
+        Self::with_endpoint(ctx, |endpoint| match builder {
+            ArrayAttributeRead::ReadAll(mut builder) => {
+                for client_id in endpoint.client_clusters {
+                    builder = builder.push(client_id)?;
+                }
+                builder.end()
             }
+            ArrayAttributeRead::ReadOne(index, builder) => {
+                let Some(client_id) = endpoint.client_clusters.get(index as usize) else {
+                    return Err(ErrorCode::ConstraintError.into());
+                };
+                builder.set(client_id)
+            }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         })
     }
 

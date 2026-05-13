@@ -645,10 +645,10 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 const NODE: Node<'static> = Node {
     endpoints: &[
         root_endpoint!(eth),
-        Endpoint {
-            id: 1,
-            device_types: devices!(DEV_TYPE_MATTER_CAMERA),
-            clusters: clusters!(
+        Endpoint::new(
+            1,
+            devices!(DEV_TYPE_MATTER_CAMERA),
+            clusters!(
                 desc::DescHandler::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 CamAv::CLUSTER_VIDEO_AUDIO,
@@ -658,7 +658,7 @@ const NODE: Node<'static> = Node {
                 WebRtc::CLUSTER,
                 chime_decl::FULL_CLUSTER
             ),
-        },
+        ),
     ],
 };
 

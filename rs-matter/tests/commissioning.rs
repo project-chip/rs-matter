@@ -124,11 +124,11 @@ static TCP_CTRL_MATTER: StaticCell<Matter> = StaticCell::new();
 const NODE: Node<'static> = Node {
     endpoints: &[
         root_endpoint!(eth),
-        Endpoint {
-            id: 1,
-            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
-            clusters: clusters!(desc::DescHandler::CLUSTER, TestOnOffDeviceLogic::CLUSTER),
-        },
+        Endpoint::new(
+            1,
+            devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters!(desc::DescHandler::CLUSTER, TestOnOffDeviceLogic::CLUSTER),
+        ),
     ],
 };
 

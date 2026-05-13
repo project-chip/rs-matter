@@ -165,17 +165,17 @@ fn main() -> Result<(), Error> {
 const NODE: Node<'static> = Node {
     endpoints: &[
         root_endpoint!(eth),
-        Endpoint {
-            id: 1,
-            device_types: devices!(DEV_TYPE_CASTING_VIDEO_PLAYER),
-            clusters: clusters!(
+        Endpoint::new(
+            1,
+            devices!(DEV_TYPE_CASTING_VIDEO_PLAYER),
+            clusters!(
                 desc::DescHandler::CLUSTER,
                 MediaHandler::CLUSTER,
                 ContentHandler::CLUSTER,
                 KeypadInputHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER
             ),
-        },
+        ),
     ],
 };
 

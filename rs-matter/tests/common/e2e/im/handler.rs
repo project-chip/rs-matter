@@ -48,20 +48,20 @@ pub struct E2eTestHandler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
     pub const NODE: Node<'static> = Node {
         endpoints: &[
-            Endpoint {
-                id: 0,
-                clusters: clusters!(eth; echo_cluster::CLUSTER),
-                device_types: &[DEV_TYPE_ROOT_NODE],
-            },
-            Endpoint {
-                id: 1,
-                clusters: clusters!(
+            Endpoint::new(
+                0,
+                &[DEV_TYPE_ROOT_NODE],
+                clusters!(eth; echo_cluster::CLUSTER),
+            ),
+            Endpoint::new(
+                1,
+                &[DEV_TYPE_ON_OFF_LIGHT],
+                clusters!(
                     DescHandler::CLUSTER,
                     OnOffHandler::<'_, TestOnOffDeviceLogic, NoLevelControl>::CLUSTER,
                     echo_cluster::CLUSTER,
                 ),
-                device_types: &[DEV_TYPE_ON_OFF_LIGHT],
-            },
+            ),
         ],
     };
 

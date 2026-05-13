@@ -42,6 +42,7 @@ use rs_matter::dm::clusters::basic_info::{
     AttributeId as BasicInfoAttributeId, BasicInfoConfig, ColorEnum, PairingHintFlags,
     ProductAppearance, ProductFinishEnum, FULL_CLUSTER as BASIC_INFO_FULL_CLUSTER,
 };
+use rs_matter::dm::clusters::binding::{self, BindingHandler, Bindings};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::eth_diag::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::fixed_label::{self, FixedLabelEntry, FixedLabelHandler};
@@ -98,6 +99,11 @@ static GEN_DIAG: StaticCell<TestEventTriggerDiag> = StaticCell::new();
 // UserLabel registry — host endpoints and labels-per-endpoint counts
 // match `dm_handler`'s `UserLabelHandler<'_, E, N>` parameterisation.
 static USER_LABELS: StaticCell<UserLabels<1, 4>> = StaticCell::new();
+// Binding registry. Capacity 16 — `TestBinding` writes a 17-entry
+// table and expects `RESOURCE_EXHAUSTED`, so this bound is what makes
+// that step pass. Two fabrics × ~8 entries per fabric is comfortably
+// above what the YAML's per-fabric scenarios actually exercise.
+static BINDINGS: StaticCell<Bindings<16>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     // Enable detailed backtraces for debugging test failures
@@ -193,6 +199,16 @@ fn main() -> Result<(), Error> {
     let user_label_handler =
         UserLabelHandler::new(Dataver::new_rand(&mut rand), ROOT_ENDPOINT_ID, user_labels);
 
+    // Binding registry — same `StaticCell` + in-place-init pattern as
+    // UserLabels. Loaded from KV before the data model accepts traffic
+    // so bindings written pre-reboot survive (spec §9.6.6.1, N quality).
+    let bindings = BINDINGS.uninit().init_with(Bindings::init());
+    futures_lite::future::block_on(bindings.load_persist(&mut kv, kv_buf))?;
+
+    let binding_handler_ep0 =
+        BindingHandler::new(Dataver::new_rand(&mut rand), ROOT_ENDPOINT_ID, bindings);
+    let binding_handler_ep1 = BindingHandler::new(Dataver::new_rand(&mut rand), 1, bindings);
+
     // Our unit testing cluster data
     let unit_testing_data = UNIT_TESTING_DATA
         .uninit()
@@ -238,6 +254,8 @@ fn main() -> Result<(), Error> {
             &on_off_handler_1,
             &on_off_handler_2,
             &user_label_handler,
+            &binding_handler_ep0,
+            &binding_handler_ep1,
         ),
         SharedKvBlobStore::new(kv, kv_buf),
         SharedNetworks::new(EthNetwork::new_default()),
@@ -434,38 +452,59 @@ const FIXED_LABELS_EP1: &[FixedLabelEntry<'static>] = &[
 
 const NODE: Node<'static> = Node {
     endpoints: &[
-        Endpoint {
-            id: ROOT_ENDPOINT_ID,
-            device_types: devices!(DEV_TYPE_ROOT_NODE),
-            clusters: clusters!(eth; groups::GroupsHandler::CLUSTER, user_label::CLUSTER),
-        },
-        Endpoint {
-            id: 1,
-            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
-            // `FixedLabel` (cluster ID 0x0040) is wired on EP1 because
-            // `TC_FLABEL_2_1` runs with `--endpoint 1` and skips cleanly
-            // via `has_attribute(FixedLabel.LabelList)` when the cluster
-            // is absent; adding it here turns the skip into an actual
-            // content + read-only-write check.
-            clusters: clusters!(
+        // `Binding` (cluster ID 0x001E) is wired on EP0 too because
+        // `TestBinding` exercises writes against both endpoints
+        // (see step "Write binding table (endpoint 0)" in the
+        // YAML) and asserts per-endpoint isolation. Pairing
+        // Binding-server with a client cluster declaration in
+        // `client_clusters` is the rs-matter way to advertise
+        // "this endpoint will initiate `OnOff` interactions" via
+        // `Descriptor::ClientList`.
+        Endpoint::new_with_clients(
+            ROOT_ENDPOINT_ID,
+            devices!(DEV_TYPE_ROOT_NODE),
+            clusters!(
+                eth;
+                groups::GroupsHandler::CLUSTER,
+                user_label::CLUSTER,
+                binding::CLUSTER
+            ),
+            &[on_off::FULL_CLUSTER.id],
+        ),
+        // `FixedLabel` (cluster ID 0x0040) is wired on EP1 because
+        // `TC_FLABEL_2_1` runs with `--endpoint 1` and skips cleanly
+        // via `has_attribute(FixedLabel.LabelList)` when the cluster
+        // is absent; adding it here turns the skip into an actual
+        // content + read-only-write check.
+        //
+        // `Binding` is wired on EP1 to satisfy `TestBinding`, which
+        // writes/reads its primary table here. Paired with a
+        // client-cluster declaration so `Descriptor::ClientList`
+        // truthfully advertises the intent to control OnOff bulbs.
+        Endpoint::new_with_clients(
+            1,
+            devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters!(
                 desc::DescHandler::CLUSTER,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 fixed_label::CLUSTER,
+                binding::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER,
                 UnitTestingHandler::CLUSTER
             ),
-        },
-        Endpoint {
-            id: 2,
-            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
-            clusters: clusters!(
+            &[on_off::FULL_CLUSTER.id],
+        ),
+        Endpoint::new(
+            2,
+            devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters!(
                 desc::DescHandler::CLUSTER,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER
             ),
-        },
+        ),
     ],
 };
 
@@ -496,16 +535,16 @@ const BASIC_INFO_CLUSTER_CV_EXPOSED: Cluster<'static> = BASIC_INFO_FULL_CLUSTER
 /// `connectedhomeip@faf4d09ad1`) keep using the default `NODE`.
 const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
     endpoints: &[
-        Endpoint {
-            id: ROOT_ENDPOINT_ID,
-            device_types: devices!(DEV_TYPE_ROOT_NODE),
-            // Manually expanded `clusters!(eth;)` with `BasicInfoHandler::CLUSTER`
-            // replaced by `BASIC_INFO_CLUSTER_CV_EXPOSED`. Keep this in sync
-            // with `clusters!(eth;)` in `rs-matter/src/dm/types/cluster.rs`.
-            // `GroupsHandler::CLUSTER` and `user_label::CLUSTER` are
-            // included for the same `TestGroupMessaging` /
-            // `TestUserLabelClusterConstraints` reasons documented on `NODE`.
-            clusters: clusters!(
+        // Manually expanded `clusters!(eth;)` with `BasicInfoHandler::CLUSTER`
+        // replaced by `BASIC_INFO_CLUSTER_CV_EXPOSED`. Keep this in sync
+        // with `clusters!(eth;)` in `rs-matter/src/dm/types/cluster.rs`.
+        // `GroupsHandler::CLUSTER` and `user_label::CLUSTER` are
+        // included for the same `TestGroupMessaging` /
+        // `TestUserLabelClusterConstraints` reasons documented on `NODE`.
+        Endpoint::new_with_clients(
+            ROOT_ENDPOINT_ID,
+            devices!(DEV_TYPE_ROOT_NODE),
+            clusters!(
                 desc::DescHandler::CLUSTER,
                 acl::AclHandler::CLUSTER,
                 BASIC_INFO_CLUSTER_CV_EXPOSED,
@@ -516,42 +555,55 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
                 grp_key_mgmt::GrpKeyMgmtHandler::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 user_label::CLUSTER,
+                binding::CLUSTER,
                 net_comm::NetworkType::Ethernet.cluster(),
                 eth_diag::EthDiagHandler::CLUSTER,
             ),
-        },
-        Endpoint {
-            id: 1,
-            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
-            // `FixedLabel` (cluster ID 0x0040) is wired on EP1 because
-            // `TC_FLABEL_2_1` runs with `--endpoint 1` and skips cleanly
-            // via `has_attribute(FixedLabel.LabelList)` when the cluster
-            // is absent; adding it here turns the skip into an actual
-            // content + read-only-write check.
-            clusters: clusters!(
+            &[on_off::FULL_CLUSTER.id],
+        ),
+        // `FixedLabel` (cluster ID 0x0040) is wired on EP1 because
+        // `TC_FLABEL_2_1` runs with `--endpoint 1` and skips cleanly
+        // via `has_attribute(FixedLabel.LabelList)` when the cluster
+        // is absent; adding it here turns the skip into an actual
+        // content + read-only-write check.
+        //
+        // `Binding` is wired on EP1 to satisfy `TestBinding`, which
+        // writes/reads its primary table here. Paired with a
+        // client-cluster declaration so `Descriptor::ClientList`
+        // truthfully advertises the intent to control OnOff bulbs.
+        Endpoint::new_with_clients(
+            1,
+            devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters!(
                 desc::DescHandler::CLUSTER,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 fixed_label::CLUSTER,
+                binding::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER,
                 UnitTestingHandler::CLUSTER
             ),
-        },
-        Endpoint {
-            id: 2,
-            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
-            clusters: clusters!(
+            &[on_off::FULL_CLUSTER.id],
+        ),
+        Endpoint::new(
+            2,
+            devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters!(
                 desc::DescHandler::CLUSTER,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER
             ),
-        },
+        ),
     ],
 };
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off and unit testing handlers.
+// The test-fixture function is intentionally a wide top-level
+// composition root — every additional cluster handler we wire grows
+// the parameter list. Suppressing here is cleaner than abstracting.
+#[allow(clippy::too_many_arguments)]
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     node: &'static Node<'static>,
     gen_diag: &'a dyn GenDiag,
@@ -560,6 +612,8 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     on_off_1: &'a OnOffHandler<'a, OH, LH>,
     on_off_2: &'a OnOffHandler<'a, OH, LH>,
     user_label_handler: &'a UserLabelHandler<'a, 1, 4>,
+    binding_handler_ep0: &'a BindingHandler<'a, 16>,
+    binding_handler_ep1: &'a BindingHandler<'a, 16>,
 ) -> impl DataModelHandler + 'a {
     (
         node,
@@ -601,6 +655,14 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                     EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(user_label::CLUSTER.id)),
                     Async(user_label::HandlerAdaptor(user_label_handler)),
                 )
+                // Binding handler at the root endpoint — owned by main
+                // (so `load_persist` can run before commissioner
+                // traffic), borrowed by reference into the chain.
+                // `TestBinding` exercises writes against EP0.
+                .chain(
+                    EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(binding::CLUSTER.id)),
+                    Async(binding::HandlerAdaptor(binding_handler_ep0)),
+                )
                 // Clusters for Endpoint 1
                 .chain(
                     EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
@@ -620,6 +682,13 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                         FixedLabelHandler::new(Dataver::new_rand(&mut rand), FIXED_LABELS_EP1)
                             .adapt(),
                     ),
+                )
+                // Binding handler at EP1 — same registry as EP0,
+                // separate facade so the per-cluster-instance Dataver
+                // stays granular per Matter Core §7.13.2.1.
+                .chain(
+                    EpClMatcher::new(Some(1), Some(binding::CLUSTER.id)),
+                    Async(binding::HandlerAdaptor(binding_handler_ep1)),
                 )
                 .chain(
                     EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
