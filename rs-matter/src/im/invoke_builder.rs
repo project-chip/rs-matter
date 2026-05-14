@@ -408,6 +408,34 @@ where
             _f: PhantomData,
         })
     }
+
+    /// Open the `Data` slot as a typed sub-builder.
+    ///
+    /// Closure-free counterpart to [`data`](Self::data) — hand back
+    /// the codegen-emitted request builder for the command, already
+    /// opened at `CmdDataTag::Data`. The caller fills the request
+    /// fields, then calls `.end()` on the sub-builder; that close
+    /// writes `Data`'s closing tag and yields a
+    /// [`CmdDataBuilder<P, 2>`]. The caller then `.end()`s once more
+    /// to close the `CmdData` entry struct itself (the "double-end"
+    /// pattern of the IM-client glue).
+    ///
+    /// Soundness of the phantom typestate advance: `B::new` is
+    /// contractually required (by [`TLVBuilder`]) to open exactly one
+    /// container at the supplied tag, and `B`'s terminal `.end()`
+    /// closes it. So by the time the caller observes the returned
+    /// `CmdDataBuilder<P, 2>`, the `Data` field has been fully written
+    /// and the typestate matches the wire state.
+    pub fn data_builder<B>(self) -> Result<B, Error>
+    where
+        B: TLVBuilder<CmdDataBuilder<P, 2>>,
+    {
+        let advanced = CmdDataBuilder {
+            p: self.p,
+            _f: PhantomData,
+        };
+        B::new(advanced, &TLVTag::Context(CmdDataTag::Data as u8))
+    }
 }
 
 // ---- command_ref -----------------------------------------------------

@@ -562,6 +562,33 @@ where
             _f: PhantomData,
         })
     }
+
+    /// Open the `Data` slot as a typed sub-builder.
+    ///
+    /// Closure-free counterpart to [`data`](Self::data) — hand back
+    /// the codegen-emitted typed value builder for the attribute,
+    /// already opened at `AttrDataTag::Data`. The caller fills the
+    /// value, then calls `.end()` on the sub-builder; that close
+    /// writes `Data`'s closing tag (for struct/array-valued attrs)
+    /// and yields an [`AttrDataBuilder<P, 3>`]. The caller then
+    /// `.end()`s once more to close the `AttrData` entry struct
+    /// (the "double-end" pattern of the IM-client glue).
+    ///
+    /// Useful for struct- or array-valued attributes (e.g. ACL
+    /// entries). For scalars prefer the closure-based [`data`].
+    ///
+    /// Soundness of the phantom typestate advance: see
+    /// [`CmdDataBuilder::data_builder`].
+    pub fn data_builder<B>(self) -> Result<B, Error>
+    where
+        B: TLVBuilder<AttrDataBuilder<P, 3>>,
+    {
+        let advanced = AttrDataBuilder {
+            p: self.p,
+            _f: PhantomData,
+        };
+        B::new(advanced, &TLVTag::Context(AttrDataTag::Data as u8))
+    }
 }
 
 impl<P> AttrDataBuilder<P, 3>

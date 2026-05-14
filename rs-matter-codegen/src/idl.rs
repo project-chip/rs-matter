@@ -19,6 +19,7 @@ use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
 mod bitmap;
+mod client;
 mod cluster;
 mod enumeration;
 mod event;
@@ -161,6 +162,8 @@ fn cluster_content_internal(
     let handler_inherent_impl = handler::handler(false, true, cluster, globals, context);
     let handler_adaptor = handler::handler_adaptor(false, cluster, globals, context);
 
+    let client_im_glue = client::client_im(cluster, entities, context);
+
     let quote = quote!(
         #bitmaps
 
@@ -195,6 +198,8 @@ fn cluster_content_internal(
         #handler_inherent_impl
 
         #handler_adaptor
+
+        #client_im_glue
     );
 
     if with_async {
@@ -34020,6 +34025,3213 @@ pub mod unit_testing {
         }
     }
     impl<T> rs_matter_crate::dm::NonBlockingHandler for HandlerAdaptor<T> where T: ClusterHandler {}
+    #[doc = "IM-client extension trait for the `UnitTesting` cluster's commands. `use` this trait to see the `push_*` methods on [`rs_matter_crate::im::CmdDataArrayBuilder`]."]
+    pub trait UnitTestingCmdRequests<P>: Sized
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn push_unit_testing_test(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_test_not_handled(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_test_specific(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_test_unknown_command(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_test_add_arguments(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestAddArgumentsRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_test_simple_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestSimpleArgumentRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_test_struct_array_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestStructArrayArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_test_struct_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestStructArgumentRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_test_nested_struct_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestNestedStructArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_test_list_struct_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestListStructArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_test_list_int_8_u_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestListInt8UArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_test_nested_struct_list_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestNestedStructListArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_test_list_nested_struct_list_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestListNestedStructListArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_test_list_int_8_u_reverse_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestListInt8UReverseRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_test_enums_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestEnumsRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_test_nullable_optional_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestNullableOptionalRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_test_complex_nullable_optional_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestComplexNullableOptionalRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_simple_struct_echo_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            SimpleStructEchoRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_timed_invoke_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_test_simple_optional_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestSimpleOptionalArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_test_emit_test_event_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestEmitTestEventRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_test_emit_test_fabric_scoped_event_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestEmitTestFabricScopedEventRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_test_batch_helper_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestBatchHelperRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_test_second_batch_helper_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestSecondBatchHelperRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_string_echo_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            StringEchoRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_global_echo_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            GlobalEchoRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_test_check_command_flags(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_test_different_vendor_mei_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestDifferentVendorMeiRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        >;
+    }
+    impl<P> UnitTestingCmdRequests<P> for rs_matter_crate::im::CmdDataArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn push_unit_testing_test(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.push()?
+                .path(endpoint, 4294048773, 0)?
+                .data(|w| {
+                    w.start_struct(
+                        &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::CmdDataTag::Data as u8),
+                    )?;
+                    w.end_container()
+                })?
+                .end()
+        }
+        fn push_unit_testing_test_not_handled(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.push()?
+                .path(endpoint, 4294048773, 1)?
+                .data(|w| {
+                    w.start_struct(
+                        &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::CmdDataTag::Data as u8),
+                    )?;
+                    w.end_container()
+                })?
+                .end()
+        }
+        fn push_unit_testing_test_specific(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.push()?
+                .path(endpoint, 4294048773, 2)?
+                .data(|w| {
+                    w.start_struct(
+                        &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::CmdDataTag::Data as u8),
+                    )?;
+                    w.end_container()
+                })?
+                .end()
+        }
+        fn push_unit_testing_test_unknown_command(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.push()?
+                .path(endpoint, 4294048773, 3)?
+                .data(|w| {
+                    w.start_struct(
+                        &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::CmdDataTag::Data as u8),
+                    )?;
+                    w.end_container()
+                })?
+                .end()
+        }
+        fn push_unit_testing_test_add_arguments(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestAddArgumentsRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 4)?.data_builder()
+        }
+        fn push_unit_testing_test_simple_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestSimpleArgumentRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 5)?.data_builder()
+        }
+        fn push_unit_testing_test_struct_array_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestStructArrayArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 6)?.data_builder()
+        }
+        fn push_unit_testing_test_struct_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestStructArgumentRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 7)?.data_builder()
+        }
+        fn push_unit_testing_test_nested_struct_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestNestedStructArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 8)?.data_builder()
+        }
+        fn push_unit_testing_test_list_struct_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestListStructArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 9)?.data_builder()
+        }
+        fn push_unit_testing_test_list_int_8_u_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestListInt8UArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 10)?.data_builder()
+        }
+        fn push_unit_testing_test_nested_struct_list_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestNestedStructListArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 11)?.data_builder()
+        }
+        fn push_unit_testing_test_list_nested_struct_list_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestListNestedStructListArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 12)?.data_builder()
+        }
+        fn push_unit_testing_test_list_int_8_u_reverse_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestListInt8UReverseRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 13)?.data_builder()
+        }
+        fn push_unit_testing_test_enums_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestEnumsRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 14)?.data_builder()
+        }
+        fn push_unit_testing_test_nullable_optional_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestNullableOptionalRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 15)?.data_builder()
+        }
+        fn push_unit_testing_test_complex_nullable_optional_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestComplexNullableOptionalRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 16)?.data_builder()
+        }
+        fn push_unit_testing_simple_struct_echo_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            SimpleStructEchoRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 17)?.data_builder()
+        }
+        fn push_unit_testing_timed_invoke_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.push()?
+                .path(endpoint, 4294048773, 18)?
+                .data(|w| {
+                    w.start_struct(
+                        &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::CmdDataTag::Data as u8),
+                    )?;
+                    w.end_container()
+                })?
+                .end()
+        }
+        fn push_unit_testing_test_simple_optional_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestSimpleOptionalArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 19)?.data_builder()
+        }
+        fn push_unit_testing_test_emit_test_event_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestEmitTestEventRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 20)?.data_builder()
+        }
+        fn push_unit_testing_test_emit_test_fabric_scoped_event_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestEmitTestFabricScopedEventRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 21)?.data_builder()
+        }
+        fn push_unit_testing_test_batch_helper_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestBatchHelperRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 22)?.data_builder()
+        }
+        fn push_unit_testing_test_second_batch_helper_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestSecondBatchHelperRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 23)?.data_builder()
+        }
+        fn push_unit_testing_string_echo_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            StringEchoRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 24)?.data_builder()
+        }
+        fn push_unit_testing_global_echo_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            GlobalEchoRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 25)?.data_builder()
+        }
+        fn push_unit_testing_test_check_command_flags(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.push()?
+                .path(endpoint, 4294048773, 26)?
+                .data(|w| {
+                    w.start_struct(
+                        &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::CmdDataTag::Data as u8),
+                    )?;
+                    w.end_container()
+                })?
+                .end()
+        }
+        fn push_unit_testing_test_different_vendor_mei_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestDifferentVendorMeiRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 4294049962)?.data_builder()
+        }
+    }
+    #[doc = "IM-client extension trait for the `UnitTesting` cluster's attribute reads. `use` this trait to see the `push_*` methods on [`rs_matter_crate::im::AttrPathArrayBuilder`]."]
+    pub trait UnitTestingAttrReads<P>: Sized
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn push_unit_testing_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_bitmap_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_bitmap_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_bitmap_32(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_bitmap_64(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_24_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_32_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_40_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_48_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_56_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_64_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_24_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_32_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_40_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_48_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_56_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_64_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_enum_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_enum_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_float_single(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_float_double(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_list_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_list_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_list_struct_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_long_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_char_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_long_char_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_epoch_us(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_epoch_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_vendor_id(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_list_nullables_and_optionals_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_enum_attr(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_struct_attr(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_range_restricted_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_range_restricted_int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_range_restricted_int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_range_restricted_int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_list_long_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_list_fabric_scoped(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_timed_write_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_general_error_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_cluster_error_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_global_enum(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_global_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_unsupported_attribute_requiring_admin_privilege(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_unsupported(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_read_failure_code(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_failure_int_32_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_bitmap_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_bitmap_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_bitmap_32(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_bitmap_64(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_24_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_32_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_40_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_48_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_56_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_64_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_24_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_32_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_40_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_48_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_56_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_64_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_enum_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_enum_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_float_single(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_float_double(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_char_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_enum_attr(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_range_restricted_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_range_restricted_int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_range_restricted_int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_range_restricted_int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_write_only_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_global_enum(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_global_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_generated_command_list(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_accepted_command_list(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_attribute_list(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_feature_map(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_cluster_revision(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_mei_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+    }
+    impl<P> UnitTestingAttrReads<P> for rs_matter_crate::im::AttrPathArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn push_unit_testing_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(0)?.end()
+        }
+        fn push_unit_testing_bitmap_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(1)?.end()
+        }
+        fn push_unit_testing_bitmap_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(2)?.end()
+        }
+        fn push_unit_testing_bitmap_32(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(3)?.end()
+        }
+        fn push_unit_testing_bitmap_64(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(4)?.end()
+        }
+        fn push_unit_testing_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(5)?.end()
+        }
+        fn push_unit_testing_int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(6)?.end()
+        }
+        fn push_unit_testing_int_24_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(7)?.end()
+        }
+        fn push_unit_testing_int_32_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(8)?.end()
+        }
+        fn push_unit_testing_int_40_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(9)?.end()
+        }
+        fn push_unit_testing_int_48_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(10)?.end()
+        }
+        fn push_unit_testing_int_56_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(11)?.end()
+        }
+        fn push_unit_testing_int_64_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(12)?.end()
+        }
+        fn push_unit_testing_int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(13)?.end()
+        }
+        fn push_unit_testing_int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(14)?.end()
+        }
+        fn push_unit_testing_int_24_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(15)?.end()
+        }
+        fn push_unit_testing_int_32_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16)?.end()
+        }
+        fn push_unit_testing_int_40_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(17)?.end()
+        }
+        fn push_unit_testing_int_48_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(18)?.end()
+        }
+        fn push_unit_testing_int_56_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(19)?.end()
+        }
+        fn push_unit_testing_int_64_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(20)?.end()
+        }
+        fn push_unit_testing_enum_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(21)?.end()
+        }
+        fn push_unit_testing_enum_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(22)?.end()
+        }
+        fn push_unit_testing_float_single(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(23)?.end()
+        }
+        fn push_unit_testing_float_double(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(24)?.end()
+        }
+        fn push_unit_testing_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(25)?.end()
+        }
+        fn push_unit_testing_list_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(26)?.end()
+        }
+        fn push_unit_testing_list_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(27)?.end()
+        }
+        fn push_unit_testing_list_struct_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(28)?.end()
+        }
+        fn push_unit_testing_long_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(29)?.end()
+        }
+        fn push_unit_testing_char_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(30)?.end()
+        }
+        fn push_unit_testing_long_char_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(31)?.end()
+        }
+        fn push_unit_testing_epoch_us(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(32)?.end()
+        }
+        fn push_unit_testing_epoch_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(33)?.end()
+        }
+        fn push_unit_testing_vendor_id(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(34)?.end()
+        }
+        fn push_unit_testing_list_nullables_and_optionals_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(35)?.end()
+        }
+        fn push_unit_testing_enum_attr(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(36)?.end()
+        }
+        fn push_unit_testing_struct_attr(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(37)?.end()
+        }
+        fn push_unit_testing_range_restricted_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(38)?.end()
+        }
+        fn push_unit_testing_range_restricted_int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(39)?.end()
+        }
+        fn push_unit_testing_range_restricted_int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(40)?.end()
+        }
+        fn push_unit_testing_range_restricted_int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(41)?.end()
+        }
+        fn push_unit_testing_list_long_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(42)?.end()
+        }
+        fn push_unit_testing_list_fabric_scoped(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(43)?.end()
+        }
+        fn push_unit_testing_timed_write_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(48)?.end()
+        }
+        fn push_unit_testing_general_error_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(49)?.end()
+        }
+        fn push_unit_testing_cluster_error_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(50)?.end()
+        }
+        fn push_unit_testing_global_enum(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(51)?.end()
+        }
+        fn push_unit_testing_global_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(52)?.end()
+        }
+        fn push_unit_testing_unsupported_attribute_requiring_admin_privilege(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(254)?.end()
+        }
+        fn push_unit_testing_unsupported(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(255)?.end()
+        }
+        fn push_unit_testing_read_failure_code(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(12288)?.end()
+        }
+        fn push_unit_testing_failure_int_32_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(12289)?.end()
+        }
+        fn push_unit_testing_nullable_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16384)?.end()
+        }
+        fn push_unit_testing_nullable_bitmap_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16385)?.end()
+        }
+        fn push_unit_testing_nullable_bitmap_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16386)?.end()
+        }
+        fn push_unit_testing_nullable_bitmap_32(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16387)?.end()
+        }
+        fn push_unit_testing_nullable_bitmap_64(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16388)?.end()
+        }
+        fn push_unit_testing_nullable_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16389)?.end()
+        }
+        fn push_unit_testing_nullable_int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16390)?.end()
+        }
+        fn push_unit_testing_nullable_int_24_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16391)?.end()
+        }
+        fn push_unit_testing_nullable_int_32_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16392)?.end()
+        }
+        fn push_unit_testing_nullable_int_40_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16393)?.end()
+        }
+        fn push_unit_testing_nullable_int_48_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16394)?.end()
+        }
+        fn push_unit_testing_nullable_int_56_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16395)?.end()
+        }
+        fn push_unit_testing_nullable_int_64_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16396)?.end()
+        }
+        fn push_unit_testing_nullable_int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16397)?.end()
+        }
+        fn push_unit_testing_nullable_int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16398)?.end()
+        }
+        fn push_unit_testing_nullable_int_24_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16399)?.end()
+        }
+        fn push_unit_testing_nullable_int_32_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16400)?.end()
+        }
+        fn push_unit_testing_nullable_int_40_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16401)?.end()
+        }
+        fn push_unit_testing_nullable_int_48_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16402)?.end()
+        }
+        fn push_unit_testing_nullable_int_56_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16403)?.end()
+        }
+        fn push_unit_testing_nullable_int_64_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16404)?.end()
+        }
+        fn push_unit_testing_nullable_enum_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16405)?.end()
+        }
+        fn push_unit_testing_nullable_enum_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16406)?.end()
+        }
+        fn push_unit_testing_nullable_float_single(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16407)?.end()
+        }
+        fn push_unit_testing_nullable_float_double(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16408)?.end()
+        }
+        fn push_unit_testing_nullable_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16409)?.end()
+        }
+        fn push_unit_testing_nullable_char_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16414)?.end()
+        }
+        fn push_unit_testing_nullable_enum_attr(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16420)?.end()
+        }
+        fn push_unit_testing_nullable_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16421)?.end()
+        }
+        fn push_unit_testing_nullable_range_restricted_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16422)?.end()
+        }
+        fn push_unit_testing_nullable_range_restricted_int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16423)?.end()
+        }
+        fn push_unit_testing_nullable_range_restricted_int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16424)?.end()
+        }
+        fn push_unit_testing_nullable_range_restricted_int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16425)?.end()
+        }
+        fn push_unit_testing_write_only_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16426)?.end()
+        }
+        fn push_unit_testing_nullable_global_enum(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16435)?.end()
+        }
+        fn push_unit_testing_nullable_global_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(16436)?.end()
+        }
+        fn push_unit_testing_generated_command_list(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(65528)?.end()
+        }
+        fn push_unit_testing_accepted_command_list(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(65529)?.end()
+        }
+        fn push_unit_testing_attribute_list(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(65531)?.end()
+        }
+        fn push_unit_testing_feature_map(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(65532)?.end()
+        }
+        fn push_unit_testing_cluster_revision(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(65533)?.end()
+        }
+        fn push_unit_testing_mei_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?.endpoint(endpoint)?.cluster(4294048773)?.attr(4294070017)?.end()
+        }
+    }
+    #[doc = "IM-client extension trait for the `UnitTesting` cluster's attribute writes. `use` this trait to see the `push_*_write` methods on [`rs_matter_crate::im::AttrDataArrayBuilder`]."]
+    pub trait UnitTestingAttrWrites<P>: Sized
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn push_unit_testing_boolean_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_bitmap_8_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: Bitmap8MaskMap,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_bitmap_16_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: Bitmap16MaskMap,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_bitmap_32_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: Bitmap32MaskMap,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_bitmap_64_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: Bitmap64MaskMap,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_16_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u16,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_24_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u32,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_32_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u32,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_40_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_48_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_56_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_64_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_8_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i8,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_16_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i16,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_24_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i32,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_32_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i32,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_40_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i64,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_48_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i64,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_56_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i64,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_int_64_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i64,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_enum_8_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_enum_16_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u16,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_float_single_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: f32,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_float_double_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: f64,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_octet_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::OctetStr<'_>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_list_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            rs_matter_crate::tlv::ToTLVArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>, u8>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_list_octet_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            rs_matter_crate::tlv::OctetsArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_list_struct_octet_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestListStructOctetArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_long_octet_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::OctetStr<'_>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_char_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Utf8Str<'_>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_long_char_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Utf8Str<'_>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_epoch_us_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_epoch_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u32,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_vendor_id_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u16,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_list_nullables_and_optionals_struct_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            NullablesAndOptionalsStructArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_enum_attr_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: SimpleEnum,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_struct_attr_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            SimpleStructBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_range_restricted_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_range_restricted_int_8_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i8,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_range_restricted_int_16_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u16,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_range_restricted_int_16_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i16,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_list_long_octet_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            rs_matter_crate::tlv::OctetsArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_list_fabric_scoped_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestFabricScopedArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_timed_write_boolean_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_general_error_boolean_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_cluster_error_boolean_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_global_enum_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: TestGlobalEnum,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_global_struct_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestGlobalStructBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_unsupported_attribute_requiring_admin_privilege_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_unsupported_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_read_failure_code_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_failure_int_32_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u32,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_boolean_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<bool>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_bitmap_8_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_bitmap_16_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_bitmap_32_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_bitmap_64_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u8>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_16_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u16>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_24_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u32>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_32_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u32>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_40_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_48_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_56_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_64_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_8_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i8>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_16_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i16>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_24_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i32>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_32_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i32>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_40_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_48_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_56_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_int_64_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_enum_8_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u8>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_enum_16_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u16>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_float_single_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<f32>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_float_double_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<f64>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_octet_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::OctetStr<'_>>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_char_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::Utf8Str<'_>>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_enum_attr_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<SimpleEnum>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_struct_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            rs_matter_crate::tlv::NullableBuilder<
+                rs_matter_crate::im::AttrDataBuilder<Self, 3>,
+                SimpleStructBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            >,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_nullable_range_restricted_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u8>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_range_restricted_int_8_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i8>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_range_restricted_int_16_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u16>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_range_restricted_int_16_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i16>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_write_only_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_global_enum_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<TestGlobalEnum>,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn push_unit_testing_nullable_global_struct_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            rs_matter_crate::tlv::NullableBuilder<
+                rs_matter_crate::im::AttrDataBuilder<Self, 3>,
+                TestGlobalStructBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            >,
+            rs_matter_crate::error::Error,
+        >;
+        fn push_unit_testing_mei_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error>;
+    }
+    impl<P> UnitTestingAttrWrites<P> for rs_matter_crate::im::AttrDataArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn push_unit_testing_boolean_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 0)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_bitmap_8_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: Bitmap8MaskMap,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 1)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_bitmap_16_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: Bitmap16MaskMap,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 2)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_bitmap_32_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: Bitmap32MaskMap,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 3)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_bitmap_64_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: Bitmap64MaskMap,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 4)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 5)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_int_16_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u16,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 6)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_int_24_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u32,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 7)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_int_32_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u32,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 8)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_int_40_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 9)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_int_48_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 10)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_int_56_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 11)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_int_64_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 12)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_int_8_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i8,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 13)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_int_16_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i16,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 14)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_int_24_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i32,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 15)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_int_32_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i32,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_int_40_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 17)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_int_48_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 18)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_int_56_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 19)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_int_64_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 20)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_enum_8_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 21)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_enum_16_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u16,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 22)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_float_single_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: f32,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 23)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_float_double_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: f64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 24)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_octet_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::OctetStr<'_>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 25)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_list_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            rs_matter_crate::tlv::ToTLVArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>, u8>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 26)?.data_builder()
+        }
+        fn push_unit_testing_list_octet_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            rs_matter_crate::tlv::OctetsArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 27)?.data_builder()
+        }
+        fn push_unit_testing_list_struct_octet_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestListStructOctetArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 28)?.data_builder()
+        }
+        fn push_unit_testing_long_octet_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::OctetStr<'_>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 29)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_char_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Utf8Str<'_>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 30)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_long_char_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Utf8Str<'_>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 31)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_epoch_us_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 32)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_epoch_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u32,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 33)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_vendor_id_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u16,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 34)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_list_nullables_and_optionals_struct_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            NullablesAndOptionalsStructArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 35)?.data_builder()
+        }
+        fn push_unit_testing_enum_attr_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: SimpleEnum,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 36)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_struct_attr_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            SimpleStructBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 37)?.data_builder()
+        }
+        fn push_unit_testing_range_restricted_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 38)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_range_restricted_int_8_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i8,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 39)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_range_restricted_int_16_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u16,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 40)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_range_restricted_int_16_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i16,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 41)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_list_long_octet_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            rs_matter_crate::tlv::OctetsArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 42)?.data_builder()
+        }
+        fn push_unit_testing_list_fabric_scoped_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestFabricScopedArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 43)?.data_builder()
+        }
+        fn push_unit_testing_timed_write_boolean_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 48)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_general_error_boolean_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 49)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_cluster_error_boolean_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 50)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_global_enum_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: TestGlobalEnum,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 51)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_global_struct_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestGlobalStructBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 52)?.data_builder()
+        }
+        fn push_unit_testing_unsupported_attribute_requiring_admin_privilege_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 254)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_unsupported_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 255)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_read_failure_code_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 12288)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_failure_int_32_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u32,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 12289)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_boolean_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<bool>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16384)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_bitmap_8_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16385)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_bitmap_16_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16386)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_bitmap_32_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16387)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_bitmap_64_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16388)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u8>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16389)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_int_16_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u16>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16390)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_int_24_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u32>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16391)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_int_32_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u32>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16392)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_int_40_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16393)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_int_48_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16394)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_int_56_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16395)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_int_64_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16396)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_int_8_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i8>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16397)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_int_16_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i16>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16398)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_int_24_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i32>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16399)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_int_32_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i32>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16400)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_int_40_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16401)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_int_48_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16402)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_int_56_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16403)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_int_64_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16404)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_enum_8_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u8>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16405)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_enum_16_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u16>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16406)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_float_single_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<f32>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16407)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_float_double_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<f64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16408)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_octet_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::OctetStr<'_>>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16409)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_char_string_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::Utf8Str<'_>>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16414)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_enum_attr_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<SimpleEnum>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16420)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_struct_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            rs_matter_crate::tlv::NullableBuilder<
+                rs_matter_crate::im::AttrDataBuilder<Self, 3>,
+                SimpleStructBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 16421)?.data_builder()
+        }
+        fn push_unit_testing_nullable_range_restricted_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u8>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16422)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_range_restricted_int_8_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i8>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16423)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_range_restricted_int_16_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u16>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16424)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_range_restricted_int_16_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i16>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16425)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_write_only_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16426)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_global_enum_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<TestGlobalEnum>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 16435)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+        fn push_unit_testing_nullable_global_struct_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            rs_matter_crate::tlv::NullableBuilder<
+                rs_matter_crate::im::AttrDataBuilder<Self, 3>,
+                TestGlobalStructBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.push()?.path(endpoint, 4294048773, 16436)?.data_builder()
+        }
+        fn push_unit_testing_mei_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            self.push()?
+                .path(endpoint, 4294048773, 4294070017)?
+                .data(|w| rs_matter_crate::tlv::ToTLV::to_tlv(
+                    &value,
+                    &rs_matter_crate::tlv::TLVTag::Context(rs_matter_crate::im::AttrDataTag::Data as u8),
+                    w,
+                ))?
+                .end()
+        }
+    }
 }
 "#;
 }
