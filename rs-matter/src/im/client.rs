@@ -22,21 +22,11 @@
 
 pub use super::{AttrId, ClusterId, EndptId};
 
-use crate::error::{Error, ErrorCode};
-use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWriteParent, TagType, ToTLV};
-use crate::transport::exchange::Exchange;
-use crate::utils::storage::WriteBuf;
+use either::Either as EitherIo;
 
-/// Root [`TLVBuilderParent`] type the IM client builders run against.
-/// The user's `*_with` closure receives a message builder
-/// parameterised by this parent type and must return it (via `.end()`
-/// on the message builder) as proof that the TLV write is complete
-/// and well-formed.
-///
-/// The HRTB on the two lifetimes is what lets the same closure work
-/// for whichever TX buffer the transport hands us on each call —
-/// neither lifetime is observable in user code.
-pub type ImBuildRootParent<'wb, 'buf> = TLVWriteParent<&'static str, &'wb mut WriteBuf<'buf>>;
+use crate::error::{Error, ErrorCode};
+use crate::tlv::{FromTLV, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
+use crate::transport::exchange::{Exchange, OwnedSender, OwnedSenderTx};
 
 use super::{
     AttrData, AttrDataTag, AttrPath, AttrResp, CmdData, CmdDataTag, CmdPath, CmdResp,
@@ -148,177 +138,6 @@ impl<'a> InvokeRequestBuilder<'a> {
 // trait inheritance would force.
 // =====================================================================
 
-/// Shared chunked-response loop for the read APIs.
-/// Used by both `ImClient::read_with` and `ImClient::read_with_async`
-/// after the initial `ReadRequest` is on the wire.
-async fn recv_read_chunks<F>(exchange: &mut Exchange<'_>, mut on_report: F) -> Result<(), Error>
-where
-    F: AsyncFnMut(&ReportDataResp<'_>) -> Result<(), Error>,
-{
-    loop {
-        exchange.recv_fetch().await?;
-
-        // Capture top-level fields first so the `rx` borrow can be
-        // released before the async callback runs — that lets the
-        // callback freely access `exchange`-unrelated async
-        // resources without lifetime conflicts.
-        let (more_chunks, suppress_response) = {
-            let rx = exchange.rx()?;
-            check_opcode(rx.meta().proto_opcode, OpCode::ReportData)?;
-            let element = TLVElement::new(rx.payload());
-            let resp = ReportDataResp::from_tlv(&element)?;
-            (
-                resp.more_chunks.unwrap_or(false),
-                resp.suppress_response.unwrap_or(false),
-            )
-        };
-
-        // Re-parse and run the async callback in a separate scope.
-        // The rx buffer stays valid until we send the next message,
-        // so re-parsing here is essentially free (the TLV decoder
-        // is a thin lazy iterator over the bytes).
-        let cb_result = {
-            let rx = exchange.rx()?;
-            let element = TLVElement::new(rx.payload());
-            let resp = ReportDataResp::from_tlv(&element)?;
-            on_report(&resp).await
-        };
-
-        if more_chunks {
-            // If the callback failed, abort the chunked transaction by
-            // sending StatusResponse(Failure) so the server stops sending.
-            if let Err(e) = cb_result {
-                send_abort(exchange).await?;
-                return Err(e);
-            }
-
-            // Send StatusResponse to request the next chunk.
-            // This clears the rx buffer.
-            debug!("ImClient::read - more_chunks=true, sending StatusResponse for next chunk");
-            exchange
-                .send_with(|_, wb| {
-                    StatusResp::write(wb, IMStatusCode::Success)?;
-                    Ok(Some(OpCode::StatusResponse.into()))
-                })
-                .await?;
-        } else {
-            // Final chunk — propagate callback error after completing the exchange.
-            cb_result?;
-
-            if !suppress_response {
-                debug!("ImClient::read - final chunk, sending StatusResponse");
-                exchange
-                    .send_with(|_, wb| {
-                        StatusResp::write(wb, IMStatusCode::Success)?;
-                        Ok(Some(OpCode::StatusResponse.into()))
-                    })
-                    .await?;
-            } else {
-                debug!("ImClient::read - final chunk, sending standalone ACK");
-                exchange.acknowledge().await?;
-            }
-            break;
-        }
-    }
-
-    Ok(())
-}
-
-/// Shared chunked-response loop for the invoke APIs.
-async fn recv_invoke_chunks<F>(exchange: &mut Exchange<'_>, mut on_response: F) -> Result<(), Error>
-where
-    F: AsyncFnMut(&InvokeResp<'_>) -> Result<(), Error>,
-{
-    loop {
-        exchange.recv_fetch().await?;
-
-        // Top-level fields first (no borrows held past this scope),
-        // then re-parse and run the async callback. See
-        // `recv_read_chunks` for the rationale.
-        let (more_chunks, suppress_response) = {
-            let rx = exchange.rx()?;
-            check_opcode(rx.meta().proto_opcode, OpCode::InvokeResponse)?;
-            let element = TLVElement::new(rx.payload());
-            let resp = InvokeResp::from_tlv(&element)?;
-            (
-                resp.more_chunks.unwrap_or(false),
-                resp.suppress_response.unwrap_or(false),
-            )
-        };
-
-        let cb_result = {
-            let rx = exchange.rx()?;
-            let element = TLVElement::new(rx.payload());
-            let resp = InvokeResp::from_tlv(&element)?;
-            on_response(&resp).await
-        };
-
-        if more_chunks {
-            // Spec forbids suppress_response=true with more_chunks=true
-            if suppress_response {
-                send_abort(exchange).await?;
-                return Err(ErrorCode::InvalidData.into());
-            }
-
-            // If the callback failed, abort the chunked transaction by
-            // sending StatusResponse(Failure) so the server stops sending.
-            if let Err(e) = cb_result {
-                send_abort(exchange).await?;
-                return Err(e);
-            }
-
-            // Send StatusResponse to request the next chunk.
-            // This clears the rx buffer.
-            debug!("ImClient::invoke - more_chunks=true, sending StatusResponse for next chunk");
-            exchange
-                .send_with(|_, wb| {
-                    StatusResp::write(wb, IMStatusCode::Success)?;
-                    Ok(Some(OpCode::StatusResponse.into()))
-                })
-                .await?;
-        } else {
-            // Final chunk — propagate callback error after completing the exchange.
-            cb_result?;
-
-            if !suppress_response {
-                debug!("ImClient::invoke - final chunk, sending StatusResponse");
-                exchange
-                    .send_with(|_, wb| {
-                        StatusResp::write(wb, IMStatusCode::Success)?;
-                        Ok(Some(OpCode::StatusResponse.into()))
-                    })
-                    .await?;
-            } else {
-                debug!("ImClient::invoke - final chunk, sending standalone ACK");
-                exchange.acknowledge().await?;
-            }
-            break;
-        }
-    }
-
-    Ok(())
-}
-
-/// Shared response-handling tail for `write_with` and `write_with_async`.
-async fn recv_write_response<F, T>(exchange: &mut Exchange<'_>, on_resp: F) -> Result<T, Error>
-where
-    F: FnOnce(WriteResp<'_>) -> Result<T, Error>,
-{
-    exchange.recv_fetch().await?;
-
-    {
-        let rx = exchange.rx()?;
-        check_opcode(rx.meta().proto_opcode, OpCode::WriteResponse)?;
-    }
-
-    exchange.acknowledge().await?;
-
-    let rx = exchange.rx()?;
-    let resp = WriteResp::from_tlv(&TLVElement::new(rx.payload()))?;
-
-    on_resp(resp)
-}
-
 /// Send a timed-request handshake and wait for `StatusResponse(Success)`.
 /// Used before timed writes/invokes.
 async fn send_timed_request(exchange: &mut Exchange<'_>, timeout_ms: u16) -> Result<(), Error> {
@@ -375,6 +194,632 @@ async fn send_abort(exchange: &mut Exchange<'_>) -> Result<(), Error> {
             Ok(Some(OpCode::StatusResponse.into()))
         })
         .await
+}
+
+// =====================================================================
+// Tier-1 transaction types for the `invoke` opcode.
+//
+// `InvokeTxn` is the cornerstone of the closure-free, scratch-buffer-
+// free IM client. It owns the exchange end-to-end (via `OwnedSender`
+// internally) and exposes a `tx().await` method that drives one
+// round of the MRP retransmit loop. The user matches on the result:
+//
+// - `EitherIo::Left(builder)` → (re-)build the request bytes via the
+//   typestate builder; `.end()` returns the `InvokeTxn` back for the
+//   next round.
+// - `EitherIo::Right(chunk)` → the request has been ACK-ed; here's
+//   the first response chunk. Iterate via `chunk.complete().await`.
+//
+// Tier-2 (closure-based) and tier-3 (scratch-buffer-based) variants
+// will be layered on top, mirroring how `Exchange::send_with` and
+// `Exchange::send` are layered on top of `Exchange::sender`.
+// =====================================================================
+
+/// Cornerstone tier-1 `invoke` transaction. See module docs for the
+/// pattern. Returned by [`ImClient::invoke_txn`].
+///
+/// Public surface is intentionally narrow: a single async
+/// [`tx`](Self::tx) method that drives one round of the MRP loop.
+/// The TLV-serialization plumbing the codegen request builder uses
+/// to fill the request bytes lives in a separate
+/// [`InvokeTxnSlot`] type accessed via [`TLVBuilderParent::writer`],
+/// so that `u8` / `start_struct` / etc. don't appear directly on
+/// `InvokeTxn` and tempt users to drive the TX buffer by hand.
+pub struct InvokeTxn<'a> {
+    state: InvokeTxnState<'a>,
+}
+
+enum InvokeTxnState<'a> {
+    /// Between rounds: own a sender, no slot. The first `tx()` call
+    /// from this state acquires a slot and hands back a builder. The
+    /// `n`-th call (n ≥ 1) here means the previous round's bytes are
+    /// in flight; we wait for the next framework event.
+    Ready(OwnedSender<'a>),
+    /// During build: own a fully-prepared [`InvokeTxnSlot`] (TX slot
+    /// plus cursor) that the codegen builder writes into via
+    /// [`TLVBuilderParent::writer`]. The next `tx()` call commits
+    /// `slot`'s bytes via [`OwnedSenderTx::complete`] and transitions
+    /// back to `Ready`.
+    Slot(InvokeTxnSlot<'a>),
+}
+
+impl<'a> InvokeTxn<'a> {
+    /// Drive one round of the MRP retransmit loop.
+    ///
+    /// - Returns `EitherIo::Left(builder)` when the framework needs
+    ///   the request bytes (re-)built into a fresh TX slot. The
+    ///   builder's `P` parent is this `InvokeTxn`; calling `.end()`
+    ///   on the message builder hands the `InvokeTxn` back, ready
+    ///   for the next `tx()` call.
+    /// - Returns `EitherIo::Right(chunk)` once the framework has
+    ///   received the peer's ACK; iterate the chunk loop via
+    ///   [`InvokeRespChunk::complete`].
+    ///
+    /// The first call after [`ImClient::invoke_txn`] is guaranteed
+    /// to yield `Left(builder)` because no message has been sent yet.
+    pub async fn tx(
+        mut self,
+    ) -> Result<EitherIo<InvReqBuilder<InvokeTxn<'a>, 0>, InvokeRespChunk<'a>>, Error> {
+        // 1. If we're in Slot state, commit the bytes we just built.
+        let sender = match self.state {
+            InvokeTxnState::Slot(slot) => slot.commit()?,
+            InvokeTxnState::Ready(s) => s,
+        };
+
+        // 2. Ask the framework for the next event.
+        match sender.tx().await? {
+            EitherIo::Left(tx) => {
+                // Re-build needed (initial or retransmit). Move to
+                // Slot state and hand back a fresh builder.
+                self.state = InvokeTxnState::Slot(InvokeTxnSlot { tx, cursor: 0 });
+                let builder = InvReqBuilder::new(self, &TLVTag::Anonymous)?;
+                Ok(EitherIo::Left(builder))
+            }
+            EitherIo::Right(exchange) => {
+                // ACK received — fetch and parse the first response chunk.
+                Ok(EitherIo::Right(InvokeRespChunk::receive(exchange).await?))
+            }
+        }
+    }
+}
+
+impl<'a> TLVBuilderParent for InvokeTxn<'a> {
+    type Write = InvokeTxnSlot<'a>;
+
+    fn writer(&mut self) -> &mut Self::Write {
+        match &mut self.state {
+            InvokeTxnState::Slot(slot) => slot,
+            // The only way to reach `writer()` on an `InvokeTxn` is
+            // through the codegen builder constructed inside
+            // [`InvokeTxn::tx`]'s `Left` arm, which transitions to
+            // `Slot` state before yielding the builder. Hitting this
+            // branch means the invariant was violated externally —
+            // panic rather than corrupt the TX buffer silently.
+            InvokeTxnState::Ready(_) => panic!(
+                "InvokeTxn::writer() called outside the build phase \
+                 (state = Ready); only reachable via an InvReqBuilder \
+                 yielded by InvokeTxn::tx — see module docs."
+            ),
+        }
+    }
+}
+
+impl<'a> core::fmt::Debug for InvokeTxn<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "InvokeTxn")
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<'a> defmt::Format for InvokeTxn<'a> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "InvokeTxn")
+    }
+}
+
+/// Internal serialization handle for the in-flight build of an
+/// [`InvokeTxn`].
+///
+/// This type only exists because [`TLVBuilderParent`] requires the
+/// `Write` associated type to be a named type (so the codegen request
+/// builders can write through it). Users should not interact with it
+/// directly — go through [`InvokeTxn::tx`] and the typed
+/// [`InvReqBuilder`] it returns.
+///
+/// Fields are private to enforce that the only way to drive
+/// `cursor` forward is by writing TLV through the
+/// [`TLVWrite`] impl below.
+pub struct InvokeTxnSlot<'a> {
+    tx: OwnedSenderTx<'a>,
+    cursor: usize,
+}
+
+impl<'a> InvokeTxnSlot<'a> {
+    /// Consume the slot — commit the bytes accumulated in `cursor`
+    /// via [`OwnedSenderTx::complete`] and return the
+    /// [`OwnedSender`] for the next retransmit-loop iteration.
+    fn commit(self) -> Result<OwnedSender<'a>, Error> {
+        self.tx
+            .complete(0, self.cursor, OpCode::InvokeRequest.into())
+    }
+}
+
+impl<'a> TLVWrite for InvokeTxnSlot<'a> {
+    type Position = usize;
+
+    fn write(&mut self, byte: u8) -> Result<(), Error> {
+        let payload = self.tx.payload();
+        if self.cursor >= payload.len() {
+            return Err(ErrorCode::NoSpace.into());
+        }
+        payload[self.cursor] = byte;
+        self.cursor += 1;
+        Ok(())
+    }
+
+    /// Byte offset into the active TX-slot payload at which the next
+    /// `write()` would land. Used by the derived `ToTLV` impls (and
+    /// similar helpers) to mark a rollback anchor before composing a
+    /// TLV structure.
+    fn get_tail(&self) -> Self::Position {
+        self.cursor
+    }
+
+    /// Roll the cursor back to a position previously returned by
+    /// [`get_tail`]. Used by derived `ToTLV` impls to unwind a
+    /// partially-written TLV structure on error.
+    fn rewind_to(&mut self, pos: Self::Position) {
+        self.cursor = pos;
+    }
+}
+
+impl<'a> core::fmt::Debug for InvokeTxnSlot<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "InvokeTxnSlot({})", self.cursor)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<'a> defmt::Format for InvokeTxnSlot<'a> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "InvokeTxnSlot({})", self.cursor)
+    }
+}
+
+/// First (possibly only) response chunk of a tier-1 `invoke`
+/// transaction. Returned by [`InvokeTxn::tx`] once the peer has
+/// ACK-ed the request.
+///
+/// The borrowed [`response`](Self::response) method gives zero-copy
+/// access to the parsed [`InvokeResp`] backed by the exchange's RX
+/// buffer; the buffer stays valid until [`complete`](Self::complete)
+/// is called.
+///
+/// For multi-chunk responses (the server signals `more_chunks=true`),
+/// [`complete`](Self::complete) returns `Some(next_chunk)` so the
+/// caller can iterate; otherwise it returns `None` and drops the
+/// exchange.
+pub struct InvokeRespChunk<'a> {
+    exchange: Exchange<'a>,
+}
+
+impl<'a> InvokeRespChunk<'a> {
+    async fn receive(mut exchange: Exchange<'a>) -> Result<Self, Error> {
+        exchange.recv_fetch().await?;
+        {
+            let rx = exchange.rx()?;
+            check_opcode(rx.meta().proto_opcode, OpCode::InvokeResponse)?;
+        }
+        Ok(Self { exchange })
+    }
+
+    /// Borrowed access to the parsed `InvokeResp` for this chunk.
+    /// The returned value points into the exchange's RX buffer, so
+    /// its lifetime is the borrow of this `InvokeRespChunk`.
+    pub fn response(&self) -> Result<InvokeResp<'_>, Error> {
+        let rx = self.exchange.rx()?;
+        let element = TLVElement::new(rx.payload());
+        InvokeResp::from_tlv(&element)
+    }
+
+    /// ACK the current chunk and, if the server signalled
+    /// `more_chunks=true`, fetch + parse the next chunk and return
+    /// it as `Some(next)`. Otherwise (final chunk) drop the exchange
+    /// and return `None`.
+    pub async fn complete(mut self) -> Result<Option<Self>, Error> {
+        let (more_chunks, suppress_response) = {
+            let resp = self.response()?;
+            (
+                resp.more_chunks.unwrap_or(false),
+                resp.suppress_response.unwrap_or(false),
+            )
+        };
+
+        if more_chunks {
+            // Spec forbids suppress_response=true with more_chunks=true
+            if suppress_response {
+                send_abort(&mut self.exchange).await?;
+                return Err(ErrorCode::InvalidData.into());
+            }
+
+            // Request next chunk.
+            self.exchange
+                .send_with(|_, wb| {
+                    StatusResp::write(wb, IMStatusCode::Success)?;
+                    Ok(Some(OpCode::StatusResponse.into()))
+                })
+                .await?;
+
+            self.exchange.recv_fetch().await?;
+            {
+                let rx = self.exchange.rx()?;
+                check_opcode(rx.meta().proto_opcode, OpCode::InvokeResponse)?;
+            }
+
+            Ok(Some(self))
+        } else {
+            if !suppress_response {
+                self.exchange
+                    .send_with(|_, wb| {
+                        StatusResp::write(wb, IMStatusCode::Success)?;
+                        Ok(Some(OpCode::StatusResponse.into()))
+                    })
+                    .await?;
+            } else {
+                self.exchange.acknowledge().await?;
+            }
+            Ok(None)
+        }
+    }
+}
+
+// =====================================================================
+// Tier-1 transaction types for the `read` opcode.
+//
+// Mirrors the `invoke` tier-1 set: `ReadTxn` drives the MRP retransmit
+// loop; the codegen `ReadReqBuilder` writes through `ReadTxnSlot`
+// while the slot is live; `ReadRespChunk` gives chunk-by-chunk
+// access to the resulting `ReportData` stream.
+// =====================================================================
+
+/// Cornerstone tier-1 `read` transaction. See module docs for the
+/// pattern. Returned by [`ImClient::read_txn`].
+pub struct ReadTxn<'a> {
+    state: ReadTxnState<'a>,
+}
+
+enum ReadTxnState<'a> {
+    Ready(OwnedSender<'a>),
+    Slot(ReadTxnSlot<'a>),
+}
+
+impl<'a> ReadTxn<'a> {
+    /// Drive one round of the MRP retransmit loop. See
+    /// [`InvokeTxn::tx`] for the full contract; the read variant is
+    /// identical except the right arm holds a [`ReadRespChunk`].
+    pub async fn tx(
+        mut self,
+    ) -> Result<EitherIo<ReadReqBuilder<ReadTxn<'a>, 0>, ReadRespChunk<'a>>, Error> {
+        let sender = match self.state {
+            ReadTxnState::Slot(slot) => slot.commit()?,
+            ReadTxnState::Ready(s) => s,
+        };
+
+        match sender.tx().await? {
+            EitherIo::Left(tx) => {
+                self.state = ReadTxnState::Slot(ReadTxnSlot { tx, cursor: 0 });
+                let builder = ReadReqBuilder::new(self, &TLVTag::Anonymous)?;
+                Ok(EitherIo::Left(builder))
+            }
+            EitherIo::Right(exchange) => {
+                Ok(EitherIo::Right(ReadRespChunk::receive(exchange).await?))
+            }
+        }
+    }
+}
+
+impl<'a> TLVBuilderParent for ReadTxn<'a> {
+    type Write = ReadTxnSlot<'a>;
+
+    fn writer(&mut self) -> &mut Self::Write {
+        match &mut self.state {
+            ReadTxnState::Slot(slot) => slot,
+            ReadTxnState::Ready(_) => panic!(
+                "ReadTxn::writer() called outside the build phase — \
+                 only reachable via a ReadReqBuilder yielded by ReadTxn::tx."
+            ),
+        }
+    }
+}
+
+impl<'a> core::fmt::Debug for ReadTxn<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "ReadTxn")
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<'a> defmt::Format for ReadTxn<'a> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "ReadTxn")
+    }
+}
+
+/// Internal serialization handle for the in-flight build of a
+/// [`ReadTxn`]. See [`InvokeTxnSlot`] for the design rationale —
+/// this type exists only because [`TLVBuilderParent`] requires the
+/// `Write` associated type to be a named type.
+pub struct ReadTxnSlot<'a> {
+    tx: OwnedSenderTx<'a>,
+    cursor: usize,
+}
+
+impl<'a> ReadTxnSlot<'a> {
+    fn commit(self) -> Result<OwnedSender<'a>, Error> {
+        self.tx.complete(0, self.cursor, OpCode::ReadRequest.into())
+    }
+}
+
+impl<'a> TLVWrite for ReadTxnSlot<'a> {
+    type Position = usize;
+
+    fn write(&mut self, byte: u8) -> Result<(), Error> {
+        let payload = self.tx.payload();
+        if self.cursor >= payload.len() {
+            return Err(ErrorCode::NoSpace.into());
+        }
+        payload[self.cursor] = byte;
+        self.cursor += 1;
+        Ok(())
+    }
+
+    fn get_tail(&self) -> Self::Position {
+        self.cursor
+    }
+
+    fn rewind_to(&mut self, pos: Self::Position) {
+        self.cursor = pos;
+    }
+}
+
+impl<'a> core::fmt::Debug for ReadTxnSlot<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "ReadTxnSlot({})", self.cursor)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<'a> defmt::Format for ReadTxnSlot<'a> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "ReadTxnSlot({})", self.cursor)
+    }
+}
+
+/// First (possibly only) response chunk of a tier-1 `read`
+/// transaction. Returned by [`ReadTxn::tx`] once the peer has ACK-ed
+/// the request and the first `ReportData` chunk is parsed.
+///
+/// Multi-chunk `ReportData` streams iterate via
+/// [`complete`](Self::complete) — same shape as [`InvokeRespChunk`].
+pub struct ReadRespChunk<'a> {
+    exchange: Exchange<'a>,
+}
+
+impl<'a> ReadRespChunk<'a> {
+    async fn receive(mut exchange: Exchange<'a>) -> Result<Self, Error> {
+        exchange.recv_fetch().await?;
+        {
+            let rx = exchange.rx()?;
+            check_opcode(rx.meta().proto_opcode, OpCode::ReportData)?;
+        }
+        Ok(Self { exchange })
+    }
+
+    /// Borrowed access to the parsed `ReportDataResp` for this chunk.
+    pub fn response(&self) -> Result<ReportDataResp<'_>, Error> {
+        let rx = self.exchange.rx()?;
+        let element = TLVElement::new(rx.payload());
+        ReportDataResp::from_tlv(&element)
+    }
+
+    /// ACK the current chunk; if `more_chunks=true`, fetch + parse
+    /// the next chunk and return it as `Some(next)`. Otherwise drop
+    /// the exchange and return `None`.
+    pub async fn complete(mut self) -> Result<Option<Self>, Error> {
+        let (more_chunks, suppress_response) = {
+            let resp = self.response()?;
+            (
+                resp.more_chunks.unwrap_or(false),
+                resp.suppress_response.unwrap_or(false),
+            )
+        };
+
+        if more_chunks {
+            // Request next chunk.
+            self.exchange
+                .send_with(|_, wb| {
+                    StatusResp::write(wb, IMStatusCode::Success)?;
+                    Ok(Some(OpCode::StatusResponse.into()))
+                })
+                .await?;
+
+            self.exchange.recv_fetch().await?;
+            {
+                let rx = self.exchange.rx()?;
+                check_opcode(rx.meta().proto_opcode, OpCode::ReportData)?;
+            }
+
+            Ok(Some(self))
+        } else {
+            if !suppress_response {
+                self.exchange
+                    .send_with(|_, wb| {
+                        StatusResp::write(wb, IMStatusCode::Success)?;
+                        Ok(Some(OpCode::StatusResponse.into()))
+                    })
+                    .await?;
+            } else {
+                self.exchange.acknowledge().await?;
+            }
+            Ok(None)
+        }
+    }
+}
+
+// =====================================================================
+// Tier-1 transaction types for the `write` opcode.
+//
+// Mirrors the `invoke` / `read` tier-1 sets. `WriteResponseMessage`
+// is single-message per spec (no chunking), so the receive side has
+// a [`WriteRespHandle`] with just a [`response()`](WriteRespHandle::response)
+// method — no `complete()` iteration.
+// =====================================================================
+
+/// Cornerstone tier-1 `write` transaction. See module docs for the
+/// pattern. Returned by [`ImClient::write_txn`].
+pub struct WriteTxn<'a> {
+    state: WriteTxnState<'a>,
+}
+
+enum WriteTxnState<'a> {
+    Ready(OwnedSender<'a>),
+    Slot(WriteTxnSlot<'a>),
+}
+
+impl<'a> WriteTxn<'a> {
+    /// Drive one round of the MRP retransmit loop. Mirrors
+    /// [`InvokeTxn::tx`] / [`ReadTxn::tx`] except the right arm
+    /// returns a [`WriteRespHandle`] (no chunking on write).
+    pub async fn tx(
+        mut self,
+    ) -> Result<EitherIo<WriteReqBuilder<WriteTxn<'a>, 0>, WriteRespHandle<'a>>, Error> {
+        let sender = match self.state {
+            WriteTxnState::Slot(slot) => slot.commit()?,
+            WriteTxnState::Ready(s) => s,
+        };
+
+        match sender.tx().await? {
+            EitherIo::Left(tx) => {
+                self.state = WriteTxnState::Slot(WriteTxnSlot { tx, cursor: 0 });
+                let builder = WriteReqBuilder::new(self, &TLVTag::Anonymous)?;
+                Ok(EitherIo::Left(builder))
+            }
+            EitherIo::Right(exchange) => {
+                Ok(EitherIo::Right(WriteRespHandle::receive(exchange).await?))
+            }
+        }
+    }
+}
+
+impl<'a> TLVBuilderParent for WriteTxn<'a> {
+    type Write = WriteTxnSlot<'a>;
+
+    fn writer(&mut self) -> &mut Self::Write {
+        match &mut self.state {
+            WriteTxnState::Slot(slot) => slot,
+            WriteTxnState::Ready(_) => panic!(
+                "WriteTxn::writer() called outside the build phase — \
+                 only reachable via a WriteReqBuilder yielded by WriteTxn::tx."
+            ),
+        }
+    }
+}
+
+impl<'a> core::fmt::Debug for WriteTxn<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "WriteTxn")
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<'a> defmt::Format for WriteTxn<'a> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "WriteTxn")
+    }
+}
+
+/// Internal serialization handle for the in-flight build of a
+/// [`WriteTxn`]. See [`InvokeTxnSlot`] for the design rationale.
+pub struct WriteTxnSlot<'a> {
+    tx: OwnedSenderTx<'a>,
+    cursor: usize,
+}
+
+impl<'a> WriteTxnSlot<'a> {
+    fn commit(self) -> Result<OwnedSender<'a>, Error> {
+        self.tx
+            .complete(0, self.cursor, OpCode::WriteRequest.into())
+    }
+}
+
+impl<'a> TLVWrite for WriteTxnSlot<'a> {
+    type Position = usize;
+
+    fn write(&mut self, byte: u8) -> Result<(), Error> {
+        let payload = self.tx.payload();
+        if self.cursor >= payload.len() {
+            return Err(ErrorCode::NoSpace.into());
+        }
+        payload[self.cursor] = byte;
+        self.cursor += 1;
+        Ok(())
+    }
+
+    fn get_tail(&self) -> Self::Position {
+        self.cursor
+    }
+
+    fn rewind_to(&mut self, pos: Self::Position) {
+        self.cursor = pos;
+    }
+}
+
+impl<'a> core::fmt::Debug for WriteTxnSlot<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "WriteTxnSlot({})", self.cursor)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<'a> defmt::Format for WriteTxnSlot<'a> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "WriteTxnSlot({})", self.cursor)
+    }
+}
+
+/// Handle to the (single, non-chunked) response of a tier-1 `write`
+/// transaction. Returned by [`WriteTxn::tx`] once the peer has
+/// ACK-ed the request and the response is parsed.
+///
+/// Unlike [`InvokeRespChunk`] / [`ReadRespChunk`], `WriteResponse`
+/// is a single message per Matter Core spec §10.7.6 — no chunk
+/// iteration is needed; just call [`response`](Self::response) to
+/// inspect the parsed [`WriteResp`].
+pub struct WriteRespHandle<'a> {
+    exchange: Exchange<'a>,
+}
+
+impl<'a> WriteRespHandle<'a> {
+    async fn receive(mut exchange: Exchange<'a>) -> Result<Self, Error> {
+        exchange.recv_fetch().await?;
+        {
+            let rx = exchange.rx()?;
+            check_opcode(rx.meta().proto_opcode, OpCode::WriteResponse)?;
+        }
+        // ACK here (via standalone `acknowledge()`, not `send_with`)
+        // because `send_with` would clear the RX buffer and break
+        // zero-copy access from `response()` below.
+        exchange.acknowledge().await?;
+        Ok(Self { exchange })
+    }
+
+    /// Borrowed access to the parsed `WriteResp`. The returned value
+    /// points into the exchange's RX buffer, which stays valid until
+    /// this handle is dropped.
+    pub fn response(&self) -> Result<WriteResp<'_>, Error> {
+        let rx = self.exchange.rx()?;
+        WriteResp::from_tlv(&TLVElement::new(rx.payload()))
+    }
 }
 
 /// IM Client trait — extension over an [`Exchange`] that adds the
@@ -447,29 +892,34 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     where
         F: FnMut(&ReportDataResp<'_>) -> Result<(), Error>,
     {
-        Self::read_with(
-            self,
-            |msg| {
-                // Bridge the snapshot-style API onto the streaming
-                // builder: one TLV encoding path for both call shapes.
-                msg.attr_requests_from(attr_paths)?
-                    .fabric_filtered(fabric_filtered)?
-                    .end()
-            },
-            // Adapt the caller's sync FnMut callback into the
-            // `AsyncFnMut` surface `read_with` expects: run the user
-            // closure synchronously, return a trivially-ready
-            // future. Zero runtime cost — `ready` does not box.
-            async |resp| on_report(resp),
-        )
-        .await
+        // Bridge: build through the streaming `ReadReqBuilder`, then
+        // iterate the chunk loop calling `on_report` per chunk to
+        // preserve the existing snapshot-API contract on top of the
+        // new chunk-returning [`read_with`].
+        let mut chunk = Self::read_with(self, |msg| {
+            msg.attr_requests_from(attr_paths)?
+                .fabric_filtered(fabric_filtered)?
+                .end()
+        })
+        .await?;
+
+        loop {
+            {
+                let resp = chunk.response()?;
+                on_report(&resp)?;
+            }
+            match chunk.complete().await? {
+                Some(next) => chunk = next,
+                None => return Ok(()),
+            }
+        }
     }
 
     /// Streaming counterpart to [`read`](Self::read).
     ///
     /// `build` is invoked with a typed
     /// [`ReadReqBuilder`] already opened on the outbound
-    /// TX buffer; the closure must return the [`ImBuildRootParent`]
+    /// TX buffer; the closure must return the [the corresponding `*Txn`]
     /// produced by `ReadReqBuilder::end()` as the
     /// type-system proof that every container the builder opened has
     /// been closed. No intermediate `Vec<AttrPath>` is allocated.
@@ -489,58 +939,81 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// channel). The borrow of the chunk data is held across the
     /// await, but the rx buffer remains valid until the next chunk
     /// request, so this is safe.
-    async fn read_with<B, F>(self, mut build: B, on_report: F) -> Result<(), Error>
+    async fn read_with<B>(self, mut build: B) -> Result<ReadRespChunk<'a>, Error>
     where
-        B: for<'wb, 'buf> FnMut(
-            ReadReqBuilder<ImBuildRootParent<'wb, 'buf>, 0>,
-        ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
-        F: AsyncFnMut(&ReportDataResp<'_>) -> Result<(), Error>,
+        B: FnMut(ReadReqBuilder<ReadTxn<'a>, 0>) -> Result<ReadTxn<'a>, Error>,
     {
-        let mut exchange: Exchange<'a> = self.into();
-        debug!(
-            "ImClient::read - Sending ReadRequest on exchange {}",
-            exchange.id()
-        );
-
-        exchange
-            .send_with(|_, wb| {
-                let parent = TLVWriteParent::new("ReadRequest", wb);
-                let builder = ReadReqBuilder::new(parent, &TLVTag::Anonymous)?;
-                let _root = build(builder)?;
-                Ok(Some(OpCode::ReadRequest.into()))
-            })
-            .await?;
-
-        recv_read_chunks(&mut exchange, on_report).await
+        // Drives the tier-1 retransmit loop on the caller's behalf
+        // (build closure idempotency contract — same TLV bytes on
+        // every call). First response chunk handed back; the caller
+        // iterates further chunks via `chunk.complete()`.
+        let mut txn = self.read_txn().await?;
+        loop {
+            match txn.tx().await? {
+                EitherIo::Left(builder) => {
+                    txn = build(builder)?;
+                }
+                EitherIo::Right(chunk) => return Ok(chunk),
+            }
+        }
     }
 
     /// Async-build counterpart to [`read_with`](Self::read_with).
     /// See [`write_with_async`](Self::write_with_async) for the
     /// TX-slot-lifetime caveat and the strengthened idempotency
     /// contract that apply to any async-build IM client path.
-    async fn read_with_async<B, F>(self, mut build: B, on_report: F) -> Result<(), Error>
+    async fn read_with_async<B>(self, mut build: B) -> Result<ReadRespChunk<'a>, Error>
     where
-        B: for<'wb, 'buf> AsyncFnMut(
-            ReadReqBuilder<ImBuildRootParent<'wb, 'buf>, 0>,
-        ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
-        F: AsyncFnMut(&ReportDataResp<'_>) -> Result<(), Error>,
+        B: AsyncFnMut(ReadReqBuilder<ReadTxn<'a>, 0>) -> Result<ReadTxn<'a>, Error>,
     {
+        let mut txn = self.read_txn().await?;
+        loop {
+            match txn.tx().await? {
+                EitherIo::Left(builder) => {
+                    txn = build(builder).await?;
+                }
+                EitherIo::Right(chunk) => return Ok(chunk),
+            }
+        }
+    }
+
+    /// Tier-1 `read` entry point — sets up a [`ReadTxn`] but does
+    /// **no** I/O. The first call to [`ReadTxn::tx`] yields the
+    /// initial builder. See [`invoke_txn`](Self::invoke_txn) for the
+    /// full pattern.
+    async fn read_txn(self) -> Result<ReadTxn<'a>, Error> {
+        let exchange: Exchange<'a> = self.into();
+        let sender = exchange.into_sender()?;
+        Ok(ReadTxn {
+            state: ReadTxnState::Ready(sender),
+        })
+    }
+
+    /// Tier-1 `invoke` entry point — sets up an [`InvokeTxn`] but
+    /// does **no** I/O beyond an optional `TimedRequest` handshake
+    /// (when `timed_timeout_ms` is `Some`). The first call to
+    /// [`InvokeTxn::tx`] yields the initial builder.
+    ///
+    /// This is the cornerstone of the IM client: closure-free,
+    /// scratch-buffer-free, full user control over the retransmit
+    /// loop. Higher-tier variants — closure-based
+    /// ([`invoke_with`](Self::invoke_with)) and the snapshot-style
+    /// [`invoke`](Self::invoke) — are layered on top of it.
+    ///
+    /// # Lifecycle
+    ///
+    /// 1. `let mut txn = exchange.invoke_txn(None).await?;`
+    /// 2. `loop { match txn.tx().await? { Left(b) => txn = build(b)?, Right(c) => break c } }`
+    /// 3. `loop { let resp = chunk.response()?; …; match chunk.complete().await? { … } }`
+    async fn invoke_txn(self, timed_timeout_ms: Option<u16>) -> Result<InvokeTxn<'a>, Error> {
         let mut exchange: Exchange<'a> = self.into();
-        debug!(
-            "ImClient::read - Sending ReadRequest (async build) on exchange {}",
-            exchange.id()
-        );
-
-        exchange
-            .send_with_async(async |_, wb| {
-                let parent = TLVWriteParent::new("ReadRequest", wb);
-                let builder = ReadReqBuilder::new(parent, &TLVTag::Anonymous)?;
-                let _root = build(builder).await?;
-                Ok(Some(OpCode::ReadRequest.into()))
-            })
-            .await?;
-
-        recv_read_chunks(&mut exchange, on_report).await
+        if let Some(timeout_ms) = timed_timeout_ms {
+            send_timed_request(&mut exchange, timeout_ms).await?;
+        }
+        let sender = exchange.into_sender()?;
+        Ok(InvokeTxn {
+            state: InvokeTxnState::Ready(sender),
+        })
     }
 
     /// Invoke one or more commands on a device with full chunking support.
@@ -575,34 +1048,41 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     where
         F: FnMut(&InvokeResp<'_>) -> Result<(), Error>,
     {
-        Self::invoke_with(
-            self,
-            timed_timeout_ms,
-            |msg| {
-                // Bridge: re-emit the pre-built `&[CmdData]` through
-                // the streaming builder so both call shapes share one
-                // TLV encoding path.
-                let mut entries = msg
-                    .suppress_response(false)?
-                    .timed_request(timed_timeout_ms.is_some())?
-                    .invoke_requests()?;
-                for cd in cmd_data {
-                    let entry = entries
-                        .push()?
-                        .path_from(&cd.path)?
-                        .data(|w| cd.data.to_tlv(&TLVTag::Context(CmdDataTag::Data as u8), w))?;
-                    entries = match cd.command_ref {
-                        Some(r) => entry.command_ref(r)?.end()?,
-                        None => entry.end()?,
-                    };
-                }
-                entries.end()?.end()
-            },
-            // Sync→async adapter for the caller's `FnMut` callback;
-            // see `read`'s mirror site for the rationale.
-            async |resp| on_response(resp),
-        )
-        .await
+        // Bridge: re-emit the pre-built `&[CmdData]` through the
+        // streaming builder, then iterate the chunk loop ourselves —
+        // calling the caller's `on_response` per chunk so the
+        // existing snapshot-API contract (single `Result<(), Error>`)
+        // is preserved on top of the new chunk-returning
+        // [`invoke_with`].
+        let mut chunk = Self::invoke_with(self, timed_timeout_ms, |msg| {
+            let mut entries = msg
+                .suppress_response(false)?
+                .timed_request(timed_timeout_ms.is_some())?
+                .invoke_requests()?;
+            for cd in cmd_data {
+                let entry = entries
+                    .push()?
+                    .path_from(&cd.path)?
+                    .data(|w| cd.data.to_tlv(&TLVTag::Context(CmdDataTag::Data as u8), w))?;
+                entries = match cd.command_ref {
+                    Some(r) => entry.command_ref(r)?.end()?,
+                    None => entry.end()?,
+                };
+            }
+            entries.end()?.end()
+        })
+        .await?;
+
+        loop {
+            {
+                let resp = chunk.response()?;
+                on_response(&resp)?;
+            }
+            match chunk.complete().await? {
+                Some(next) => chunk = next,
+                None => return Ok(()),
+            }
+        }
     }
 
     /// Streaming counterpart to [`invoke`](Self::invoke).
@@ -613,7 +1093,7 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// buffer first), `invoke_with` hands the caller a typed
     /// [`InvReqBuilder`] already opened on the outbound
     /// TX buffer and lets them stream the `InvokeRequestMessage`
-    /// directly. The closure must return the [`ImBuildRootParent`]
+    /// directly. The closure must return the [the corresponding `*Txn`]
     /// produced by `InvReqBuilder::end()` as the
     /// type-system proof of completeness. This is the MCU-friendly
     /// path for client clusters that send commands — the typed
@@ -629,38 +1109,28 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// chunk); chunking flow control is handled internally.
     /// `on_response` is `AsyncFnMut` — see [`read_with`](Self::read_with)
     /// for the rationale.
-    async fn invoke_with<B, F>(
+    async fn invoke_with<B>(
         self,
         timed_timeout_ms: Option<u16>,
         mut build: B,
-        on_response: F,
-    ) -> Result<(), Error>
+    ) -> Result<InvokeRespChunk<'a>, Error>
     where
-        B: for<'wb, 'buf> FnMut(
-            InvReqBuilder<ImBuildRootParent<'wb, 'buf>, 0>,
-        ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
-        F: AsyncFnMut(&InvokeResp<'_>) -> Result<(), Error>,
+        B: FnMut(InvReqBuilder<InvokeTxn<'a>, 0>) -> Result<InvokeTxn<'a>, Error>,
     {
-        let mut exchange: Exchange<'a> = self.into();
-        debug!(
-            "ImClient::invoke - Starting invoke on exchange {}",
-            exchange.id()
-        );
-
-        if let Some(timeout_ms) = timed_timeout_ms {
-            send_timed_request(&mut exchange, timeout_ms).await?;
+        // Drives the tier-1 retransmit loop on the caller's behalf:
+        // the `build` closure is (re-)run on every framework attempt
+        // (so it must remain idempotent — same TLV bytes on every
+        // call), and the first response chunk is returned to the
+        // caller for direct inspection / `complete()` iteration.
+        let mut txn = self.invoke_txn(timed_timeout_ms).await?;
+        loop {
+            match txn.tx().await? {
+                EitherIo::Left(builder) => {
+                    txn = build(builder)?;
+                }
+                EitherIo::Right(chunk) => return Ok(chunk),
+            }
         }
-
-        exchange
-            .send_with(|_, wb| {
-                let parent = TLVWriteParent::new("InvokeRequest", wb);
-                let builder = InvReqBuilder::new(parent, &TLVTag::Anonymous)?;
-                let _root = build(builder)?;
-                Ok(Some(OpCode::InvokeRequest.into()))
-            })
-            .await?;
-
-        recv_invoke_chunks(&mut exchange, on_response).await
     }
 
     /// Async-build counterpart to [`invoke_with`](Self::invoke_with).
@@ -669,38 +1139,23 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// crypto sign) can do so directly into the TX buffer without
     /// a sibling buffer. See [`write_with_async`](Self::write_with_async)
     /// for the slot-lifetime and idempotency caveats.
-    async fn invoke_with_async<B, F>(
+    async fn invoke_with_async<B>(
         self,
         timed_timeout_ms: Option<u16>,
         mut build: B,
-        on_response: F,
-    ) -> Result<(), Error>
+    ) -> Result<InvokeRespChunk<'a>, Error>
     where
-        B: for<'wb, 'buf> AsyncFnMut(
-            InvReqBuilder<ImBuildRootParent<'wb, 'buf>, 0>,
-        ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
-        F: AsyncFnMut(&InvokeResp<'_>) -> Result<(), Error>,
+        B: AsyncFnMut(InvReqBuilder<InvokeTxn<'a>, 0>) -> Result<InvokeTxn<'a>, Error>,
     {
-        let mut exchange: Exchange<'a> = self.into();
-        debug!(
-            "ImClient::invoke - Starting invoke (async build) on exchange {}",
-            exchange.id()
-        );
-
-        if let Some(timeout_ms) = timed_timeout_ms {
-            send_timed_request(&mut exchange, timeout_ms).await?;
+        let mut txn = self.invoke_txn(timed_timeout_ms).await?;
+        loop {
+            match txn.tx().await? {
+                EitherIo::Left(builder) => {
+                    txn = build(builder).await?;
+                }
+                EitherIo::Right(chunk) => return Ok(chunk),
+            }
         }
-
-        exchange
-            .send_with_async(async |_, wb| {
-                let parent = TLVWriteParent::new("InvokeRequest", wb);
-                let builder = InvReqBuilder::new(parent, &TLVTag::Anonymous)?;
-                let _root = build(builder).await?;
-                Ok(Some(OpCode::InvokeRequest.into()))
-            })
-            .await?;
-
-        recv_invoke_chunks(&mut exchange, on_response).await
     }
 
     /// Write attributes to a device.
@@ -727,47 +1182,43 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     where
         F: FnOnce(WriteResp<'_>) -> Result<T, Error>,
     {
-        Self::write_with(
-            self,
-            timed_timeout_ms,
-            |msg| {
-                // Bridge the snapshot-style API to the streaming one: the
-                // pre-collected `&[AttrData]` is re-emitted entry-by-entry
-                // through the streaming builder, so both code paths share
-                // exactly one TLV encoding implementation.
-                //
-                // `SuppressResponse` is implicitly omitted (the legacy
-                // snapshot did the same — `None` for that field). The
-                // legacy snapshot also wrote `TimedRequest` only when
-                // `timed=true`, so mirror that here.
-                let mut entries = if timed_timeout_ms.is_some() {
-                    msg.timed_request(true)?.write_requests()?
-                } else {
-                    msg.write_requests()?
-                };
-                for ad in attr_data {
-                    // Each `AttrDataBuilder<_, N>` is a different type per
-                    // typestate `N`; an if-else over `ad.data_ver` lets
-                    // both arms land at state 2 (via implicit
-                    // data_version skip on the None arm) and continue
-                    // uniformly.
-                    let entry = entries.push()?;
-                    entries = match ad.data_ver {
-                        Some(dv) => entry.data_version(dv)?.path_from(&ad.path)?,
-                        None => entry.path_from(&ad.path)?,
-                    }
-                    .data(|w| ad.data.to_tlv(&TLVTag::Context(AttrDataTag::Data as u8), w))?
-                    .end()?;
+        // Bridge: build through the streaming `WriteReqBuilder`, then
+        // invoke the caller's `on_resp` with the parsed `WriteResp`
+        // borrowed from the handle. The handle is dropped on return,
+        // releasing the exchange.
+        let handle = Self::write_with(self, timed_timeout_ms, |msg| {
+            // `SuppressResponse` is implicitly omitted (the legacy
+            // snapshot did the same — `None` for that field). The
+            // legacy snapshot also wrote `TimedRequest` only when
+            // `timed=true`, so mirror that here.
+            let mut entries = if timed_timeout_ms.is_some() {
+                msg.timed_request(true)?.write_requests()?
+            } else {
+                msg.write_requests()?
+            };
+            for ad in attr_data {
+                // Each `AttrDataBuilder<_, N>` is a different type per
+                // typestate `N`; an if-else over `ad.data_ver` lets
+                // both arms land at state 2 (via implicit
+                // data_version skip on the None arm) and continue
+                // uniformly.
+                let entry = entries.push()?;
+                entries = match ad.data_ver {
+                    Some(dv) => entry.data_version(dv)?.path_from(&ad.path)?,
+                    None => entry.path_from(&ad.path)?,
                 }
-                // `.end()` on the array closes it; the next `.end()` on
-                // the message implicitly skips `MoreChunkedMessages` and
-                // yields the root parent — proof that the message is
-                // well-formed.
-                entries.end()?.end()
-            },
-            on_resp,
-        )
-        .await
+                .data(|w| ad.data.to_tlv(&TLVTag::Context(AttrDataTag::Data as u8), w))?
+                .end()?;
+            }
+            // `.end()` on the array closes it; the next `.end()` on
+            // the message implicitly skips `MoreChunkedMessages` and
+            // yields the root parent — proof that the message is
+            // well-formed.
+            entries.end()?.end()
+        })
+        .await?;
+
+        on_resp(handle.response()?)
     }
 
     /// Streaming counterpart to [`write`](Self::write).
@@ -783,7 +1234,7 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// streaming client APIs use.
     ///
     /// The closure receives the message builder at typestate `0` and
-    /// must return the [`ImBuildRootParent`] that
+    /// must return the [the corresponding `*Txn`] that
     /// `WriteReqBuilder::end()` produces — this is the
     /// type-system proof that the caller closed every container the
     /// builder opened (`.end()` on the array, then `.end()` on the
@@ -806,33 +1257,23 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// shape — build through the streaming
     /// `WriteReqBuilder` from values captured by
     /// reference — is naturally idempotent.
-    async fn write_with<B, F, T>(
+    async fn write_with<B>(
         self,
         timed_timeout_ms: Option<u16>,
         mut build: B,
-        on_resp: F,
-    ) -> Result<T, Error>
+    ) -> Result<WriteRespHandle<'a>, Error>
     where
-        B: for<'wb, 'buf> FnMut(
-            WriteReqBuilder<ImBuildRootParent<'wb, 'buf>, 0>,
-        ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
-        F: FnOnce(WriteResp<'_>) -> Result<T, Error>,
+        B: FnMut(WriteReqBuilder<WriteTxn<'a>, 0>) -> Result<WriteTxn<'a>, Error>,
     {
-        let mut exchange: Exchange<'a> = self.into();
-        if let Some(timeout_ms) = timed_timeout_ms {
-            send_timed_request(&mut exchange, timeout_ms).await?;
+        let mut txn = self.write_txn(timed_timeout_ms).await?;
+        loop {
+            match txn.tx().await? {
+                EitherIo::Left(builder) => {
+                    txn = build(builder)?;
+                }
+                EitherIo::Right(handle) => return Ok(handle),
+            }
         }
-
-        exchange
-            .send_with(|_, wb| {
-                let parent = TLVWriteParent::new("WriteRequest", wb);
-                let builder = WriteReqBuilder::new(parent, &TLVTag::Anonymous)?;
-                let _root = build(builder)?;
-                Ok(Some(OpCode::WriteRequest.into()))
-            })
-            .await?;
-
-        recv_write_response(&mut exchange, on_resp).await
     }
 
     /// Async-build counterpart to [`write_with`](Self::write_with).
@@ -840,9 +1281,7 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// The `build` closure is `AsyncFnMut` and may `.await` while
     /// holding the typed [`WriteReqBuilder`] — useful when
     /// the attribute values must themselves be fetched asynchronously
-    /// (KV lookup, sensor read, async crypto, …). Returns the
-    /// [`ImBuildRootParent`] as the same proof-of-completeness as
-    /// [`write_with`](Self::write_with).
+    /// (KV lookup, sensor read, async crypto, …).
     ///
     /// **TX-slot lifetime caveat**: the underlying transport's TX
     /// buffer slot stays reserved for the entire duration of one
@@ -857,33 +1296,38 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// version — strengthened because the closure can now suspend
     /// and observe possibly-different external state on retransmit.
     /// Output must remain identical across retransmits.
-    async fn write_with_async<B, F, T>(
+    async fn write_with_async<B>(
         self,
         timed_timeout_ms: Option<u16>,
         mut build: B,
-        on_resp: F,
-    ) -> Result<T, Error>
+    ) -> Result<WriteRespHandle<'a>, Error>
     where
-        B: for<'wb, 'buf> AsyncFnMut(
-            WriteReqBuilder<ImBuildRootParent<'wb, 'buf>, 0>,
-        ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
-        F: FnOnce(WriteResp<'_>) -> Result<T, Error>,
+        B: AsyncFnMut(WriteReqBuilder<WriteTxn<'a>, 0>) -> Result<WriteTxn<'a>, Error>,
     {
+        let mut txn = self.write_txn(timed_timeout_ms).await?;
+        loop {
+            match txn.tx().await? {
+                EitherIo::Left(builder) => {
+                    txn = build(builder).await?;
+                }
+                EitherIo::Right(handle) => return Ok(handle),
+            }
+        }
+    }
+
+    /// Tier-1 `write` entry point — sets up a [`WriteTxn`]. If
+    /// `timed_timeout_ms` is `Some`, performs the `TimedRequest`
+    /// handshake first (the only I/O `write_txn` may do). The first
+    /// call to [`WriteTxn::tx`] yields the initial builder.
+    async fn write_txn(self, timed_timeout_ms: Option<u16>) -> Result<WriteTxn<'a>, Error> {
         let mut exchange: Exchange<'a> = self.into();
         if let Some(timeout_ms) = timed_timeout_ms {
             send_timed_request(&mut exchange, timeout_ms).await?;
         }
-
-        exchange
-            .send_with_async(async |_, wb| {
-                let parent = TLVWriteParent::new("WriteRequest", wb);
-                let builder = WriteReqBuilder::new(parent, &TLVTag::Anonymous)?;
-                let _root = build(builder).await?;
-                Ok(Some(OpCode::WriteRequest.into()))
-            })
-            .await?;
-
-        recv_write_response(&mut exchange, on_resp).await
+        let sender = exchange.into_sender()?;
+        Ok(WriteTxn {
+            state: WriteTxnState::Ready(sender),
+        })
     }
 
     // ---- Single-item convenience methods -------------------------------

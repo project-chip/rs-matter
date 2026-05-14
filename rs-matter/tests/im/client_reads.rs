@@ -22,6 +22,7 @@
 //! the default E2eTestHandler) and then call `ImClient` methods directly on the
 //! client-side exchange.
 
+use either::Either;
 use embassy_futures::block_on;
 use embassy_futures::select::select;
 
@@ -209,6 +210,73 @@ fn test_client_read_single_attr() {
             .await?;
 
             assert_eq!(value, 0x1234, "Att1 should return 0x1234");
+
+            Ok(())
+        })
+        .coalesce(),
+    )
+    .unwrap()
+}
+
+/// Tier-1 (closure-free) `read` via `ImClient::read_txn` +
+/// `ReadTxn::tx` + `ReadRespChunk`. Mirrors
+/// `test_client_invoke_txn_non_chunked`.
+#[test]
+fn test_client_read_txn_non_chunked() {
+    init_env_logger();
+
+    let im = new_default_runner();
+    im.add_default_acl();
+    let handler = im.handler();
+
+    block_on(
+        select(im.run(handler), async {
+            let exchange = im.initiate_exchange().await?;
+            let mut txn = exchange.read_txn().await?;
+
+            let path = AttrPath::from_gp(&GenericPath::new(
+                Some(0),
+                Some(echo_cluster::ID),
+                Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
+            ));
+            let paths = [path];
+
+            // Drive the retransmit loop.
+            let mut chunk = loop {
+                match txn.tx().await? {
+                    Either::Left(builder) => {
+                        txn = builder
+                            .attr_requests_from(&paths)?
+                            .fabric_filtered(false)?
+                            .end()?;
+                    }
+                    Either::Right(c) => break c,
+                }
+            };
+
+            // Iterate response chunks. Non-chunked read → exactly one chunk.
+            let mut chunk_count = 0u32;
+            let mut attr_count = 0u32;
+            loop {
+                chunk_count += 1;
+                {
+                    let resp = chunk.response()?;
+                    if let Some(attr_reports) = &resp.attr_reports {
+                        for attr_resp in attr_reports.iter() {
+                            if attr_resp.is_ok() {
+                                attr_count += 1;
+                            }
+                        }
+                    }
+                }
+                match chunk.complete().await? {
+                    Some(next) => chunk = next,
+                    None => break,
+                }
+            }
+
+            assert_eq!(chunk_count, 1, "Non-chunked read should have 1 chunk");
+            assert_eq!(attr_count, 1, "Should have received 1 attribute report");
 
             Ok(())
         })

@@ -18,12 +18,13 @@
 //! Client-side invoke tests exercising `ImClient::invoke`, `ImClient::invoke_single`,
 //! and `ImClient::invoke_single_cmd`.
 
+use either::Either;
 use embassy_futures::block_on;
 use embassy_futures::select::select;
 
 use rs_matter::im::client::ImClient;
-use rs_matter::im::{CmdData, CmdPath, CmdResp};
-use rs_matter::tlv::TLVElement;
+use rs_matter::im::{CmdData, CmdDataTag, CmdPath, CmdResp};
+use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
 use rs_matter::utils::select::Coalesce;
 
 use crate::common::e2e::im::echo_cluster;
@@ -163,6 +164,92 @@ fn test_client_invoke_single_cmd() {
             .await?;
 
             assert_eq!(value, 14, "EchoResp should return 7 * 2 = 14");
+
+            Ok(())
+        })
+        .coalesce(),
+    )
+    .unwrap()
+}
+
+/// Tier-1 (closure-free, scratch-buffer-free) `invoke` via
+/// `ImClient::invoke_txn` + `InvokeTxn::tx` + `InvokeRespChunk`.
+///
+/// Drives the retransmit-and-receive loop manually:
+///   1. `invoke_txn().await?`  →  `InvokeTxn` (no I/O yet).
+///   2. `txn.tx().await?`      →  on first call, returns `Left(builder)`.
+///   3. Build the request via the typed builder; `.end()` hands the
+///      `InvokeTxn` back.
+///   4. `txn.tx().await?`      →  commits bytes, awaits the framework.
+///                                Returns `Right(chunk)` once ACK-ed.
+///   5. `chunk.response()?`    →  borrowed `InvokeResp` for inspection.
+///   6. `chunk.complete().await?` → ACKs the chunk; returns the next
+///                                  chunk if `more_chunks=true`, else `None`.
+#[test]
+fn test_client_invoke_txn_non_chunked() {
+    init_env_logger();
+
+    let im = new_default_runner();
+    im.add_default_acl();
+    let handler = im.handler();
+
+    block_on(
+        select(im.run(handler), async {
+            let exchange = im.initiate_exchange().await?;
+            let mut txn = exchange.invoke_txn(None).await?;
+
+            // Drive the retransmit loop until the framework hands us
+            // the first response chunk.
+            let mut chunk = loop {
+                match txn.tx().await? {
+                    Either::Left(builder) => {
+                        txn = builder
+                            .suppress_response(false)?
+                            .timed_request(false)?
+                            .invoke_requests()?
+                            .push()?
+                            .path(0, echo_cluster::ID, echo_cluster::Commands::EchoReq as u32)?
+                            .data(|w| {
+                                // EchoReq body: anonymous TLV u8 retagged at
+                                // CmdDataTag::Data — same on-wire form as the
+                                // existing tier-2 invoke test (`[0x04, 5u8]`).
+                                w.u8(&TLVTag::Context(CmdDataTag::Data as u8), 5)
+                            })?
+                            .end()? // close CmdData entry
+                            .end()? // close InvokeRequests array
+                            .end()?; // close InvokeRequestMessage → InvokeTxn
+                    }
+                    Either::Right(c) => break c,
+                }
+            };
+
+            // Iterate the response-chunk loop. Non-chunked EchoReq
+            // gives exactly one chunk before `complete()` returns None.
+            let mut chunk_count = 0u32;
+            let mut got_response = false;
+            loop {
+                chunk_count += 1;
+                {
+                    let resp = chunk.response()?;
+                    if let Some(invoke_responses) = &resp.invoke_responses {
+                        for cmd_resp in invoke_responses.iter() {
+                            if cmd_resp.is_ok() {
+                                got_response = true;
+                            }
+                        }
+                    }
+                }
+                match chunk.complete().await? {
+                    Some(next) => chunk = next,
+                    None => break,
+                }
+            }
+
+            assert_eq!(
+                chunk_count, 1,
+                "Non-chunked invoke should have exactly 1 chunk"
+            );
+            assert!(got_response, "Should have received an invoke response");
 
             Ok(())
         })
