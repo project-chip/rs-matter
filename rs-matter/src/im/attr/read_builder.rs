@@ -83,7 +83,7 @@ use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite, ToTLV};
 /// - `4`: past `FabricFiltered` (mandatory; no implicit-skip path
 ///   from state 0/1/2/3 to here)
 /// - `5`: past `DataVersionFilters`
-pub struct ReadReqBuilder<P, const F: usize> {
+pub struct ReadReqBuilder<P, const F: usize = 0> {
     p: P,
 }
 
@@ -450,7 +450,7 @@ where
 /// `Endpoint` and `Attribute`). Each setter advances directly to its
 /// own state; later-field setters on earlier states implicitly skip
 /// the ones in between.
-pub struct AttrPathBuilder<P, const F: usize> {
+pub struct AttrPathBuilder<P, const F: usize = 0> {
     p: P,
     _f: PhantomData<[(); F]>,
 }

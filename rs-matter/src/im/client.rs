@@ -94,7 +94,7 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// request, so this is safe.
     async fn read_with<B>(self, mut build: B) -> Result<ReadRespChunk<'a>, Error>
     where
-        B: FnMut(ReadReqBuilder<ReadSender<'a>, 0>) -> Result<ReadSender<'a>, Error>,
+        B: FnMut(ReadReqBuilder<ReadSender<'a>>) -> Result<ReadSender<'a>, Error>,
     {
         // Drives the retransmit loop on the caller's behalf
         // (build closure idempotency contract — same TLV bytes on
@@ -162,7 +162,7 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
         mut build: B,
     ) -> Result<WriteRespHandle<'a>, Error>
     where
-        B: FnMut(WriteReqBuilder<WriteSender<'a>, 0>) -> Result<WriteSender<'a>, Error>,
+        B: FnMut(WriteReqBuilder<WriteSender<'a>>) -> Result<WriteSender<'a>, Error>,
     {
         let mut sender = self.write_sender(timed_timeout_ms).await?;
         loop {
@@ -243,7 +243,7 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
         mut build: B,
     ) -> Result<InvokeRespChunk<'a>, Error>
     where
-        B: FnMut(InvReqBuilder<InvokeSender<'a>, 0>) -> Result<InvokeSender<'a>, Error>,
+        B: FnMut(InvReqBuilder<InvokeSender<'a>>) -> Result<InvokeSender<'a>, Error>,
     {
         // Drives the retransmit loop on the caller's behalf:
         // the `build` closure is (re-)run on every framework attempt
@@ -303,7 +303,7 @@ impl<'a> ReadSender<'a> {
     /// identical except the right arm holds a [`ReadRespChunk`].
     pub async fn tx(
         mut self,
-    ) -> Result<TxOutcome<ReadReqBuilder<ReadSender<'a>, 0>, ReadRespChunk<'a>>, Error> {
+    ) -> Result<TxOutcome<ReadReqBuilder<ReadSender<'a>>, ReadRespChunk<'a>>, Error> {
         let sender = match self.state {
             ReadSenderState::Slot(slot) => slot.commit()?,
             ReadSenderState::Ready(s) => s,
@@ -496,7 +496,7 @@ impl<'a> WriteSender<'a> {
     /// returns a [`WriteRespHandle`] (no chunking on write).
     pub async fn tx(
         mut self,
-    ) -> Result<TxOutcome<WriteReqBuilder<WriteSender<'a>, 0>, WriteRespHandle<'a>>, Error> {
+    ) -> Result<TxOutcome<WriteReqBuilder<WriteSender<'a>>, WriteRespHandle<'a>>, Error> {
         let sender = match self.state {
             WriteSenderState::Slot(slot) => slot.commit()?,
             WriteSenderState::Ready(s) => s,
@@ -689,7 +689,7 @@ impl<'a> InvokeSender<'a> {
     /// to yield `TxOutcome::BuildRequest(builder)` because no message has been sent yet.
     pub async fn tx(
         mut self,
-    ) -> Result<TxOutcome<InvReqBuilder<InvokeSender<'a>, 0>, InvokeRespChunk<'a>>, Error> {
+    ) -> Result<TxOutcome<InvReqBuilder<InvokeSender<'a>>, InvokeRespChunk<'a>>, Error> {
         // 1. If we're in Slot state, commit the bytes we just built.
         let sender = match self.state {
             InvokeSenderState::Slot(slot) => slot.commit()?,

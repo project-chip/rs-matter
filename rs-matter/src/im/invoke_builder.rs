@@ -100,7 +100,7 @@ use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite, ToTLV};
 /// - `1`: past `SuppressResponse`
 /// - `2`: past `TimedRequest`
 /// - `3`: past `InvokeRequests` array
-pub struct InvReqBuilder<P, const F: usize> {
+pub struct InvReqBuilder<P, const F: usize = 0> {
     p: P,
 }
 
@@ -300,7 +300,7 @@ where
 /// - `1`: past `Path`
 /// - `2`: past `Data` (struct can be closed)
 /// - `3`: past `CommandRef`
-pub struct CmdDataBuilder<P, const F: usize> {
+pub struct CmdDataBuilder<P, const F: usize = 0> {
     p: P,
     _f: PhantomData<[(); F]>,
 }

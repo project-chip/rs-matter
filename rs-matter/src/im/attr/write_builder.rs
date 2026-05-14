@@ -123,7 +123,7 @@ use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite};
 /// .write_requests()? … .end()?` — `SuppressResponse` and
 /// `MoreChunkedMessages` default to absent (= false on the wire),
 /// `TimedRequest` is only set when issuing a timed write.
-pub struct WriteReqBuilder<P, const F: usize> {
+pub struct WriteReqBuilder<P, const F: usize = 0> {
     p: P,
 }
 
@@ -396,7 +396,7 @@ where
 /// - `1`: `DataVersion` decided
 /// - `2`: `Path` written
 /// - `3`: `Data` written (struct can be closed)
-pub struct AttrDataBuilder<P, const F: usize> {
+pub struct AttrDataBuilder<P, const F: usize = 0> {
     p: P,
     _f: PhantomData<[(); F]>,
 }
