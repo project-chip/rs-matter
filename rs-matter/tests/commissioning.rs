@@ -64,12 +64,10 @@ use rs_matter::dm::{
     IMBuffer, Node,
 };
 use rs_matter::error::Error;
-use rs_matter::im::client::ImClient;
-use rs_matter::im::{AttrResp, CmdResp, IMStatusCode};
+use rs_matter::im::IMStatusCode;
 use rs_matter::persist::DummyKvBlobStoreAccess;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::{PaseInitiator, MAX_COMM_WINDOW_TIMEOUT_SECS};
-use rs_matter::tlv::TLVTag;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::mdns::{CommissionableFilter, DiscoveredDevice};
 use rs_matter::transport::network::tcp::TcpNetwork;
@@ -303,7 +301,10 @@ async fn run_controller_flow<C: Crypto>(
     info!("=== Phase 2: PASE Session Establishment ===");
     establish_pase_session(matter, crypto, peer_addr, TEST_PASSCODE).await?;
 
-    info!("=== Phase 3: Interaction Model Operations ===");
+    info!("=== Phase 3: ArmFailSafe (response-bearing command) ===");
+    test_arm_failsafe(matter).await?;
+
+    info!("=== Phase 4: Interaction Model Operations ===");
     test_onoff_cluster(matter).await?;
 
     info!("=== All commissioning test phases completed successfully! ===");
@@ -557,54 +558,13 @@ async fn read_onoff_with_timeout(matter: &Matter<'_>) -> Result<bool, Error> {
 }
 
 async fn read_onoff(exchange: Exchange<'_>) -> Result<bool, Error> {
-    use either::Either;
-    use rs_matter::dm::clusters::app::on_off::OnOffAttrReads;
+    use rs_matter::dm::clusters::app::on_off::OnOffClient;
 
-    let mut txn = exchange.read_txn().await?;
-
-    let mut chunk = loop {
-        match txn.tx().await? {
-            Either::Left(builder) => {
-                // The codegen extension method bakes in cluster ID
-                // (0x0006) and attribute ID (`OnOff::OnOff` = 0).
-                txn = builder
-                    .attr_requests()?
-                    .push_on_off_on_off(1)?
-                    .end()?
-                    .fabric_filtered(true)?
-                    .end()?;
-            }
-            Either::Right(c) => break c,
-        }
-    };
-
-    // Extract the value from the first attribute report; then drain
-    // any remaining chunks to send the trailing StatusResponse(Success).
-    let value = {
-        let resp = chunk.response()?;
-        let attr_reports = resp
-            .attr_reports
-            .as_ref()
-            .ok_or(rs_matter::error::ErrorCode::InvalidData)?;
-        let attr_resp = attr_reports
-            .iter()
-            .next()
-            .ok_or(rs_matter::error::ErrorCode::InvalidData)?
-            .map_err(|_| rs_matter::error::ErrorCode::InvalidData)?;
-        match attr_resp {
-            AttrResp::Data(data) => data.data.bool()?,
-            AttrResp::Status(status) => {
-                warn!("Read returned status: {:?}", status.status);
-                return Err(rs_matter::error::ErrorCode::InvalidData.into());
-            }
-        }
-    };
-
-    while let Some(next) = chunk.complete().await? {
-        chunk = next;
-    }
-
-    Ok(value)
+    // Single-shot: cluster ID, attribute ID, fabric_filtered=true,
+    // retransmit loop, response parsing, status-to-error conversion,
+    // and chunk drain (trailing StatusResponse) are all baked into
+    // the codegen-emitted `on_off_on_off_read`.
+    exchange.on_off_on_off_read(1).await
 }
 
 async fn invoke_toggle_with_timeout(matter: &Matter<'_>) -> Result<IMStatusCode, Error> {
@@ -624,57 +584,69 @@ async fn invoke_toggle_with_timeout(matter: &Matter<'_>) -> Result<IMStatusCode,
 }
 
 async fn invoke_toggle(exchange: Exchange<'_>) -> Result<IMStatusCode, Error> {
-    use either::Either;
-    use rs_matter::dm::clusters::app::on_off::OnOffCmdRequests;
+    use rs_matter::dm::clusters::app::on_off::OnOffClient;
 
-    let mut txn = exchange.invoke_txn(None).await?;
-    let mut chunk = loop {
-        match txn.tx().await? {
-            Either::Left(builder) => {
-                // `OnOff::Toggle` is an empty-request (DefaultSuccess)
-                // command — the codegen extension method bakes in the
-                // cluster ID (0x0006), the command ID (2), and the
-                // empty `Data` struct, returning the array builder
-                // directly.
-                txn = builder
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?
-                    .push_on_off_toggle(1)?
-                    .end()?
-                    .end()?;
-            }
-            Either::Right(c) => break c,
+    // `OnOff::Toggle` is an empty-request DefaultSuccess command —
+    // `on_off_toggle` returns `Ok(())` on success and converts the
+    // IM status to an `Error` otherwise. The remaining `IMStatusCode`
+    // return type is preserved for the caller — on the happy path it
+    // is always `Success`.
+    exchange.on_off_toggle(1).await?;
+    Ok(IMStatusCode::Success)
+}
+
+// ============================================================================
+// Phase 3: ArmFailSafe — exercises the response-bearing client-trait method
+// ============================================================================
+
+async fn test_arm_failsafe(matter: &Matter<'_>) -> Result<(), Error> {
+    let exchange = Exchange::initiate(matter, 0, 0, true).await?;
+    debug!("ArmFailSafe exchange initiated: {}", exchange.id());
+
+    let mut fut = pin!(invoke_arm_failsafe(exchange));
+    let mut timeout = pin!(Timer::after(Duration::from_secs(IM_TIMEOUT_SECS)));
+
+    match select(&mut fut, &mut timeout).await {
+        Either::First(result) => result,
+        Either::Second(_) => {
+            warn!("ArmFailSafe timed out");
+            Err(rs_matter::error::ErrorCode::RxTimeout.into())
         }
-    };
-
-    // OnOff::Toggle returns DefaultSuccess → status-only chunk.
-    let status = if chunk.is_status_only() {
-        // Status-only path: receive() already validated the status
-        // is Success (else it returns Err). So we know it's Success.
-        IMStatusCode::Success
-    } else {
-        let resp = chunk
-            .response()?
-            .expect("non-status_only branch must have a response");
-        let cmd_resp = resp
-            .invoke_responses
-            .as_ref()
-            .and_then(|r| r.iter().next())
-            .ok_or(rs_matter::error::ErrorCode::InvalidData)?
-            .map_err(|_| rs_matter::error::ErrorCode::InvalidData)?;
-        match cmd_resp {
-            CmdResp::Status(s) => s.status.status,
-            CmdResp::Cmd(_) => IMStatusCode::Success,
-        }
-    };
-
-    // Drain remaining chunks (sends trailing StatusResponse(Success) if any).
-    while let Some(next) = chunk.complete().await? {
-        chunk = next;
     }
+}
 
-    Ok(status)
+async fn invoke_arm_failsafe(exchange: Exchange<'_>) -> Result<(), Error> {
+    use rs_matter::dm::clusters::gen_comm::{
+        ArmFailSafeResponseHandle, CommissioningErrorEnum, GeneralCommissioningClient,
+    };
+
+    // `ArmFailSafe(expiry=60s, breadcrumb=0)` on the root endpoint —
+    // the response-bearing single-shot. The codegen-emitted
+    // `general_commissioning_arm_fail_safe` returns the typed
+    // `ArmFailSafeResponseHandle<'_>`, which keeps the exchange's RX
+    // buffer alive so the caller can read the borrowed response;
+    // then `.complete().await?` sends the trailing
+    // `StatusResponse(Success)` and closes the exchange.
+    let handle: ArmFailSafeResponseHandle<'_> = exchange
+        .general_commissioning_arm_fail_safe(0, |req| {
+            req.expiry_length_seconds(60)?.breadcrumb(0)?.end()
+        })
+        .await?;
+
+    let (error_code, debug_text_len) = {
+        let resp = handle.response()?;
+        let error_code = resp.error_code()?;
+        let debug_text_len = resp.debug_text()?.len();
+        (error_code, debug_text_len)
+    };
+    info!("ArmFailSafe response: error_code={error_code:?}, debug_text_len={debug_text_len}");
+    assert_eq!(
+        error_code,
+        CommissioningErrorEnum::OK,
+        "ArmFailSafe should succeed"
+    );
+
+    handle.complete().await
 }
 
 // ============================================================================

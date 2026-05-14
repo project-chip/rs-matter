@@ -99,3 +99,7 @@ jobs:
       - name: Examples - Sync Mutex
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
         run: cargo build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log,zbus,sync-mutex
+
+      - name: Examples - WebRTC Camera
+        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
+        run: cargo build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log,zbus,webrtc-camera

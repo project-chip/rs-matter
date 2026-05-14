@@ -94,8 +94,8 @@ use rs_matter::dm::clusters::app::cam_av_stream::{
     RateDistortionPoint, StreamUsageEnum, VideoCodecEnum, VideoSensorParams, VideoStream,
 };
 use rs_matter::dm::clusters::app::webrtc_prov::{
-    AnswerOutcome, HandlerAsyncAdaptor as WebRtcAdaptor, OfferParams, OutboundWork, SolicitOutcome,
-    WebRtcError, WebRtcHooks, WebRtcProvHandler,
+    AnswerOutcome, HandlerAsyncAdaptor as WebRtcAdaptor, IceCandidateSink, OfferParams,
+    OutboundWork, SolicitOutcome, WebRtcError, WebRtcHooks, WebRtcProvHandler,
 };
 use rs_matter::dm::clusters::app::zone_mgmt::{
     HandlerAsyncAdaptor as ZoneMgmtAdaptor, ZoneMgmtConfig, ZoneMgmtHandler, ZoneMgmtHooks,
@@ -111,6 +111,7 @@ use rs_matter::dm::events::NoEvents;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
+use rs_matter::dm::DataModel;
 use rs_matter::dm::DeviceType;
 use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{DataModelHandler, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node};
@@ -120,7 +121,7 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter::tlv::{Nullable, TLVArray, TLVBuilderParent};
+use rs_matter::tlv::TLVArray;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
@@ -136,7 +137,6 @@ use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc};
 
 // The generated TLV builder for an `ICECandidateStruct` array element.
-use rs_matter::dm::clusters::decl::globals::ICECandidateStructArrayBuilder;
 
 #[path = "../common/mdns.rs"]
 mod mdns;
@@ -161,8 +161,15 @@ const SDP_LEN: usize = 8 * 1024;
 // Must be large enough to hold an outbound `Answer(sdp)` invoke payload,
 // i.e. the full SDP plus TLV framing overhead.
 const OUT_LEN: usize = SDP_LEN + 1024;
+// Bounds for the per-invoke ICE candidate snapshot — `WebRtcProvHandler`
+// stack-allocates `Vec<heapless::String<CAND_LEN>, MAX_CAND>` for each
+// outbound `IceCandidates` invoke and hands a `&mut` sink view to the
+// hook. SDP candidate strings are typically <100 bytes; trickle rounds
+// rarely exceed a handful of candidates.
+const CAND_LEN: usize = 256;
+const MAX_CAND: usize = 16;
 
-type WebRtc = WebRtcProvHandler<Str0mHooks, N_SESSIONS, SDP_LEN, OUT_LEN>;
+type WebRtc = WebRtcProvHandler<Str0mHooks, N_SESSIONS, SDP_LEN, OUT_LEN, CAND_LEN, MAX_CAND>;
 
 /// Stream usages advertised by the `CameraAVStreamManagement` cluster, in
 /// priority order (highest priority first). `LiveView` is the only usage
@@ -396,7 +403,8 @@ struct SessionCtrl {
     remote_cand_tx: Sender<Candidate>,
     shutdown_tx: Sender<()>,
     /// Locally-gathered candidates awaiting transmission via
-    /// `fill_ice_candidates`. Populated by the driver, drained by the hook.
+    /// `take_ice_candidates`. Populated by the driver, drained by the
+    /// hook on each outbound `IceCandidates` invoke.
     trickle_buf: Rc<RefCell<Vec<String>>>,
     /// SDP Answer produced by `on_offer`, awaiting transmission via
     /// `take_answer_sdp`. `None` once the Answer has been pushed.
@@ -1039,31 +1047,25 @@ impl WebRtcHooks for Str0mHooks {
         }
     }
 
-    async fn fill_ice_candidates<P: TLVBuilderParent>(
+    async fn take_ice_candidates(
         &self,
         session_id: u16,
-        mut candidates: ICECandidateStructArrayBuilder<P>,
-    ) -> Result<P, Error> {
-        // Drain the per-session trickle buffer.
-        let drained: Vec<String> = {
-            let inner = self.shared.inner.borrow();
-            if let Some(s) = inner.sessions.get(&session_id) {
-                s.trickle_buf.borrow_mut().drain(..).collect()
-            } else {
-                Vec::new()
-            }
+        out: &mut dyn IceCandidateSink,
+    ) -> Result<(), WebRtcError> {
+        // Snapshot-and-consume the trickle buffer. The handler will
+        // iterate `out` inside a sync FnMut build closure that MRP
+        // may re-run on retransmit — but the closure works off the
+        // snapshot (not this queue), so re-runs are idempotent and
+        // we can drain here without any in-flight bookkeeping.
+        let inner = self.shared.inner.borrow();
+        let Some(s) = inner.sessions.get(&session_id) else {
+            return Ok(());
         };
-
+        let drained: Vec<String> = s.trickle_buf.borrow_mut().drain(..).collect();
         for cand in &drained {
-            candidates = candidates
-                .push()?
-                .candidate(cand.as_str())?
-                .sdp_mid(Nullable::none())?
-                .sdpm_line_index(Nullable::none())?
-                .end()?;
+            out.push(cand)?;
         }
-
-        candidates.end()
+        Ok(())
     }
 
     async fn take_answer_sdp(

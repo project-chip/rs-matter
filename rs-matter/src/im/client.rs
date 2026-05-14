@@ -787,21 +787,23 @@ impl<'a> WriteRespHandle<'a> {
 /// Matter Interaction Model client operations.
 ///
 /// Implemented for [`Exchange<'a>`]; user code just `use`s this trait
-/// to get method-syntax access on any exchange handle:
+/// to get method-syntax access on any exchange handle. Two flavours
+/// of method live on this trait:
 ///
-/// ```ignore
-/// use rs_matter::im::client::ImClient;
+/// - `*_txn` — tier-1, hands the caller a typed `*Txn` they drive
+///   manually. Maximum control, full visibility into the retransmit
+///   loop and chunked response iteration.
+/// - `*_with` / `*_with_async` — tier-2, takes a build closure that
+///   writes the request straight into the TX buffer; the retransmit
+///   loop is handled internally and the first response chunk is
+///   handed back for the caller to iterate via `complete()`.
 ///
-/// let exchange = Exchange::initiate(matter, fab, peer, true).await?;
-/// let value = exchange
-///     .read_single_attr(1, OnOff::ID, OnOff::ON_OFF_ATTR_ID, true, |resp| {
-///         match resp {
-///             AttrResp::Data(d) => d.data.bool(),
-///             AttrResp::Status(s) => Err(s.status.to_error_code().unwrap().into()),
-///         }
-///     })
-///     .await?;
-/// ```
+/// On top of these, the codegen-emitted per-cluster
+/// `<ClusterName>Client<'a>` traits add high-level single-shot
+/// methods (`<cluster>_<command>` / `<cluster>_<attr>_read` /
+/// `<cluster>_<attr>_write`) that bake in the cluster/attr/cmd IDs
+/// and the chunk-drain / status-to-error conversion for the common
+/// case.
 ///
 /// The trait sits over `Self: Into<Exchange<'a>>` so any type that
 /// converts to an exchange can opt in via a one-line blanket impl;
@@ -814,12 +816,7 @@ impl<'a> WriteRespHandle<'a> {
 /// exchange is one IM transaction, end of story. After the method
 /// returns, the exchange is closed and the slot is released; callers
 /// wanting to issue another transaction must initiate a fresh
-/// exchange. Methods that need to surface zero-copy response data
-/// ([`write`](Self::write), [`read_single_attr`](Self::read_single_attr),
-/// [`invoke_single_cmd`](Self::invoke_single_cmd)) take an
-/// `FnOnce(Resp<'_>) -> Result<T, Error>` callback so the borrowed
-/// response can be inspected before the exchange is dropped; the
-/// callback's return value is propagated as owned `T`.
+/// exchange.
 pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// Streaming counterpart to [`read_txn`](Self::read_txn).
     ///
