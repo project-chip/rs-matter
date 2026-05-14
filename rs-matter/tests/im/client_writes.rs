@@ -15,13 +15,12 @@
  *    limitations under the License.
  */
 
-//! Client-side write tests exercising the tier-1 `WriteTxn` API.
+//! Client-side write tests exercising the `WriteSender` API.
 
-use either::Either;
 use embassy_futures::block_on;
 use embassy_futures::select::select;
 
-use rs_matter::im::client::ImClient;
+use rs_matter::im::client::{ImClient, TxOutcome};
 use rs_matter::im::{AttrDataTag, IMStatusCode};
 use rs_matter::tlv::{TLVElement, TLVTag, ToTLV};
 use rs_matter::utils::select::Coalesce;
@@ -31,7 +30,7 @@ use crate::common::e2e::new_default_runner;
 use crate::common::init_env_logger;
 
 #[test]
-fn test_client_write_txn() {
+fn test_client_write_sender() {
     init_env_logger();
 
     let im = new_default_runner();
@@ -41,7 +40,7 @@ fn test_client_write_txn() {
     block_on(
         select(im.run(handler), async {
             let exchange = im.initiate_exchange().await?;
-            let mut txn = exchange.write_txn(None).await?;
+            let mut sender = exchange.write_sender(None).await?;
 
             // Encode a u16 value (0x0539) as anonymous TLV. Same wire
             // form as the snapshot-API test above.
@@ -50,8 +49,8 @@ fn test_client_write_txn() {
 
             // Drive the retransmit loop.
             let handle = loop {
-                match txn.tx().await? {
-                    Either::Left(builder) => {
+                match sender.tx().await? {
+                    TxOutcome::BuildRequest(builder) => {
                         // Skip SuppressResponse + TimedRequest (implicit).
                         let entries = builder.write_requests()?;
                         // One AttrData entry: write echo_cluster::AttWrite on endpoint 0.
@@ -65,9 +64,9 @@ fn test_client_write_txn() {
                             )?
                             .data(|w| value.to_tlv(&TLVTag::Context(AttrDataTag::Data as u8), w))?
                             .end()?; // close AttrData → AttrDataArrayBuilder
-                        txn = entry.end()?.end()?; // close array, close msg
+                        sender = entry.end()?.end()?; // close array, close msg
                     }
-                    Either::Right(h) => break h,
+                    TxOutcome::GotResponse(h) => break h,
                 }
             };
 

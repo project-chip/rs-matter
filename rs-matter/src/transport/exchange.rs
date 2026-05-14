@@ -1365,60 +1365,6 @@ impl<'a> Exchange<'a> {
         Ok(())
     }
 
-    /// Async-closure counterpart to [`send_with`](Self::send_with).
-    ///
-    /// The build closure may itself `.await` while holding the
-    /// `&mut WriteBuf` — useful when the request body depends on
-    /// values that must be fetched asynchronously (KV lookup, sensor
-    /// read, async crypto sign, …).
-    ///
-    /// # Idempotency
-    ///
-    /// As with [`send_with`], MRP retransmits invoke the closure
-    /// again with a fresh `WriteBuf` on every attempt. The wire
-    /// payload must be identical across calls — if the closure's
-    /// `.await` resolves a different value on retransmit, the
-    /// recipient may observe inconsistent state. This is a stronger
-    /// version of the existing idempotency contract because the
-    /// closure now has more ways to be non-deterministic.
-    ///
-    /// # TX-slot reservation lifetime
-    ///
-    /// The transport-layer TX buffer slot (acquired internally via
-    /// `init_send`) is held for the entire duration of one closure
-    /// invocation — including any time the closure spends awaiting.
-    /// With a small TX buffer pool, a slow-awaiting closure could
-    /// starve other concurrent exchanges. Use only when the build's
-    /// async dependencies are bounded and short (≪ MRP retransmit
-    /// interval). For builds that can stall arbitrarily, prefer
-    /// computing the payload before calling this method and passing
-    /// values by capture into a sync [`send_with`] closure.
-    pub async fn send_with_async<F>(&mut self, mut f: F) -> Result<(), Error>
-    where
-        F: AsyncFnMut(&Exchange<'_>, &mut WriteBuf<'_>) -> Result<Option<MessageMeta>, Error>,
-    {
-        let mut sender = self.sender()?;
-
-        while let Some(mut tx) = sender.tx().await? {
-            let (exchange, payload) = tx.split();
-            let mut wb = WriteBuf::new(payload);
-
-            // Closure may `.await` inside; the TX slot stays
-            // reserved (see the doc comment for the implications).
-            let outcome = f(exchange, &mut wb).await?;
-
-            if let Some(meta) = outcome {
-                let payload_start = wb.get_start();
-                let payload_end = wb.get_tail();
-                tx.complete(payload_start, payload_end, meta)?;
-            } else {
-                break;
-            }
-        }
-
-        Ok(())
-    }
-
     /// Send the provided exchange meta-data and payload as part of this exchange.
     ///
     /// If the provided exchange meta-data indicates a reliable message, the message will be automatically re-transmitted until

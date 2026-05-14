@@ -15,13 +15,12 @@
  *    limitations under the License.
  */
 
-//! Client-side invoke tests exercising the tier-1 `InvokeTxn` API.
+//! Client-side invoke tests exercising the `InvokeSender` API.
 
-use either::Either;
 use embassy_futures::block_on;
 use embassy_futures::select::select;
 
-use rs_matter::im::client::ImClient;
+use rs_matter::im::client::{ImClient, TxOutcome};
 use rs_matter::im::CmdDataTag;
 use rs_matter::tlv::{TLVTag, TLVWrite};
 use rs_matter::utils::select::Coalesce;
@@ -31,7 +30,7 @@ use crate::common::e2e::new_default_runner;
 use crate::common::init_env_logger;
 
 #[test]
-fn test_client_invoke_txn_non_chunked() {
+fn test_client_invoke_sender_non_chunked() {
     init_env_logger();
 
     let im = new_default_runner();
@@ -41,14 +40,14 @@ fn test_client_invoke_txn_non_chunked() {
     block_on(
         select(im.run(handler), async {
             let exchange = im.initiate_exchange().await?;
-            let mut txn = exchange.invoke_txn(None).await?;
+            let mut sender = exchange.invoke_sender(None).await?;
 
             // Drive the retransmit loop until the framework hands us
             // the first response chunk.
             let mut chunk = loop {
-                match txn.tx().await? {
-                    Either::Left(builder) => {
-                        txn = builder
+                match sender.tx().await? {
+                    TxOutcome::BuildRequest(builder) => {
+                        sender = builder
                             .suppress_response(false)?
                             .timed_request(false)?
                             .invoke_requests()?
@@ -57,14 +56,14 @@ fn test_client_invoke_txn_non_chunked() {
                             .data(|w| {
                                 // EchoReq body: anonymous TLV u8 retagged at
                                 // CmdDataTag::Data — same on-wire form as the
-                                // existing tier-2 invoke test (`[0x04, 5u8]`).
+                                // existing invoke test (`[0x04, 5u8]`).
                                 w.u8(&TLVTag::Context(CmdDataTag::Data as u8), 5)
                             })?
                             .end()? // close CmdData entry
                             .end()? // close InvokeRequests array
-                            .end()?; // close InvokeRequestMessage → InvokeTxn
+                            .end()?; // close InvokeRequestMessage → InvokeSender
                     }
-                    Either::Right(c) => break c,
+                    TxOutcome::GotResponse(c) => break c,
                 }
             };
 

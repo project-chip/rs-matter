@@ -15,13 +15,12 @@
  *    limitations under the License.
  */
 
-//! Client-side read tests exercising the tier-1 `ReadTxn` API.
+//! Client-side read tests exercising the `ReadSender` API.
 
-use either::Either;
 use embassy_futures::block_on;
 use embassy_futures::select::select;
 
-use rs_matter::im::client::ImClient;
+use rs_matter::im::client::{ImClient, TxOutcome};
 use rs_matter::im::{AttrPath, GenericPath};
 use rs_matter::utils::select::Coalesce;
 
@@ -29,10 +28,10 @@ use crate::common::e2e::im::echo_cluster;
 use crate::common::e2e::new_default_runner;
 use crate::common::init_env_logger;
 
-/// `ReadTxn::tx` + `ReadRespChunk`. Mirrors
-/// `test_client_invoke_txn_non_chunked`.
+/// `ReadSender::tx` + `ReadRespChunk`. Mirrors
+/// `test_client_invoke_sender_non_chunked`.
 #[test]
-fn test_client_read_txn_non_chunked() {
+fn test_client_read_sender_non_chunked() {
     init_env_logger();
 
     let im = new_default_runner();
@@ -42,7 +41,7 @@ fn test_client_read_txn_non_chunked() {
     block_on(
         select(im.run(handler), async {
             let exchange = im.initiate_exchange().await?;
-            let mut txn = exchange.read_txn().await?;
+            let mut sender = exchange.read_sender().await?;
 
             let path = AttrPath::from_gp(&GenericPath::new(
                 Some(0),
@@ -53,14 +52,14 @@ fn test_client_read_txn_non_chunked() {
 
             // Drive the retransmit loop.
             let mut chunk = loop {
-                match txn.tx().await? {
-                    Either::Left(builder) => {
-                        txn = builder
+                match sender.tx().await? {
+                    TxOutcome::BuildRequest(builder) => {
+                        sender = builder
                             .attr_requests_from(&paths)?
                             .fabric_filtered(false)?
                             .end()?;
                     }
-                    Either::Right(c) => break c,
+                    TxOutcome::GotResponse(c) => break c,
                 }
             };
 
@@ -95,13 +94,13 @@ fn test_client_read_txn_non_chunked() {
     .unwrap()
 }
 
-/// Chunked wildcard read via tier-1 — verifies the chunk loop on
+/// Chunked wildcard read — verifies the chunk loop on
 /// `InvokeRespChunk` / `ReadRespChunk` correctly iterates multiple
 /// chunks when the server signals `more_chunks=true`. Reading every
 /// attribute on every endpoint should produce > 1 chunk and many
 /// attribute reports.
 #[test]
-fn test_client_read_txn_chunked_wildcard() {
+fn test_client_read_sender_chunked_wildcard() {
     init_env_logger();
 
     let im = new_default_runner();
@@ -111,21 +110,21 @@ fn test_client_read_txn_chunked_wildcard() {
     block_on(
         select(im.run(handler), async {
             let exchange = im.initiate_exchange().await?;
-            let mut txn = exchange.read_txn().await?;
+            let mut sender = exchange.read_sender().await?;
 
             // Wildcard path: every attribute on every endpoint.
             let path = AttrPath::from_gp(&GenericPath::new(None, None, None));
             let paths = [path];
 
             let mut chunk = loop {
-                match txn.tx().await? {
-                    Either::Left(builder) => {
-                        txn = builder
+                match sender.tx().await? {
+                    TxOutcome::BuildRequest(builder) => {
+                        sender = builder
                             .attr_requests_from(&paths)?
                             .fabric_filtered(false)?
                             .end()?;
                     }
-                    Either::Right(c) => break c,
+                    TxOutcome::GotResponse(c) => break c,
                 }
             };
 

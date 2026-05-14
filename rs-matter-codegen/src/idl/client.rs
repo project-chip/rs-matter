@@ -570,7 +570,7 @@ fn client_trait(
                         #req_builder<
                             #krate::im::CmdDataBuilder<
                                 #krate::im::CmdDataArrayBuilder<
-                                    #krate::im::InvReqBuilder<#krate::im::client::InvokeTxn<'a>, 3>,
+                                    #krate::im::InvReqBuilder<#krate::im::client::InvokeSender<'a>, 3>,
                                 >,
                                 2,
                             >,
@@ -579,7 +579,7 @@ fn client_trait(
                     ) -> Result<
                         #krate::im::CmdDataBuilder<
                             #krate::im::CmdDataArrayBuilder<
-                                #krate::im::InvReqBuilder<#krate::im::client::InvokeTxn<'a>, 3>,
+                                #krate::im::InvReqBuilder<#krate::im::client::InvokeSender<'a>, 3>,
                             >,
                             2,
                         >,
