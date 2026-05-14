@@ -41,7 +41,7 @@ fn test_client_invoke_non_chunked() {
 
     block_on(
         select(im.run(handler), async {
-            let mut exchange = im.initiate_exchange().await?;
+            let exchange = im.initiate_exchange().await?;
 
             let path = CmdPath {
                 endpoint: Some(0),
@@ -60,7 +60,7 @@ fn test_client_invoke_non_chunked() {
             let mut chunk_count = 0u32;
             let mut got_response = false;
 
-            ImClient::invoke(&mut exchange, &[cmd], None, |resp| {
+            ImClient::invoke(exchange, &[cmd], None, |resp| {
                 chunk_count += 1;
 
                 if let Some(invoke_responses) = &resp.invoke_responses {
@@ -99,13 +99,13 @@ fn test_client_invoke_single() {
 
     block_on(
         select(im.run(handler), async {
-            let mut exchange = im.initiate_exchange().await?;
+            let exchange = im.initiate_exchange().await?;
 
             // EchoReq on endpoint 0 with value 5; multiplier is 2, so expect 10
             let echo_data = [0x04, 5u8]; // TLV unsigned int tag=anonymous, value=5
 
             let value = ImClient::invoke_single(
-                &mut exchange,
+                exchange,
                 0,
                 echo_cluster::ID,
                 echo_cluster::Commands::EchoReq as u32,
@@ -141,30 +141,28 @@ fn test_client_invoke_single_cmd() {
 
     block_on(
         select(im.run(handler), async {
-            let mut exchange = im.initiate_exchange().await?;
+            let exchange = im.initiate_exchange().await?;
 
             // EchoReq on endpoint 0 with value 7; multiplier is 2, so expect 14
             let echo_data = [0x04, 7u8]; // TLV unsigned int tag=anonymous, value=7
 
-            let resp = ImClient::invoke_single_cmd(
-                &mut exchange,
+            let value = ImClient::invoke_single_cmd(
+                exchange,
                 0,
                 echo_cluster::ID,
                 echo_cluster::Commands::EchoReq as u32,
                 TLVElement::new(&echo_data),
                 None,
+                |resp| match resp {
+                    CmdResp::Cmd(data) => Ok(data.data.u8()?),
+                    CmdResp::Status(status) => {
+                        panic!("Unexpected status response: {:?}", status.status);
+                    }
+                },
             )
             .await?;
 
-            match resp {
-                CmdResp::Cmd(data) => {
-                    let value = data.data.u8()?;
-                    assert_eq!(value, 14, "EchoResp should return 7 * 2 = 14");
-                }
-                CmdResp::Status(status) => {
-                    panic!("Unexpected status response: {:?}", status.status);
-                }
-            }
+            assert_eq!(value, 14, "EchoResp should return 7 * 2 = 14");
 
             Ok(())
         })

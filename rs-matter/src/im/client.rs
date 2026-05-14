@@ -141,6 +141,18 @@ impl<'a> InvokeRequestBuilder<'a> {
 /// This struct provides methods for sending Read, Write, and Invoke requests
 /// over an established exchange (either PASE or CASE session).
 ///
+/// # Lifecycle
+///
+/// Every method **consumes** its `Exchange` by value — one exchange is
+/// one IM transaction, end of story. After the method returns, the
+/// exchange is closed and the slot is released; callers wanting to
+/// issue another transaction must initiate a fresh exchange. Methods
+/// that need to surface zero-copy response data (`write`,
+/// `read_single_attr`, `invoke_single_cmd`) take an `FnOnce(Resp<'_>)`
+/// callback so the borrowed response can be inspected before the
+/// exchange is dropped; the callback's return value is propagated as
+/// owned `T`.
+///
 /// # Example
 ///
 /// ```ignore
@@ -183,7 +195,7 @@ impl ImClient {
     /// - `fabric_filtered` - Whether to filter results by fabric
     /// - `on_report` - Callback invoked for each ReportData chunk
     pub async fn read<F>(
-        exchange: &mut Exchange<'_>,
+        exchange: Exchange<'_>,
         attr_paths: &[AttrPath],
         fabric_filtered: bool,
         mut on_report: F,
@@ -234,7 +246,7 @@ impl ImClient {
     /// await, but the rx buffer remains valid until the next chunk
     /// request, so this is safe.
     pub async fn read_with<B, F>(
-        exchange: &mut Exchange<'_>,
+        mut exchange: Exchange<'_>,
         mut build: B,
         on_report: F,
     ) -> Result<(), Error>
@@ -258,7 +270,7 @@ impl ImClient {
             })
             .await?;
 
-        Self::recv_read_chunks(exchange, on_report).await
+        Self::recv_read_chunks(&mut exchange, on_report).await
     }
 
     /// Async-build counterpart to [`read_with`](Self::read_with).
@@ -266,7 +278,7 @@ impl ImClient {
     /// TX-slot-lifetime caveat and the strengthened idempotency
     /// contract that apply to any async-build IM client path.
     pub async fn read_with_async<B, F>(
-        exchange: &mut Exchange<'_>,
+        mut exchange: Exchange<'_>,
         mut build: B,
         on_report: F,
     ) -> Result<(), Error>
@@ -290,7 +302,7 @@ impl ImClient {
             })
             .await?;
 
-        Self::recv_read_chunks(exchange, on_report).await
+        Self::recv_read_chunks(&mut exchange, on_report).await
     }
 
     /// Shared chunked-response loop for the read APIs. Both the
@@ -393,7 +405,7 @@ impl ImClient {
     /// - `timed_timeout_ms` - Optional timeout for timed invoke (required for some commands)
     /// - `on_response` - Callback invoked for each InvokeResponse chunk
     pub async fn invoke<F>(
-        exchange: &mut Exchange<'_>,
+        exchange: Exchange<'_>,
         cmd_data: &[CmdData<'_>],
         timed_timeout_ms: Option<u16>,
         mut on_response: F,
@@ -456,7 +468,7 @@ impl ImClient {
     /// `on_response` is `AsyncFnMut` — see [`read_with`](Self::read_with)
     /// for the rationale.
     pub async fn invoke_with<B, F>(
-        exchange: &mut Exchange<'_>,
+        mut exchange: Exchange<'_>,
         timed_timeout_ms: Option<u16>,
         mut build: B,
         on_response: F,
@@ -473,7 +485,7 @@ impl ImClient {
         );
 
         if let Some(timeout_ms) = timed_timeout_ms {
-            Self::send_timed_request(exchange, timeout_ms).await?;
+            Self::send_timed_request(&mut exchange, timeout_ms).await?;
         }
 
         exchange
@@ -485,7 +497,7 @@ impl ImClient {
             })
             .await?;
 
-        Self::recv_invoke_chunks(exchange, on_response).await
+        Self::recv_invoke_chunks(&mut exchange, on_response).await
     }
 
     /// Async-build counterpart to [`invoke_with`](Self::invoke_with).
@@ -495,7 +507,7 @@ impl ImClient {
     /// a sibling buffer. See [`write_with_async`](Self::write_with_async)
     /// for the slot-lifetime and idempotency caveats.
     pub async fn invoke_with_async<B, F>(
-        exchange: &mut Exchange<'_>,
+        mut exchange: Exchange<'_>,
         timed_timeout_ms: Option<u16>,
         mut build: B,
         on_response: F,
@@ -512,7 +524,7 @@ impl ImClient {
         );
 
         if let Some(timeout_ms) = timed_timeout_ms {
-            Self::send_timed_request(exchange, timeout_ms).await?;
+            Self::send_timed_request(&mut exchange, timeout_ms).await?;
         }
 
         exchange
@@ -524,7 +536,7 @@ impl ImClient {
             })
             .await?;
 
-        Self::recv_invoke_chunks(exchange, on_response).await
+        Self::recv_invoke_chunks(&mut exchange, on_response).await
     }
 
     /// Shared chunked-response loop for the invoke APIs. Both the
@@ -611,56 +623,68 @@ impl ImClient {
 
     /// Write attributes to a device.
     ///
-    /// Sends a WriteRequest and returns the WriteResponse containing
-    /// the status of each write operation.
+    /// Sends a WriteRequest, then invokes `on_resp` with the parsed
+    /// WriteResponse (which borrows from the exchange's RX buffer).
+    /// The callback's return value is propagated; the exchange is
+    /// consumed and dropped at the end of the call.
     ///
     /// # Arguments
-    /// - `exchange` - An established exchange (PASE or CASE session)
+    /// - `exchange` - An established exchange (PASE or CASE session) —
+    ///   consumed by the call (one exchange = one IM transaction)
     /// - `attr_data` - Attribute data to write
     /// - `timed_timeout_ms` - Optional timeout for timed write (required for some attributes)
-    ///
-    /// # Returns
-    /// The parsed WriteResponse, or an error if the request failed.
-    pub async fn write<'a>(
-        exchange: &'a mut Exchange<'_>,
+    /// - `on_resp` - Callback invoked with the parsed `WriteResp` so
+    ///   the caller can inspect per-attribute statuses with zero-copy
+    ///   access and extract an owned result.
+    pub async fn write<F, T>(
+        exchange: Exchange<'_>,
         attr_data: &[AttrData<'_>],
         timed_timeout_ms: Option<u16>,
-    ) -> Result<WriteResp<'a>, Error> {
-        Self::write_with(exchange, timed_timeout_ms, |msg| {
-            // Bridge the snapshot-style API to the streaming one: the
-            // pre-collected `&[AttrData]` is re-emitted entry-by-entry
-            // through the streaming builder, so both code paths share
-            // exactly one TLV encoding implementation.
-            //
-            // `SuppressResponse` is implicitly omitted (the legacy
-            // snapshot did the same — `None` for that field). The
-            // legacy snapshot also wrote `TimedRequest` only when
-            // `timed=true`, so mirror that here.
-            let mut entries = if timed_timeout_ms.is_some() {
-                msg.timed_request(true)?.write_requests()?
-            } else {
-                msg.write_requests()?
-            };
-            for ad in attr_data {
-                // Each `AttrDataBuilder<_, N>` is a different type per
-                // typestate `N`; an if-else over `ad.data_ver` lets
-                // both arms land at state 2 (via implicit
-                // data_version skip on the None arm) and continue
-                // uniformly.
-                let entry = entries.push()?;
-                entries = match ad.data_ver {
-                    Some(dv) => entry.data_version(dv)?.path_from(&ad.path)?,
-                    None => entry.path_from(&ad.path)?,
+        on_resp: F,
+    ) -> Result<T, Error>
+    where
+        F: FnOnce(WriteResp<'_>) -> Result<T, Error>,
+    {
+        Self::write_with(
+            exchange,
+            timed_timeout_ms,
+            |msg| {
+                // Bridge the snapshot-style API to the streaming one: the
+                // pre-collected `&[AttrData]` is re-emitted entry-by-entry
+                // through the streaming builder, so both code paths share
+                // exactly one TLV encoding implementation.
+                //
+                // `SuppressResponse` is implicitly omitted (the legacy
+                // snapshot did the same — `None` for that field). The
+                // legacy snapshot also wrote `TimedRequest` only when
+                // `timed=true`, so mirror that here.
+                let mut entries = if timed_timeout_ms.is_some() {
+                    msg.timed_request(true)?.write_requests()?
+                } else {
+                    msg.write_requests()?
+                };
+                for ad in attr_data {
+                    // Each `AttrDataBuilder<_, N>` is a different type per
+                    // typestate `N`; an if-else over `ad.data_ver` lets
+                    // both arms land at state 2 (via implicit
+                    // data_version skip on the None arm) and continue
+                    // uniformly.
+                    let entry = entries.push()?;
+                    entries = match ad.data_ver {
+                        Some(dv) => entry.data_version(dv)?.path_from(&ad.path)?,
+                        None => entry.path_from(&ad.path)?,
+                    }
+                    .data(|w| ad.data.to_tlv(&TLVTag::Context(AttrDataTag::Data as u8), w))?
+                    .end()?;
                 }
-                .data(|w| ad.data.to_tlv(&TLVTag::Context(AttrDataTag::Data as u8), w))?
-                .end()?;
-            }
-            // `.end()` on the array closes it; the next `.end()` on
-            // the message implicitly skips `MoreChunkedMessages` and
-            // yields the root parent — proof that the message is
-            // well-formed.
-            entries.end()?.end()
-        })
+                // `.end()` on the array closes it; the next `.end()` on
+                // the message implicitly skips `MoreChunkedMessages` and
+                // yields the root parent — proof that the message is
+                // well-formed.
+                entries.end()?.end()
+            },
+            on_resp,
+        )
         .await
     }
 
@@ -700,18 +724,20 @@ impl ImClient {
     /// shape — build through the streaming
     /// `WriteReqBuilder` from values captured by
     /// reference — is naturally idempotent.
-    pub async fn write_with<'a, F>(
-        exchange: &'a mut Exchange<'_>,
+    pub async fn write_with<B, F, T>(
+        mut exchange: Exchange<'_>,
         timed_timeout_ms: Option<u16>,
-        mut build: F,
-    ) -> Result<WriteResp<'a>, Error>
+        mut build: B,
+        on_resp: F,
+    ) -> Result<T, Error>
     where
-        F: for<'wb, 'buf> FnMut(
+        B: for<'wb, 'buf> FnMut(
             WriteReqBuilder<ImBuildRootParent<'wb, 'buf>, 0>,
         ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
+        F: FnOnce(WriteResp<'_>) -> Result<T, Error>,
     {
         if let Some(timeout_ms) = timed_timeout_ms {
-            Self::send_timed_request(exchange, timeout_ms).await?;
+            Self::send_timed_request(&mut exchange, timeout_ms).await?;
         }
 
         exchange
@@ -723,7 +749,7 @@ impl ImClient {
             })
             .await?;
 
-        Self::recv_write_response(exchange).await
+        Self::recv_write_response(&mut exchange, on_resp).await
     }
 
     /// Async-build counterpart to [`write_with`](Self::write_with).
@@ -748,18 +774,20 @@ impl ImClient {
     /// version — strengthened because the closure can now suspend
     /// and observe possibly-different external state on retransmit.
     /// Output must remain identical across retransmits.
-    pub async fn write_with_async<'a, F>(
-        exchange: &'a mut Exchange<'_>,
+    pub async fn write_with_async<B, F, T>(
+        mut exchange: Exchange<'_>,
         timed_timeout_ms: Option<u16>,
-        mut build: F,
-    ) -> Result<WriteResp<'a>, Error>
+        mut build: B,
+        on_resp: F,
+    ) -> Result<T, Error>
     where
-        F: for<'wb, 'buf> AsyncFnMut(
+        B: for<'wb, 'buf> AsyncFnMut(
             WriteReqBuilder<ImBuildRootParent<'wb, 'buf>, 0>,
         ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
+        F: FnOnce(WriteResp<'_>) -> Result<T, Error>,
     {
         if let Some(timeout_ms) = timed_timeout_ms {
-            Self::send_timed_request(exchange, timeout_ms).await?;
+            Self::send_timed_request(&mut exchange, timeout_ms).await?;
         }
 
         exchange
@@ -771,15 +799,16 @@ impl ImClient {
             })
             .await?;
 
-        Self::recv_write_response(exchange).await
+        Self::recv_write_response(&mut exchange, on_resp).await
     }
 
     /// Shared response-handling tail for [`write_with`] and
     /// [`write_with_async`] — extracted so both call sites stay
     /// identical and any future fix lands once.
-    async fn recv_write_response<'a>(
-        exchange: &'a mut Exchange<'_>,
-    ) -> Result<WriteResp<'a>, Error> {
+    async fn recv_write_response<F, T>(exchange: &mut Exchange<'_>, on_resp: F) -> Result<T, Error>
+    where
+        F: FnOnce(WriteResp<'_>) -> Result<T, Error>,
+    {
         exchange.recv_fetch().await?;
 
         {
@@ -792,7 +821,7 @@ impl ImClient {
         let rx = exchange.rx()?;
         let resp = WriteResp::from_tlv(&TLVElement::new(rx.payload()))?;
 
-        Ok(resp)
+        on_resp(resp)
     }
 
     /// Send a timed request and wait for the status response.
@@ -879,7 +908,7 @@ impl ImClient {
     /// The value returned by the callback, or an error if no attribute
     /// response was found or the read failed.
     pub async fn read_single<T, F>(
-        exchange: &mut Exchange<'_>,
+        exchange: Exchange<'_>,
         endpoint: EndptId,
         cluster: ClusterId,
         attr: AttrId,
@@ -948,21 +977,26 @@ impl ImClient {
     /// `StatusResponse(Success)` and an error is returned; use
     /// [`read_single`](Self::read_single) with a callback for that case.
     ///
-    /// The exchange remains borrowed for the lifetime of the returned
-    /// `AttrResp`, since the response data points into the exchange's RX
-    /// buffer.
+    /// `on_resp` is invoked synchronously with the borrowed
+    /// `AttrResp` while the RX buffer is still valid; its return
+    /// value is propagated as an owned `T`. The exchange is consumed
+    /// and dropped on return.
     ///
     /// # Returns
-    /// The first `AttrResp` from the report data, or an error if no
-    /// attribute response was found, the read failed, chunking was
-    /// encountered, or `suppress_response` was false.
-    pub async fn read_single_attr<'a>(
-        exchange: &'a mut Exchange<'_>,
+    /// The value `on_resp` produced, or an error if no attribute
+    /// response was found, the read failed, chunking was encountered,
+    /// or `suppress_response` was false.
+    pub async fn read_single_attr<F, T>(
+        mut exchange: Exchange<'_>,
         endpoint: EndptId,
         cluster: ClusterId,
         attr: AttrId,
         fabric_filtered: bool,
-    ) -> Result<AttrResp<'a>, Error> {
+        on_resp: F,
+    ) -> Result<T, Error>
+    where
+        F: FnOnce(&AttrResp<'_>) -> Result<T, Error>,
+    {
         let path = AttrPath {
             endpoint: Some(endpoint),
             cluster: Some(cluster),
@@ -991,7 +1025,7 @@ impl ImClient {
             let resp = ReportDataResp::from_tlv(&element)?;
 
             if resp.more_chunks.unwrap_or(false) {
-                Self::send_abort(exchange).await?;
+                Self::send_abort(&mut exchange).await?;
                 return Err(ErrorCode::InvalidData.into());
             }
 
@@ -1001,7 +1035,7 @@ impl ImClient {
         if !suppress_response {
             // suppress_response=false means the server expects a StatusResponse,
             // which requires send_with() and clears the RX buffer, making
-            // zero-copy return impossible. Complete the exchange properly,
+            // zero-copy access impossible. Complete the exchange properly,
             // then return an error. Use read_single() with a callback for
             // the suppress_response=false case.
             exchange
@@ -1021,11 +1055,14 @@ impl ImClient {
         let element = TLVElement::new(rx.payload());
         let resp = ReportDataResp::from_tlv(&element)?;
 
-        resp.attr_reports
+        let attr_resp = resp
+            .attr_reports
             .as_ref()
             .and_then(|reports| reports.iter().next())
             .ok_or(Error::from(ErrorCode::InvalidData))?
-            .map_err(|_| Error::from(ErrorCode::InvalidData))
+            .map_err(|_| Error::from(ErrorCode::InvalidData))?;
+
+        on_resp(&attr_resp)
     }
 
     /// Invoke a single command and extract an owned value via callback.
@@ -1050,7 +1087,7 @@ impl ImClient {
     /// The value returned by the callback, or an error if no command
     /// response was found or the invoke failed.
     pub async fn invoke_single<T, F>(
-        exchange: &mut Exchange<'_>,
+        exchange: Exchange<'_>,
         endpoint: EndptId,
         cluster: ClusterId,
         cmd: u32,
@@ -1131,20 +1168,29 @@ impl ImClient {
     /// `CmdResp`, since the response data points into the exchange's RX
     /// buffer.
     ///
+    /// `on_resp` is invoked synchronously with the borrowed `CmdResp`
+    /// while the RX buffer is still valid; its return value is
+    /// propagated as an owned `T`. The exchange is consumed and
+    /// dropped on return.
+    ///
     /// # Returns
-    /// The first `CmdResp` from the invoke response, or an error if no
-    /// response was found, the invoke failed, or chunking was encountered.
-    pub async fn invoke_single_cmd<'a>(
-        exchange: &'a mut Exchange<'_>,
+    /// The value `on_resp` produced, or an error if no response was
+    /// found, the invoke failed, or chunking was encountered.
+    pub async fn invoke_single_cmd<F, T>(
+        mut exchange: Exchange<'_>,
         endpoint: EndptId,
         cluster: ClusterId,
         cmd: u32,
         cmd_data: TLVElement<'_>,
         timed_timeout_ms: Option<u16>,
-    ) -> Result<CmdResp<'a>, Error> {
+        on_resp: F,
+    ) -> Result<T, Error>
+    where
+        F: FnOnce(CmdResp<'_>) -> Result<T, Error>,
+    {
         // If timed, send TimedRequest first
         if let Some(timeout_ms) = timed_timeout_ms {
-            Self::send_timed_request(exchange, timeout_ms).await?;
+            Self::send_timed_request(&mut exchange, timeout_ms).await?;
         }
 
         let path = CmdPath {
@@ -1186,7 +1232,7 @@ impl ImClient {
             exchange.acknowledge().await?;
 
             if status == IMStatusCode::Success {
-                return Ok(CmdResp::status_new(
+                let synth = CmdResp::status_new(
                     CmdPath {
                         endpoint: Some(endpoint),
                         cluster: Some(cluster),
@@ -1195,7 +1241,8 @@ impl ImClient {
                     IMStatusCode::Success,
                     None,
                     None,
-                ));
+                );
+                return on_resp(synth);
             } else {
                 error!("Invoke reply: StatusResponse({:?})", status);
                 return Err(status
@@ -1214,7 +1261,7 @@ impl ImClient {
             let resp = InvokeResp::from_tlv(&element)?;
 
             if resp.more_chunks.unwrap_or(false) {
-                Self::send_abort(exchange).await?;
+                Self::send_abort(&mut exchange).await?;
                 return Err(ErrorCode::InvalidData.into());
             }
         }
@@ -1228,11 +1275,14 @@ impl ImClient {
         let element = TLVElement::new(rx.payload());
         let resp = InvokeResp::from_tlv(&element)?;
 
-        resp.invoke_responses
+        let cmd_resp = resp
+            .invoke_responses
             .as_ref()
             .and_then(|responses| responses.iter().next())
             .ok_or(Error::from(ErrorCode::InvalidData))?
-            .map_err(|_| Error::from(ErrorCode::InvalidData))
+            .map_err(|_| Error::from(ErrorCode::InvalidData))?;
+
+        on_resp(cmd_resp)
     }
 }
 

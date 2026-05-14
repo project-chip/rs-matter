@@ -40,7 +40,7 @@ fn test_client_write() {
 
     block_on(
         select(im.run(handler), async {
-            let mut exchange = im.initiate_exchange().await?;
+            let exchange = im.initiate_exchange().await?;
 
             let path = AttrPath {
                 endpoint: Some(0),
@@ -57,24 +57,26 @@ fn test_client_write() {
                 data: TLVElement::new(&value_tlv),
             };
 
-            let resp = ImClient::write(&mut exchange, &[attr], None).await?;
+            ImClient::write(exchange, &[attr], None, |resp| {
+                // Check that we got exactly one write response with Success status
+                let mut status_count = 0u32;
+                for status in resp.write_responses.iter() {
+                    let status = status.unwrap();
+                    assert_eq!(
+                        status.status.status,
+                        IMStatusCode::Success,
+                        "Write should succeed"
+                    );
+                    status_count += 1;
+                }
 
-            // Check that we got exactly one write response with Success status
-            let mut status_count = 0u32;
-            for status in resp.write_responses.iter() {
-                let status = status.unwrap();
                 assert_eq!(
-                    status.status.status,
-                    IMStatusCode::Success,
-                    "Write should succeed"
+                    status_count, 1,
+                    "Should have exactly 1 write response status"
                 );
-                status_count += 1;
-            }
-
-            assert_eq!(
-                status_count, 1,
-                "Should have exactly 1 write response status"
-            );
+                Ok(())
+            })
+            .await?;
 
             Ok(())
         })

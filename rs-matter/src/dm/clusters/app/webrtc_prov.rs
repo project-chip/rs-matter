@@ -687,20 +687,19 @@ impl<H: WebRtcHooks, const N_SESSIONS: usize, const SDP_LEN: usize, const OUT_LE
 
         let element = TLVElement::new(wb.as_slice());
 
-        let mut exchange =
+        let exchange =
             Exchange::initiate(ctx.matter(), session.fab_idx, session.peer_node_id, true).await?;
 
-        let _resp = ImClient::invoke_single_cmd(
-            &mut exchange,
+        ImClient::invoke_single_cmd(
+            exchange,
             session.peer_endpoint_id,
             REQUESTOR_CLUSTER_ID,
             cmd_id,
             element,
             None,
+            |_resp| Ok(()),
         )
-        .await?;
-
-        Ok(())
+        .await
     }
 }
 

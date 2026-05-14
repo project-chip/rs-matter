@@ -545,10 +545,10 @@ async fn test_onoff_cluster(matter: &Matter<'_>) -> Result<(), Error> {
 }
 
 async fn read_onoff_with_timeout(matter: &Matter<'_>) -> Result<bool, Error> {
-    let mut exchange = Exchange::initiate(matter, 0, 0, true).await?;
+    let exchange = Exchange::initiate(matter, 0, 0, true).await?;
     debug!("IM read exchange initiated: {}", exchange.id());
 
-    let mut read_fut = pin!(read_onoff(&mut exchange));
+    let mut read_fut = pin!(read_onoff(exchange));
     let mut timeout = pin!(Timer::after(Duration::from_secs(IM_TIMEOUT_SECS)));
 
     match select(&mut read_fut, &mut timeout).await {
@@ -560,23 +560,29 @@ async fn read_onoff_with_timeout(matter: &Matter<'_>) -> Result<bool, Error> {
     }
 }
 
-async fn read_onoff(exchange: &mut Exchange<'_>) -> Result<bool, Error> {
-    let resp = ImClient::read_single_attr(exchange, 1, CLUSTER_ON_OFF, ATTR_ON_OFF, true).await?;
-
-    match resp {
-        AttrResp::Data(data) => data.data.bool(),
-        AttrResp::Status(status) => {
-            warn!("Read returned status: {:?}", status.status);
-            Err(rs_matter::error::ErrorCode::InvalidData.into())
-        }
-    }
+async fn read_onoff(exchange: Exchange<'_>) -> Result<bool, Error> {
+    ImClient::read_single_attr(
+        exchange,
+        1,
+        CLUSTER_ON_OFF,
+        ATTR_ON_OFF,
+        true,
+        |resp| match resp {
+            AttrResp::Data(data) => data.data.bool(),
+            AttrResp::Status(status) => {
+                warn!("Read returned status: {:?}", status.status);
+                Err(rs_matter::error::ErrorCode::InvalidData.into())
+            }
+        },
+    )
+    .await
 }
 
 async fn invoke_toggle_with_timeout(matter: &Matter<'_>) -> Result<IMStatusCode, Error> {
-    let mut exchange = Exchange::initiate(matter, 0, 0, true).await?;
+    let exchange = Exchange::initiate(matter, 0, 0, true).await?;
     debug!("Invoke exchange initiated: {}", exchange.id());
 
-    let mut invoke_fut = pin!(invoke_toggle(&mut exchange));
+    let mut invoke_fut = pin!(invoke_toggle(exchange));
     let mut timeout = pin!(Timer::after(Duration::from_secs(IM_TIMEOUT_SECS)));
 
     match select(&mut invoke_fut, &mut timeout).await {
@@ -588,7 +594,7 @@ async fn invoke_toggle_with_timeout(matter: &Matter<'_>) -> Result<IMStatusCode,
     }
 }
 
-async fn invoke_toggle(exchange: &mut Exchange<'_>) -> Result<IMStatusCode, Error> {
+async fn invoke_toggle(exchange: Exchange<'_>) -> Result<IMStatusCode, Error> {
     let mut buf = [0u8; 8];
     let tail = {
         let mut wb = WriteBuf::new(&mut buf);
@@ -597,20 +603,19 @@ async fn invoke_toggle(exchange: &mut Exchange<'_>) -> Result<IMStatusCode, Erro
         wb.get_tail()
     };
 
-    let resp = ImClient::invoke_single_cmd(
+    ImClient::invoke_single_cmd(
         exchange,
         1,
         CLUSTER_ON_OFF,
         CMD_TOGGLE,
         TLVElement::new(&buf[..tail]),
         None,
+        |resp| match resp {
+            CmdResp::Status(s) => Ok(s.status.status),
+            CmdResp::Cmd(_) => Ok(IMStatusCode::Success),
+        },
     )
-    .await?;
-
-    match resp {
-        CmdResp::Status(s) => Ok(s.status.status),
-        CmdResp::Cmd(_) => Ok(IMStatusCode::Success),
-    }
+    .await
 }
 
 // ============================================================================

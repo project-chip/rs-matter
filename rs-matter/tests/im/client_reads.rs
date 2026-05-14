@@ -44,7 +44,7 @@ fn test_client_read_non_chunked() {
 
     block_on(
         select(im.run(handler), async {
-            let mut exchange = im.initiate_exchange().await?;
+            let exchange = im.initiate_exchange().await?;
 
             let mut chunk_count = 0u32;
             let mut attr_count = 0u32;
@@ -56,7 +56,7 @@ fn test_client_read_non_chunked() {
                 Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
             ));
 
-            ImClient::read(&mut exchange, &[path], false, |report| {
+            ImClient::read(exchange, &[path], false, |report| {
                 chunk_count += 1;
 
                 if let Some(attr_reports) = &report.attr_reports {
@@ -99,7 +99,7 @@ fn test_client_read_chunked_wildcard() {
 
     block_on(
         select(im.run(handler), async {
-            let mut exchange = im.initiate_exchange().await?;
+            let exchange = im.initiate_exchange().await?;
 
             let mut chunk_count = 0u32;
             let mut total_attr_count = 0u32;
@@ -107,7 +107,7 @@ fn test_client_read_chunked_wildcard() {
             // Read all attributes on all endpoints — this will trigger chunking
             let path = AttrPath::from_gp(&GenericPath::new(None, None, None));
 
-            ImClient::read(&mut exchange, &[path], false, |report| {
+            ImClient::read(exchange, &[path], false, |report| {
                 chunk_count += 1;
 
                 if let Some(attr_reports) = &report.attr_reports {
@@ -151,11 +151,11 @@ fn test_client_read_single() {
 
     block_on(
         select(im.run(handler), async {
-            let mut exchange = im.initiate_exchange().await?;
+            let exchange = im.initiate_exchange().await?;
 
             // Read echo cluster Att1 on endpoint 0
             let value = ImClient::read_single(
-                &mut exchange,
+                exchange,
                 0,
                 echo_cluster::ID,
                 echo_cluster::AttributesDiscriminants::Att1 as u32,
@@ -190,27 +190,25 @@ fn test_client_read_single_attr() {
 
     block_on(
         select(im.run(handler), async {
-            let mut exchange = im.initiate_exchange().await?;
+            let exchange = im.initiate_exchange().await?;
 
             // Read echo cluster Att1 on endpoint 0
-            let resp = ImClient::read_single_attr(
-                &mut exchange,
+            let value = ImClient::read_single_attr(
+                exchange,
                 0,
                 echo_cluster::ID,
                 echo_cluster::AttributesDiscriminants::Att1 as u32,
                 false,
+                |resp| match resp {
+                    AttrResp::Data(data) => Ok(data.data.u16()?),
+                    AttrResp::Status(status) => {
+                        panic!("Unexpected status response: {:?}", status.status);
+                    }
+                },
             )
             .await?;
 
-            match resp {
-                AttrResp::Data(data) => {
-                    let value = data.data.u16()?;
-                    assert_eq!(value, 0x1234, "Att1 should return 0x1234");
-                }
-                AttrResp::Status(status) => {
-                    panic!("Unexpected status response: {:?}", status.status);
-                }
-            }
+            assert_eq!(value, 0x1234, "Att1 should return 0x1234");
 
             Ok(())
         })
