@@ -561,21 +561,15 @@ async fn read_onoff_with_timeout(matter: &Matter<'_>) -> Result<bool, Error> {
 }
 
 async fn read_onoff(exchange: Exchange<'_>) -> Result<bool, Error> {
-    ImClient::read_single_attr(
-        exchange,
-        1,
-        CLUSTER_ON_OFF,
-        ATTR_ON_OFF,
-        true,
-        |resp| match resp {
+    exchange
+        .read_single_attr(1, CLUSTER_ON_OFF, ATTR_ON_OFF, true, |resp| match resp {
             AttrResp::Data(data) => data.data.bool(),
             AttrResp::Status(status) => {
                 warn!("Read returned status: {:?}", status.status);
                 Err(rs_matter::error::ErrorCode::InvalidData.into())
             }
-        },
-    )
-    .await
+        })
+        .await
 }
 
 async fn invoke_toggle_with_timeout(matter: &Matter<'_>) -> Result<IMStatusCode, Error> {
@@ -603,19 +597,19 @@ async fn invoke_toggle(exchange: Exchange<'_>) -> Result<IMStatusCode, Error> {
         wb.get_tail()
     };
 
-    ImClient::invoke_single_cmd(
-        exchange,
-        1,
-        CLUSTER_ON_OFF,
-        CMD_TOGGLE,
-        TLVElement::new(&buf[..tail]),
-        None,
-        |resp| match resp {
-            CmdResp::Status(s) => Ok(s.status.status),
-            CmdResp::Cmd(_) => Ok(IMStatusCode::Success),
-        },
-    )
-    .await
+    exchange
+        .invoke_single_cmd(
+            1,
+            CLUSTER_ON_OFF,
+            CMD_TOGGLE,
+            TLVElement::new(&buf[..tail]),
+            None,
+            |resp| match resp {
+                CmdResp::Status(s) => Ok(s.status.status),
+                CmdResp::Cmd(_) => Ok(IMStatusCode::Success),
+            },
+        )
+        .await
 }
 
 // ============================================================================

@@ -136,41 +136,285 @@ impl<'a> InvokeRequestBuilder<'a> {
     }
 }
 
-/// IM Client for sending requests to Matter devices.
+// =====================================================================
+// Module-private helpers shared by trait default impls.
+//
+// The IM-client trait below has default-impl methods that drive each
+// IM transaction end-to-end. They share several response-loop bodies
+// (chunked-response handling for read/invoke, single-response handling
+// for write, the timed-request handshake, the abort path); those live
+// here as freestanding `pub(crate)` fns rather than trait methods so
+// that we don't have to expose them as required trait items the way
+// trait inheritance would force.
+// =====================================================================
+
+/// Shared chunked-response loop for the read APIs.
+/// Used by both `ImClient::read_with` and `ImClient::read_with_async`
+/// after the initial `ReadRequest` is on the wire.
+async fn recv_read_chunks<F>(exchange: &mut Exchange<'_>, mut on_report: F) -> Result<(), Error>
+where
+    F: AsyncFnMut(&ReportDataResp<'_>) -> Result<(), Error>,
+{
+    loop {
+        exchange.recv_fetch().await?;
+
+        // Capture top-level fields first so the `rx` borrow can be
+        // released before the async callback runs — that lets the
+        // callback freely access `exchange`-unrelated async
+        // resources without lifetime conflicts.
+        let (more_chunks, suppress_response) = {
+            let rx = exchange.rx()?;
+            check_opcode(rx.meta().proto_opcode, OpCode::ReportData)?;
+            let element = TLVElement::new(rx.payload());
+            let resp = ReportDataResp::from_tlv(&element)?;
+            (
+                resp.more_chunks.unwrap_or(false),
+                resp.suppress_response.unwrap_or(false),
+            )
+        };
+
+        // Re-parse and run the async callback in a separate scope.
+        // The rx buffer stays valid until we send the next message,
+        // so re-parsing here is essentially free (the TLV decoder
+        // is a thin lazy iterator over the bytes).
+        let cb_result = {
+            let rx = exchange.rx()?;
+            let element = TLVElement::new(rx.payload());
+            let resp = ReportDataResp::from_tlv(&element)?;
+            on_report(&resp).await
+        };
+
+        if more_chunks {
+            // If the callback failed, abort the chunked transaction by
+            // sending StatusResponse(Failure) so the server stops sending.
+            if let Err(e) = cb_result {
+                send_abort(exchange).await?;
+                return Err(e);
+            }
+
+            // Send StatusResponse to request the next chunk.
+            // This clears the rx buffer.
+            debug!("ImClient::read - more_chunks=true, sending StatusResponse for next chunk");
+            exchange
+                .send_with(|_, wb| {
+                    StatusResp::write(wb, IMStatusCode::Success)?;
+                    Ok(Some(OpCode::StatusResponse.into()))
+                })
+                .await?;
+        } else {
+            // Final chunk — propagate callback error after completing the exchange.
+            cb_result?;
+
+            if !suppress_response {
+                debug!("ImClient::read - final chunk, sending StatusResponse");
+                exchange
+                    .send_with(|_, wb| {
+                        StatusResp::write(wb, IMStatusCode::Success)?;
+                        Ok(Some(OpCode::StatusResponse.into()))
+                    })
+                    .await?;
+            } else {
+                debug!("ImClient::read - final chunk, sending standalone ACK");
+                exchange.acknowledge().await?;
+            }
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+/// Shared chunked-response loop for the invoke APIs.
+async fn recv_invoke_chunks<F>(exchange: &mut Exchange<'_>, mut on_response: F) -> Result<(), Error>
+where
+    F: AsyncFnMut(&InvokeResp<'_>) -> Result<(), Error>,
+{
+    loop {
+        exchange.recv_fetch().await?;
+
+        // Top-level fields first (no borrows held past this scope),
+        // then re-parse and run the async callback. See
+        // `recv_read_chunks` for the rationale.
+        let (more_chunks, suppress_response) = {
+            let rx = exchange.rx()?;
+            check_opcode(rx.meta().proto_opcode, OpCode::InvokeResponse)?;
+            let element = TLVElement::new(rx.payload());
+            let resp = InvokeResp::from_tlv(&element)?;
+            (
+                resp.more_chunks.unwrap_or(false),
+                resp.suppress_response.unwrap_or(false),
+            )
+        };
+
+        let cb_result = {
+            let rx = exchange.rx()?;
+            let element = TLVElement::new(rx.payload());
+            let resp = InvokeResp::from_tlv(&element)?;
+            on_response(&resp).await
+        };
+
+        if more_chunks {
+            // Spec forbids suppress_response=true with more_chunks=true
+            if suppress_response {
+                send_abort(exchange).await?;
+                return Err(ErrorCode::InvalidData.into());
+            }
+
+            // If the callback failed, abort the chunked transaction by
+            // sending StatusResponse(Failure) so the server stops sending.
+            if let Err(e) = cb_result {
+                send_abort(exchange).await?;
+                return Err(e);
+            }
+
+            // Send StatusResponse to request the next chunk.
+            // This clears the rx buffer.
+            debug!("ImClient::invoke - more_chunks=true, sending StatusResponse for next chunk");
+            exchange
+                .send_with(|_, wb| {
+                    StatusResp::write(wb, IMStatusCode::Success)?;
+                    Ok(Some(OpCode::StatusResponse.into()))
+                })
+                .await?;
+        } else {
+            // Final chunk — propagate callback error after completing the exchange.
+            cb_result?;
+
+            if !suppress_response {
+                debug!("ImClient::invoke - final chunk, sending StatusResponse");
+                exchange
+                    .send_with(|_, wb| {
+                        StatusResp::write(wb, IMStatusCode::Success)?;
+                        Ok(Some(OpCode::StatusResponse.into()))
+                    })
+                    .await?;
+            } else {
+                debug!("ImClient::invoke - final chunk, sending standalone ACK");
+                exchange.acknowledge().await?;
+            }
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+/// Shared response-handling tail for `write_with` and `write_with_async`.
+async fn recv_write_response<F, T>(exchange: &mut Exchange<'_>, on_resp: F) -> Result<T, Error>
+where
+    F: FnOnce(WriteResp<'_>) -> Result<T, Error>,
+{
+    exchange.recv_fetch().await?;
+
+    {
+        let rx = exchange.rx()?;
+        check_opcode(rx.meta().proto_opcode, OpCode::WriteResponse)?;
+    }
+
+    exchange.acknowledge().await?;
+
+    let rx = exchange.rx()?;
+    let resp = WriteResp::from_tlv(&TLVElement::new(rx.payload()))?;
+
+    on_resp(resp)
+}
+
+/// Send a timed-request handshake and wait for `StatusResponse(Success)`.
+/// Used before timed writes/invokes.
+async fn send_timed_request(exchange: &mut Exchange<'_>, timeout_ms: u16) -> Result<(), Error> {
+    let req = TimedReq {
+        timeout: timeout_ms,
+    };
+
+    exchange
+        .send_with(|_, wb| {
+            req.to_tlv(&TagType::Anonymous, wb)?;
+            Ok(Some(OpCode::TimedRequest.into()))
+        })
+        .await?;
+
+    exchange.recv_fetch().await?;
+
+    let rx = exchange.rx()?;
+    check_opcode(rx.meta().proto_opcode, OpCode::StatusResponse)?;
+
+    let status_resp = StatusResp::from_tlv(&TLVElement::new(rx.payload()))?;
+    if status_resp.status != IMStatusCode::Success {
+        error!("TimedRequest failed with status: {:?}", status_resp.status);
+        return Err(status_resp
+            .status
+            .to_error_code()
+            .unwrap_or(ErrorCode::Failure)
+            .into());
+    }
+
+    Ok(())
+}
+
+/// Check that the received opcode matches the expected one.
+fn check_opcode(received: u8, expected: OpCode) -> Result<(), Error> {
+    if received != expected as u8 {
+        error!(
+            "Unexpected IM opcode: received {}, expected {:?}",
+            received, expected
+        );
+        Err(ErrorCode::InvalidOpcode.into())
+    } else {
+        Ok(())
+    }
+}
+
+/// Abort a chunked transaction by sending `StatusResponse(Failure)`.
 ///
-/// This struct provides methods for sending Read, Write, and Invoke requests
-/// over an established exchange (either PASE or CASE session).
+/// This tells the server we are not continuing the transaction, preventing
+/// it from waiting indefinitely for the next `StatusResponse(Success)`.
+async fn send_abort(exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    exchange
+        .send_with(|_, wb| {
+            StatusResp::write(wb, IMStatusCode::Failure)?;
+            Ok(Some(OpCode::StatusResponse.into()))
+        })
+        .await
+}
+
+/// IM Client trait — extension over an [`Exchange`] that adds the
+/// Matter Interaction Model client operations.
+///
+/// Implemented for [`Exchange<'a>`]; user code just `use`s this trait
+/// to get method-syntax access on any exchange handle:
+///
+/// ```ignore
+/// use rs_matter::im::client::ImClient;
+///
+/// let exchange = Exchange::initiate(matter, fab, peer, true).await?;
+/// let value = exchange
+///     .read_single_attr(1, OnOff::ID, OnOff::ON_OFF_ATTR_ID, true, |resp| {
+///         match resp {
+///             AttrResp::Data(d) => d.data.bool(),
+///             AttrResp::Status(s) => Err(s.status.to_error_code().unwrap().into()),
+///         }
+///     })
+///     .await?;
+/// ```
+///
+/// The trait sits over `Self: Into<Exchange<'a>>` so any type that
+/// converts to an exchange can opt in via a one-line blanket impl;
+/// `Exchange<'a>` itself implements `Into<Exchange<'a>>` for free via
+/// the standard-library identity impl.
 ///
 /// # Lifecycle
 ///
-/// Every method **consumes** its `Exchange` by value — one exchange is
-/// one IM transaction, end of story. After the method returns, the
-/// exchange is closed and the slot is released; callers wanting to
-/// issue another transaction must initiate a fresh exchange. Methods
-/// that need to surface zero-copy response data (`write`,
-/// `read_single_attr`, `invoke_single_cmd`) take an `FnOnce(Resp<'_>)`
-/// callback so the borrowed response can be inspected before the
-/// exchange is dropped; the callback's return value is propagated as
-/// owned `T`.
-///
-/// # Example
-///
-/// ```ignore
-/// // Read an attribute
-/// let attr_path = AttrPath {
-///     endpoint: Some(1),
-///     cluster: Some(0x0006), // OnOff cluster
-///     attr: Some(0x0000),    // OnOff attribute
-///     ..Default::default()
-/// };
-/// ImClient::read(exchange, &[attr_path], true, |report| {
-///     // Process each chunk's attribute reports here
-///     Ok(())
-/// }).await?;
-/// ```
-pub struct ImClient;
-
-impl ImClient {
+/// Every method **consumes** the exchange (`self` by value) — one
+/// exchange is one IM transaction, end of story. After the method
+/// returns, the exchange is closed and the slot is released; callers
+/// wanting to issue another transaction must initiate a fresh
+/// exchange. Methods that need to surface zero-copy response data
+/// ([`write`](Self::write), [`read_single_attr`](Self::read_single_attr),
+/// [`invoke_single_cmd`](Self::invoke_single_cmd)) take an
+/// `FnOnce(Resp<'_>) -> Result<T, Error>` callback so the borrowed
+/// response can be inspected before the exchange is dropped; the
+/// callback's return value is propagated as owned `T`.
+pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// Read attributes from a device with full chunking support.
     ///
     /// This is the lowest-level read API. It supports wildcard paths and
@@ -194,8 +438,8 @@ impl ImClient {
     /// - `attr_paths` - Attribute paths to read
     /// - `fabric_filtered` - Whether to filter results by fabric
     /// - `on_report` - Callback invoked for each ReportData chunk
-    pub async fn read<F>(
-        exchange: Exchange<'_>,
+    async fn read<F>(
+        self,
         attr_paths: &[AttrPath],
         fabric_filtered: bool,
         mut on_report: F,
@@ -204,7 +448,7 @@ impl ImClient {
         F: FnMut(&ReportDataResp<'_>) -> Result<(), Error>,
     {
         Self::read_with(
-            exchange,
+            self,
             |msg| {
                 // Bridge the snapshot-style API onto the streaming
                 // builder: one TLV encoding path for both call shapes.
@@ -245,17 +489,14 @@ impl ImClient {
     /// channel). The borrow of the chunk data is held across the
     /// await, but the rx buffer remains valid until the next chunk
     /// request, so this is safe.
-    pub async fn read_with<B, F>(
-        mut exchange: Exchange<'_>,
-        mut build: B,
-        on_report: F,
-    ) -> Result<(), Error>
+    async fn read_with<B, F>(self, mut build: B, on_report: F) -> Result<(), Error>
     where
         B: for<'wb, 'buf> FnMut(
             ReadReqBuilder<ImBuildRootParent<'wb, 'buf>, 0>,
         ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
         F: AsyncFnMut(&ReportDataResp<'_>) -> Result<(), Error>,
     {
+        let mut exchange: Exchange<'a> = self.into();
         debug!(
             "ImClient::read - Sending ReadRequest on exchange {}",
             exchange.id()
@@ -270,24 +511,21 @@ impl ImClient {
             })
             .await?;
 
-        Self::recv_read_chunks(&mut exchange, on_report).await
+        recv_read_chunks(&mut exchange, on_report).await
     }
 
     /// Async-build counterpart to [`read_with`](Self::read_with).
     /// See [`write_with_async`](Self::write_with_async) for the
     /// TX-slot-lifetime caveat and the strengthened idempotency
     /// contract that apply to any async-build IM client path.
-    pub async fn read_with_async<B, F>(
-        mut exchange: Exchange<'_>,
-        mut build: B,
-        on_report: F,
-    ) -> Result<(), Error>
+    async fn read_with_async<B, F>(self, mut build: B, on_report: F) -> Result<(), Error>
     where
         B: for<'wb, 'buf> AsyncFnMut(
             ReadReqBuilder<ImBuildRootParent<'wb, 'buf>, 0>,
         ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
         F: AsyncFnMut(&ReportDataResp<'_>) -> Result<(), Error>,
     {
+        let mut exchange: Exchange<'a> = self.into();
         debug!(
             "ImClient::read - Sending ReadRequest (async build) on exchange {}",
             exchange.id()
@@ -302,83 +540,7 @@ impl ImClient {
             })
             .await?;
 
-        Self::recv_read_chunks(&mut exchange, on_report).await
-    }
-
-    /// Shared chunked-response loop for the read APIs. Both the
-    /// sync-build and async-build variants enter this loop after
-    /// the initial `ReadRequest` is on the wire.
-    async fn recv_read_chunks<F>(exchange: &mut Exchange<'_>, mut on_report: F) -> Result<(), Error>
-    where
-        F: AsyncFnMut(&ReportDataResp<'_>) -> Result<(), Error>,
-    {
-        loop {
-            exchange.recv_fetch().await?;
-
-            // Capture top-level fields first so the `rx` borrow can be
-            // released before the async callback runs — that lets the
-            // callback freely access `exchange`-unrelated async
-            // resources without lifetime conflicts.
-            let (more_chunks, suppress_response) = {
-                let rx = exchange.rx()?;
-                Self::check_opcode(rx.meta().proto_opcode, OpCode::ReportData)?;
-                let element = TLVElement::new(rx.payload());
-                let resp = ReportDataResp::from_tlv(&element)?;
-                (
-                    resp.more_chunks.unwrap_or(false),
-                    resp.suppress_response.unwrap_or(false),
-                )
-            };
-
-            // Re-parse and run the async callback in a separate scope.
-            // The rx buffer stays valid until we send the next message,
-            // so re-parsing here is essentially free (the TLV decoder
-            // is a thin lazy iterator over the bytes).
-            let cb_result = {
-                let rx = exchange.rx()?;
-                let element = TLVElement::new(rx.payload());
-                let resp = ReportDataResp::from_tlv(&element)?;
-                on_report(&resp).await
-            };
-
-            if more_chunks {
-                // If the callback failed, abort the chunked transaction by
-                // sending StatusResponse(Failure) so the server stops sending.
-                if let Err(e) = cb_result {
-                    Self::send_abort(exchange).await?;
-                    return Err(e);
-                }
-
-                // Send StatusResponse to request the next chunk.
-                // This clears the rx buffer.
-                debug!("ImClient::read - more_chunks=true, sending StatusResponse for next chunk");
-                exchange
-                    .send_with(|_, wb| {
-                        StatusResp::write(wb, IMStatusCode::Success)?;
-                        Ok(Some(OpCode::StatusResponse.into()))
-                    })
-                    .await?;
-            } else {
-                // Final chunk — propagate callback error after completing the exchange.
-                cb_result?;
-
-                if !suppress_response {
-                    debug!("ImClient::read - final chunk, sending StatusResponse");
-                    exchange
-                        .send_with(|_, wb| {
-                            StatusResp::write(wb, IMStatusCode::Success)?;
-                            Ok(Some(OpCode::StatusResponse.into()))
-                        })
-                        .await?;
-                } else {
-                    debug!("ImClient::read - final chunk, sending standalone ACK");
-                    exchange.acknowledge().await?;
-                }
-                break;
-            }
-        }
-
-        Ok(())
+        recv_read_chunks(&mut exchange, on_report).await
     }
 
     /// Invoke one or more commands on a device with full chunking support.
@@ -404,8 +566,8 @@ impl ImClient {
     /// - `cmd_data` - One or more commands to invoke
     /// - `timed_timeout_ms` - Optional timeout for timed invoke (required for some commands)
     /// - `on_response` - Callback invoked for each InvokeResponse chunk
-    pub async fn invoke<F>(
-        exchange: Exchange<'_>,
+    async fn invoke<F>(
+        self,
         cmd_data: &[CmdData<'_>],
         timed_timeout_ms: Option<u16>,
         mut on_response: F,
@@ -414,7 +576,7 @@ impl ImClient {
         F: FnMut(&InvokeResp<'_>) -> Result<(), Error>,
     {
         Self::invoke_with(
-            exchange,
+            self,
             timed_timeout_ms,
             |msg| {
                 // Bridge: re-emit the pre-built `&[CmdData]` through
@@ -467,8 +629,8 @@ impl ImClient {
     /// chunk); chunking flow control is handled internally.
     /// `on_response` is `AsyncFnMut` — see [`read_with`](Self::read_with)
     /// for the rationale.
-    pub async fn invoke_with<B, F>(
-        mut exchange: Exchange<'_>,
+    async fn invoke_with<B, F>(
+        self,
         timed_timeout_ms: Option<u16>,
         mut build: B,
         on_response: F,
@@ -479,13 +641,14 @@ impl ImClient {
         ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
         F: AsyncFnMut(&InvokeResp<'_>) -> Result<(), Error>,
     {
+        let mut exchange: Exchange<'a> = self.into();
         debug!(
             "ImClient::invoke - Starting invoke on exchange {}",
             exchange.id()
         );
 
         if let Some(timeout_ms) = timed_timeout_ms {
-            Self::send_timed_request(&mut exchange, timeout_ms).await?;
+            send_timed_request(&mut exchange, timeout_ms).await?;
         }
 
         exchange
@@ -497,7 +660,7 @@ impl ImClient {
             })
             .await?;
 
-        Self::recv_invoke_chunks(&mut exchange, on_response).await
+        recv_invoke_chunks(&mut exchange, on_response).await
     }
 
     /// Async-build counterpart to [`invoke_with`](Self::invoke_with).
@@ -506,8 +669,8 @@ impl ImClient {
     /// crypto sign) can do so directly into the TX buffer without
     /// a sibling buffer. See [`write_with_async`](Self::write_with_async)
     /// for the slot-lifetime and idempotency caveats.
-    pub async fn invoke_with_async<B, F>(
-        mut exchange: Exchange<'_>,
+    async fn invoke_with_async<B, F>(
+        self,
         timed_timeout_ms: Option<u16>,
         mut build: B,
         on_response: F,
@@ -518,13 +681,14 @@ impl ImClient {
         ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
         F: AsyncFnMut(&InvokeResp<'_>) -> Result<(), Error>,
     {
+        let mut exchange: Exchange<'a> = self.into();
         debug!(
             "ImClient::invoke - Starting invoke (async build) on exchange {}",
             exchange.id()
         );
 
         if let Some(timeout_ms) = timed_timeout_ms {
-            Self::send_timed_request(&mut exchange, timeout_ms).await?;
+            send_timed_request(&mut exchange, timeout_ms).await?;
         }
 
         exchange
@@ -536,89 +700,7 @@ impl ImClient {
             })
             .await?;
 
-        Self::recv_invoke_chunks(&mut exchange, on_response).await
-    }
-
-    /// Shared chunked-response loop for the invoke APIs. Both the
-    /// sync-build and async-build variants enter this loop after
-    /// the initial `InvokeRequest` is on the wire.
-    async fn recv_invoke_chunks<F>(
-        exchange: &mut Exchange<'_>,
-        mut on_response: F,
-    ) -> Result<(), Error>
-    where
-        F: AsyncFnMut(&InvokeResp<'_>) -> Result<(), Error>,
-    {
-        loop {
-            exchange.recv_fetch().await?;
-
-            // Top-level fields first (no borrows held past this scope),
-            // then re-parse and run the async callback. See
-            // `read_with`'s loop for the rationale.
-            let (more_chunks, suppress_response) = {
-                let rx = exchange.rx()?;
-                Self::check_opcode(rx.meta().proto_opcode, OpCode::InvokeResponse)?;
-                let element = TLVElement::new(rx.payload());
-                let resp = InvokeResp::from_tlv(&element)?;
-                (
-                    resp.more_chunks.unwrap_or(false),
-                    resp.suppress_response.unwrap_or(false),
-                )
-            };
-
-            let cb_result = {
-                let rx = exchange.rx()?;
-                let element = TLVElement::new(rx.payload());
-                let resp = InvokeResp::from_tlv(&element)?;
-                on_response(&resp).await
-            };
-
-            if more_chunks {
-                // Spec forbids suppress_response=true with more_chunks=true
-                if suppress_response {
-                    Self::send_abort(exchange).await?;
-                    return Err(ErrorCode::InvalidData.into());
-                }
-
-                // If the callback failed, abort the chunked transaction by
-                // sending StatusResponse(Failure) so the server stops sending.
-                if let Err(e) = cb_result {
-                    Self::send_abort(exchange).await?;
-                    return Err(e);
-                }
-
-                // Send StatusResponse to request the next chunk.
-                // This clears the rx buffer.
-                debug!(
-                    "ImClient::invoke - more_chunks=true, sending StatusResponse for next chunk"
-                );
-                exchange
-                    .send_with(|_, wb| {
-                        StatusResp::write(wb, IMStatusCode::Success)?;
-                        Ok(Some(OpCode::StatusResponse.into()))
-                    })
-                    .await?;
-            } else {
-                // Final chunk — propagate callback error after completing the exchange.
-                cb_result?;
-
-                if !suppress_response {
-                    debug!("ImClient::invoke - final chunk, sending StatusResponse");
-                    exchange
-                        .send_with(|_, wb| {
-                            StatusResp::write(wb, IMStatusCode::Success)?;
-                            Ok(Some(OpCode::StatusResponse.into()))
-                        })
-                        .await?;
-                } else {
-                    debug!("ImClient::invoke - final chunk, sending standalone ACK");
-                    exchange.acknowledge().await?;
-                }
-                break;
-            }
-        }
-
-        Ok(())
+        recv_invoke_chunks(&mut exchange, on_response).await
     }
 
     /// Write attributes to a device.
@@ -636,8 +718,8 @@ impl ImClient {
     /// - `on_resp` - Callback invoked with the parsed `WriteResp` so
     ///   the caller can inspect per-attribute statuses with zero-copy
     ///   access and extract an owned result.
-    pub async fn write<F, T>(
-        exchange: Exchange<'_>,
+    async fn write<F, T>(
+        self,
         attr_data: &[AttrData<'_>],
         timed_timeout_ms: Option<u16>,
         on_resp: F,
@@ -646,7 +728,7 @@ impl ImClient {
         F: FnOnce(WriteResp<'_>) -> Result<T, Error>,
     {
         Self::write_with(
-            exchange,
+            self,
             timed_timeout_ms,
             |msg| {
                 // Bridge the snapshot-style API to the streaming one: the
@@ -724,8 +806,8 @@ impl ImClient {
     /// shape — build through the streaming
     /// `WriteReqBuilder` from values captured by
     /// reference — is naturally idempotent.
-    pub async fn write_with<B, F, T>(
-        mut exchange: Exchange<'_>,
+    async fn write_with<B, F, T>(
+        self,
         timed_timeout_ms: Option<u16>,
         mut build: B,
         on_resp: F,
@@ -736,8 +818,9 @@ impl ImClient {
         ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
         F: FnOnce(WriteResp<'_>) -> Result<T, Error>,
     {
+        let mut exchange: Exchange<'a> = self.into();
         if let Some(timeout_ms) = timed_timeout_ms {
-            Self::send_timed_request(&mut exchange, timeout_ms).await?;
+            send_timed_request(&mut exchange, timeout_ms).await?;
         }
 
         exchange
@@ -749,7 +832,7 @@ impl ImClient {
             })
             .await?;
 
-        Self::recv_write_response(&mut exchange, on_resp).await
+        recv_write_response(&mut exchange, on_resp).await
     }
 
     /// Async-build counterpart to [`write_with`](Self::write_with).
@@ -774,8 +857,8 @@ impl ImClient {
     /// version — strengthened because the closure can now suspend
     /// and observe possibly-different external state on retransmit.
     /// Output must remain identical across retransmits.
-    pub async fn write_with_async<B, F, T>(
-        mut exchange: Exchange<'_>,
+    async fn write_with_async<B, F, T>(
+        self,
         timed_timeout_ms: Option<u16>,
         mut build: B,
         on_resp: F,
@@ -786,8 +869,9 @@ impl ImClient {
         ) -> Result<ImBuildRootParent<'wb, 'buf>, Error>,
         F: FnOnce(WriteResp<'_>) -> Result<T, Error>,
     {
+        let mut exchange: Exchange<'a> = self.into();
         if let Some(timeout_ms) = timed_timeout_ms {
-            Self::send_timed_request(&mut exchange, timeout_ms).await?;
+            send_timed_request(&mut exchange, timeout_ms).await?;
         }
 
         exchange
@@ -799,93 +883,10 @@ impl ImClient {
             })
             .await?;
 
-        Self::recv_write_response(&mut exchange, on_resp).await
+        recv_write_response(&mut exchange, on_resp).await
     }
 
-    /// Shared response-handling tail for [`write_with`] and
-    /// [`write_with_async`] — extracted so both call sites stay
-    /// identical and any future fix lands once.
-    async fn recv_write_response<F, T>(exchange: &mut Exchange<'_>, on_resp: F) -> Result<T, Error>
-    where
-        F: FnOnce(WriteResp<'_>) -> Result<T, Error>,
-    {
-        exchange.recv_fetch().await?;
-
-        {
-            let rx = exchange.rx()?;
-            Self::check_opcode(rx.meta().proto_opcode, OpCode::WriteResponse)?;
-        }
-
-        exchange.acknowledge().await?;
-
-        let rx = exchange.rx()?;
-        let resp = WriteResp::from_tlv(&TLVElement::new(rx.payload()))?;
-
-        on_resp(resp)
-    }
-
-    /// Send a timed request and wait for the status response.
-    ///
-    /// This is used before timed write or invoke operations.
-    async fn send_timed_request(exchange: &mut Exchange<'_>, timeout_ms: u16) -> Result<(), Error> {
-        let req = TimedReq {
-            timeout: timeout_ms,
-        };
-
-        exchange
-            .send_with(|_, wb| {
-                req.to_tlv(&TagType::Anonymous, wb)?;
-                Ok(Some(OpCode::TimedRequest.into()))
-            })
-            .await?;
-
-        exchange.recv_fetch().await?;
-
-        let rx = exchange.rx()?;
-        Self::check_opcode(rx.meta().proto_opcode, OpCode::StatusResponse)?;
-
-        let status_resp = StatusResp::from_tlv(&TLVElement::new(rx.payload()))?;
-        if status_resp.status != IMStatusCode::Success {
-            error!("TimedRequest failed with status: {:?}", status_resp.status);
-            return Err(status_resp
-                .status
-                .to_error_code()
-                .unwrap_or(ErrorCode::Failure)
-                .into());
-        }
-
-        Ok(())
-    }
-
-    /// Check that the received opcode matches the expected one.
-    fn check_opcode(received: u8, expected: OpCode) -> Result<(), Error> {
-        if received != expected as u8 {
-            error!(
-                "Unexpected IM opcode: received {}, expected {:?}",
-                received, expected
-            );
-            Err(ErrorCode::InvalidOpcode.into())
-        } else {
-            Ok(())
-        }
-    }
-
-    /// Abort a chunked transaction by sending `StatusResponse(Failure)`.
-    ///
-    /// This tells the server we are not continuing the transaction, preventing
-    /// it from waiting indefinitely for the next `StatusResponse(Success)`.
-    async fn send_abort(exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        exchange
-            .send_with(|_, wb| {
-                StatusResp::write(wb, IMStatusCode::Failure)?;
-                Ok(Some(OpCode::StatusResponse.into()))
-            })
-            .await
-    }
-}
-
-/// Extension methods for easier single-item operations
-impl ImClient {
+    // ---- Single-item convenience methods -------------------------------
     /// Read a single attribute and extract an owned value via callback.
     ///
     /// Convenience wrapper around [`read`](Self::read) for the common case
@@ -907,8 +908,8 @@ impl ImClient {
     /// # Returns
     /// The value returned by the callback, or an error if no attribute
     /// response was found or the read failed.
-    pub async fn read_single<T, F>(
-        exchange: Exchange<'_>,
+    async fn read_single<T, F>(
+        self,
         endpoint: EndptId,
         cluster: ClusterId,
         attr: AttrId,
@@ -928,7 +929,7 @@ impl ImClient {
         let mut result: Option<Result<T, Error>> = None;
         let mut on_attr = Some(on_attr);
 
-        Self::read(exchange, &[path], fabric_filtered, |report| {
+        Self::read(self, &[path], fabric_filtered, |report| {
             if result.is_none() {
                 if let Some(attr_reports) = &report.attr_reports {
                     if let Some(attr_resp) = attr_reports.iter().next() {
@@ -986,8 +987,8 @@ impl ImClient {
     /// The value `on_resp` produced, or an error if no attribute
     /// response was found, the read failed, chunking was encountered,
     /// or `suppress_response` was false.
-    pub async fn read_single_attr<F, T>(
-        mut exchange: Exchange<'_>,
+    async fn read_single_attr<F, T>(
+        self,
         endpoint: EndptId,
         cluster: ClusterId,
         attr: AttrId,
@@ -997,6 +998,7 @@ impl ImClient {
     where
         F: FnOnce(&AttrResp<'_>) -> Result<T, Error>,
     {
+        let mut exchange: Exchange<'a> = self.into();
         let path = AttrPath {
             endpoint: Some(endpoint),
             cluster: Some(cluster),
@@ -1019,13 +1021,13 @@ impl ImClient {
         // Check opcode and response flags before acknowledging
         let suppress_response = {
             let rx = exchange.rx()?;
-            Self::check_opcode(rx.meta().proto_opcode, OpCode::ReportData)?;
+            check_opcode(rx.meta().proto_opcode, OpCode::ReportData)?;
 
             let element = TLVElement::new(rx.payload());
             let resp = ReportDataResp::from_tlv(&element)?;
 
             if resp.more_chunks.unwrap_or(false) {
-                Self::send_abort(&mut exchange).await?;
+                send_abort(&mut exchange).await?;
                 return Err(ErrorCode::InvalidData.into());
             }
 
@@ -1086,8 +1088,8 @@ impl ImClient {
     /// # Returns
     /// The value returned by the callback, or an error if no command
     /// response was found or the invoke failed.
-    pub async fn invoke_single<T, F>(
-        exchange: Exchange<'_>,
+    async fn invoke_single<T, F>(
+        self,
         endpoint: EndptId,
         cluster: ClusterId,
         cmd: u32,
@@ -1113,7 +1115,7 @@ impl ImClient {
         let mut result: Option<Result<T, Error>> = None;
         let mut on_resp = Some(on_resp);
 
-        Self::invoke(exchange, &[data], timed_timeout_ms, |resp| {
+        Self::invoke(self, &[data], timed_timeout_ms, |resp| {
             if result.is_none() {
                 if let Some(invoke_responses) = &resp.invoke_responses {
                     if let Some(cmd_resp) = invoke_responses.iter().next() {
@@ -1176,8 +1178,8 @@ impl ImClient {
     /// # Returns
     /// The value `on_resp` produced, or an error if no response was
     /// found, the invoke failed, or chunking was encountered.
-    pub async fn invoke_single_cmd<F, T>(
-        mut exchange: Exchange<'_>,
+    async fn invoke_single_cmd<F, T>(
+        self,
         endpoint: EndptId,
         cluster: ClusterId,
         cmd: u32,
@@ -1188,9 +1190,10 @@ impl ImClient {
     where
         F: FnOnce(CmdResp<'_>) -> Result<T, Error>,
     {
+        let mut exchange: Exchange<'a> = self.into();
         // If timed, send TimedRequest first
         if let Some(timeout_ms) = timed_timeout_ms {
-            Self::send_timed_request(&mut exchange, timeout_ms).await?;
+            send_timed_request(&mut exchange, timeout_ms).await?;
         }
 
         let path = CmdPath {
@@ -1255,13 +1258,13 @@ impl ImClient {
         // Check opcode and more_chunks before acknowledging
         {
             let rx = exchange.rx()?;
-            Self::check_opcode(rx.meta().proto_opcode, OpCode::InvokeResponse)?;
+            check_opcode(rx.meta().proto_opcode, OpCode::InvokeResponse)?;
 
             let element = TLVElement::new(rx.payload());
             let resp = InvokeResp::from_tlv(&element)?;
 
             if resp.more_chunks.unwrap_or(false) {
-                Self::send_abort(&mut exchange).await?;
+                send_abort(&mut exchange).await?;
                 return Err(ErrorCode::InvalidData.into());
             }
         }
@@ -1285,6 +1288,11 @@ impl ImClient {
         on_resp(cmd_resp)
     }
 }
+
+/// Blanket impl so any [`Exchange<'a>`] is an [`ImClient<'a>`] when
+/// the trait is `use`d. The default-method bodies do all the work;
+/// this impl just opts the type in.
+impl<'a> ImClient<'a> for Exchange<'a> {}
 
 #[cfg(test)]
 mod tests {
