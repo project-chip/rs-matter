@@ -15,14 +15,14 @@
  *    limitations under the License.
  */
 
-//! Client-side write tests exercising `ImClient::write`.
+//! Client-side write tests exercising the tier-1 `WriteTxn` API.
 
 use either::Either;
 use embassy_futures::block_on;
 use embassy_futures::select::select;
 
 use rs_matter::im::client::ImClient;
-use rs_matter::im::{AttrData, AttrDataTag, AttrPath, IMStatusCode};
+use rs_matter::im::{AttrDataTag, IMStatusCode};
 use rs_matter::tlv::{TLVElement, TLVTag, ToTLV};
 use rs_matter::utils::select::Coalesce;
 
@@ -30,65 +30,6 @@ use crate::common::e2e::im::echo_cluster;
 use crate::common::e2e::new_default_runner;
 use crate::common::init_env_logger;
 
-/// Test that `ImClient::write` can write an attribute and receive a success response.
-#[test]
-fn test_client_write() {
-    init_env_logger();
-
-    let im = new_default_runner();
-    im.add_default_acl();
-    let handler = im.handler();
-
-    block_on(
-        select(im.run(handler), async {
-            let exchange = im.initiate_exchange().await?;
-
-            let path = AttrPath {
-                endpoint: Some(0),
-                cluster: Some(echo_cluster::ID),
-                attr: Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
-                ..Default::default()
-            };
-
-            // Encode a u16 value as anonymous TLV
-            let value_tlv = [0x05, 0x39, 0x05]; // TLV u16 tag=anonymous, value=0x0539
-            let attr = AttrData {
-                data_ver: None,
-                path,
-                data: TLVElement::new(&value_tlv),
-            };
-
-            ImClient::write(exchange, &[attr], None, |resp| {
-                // Check that we got exactly one write response with Success status
-                let mut status_count = 0u32;
-                for status in resp.write_responses.iter() {
-                    let status = status.unwrap();
-                    assert_eq!(
-                        status.status.status,
-                        IMStatusCode::Success,
-                        "Write should succeed"
-                    );
-                    status_count += 1;
-                }
-
-                assert_eq!(
-                    status_count, 1,
-                    "Should have exactly 1 write response status"
-                );
-                Ok(())
-            })
-            .await?;
-
-            Ok(())
-        })
-        .coalesce(),
-    )
-    .unwrap()
-}
-
-/// Tier-1 (closure-free) `write` via `ImClient::write_txn` +
-/// `WriteTxn::tx` + `WriteRespHandle`. Mirrors
-/// `test_client_invoke_txn_non_chunked` / `test_client_read_txn_non_chunked`.
 #[test]
 fn test_client_write_txn() {
     init_env_logger();

@@ -15,210 +15,20 @@
  *    limitations under the License.
  */
 
-//! Client-side read tests exercising `ImClient::read`, `ImClient::read_single`,
-//! and `ImClient::read_single_attr`.
-//!
-//! These tests use the `E2eRunner` infrastructure to run a real server (with
-//! the default E2eTestHandler) and then call `ImClient` methods directly on the
-//! client-side exchange.
+//! Client-side read tests exercising the tier-1 `ReadTxn` API.
 
 use either::Either;
 use embassy_futures::block_on;
 use embassy_futures::select::select;
 
 use rs_matter::im::client::ImClient;
-use rs_matter::im::{AttrPath, AttrResp, GenericPath};
+use rs_matter::im::{AttrPath, GenericPath};
 use rs_matter::utils::select::Coalesce;
 
 use crate::common::e2e::im::echo_cluster;
 use crate::common::e2e::new_default_runner;
 use crate::common::init_env_logger;
 
-/// Test that a non-chunked read (single attribute) works correctly via `ImClient::read`.
-#[test]
-fn test_client_read_non_chunked() {
-    init_env_logger();
-
-    let im = new_default_runner();
-    im.add_default_acl();
-    let handler = im.handler();
-
-    block_on(
-        select(im.run(handler), async {
-            let exchange = im.initiate_exchange().await?;
-
-            let mut chunk_count = 0u32;
-            let mut attr_count = 0u32;
-
-            // Read a single attribute: echo cluster Att1 on endpoint 0
-            let path = AttrPath::from_gp(&GenericPath::new(
-                Some(0),
-                Some(echo_cluster::ID),
-                Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
-            ));
-
-            ImClient::read(exchange, &[path], false, |report| {
-                chunk_count += 1;
-
-                if let Some(attr_reports) = &report.attr_reports {
-                    for attr_resp in attr_reports.iter() {
-                        if attr_resp.is_ok() {
-                            attr_count += 1;
-                        }
-                    }
-                }
-
-                Ok(())
-            })
-            .await?;
-
-            assert_eq!(
-                chunk_count, 1,
-                "Non-chunked read should have exactly 1 chunk"
-            );
-            assert_eq!(
-                attr_count, 1,
-                "Should have received exactly 1 attribute report"
-            );
-
-            Ok(())
-        })
-        .coalesce(),
-    )
-    .unwrap()
-}
-
-/// Test that a chunked read (wildcard path reading all attributes) works correctly
-/// via `ImClient::read`, receiving multiple chunks.
-#[test]
-fn test_client_read_chunked_wildcard() {
-    init_env_logger();
-
-    let im = new_default_runner();
-    im.add_default_acl();
-    let handler = im.handler();
-
-    block_on(
-        select(im.run(handler), async {
-            let exchange = im.initiate_exchange().await?;
-
-            let mut chunk_count = 0u32;
-            let mut total_attr_count = 0u32;
-
-            // Read all attributes on all endpoints — this will trigger chunking
-            let path = AttrPath::from_gp(&GenericPath::new(None, None, None));
-
-            ImClient::read(exchange, &[path], false, |report| {
-                chunk_count += 1;
-
-                if let Some(attr_reports) = &report.attr_reports {
-                    for attr_resp in attr_reports.iter() {
-                        if attr_resp.is_ok() {
-                            total_attr_count += 1;
-                        }
-                    }
-                }
-
-                Ok(())
-            })
-            .await?;
-
-            assert!(
-                chunk_count > 1,
-                "Wildcard read should produce multiple chunks, got {}",
-                chunk_count
-            );
-            assert!(
-                total_attr_count > 100,
-                "Wildcard read should return many attributes, got {}",
-                total_attr_count
-            );
-
-            Ok(())
-        })
-        .coalesce(),
-    )
-    .unwrap()
-}
-
-/// Test that `ImClient::read_single` works correctly with the callback-based `read`.
-#[test]
-fn test_client_read_single() {
-    init_env_logger();
-
-    let im = new_default_runner();
-    im.add_default_acl();
-    let handler = im.handler();
-
-    block_on(
-        select(im.run(handler), async {
-            let exchange = im.initiate_exchange().await?;
-
-            // Read echo cluster Att1 on endpoint 0
-            let value = ImClient::read_single(
-                exchange,
-                0,
-                echo_cluster::ID,
-                echo_cluster::AttributesDiscriminants::Att1 as u32,
-                false,
-                |resp| match resp {
-                    AttrResp::Data(data) => Ok(data.data.u16()?),
-                    AttrResp::Status(status) => {
-                        panic!("Unexpected status response: {:?}", status.status);
-                    }
-                },
-            )
-            .await?;
-
-            // EchoHandler returns 0x1234 for Att1 reads (see echo_cluster.rs)
-            assert_eq!(value, 0x1234, "Att1 should return 0x1234");
-
-            Ok(())
-        })
-        .coalesce(),
-    )
-    .unwrap()
-}
-
-/// Test that `ImClient::read_single_attr` returns zero-copy response data.
-#[test]
-fn test_client_read_single_attr() {
-    init_env_logger();
-
-    let im = new_default_runner();
-    im.add_default_acl();
-    let handler = im.handler();
-
-    block_on(
-        select(im.run(handler), async {
-            let exchange = im.initiate_exchange().await?;
-
-            // Read echo cluster Att1 on endpoint 0
-            let value = ImClient::read_single_attr(
-                exchange,
-                0,
-                echo_cluster::ID,
-                echo_cluster::AttributesDiscriminants::Att1 as u32,
-                false,
-                |resp| match resp {
-                    AttrResp::Data(data) => Ok(data.data.u16()?),
-                    AttrResp::Status(status) => {
-                        panic!("Unexpected status response: {:?}", status.status);
-                    }
-                },
-            )
-            .await?;
-
-            assert_eq!(value, 0x1234, "Att1 should return 0x1234");
-
-            Ok(())
-        })
-        .coalesce(),
-    )
-    .unwrap()
-}
-
-/// Tier-1 (closure-free) `read` via `ImClient::read_txn` +
 /// `ReadTxn::tx` + `ReadRespChunk`. Mirrors
 /// `test_client_invoke_txn_non_chunked`.
 #[test]
@@ -277,6 +87,78 @@ fn test_client_read_txn_non_chunked() {
 
             assert_eq!(chunk_count, 1, "Non-chunked read should have 1 chunk");
             assert_eq!(attr_count, 1, "Should have received 1 attribute report");
+
+            Ok(())
+        })
+        .coalesce(),
+    )
+    .unwrap()
+}
+
+/// Chunked wildcard read via tier-1 — verifies the chunk loop on
+/// `InvokeRespChunk` / `ReadRespChunk` correctly iterates multiple
+/// chunks when the server signals `more_chunks=true`. Reading every
+/// attribute on every endpoint should produce > 1 chunk and many
+/// attribute reports.
+#[test]
+fn test_client_read_txn_chunked_wildcard() {
+    init_env_logger();
+
+    let im = new_default_runner();
+    im.add_default_acl();
+    let handler = im.handler();
+
+    block_on(
+        select(im.run(handler), async {
+            let exchange = im.initiate_exchange().await?;
+            let mut txn = exchange.read_txn().await?;
+
+            // Wildcard path: every attribute on every endpoint.
+            let path = AttrPath::from_gp(&GenericPath::new(None, None, None));
+            let paths = [path];
+
+            let mut chunk = loop {
+                match txn.tx().await? {
+                    Either::Left(builder) => {
+                        txn = builder
+                            .attr_requests_from(&paths)?
+                            .fabric_filtered(false)?
+                            .end()?;
+                    }
+                    Either::Right(c) => break c,
+                }
+            };
+
+            let mut chunk_count = 0u32;
+            let mut total_attr_count = 0u32;
+            loop {
+                chunk_count += 1;
+                {
+                    let resp = chunk.response()?;
+                    if let Some(attr_reports) = &resp.attr_reports {
+                        for attr_resp in attr_reports.iter() {
+                            if attr_resp.is_ok() {
+                                total_attr_count += 1;
+                            }
+                        }
+                    }
+                }
+                match chunk.complete().await? {
+                    Some(next) => chunk = next,
+                    None => break,
+                }
+            }
+
+            assert!(
+                chunk_count > 1,
+                "Wildcard read should produce multiple chunks, got {}",
+                chunk_count
+            );
+            assert!(
+                total_attr_count > 100,
+                "Wildcard read should return many attributes, got {}",
+                total_attr_count
+            );
 
             Ok(())
         })

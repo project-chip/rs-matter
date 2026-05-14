@@ -69,7 +69,7 @@ use rs_matter::im::{AttrResp, CmdResp, IMStatusCode};
 use rs_matter::persist::DummyKvBlobStoreAccess;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::{PaseInitiator, MAX_COMM_WINDOW_TIMEOUT_SECS};
-use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
+use rs_matter::tlv::TLVTag;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::mdns::{CommissionableFilter, DiscoveredDevice};
 use rs_matter::transport::network::tcp::TcpNetwork;
@@ -79,7 +79,6 @@ use rs_matter::utils::epoch::sys_epoch;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::utils::storage::WriteBuf;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
 use socket2::{Domain, Protocol, Socket, Type};
@@ -96,9 +95,6 @@ const TEST_PASSCODE: u32 = 20202021;
 /// Discriminator used by `TEST_DEV_COMM`
 const TEST_DISCRIMINATOR: u16 = 3840;
 
-const CLUSTER_ON_OFF: u32 = 0x0006;
-const ATTR_ON_OFF: u32 = 0x0000;
-const CMD_TOGGLE: u32 = 0x0002;
 const PASE_TIMEOUT_SECS: u64 = 30;
 const IM_TIMEOUT_SECS: u64 = 10;
 const DISCOVERY_TIMEOUT_MS: u32 = 30_000;
@@ -561,15 +557,54 @@ async fn read_onoff_with_timeout(matter: &Matter<'_>) -> Result<bool, Error> {
 }
 
 async fn read_onoff(exchange: Exchange<'_>) -> Result<bool, Error> {
-    exchange
-        .read_single_attr(1, CLUSTER_ON_OFF, ATTR_ON_OFF, true, |resp| match resp {
-            AttrResp::Data(data) => data.data.bool(),
+    use either::Either;
+    use rs_matter::dm::clusters::app::on_off::OnOffAttrReads;
+
+    let mut txn = exchange.read_txn().await?;
+
+    let mut chunk = loop {
+        match txn.tx().await? {
+            Either::Left(builder) => {
+                // The codegen extension method bakes in cluster ID
+                // (0x0006) and attribute ID (`OnOff::OnOff` = 0).
+                txn = builder
+                    .attr_requests()?
+                    .push_on_off_on_off(1)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()?;
+            }
+            Either::Right(c) => break c,
+        }
+    };
+
+    // Extract the value from the first attribute report; then drain
+    // any remaining chunks to send the trailing StatusResponse(Success).
+    let value = {
+        let resp = chunk.response()?;
+        let attr_reports = resp
+            .attr_reports
+            .as_ref()
+            .ok_or(rs_matter::error::ErrorCode::InvalidData)?;
+        let attr_resp = attr_reports
+            .iter()
+            .next()
+            .ok_or(rs_matter::error::ErrorCode::InvalidData)?
+            .map_err(|_| rs_matter::error::ErrorCode::InvalidData)?;
+        match attr_resp {
+            AttrResp::Data(data) => data.data.bool()?,
             AttrResp::Status(status) => {
                 warn!("Read returned status: {:?}", status.status);
-                Err(rs_matter::error::ErrorCode::InvalidData.into())
+                return Err(rs_matter::error::ErrorCode::InvalidData.into());
             }
-        })
-        .await
+        }
+    };
+
+    while let Some(next) = chunk.complete().await? {
+        chunk = next;
+    }
+
+    Ok(value)
 }
 
 async fn invoke_toggle_with_timeout(matter: &Matter<'_>) -> Result<IMStatusCode, Error> {
@@ -589,27 +624,57 @@ async fn invoke_toggle_with_timeout(matter: &Matter<'_>) -> Result<IMStatusCode,
 }
 
 async fn invoke_toggle(exchange: Exchange<'_>) -> Result<IMStatusCode, Error> {
-    let mut buf = [0u8; 8];
-    let tail = {
-        let mut wb = WriteBuf::new(&mut buf);
-        wb.start_struct(&TLVTag::Anonymous)?;
-        wb.end_container()?;
-        wb.get_tail()
+    use either::Either;
+    use rs_matter::dm::clusters::app::on_off::OnOffCmdRequests;
+
+    let mut txn = exchange.invoke_txn(None).await?;
+    let mut chunk = loop {
+        match txn.tx().await? {
+            Either::Left(builder) => {
+                // `OnOff::Toggle` is an empty-request (DefaultSuccess)
+                // command — the codegen extension method bakes in the
+                // cluster ID (0x0006), the command ID (2), and the
+                // empty `Data` struct, returning the array builder
+                // directly.
+                txn = builder
+                    .suppress_response(false)?
+                    .timed_request(false)?
+                    .invoke_requests()?
+                    .push_on_off_toggle(1)?
+                    .end()?
+                    .end()?;
+            }
+            Either::Right(c) => break c,
+        }
     };
 
-    exchange
-        .invoke_single_cmd(
-            1,
-            CLUSTER_ON_OFF,
-            CMD_TOGGLE,
-            TLVElement::new(&buf[..tail]),
-            None,
-            |resp| match resp {
-                CmdResp::Status(s) => Ok(s.status.status),
-                CmdResp::Cmd(_) => Ok(IMStatusCode::Success),
-            },
-        )
-        .await
+    // OnOff::Toggle returns DefaultSuccess → status-only chunk.
+    let status = if chunk.is_status_only() {
+        // Status-only path: receive() already validated the status
+        // is Success (else it returns Err). So we know it's Success.
+        IMStatusCode::Success
+    } else {
+        let resp = chunk
+            .response()?
+            .expect("non-status_only branch must have a response");
+        let cmd_resp = resp
+            .invoke_responses
+            .as_ref()
+            .and_then(|r| r.iter().next())
+            .ok_or(rs_matter::error::ErrorCode::InvalidData)?
+            .map_err(|_| rs_matter::error::ErrorCode::InvalidData)?;
+        match cmd_resp {
+            CmdResp::Status(s) => s.status.status,
+            CmdResp::Cmd(_) => IMStatusCode::Success,
+        }
+    };
+
+    // Drain remaining chunks (sends trailing StatusResponse(Success) if any).
+    while let Some(next) = chunk.complete().await? {
+        chunk = next;
+    }
+
+    Ok(status)
 }
 
 // ============================================================================
