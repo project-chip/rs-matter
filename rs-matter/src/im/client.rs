@@ -30,7 +30,7 @@ use crate::transport::exchange::{Exchange, OwnedSender, OwnedSenderTx};
 
 use super::{
     IMStatusCode, InvReqBuilder, InvokeResp, OpCode, ReadReqBuilder, ReportDataResp, StatusResp,
-    TimedReq, WriteReqBuilder, WriteResp,
+    SubscribeReqBuilder, SubscribeResp, TimedReq, WriteReqBuilder, WriteResp,
 };
 
 /// IM Client trait — extension over an [`Exchange`] that adds the
@@ -68,30 +68,18 @@ use super::{
 /// wanting to issue another transaction must initiate a fresh
 /// exchange.
 pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
-    /// Streaming counterpart to [`read_sender`](Self::read_sender).
+    /// Perform an IM read transaction.
     ///
-    /// `build` is invoked with a typed
-    /// [`ReadReqBuilder`] already opened on the outbound
-    /// TX buffer; the closure must return the [the corresponding `*Sender`]
-    /// produced by `ReadReqBuilder::end()` as the
-    /// type-system proof that every container the builder opened has
-    /// been closed. No intermediate `Vec<AttrPath>` is allocated.
-    /// `on_report` is then invoked for each `ReportData` chunk the
-    /// server returns; chunking flow control (ACK each chunk with
-    /// `StatusResponse(SUCCESS)`, abort on callback error) is handled
-    /// internally.
+    /// # Arguments
+    /// - `build` closure that writes the `ReadRequestMessage` TLV body
+    ///   NOTE: The closure is `FnMut` because the MRP layer may retransmit the
+    ///   request multiple times; it MUST produce the same TLV output on every call.
     ///
-    /// `build` is `FnMut` and must be idempotent — the MRP layer may
-    /// retransmit the request and re-invoke the closure with a fresh
-    /// builder on each attempt. See
-    /// [`write_with`](Self::write_with) for the rationale.
-    ///
-    /// `on_report` is `AsyncFnMut` so callers can `.await` while
-    /// processing each chunk (e.g. forwarding values to an async
-    /// sink, persisting them to KV, awaiting backpressure on a
-    /// channel). The borrow of the chunk data is held across the
-    /// await, but the rx buffer remains valid until the next chunk
-    /// request, so this is safe.
+    /// # Returns
+    /// - `Ok(ReadRespChunk)` for the first response chunk; multi-chunk
+    ///   `ReportData` streams iterate via `ReadRespChunk::complete()`
+    /// - `Err` if the transaction fails at any point (request build,
+    ///   I/O, response parsing, etc.)
     async fn read_with<B>(self, mut build: B) -> Result<ReadRespChunk<'a>, Error>
     where
         B: FnMut(ReadReqBuilder<ReadSender<'a>>) -> Result<ReadSender<'a>, Error>,
@@ -111,10 +99,13 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
         }
     }
 
-    /// `read` entry point — sets up a [`ReadSender`] but does
-    /// **no** I/O. The first call to [`ReadSender::tx`] yields the
-    /// initial builder. See [`invoke_sender`](Self::invoke_sender) for the
-    /// full pattern.
+    /// Perform an IM read transaction without using a closure.
+    ///
+    /// # Returns
+    /// - `Ok(ReadSender)` ready for the caller to drive manually via `ReadSender::tx()`
+    ///   The first call to [`ReadSender::tx`] yields the initial builder.
+    ///   See [`invoke_sender`](Self::invoke_sender) for the full pattern.
+    /// - `Err` if the transaction fails at any point (I/O, etc.)
     async fn read_sender(self) -> Result<ReadSender<'a>, Error> {
         let exchange: Exchange<'a> = self.into();
         let sender = exchange.into_sender()?;
@@ -123,39 +114,17 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
         })
     }
 
-    /// Streaming counterpart to [`write_sender`](Self::write_sender).
+    /// Perform an IM write transaction.
     ///
-    /// Hands the caller a typed [`WriteReqBuilder`] already opened
-    /// on the outgoing TX buffer and lets them stream the
-    /// `WriteRequestMessage` directly. No intermediate `Vec`, no
-    /// out-of-band payload buffer — every byte ends up in the TX
-    /// buffer exactly once. This is what the power-user
-    /// streaming client APIs use.
+    /// # Arguments
+    /// - `build` closure that writes the `WriteRequestMessage` TLV body
+    ///  NOTE: The closure is `FnMut` because the MRP layer may retransmit the
+    ///  request multiple times; it MUST produce the same TLV output on every call.
     ///
-    /// The closure receives the message builder at typestate `0` and
-    /// must return the [the corresponding `*Sender`] that
-    /// `WriteReqBuilder::end()` produces — this is the
-    /// type-system proof that the caller closed every container the
-    /// builder opened (`.end()` on the array, then `.end()` on the
-    /// message). Forgetting to close one is a compile error, not a
-    /// runtime malformed-TLV bug.
-    ///
-    /// When `timed_timeout_ms` is `Some`, this method sends the
-    /// `TimedRequest` handshake before the write — the caller's
-    /// builder body should set `timed_request(true)` accordingly.
-    ///
-    /// # Idempotency requirement
-    ///
-    /// `build` is `FnMut` because Matter's reliable-messaging layer
-    /// (MRP) may retransmit the request multiple times — each
-    /// retransmit invokes the closure again on a fresh builder over
-    /// a fresh TX buffer. The closure **must** produce the same TLV
-    /// output on every call (i.e. its writes must be a pure function
-    /// of any captured state, and that state must not be moved out /
-    /// consumed by the first invocation). The typical idiomatic
-    /// shape — build through the streaming
-    /// `WriteReqBuilder` from values captured by
-    /// reference — is naturally idempotent.
+    /// # Returns
+    /// - `Ok(WriteRespHandle)` once the request is ACK-ed and the response is parsed; call
+    ///   `WriteRespHandle::response()` to inspect the parsed `WriteResp`.
+    /// - `Err` if the transaction fails at any point (request build, I/O, response parsing, etc.)
     async fn write_with<B>(
         self,
         timed_timeout_ms: Option<u16>,
@@ -175,10 +144,16 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
         }
     }
 
-    /// `write` entry point — sets up a [`WriteSender`]. If
-    /// `timed_timeout_ms` is `Some`, performs the `TimedRequest`
-    /// handshake first (the only I/O `write_sender` may do). The first
-    /// call to [`WriteSender::tx`] yields the initial builder.
+    /// Perform an IM write transaction without using a closure.
+    ///
+    /// # Arguments
+    /// - `timed_timeout_ms` if `Some`, perform the initial handshake via a `TimedRequest` with the given timeout (in milliseconds)
+    ///
+    /// # Returns
+    /// - `Ok(WriteSender)` ready for the caller to drive manually via `WriteSender::tx()`
+    ///   The first call to [`WriteSender::tx`] yields the initial builder.
+    ///   See [`invoke_sender`](Self::invoke_sender) for the full pattern.
+    /// - `Err` if the transaction fails at any point (I/O, etc.)
     async fn write_sender(self, timed_timeout_ms: Option<u16>) -> Result<WriteSender<'a>, Error> {
         let mut exchange: Exchange<'a> = self.into();
         if let Some(timeout_ms) = timed_timeout_ms {
@@ -190,53 +165,18 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
         })
     }
 
-    /// `invoke` entry point — sets up an [`InvokeSender`] but
-    /// does **no** I/O beyond an optional `TimedRequest` handshake
-    /// (when `timed_timeout_ms` is `Some`). The first call to
-    /// [`InvokeSender::tx`] yields the initial builder.
+    /// Perform an IM invoke transaction.
     ///
-    /// This is the cornerstone of the IM client: closure-free,
-    /// scratch-buffer-free, full user control over the retransmit
-    /// loop. Higher-tier variants — closure-based
-    /// ([`invoke_with`](Self::invoke_with)) and the snapshot-style
-    /// [`invoke`](Self::invoke) — are layered on top of it.
+    /// # Arguments
+    /// - `timed_timeout_ms` if `Some`, perform the initial handshake via a `TimedRequest` with the given timeout (in milliseconds)
+    /// - `build` closure that writes the `InvokeRequestMessage` TLV body
+    ///   NOTE: The closure is `FnMut` because the MRP layer may retransmit the
+    ///   request multiple times; it MUST produce the same TLV output on every call.
     ///
-    /// # Lifecycle
-    ///
-    /// 1. `let mut sender = exchange.invoke_sender(None).await?;`
-    /// 2. `loop { match sender.tx().await? { TxOutcome::BuildRequest(b) => sender = build(b)?, TxOutcome::GotResponse(c) => break c } }`
-    /// 3. `loop { let resp = chunk.response()?; …; match chunk.complete().await? { … } }`
-    async fn invoke_sender(self, timed_timeout_ms: Option<u16>) -> Result<InvokeSender<'a>, Error> {
-        let mut exchange: Exchange<'a> = self.into();
-        if let Some(timeout_ms) = timed_timeout_ms {
-            send_timed_request(&mut exchange, timeout_ms).await?;
-        }
-        let sender = exchange.into_sender()?;
-        Ok(InvokeSender {
-            state: InvokeSenderState::Ready(sender),
-        })
-    }
-
-    /// Streaming counterpart to [`invoke_sender`](Self::invoke_sender).
-    ///
-    /// Hands the caller a typed [`InvReqBuilder`] already opened on
-    /// the outbound TX buffer and lets them stream the
-    /// `InvokeRequestMessage` directly. The closure must return the
-    /// [`InvokeSender`] produced by `InvReqBuilder::end()` as the
-    /// type-system proof of completeness. This is the MCU-friendly
-    /// path for client clusters that send commands — the typed
-    /// request-builder writes straight into the TX buffer, no
-    /// out-of-band payload buffer needed.
-    ///
-    /// `build` is `FnMut` and must be idempotent — the MRP layer may
-    /// retransmit the request and re-invoke the closure with a fresh
-    /// builder on each attempt.
-    ///
-    /// `on_response` is invoked per `InvokeResponseMessage` chunk
-    /// (see Matter Core spec §10.7.10 for when invoke responses
-    /// chunk); chunking flow control is handled internally.
-    /// `on_response` is `AsyncFnMut` — see [`read_with`](Self::read_with)
-    /// for the rationale.
+    /// # Returns
+    /// - `Ok(InvokeRespChunk)` once the request is ACK-ed and the first response chunk is parsed; multi-chunk
+    ///  `InvokeResponse` streams iterate via `InvokeRespChunk::complete()`.
+    /// - `Err` if the transaction fails at any point (request build, I/O, response parsing, etc.)
     async fn invoke_with<B>(
         self,
         timed_timeout_ms: Option<u16>,
@@ -259,6 +199,32 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
                 TxOutcome::GotResponse(chunk) => return Ok(chunk),
             }
         }
+    }
+
+    /// Perform an IM invoke transaction without using a closure.
+    ///
+    /// # Arguments
+    /// - `timed_timeout_ms` if `Some`, perform the initial handshake via a `TimedRequest` with the given timeout (in milliseconds)
+    ///
+    /// # Returns
+    /// - `Ok(InvokeSender)` ready for the caller to drive manually via `InvokeSender::tx()`
+    ///  The first call to [`InvokeSender::tx`] yields the initial builder.
+    /// - `Err` if the transaction fails at any point (I/O, etc.)
+    ///
+    /// # Lifecycle
+    ///
+    /// 1. `let mut sender = exchange.invoke_sender(None).await?;`
+    /// 2. `loop { match sender.tx().await? { TxOutcome::BuildRequest(b) => sender = build(b)?, TxOutcome::GotResponse(c) => break c } }`
+    /// 3. `loop { let resp = chunk.response()?; …; match chunk.complete().await? { … } }`
+    async fn invoke_sender(self, timed_timeout_ms: Option<u16>) -> Result<InvokeSender<'a>, Error> {
+        let mut exchange: Exchange<'a> = self.into();
+        if let Some(timeout_ms) = timed_timeout_ms {
+            send_timed_request(&mut exchange, timeout_ms).await?;
+        }
+        let sender = exchange.into_sender()?;
+        Ok(InvokeSender {
+            state: InvokeSenderState::Ready(sender),
+        })
     }
 }
 

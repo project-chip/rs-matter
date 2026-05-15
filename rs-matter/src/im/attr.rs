@@ -24,12 +24,14 @@ use super::{AttrId, ClusterId, EndptId, EventPath, EventResp, GenericPath, IMSta
 pub use read::*;
 pub use read_builder::*;
 pub use subscribe::*;
+pub use subscribe_builder::*;
 pub use write::*;
 pub use write_builder::*;
 
 mod read;
 mod read_builder;
 mod subscribe;
+mod subscribe_builder;
 mod write;
 mod write_builder;
 
