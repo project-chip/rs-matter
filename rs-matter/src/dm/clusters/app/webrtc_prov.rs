@@ -187,9 +187,10 @@ pub struct AnswerOutcome {
 /// [`WebRtcProvHandler::run`].
 ///
 /// The payload itself is NOT carried here: for [`OutboundWork::IceCandidates`]
-/// the handler calls [`WebRtcHooks::fill_ice_candidates`] with a TLV
-/// array builder and the hook streams queued candidates into it directly,
-/// avoiding any owned intermediate buffer.
+/// the handler calls [`WebRtcHooks::take_ice_candidates`] before opening
+/// the invoke, snapshotting the queue once into a stack-allocated buffer;
+/// the sync build closure then iterates that snapshot, so MRP retransmits
+/// re-emit the same TLV array.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OutboundWork {
@@ -671,14 +672,15 @@ impl<
             return Ok(());
         };
 
-        // Pre-fetch any async-supplied request payload (SDPs).
-        // `take_*_sdp` consumes the queued SDP — it must run exactly
-        // once even though `invoke_with_async` may re-run its build
-        // closure on MRP retransmits. ICE candidates can stay inside
-        // the closure because `fill_ice_candidates` is contractually
-        // idempotent ("push every queued candidate" — replaying it
-        // produces the same TLV array). `OutboundWork::End` carries
-        // its parameters by value.
+        // Pre-fetch any async-supplied request payload (SDPs for
+        // Offer/Answer; the ICE-candidate snapshot is similarly
+        // taken outside its own build closure further down). The
+        // `take_*` hooks consume the respective queues, so they must
+        // run exactly once — outside the sync `FnMut` build closure
+        // that MRP may re-invoke on retransmit. The build closure
+        // then works off the snapshot and stays idempotent.
+        // `OutboundWork::End` carries its parameters by value and
+        // needs no pre-fetch.
         let mut sdp_buf = [0u8; SDP_LEN];
         let sdp_len = match &work {
             OutboundWork::Offer { session_id } => self

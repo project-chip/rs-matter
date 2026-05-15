@@ -1258,9 +1258,14 @@ fn client_trait(
                 })
                 .await?;
 
-                // Inspect per-attribute status. WriteResponse is
-                // single-message — no chunking — so we only need to
-                // look at the first (and only) status entry.
+                // Inspect every per-attribute status. The high-level
+                // single-attribute write should normally produce one
+                // entry, but a WriteRequest can carry many AttrData
+                // entries and the peer returns a status per path; if
+                // ANY of them is non-Success, surface that as the
+                // error. `WriteResponse` itself is single-message —
+                // no chunking — so a single `response()` call is
+                // sufficient.
                 let resp = handle.response()?;
                 for status in resp.write_responses.iter() {
                     let status = status?;
