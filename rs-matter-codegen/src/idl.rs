@@ -34024,245 +34024,25 @@ pub mod unit_testing {
         }
     }
     impl<T> rs_matter_crate::dm::NonBlockingHandler for HandlerAdaptor<T> where T: ClusterHandler {}
-    #[doc = "IM-client extension trait for the `UnitTesting` cluster's commands. `use` this trait to see the `push_*` methods on [`rs_matter_crate::im::CmdDataArrayBuilder`]."]
-    pub trait UnitTestingCmdRequests<P>: Sized
+    #[doc = "Cluster-scoped view onto a [`rs_matter_crate::im::CmdDataArrayBuilder`] for the `UnitTesting` cluster. Empty-request commands push and return `Self`; parameterized commands return the codegen-emitted typed request builder (whose parent chain bypasses the view — close back to the array via Data + CmdData `.end()?`s). `.end()` closes the wrapped array. Command names that would collide with the view's own inherent methods (see `RESERVED_VIEW_METHOD_NAMES` in the codegen — currently `end`, which the WebRTC cluster uses) get a `cmd_` prefix."]
+    pub struct UnitTestingCmdRequestsView<P>
     where
         P: rs_matter_crate::tlv::TLVBuilderParent,
     {
-        fn push_unit_testing_test(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_test_not_handled(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_test_specific(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_test_unknown_command(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_test_add_arguments(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestAddArgumentsRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_test_simple_argument_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestSimpleArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
-                0,
-            >,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_test_struct_array_argument_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestStructArrayArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
-                0,
-            >,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_test_struct_argument_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestStructArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
-                0,
-            >,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_test_nested_struct_argument_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestNestedStructArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
-                0,
-            >,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_test_list_struct_argument_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestListStructArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
-                0,
-            >,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_test_list_int_8_u_argument_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestListInt8UArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
-                0,
-            >,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_test_nested_struct_list_argument_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestNestedStructListArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
-                0,
-            >,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_test_list_nested_struct_list_argument_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestListNestedStructListArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
-                0,
-            >,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_test_list_int_8_u_reverse_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestListInt8UReverseRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
-                0,
-            >,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_test_enums_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestEnumsRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_test_nullable_optional_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestNullableOptionalRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
-                0,
-            >,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_test_complex_nullable_optional_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestComplexNullableOptionalRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
-                0,
-            >,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_simple_struct_echo_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            SimpleStructEchoRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_timed_invoke_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_test_simple_optional_argument_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestSimpleOptionalArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
-                0,
-            >,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_test_emit_test_event_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestEmitTestEventRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_test_emit_test_fabric_scoped_event_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestEmitTestFabricScopedEventRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
-                0,
-            >,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_test_batch_helper_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestBatchHelperRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_test_second_batch_helper_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestSecondBatchHelperRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
-                0,
-            >,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_string_echo_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            StringEchoRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_global_echo_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            GlobalEchoRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_test_check_command_flags(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_test_different_vendor_mei_request(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestDifferentVendorMeiRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
-                0,
-            >,
-            rs_matter_crate::error::Error,
-        >;
+        array: rs_matter_crate::im::CmdDataArrayBuilder<P>,
     }
-    impl<P> UnitTestingCmdRequests<P> for rs_matter_crate::im::CmdDataArrayBuilder<P>
+    impl<P> UnitTestingCmdRequestsView<P>
     where
         P: rs_matter_crate::tlv::TLVBuilderParent,
     {
-        fn push_unit_testing_test(
+        pub fn test(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<Self, rs_matter_crate::error::Error> {
             use rs_matter_crate::tlv::TLVWrite;
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 0)?
                 .data(|w| {
                     w.start_struct(&rs_matter_crate::tlv::TLVTag::Context(
@@ -34270,14 +34050,17 @@ pub mod unit_testing {
                     ))?;
                     w.end_container()
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_test_not_handled(
+        pub fn test_not_handled(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<Self, rs_matter_crate::error::Error> {
             use rs_matter_crate::tlv::TLVWrite;
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 1)?
                 .data(|w| {
                     w.start_struct(&rs_matter_crate::tlv::TLVTag::Context(
@@ -34285,14 +34068,17 @@ pub mod unit_testing {
                     ))?;
                     w.end_container()
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_test_specific(
+        pub fn test_specific(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<Self, rs_matter_crate::error::Error> {
             use rs_matter_crate::tlv::TLVWrite;
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 2)?
                 .data(|w| {
                     w.start_struct(&rs_matter_crate::tlv::TLVTag::Context(
@@ -34300,14 +34086,17 @@ pub mod unit_testing {
                     ))?;
                     w.end_container()
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_test_unknown_command(
+        pub fn test_unknown_command(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<Self, rs_matter_crate::error::Error> {
             use rs_matter_crate::tlv::TLVWrite;
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 3)?
                 .data(|w| {
                     w.start_struct(&rs_matter_crate::tlv::TLVTag::Context(
@@ -34315,173 +34104,227 @@ pub mod unit_testing {
                     ))?;
                     w.end_container()
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_test_add_arguments(
+        pub fn test_add_arguments(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
-            TestAddArgumentsRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            TestAddArgumentsRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 4)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 4)?
+                .data_builder()
         }
-        fn push_unit_testing_test_simple_argument_request(
+        pub fn test_simple_argument_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             TestSimpleArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
                 0,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 5)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 5)?
+                .data_builder()
         }
-        fn push_unit_testing_test_struct_array_argument_request(
+        pub fn test_struct_array_argument_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             TestStructArrayArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
                 0,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 6)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 6)?
+                .data_builder()
         }
-        fn push_unit_testing_test_struct_argument_request(
+        pub fn test_struct_argument_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             TestStructArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
                 0,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 7)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 7)?
+                .data_builder()
         }
-        fn push_unit_testing_test_nested_struct_argument_request(
+        pub fn test_nested_struct_argument_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             TestNestedStructArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
                 0,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 8)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 8)?
+                .data_builder()
         }
-        fn push_unit_testing_test_list_struct_argument_request(
+        pub fn test_list_struct_argument_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             TestListStructArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
                 0,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 9)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 9)?
+                .data_builder()
         }
-        fn push_unit_testing_test_list_int_8_u_argument_request(
+        pub fn test_list_int_8_u_argument_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             TestListInt8UArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
                 0,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 10)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 10)?
+                .data_builder()
         }
-        fn push_unit_testing_test_nested_struct_list_argument_request(
+        pub fn test_nested_struct_list_argument_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             TestNestedStructListArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
                 0,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 11)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 11)?
+                .data_builder()
         }
-        fn push_unit_testing_test_list_nested_struct_list_argument_request(
+        pub fn test_list_nested_struct_list_argument_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             TestListNestedStructListArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
                 0,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 12)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 12)?
+                .data_builder()
         }
-        fn push_unit_testing_test_list_int_8_u_reverse_request(
+        pub fn test_list_int_8_u_reverse_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             TestListInt8UReverseRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
                 0,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 13)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 13)?
+                .data_builder()
         }
-        fn push_unit_testing_test_enums_request(
+        pub fn test_enums_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
-            TestEnumsRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            TestEnumsRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 14)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 14)?
+                .data_builder()
         }
-        fn push_unit_testing_test_nullable_optional_request(
+        pub fn test_nullable_optional_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             TestNullableOptionalRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
                 0,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 15)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 15)?
+                .data_builder()
         }
-        fn push_unit_testing_test_complex_nullable_optional_request(
+        pub fn test_complex_nullable_optional_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             TestComplexNullableOptionalRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
                 0,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 16)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 16)?
+                .data_builder()
         }
-        fn push_unit_testing_simple_struct_echo_request(
+        pub fn simple_struct_echo_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
-            SimpleStructEchoRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            SimpleStructEchoRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 17)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 17)?
+                .data_builder()
         }
-        fn push_unit_testing_timed_invoke_request(
+        pub fn timed_invoke_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<Self, rs_matter_crate::error::Error> {
             use rs_matter_crate::tlv::TLVWrite;
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 18)?
                 .data(|w| {
                     w.start_struct(&rs_matter_crate::tlv::TLVTag::Context(
@@ -34489,86 +34332,122 @@ pub mod unit_testing {
                     ))?;
                     w.end_container()
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_test_simple_optional_argument_request(
+        pub fn test_simple_optional_argument_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             TestSimpleOptionalArgumentRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
                 0,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 19)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 19)?
+                .data_builder()
         }
-        fn push_unit_testing_test_emit_test_event_request(
+        pub fn test_emit_test_event_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
-            TestEmitTestEventRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            TestEmitTestEventRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 20)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 20)?
+                .data_builder()
         }
-        fn push_unit_testing_test_emit_test_fabric_scoped_event_request(
+        pub fn test_emit_test_fabric_scoped_event_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             TestEmitTestFabricScopedEventRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
                 0,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 21)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 21)?
+                .data_builder()
         }
-        fn push_unit_testing_test_batch_helper_request(
+        pub fn test_batch_helper_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
-            TestBatchHelperRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            TestBatchHelperRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 22)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 22)?
+                .data_builder()
         }
-        fn push_unit_testing_test_second_batch_helper_request(
+        pub fn test_second_batch_helper_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             TestSecondBatchHelperRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
                 0,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 23)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 23)?
+                .data_builder()
         }
-        fn push_unit_testing_string_echo_request(
+        pub fn string_echo_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
-            StringEchoRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            StringEchoRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 24)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 24)?
+                .data_builder()
         }
-        fn push_unit_testing_global_echo_request(
+        pub fn global_echo_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
-            GlobalEchoRequestRequestBuilder<rs_matter_crate::im::CmdDataBuilder<Self, 2>, 0>,
+            GlobalEchoRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 25)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 25)?
+                .data_builder()
         }
-        fn push_unit_testing_test_check_command_flags(
+        pub fn test_check_command_flags(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<Self, rs_matter_crate::error::Error> {
             use rs_matter_crate::tlv::TLVWrite;
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 26)?
                 .data(|w| {
                     w.start_struct(&rs_matter_crate::tlv::TLVTag::Context(
@@ -34576,1859 +34455,1329 @@ pub mod unit_testing {
                     ))?;
                     w.end_container()
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_test_different_vendor_mei_request(
+        pub fn test_different_vendor_mei_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             TestDifferentVendorMeiRequestRequestBuilder<
-                rs_matter_crate::im::CmdDataBuilder<Self, 2>,
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
                 0,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?
+            self.array
+                .push()?
                 .path(endpoint, 4294048773, 4294049962)?
                 .data_builder()
         }
+        #[doc = r" Close the wrapped array and return its parent."]
+        pub fn end(self) -> Result<P, rs_matter_crate::error::Error> {
+            self.array.end()
+        }
     }
-    #[doc = "IM-client extension trait for the `UnitTesting` cluster's attribute reads. `use` this trait to see the `push_*` methods on [`rs_matter_crate::im::AttrPathArrayBuilder`]."]
+    #[doc = "IM-client extension trait for the `UnitTesting` cluster's commands. `use` this trait to call `.unit_testing_inv()` on a [`rs_matter_crate::im::CmdDataArrayBuilder`]; the returned [`UnitTestingCmdRequestsView`] exposes one method per command (cluster-prefix-free). `.end()` on the view closes the wrapped array."]
+    pub trait UnitTestingCmdRequests<P>: Sized
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn unit_testing_inv(self) -> UnitTestingCmdRequestsView<P>;
+    }
+    impl<P> UnitTestingCmdRequests<P> for rs_matter_crate::im::CmdDataArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn unit_testing_inv(self) -> UnitTestingCmdRequestsView<P> {
+            UnitTestingCmdRequestsView { array: self }
+        }
+    }
+    #[doc = "Cluster-scoped view onto an [`rs_matter_crate::im::AttrPathArrayBuilder`] for the `UnitTesting` cluster. Each method pushes one `AttrPath` (cluster ID baked in) and returns `Self` for chaining; `.end()` closes the underlying array. Attribute names that would collide with the view's own inherent methods (see `RESERVED_VIEW_METHOD_NAMES` in the codegen) get an `attr_` prefix."]
+    pub struct UnitTestingAttrReadsView<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        array: rs_matter_crate::im::AttrPathArrayBuilder<P>,
+    }
+    impl<P> UnitTestingAttrReadsView<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        pub fn boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(0)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn bitmap_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(1)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn bitmap_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(2)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn bitmap_32(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(3)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn bitmap_64(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(4)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(5)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(6)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_24_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(7)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_32_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(8)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_40_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(9)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_48_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(10)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_56_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(11)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_64_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(12)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(13)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(14)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_24_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(15)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_32_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_40_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(17)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_48_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(18)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_56_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(19)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_64_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(20)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn enum_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(21)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn enum_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(22)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn float_single(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(23)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn float_double(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(24)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(25)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn list_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(26)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn list_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(27)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn list_struct_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(28)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn long_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(29)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn char_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(30)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn long_char_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(31)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn epoch_us(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(32)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn epoch_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(33)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn vendor_id(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(34)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn list_nullables_and_optionals_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(35)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn enum_attr(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(36)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn struct_attr(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(37)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn range_restricted_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(38)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn range_restricted_int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(39)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn range_restricted_int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(40)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn range_restricted_int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(41)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn list_long_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(42)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn list_fabric_scoped(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(43)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn timed_write_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(48)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn general_error_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(49)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn cluster_error_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(50)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn global_enum(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(51)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn global_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(52)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn unsupported_attribute_requiring_admin_privilege(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(254)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn unsupported(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(255)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn read_failure_code(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(12288)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn failure_int_32_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(12289)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16384)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_bitmap_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16385)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_bitmap_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16386)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_bitmap_32(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16387)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_bitmap_64(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16388)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16389)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16390)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_24_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16391)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_32_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16392)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_40_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16393)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_48_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16394)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_56_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16395)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_64_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16396)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16397)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16398)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_24_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16399)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_32_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16400)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_40_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16401)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_48_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16402)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_56_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16403)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_64_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16404)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_enum_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16405)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_enum_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16406)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_float_single(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16407)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_float_double(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16408)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16409)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_char_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16414)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_enum_attr(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16420)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16421)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_range_restricted_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16422)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_range_restricted_int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16423)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_range_restricted_int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16424)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_range_restricted_int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16425)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn write_only_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16426)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_global_enum(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16435)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_global_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16436)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn generated_command_list(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(65528)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn accepted_command_list(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(65529)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn attribute_list(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(65531)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn feature_map(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(65532)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn cluster_revision(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(65533)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn mei_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(4294070017)?
+                .end()?;
+            Ok(Self { array })
+        }
+        #[doc = r" Close the wrapped array and return its parent."]
+        pub fn end(self) -> Result<P, rs_matter_crate::error::Error> {
+            self.array.end()
+        }
+    }
+    #[doc = "IM-client extension trait for the `UnitTesting` cluster's attribute reads. `use` this trait to call `.unit_testing_read()` on an [`rs_matter_crate::im::AttrPathArrayBuilder`]; the returned [`UnitTestingAttrReadsView`] exposes one method per attribute (cluster-prefix-free). `.end()` on the view closes the wrapped array."]
     pub trait UnitTestingAttrReads<P>: Sized
     where
         P: rs_matter_crate::tlv::TLVBuilderParent,
     {
-        fn push_unit_testing_boolean(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_bitmap_8(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_bitmap_16(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_bitmap_32(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_bitmap_64(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_8_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_16_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_24_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_32_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_40_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_48_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_56_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_64_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_8_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_16_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_24_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_32_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_40_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_48_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_56_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_64_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_enum_8(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_enum_16(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_float_single(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_float_double(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_octet_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_list_int_8_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_list_octet_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_list_struct_octet_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_long_octet_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_char_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_long_char_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_epoch_us(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_epoch_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_vendor_id(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_list_nullables_and_optionals_struct(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_enum_attr(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_struct_attr(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_range_restricted_int_8_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_range_restricted_int_8_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_range_restricted_int_16_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_range_restricted_int_16_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_list_long_octet_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_list_fabric_scoped(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_timed_write_boolean(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_general_error_boolean(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_cluster_error_boolean(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_global_enum(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_global_struct(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_unsupported_attribute_requiring_admin_privilege(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_unsupported(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_read_failure_code(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_failure_int_32_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_boolean(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_bitmap_8(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_bitmap_16(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_bitmap_32(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_bitmap_64(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_8_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_16_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_24_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_32_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_40_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_48_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_56_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_64_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_8_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_16_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_24_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_32_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_40_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_48_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_56_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_64_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_enum_8(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_enum_16(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_float_single(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_float_double(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_octet_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_char_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_enum_attr(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_struct(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_range_restricted_int_8_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_range_restricted_int_8_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_range_restricted_int_16_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_range_restricted_int_16_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_write_only_int_8_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_global_enum(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_global_struct(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_generated_command_list(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_accepted_command_list(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_attribute_list(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_feature_map(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_cluster_revision(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_mei_int_8_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
+        fn unit_testing_read(self) -> UnitTestingAttrReadsView<P>;
     }
     impl<P> UnitTestingAttrReads<P> for rs_matter_crate::im::AttrPathArrayBuilder<P>
     where
         P: rs_matter_crate::tlv::TLVBuilderParent,
     {
-        fn push_unit_testing_boolean(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(0)?
-                .end()
-        }
-        fn push_unit_testing_bitmap_8(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(1)?
-                .end()
-        }
-        fn push_unit_testing_bitmap_16(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(2)?
-                .end()
-        }
-        fn push_unit_testing_bitmap_32(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(3)?
-                .end()
-        }
-        fn push_unit_testing_bitmap_64(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(4)?
-                .end()
-        }
-        fn push_unit_testing_int_8_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(5)?
-                .end()
-        }
-        fn push_unit_testing_int_16_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(6)?
-                .end()
-        }
-        fn push_unit_testing_int_24_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(7)?
-                .end()
-        }
-        fn push_unit_testing_int_32_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(8)?
-                .end()
-        }
-        fn push_unit_testing_int_40_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(9)?
-                .end()
-        }
-        fn push_unit_testing_int_48_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(10)?
-                .end()
-        }
-        fn push_unit_testing_int_56_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(11)?
-                .end()
-        }
-        fn push_unit_testing_int_64_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(12)?
-                .end()
-        }
-        fn push_unit_testing_int_8_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(13)?
-                .end()
-        }
-        fn push_unit_testing_int_16_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(14)?
-                .end()
-        }
-        fn push_unit_testing_int_24_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(15)?
-                .end()
-        }
-        fn push_unit_testing_int_32_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16)?
-                .end()
-        }
-        fn push_unit_testing_int_40_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(17)?
-                .end()
-        }
-        fn push_unit_testing_int_48_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(18)?
-                .end()
-        }
-        fn push_unit_testing_int_56_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(19)?
-                .end()
-        }
-        fn push_unit_testing_int_64_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(20)?
-                .end()
-        }
-        fn push_unit_testing_enum_8(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(21)?
-                .end()
-        }
-        fn push_unit_testing_enum_16(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(22)?
-                .end()
-        }
-        fn push_unit_testing_float_single(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(23)?
-                .end()
-        }
-        fn push_unit_testing_float_double(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(24)?
-                .end()
-        }
-        fn push_unit_testing_octet_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(25)?
-                .end()
-        }
-        fn push_unit_testing_list_int_8_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(26)?
-                .end()
-        }
-        fn push_unit_testing_list_octet_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(27)?
-                .end()
-        }
-        fn push_unit_testing_list_struct_octet_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(28)?
-                .end()
-        }
-        fn push_unit_testing_long_octet_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(29)?
-                .end()
-        }
-        fn push_unit_testing_char_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(30)?
-                .end()
-        }
-        fn push_unit_testing_long_char_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(31)?
-                .end()
-        }
-        fn push_unit_testing_epoch_us(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(32)?
-                .end()
-        }
-        fn push_unit_testing_epoch_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(33)?
-                .end()
-        }
-        fn push_unit_testing_vendor_id(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(34)?
-                .end()
-        }
-        fn push_unit_testing_list_nullables_and_optionals_struct(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(35)?
-                .end()
-        }
-        fn push_unit_testing_enum_attr(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(36)?
-                .end()
-        }
-        fn push_unit_testing_struct_attr(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(37)?
-                .end()
-        }
-        fn push_unit_testing_range_restricted_int_8_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(38)?
-                .end()
-        }
-        fn push_unit_testing_range_restricted_int_8_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(39)?
-                .end()
-        }
-        fn push_unit_testing_range_restricted_int_16_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(40)?
-                .end()
-        }
-        fn push_unit_testing_range_restricted_int_16_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(41)?
-                .end()
-        }
-        fn push_unit_testing_list_long_octet_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(42)?
-                .end()
-        }
-        fn push_unit_testing_list_fabric_scoped(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(43)?
-                .end()
-        }
-        fn push_unit_testing_timed_write_boolean(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(48)?
-                .end()
-        }
-        fn push_unit_testing_general_error_boolean(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(49)?
-                .end()
-        }
-        fn push_unit_testing_cluster_error_boolean(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(50)?
-                .end()
-        }
-        fn push_unit_testing_global_enum(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(51)?
-                .end()
-        }
-        fn push_unit_testing_global_struct(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(52)?
-                .end()
-        }
-        fn push_unit_testing_unsupported_attribute_requiring_admin_privilege(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(254)?
-                .end()
-        }
-        fn push_unit_testing_unsupported(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(255)?
-                .end()
-        }
-        fn push_unit_testing_read_failure_code(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(12288)?
-                .end()
-        }
-        fn push_unit_testing_failure_int_32_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(12289)?
-                .end()
-        }
-        fn push_unit_testing_nullable_boolean(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16384)?
-                .end()
-        }
-        fn push_unit_testing_nullable_bitmap_8(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16385)?
-                .end()
-        }
-        fn push_unit_testing_nullable_bitmap_16(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16386)?
-                .end()
-        }
-        fn push_unit_testing_nullable_bitmap_32(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16387)?
-                .end()
-        }
-        fn push_unit_testing_nullable_bitmap_64(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16388)?
-                .end()
-        }
-        fn push_unit_testing_nullable_int_8_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16389)?
-                .end()
-        }
-        fn push_unit_testing_nullable_int_16_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16390)?
-                .end()
-        }
-        fn push_unit_testing_nullable_int_24_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16391)?
-                .end()
-        }
-        fn push_unit_testing_nullable_int_32_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16392)?
-                .end()
-        }
-        fn push_unit_testing_nullable_int_40_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16393)?
-                .end()
-        }
-        fn push_unit_testing_nullable_int_48_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16394)?
-                .end()
-        }
-        fn push_unit_testing_nullable_int_56_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16395)?
-                .end()
-        }
-        fn push_unit_testing_nullable_int_64_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16396)?
-                .end()
-        }
-        fn push_unit_testing_nullable_int_8_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16397)?
-                .end()
-        }
-        fn push_unit_testing_nullable_int_16_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16398)?
-                .end()
-        }
-        fn push_unit_testing_nullable_int_24_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16399)?
-                .end()
-        }
-        fn push_unit_testing_nullable_int_32_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16400)?
-                .end()
-        }
-        fn push_unit_testing_nullable_int_40_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16401)?
-                .end()
-        }
-        fn push_unit_testing_nullable_int_48_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16402)?
-                .end()
-        }
-        fn push_unit_testing_nullable_int_56_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16403)?
-                .end()
-        }
-        fn push_unit_testing_nullable_int_64_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16404)?
-                .end()
-        }
-        fn push_unit_testing_nullable_enum_8(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16405)?
-                .end()
-        }
-        fn push_unit_testing_nullable_enum_16(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16406)?
-                .end()
-        }
-        fn push_unit_testing_nullable_float_single(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16407)?
-                .end()
-        }
-        fn push_unit_testing_nullable_float_double(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16408)?
-                .end()
-        }
-        fn push_unit_testing_nullable_octet_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16409)?
-                .end()
-        }
-        fn push_unit_testing_nullable_char_string(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16414)?
-                .end()
-        }
-        fn push_unit_testing_nullable_enum_attr(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16420)?
-                .end()
-        }
-        fn push_unit_testing_nullable_struct(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16421)?
-                .end()
-        }
-        fn push_unit_testing_nullable_range_restricted_int_8_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16422)?
-                .end()
-        }
-        fn push_unit_testing_nullable_range_restricted_int_8_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16423)?
-                .end()
-        }
-        fn push_unit_testing_nullable_range_restricted_int_16_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16424)?
-                .end()
-        }
-        fn push_unit_testing_nullable_range_restricted_int_16_s(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16425)?
-                .end()
-        }
-        fn push_unit_testing_write_only_int_8_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16426)?
-                .end()
-        }
-        fn push_unit_testing_nullable_global_enum(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16435)?
-                .end()
-        }
-        fn push_unit_testing_nullable_global_struct(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(16436)?
-                .end()
-        }
-        fn push_unit_testing_generated_command_list(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(65528)?
-                .end()
-        }
-        fn push_unit_testing_accepted_command_list(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(65529)?
-                .end()
-        }
-        fn push_unit_testing_attribute_list(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(65531)?
-                .end()
-        }
-        fn push_unit_testing_feature_map(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(65532)?
-                .end()
-        }
-        fn push_unit_testing_cluster_revision(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(65533)?
-                .end()
-        }
-        fn push_unit_testing_mei_int_8_u(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
-                .endpoint(endpoint)?
-                .cluster(4294048773)?
-                .attr(4294070017)?
-                .end()
+        fn unit_testing_read(self) -> UnitTestingAttrReadsView<P> {
+            UnitTestingAttrReadsView { array: self }
         }
     }
-    #[doc = "IM-client extension trait for the `UnitTesting` cluster's attribute writes. `use` this trait to see the `push_*_write` methods on [`rs_matter_crate::im::AttrDataArrayBuilder`]."]
-    pub trait UnitTestingAttrWrites<P>: Sized
+    #[doc = "Cluster-scoped view onto an [`rs_matter_crate::im::AttrDataArrayBuilder`] for the `UnitTesting` cluster. Scalar-valued attrs push and return `Self` for chaining; struct/list-valued attrs return the codegen-emitted typed value builder (whose parent chain bypasses the view — close back to the array via Data + AttrData `.end()?`s). `.end()` closes the wrapped array. Attribute names that would collide with the view's own inherent methods (see `RESERVED_VIEW_METHOD_NAMES` in the codegen) get an `attr_` prefix."]
+    pub struct UnitTestingAttrWritesView<P>
     where
         P: rs_matter_crate::tlv::TLVBuilderParent,
     {
-        fn push_unit_testing_boolean_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: bool,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_bitmap_8_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: Bitmap8MaskMap,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_bitmap_16_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: Bitmap16MaskMap,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_bitmap_32_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: Bitmap32MaskMap,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_bitmap_64_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: Bitmap64MaskMap,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_8_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u8,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_16_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u16,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_24_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u32,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_32_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u32,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_40_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u64,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_48_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u64,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_56_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u64,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_64_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u64,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_8_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: i8,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_16_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: i16,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_24_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: i32,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_32_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: i32,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_40_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: i64,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_48_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: i64,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_56_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: i64,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_int_64_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: i64,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_enum_8_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u8,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_enum_16_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u16,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_float_single_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: f32,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_float_double_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: f64,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_octet_string_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::OctetStr<'_>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_list_int_8_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            rs_matter_crate::tlv::ToTLVArrayBuilder<
-                rs_matter_crate::im::AttrDataBuilder<Self, 3>,
-                u8,
-            >,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_list_octet_string_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            rs_matter_crate::tlv::OctetsArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_list_struct_octet_string_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestListStructOctetArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_long_octet_string_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::OctetStr<'_>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_char_string_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Utf8Str<'_>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_long_char_string_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Utf8Str<'_>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_epoch_us_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u64,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_epoch_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u32,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_vendor_id_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u16,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_list_nullables_and_optionals_struct_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            NullablesAndOptionalsStructArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_enum_attr_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: SimpleEnum,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_struct_attr_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            SimpleStructBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_range_restricted_int_8_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u8,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_range_restricted_int_8_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: i8,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_range_restricted_int_16_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u16,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_range_restricted_int_16_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: i16,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_list_long_octet_string_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            rs_matter_crate::tlv::OctetsArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_list_fabric_scoped_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestFabricScopedArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_timed_write_boolean_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: bool,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_general_error_boolean_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: bool,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_cluster_error_boolean_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: bool,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_global_enum_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: TestGlobalEnum,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_global_struct_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            TestGlobalStructBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_unsupported_attribute_requiring_admin_privilege_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: bool,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_unsupported_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: bool,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_read_failure_code_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u8,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_failure_int_32_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u32,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_boolean_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<bool>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_bitmap_8_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_bitmap_16_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_bitmap_32_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_bitmap_64_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_8_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<u8>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_16_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<u16>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_24_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<u32>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_32_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<u32>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_40_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<u64>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_48_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<u64>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_56_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<u64>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_64_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<u64>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_8_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<i8>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_16_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<i16>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_24_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<i32>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_32_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<i32>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_40_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<i64>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_48_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<i64>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_56_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<i64>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_int_64_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<i64>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_enum_8_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<u8>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_enum_16_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<u16>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_float_single_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<f32>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_float_double_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<f64>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_octet_string_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::OctetStr<'_>>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_char_string_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::Utf8Str<'_>>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_enum_attr_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<SimpleEnum>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_struct_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            rs_matter_crate::tlv::NullableBuilder<
-                rs_matter_crate::im::AttrDataBuilder<Self, 3>,
-                SimpleStructBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
-            >,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_nullable_range_restricted_int_8_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<u8>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_range_restricted_int_8_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<i8>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_range_restricted_int_16_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<u16>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_range_restricted_int_16_s_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<i16>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_write_only_int_8_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u8,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_global_enum_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: rs_matter_crate::tlv::Nullable<TestGlobalEnum>,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
-        fn push_unit_testing_nullable_global_struct_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-        ) -> Result<
-            rs_matter_crate::tlv::NullableBuilder<
-                rs_matter_crate::im::AttrDataBuilder<Self, 3>,
-                TestGlobalStructBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
-            >,
-            rs_matter_crate::error::Error,
-        >;
-        fn push_unit_testing_mei_int_8_u_write(
-            self,
-            endpoint: rs_matter_crate::dm::EndptId,
-            value: u8,
-        ) -> Result<Self, rs_matter_crate::error::Error>;
+        array: rs_matter_crate::im::AttrDataArrayBuilder<P>,
     }
-    impl<P> UnitTestingAttrWrites<P> for rs_matter_crate::im::AttrDataArrayBuilder<P>
+    impl<P> UnitTestingAttrWritesView<P>
     where
         P: rs_matter_crate::tlv::TLVBuilderParent,
     {
-        fn push_unit_testing_boolean_write(
+        pub fn boolean(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: bool,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 0)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36439,14 +35788,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_bitmap_8_write(
+        pub fn bitmap_8(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: Bitmap8MaskMap,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 1)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36457,14 +35809,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_bitmap_16_write(
+        pub fn bitmap_16(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: Bitmap16MaskMap,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 2)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36475,14 +35830,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_bitmap_32_write(
+        pub fn bitmap_32(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: Bitmap32MaskMap,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 3)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36493,14 +35851,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_bitmap_64_write(
+        pub fn bitmap_64(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: Bitmap64MaskMap,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 4)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36511,14 +35872,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_int_8_u_write(
+        pub fn int_8_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u8,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 5)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36529,14 +35893,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_int_16_u_write(
+        pub fn int_16_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u16,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 6)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36547,14 +35914,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_int_24_u_write(
+        pub fn int_24_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u32,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 7)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36565,14 +35935,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_int_32_u_write(
+        pub fn int_32_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u32,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 8)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36583,14 +35956,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_int_40_u_write(
+        pub fn int_40_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u64,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 9)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36601,14 +35977,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_int_48_u_write(
+        pub fn int_48_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u64,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 10)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36619,14 +35998,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_int_56_u_write(
+        pub fn int_56_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u64,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 11)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36637,14 +36019,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_int_64_u_write(
+        pub fn int_64_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u64,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 12)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36655,14 +36040,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_int_8_s_write(
+        pub fn int_8_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i8,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 13)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36673,14 +36061,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_int_16_s_write(
+        pub fn int_16_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i16,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 14)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36691,14 +36082,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_int_24_s_write(
+        pub fn int_24_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i32,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 15)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36709,14 +36103,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_int_32_s_write(
+        pub fn int_32_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i32,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36727,14 +36124,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_int_40_s_write(
+        pub fn int_40_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i64,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 17)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36745,14 +36145,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_int_48_s_write(
+        pub fn int_48_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i64,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 18)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36763,14 +36166,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_int_56_s_write(
+        pub fn int_56_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i64,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 19)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36781,14 +36187,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_int_64_s_write(
+        pub fn int_64_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i64,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 20)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36799,14 +36208,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_enum_8_write(
+        pub fn enum_8(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u8,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 21)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36817,14 +36229,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_enum_16_write(
+        pub fn enum_16(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u16,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 22)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36835,14 +36250,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_float_single_write(
+        pub fn float_single(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: f32,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 23)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36853,14 +36271,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_float_double_write(
+        pub fn float_double(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: f64,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 24)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36871,14 +36292,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_octet_string_write(
+        pub fn octet_string(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::OctetStr<'_>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 25)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36889,44 +36313,69 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_list_int_8_u_write(
+        pub fn list_int_8_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             rs_matter_crate::tlv::ToTLVArrayBuilder<
-                rs_matter_crate::im::AttrDataBuilder<Self, 3>,
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
                 u8,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 26)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 26)?
+                .data_builder()
         }
-        fn push_unit_testing_list_octet_string_write(
+        pub fn list_octet_string(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
-            rs_matter_crate::tlv::OctetsArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            rs_matter_crate::tlv::OctetsArrayBuilder<
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+            >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 27)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 27)?
+                .data_builder()
         }
-        fn push_unit_testing_list_struct_octet_string_write(
+        pub fn list_struct_octet_string(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
-            TestListStructOctetArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            TestListStructOctetArrayBuilder<
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+            >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 28)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 28)?
+                .data_builder()
         }
-        fn push_unit_testing_long_octet_string_write(
+        pub fn long_octet_string(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::OctetStr<'_>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 29)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36937,14 +36386,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_char_string_write(
+        pub fn char_string(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Utf8Str<'_>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 30)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36955,14 +36407,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_long_char_string_write(
+        pub fn long_char_string(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Utf8Str<'_>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 31)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36973,14 +36428,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_epoch_us_write(
+        pub fn epoch_us(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u64,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 32)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -36991,14 +36449,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_epoch_s_write(
+        pub fn epoch_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u32,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 33)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37009,14 +36470,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_vendor_id_write(
+        pub fn vendor_id(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u16,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 34)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37027,23 +36491,34 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_list_nullables_and_optionals_struct_write(
+        pub fn list_nullables_and_optionals_struct(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
-            NullablesAndOptionalsStructArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            NullablesAndOptionalsStructArrayBuilder<
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+            >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 35)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 35)?
+                .data_builder()
         }
-        fn push_unit_testing_enum_attr_write(
+        pub fn enum_attr(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: SimpleEnum,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 36)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37054,23 +36529,34 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_struct_attr_write(
+        pub fn struct_attr(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
-            SimpleStructBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            SimpleStructBuilder<
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+            >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 37)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 37)?
+                .data_builder()
         }
-        fn push_unit_testing_range_restricted_int_8_u_write(
+        pub fn range_restricted_int_8_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u8,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 38)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37081,14 +36567,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_range_restricted_int_8_s_write(
+        pub fn range_restricted_int_8_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i8,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 39)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37099,14 +36588,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_range_restricted_int_16_u_write(
+        pub fn range_restricted_int_16_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u16,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 40)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37117,14 +36609,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_range_restricted_int_16_s_write(
+        pub fn range_restricted_int_16_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i16,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 41)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37135,32 +36630,51 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_list_long_octet_string_write(
+        pub fn list_long_octet_string(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
-            rs_matter_crate::tlv::OctetsArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            rs_matter_crate::tlv::OctetsArrayBuilder<
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+            >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 42)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 42)?
+                .data_builder()
         }
-        fn push_unit_testing_list_fabric_scoped_write(
+        pub fn list_fabric_scoped(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
-            TestFabricScopedArrayBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            TestFabricScopedArrayBuilder<
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+            >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 43)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 43)?
+                .data_builder()
         }
-        fn push_unit_testing_timed_write_boolean_write(
+        pub fn timed_write_boolean(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: bool,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 48)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37171,14 +36685,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_general_error_boolean_write(
+        pub fn general_error_boolean(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: bool,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 49)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37189,14 +36706,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_cluster_error_boolean_write(
+        pub fn cluster_error_boolean(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: bool,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 50)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37207,14 +36727,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_global_enum_write(
+        pub fn global_enum(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: TestGlobalEnum,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 51)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37225,23 +36748,34 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_global_struct_write(
+        pub fn global_struct(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
-            TestGlobalStructBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+            TestGlobalStructBuilder<
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+            >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?.path(endpoint, 4294048773, 52)?.data_builder()
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 52)?
+                .data_builder()
         }
-        fn push_unit_testing_unsupported_attribute_requiring_admin_privilege_write(
+        pub fn unsupported_attribute_requiring_admin_privilege(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: bool,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 254)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37252,14 +36786,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_unsupported_write(
+        pub fn unsupported(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: bool,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 255)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37270,14 +36807,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_read_failure_code_write(
+        pub fn read_failure_code(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u8,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 12288)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37288,14 +36828,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_failure_int_32_u_write(
+        pub fn failure_int_32_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u32,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 12289)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37306,14 +36849,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_boolean_write(
+        pub fn nullable_boolean(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<bool>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16384)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37324,14 +36870,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_bitmap_8_write(
+        pub fn nullable_bitmap_8(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16385)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37342,14 +36891,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_bitmap_16_write(
+        pub fn nullable_bitmap_16(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16386)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37360,14 +36912,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_bitmap_32_write(
+        pub fn nullable_bitmap_32(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16387)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37378,14 +36933,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_bitmap_64_write(
+        pub fn nullable_bitmap_64(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16388)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37396,14 +36954,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_int_8_u_write(
+        pub fn nullable_int_8_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16389)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37414,14 +36975,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_int_16_u_write(
+        pub fn nullable_int_16_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16390)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37432,14 +36996,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_int_24_u_write(
+        pub fn nullable_int_24_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u32>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16391)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37450,14 +37017,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_int_32_u_write(
+        pub fn nullable_int_32_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u32>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16392)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37468,14 +37038,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_int_40_u_write(
+        pub fn nullable_int_40_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16393)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37486,14 +37059,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_int_48_u_write(
+        pub fn nullable_int_48_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16394)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37504,14 +37080,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_int_56_u_write(
+        pub fn nullable_int_56_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16395)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37522,14 +37101,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_int_64_u_write(
+        pub fn nullable_int_64_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16396)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37540,14 +37122,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_int_8_s_write(
+        pub fn nullable_int_8_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i8>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16397)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37558,14 +37143,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_int_16_s_write(
+        pub fn nullable_int_16_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i16>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16398)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37576,14 +37164,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_int_24_s_write(
+        pub fn nullable_int_24_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i32>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16399)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37594,14 +37185,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_int_32_s_write(
+        pub fn nullable_int_32_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i32>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16400)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37612,14 +37206,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_int_40_s_write(
+        pub fn nullable_int_40_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16401)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37630,14 +37227,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_int_48_s_write(
+        pub fn nullable_int_48_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16402)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37648,14 +37248,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_int_56_s_write(
+        pub fn nullable_int_56_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16403)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37666,14 +37269,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_int_64_s_write(
+        pub fn nullable_int_64_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16404)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37684,14 +37290,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_enum_8_write(
+        pub fn nullable_enum_8(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16405)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37702,14 +37311,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_enum_16_write(
+        pub fn nullable_enum_16(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16406)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37720,14 +37332,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_float_single_write(
+        pub fn nullable_float_single(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<f32>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16407)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37738,14 +37353,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_float_double_write(
+        pub fn nullable_float_double(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<f64>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16408)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37756,14 +37374,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_octet_string_write(
+        pub fn nullable_octet_string(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::OctetStr<'_>>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16409)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37774,14 +37395,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_char_string_write(
+        pub fn nullable_char_string(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::Utf8Str<'_>>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16414)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37792,14 +37416,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_enum_attr_write(
+        pub fn nullable_enum_attr(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<SimpleEnum>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16420)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37810,28 +37437,40 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_struct_write(
+        pub fn nullable_struct(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             rs_matter_crate::tlv::NullableBuilder<
-                rs_matter_crate::im::AttrDataBuilder<Self, 3>,
-                SimpleStructBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+                SimpleStructBuilder<
+                    rs_matter_crate::im::AttrDataBuilder<
+                        rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                        3,
+                    >,
+                >,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?
+            self.array
+                .push()?
                 .path(endpoint, 4294048773, 16421)?
                 .data_builder()
         }
-        fn push_unit_testing_nullable_range_restricted_int_8_u_write(
+        pub fn nullable_range_restricted_int_8_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16422)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37842,14 +37481,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_range_restricted_int_8_s_write(
+        pub fn nullable_range_restricted_int_8_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i8>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16423)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37860,14 +37502,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_range_restricted_int_16_u_write(
+        pub fn nullable_range_restricted_int_16_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16424)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37878,14 +37523,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_range_restricted_int_16_s_write(
+        pub fn nullable_range_restricted_int_16_s(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i16>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16425)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37896,14 +37544,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_write_only_int_8_u_write(
+        pub fn write_only_int_8_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u8,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16426)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37914,14 +37565,17 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_global_enum_write(
+        pub fn nullable_global_enum(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<TestGlobalEnum>,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 16435)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37932,28 +37586,40 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
         }
-        fn push_unit_testing_nullable_global_struct_write(
+        pub fn nullable_global_struct(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<
             rs_matter_crate::tlv::NullableBuilder<
-                rs_matter_crate::im::AttrDataBuilder<Self, 3>,
-                TestGlobalStructBuilder<rs_matter_crate::im::AttrDataBuilder<Self, 3>>,
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+                TestGlobalStructBuilder<
+                    rs_matter_crate::im::AttrDataBuilder<
+                        rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                        3,
+                    >,
+                >,
             >,
             rs_matter_crate::error::Error,
         > {
-            self.push()?
+            self.array
+                .push()?
                 .path(endpoint, 4294048773, 16436)?
                 .data_builder()
         }
-        fn push_unit_testing_mei_int_8_u_write(
+        pub fn mei_int_8_u(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u8,
         ) -> Result<Self, rs_matter_crate::error::Error> {
-            self.push()?
+            let array = self
+                .array
+                .push()?
                 .path(endpoint, 4294048773, 4294070017)?
                 .data(|w| {
                     rs_matter_crate::tlv::ToTLV::to_tlv(
@@ -37964,7 +37630,27 @@ pub mod unit_testing {
                         w,
                     )
                 })?
-                .end()
+                .end()?;
+            Ok(Self { array })
+        }
+        #[doc = r" Close the wrapped array and return its parent."]
+        pub fn end(self) -> Result<P, rs_matter_crate::error::Error> {
+            self.array.end()
+        }
+    }
+    #[doc = "IM-client extension trait for the `UnitTesting` cluster's attribute writes. `use` this trait to call `.unit_testing_write()` on an [`rs_matter_crate::im::AttrDataArrayBuilder`]; the returned [`UnitTestingAttrWritesView`] exposes one method per writable attribute (cluster-prefix-free). `.end()` on the view closes the wrapped array."]
+    pub trait UnitTestingAttrWrites<P>: Sized
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn unit_testing_write(self) -> UnitTestingAttrWritesView<P>;
+    }
+    impl<P> UnitTestingAttrWrites<P> for rs_matter_crate::im::AttrDataArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn unit_testing_write(self) -> UnitTestingAttrWritesView<P> {
+            UnitTestingAttrWritesView { array: self }
         }
     }
     #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `TestSpecificResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`TestSpecificResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
@@ -38754,7 +38440,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 msg.invoke_requests()?
-                    .push_unit_testing_test(endpoint)?
+                    .unit_testing_inv()
+                    .test(endpoint)?
                     .end()?
                     .end()
             })
@@ -38772,7 +38459,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 msg.invoke_requests()?
-                    .push_unit_testing_test_not_handled(endpoint)?
+                    .unit_testing_inv()
+                    .test_not_handled(endpoint)?
                     .end()?
                     .end()
             })
@@ -38790,7 +38478,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 msg.invoke_requests()?
-                    .push_unit_testing_test_specific(endpoint)?
+                    .unit_testing_inv()
+                    .test_specific(endpoint)?
                     .end()?
                     .end()
             })
@@ -38805,7 +38494,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 msg.invoke_requests()?
-                    .push_unit_testing_test_unknown_command(endpoint)?
+                    .unit_testing_inv()
+                    .test_unknown_command(endpoint)?
                     .end()?
                     .end()
             })
@@ -38850,8 +38540,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder = entries.push_unit_testing_test_add_arguments(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_add_arguments(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -38893,9 +38583,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder =
-                    entries.push_unit_testing_test_simple_argument_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_simple_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -38937,9 +38626,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder =
-                    entries.push_unit_testing_test_struct_array_argument_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_struct_array_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -38981,9 +38669,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder =
-                    entries.push_unit_testing_test_struct_argument_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_struct_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39025,9 +38712,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder =
-                    entries.push_unit_testing_test_nested_struct_argument_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_nested_struct_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39069,9 +38755,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder =
-                    entries.push_unit_testing_test_list_struct_argument_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_list_struct_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39113,9 +38798,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder =
-                    entries.push_unit_testing_test_list_int_8_u_argument_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_list_int_8_u_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39157,9 +38841,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder =
-                    entries.push_unit_testing_test_nested_struct_list_argument_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_nested_struct_list_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39201,9 +38884,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder = entries
-                    .push_unit_testing_test_list_nested_struct_list_argument_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_list_nested_struct_list_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39245,9 +38927,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder =
-                    entries.push_unit_testing_test_list_int_8_u_reverse_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_list_int_8_u_reverse_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39289,8 +38970,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder = entries.push_unit_testing_test_enums_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_enums_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39332,9 +39013,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder =
-                    entries.push_unit_testing_test_nullable_optional_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_nullable_optional_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39376,9 +39056,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder =
-                    entries.push_unit_testing_test_complex_nullable_optional_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_complex_nullable_optional_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39420,8 +39099,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder = entries.push_unit_testing_simple_struct_echo_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.simple_struct_echo_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39436,7 +39115,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 msg.invoke_requests()?
-                    .push_unit_testing_timed_invoke_request(endpoint)?
+                    .unit_testing_inv()
+                    .timed_invoke_request(endpoint)?
                     .end()?
                     .end()
             })
@@ -39481,9 +39161,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder =
-                    entries.push_unit_testing_test_simple_optional_argument_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_simple_optional_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39528,9 +39207,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder =
-                    entries.push_unit_testing_test_emit_test_event_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_emit_test_event_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39572,9 +39250,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder = entries
-                    .push_unit_testing_test_emit_test_fabric_scoped_event_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_emit_test_fabric_scoped_event_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39616,8 +39293,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder = entries.push_unit_testing_test_batch_helper_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_batch_helper_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39659,9 +39336,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder =
-                    entries.push_unit_testing_test_second_batch_helper_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_second_batch_helper_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39703,8 +39379,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder = entries.push_unit_testing_string_echo_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.string_echo_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39746,8 +39422,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder = entries.push_unit_testing_global_echo_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.global_echo_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39762,7 +39438,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 msg.invoke_requests()?
-                    .push_unit_testing_test_check_command_flags(endpoint)?
+                    .unit_testing_inv()
+                    .test_check_command_flags(endpoint)?
                     .end()?
                     .end()
             })
@@ -39807,9 +39484,8 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
-                let entries = msg.invoke_requests()?;
-                let req_builder =
-                    entries.push_unit_testing_test_different_vendor_mei_request(endpoint)?;
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_different_vendor_mei_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
             })
@@ -39824,7 +39500,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_boolean(endpoint)?
+                    .unit_testing_read()
+                    .boolean(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -39868,7 +39545,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_bitmap_8(endpoint)?
+                    .unit_testing_read()
+                    .bitmap_8(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -39912,7 +39590,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_bitmap_16(endpoint)?
+                    .unit_testing_read()
+                    .bitmap_16(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -39956,7 +39635,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_bitmap_32(endpoint)?
+                    .unit_testing_read()
+                    .bitmap_32(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40000,7 +39680,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_bitmap_64(endpoint)?
+                    .unit_testing_read()
+                    .bitmap_64(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40044,7 +39725,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_int_8_u(endpoint)?
+                    .unit_testing_read()
+                    .int_8_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40088,7 +39770,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_int_16_u(endpoint)?
+                    .unit_testing_read()
+                    .int_16_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40132,7 +39815,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_int_24_u(endpoint)?
+                    .unit_testing_read()
+                    .int_24_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40176,7 +39860,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_int_32_u(endpoint)?
+                    .unit_testing_read()
+                    .int_32_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40220,7 +39905,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_int_40_u(endpoint)?
+                    .unit_testing_read()
+                    .int_40_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40264,7 +39950,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_int_48_u(endpoint)?
+                    .unit_testing_read()
+                    .int_48_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40308,7 +39995,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_int_56_u(endpoint)?
+                    .unit_testing_read()
+                    .int_56_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40352,7 +40040,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_int_64_u(endpoint)?
+                    .unit_testing_read()
+                    .int_64_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40396,7 +40085,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_int_8_s(endpoint)?
+                    .unit_testing_read()
+                    .int_8_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40440,7 +40130,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_int_16_s(endpoint)?
+                    .unit_testing_read()
+                    .int_16_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40484,7 +40175,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_int_24_s(endpoint)?
+                    .unit_testing_read()
+                    .int_24_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40528,7 +40220,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_int_32_s(endpoint)?
+                    .unit_testing_read()
+                    .int_32_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40572,7 +40265,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_int_40_s(endpoint)?
+                    .unit_testing_read()
+                    .int_40_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40616,7 +40310,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_int_48_s(endpoint)?
+                    .unit_testing_read()
+                    .int_48_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40660,7 +40355,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_int_56_s(endpoint)?
+                    .unit_testing_read()
+                    .int_56_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40704,7 +40400,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_int_64_s(endpoint)?
+                    .unit_testing_read()
+                    .int_64_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40748,7 +40445,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_enum_8(endpoint)?
+                    .unit_testing_read()
+                    .enum_8(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40792,7 +40490,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_enum_16(endpoint)?
+                    .unit_testing_read()
+                    .enum_16(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40836,7 +40535,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_float_single(endpoint)?
+                    .unit_testing_read()
+                    .float_single(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40880,7 +40580,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_float_double(endpoint)?
+                    .unit_testing_read()
+                    .float_double(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40924,7 +40625,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_epoch_us(endpoint)?
+                    .unit_testing_read()
+                    .epoch_us(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -40968,7 +40670,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_epoch_s(endpoint)?
+                    .unit_testing_read()
+                    .epoch_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41012,7 +40715,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_vendor_id(endpoint)?
+                    .unit_testing_read()
+                    .vendor_id(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41056,7 +40760,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_enum_attr(endpoint)?
+                    .unit_testing_read()
+                    .enum_attr(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41100,7 +40805,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_range_restricted_int_8_u(endpoint)?
+                    .unit_testing_read()
+                    .range_restricted_int_8_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41144,7 +40850,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_range_restricted_int_8_s(endpoint)?
+                    .unit_testing_read()
+                    .range_restricted_int_8_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41188,7 +40895,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_range_restricted_int_16_u(endpoint)?
+                    .unit_testing_read()
+                    .range_restricted_int_16_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41232,7 +40940,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_range_restricted_int_16_s(endpoint)?
+                    .unit_testing_read()
+                    .range_restricted_int_16_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41276,7 +40985,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_timed_write_boolean(endpoint)?
+                    .unit_testing_read()
+                    .timed_write_boolean(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41320,7 +41030,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_general_error_boolean(endpoint)?
+                    .unit_testing_read()
+                    .general_error_boolean(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41364,7 +41075,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_cluster_error_boolean(endpoint)?
+                    .unit_testing_read()
+                    .cluster_error_boolean(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41408,7 +41120,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_global_enum(endpoint)?
+                    .unit_testing_read()
+                    .global_enum(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41452,7 +41165,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_unsupported_attribute_requiring_admin_privilege(endpoint)?
+                    .unit_testing_read()
+                    .unsupported_attribute_requiring_admin_privilege(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41496,7 +41210,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_unsupported(endpoint)?
+                    .unit_testing_read()
+                    .unsupported(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41540,7 +41255,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_read_failure_code(endpoint)?
+                    .unit_testing_read()
+                    .read_failure_code(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41584,7 +41300,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_failure_int_32_u(endpoint)?
+                    .unit_testing_read()
+                    .failure_int_32_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41628,7 +41345,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_boolean(endpoint)?
+                    .unit_testing_read()
+                    .nullable_boolean(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41673,7 +41391,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_bitmap_8(endpoint)?
+                    .unit_testing_read()
+                    .nullable_bitmap_8(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41718,7 +41437,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_bitmap_16(endpoint)?
+                    .unit_testing_read()
+                    .nullable_bitmap_16(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41763,7 +41483,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_bitmap_32(endpoint)?
+                    .unit_testing_read()
+                    .nullable_bitmap_32(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41808,7 +41529,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_bitmap_64(endpoint)?
+                    .unit_testing_read()
+                    .nullable_bitmap_64(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41852,7 +41574,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_int_8_u(endpoint)?
+                    .unit_testing_read()
+                    .nullable_int_8_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41896,7 +41619,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_int_16_u(endpoint)?
+                    .unit_testing_read()
+                    .nullable_int_16_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41940,7 +41664,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_int_24_u(endpoint)?
+                    .unit_testing_read()
+                    .nullable_int_24_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -41984,7 +41709,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_int_32_u(endpoint)?
+                    .unit_testing_read()
+                    .nullable_int_32_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42028,7 +41754,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_int_40_u(endpoint)?
+                    .unit_testing_read()
+                    .nullable_int_40_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42072,7 +41799,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_int_48_u(endpoint)?
+                    .unit_testing_read()
+                    .nullable_int_48_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42116,7 +41844,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_int_56_u(endpoint)?
+                    .unit_testing_read()
+                    .nullable_int_56_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42160,7 +41889,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_int_64_u(endpoint)?
+                    .unit_testing_read()
+                    .nullable_int_64_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42204,7 +41934,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_int_8_s(endpoint)?
+                    .unit_testing_read()
+                    .nullable_int_8_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42248,7 +41979,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_int_16_s(endpoint)?
+                    .unit_testing_read()
+                    .nullable_int_16_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42292,7 +42024,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_int_24_s(endpoint)?
+                    .unit_testing_read()
+                    .nullable_int_24_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42336,7 +42069,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_int_32_s(endpoint)?
+                    .unit_testing_read()
+                    .nullable_int_32_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42380,7 +42114,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_int_40_s(endpoint)?
+                    .unit_testing_read()
+                    .nullable_int_40_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42424,7 +42159,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_int_48_s(endpoint)?
+                    .unit_testing_read()
+                    .nullable_int_48_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42468,7 +42204,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_int_56_s(endpoint)?
+                    .unit_testing_read()
+                    .nullable_int_56_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42512,7 +42249,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_int_64_s(endpoint)?
+                    .unit_testing_read()
+                    .nullable_int_64_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42556,7 +42294,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_enum_8(endpoint)?
+                    .unit_testing_read()
+                    .nullable_enum_8(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42600,7 +42339,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_enum_16(endpoint)?
+                    .unit_testing_read()
+                    .nullable_enum_16(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42644,7 +42384,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_float_single(endpoint)?
+                    .unit_testing_read()
+                    .nullable_float_single(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42688,7 +42429,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_float_double(endpoint)?
+                    .unit_testing_read()
+                    .nullable_float_double(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42733,7 +42475,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_enum_attr(endpoint)?
+                    .unit_testing_read()
+                    .nullable_enum_attr(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42777,7 +42520,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_range_restricted_int_8_u(endpoint)?
+                    .unit_testing_read()
+                    .nullable_range_restricted_int_8_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42821,7 +42565,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_range_restricted_int_8_s(endpoint)?
+                    .unit_testing_read()
+                    .nullable_range_restricted_int_8_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42865,7 +42610,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_range_restricted_int_16_u(endpoint)?
+                    .unit_testing_read()
+                    .nullable_range_restricted_int_16_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42909,7 +42655,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_range_restricted_int_16_s(endpoint)?
+                    .unit_testing_read()
+                    .nullable_range_restricted_int_16_s(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42953,7 +42700,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_write_only_int_8_u(endpoint)?
+                    .unit_testing_read()
+                    .write_only_int_8_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -42998,7 +42746,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_nullable_global_enum(endpoint)?
+                    .unit_testing_read()
+                    .nullable_global_enum(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -43042,7 +42791,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_feature_map(endpoint)?
+                    .unit_testing_read()
+                    .feature_map(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -43086,7 +42836,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_cluster_revision(endpoint)?
+                    .unit_testing_read()
+                    .cluster_revision(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -43130,7 +42881,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
-                    .push_unit_testing_mei_int_8_u(endpoint)?
+                    .unit_testing_read()
+                    .mei_int_8_u(endpoint)?
                     .end()?
                     .fabric_filtered(true)?
                     .end()
@@ -43175,7 +42927,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_boolean_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .boolean(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43203,7 +42956,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_bitmap_8_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .bitmap_8(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43231,7 +42985,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_bitmap_16_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .bitmap_16(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43259,7 +43014,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_bitmap_32_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .bitmap_32(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43287,7 +43043,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_bitmap_64_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .bitmap_64(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43315,7 +43072,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_int_8_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .int_8_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43343,7 +43101,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_int_16_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .int_16_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43371,7 +43130,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_int_24_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .int_24_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43399,7 +43159,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_int_32_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .int_32_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43427,7 +43188,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_int_40_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .int_40_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43455,7 +43217,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_int_48_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .int_48_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43483,7 +43246,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_int_56_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .int_56_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43511,7 +43275,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_int_64_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .int_64_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43539,7 +43304,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_int_8_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .int_8_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43567,7 +43333,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_int_16_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .int_16_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43595,7 +43362,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_int_24_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .int_24_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43623,7 +43391,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_int_32_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .int_32_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43651,7 +43420,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_int_40_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .int_40_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43679,7 +43449,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_int_48_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .int_48_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43707,7 +43478,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_int_56_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .int_56_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43735,7 +43507,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_int_64_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .int_64_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43763,7 +43536,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_enum_8_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .enum_8(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43791,7 +43565,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_enum_16_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .enum_16(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43819,7 +43594,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_float_single_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .float_single(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43847,7 +43623,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_float_double_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .float_double(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43875,7 +43652,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_epoch_us_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .epoch_us(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43903,7 +43681,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_epoch_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .epoch_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43931,7 +43710,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_vendor_id_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .vendor_id(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43959,7 +43739,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_enum_attr_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .enum_attr(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -43987,7 +43768,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_range_restricted_int_8_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .range_restricted_int_8_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44015,7 +43797,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_range_restricted_int_8_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .range_restricted_int_8_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44043,7 +43826,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_range_restricted_int_16_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .range_restricted_int_16_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44071,7 +43855,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_range_restricted_int_16_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .range_restricted_int_16_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44099,7 +43884,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_timed_write_boolean_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .timed_write_boolean(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44127,7 +43913,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_general_error_boolean_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .general_error_boolean(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44155,7 +43942,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_cluster_error_boolean_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .cluster_error_boolean(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44183,7 +43971,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_global_enum_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .global_enum(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44211,10 +44000,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_unsupported_attribute_requiring_admin_privilege_write(
-                        endpoint,
-                        value.clone(),
-                    )?
+                    .unit_testing_write()
+                    .unsupported_attribute_requiring_admin_privilege(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44242,7 +44029,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_unsupported_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .unsupported(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44270,7 +44058,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_read_failure_code_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .read_failure_code(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44298,7 +44087,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_failure_int_32_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .failure_int_32_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44326,7 +44116,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_boolean_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_boolean(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44354,7 +44145,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_bitmap_8_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_bitmap_8(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44382,7 +44174,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_bitmap_16_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_bitmap_16(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44410,7 +44203,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_bitmap_32_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_bitmap_32(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44438,7 +44232,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_bitmap_64_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_bitmap_64(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44466,7 +44261,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_int_8_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_int_8_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44494,7 +44290,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_int_16_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_int_16_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44522,7 +44319,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_int_24_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_int_24_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44550,7 +44348,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_int_32_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_int_32_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44578,7 +44377,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_int_40_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_int_40_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44606,7 +44406,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_int_48_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_int_48_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44634,7 +44435,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_int_56_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_int_56_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44662,7 +44464,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_int_64_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_int_64_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44690,7 +44493,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_int_8_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_int_8_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44718,7 +44522,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_int_16_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_int_16_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44746,7 +44551,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_int_24_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_int_24_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44774,7 +44580,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_int_32_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_int_32_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44802,7 +44609,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_int_40_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_int_40_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44830,7 +44638,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_int_48_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_int_48_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44858,7 +44667,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_int_56_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_int_56_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44886,7 +44696,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_int_64_s_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_int_64_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44914,7 +44725,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_enum_8_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_enum_8(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44942,7 +44754,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_enum_16_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_enum_16(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44970,7 +44783,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_float_single_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_float_single(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -44998,7 +44812,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_float_double_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_float_double(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -45026,7 +44841,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_enum_attr_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_enum_attr(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -45054,10 +44870,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_range_restricted_int_8_u_write(
-                        endpoint,
-                        value.clone(),
-                    )?
+                    .unit_testing_write()
+                    .nullable_range_restricted_int_8_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -45085,10 +44899,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_range_restricted_int_8_s_write(
-                        endpoint,
-                        value.clone(),
-                    )?
+                    .unit_testing_write()
+                    .nullable_range_restricted_int_8_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -45116,10 +44928,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_range_restricted_int_16_u_write(
-                        endpoint,
-                        value.clone(),
-                    )?
+                    .unit_testing_write()
+                    .nullable_range_restricted_int_16_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -45147,10 +44957,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_range_restricted_int_16_s_write(
-                        endpoint,
-                        value.clone(),
-                    )?
+                    .unit_testing_write()
+                    .nullable_range_restricted_int_16_s(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -45178,7 +44986,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_write_only_int_8_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .write_only_int_8_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -45206,7 +45015,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_nullable_global_enum_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .nullable_global_enum(endpoint, value.clone())?
                     .end()?
                     .end()
             })
@@ -45234,7 +45044,8 @@ pub mod unit_testing {
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
-                    .push_unit_testing_mei_int_8_u_write(endpoint, value.clone())?
+                    .unit_testing_write()
+                    .mei_int_8_u(endpoint, value.clone())?
                     .end()?
                     .end()
             })
