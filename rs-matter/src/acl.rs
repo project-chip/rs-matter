@@ -29,7 +29,7 @@ use crate::dm::clusters::acl::{
     AccessControlAuxiliaryTypeEnum, AccessControlEntryAuthModeEnum,
     AccessControlEntryPrivilegeEnum, AccessControlEntryStruct, AccessControlEntryStructBuilder,
 };
-use crate::dm::{Access, ClusterId, DeviceType, EndptId, NodeId, Privilege};
+use crate::dm::{Access, ClusterId, DeviceType, EndptId, GlobalElements, NodeId, Privilege};
 use crate::error::{Error, ErrorCode};
 use crate::im::GenericPath;
 use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
@@ -576,10 +576,9 @@ pub struct AclEntry {
     targets: Nullable<Vec<Target, MAX_TARGETS_PER_ACL_ENTRY>>,
     // TODO: Figure out what this is, document and use
     auxiliary_type: Option<AccessControlAuxiliaryTypeEnum>,
-    // TODO: Instead of the direct value, we should consider GlobalElements::FabricIndex
     // Note that this field will always be `Some(NN)` when the entry is persisted in storage,
-    // however, it will be `None` when the entry is coming from the other peer
-    #[tagval(0xFE)]
+    // however, it will be `None` when the entry is coming from the other peer.
+    #[tagval(GlobalElements::FabricIndex as u8)]
     pub fab_idx: Option<NonZeroU8>,
 }
 

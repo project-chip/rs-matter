@@ -17,8 +17,9 @@
 
 use core::fmt;
 
+use crate::dm::GlobalElements;
 use crate::error::Error;
-use crate::im::{AttrPath, DataVersionFilter, EventFilter, EventPath};
+use crate::im::{AttrPath, DataVersionFilter, EventFilter, EventPath, IM_REVISION};
 use crate::tlv::{FromTLV, TLVArray, TLVElement, TagType, ToTLV};
 use crate::utils::storage::WriteBuf;
 
@@ -131,13 +132,18 @@ pub enum SubscribeReqTag {
 /// A response to a subscription request.
 ///
 /// Corresponds to the `SubscribeResponseMessage` TLV structure in the Interaction Model.
-#[derive(Debug, Default, Clone, FromTLV, ToTLV)]
+#[derive(Debug, Clone, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SubscribeResp {
     pub subs_id: u32,
     // The Context Tags are discontiguous for some reason
     pub _dummy: Option<u32>,
     pub max_int: u16,
+    /// `interactionModelRevision` — mandatory in every IM message we send;
+    /// modelled as `Option<u8>` so we tolerate peers that omit it (the C++
+    /// SDK is tolerant in practice).
+    #[tagval(GlobalElements::InteractionModelRevision as u8)]
+    pub interaction_model_revision: Option<u8>,
 }
 
 impl SubscribeResp {
@@ -147,6 +153,7 @@ impl SubscribeResp {
             subs_id,
             _dummy: None,
             max_int,
+            interaction_model_revision: Some(IM_REVISION),
         }
     }
 
@@ -163,9 +170,7 @@ impl SubscribeResp {
         subscription_id: u32,
         max_int: u16,
     ) -> Result<&'a [u8], Error> {
-        let resp = Self::new(subscription_id, max_int);
-        resp.to_tlv(&TagType::Anonymous, &mut *wb)?;
-
+        Self::new(subscription_id, max_int).to_tlv(&TagType::Anonymous, &mut *wb)?;
         Ok(wb.as_slice())
     }
 }

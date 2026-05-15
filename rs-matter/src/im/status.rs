@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2025 Project CHIP Authors
+ *    Copyright (c) 2025-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -17,11 +17,12 @@
 
 //! This module defines the `Status` and `StatusResp` structures used in the Interaction Model.
 
+use crate::dm::GlobalElements;
 use crate::error::Error;
 use crate::tlv::{FromTLV, TagType, ToTLV};
 use crate::utils::storage::WriteBuf;
 
-use super::IMStatusCode;
+use super::{IMStatusCode, IM_REVISION};
 
 /// An IM status structure that contains an `IMStatusCode` and an optional cluster status code.
 ///
@@ -52,11 +53,33 @@ impl Status {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct StatusResp {
     pub status: IMStatusCode,
+    /// `interactionModelRevision` — mandatory in every IM message we send;
+    /// modelled as `Option<u8>` so we tolerate peers that omit it (the C++
+    /// SDK is tolerant in practice).
+    #[tagval(GlobalElements::InteractionModelRevision as u8)]
+    pub interaction_model_revision: Option<u8>,
+}
+
+// Custom `Default` (rather than derived) so the trailing
+// `interaction_model_revision` defaults to `Some(IM_REVISION)` instead of
+// `None` — that way struct-literal fallbacks like
+// `StatusResp { status, ..Default::default() }` produce a spec-compliant
+// on-the-wire response without each caller setting it.
+impl Default for StatusResp {
+    fn default() -> Self {
+        Self {
+            status: IMStatusCode::Success,
+            interaction_model_revision: Some(IM_REVISION),
+        }
+    }
 }
 
 impl StatusResp {
     pub fn write(wb: &mut WriteBuf, status: IMStatusCode) -> Result<(), Error> {
-        let status = Self { status };
-        status.to_tlv(&TagType::Anonymous, wb)
+        Self {
+            status,
+            ..Default::default()
+        }
+        .to_tlv(&TagType::Anonymous, &mut *wb)
     }
 }

@@ -241,12 +241,9 @@ fn test_subscribe_events() {
                 ..TLVTest::subscribe_final(
                     StatusResp {
                         status: IMStatusCode::Success,
-                    },
-                    SubscribeResp {
-                        subs_id: 1,
-                        max_int: 40,
                         ..Default::default()
                     },
+                    SubscribeResp::new(1, 40),
                     ReplyProcessor::none,
                 )
             },
@@ -294,6 +291,7 @@ fn test_subscribe_events() {
                 ReplyProcessor::none,
                 StatusResp {
                     status: IMStatusCode::Success,
+                    ..Default::default()
                 },
             ),
         ],
@@ -339,6 +337,7 @@ fn test_long_read_events() {
             &TLVTest::continue_report(
                 StatusResp {
                     status: IMStatusCode::Success,
+                    ..Default::default()
                 },
                 TestReportDataMsg {
                     event_reports: Some(&[event_data_path!(

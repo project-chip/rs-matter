@@ -17,7 +17,7 @@
 
 use core::fmt;
 
-use crate::dm::{AttrId, ClusterId, EndptId};
+use crate::dm::{AttrId, ClusterId, EndptId, GlobalElements};
 use crate::error::{Error, ErrorCode};
 use crate::im::{AttrData, AttrStatus};
 use crate::tlv::{FromTLV, TLVArray, TLVElement, ToTLV};
@@ -118,6 +118,11 @@ pub enum WriteReqTag {
 #[tlvargs(lifetime = "'a")]
 pub struct WriteResp<'a> {
     pub write_responses: TLVArray<'a, AttrStatus>,
+    /// `interactionModelRevision` (TLV context tag `0xFF`). Mandatory in
+    /// every IM message we send; modelled as `Option<u8>` so we tolerate
+    /// peers that omit it (the C++ SDK is tolerant in practice).
+    #[tagval(GlobalElements::InteractionModelRevision as u8)]
+    pub interaction_model_revision: Option<u8>,
 }
 
 impl<'a> WriteResp<'a> {

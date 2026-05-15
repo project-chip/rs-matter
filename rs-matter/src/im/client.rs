@@ -37,7 +37,7 @@ use crate::transport::exchange::{Exchange, OwnedSender, OwnedSenderTx};
 
 use super::{
     IMStatusCode, InvReqBuilder, InvokeResp, OpCode, ReadReqBuilder, ReportDataResp, StatusResp,
-    SubscribeReqBuilder, SubscribeResp, TimedReq, WriteReqBuilder, WriteResp,
+    SubscribeReqBuilder, SubscribeResp, TimedReq, WriteReqBuilder, WriteResp, IM_REVISION,
 };
 
 /// IM Client trait — extension over an [`Exchange`] that adds the
@@ -1323,6 +1323,7 @@ pub struct SubscribeEstablished {
 async fn send_timed_request(exchange: &mut Exchange<'_>, timeout_ms: u16) -> Result<(), Error> {
     let req = TimedReq {
         timeout: timeout_ms,
+        interaction_model_revision: Some(IM_REVISION),
     };
 
     exchange

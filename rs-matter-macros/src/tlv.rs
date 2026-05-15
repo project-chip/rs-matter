@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025 Project CHIP Authors
+ * Copyright (c) 2024-2026 Project CHIP Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -96,16 +96,24 @@ fn parse_enum_val(attrs: &[syn::Attribute]) -> Option<u16> {
         .next()
 }
 
-fn parse_tag_val(attrs: &[syn::Attribute]) -> Option<u8> {
+/// Parse a `#[tagval(...)]` attribute and return the expression inside.
+///
+/// The expression must evaluate to a `u8` in const context. The simple
+/// case is a literal (`#[tagval(0xFF)]`); a const path such as
+/// `#[tagval(GlobalElements::InteractionModelRevision as u8)]` is also
+/// accepted so that callers can name the tag rather than spell it
+/// numerically. The emitter wraps the expression in `(<expr>) as u8`
+/// at the `TLVTag::Context(...)` site, so any expression that the
+/// compiler can coerce to `u8` works.
+fn parse_tag_val(attrs: &[syn::Attribute]) -> Option<TokenStream> {
     attrs
         .iter()
         .filter(|attr| attr.path().is_ident("tagval"))
         .map(|attr| {
-            attr.parse_args_with(|parser: ParseStream| {
-                parser.parse::<LitInt>()?.base10_parse::<u8>()
-            })
-            .unwrap()
+            attr.parse_args_with(|parser: ParseStream| parser.parse::<syn::Expr>())
+                .unwrap()
         })
+        .map(|expr| quote! { (#expr) as u8 })
         .next()
 }
 
@@ -204,7 +212,7 @@ fn gen_totlv_for_struct_named(
         if let Some(a) = parse_tag_val(&field.attrs) {
             tags.push(a);
         } else {
-            tags.push(tag_start);
+            tags.push(quote! { #tag_start });
             tag_start += 1;
         }
     }
@@ -583,13 +591,9 @@ fn gen_fromtlv_for_struct_named(
 
     for field in fields.named.iter() {
         if let Some(a) = parse_tag_val(&field.attrs) {
-            // TODO: The current limitation with this is that a hard-coded integer
-            // value has to be mentioned in the tagval attribute. This is because
-            // our tags vector is for integers, and pushing an 'identifier' on it
-            // wouldn't work.
             tags.push(a);
         } else {
-            tags.push(tag_start);
+            tags.push(quote! { #tag_start });
             tag_start += 1;
         }
         idents.push(&field.ident);
