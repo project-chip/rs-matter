@@ -1528,7 +1528,7 @@ mod tests {
 
     #[test]
     fn parse_idl_success() {
-        let idl = parse_idl(include_str!("parser/test_input1.matter").into());
+        let idl = parse_idl(include_str!("parser/test_input1.matter"));
 
         assert_eq!(idl.clusters.len(), 1);
         assert_eq!(idl.clusters.first().expect("cluster").id, "Identify")
@@ -1536,7 +1536,7 @@ mod tests {
 
     #[test]
     fn parse_idl_real() {
-        let idl = parse_idl(include_str!("parser/controller-clusters-V1.4.2.0.matter").into());
+        let idl = parse_idl(include_str!("parser/controller-clusters-V1.4.2.0.matter"));
 
         assert_eq!(idl.clusters.len(), 140);
         assert_eq!(idl.clusters.first().expect("cluster").id, "Identify")

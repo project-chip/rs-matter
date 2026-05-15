@@ -74,7 +74,7 @@ fn test_read_event_filtered() {
     im.test_one(
         &handler,
         TLVTest::read_events(
-            &[WILDCARD_PATH.clone()],
+            core::slice::from_ref(&WILDCARD_PATH),
             &[
                 event_data_path!(ep0_event1, 1, EventPriority::Critical, Some(&0x41u8)),
                 event_data_path!(ep0_event1, 2, EventPriority::Critical, Some(&0x42u8)),
@@ -94,7 +94,7 @@ fn test_read_event_filtered() {
                     node: None,
                     event_min: Some(3),
                 }]),
-                ..TestReadReq::event_reqs(&[WILDCARD_PATH.clone()])
+                ..TestReadReq::event_reqs(core::slice::from_ref(&WILDCARD_PATH))
             },
             TestReportDataMsg::event_reports(&[
                 // n.b. first two events excluded
@@ -222,7 +222,7 @@ fn test_subscribe_events() {
                 TestSubscribeReq {
                     min_int_floor: 0,
                     max_int_ceil: 1,
-                    ..TestSubscribeReq::event_reqs(&[WILDCARD_PATH.clone()])
+                    ..TestSubscribeReq::event_reqs(core::slice::from_ref(&WILDCARD_PATH))
                 },
                 TestReportDataMsg {
                     subscription_id: Some(1),
@@ -253,7 +253,7 @@ fn test_subscribe_events() {
             // Without this unrelated back-n-forth the test hangs, should investigate and fix at some point
             &TLVTest::read(
                 TestReadReq {
-                    ..TestReadReq::event_reqs(&[WILDCARD_PATH.clone()])
+                    ..TestReadReq::event_reqs(core::slice::from_ref(&WILDCARD_PATH))
                 },
                 TestReportDataMsg::event_reports(&[event_data_path!(
                     ep0_event1,
@@ -325,7 +325,7 @@ fn test_long_read_events() {
         &handler,
         [
             &TLVTest::read(
-                TestReadReq::event_reqs(&[WILDCARD_PATH.clone()]),
+                TestReadReq::event_reqs(core::slice::from_ref(&WILDCARD_PATH)),
                 TestReportDataMsg {
                     event_reports: Some(&[
                         event_data_path!(ep0_event1, 1, EventPriority::Critical, Some(&[1u8; 256])),

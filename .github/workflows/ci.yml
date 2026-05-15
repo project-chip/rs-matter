@@ -65,7 +65,7 @@ jobs:
 
       - name: Clippy - All
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
-        run: cargo clippy --no-deps -- -Dwarnings
+        run: cargo clippy --no-deps --all-targets -- -Dwarnings
 
       - name: Clippy - baremetal
         if: matrix.features == '' && matrix.crypto-backend == 'rustcrypto'

@@ -321,7 +321,7 @@ mod tests {
         let creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
 
         // Should have root cert
-        assert!(creds.root_cert().len() > 0);
+        assert!(!creds.root_cert().is_empty());
         // Should have IPK
         assert_eq!(creds.ipk().access().len(), AEAD_CANON_KEY_LEN);
         // Fabric ID should match
@@ -354,15 +354,15 @@ mod tests {
         let csr = generate_test_csr();
 
         // Generate first device
-        let dev1 = unwrap!(creds.generate_device_credentials(&crypto, &csr, &[]));
+        let dev1 = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
         assert_eq!(dev1.node_id, 1);
 
         // Generate second device
-        let dev2 = unwrap!(creds.generate_device_credentials(&crypto, &csr, &[]));
+        let dev2 = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
         assert_eq!(dev2.node_id, 2);
 
         // Generate third device
-        let dev3 = unwrap!(creds.generate_device_credentials(&crypto, &csr, &[]));
+        let dev3 = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
         assert_eq!(dev3.node_id, 3);
     }
 
@@ -390,7 +390,7 @@ mod tests {
         let csr = generate_test_csr();
 
         // Generate with auto node ID
-        let dev1 = unwrap!(creds.generate_device_credentials(&crypto, &csr, &[]));
+        let dev1 = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
         assert_eq!(dev1.node_id, 1);
 
         // Generate with explicit node ID (should not affect counter)
@@ -398,7 +398,7 @@ mod tests {
         assert_eq!(dev2.node_id, 9999);
 
         // Next auto assigned node ID should be 2, not 10000
-        let dev3 = unwrap!(creds.generate_device_credentials(&crypto, &csr, &[]));
+        let dev3 = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
         assert_eq!(dev3.node_id, 2);
     }
 
@@ -413,9 +413,9 @@ mod tests {
         let dev = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
 
         // NOC should be present and non-empty
-        assert!(dev.noc.len() > 0);
+        assert!(!dev.noc.is_empty());
         // Root cert should be present and non-empty
-        assert!(dev.root_cert.len() > 0);
+        assert!(!dev.root_cert.is_empty());
         // IPK should be 16 bytes
         assert_eq!(dev.ipk.access().len(), AEAD_CANON_KEY_LEN);
         // Node ID should be assigned
@@ -433,9 +433,9 @@ mod tests {
         let csr = generate_test_csr();
         let cat_ids = &[0x00011111u32, 0x00022222u32];
 
-        let dev = unwrap!(creds.generate_device_credentials(&crypto, &csr, cat_ids));
+        let dev = unwrap!(creds.generate_device_credentials(&crypto, csr, cat_ids));
 
-        assert!(dev.noc.len() > 0);
+        assert!(!dev.noc.is_empty());
         assert_eq!(dev.node_id, 1);
     }
 
@@ -470,7 +470,7 @@ mod tests {
 
         // ICAC should be present
         assert!(dev.icac.is_some());
-        assert!(dev.icac.unwrap().len() > 0);
+        assert!(!dev.icac.unwrap().is_empty());
     }
 
     #[test]
@@ -484,7 +484,7 @@ mod tests {
         unwrap!(creds.enable_icac(&crypto));
 
         let icac = unwrap!(creds.icac_cert());
-        assert!(icac.len() > 0);
+        assert!(!icac.is_empty());
     }
 
     #[test]
@@ -504,7 +504,7 @@ mod tests {
         assert!(dev.icac.is_some());
 
         // NOC should be present
-        assert!(dev.noc.len() > 0);
+        assert!(!dev.noc.is_empty());
     }
 
     #[test]
@@ -539,7 +539,7 @@ mod tests {
         let creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
 
         let root_cert = creds.root_cert();
-        assert!(root_cert.len() > 0);
+        assert!(!root_cert.is_empty());
         assert!(root_cert.len() < MAX_CERT_TLV_LEN);
     }
 
@@ -555,8 +555,8 @@ mod tests {
         unwrap!(root_cert_before.extend_from_slice(creds.root_cert()));
 
         // Generate device credentials
-        let dev1 = unwrap!(creds.generate_device_credentials(&crypto, &csr, &[]));
-        let dev2 = unwrap!(creds.generate_device_credentials(&crypto, &csr, &[]));
+        let dev1 = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
+        let dev2 = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
 
         // Root cert should be the same
         assert_eq!(dev1.root_cert.as_slice(), root_cert_before.as_slice());
@@ -627,7 +627,7 @@ mod tests {
         let csr = generate_test_csr();
         let cat_ids = &[0x00011111u32, 0x00022222u32, 0x00033333u32];
 
-        let dev = unwrap!(creds.generate_device_credentials(&crypto, &csr, cat_ids));
+        let dev = unwrap!(creds.generate_device_credentials(&crypto, csr, cat_ids));
 
         // Parse NOC and extract CAT IDs
         let parsed_cat_ids = unwrap!(extract_cat_ids_from_noc(&dev.noc));
@@ -660,7 +660,7 @@ mod tests {
         let csr = generate_test_csr();
         let too_many_cat_ids = &[0x00011111u32, 0x00022222u32, 0x00033333u32, 0x00044444u32];
 
-        let result = creds.generate_device_credentials(&crypto, &csr, too_many_cat_ids);
+        let result = creds.generate_device_credentials(&crypto, csr, too_many_cat_ids);
 
         assert!(result.is_err());
     }

@@ -432,7 +432,7 @@ mod tests {
         let mut wb = crate::utils::storage::WriteBuf::new(&mut buf);
         req.to_tlv(&TagType::Anonymous, &mut wb).unwrap();
 
-        assert!(wb.as_slice().len() > 0);
+        assert!(!wb.as_slice().is_empty());
     }
 
     #[test]
@@ -446,7 +446,7 @@ mod tests {
         let mut wb = crate::utils::storage::WriteBuf::new(&mut buf);
         pake1.to_tlv(&TagType::Anonymous, &mut wb).unwrap();
 
-        assert!(wb.as_slice().len() > 0);
+        assert!(!wb.as_slice().is_empty());
     }
 
     #[test]
@@ -460,6 +460,6 @@ mod tests {
         let mut wb = crate::utils::storage::WriteBuf::new(&mut buf);
         pake3.to_tlv(&TagType::Anonymous, &mut wb).unwrap();
 
-        assert!(wb.as_slice().len() > 0);
+        assert!(!wb.as_slice().is_empty());
     }
 }

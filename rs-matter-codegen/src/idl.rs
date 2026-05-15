@@ -38741,15 +38741,18 @@ pub mod unit_testing {
             Ok(())
         }
     }
-    #[doc = "Single-shot IM-client convenience trait for the `UnitTesting` cluster. `use` this trait to call `<cluster>_<command>` / `<cluster>_<attr>_read` / `<cluster>_<attr>_write` directly on an [`rs_matter_crate::transport::exchange::Exchange`]. The cluster ID, command/attribute ID, request opcode, retransmit loop, response-chunk iteration, and status-only handling are all baked in. DefaultSuccess commands return `Result<(), Error>` and drain the response internally; response-bearing commands return `Result<<RespStruct>Handle<'a>, Error>` — the handle keeps the RX buffer alive so the caller can read the borrowed response via `.response()?` before `.complete().await?`ing the exchange."]
-    pub trait UnitTestingClient<'a>: rs_matter_crate::im::client::ImClient<'a> {
-        async fn unit_testing_test(
+    #[doc = "Per-exchange view onto the `UnitTesting` cluster's client operations. Returned by [`UnitTestingClient::unit_testing`]. Each method consumes the view (and therefore the underlying [`rs_matter_crate::transport::exchange::Exchange`]) — one exchange is one IM transaction."]
+    pub struct UnitTestingClientView<'a> {
+        exchange: rs_matter_crate::transport::exchange::Exchange<'a>,
+    }
+    impl<'a> UnitTestingClientView<'a> {
+        pub async fn test(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::invoke_with(self, None, |msg| {
+            let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 msg.invoke_requests()?
                     .push_unit_testing_test(endpoint)?
                     .end()?
@@ -38761,13 +38764,13 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_test_not_handled(
+        pub async fn test_not_handled(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::invoke_with(self, None, |msg| {
+            let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 msg.invoke_requests()?
                     .push_unit_testing_test_not_handled(endpoint)?
                     .end()?
@@ -38779,13 +38782,13 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_test_specific(
+        pub async fn test_specific(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<TestSpecificResponseHandle<'a>, rs_matter_crate::error::Error> {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 msg.invoke_requests()?
                     .push_unit_testing_test_specific(endpoint)?
                     .end()?
@@ -38794,13 +38797,13 @@ pub mod unit_testing {
             .await?;
             Ok(TestSpecificResponseHandle { chunk })
         }
-        async fn unit_testing_test_unknown_command(
+        pub async fn test_unknown_command(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::invoke_with(self, None, |msg| {
+            let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 msg.invoke_requests()?
                     .push_unit_testing_test_unknown_command(endpoint)?
                     .end()?
@@ -38812,7 +38815,7 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_test_add_arguments<F>(
+        pub async fn test_add_arguments<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -38846,7 +38849,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder = entries.push_unit_testing_test_add_arguments(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -38855,7 +38858,7 @@ pub mod unit_testing {
             .await?;
             Ok(TestAddArgumentsResponseHandle { chunk })
         }
-        async fn unit_testing_test_simple_argument_request<F>(
+        pub async fn test_simple_argument_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -38889,7 +38892,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_simple_argument_request(endpoint)?;
@@ -38899,7 +38902,7 @@ pub mod unit_testing {
             .await?;
             Ok(TestSimpleArgumentResponseHandle { chunk })
         }
-        async fn unit_testing_test_struct_array_argument_request<F>(
+        pub async fn test_struct_array_argument_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -38933,7 +38936,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_struct_array_argument_request(endpoint)?;
@@ -38943,7 +38946,7 @@ pub mod unit_testing {
             .await?;
             Ok(TestStructArrayArgumentResponseHandle { chunk })
         }
-        async fn unit_testing_test_struct_argument_request<F>(
+        pub async fn test_struct_argument_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -38977,7 +38980,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_struct_argument_request(endpoint)?;
@@ -38987,7 +38990,7 @@ pub mod unit_testing {
             .await?;
             Ok(BooleanResponseHandle { chunk })
         }
-        async fn unit_testing_test_nested_struct_argument_request<F>(
+        pub async fn test_nested_struct_argument_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39021,7 +39024,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_nested_struct_argument_request(endpoint)?;
@@ -39031,7 +39034,7 @@ pub mod unit_testing {
             .await?;
             Ok(BooleanResponseHandle { chunk })
         }
-        async fn unit_testing_test_list_struct_argument_request<F>(
+        pub async fn test_list_struct_argument_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39065,7 +39068,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_list_struct_argument_request(endpoint)?;
@@ -39075,7 +39078,7 @@ pub mod unit_testing {
             .await?;
             Ok(BooleanResponseHandle { chunk })
         }
-        async fn unit_testing_test_list_int_8_u_argument_request<F>(
+        pub async fn test_list_int_8_u_argument_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39109,7 +39112,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_list_int_8_u_argument_request(endpoint)?;
@@ -39119,7 +39122,7 @@ pub mod unit_testing {
             .await?;
             Ok(BooleanResponseHandle { chunk })
         }
-        async fn unit_testing_test_nested_struct_list_argument_request<F>(
+        pub async fn test_nested_struct_list_argument_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39153,7 +39156,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_nested_struct_list_argument_request(endpoint)?;
@@ -39163,7 +39166,7 @@ pub mod unit_testing {
             .await?;
             Ok(BooleanResponseHandle { chunk })
         }
-        async fn unit_testing_test_list_nested_struct_list_argument_request<F>(
+        pub async fn test_list_nested_struct_list_argument_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39197,7 +39200,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder = entries
                     .push_unit_testing_test_list_nested_struct_list_argument_request(endpoint)?;
@@ -39207,7 +39210,7 @@ pub mod unit_testing {
             .await?;
             Ok(BooleanResponseHandle { chunk })
         }
-        async fn unit_testing_test_list_int_8_u_reverse_request<F>(
+        pub async fn test_list_int_8_u_reverse_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39241,7 +39244,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_list_int_8_u_reverse_request(endpoint)?;
@@ -39251,7 +39254,7 @@ pub mod unit_testing {
             .await?;
             Ok(TestListInt8UReverseResponseHandle { chunk })
         }
-        async fn unit_testing_test_enums_request<F>(
+        pub async fn test_enums_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39285,7 +39288,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder = entries.push_unit_testing_test_enums_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39294,7 +39297,7 @@ pub mod unit_testing {
             .await?;
             Ok(TestEnumsResponseHandle { chunk })
         }
-        async fn unit_testing_test_nullable_optional_request<F>(
+        pub async fn test_nullable_optional_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39328,7 +39331,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_nullable_optional_request(endpoint)?;
@@ -39338,7 +39341,7 @@ pub mod unit_testing {
             .await?;
             Ok(TestNullableOptionalResponseHandle { chunk })
         }
-        async fn unit_testing_test_complex_nullable_optional_request<F>(
+        pub async fn test_complex_nullable_optional_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39372,7 +39375,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_complex_nullable_optional_request(endpoint)?;
@@ -39382,7 +39385,7 @@ pub mod unit_testing {
             .await?;
             Ok(TestComplexNullableOptionalResponseHandle { chunk })
         }
-        async fn unit_testing_simple_struct_echo_request<F>(
+        pub async fn simple_struct_echo_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39416,7 +39419,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder = entries.push_unit_testing_simple_struct_echo_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39425,13 +39428,13 @@ pub mod unit_testing {
             .await?;
             Ok(SimpleStructResponseHandle { chunk })
         }
-        async fn unit_testing_timed_invoke_request(
+        pub async fn timed_invoke_request(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::invoke_with(self, None, |msg| {
+            let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 msg.invoke_requests()?
                     .push_unit_testing_timed_invoke_request(endpoint)?
                     .end()?
@@ -39443,7 +39446,7 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_test_simple_optional_argument_request<F>(
+        pub async fn test_simple_optional_argument_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39477,7 +39480,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::invoke_with(self, None, |msg| {
+            let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_simple_optional_argument_request(endpoint)?;
@@ -39490,7 +39493,7 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_test_emit_test_event_request<F>(
+        pub async fn test_emit_test_event_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39524,7 +39527,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_emit_test_event_request(endpoint)?;
@@ -39534,7 +39537,7 @@ pub mod unit_testing {
             .await?;
             Ok(TestEmitTestEventResponseHandle { chunk })
         }
-        async fn unit_testing_test_emit_test_fabric_scoped_event_request<F>(
+        pub async fn test_emit_test_fabric_scoped_event_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39568,7 +39571,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder = entries
                     .push_unit_testing_test_emit_test_fabric_scoped_event_request(endpoint)?;
@@ -39578,7 +39581,7 @@ pub mod unit_testing {
             .await?;
             Ok(TestEmitTestFabricScopedEventResponseHandle { chunk })
         }
-        async fn unit_testing_test_batch_helper_request<F>(
+        pub async fn test_batch_helper_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39612,7 +39615,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder = entries.push_unit_testing_test_batch_helper_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39621,7 +39624,7 @@ pub mod unit_testing {
             .await?;
             Ok(TestBatchHelperResponseHandle { chunk })
         }
-        async fn unit_testing_test_second_batch_helper_request<F>(
+        pub async fn test_second_batch_helper_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39655,7 +39658,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_second_batch_helper_request(endpoint)?;
@@ -39665,7 +39668,7 @@ pub mod unit_testing {
             .await?;
             Ok(TestBatchHelperResponseHandle { chunk })
         }
-        async fn unit_testing_string_echo_request<F>(
+        pub async fn string_echo_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39699,7 +39702,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder = entries.push_unit_testing_string_echo_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39708,7 +39711,7 @@ pub mod unit_testing {
             .await?;
             Ok(StringEchoResponseHandle { chunk })
         }
-        async fn unit_testing_global_echo_request<F>(
+        pub async fn global_echo_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39742,7 +39745,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder = entries.push_unit_testing_global_echo_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39751,13 +39754,13 @@ pub mod unit_testing {
             .await?;
             Ok(GlobalEchoResponseHandle { chunk })
         }
-        async fn unit_testing_test_check_command_flags(
+        pub async fn test_check_command_flags(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::invoke_with(self, None, |msg| {
+            let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 msg.invoke_requests()?
                     .push_unit_testing_test_check_command_flags(endpoint)?
                     .end()?
@@ -39769,7 +39772,7 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_test_different_vendor_mei_request<F>(
+        pub async fn test_different_vendor_mei_request<F>(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             mut request: F,
@@ -39803,7 +39806,7 @@ pub mod unit_testing {
         {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let chunk = _ImClient::invoke_with(self, None, |msg| {
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
                 let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_different_vendor_mei_request(endpoint)?;
@@ -39813,13 +39816,13 @@ pub mod unit_testing {
             .await?;
             Ok(TestDifferentVendorMeiResponseHandle { chunk })
         }
-        async fn unit_testing_boolean_read(
+        pub async fn boolean_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<bool, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_boolean(endpoint)?
                     .end()?
@@ -39857,13 +39860,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_bitmap_8_read(
+        pub async fn bitmap_8_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<Bitmap8MaskMap, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_bitmap_8(endpoint)?
                     .end()?
@@ -39901,13 +39904,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_bitmap_16_read(
+        pub async fn bitmap_16_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<Bitmap16MaskMap, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_bitmap_16(endpoint)?
                     .end()?
@@ -39945,13 +39948,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_bitmap_32_read(
+        pub async fn bitmap_32_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<Bitmap32MaskMap, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_bitmap_32(endpoint)?
                     .end()?
@@ -39989,13 +39992,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_bitmap_64_read(
+        pub async fn bitmap_64_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<Bitmap64MaskMap, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_bitmap_64(endpoint)?
                     .end()?
@@ -40033,13 +40036,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_int_8_u_read(
+        pub async fn int_8_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u8, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_int_8_u(endpoint)?
                     .end()?
@@ -40077,13 +40080,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_int_16_u_read(
+        pub async fn int_16_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u16, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_int_16_u(endpoint)?
                     .end()?
@@ -40121,13 +40124,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_int_24_u_read(
+        pub async fn int_24_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u32, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_int_24_u(endpoint)?
                     .end()?
@@ -40165,13 +40168,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_int_32_u_read(
+        pub async fn int_32_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u32, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_int_32_u(endpoint)?
                     .end()?
@@ -40209,13 +40212,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_int_40_u_read(
+        pub async fn int_40_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u64, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_int_40_u(endpoint)?
                     .end()?
@@ -40253,13 +40256,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_int_48_u_read(
+        pub async fn int_48_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u64, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_int_48_u(endpoint)?
                     .end()?
@@ -40297,13 +40300,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_int_56_u_read(
+        pub async fn int_56_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u64, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_int_56_u(endpoint)?
                     .end()?
@@ -40341,13 +40344,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_int_64_u_read(
+        pub async fn int_64_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u64, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_int_64_u(endpoint)?
                     .end()?
@@ -40385,13 +40388,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_int_8_s_read(
+        pub async fn int_8_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<i8, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_int_8_s(endpoint)?
                     .end()?
@@ -40429,13 +40432,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_int_16_s_read(
+        pub async fn int_16_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<i16, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_int_16_s(endpoint)?
                     .end()?
@@ -40473,13 +40476,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_int_24_s_read(
+        pub async fn int_24_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<i32, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_int_24_s(endpoint)?
                     .end()?
@@ -40517,13 +40520,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_int_32_s_read(
+        pub async fn int_32_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<i32, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_int_32_s(endpoint)?
                     .end()?
@@ -40561,13 +40564,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_int_40_s_read(
+        pub async fn int_40_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<i64, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_int_40_s(endpoint)?
                     .end()?
@@ -40605,13 +40608,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_int_48_s_read(
+        pub async fn int_48_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<i64, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_int_48_s(endpoint)?
                     .end()?
@@ -40649,13 +40652,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_int_56_s_read(
+        pub async fn int_56_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<i64, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_int_56_s(endpoint)?
                     .end()?
@@ -40693,13 +40696,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_int_64_s_read(
+        pub async fn int_64_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<i64, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_int_64_s(endpoint)?
                     .end()?
@@ -40737,13 +40740,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_enum_8_read(
+        pub async fn enum_8_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u8, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_enum_8(endpoint)?
                     .end()?
@@ -40781,13 +40784,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_enum_16_read(
+        pub async fn enum_16_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u16, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_enum_16(endpoint)?
                     .end()?
@@ -40825,13 +40828,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_float_single_read(
+        pub async fn float_single_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<f32, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_float_single(endpoint)?
                     .end()?
@@ -40869,13 +40872,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_float_double_read(
+        pub async fn float_double_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<f64, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_float_double(endpoint)?
                     .end()?
@@ -40913,13 +40916,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_epoch_us_read(
+        pub async fn epoch_us_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u64, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_epoch_us(endpoint)?
                     .end()?
@@ -40957,13 +40960,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_epoch_s_read(
+        pub async fn epoch_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u32, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_epoch_s(endpoint)?
                     .end()?
@@ -41001,13 +41004,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_vendor_id_read(
+        pub async fn vendor_id_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u16, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_vendor_id(endpoint)?
                     .end()?
@@ -41045,13 +41048,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_enum_attr_read(
+        pub async fn enum_attr_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<SimpleEnum, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_enum_attr(endpoint)?
                     .end()?
@@ -41089,13 +41092,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_range_restricted_int_8_u_read(
+        pub async fn range_restricted_int_8_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u8, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_range_restricted_int_8_u(endpoint)?
                     .end()?
@@ -41133,13 +41136,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_range_restricted_int_8_s_read(
+        pub async fn range_restricted_int_8_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<i8, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_range_restricted_int_8_s(endpoint)?
                     .end()?
@@ -41177,13 +41180,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_range_restricted_int_16_u_read(
+        pub async fn range_restricted_int_16_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u16, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_range_restricted_int_16_u(endpoint)?
                     .end()?
@@ -41221,13 +41224,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_range_restricted_int_16_s_read(
+        pub async fn range_restricted_int_16_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<i16, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_range_restricted_int_16_s(endpoint)?
                     .end()?
@@ -41265,13 +41268,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_timed_write_boolean_read(
+        pub async fn timed_write_boolean_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<bool, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_timed_write_boolean(endpoint)?
                     .end()?
@@ -41309,13 +41312,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_general_error_boolean_read(
+        pub async fn general_error_boolean_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<bool, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_general_error_boolean(endpoint)?
                     .end()?
@@ -41353,13 +41356,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_cluster_error_boolean_read(
+        pub async fn cluster_error_boolean_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<bool, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_cluster_error_boolean(endpoint)?
                     .end()?
@@ -41397,13 +41400,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_global_enum_read(
+        pub async fn global_enum_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<TestGlobalEnum, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_global_enum(endpoint)?
                     .end()?
@@ -41441,13 +41444,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_unsupported_attribute_requiring_admin_privilege_read(
+        pub async fn unsupported_attribute_requiring_admin_privilege_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<Option<bool>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_unsupported_attribute_requiring_admin_privilege(endpoint)?
                     .end()?
@@ -41485,13 +41488,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_unsupported_read(
+        pub async fn unsupported_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<Option<bool>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_unsupported(endpoint)?
                     .end()?
@@ -41529,13 +41532,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_read_failure_code_read(
+        pub async fn read_failure_code_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<Option<u8>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_read_failure_code(endpoint)?
                     .end()?
@@ -41573,13 +41576,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_failure_int_32_u_read(
+        pub async fn failure_int_32_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<Option<u32>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_failure_int_32_u(endpoint)?
                     .end()?
@@ -41617,13 +41620,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_boolean_read(
+        pub async fn nullable_boolean_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<bool>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_boolean(endpoint)?
                     .end()?
@@ -41661,14 +41664,14 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_bitmap_8_read(
+        pub async fn nullable_bitmap_8_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>, rs_matter_crate::error::Error>
         {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_bitmap_8(endpoint)?
                     .end()?
@@ -41706,14 +41709,14 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_bitmap_16_read(
+        pub async fn nullable_bitmap_16_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>, rs_matter_crate::error::Error>
         {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_bitmap_16(endpoint)?
                     .end()?
@@ -41751,14 +41754,14 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_bitmap_32_read(
+        pub async fn nullable_bitmap_32_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>, rs_matter_crate::error::Error>
         {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_bitmap_32(endpoint)?
                     .end()?
@@ -41796,14 +41799,14 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_bitmap_64_read(
+        pub async fn nullable_bitmap_64_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>, rs_matter_crate::error::Error>
         {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_bitmap_64(endpoint)?
                     .end()?
@@ -41841,13 +41844,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_int_8_u_read(
+        pub async fn nullable_int_8_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_int_8_u(endpoint)?
                     .end()?
@@ -41885,13 +41888,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_int_16_u_read(
+        pub async fn nullable_int_16_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_int_16_u(endpoint)?
                     .end()?
@@ -41929,13 +41932,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_int_24_u_read(
+        pub async fn nullable_int_24_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_int_24_u(endpoint)?
                     .end()?
@@ -41973,13 +41976,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_int_32_u_read(
+        pub async fn nullable_int_32_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_int_32_u(endpoint)?
                     .end()?
@@ -42017,13 +42020,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_int_40_u_read(
+        pub async fn nullable_int_40_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_int_40_u(endpoint)?
                     .end()?
@@ -42061,13 +42064,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_int_48_u_read(
+        pub async fn nullable_int_48_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_int_48_u(endpoint)?
                     .end()?
@@ -42105,13 +42108,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_int_56_u_read(
+        pub async fn nullable_int_56_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_int_56_u(endpoint)?
                     .end()?
@@ -42149,13 +42152,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_int_64_u_read(
+        pub async fn nullable_int_64_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_int_64_u(endpoint)?
                     .end()?
@@ -42193,13 +42196,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_int_8_s_read(
+        pub async fn nullable_int_8_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_int_8_s(endpoint)?
                     .end()?
@@ -42237,13 +42240,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_int_16_s_read(
+        pub async fn nullable_int_16_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_int_16_s(endpoint)?
                     .end()?
@@ -42281,13 +42284,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_int_24_s_read(
+        pub async fn nullable_int_24_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_int_24_s(endpoint)?
                     .end()?
@@ -42325,13 +42328,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_int_32_s_read(
+        pub async fn nullable_int_32_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_int_32_s(endpoint)?
                     .end()?
@@ -42369,13 +42372,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_int_40_s_read(
+        pub async fn nullable_int_40_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_int_40_s(endpoint)?
                     .end()?
@@ -42413,13 +42416,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_int_48_s_read(
+        pub async fn nullable_int_48_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_int_48_s(endpoint)?
                     .end()?
@@ -42457,13 +42460,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_int_56_s_read(
+        pub async fn nullable_int_56_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_int_56_s(endpoint)?
                     .end()?
@@ -42501,13 +42504,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_int_64_s_read(
+        pub async fn nullable_int_64_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_int_64_s(endpoint)?
                     .end()?
@@ -42545,13 +42548,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_enum_8_read(
+        pub async fn nullable_enum_8_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_enum_8(endpoint)?
                     .end()?
@@ -42589,13 +42592,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_enum_16_read(
+        pub async fn nullable_enum_16_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_enum_16(endpoint)?
                     .end()?
@@ -42633,13 +42636,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_float_single_read(
+        pub async fn nullable_float_single_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<f32>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_float_single(endpoint)?
                     .end()?
@@ -42677,13 +42680,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_float_double_read(
+        pub async fn nullable_float_double_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<f64>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_float_double(endpoint)?
                     .end()?
@@ -42721,14 +42724,14 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_enum_attr_read(
+        pub async fn nullable_enum_attr_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<SimpleEnum>, rs_matter_crate::error::Error>
         {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_enum_attr(endpoint)?
                     .end()?
@@ -42766,13 +42769,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_range_restricted_int_8_u_read(
+        pub async fn nullable_range_restricted_int_8_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_range_restricted_int_8_u(endpoint)?
                     .end()?
@@ -42810,13 +42813,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_range_restricted_int_8_s_read(
+        pub async fn nullable_range_restricted_int_8_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_range_restricted_int_8_s(endpoint)?
                     .end()?
@@ -42854,13 +42857,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_range_restricted_int_16_u_read(
+        pub async fn nullable_range_restricted_int_16_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_range_restricted_int_16_u(endpoint)?
                     .end()?
@@ -42898,13 +42901,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_range_restricted_int_16_s_read(
+        pub async fn nullable_range_restricted_int_16_s_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_range_restricted_int_16_s(endpoint)?
                     .end()?
@@ -42942,13 +42945,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_write_only_int_8_u_read(
+        pub async fn write_only_int_8_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<Option<u8>, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_write_only_int_8_u(endpoint)?
                     .end()?
@@ -42986,14 +42989,14 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_nullable_global_enum_read(
+        pub async fn nullable_global_enum_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<rs_matter_crate::tlv::Nullable<TestGlobalEnum>, rs_matter_crate::error::Error>
         {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_nullable_global_enum(endpoint)?
                     .end()?
@@ -43031,13 +43034,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_feature_map_read(
+        pub async fn feature_map_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u32, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_feature_map(endpoint)?
                     .end()?
@@ -43075,13 +43078,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_cluster_revision_read(
+        pub async fn cluster_revision_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u16, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_cluster_revision(endpoint)?
                     .end()?
@@ -43119,13 +43122,13 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_mei_int_8_u_read(
+        pub async fn mei_int_8_u_read(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
         ) -> Result<u8, rs_matter_crate::error::Error> {
             use self::UnitTestingAttrReads as _Reads;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let mut chunk = _ImClient::read_with(self, |msg| {
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                 msg.attr_requests()?
                     .push_unit_testing_mei_int_8_u(endpoint)?
                     .end()?
@@ -43163,14 +43166,14 @@ pub mod unit_testing {
             }
             Ok(value)
         }
-        async fn unit_testing_boolean_write(
+        pub async fn boolean_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_boolean_write(endpoint, value.clone())?
                     .end()?
@@ -43191,14 +43194,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_bitmap_8_write(
+        pub async fn bitmap_8_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: Bitmap8MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_bitmap_8_write(endpoint, value.clone())?
                     .end()?
@@ -43219,14 +43222,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_bitmap_16_write(
+        pub async fn bitmap_16_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: Bitmap16MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_bitmap_16_write(endpoint, value.clone())?
                     .end()?
@@ -43247,14 +43250,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_bitmap_32_write(
+        pub async fn bitmap_32_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: Bitmap32MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_bitmap_32_write(endpoint, value.clone())?
                     .end()?
@@ -43275,14 +43278,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_bitmap_64_write(
+        pub async fn bitmap_64_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: Bitmap64MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_bitmap_64_write(endpoint, value.clone())?
                     .end()?
@@ -43303,14 +43306,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_int_8_u_write(
+        pub async fn int_8_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_int_8_u_write(endpoint, value.clone())?
                     .end()?
@@ -43331,14 +43334,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_int_16_u_write(
+        pub async fn int_16_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_int_16_u_write(endpoint, value.clone())?
                     .end()?
@@ -43359,14 +43362,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_int_24_u_write(
+        pub async fn int_24_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_int_24_u_write(endpoint, value.clone())?
                     .end()?
@@ -43387,14 +43390,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_int_32_u_write(
+        pub async fn int_32_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_int_32_u_write(endpoint, value.clone())?
                     .end()?
@@ -43415,14 +43418,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_int_40_u_write(
+        pub async fn int_40_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_int_40_u_write(endpoint, value.clone())?
                     .end()?
@@ -43443,14 +43446,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_int_48_u_write(
+        pub async fn int_48_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_int_48_u_write(endpoint, value.clone())?
                     .end()?
@@ -43471,14 +43474,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_int_56_u_write(
+        pub async fn int_56_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_int_56_u_write(endpoint, value.clone())?
                     .end()?
@@ -43499,14 +43502,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_int_64_u_write(
+        pub async fn int_64_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_int_64_u_write(endpoint, value.clone())?
                     .end()?
@@ -43527,14 +43530,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_int_8_s_write(
+        pub async fn int_8_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_int_8_s_write(endpoint, value.clone())?
                     .end()?
@@ -43555,14 +43558,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_int_16_s_write(
+        pub async fn int_16_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_int_16_s_write(endpoint, value.clone())?
                     .end()?
@@ -43583,14 +43586,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_int_24_s_write(
+        pub async fn int_24_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_int_24_s_write(endpoint, value.clone())?
                     .end()?
@@ -43611,14 +43614,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_int_32_s_write(
+        pub async fn int_32_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_int_32_s_write(endpoint, value.clone())?
                     .end()?
@@ -43639,14 +43642,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_int_40_s_write(
+        pub async fn int_40_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_int_40_s_write(endpoint, value.clone())?
                     .end()?
@@ -43667,14 +43670,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_int_48_s_write(
+        pub async fn int_48_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_int_48_s_write(endpoint, value.clone())?
                     .end()?
@@ -43695,14 +43698,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_int_56_s_write(
+        pub async fn int_56_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_int_56_s_write(endpoint, value.clone())?
                     .end()?
@@ -43723,14 +43726,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_int_64_s_write(
+        pub async fn int_64_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_int_64_s_write(endpoint, value.clone())?
                     .end()?
@@ -43751,14 +43754,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_enum_8_write(
+        pub async fn enum_8_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_enum_8_write(endpoint, value.clone())?
                     .end()?
@@ -43779,14 +43782,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_enum_16_write(
+        pub async fn enum_16_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_enum_16_write(endpoint, value.clone())?
                     .end()?
@@ -43807,14 +43810,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_float_single_write(
+        pub async fn float_single_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: f32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_float_single_write(endpoint, value.clone())?
                     .end()?
@@ -43835,14 +43838,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_float_double_write(
+        pub async fn float_double_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: f64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_float_double_write(endpoint, value.clone())?
                     .end()?
@@ -43863,14 +43866,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_epoch_us_write(
+        pub async fn epoch_us_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_epoch_us_write(endpoint, value.clone())?
                     .end()?
@@ -43891,14 +43894,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_epoch_s_write(
+        pub async fn epoch_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_epoch_s_write(endpoint, value.clone())?
                     .end()?
@@ -43919,14 +43922,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_vendor_id_write(
+        pub async fn vendor_id_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_vendor_id_write(endpoint, value.clone())?
                     .end()?
@@ -43947,14 +43950,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_enum_attr_write(
+        pub async fn enum_attr_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: SimpleEnum,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_enum_attr_write(endpoint, value.clone())?
                     .end()?
@@ -43975,14 +43978,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_range_restricted_int_8_u_write(
+        pub async fn range_restricted_int_8_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_range_restricted_int_8_u_write(endpoint, value.clone())?
                     .end()?
@@ -44003,14 +44006,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_range_restricted_int_8_s_write(
+        pub async fn range_restricted_int_8_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_range_restricted_int_8_s_write(endpoint, value.clone())?
                     .end()?
@@ -44031,14 +44034,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_range_restricted_int_16_u_write(
+        pub async fn range_restricted_int_16_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_range_restricted_int_16_u_write(endpoint, value.clone())?
                     .end()?
@@ -44059,14 +44062,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_range_restricted_int_16_s_write(
+        pub async fn range_restricted_int_16_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: i16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_range_restricted_int_16_s_write(endpoint, value.clone())?
                     .end()?
@@ -44087,14 +44090,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_timed_write_boolean_write(
+        pub async fn timed_write_boolean_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_timed_write_boolean_write(endpoint, value.clone())?
                     .end()?
@@ -44115,14 +44118,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_general_error_boolean_write(
+        pub async fn general_error_boolean_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_general_error_boolean_write(endpoint, value.clone())?
                     .end()?
@@ -44143,14 +44146,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_cluster_error_boolean_write(
+        pub async fn cluster_error_boolean_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_cluster_error_boolean_write(endpoint, value.clone())?
                     .end()?
@@ -44171,14 +44174,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_global_enum_write(
+        pub async fn global_enum_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: TestGlobalEnum,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_global_enum_write(endpoint, value.clone())?
                     .end()?
@@ -44199,14 +44202,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_unsupported_attribute_requiring_admin_privilege_write(
+        pub async fn unsupported_attribute_requiring_admin_privilege_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_unsupported_attribute_requiring_admin_privilege_write(
                         endpoint,
@@ -44230,14 +44233,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_unsupported_write(
+        pub async fn unsupported_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_unsupported_write(endpoint, value.clone())?
                     .end()?
@@ -44258,14 +44261,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_read_failure_code_write(
+        pub async fn read_failure_code_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_read_failure_code_write(endpoint, value.clone())?
                     .end()?
@@ -44286,14 +44289,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_failure_int_32_u_write(
+        pub async fn failure_int_32_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_failure_int_32_u_write(endpoint, value.clone())?
                     .end()?
@@ -44314,14 +44317,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_boolean_write(
+        pub async fn nullable_boolean_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<bool>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_boolean_write(endpoint, value.clone())?
                     .end()?
@@ -44342,14 +44345,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_bitmap_8_write(
+        pub async fn nullable_bitmap_8_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_bitmap_8_write(endpoint, value.clone())?
                     .end()?
@@ -44370,14 +44373,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_bitmap_16_write(
+        pub async fn nullable_bitmap_16_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_bitmap_16_write(endpoint, value.clone())?
                     .end()?
@@ -44398,14 +44401,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_bitmap_32_write(
+        pub async fn nullable_bitmap_32_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_bitmap_32_write(endpoint, value.clone())?
                     .end()?
@@ -44426,14 +44429,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_bitmap_64_write(
+        pub async fn nullable_bitmap_64_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_bitmap_64_write(endpoint, value.clone())?
                     .end()?
@@ -44454,14 +44457,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_int_8_u_write(
+        pub async fn nullable_int_8_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_int_8_u_write(endpoint, value.clone())?
                     .end()?
@@ -44482,14 +44485,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_int_16_u_write(
+        pub async fn nullable_int_16_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_int_16_u_write(endpoint, value.clone())?
                     .end()?
@@ -44510,14 +44513,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_int_24_u_write(
+        pub async fn nullable_int_24_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u32>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_int_24_u_write(endpoint, value.clone())?
                     .end()?
@@ -44538,14 +44541,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_int_32_u_write(
+        pub async fn nullable_int_32_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u32>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_int_32_u_write(endpoint, value.clone())?
                     .end()?
@@ -44566,14 +44569,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_int_40_u_write(
+        pub async fn nullable_int_40_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_int_40_u_write(endpoint, value.clone())?
                     .end()?
@@ -44594,14 +44597,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_int_48_u_write(
+        pub async fn nullable_int_48_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_int_48_u_write(endpoint, value.clone())?
                     .end()?
@@ -44622,14 +44625,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_int_56_u_write(
+        pub async fn nullable_int_56_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_int_56_u_write(endpoint, value.clone())?
                     .end()?
@@ -44650,14 +44653,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_int_64_u_write(
+        pub async fn nullable_int_64_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_int_64_u_write(endpoint, value.clone())?
                     .end()?
@@ -44678,14 +44681,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_int_8_s_write(
+        pub async fn nullable_int_8_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i8>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_int_8_s_write(endpoint, value.clone())?
                     .end()?
@@ -44706,14 +44709,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_int_16_s_write(
+        pub async fn nullable_int_16_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i16>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_int_16_s_write(endpoint, value.clone())?
                     .end()?
@@ -44734,14 +44737,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_int_24_s_write(
+        pub async fn nullable_int_24_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i32>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_int_24_s_write(endpoint, value.clone())?
                     .end()?
@@ -44762,14 +44765,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_int_32_s_write(
+        pub async fn nullable_int_32_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i32>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_int_32_s_write(endpoint, value.clone())?
                     .end()?
@@ -44790,14 +44793,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_int_40_s_write(
+        pub async fn nullable_int_40_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_int_40_s_write(endpoint, value.clone())?
                     .end()?
@@ -44818,14 +44821,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_int_48_s_write(
+        pub async fn nullable_int_48_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_int_48_s_write(endpoint, value.clone())?
                     .end()?
@@ -44846,14 +44849,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_int_56_s_write(
+        pub async fn nullable_int_56_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_int_56_s_write(endpoint, value.clone())?
                     .end()?
@@ -44874,14 +44877,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_int_64_s_write(
+        pub async fn nullable_int_64_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_int_64_s_write(endpoint, value.clone())?
                     .end()?
@@ -44902,14 +44905,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_enum_8_write(
+        pub async fn nullable_enum_8_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_enum_8_write(endpoint, value.clone())?
                     .end()?
@@ -44930,14 +44933,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_enum_16_write(
+        pub async fn nullable_enum_16_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_enum_16_write(endpoint, value.clone())?
                     .end()?
@@ -44958,14 +44961,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_float_single_write(
+        pub async fn nullable_float_single_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<f32>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_float_single_write(endpoint, value.clone())?
                     .end()?
@@ -44986,14 +44989,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_float_double_write(
+        pub async fn nullable_float_double_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<f64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_float_double_write(endpoint, value.clone())?
                     .end()?
@@ -45014,14 +45017,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_enum_attr_write(
+        pub async fn nullable_enum_attr_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<SimpleEnum>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_enum_attr_write(endpoint, value.clone())?
                     .end()?
@@ -45042,14 +45045,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_range_restricted_int_8_u_write(
+        pub async fn nullable_range_restricted_int_8_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_range_restricted_int_8_u_write(
                         endpoint,
@@ -45073,14 +45076,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_range_restricted_int_8_s_write(
+        pub async fn nullable_range_restricted_int_8_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i8>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_range_restricted_int_8_s_write(
                         endpoint,
@@ -45104,14 +45107,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_range_restricted_int_16_u_write(
+        pub async fn nullable_range_restricted_int_16_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_range_restricted_int_16_u_write(
                         endpoint,
@@ -45135,14 +45138,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_range_restricted_int_16_s_write(
+        pub async fn nullable_range_restricted_int_16_s_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<i16>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_range_restricted_int_16_s_write(
                         endpoint,
@@ -45166,14 +45169,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_write_only_int_8_u_write(
+        pub async fn write_only_int_8_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_write_only_int_8_u_write(endpoint, value.clone())?
                     .end()?
@@ -45194,14 +45197,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_nullable_global_enum_write(
+        pub async fn nullable_global_enum_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: rs_matter_crate::tlv::Nullable<TestGlobalEnum>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_nullable_global_enum_write(endpoint, value.clone())?
                     .end()?
@@ -45222,14 +45225,14 @@ pub mod unit_testing {
             }
             Ok(())
         }
-        async fn unit_testing_mei_int_8_u_write(
+        pub async fn mei_int_8_u_write(
             self,
             endpoint: rs_matter_crate::dm::EndptId,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             use self::UnitTestingAttrWrites as _Writes;
             use rs_matter_crate::im::client::ImClient as _ImClient;
-            let handle = _ImClient::write_with(self, None, |msg| {
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
                 msg.write_requests()?
                     .push_unit_testing_mei_int_8_u_write(endpoint, value.clone())?
                     .end()?
@@ -45249,6 +45252,18 @@ pub mod unit_testing {
                 }
             }
             Ok(())
+        }
+    }
+    #[doc = "Single-shot IM-client convenience trait for the `UnitTesting` cluster. `use` this trait to call `.unit_testing()` on an [`rs_matter_crate::transport::exchange::Exchange`]; the returned [`UnitTestingClientView`] exposes one method per command and per scalar attribute (read / write). The cluster ID, command/attribute ID, request opcode, retransmit loop, response-chunk iteration, and status-only handling are all baked in. DefaultSuccess commands return `Result<(), Error>` and drain the response internally; response-bearing commands return `Result<<RespStruct>Handle<'a>, Error>` — the handle keeps the RX buffer alive so the caller can read the borrowed response via `.response()?` before `.complete().await?`ing the exchange.\n\nThe indirection through `UnitTestingClientView` keeps each cluster's API surface narrow: at the call site `exchange.unit_testing().` shows only this cluster's methods in IDE completion."]
+    pub trait UnitTestingClient<'a>: rs_matter_crate::im::client::ImClient<'a> {
+        #[doc = r" Enter this cluster's client view. Consumes the"]
+        #[doc = r" exchange — call methods on the returned view to drive"]
+        #[doc = r" a single IM transaction (one command invoke or one"]
+        #[doc = r" attribute read/write)."]
+        fn unit_testing(self) -> UnitTestingClientView<'a> {
+            UnitTestingClientView {
+                exchange: self.into(),
+            }
         }
     }
     impl<'a> UnitTestingClient<'a> for rs_matter_crate::transport::exchange::Exchange<'a> {}

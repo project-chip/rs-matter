@@ -564,7 +564,7 @@ async fn read_onoff(exchange: Exchange<'_>) -> Result<bool, Error> {
     // retransmit loop, response parsing, status-to-error conversion,
     // and chunk drain (trailing StatusResponse) are all baked into
     // the codegen-emitted `on_off_on_off_read`.
-    exchange.on_off_on_off_read(1).await
+    exchange.on_off().on_off_read(1).await
 }
 
 async fn invoke_toggle_with_timeout(matter: &Matter<'_>) -> Result<IMStatusCode, Error> {
@@ -591,7 +591,7 @@ async fn invoke_toggle(exchange: Exchange<'_>) -> Result<IMStatusCode, Error> {
     // IM status to an `Error` otherwise. The remaining `IMStatusCode`
     // return type is preserved for the caller — on the happy path it
     // is always `Success`.
-    exchange.on_off_toggle(1).await?;
+    exchange.on_off().toggle(1).await?;
     Ok(IMStatusCode::Success)
 }
 
@@ -628,9 +628,8 @@ async fn invoke_arm_failsafe(exchange: Exchange<'_>) -> Result<(), Error> {
     // then `.complete().await?` sends the trailing
     // `StatusResponse(Success)` and closes the exchange.
     let handle: ArmFailSafeResponseHandle<'_> = exchange
-        .general_commissioning_arm_fail_safe(0, |req| {
-            req.expiry_length_seconds(60)?.breadcrumb(0)?.end()
-        })
+        .general_commissioning()
+        .arm_fail_safe(0, |req| req.expiry_length_seconds(60)?.breadcrumb(0)?.end())
         .await?;
 
     let (error_code, debug_text_len) = {

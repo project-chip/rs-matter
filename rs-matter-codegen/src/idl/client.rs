@@ -480,11 +480,13 @@ fn client_trait(
     let cluster_snake = idl_field_name_to_rs_name(&cluster.id);
     let cluster_camel = idl_field_name_to_rs_type_name(&cluster.id);
     let trait_name = ident(&format!("{cluster_camel}Client"));
+    let view_name = ident(&format!("{cluster_camel}ClientView"));
+    let entry_method = ident(&cluster_snake);
 
     // The per-cluster IM-client extension traits (already emitted
-    // above in this same module) that the default method bodies
-    // delegate to. We `use` them inside each default-method body so
-    // method-call syntax resolves.
+    // above in this same module) that the view methods delegate to.
+    // We `use` them inside each method body so method-call syntax
+    // resolves.
     let cmd_requests_trait_name = ident(&format!("{cluster_camel}CmdRequests"));
     let attr_reads_trait_name = ident(&format!("{cluster_camel}AttrReads"));
     let attr_writes_trait_name = ident(&format!("{cluster_camel}AttrWrites"));
@@ -506,11 +508,13 @@ fn client_trait(
     // a single, non-chunked `InvokeResponseMessage` — chunking is only
     // legal for batched (N>1) invokes — so the handle's `response()`
     // can safely parse one IB without iterating.
+    //
+    // Methods live on the per-cluster *view* struct
+    // (`<ClusterName>ClientView<'a>`) rather than on the trait, so
+    // IDE completion at `exchange.<cluster>().` shows only this
+    // cluster's surface.
     let cmd_methods = cluster.commands.iter().map(|cmd| {
-        let method_name = ident(&format!(
-            "{cluster_snake}_{}",
-            idl_field_name_to_rs_name(&cmd.id)
-        ));
+        let method_name = ident(&idl_field_name_to_rs_name(&cmd.id));
         let push_method = ident(&format!(
             "push_{cluster_snake}_{}",
             idl_field_name_to_rs_name(&cmd.id)
@@ -560,7 +564,7 @@ fn client_trait(
                 quote!(let chunk)
             };
             quote!(
-                async fn #method_name<F>(
+                pub async fn #method_name<F>(
                     self,
                     endpoint: #krate::dm::EndptId,
                     mut request: F,
@@ -589,7 +593,7 @@ fn client_trait(
                     use #krate::im::client::ImClient as _ImClient;
                     use self::#cmd_requests_trait_name as _Cmds;
 
-                    #chunk_binding = _ImClient::invoke_with(self, None, |msg| {
+                    #chunk_binding = _ImClient::invoke_with(self.exchange, None, |msg| {
                         // `suppress_response` and `timed_request` are
                         // skipped — `InvReqBuilder` fills them in as
                         // `false` on the wire (the common-case
@@ -611,14 +615,14 @@ fn client_trait(
                 quote!(let chunk)
             };
             quote!(
-                async fn #method_name(
+                pub async fn #method_name(
                     self,
                     endpoint: #krate::dm::EndptId,
                 ) -> Result<#return_ty, #krate::error::Error> {
                     use #krate::im::client::ImClient as _ImClient;
                     use self::#cmd_requests_trait_name as _Cmds;
 
-                    #chunk_binding = _ImClient::invoke_with(self, None, |msg| {
+                    #chunk_binding = _ImClient::invoke_with(self.exchange, None, |msg| {
                         // `suppress_response` / `timed_request`
                         // skipped — see the parameterized branch.
                         msg.invoke_requests()?
@@ -732,7 +736,7 @@ fn client_trait(
         }
 
         let method_name = ident(&format!(
-            "{cluster_snake}_{}_read",
+            "{}_read",
             idl_field_name_to_rs_name(&attr.field.field.id)
         ));
         let push_method = ident(&format!(
@@ -741,14 +745,14 @@ fn client_trait(
         ));
 
         Some(quote!(
-            async fn #method_name(
+            pub async fn #method_name(
                 self,
                 endpoint: #krate::dm::EndptId,
             ) -> Result<#value_ty, #krate::error::Error> {
                 use #krate::im::client::ImClient as _ImClient;
                 use self::#attr_reads_trait_name as _Reads;
 
-                let mut chunk = _ImClient::read_with(self, |msg| {
+                let mut chunk = _ImClient::read_with(self.exchange, |msg| {
                     msg.attr_requests()?
                         .#push_method(endpoint)?
                         .end()?
@@ -812,7 +816,7 @@ fn client_trait(
         }
 
         let method_name = ident(&format!(
-            "{cluster_snake}_{}_write",
+            "{}_write",
             idl_field_name_to_rs_name(&attr.field.field.id)
         ));
         let push_method = ident(&format!(
@@ -821,7 +825,7 @@ fn client_trait(
         ));
 
         Some(quote!(
-            async fn #method_name(
+            pub async fn #method_name(
                 self,
                 endpoint: #krate::dm::EndptId,
                 value: #value_ty,
@@ -829,7 +833,7 @@ fn client_trait(
                 use #krate::im::client::ImClient as _ImClient;
                 use self::#attr_writes_trait_name as _Writes;
 
-                let handle = _ImClient::write_with(self, None, |msg| {
+                let handle = _ImClient::write_with(self.exchange, None, |msg| {
                     msg.write_requests()?
                         .#push_method(endpoint, value.clone())?
                         .end()?
@@ -858,29 +862,59 @@ fn client_trait(
     });
 
     let trait_doc = Literal::string(&format!(
-        "Single-shot IM-client convenience trait for the `{}` cluster. \
-         `use` this trait to call `<cluster>_<command>` / \
-         `<cluster>_<attr>_read` / `<cluster>_<attr>_write` directly \
-         on an [`{}::transport::exchange::Exchange`]. The cluster ID, \
-         command/attribute ID, request opcode, retransmit loop, \
-         response-chunk iteration, and status-only handling are all \
-         baked in. DefaultSuccess commands return `Result<(), Error>` \
-         and drain the response internally; response-bearing commands \
-         return `Result<<RespStruct>Handle<'a>, Error>` — the handle \
-         keeps the RX buffer alive so the caller can read the \
-         borrowed response via `.response()?` before \
-         `.complete().await?`ing the exchange.",
-        cluster.id, krate,
+        "Single-shot IM-client convenience trait for the `{cluster_id}` cluster. \
+         `use` this trait to call `.{snake}()` on an \
+         [`{krate}::transport::exchange::Exchange`]; the returned \
+         [`{view}`] exposes one method per command and per scalar \
+         attribute (read / write). The cluster ID, command/attribute \
+         ID, request opcode, retransmit loop, response-chunk iteration, \
+         and status-only handling are all baked in. DefaultSuccess \
+         commands return `Result<(), Error>` and drain the response \
+         internally; response-bearing commands return \
+         `Result<<RespStruct>Handle<'a>, Error>` — the handle keeps \
+         the RX buffer alive so the caller can read the borrowed \
+         response via `.response()?` before `.complete().await?`ing \
+         the exchange.\n\n\
+         The indirection through `{view}` keeps each cluster's API \
+         surface narrow: at the call site `exchange.{snake}().` shows \
+         only this cluster's methods in IDE completion.",
+        cluster_id = cluster.id,
+        krate = krate,
+        snake = cluster_snake,
+        view = format!("{cluster_camel}ClientView"),
+    ));
+    let view_doc = Literal::string(&format!(
+        "Per-exchange view onto the `{cluster_id}` cluster's client operations. \
+         Returned by [`{cluster_camel}Client::{cluster_snake}`]. Each method \
+         consumes the view (and therefore the underlying \
+         [`{krate}::transport::exchange::Exchange`]) — one exchange is one \
+         IM transaction.",
+        cluster_id = cluster.id,
     ));
 
     quote!(
         #(#response_handles)*
 
-        #[doc = #trait_doc]
-        pub trait #trait_name<'a>: #krate::im::client::ImClient<'a> {
+        #[doc = #view_doc]
+        pub struct #view_name<'a> {
+            exchange: #krate::transport::exchange::Exchange<'a>,
+        }
+
+        impl<'a> #view_name<'a> {
             #(#cmd_methods)*
             #(#attr_read_methods)*
             #(#attr_write_methods)*
+        }
+
+        #[doc = #trait_doc]
+        pub trait #trait_name<'a>: #krate::im::client::ImClient<'a> {
+            /// Enter this cluster's client view. Consumes the
+            /// exchange — call methods on the returned view to drive
+            /// a single IM transaction (one command invoke or one
+            /// attribute read/write).
+            fn #entry_method(self) -> #view_name<'a> {
+                #view_name { exchange: self.into() }
+            }
         }
 
         impl<'a> #trait_name<'a> for #krate::transport::exchange::Exchange<'a> {}

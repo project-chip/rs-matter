@@ -721,7 +721,8 @@ impl<
             OutboundWork::Offer { session_id } => {
                 let session_id = *session_id;
                 exchange
-                    .web_rtc_transport_requestor_offer(endpoint, |req| {
+                    .web_rtc_transport_requestor()
+                    .offer(endpoint, |req| {
                         req.web_rtc_session_id(session_id)?
                             .sdp(sdp)?
                             .ice_servers()?
@@ -734,7 +735,8 @@ impl<
             OutboundWork::Answer { session_id } => {
                 let session_id = *session_id;
                 exchange
-                    .web_rtc_transport_requestor_answer(endpoint, |req| {
+                    .web_rtc_transport_requestor()
+                    .answer(endpoint, |req| {
                         req.web_rtc_session_id(session_id)?.sdp(sdp)?.end()
                     })
                     .await?;
@@ -761,7 +763,8 @@ impl<
                         .map_err(Error::from)?;
                 }
                 exchange
-                    .web_rtc_transport_requestor_ice_candidates(endpoint, |req| {
+                    .web_rtc_transport_requestor()
+                    .ice_candidates(endpoint, |req| {
                         let req = req.web_rtc_session_id(session_id)?;
                         let mut arr = req.ice_candidates()?;
                         for cand in ice_buf.iter() {
@@ -780,7 +783,8 @@ impl<
                 let session_id = *session_id;
                 let reason = *reason;
                 exchange
-                    .web_rtc_transport_requestor_end(endpoint, |req| {
+                    .web_rtc_transport_requestor()
+                    .end(endpoint, |req| {
                         req.web_rtc_session_id(session_id)?.reason(reason)?.end()
                     })
                     .await?;

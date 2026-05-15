@@ -95,7 +95,7 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
                     .filter(|ia2| ia2.interface_name == iname)
                     .find_map(|ia2| {
                         ia2.address
-                            .and_then(|addr| addr.as_sockaddr_in().map(|addr| addr.ip().into()))
+                            .and_then(|addr| addr.as_sockaddr_in().map(|addr| addr.ip()))
                             .map(|ip: std::net::Ipv4Addr| (iname.clone(), ip, ipv6))
                     })
             })
