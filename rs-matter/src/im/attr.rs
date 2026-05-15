@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use crate::error::Error;
+use crate::error::{Error, ErrorCode};
 use crate::im::{EventFilter, NodeId};
 use crate::tlv::{FromTLV, Nullable, TLVArray, TLVElement, ToTLV};
 
@@ -284,6 +284,75 @@ pub struct ReportDataResp<'a> {
     pub event_reports: Option<TLVArray<'a, EventResp<'a>>>,
     pub more_chunks: Option<bool>,
     pub suppress_response: Option<bool>,
+}
+
+impl<'a> ReportDataResp<'a> {
+    /// Iterate the entries in `attr_reports` whose path matches the
+    /// given `(cluster, attr)` pair, in `(endpoint, result)` form.
+    ///
+    /// - **`Ok(T)`** — `AttrResp::Data` entry; the embedded `data` is
+    ///   decoded via `FromTLV` into `T`.
+    /// - **`Err(_)`** — `AttrResp::Status` entry; the `IMStatusCode`
+    ///   becomes an [`Error`]. This catches access-check failures
+    ///   (`UnsupportedAccess`, …) and `Unsupported{Endpoint,Cluster,Attribute}`
+    ///   uniformly — the peer echoes the requested path on status, so
+    ///   the filter still matches those entries.
+    /// - Entries with non-matching cluster/attr are silently skipped.
+    /// - Entries with an absent endpoint in the path are skipped
+    ///   (would indicate a malformed report).
+    ///
+    /// Wildcard reads (path missing endpoint, cluster, or attr in the
+    /// request) legally produce multiple matching reports — the
+    /// iterator yields one per expanded path, in wire order.
+    pub fn attrs<T>(
+        &self,
+        cluster: ClusterId,
+        attr: AttrId,
+    ) -> impl Iterator<Item = (EndptId, Result<T, Error>)> + use<'_, 'a, T>
+    where
+        T: FromTLV<'a> + 'a,
+    {
+        self.attr_reports
+            .as_ref()
+            .into_iter()
+            .flat_map(|arr| arr.iter())
+            .filter_map(move |resp| filter_attr_resp::<T>(resp.ok()?, cluster, attr))
+    }
+}
+
+/// Helper for [`ReportDataResp::attrs`] — extracts `(endpoint,
+/// Result<T, Error>)` from a single `AttrResp` if it matches the
+/// requested `(cluster, attr)` filter.
+fn filter_attr_resp<'a, T>(
+    resp: AttrResp<'a>,
+    cluster: ClusterId,
+    attr: AttrId,
+) -> Option<(EndptId, Result<T, Error>)>
+where
+    T: FromTLV<'a>,
+{
+    match resp {
+        AttrResp::Data(data) => {
+            if data.path.cluster != Some(cluster) || data.path.attr != Some(attr) {
+                return None;
+            }
+            let endpoint = data.path.endpoint?;
+            Some((endpoint, T::from_tlv(&data.data)))
+        }
+        AttrResp::Status(s) => {
+            if s.path.cluster != Some(cluster) || s.path.attr != Some(attr) {
+                return None;
+            }
+            let endpoint = s.path.endpoint?;
+            let err: Error = s
+                .status
+                .status
+                .to_error_code()
+                .unwrap_or(ErrorCode::Failure)
+                .into();
+            Some((endpoint, Err(err)))
+        }
+    }
 }
 
 /// Tags corresponding to the fields in the `ReportDataMessage` TLV structure.

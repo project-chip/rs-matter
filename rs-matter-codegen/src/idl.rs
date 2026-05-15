@@ -37653,6 +37653,2052 @@ pub mod unit_testing {
             UnitTestingAttrWritesView { array: self }
         }
     }
+    #[doc = "Cluster-scoped response view onto a [`rs_matter_crate::im::InvokeResp`] for the `UnitTesting` cluster. Each method returns an iterator of `(EndptId, Result<R, Error>)` over the entries in `invoke_responses` whose path matches that command. Command names that would collide with the view's own inherent methods (see `RESERVED_VIEW_METHOD_NAMES` in the codegen) get a `cmd_` prefix."]
+    pub struct UnitTestingCmdResponsesView<'a, 'r> {
+        resp: &'r rs_matter_crate::im::InvokeResp<'a>,
+    }
+    impl<'a, 'r> UnitTestingCmdResponsesView<'a, 'r> {
+        pub fn test(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 0)
+        }
+        pub fn test_not_handled(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 1)
+        }
+        pub fn test_specific(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestSpecificResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestSpecificResponse<'a>>(4294048773, 2)
+        }
+        pub fn test_unknown_command(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 3)
+        }
+        pub fn test_add_arguments(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestAddArgumentsResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestAddArgumentsResponse<'a>>(4294048773, 4)
+        }
+        pub fn test_simple_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestSimpleArgumentResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestSimpleArgumentResponse<'a>>(4294048773, 5)
+        }
+        pub fn test_struct_array_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestStructArrayArgumentResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestStructArrayArgumentResponse<'a>>(4294048773, 6)
+        }
+        pub fn test_struct_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<BooleanResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp.responses::<BooleanResponse<'a>>(4294048773, 7)
+        }
+        pub fn test_nested_struct_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<BooleanResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp.responses::<BooleanResponse<'a>>(4294048773, 8)
+        }
+        pub fn test_list_struct_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<BooleanResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp.responses::<BooleanResponse<'a>>(4294048773, 9)
+        }
+        pub fn test_list_int_8_u_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<BooleanResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp.responses::<BooleanResponse<'a>>(4294048773, 10)
+        }
+        pub fn test_nested_struct_list_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<BooleanResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp.responses::<BooleanResponse<'a>>(4294048773, 11)
+        }
+        pub fn test_list_nested_struct_list_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<BooleanResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp.responses::<BooleanResponse<'a>>(4294048773, 12)
+        }
+        pub fn test_list_int_8_u_reverse_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestListInt8UReverseResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestListInt8UReverseResponse<'a>>(4294048773, 13)
+        }
+        pub fn test_enums_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestEnumsResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp.responses::<TestEnumsResponse<'a>>(4294048773, 14)
+        }
+        pub fn test_nullable_optional_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestNullableOptionalResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestNullableOptionalResponse<'a>>(4294048773, 15)
+        }
+        pub fn test_complex_nullable_optional_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestComplexNullableOptionalResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestComplexNullableOptionalResponse<'a>>(4294048773, 16)
+        }
+        pub fn simple_struct_echo_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<SimpleStructResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<SimpleStructResponse<'a>>(4294048773, 17)
+        }
+        pub fn timed_invoke_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 18)
+        }
+        pub fn test_simple_optional_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 19)
+        }
+        pub fn test_emit_test_event_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestEmitTestEventResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestEmitTestEventResponse<'a>>(4294048773, 20)
+        }
+        pub fn test_emit_test_fabric_scoped_event_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestEmitTestFabricScopedEventResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestEmitTestFabricScopedEventResponse<'a>>(4294048773, 21)
+        }
+        pub fn test_batch_helper_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestBatchHelperResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestBatchHelperResponse<'a>>(4294048773, 22)
+        }
+        pub fn test_second_batch_helper_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestBatchHelperResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestBatchHelperResponse<'a>>(4294048773, 23)
+        }
+        pub fn string_echo_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<StringEchoResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<StringEchoResponse<'a>>(4294048773, 24)
+        }
+        pub fn global_echo_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<GlobalEchoResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<GlobalEchoResponse<'a>>(4294048773, 25)
+        }
+        pub fn test_check_command_flags(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 26)
+        }
+        pub fn test_different_vendor_mei_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestDifferentVendorMeiResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestDifferentVendorMeiResponse<'a>>(4294048773, 4294049962)
+        }
+    }
+    #[doc = "IM-client extension trait for extracting `UnitTesting`-cluster command responses out of a generic [`rs_matter_crate::im::InvokeResp`]. `use` this trait to call `.unit_testing_inv_resp()` on an `InvokeResp`; the returned [`UnitTestingCmdResponsesView`] exposes one iterator method per command, each yielding `(EndptId, Result<<Output>, Error>)` — see [`rs_matter_crate::im::InvokeResp::responses`] / [`rs_matter_crate::im::InvokeResp::statuses`] for the per-entry semantics."]
+    pub trait UnitTestingCmdResponses<'a> {
+        fn unit_testing_inv_resp(&self) -> UnitTestingCmdResponsesView<'a, '_>;
+    }
+    impl<'a> UnitTestingCmdResponses<'a> for rs_matter_crate::im::InvokeResp<'a> {
+        fn unit_testing_inv_resp(&self) -> UnitTestingCmdResponsesView<'a, '_> {
+            UnitTestingCmdResponsesView { resp: self }
+        }
+    }
+    #[doc = "Cluster-scoped response view onto a [`rs_matter_crate::im::ReportDataResp`] for the `UnitTesting` cluster. Each method returns an iterator of `(EndptId, Result<T, Error>)` over the entries in `attr_reports` whose path matches that attribute. Attribute names that would collide with the view's own inherent methods (see `RESERVED_VIEW_METHOD_NAMES` in the codegen) get an `attr_` prefix."]
+    pub struct UnitTestingAttrResponsesView<'a, 'r> {
+        resp: &'r rs_matter_crate::im::ReportDataResp<'a>,
+    }
+    impl<'a, 'r> UnitTestingAttrResponsesView<'a, 'r> {
+        pub fn boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<bool, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<bool>(4294048773, 0)
+        }
+        pub fn bitmap_8(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Bitmap8MaskMap, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Bitmap8MaskMap>(4294048773, 1)
+        }
+        pub fn bitmap_16(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Bitmap16MaskMap, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Bitmap16MaskMap>(4294048773, 2)
+        }
+        pub fn bitmap_32(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Bitmap32MaskMap, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Bitmap32MaskMap>(4294048773, 3)
+        }
+        pub fn bitmap_64(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Bitmap64MaskMap, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Bitmap64MaskMap>(4294048773, 4)
+        }
+        pub fn int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u8, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u8>(4294048773, 5)
+        }
+        pub fn int_16_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u16, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u16>(4294048773, 6)
+        }
+        pub fn int_24_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u32, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u32>(4294048773, 7)
+        }
+        pub fn int_32_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u32, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u32>(4294048773, 8)
+        }
+        pub fn int_40_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u64>(4294048773, 9)
+        }
+        pub fn int_48_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u64>(4294048773, 10)
+        }
+        pub fn int_56_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u64>(4294048773, 11)
+        }
+        pub fn int_64_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u64>(4294048773, 12)
+        }
+        pub fn int_8_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i8, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i8>(4294048773, 13)
+        }
+        pub fn int_16_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i16, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i16>(4294048773, 14)
+        }
+        pub fn int_24_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i32, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i32>(4294048773, 15)
+        }
+        pub fn int_32_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i32, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i32>(4294048773, 16)
+        }
+        pub fn int_40_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i64>(4294048773, 17)
+        }
+        pub fn int_48_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i64>(4294048773, 18)
+        }
+        pub fn int_56_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i64>(4294048773, 19)
+        }
+        pub fn int_64_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i64>(4294048773, 20)
+        }
+        pub fn enum_8(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u8, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u8>(4294048773, 21)
+        }
+        pub fn enum_16(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u16, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u16>(4294048773, 22)
+        }
+        pub fn float_single(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<f32, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<f32>(4294048773, 23)
+        }
+        pub fn float_double(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<f64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<f64>(4294048773, 24)
+        }
+        pub fn epoch_us(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u64>(4294048773, 32)
+        }
+        pub fn epoch_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u32, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u32>(4294048773, 33)
+        }
+        pub fn vendor_id(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u16, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u16>(4294048773, 34)
+        }
+        pub fn enum_attr(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<SimpleEnum, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<SimpleEnum>(4294048773, 36)
+        }
+        pub fn range_restricted_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u8, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u8>(4294048773, 38)
+        }
+        pub fn range_restricted_int_8_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i8, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i8>(4294048773, 39)
+        }
+        pub fn range_restricted_int_16_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u16, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u16>(4294048773, 40)
+        }
+        pub fn range_restricted_int_16_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i16, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i16>(4294048773, 41)
+        }
+        pub fn timed_write_boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<bool, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<bool>(4294048773, 48)
+        }
+        pub fn general_error_boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<bool, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<bool>(4294048773, 49)
+        }
+        pub fn cluster_error_boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<bool, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<bool>(4294048773, 50)
+        }
+        pub fn global_enum(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestGlobalEnum, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<TestGlobalEnum>(4294048773, 51)
+        }
+        pub fn unsupported_attribute_requiring_admin_privilege(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Option<bool>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Option<bool>>(4294048773, 254)
+        }
+        pub fn unsupported(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Option<bool>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Option<bool>>(4294048773, 255)
+        }
+        pub fn read_failure_code(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Option<u8>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Option<u8>>(4294048773, 12288)
+        }
+        pub fn failure_int_32_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Option<u32>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Option<u32>>(4294048773, 12289)
+        }
+        pub fn nullable_boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<bool>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<bool>>(4294048773, 16384)
+        }
+        pub fn nullable_bitmap_8(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<
+                    rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
+                    rs_matter_crate::error::Error,
+                >,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>>(4294048773, 16385)
+        }
+        pub fn nullable_bitmap_16(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<
+                    rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
+                    rs_matter_crate::error::Error,
+                >,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>>(4294048773, 16386)
+        }
+        pub fn nullable_bitmap_32(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<
+                    rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
+                    rs_matter_crate::error::Error,
+                >,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>>(4294048773, 16387)
+        }
+        pub fn nullable_bitmap_64(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<
+                    rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
+                    rs_matter_crate::error::Error,
+                >,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>>(4294048773, 16388)
+        }
+        pub fn nullable_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u8>>(4294048773, 16389)
+        }
+        pub fn nullable_int_16_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u16>>(4294048773, 16390)
+        }
+        pub fn nullable_int_24_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u32>>(4294048773, 16391)
+        }
+        pub fn nullable_int_32_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u32>>(4294048773, 16392)
+        }
+        pub fn nullable_int_40_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u64>>(4294048773, 16393)
+        }
+        pub fn nullable_int_48_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u64>>(4294048773, 16394)
+        }
+        pub fn nullable_int_56_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u64>>(4294048773, 16395)
+        }
+        pub fn nullable_int_64_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u64>>(4294048773, 16396)
+        }
+        pub fn nullable_int_8_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i8>>(4294048773, 16397)
+        }
+        pub fn nullable_int_16_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i16>>(4294048773, 16398)
+        }
+        pub fn nullable_int_24_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i32>>(4294048773, 16399)
+        }
+        pub fn nullable_int_32_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i32>>(4294048773, 16400)
+        }
+        pub fn nullable_int_40_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i64>>(4294048773, 16401)
+        }
+        pub fn nullable_int_48_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i64>>(4294048773, 16402)
+        }
+        pub fn nullable_int_56_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i64>>(4294048773, 16403)
+        }
+        pub fn nullable_int_64_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i64>>(4294048773, 16404)
+        }
+        pub fn nullable_enum_8(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u8>>(4294048773, 16405)
+        }
+        pub fn nullable_enum_16(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u16>>(4294048773, 16406)
+        }
+        pub fn nullable_float_single(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<f32>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<f32>>(4294048773, 16407)
+        }
+        pub fn nullable_float_double(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<f64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<f64>>(4294048773, 16408)
+        }
+        pub fn nullable_enum_attr(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<SimpleEnum>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<SimpleEnum>>(4294048773, 16420)
+        }
+        pub fn nullable_range_restricted_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u8>>(4294048773, 16422)
+        }
+        pub fn nullable_range_restricted_int_8_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i8>>(4294048773, 16423)
+        }
+        pub fn nullable_range_restricted_int_16_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u16>>(4294048773, 16424)
+        }
+        pub fn nullable_range_restricted_int_16_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i16>>(4294048773, 16425)
+        }
+        pub fn write_only_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Option<u8>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Option<u8>>(4294048773, 16426)
+        }
+        pub fn nullable_global_enum(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<
+                    rs_matter_crate::tlv::Nullable<TestGlobalEnum>,
+                    rs_matter_crate::error::Error,
+                >,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<TestGlobalEnum>>(4294048773, 16435)
+        }
+        pub fn feature_map(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u32, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u32>(4294048773, 65532)
+        }
+        pub fn cluster_revision(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u16, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u16>(4294048773, 65533)
+        }
+        pub fn mei_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u8, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u8>(4294048773, 4294070017)
+        }
+    }
+    #[doc = "IM-client extension trait for extracting `UnitTesting`-cluster attribute reports out of a generic [`rs_matter_crate::im::ReportDataResp`]. `use` this trait to call `.unit_testing_read_resp()` on a `ReportDataResp`; the returned [`UnitTestingAttrResponsesView`] exposes one iterator method per scalar attribute, each yielding `(EndptId, Result<T, Error>)`. Non-scalar attributes (struct, list, string) require `ReportDataResp::attrs::<T>(cluster, attr)` directly with the right FromTLV-able type."]
+    pub trait UnitTestingAttrResponses<'a> {
+        fn unit_testing_read_resp(&self) -> UnitTestingAttrResponsesView<'a, '_>;
+    }
+    impl<'a> UnitTestingAttrResponses<'a> for rs_matter_crate::im::ReportDataResp<'a> {
+        fn unit_testing_read_resp(&self) -> UnitTestingAttrResponsesView<'a, '_> {
+            UnitTestingAttrResponsesView { resp: self }
+        }
+    }
+    #[doc = "Cluster-scoped write-status view onto a [`rs_matter_crate::im::WriteResp`] for the `UnitTesting` cluster. Each method returns an iterator of `(EndptId, Result<(), Error>)` over the entries in `write_responses` whose path matches that attribute. Attribute names that would collide with the view's own inherent methods (see `RESERVED_VIEW_METHOD_NAMES` in the codegen) get an `attr_` prefix."]
+    pub struct UnitTestingWriteResponsesView<'a, 'r> {
+        resp: &'r rs_matter_crate::im::WriteResp<'a>,
+    }
+    impl<'a, 'r> UnitTestingWriteResponsesView<'a, 'r> {
+        pub fn boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 0)
+        }
+        pub fn bitmap_8(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 1)
+        }
+        pub fn bitmap_16(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 2)
+        }
+        pub fn bitmap_32(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 3)
+        }
+        pub fn bitmap_64(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 4)
+        }
+        pub fn int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 5)
+        }
+        pub fn int_16_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 6)
+        }
+        pub fn int_24_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 7)
+        }
+        pub fn int_32_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 8)
+        }
+        pub fn int_40_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 9)
+        }
+        pub fn int_48_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 10)
+        }
+        pub fn int_56_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 11)
+        }
+        pub fn int_64_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 12)
+        }
+        pub fn int_8_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 13)
+        }
+        pub fn int_16_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 14)
+        }
+        pub fn int_24_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 15)
+        }
+        pub fn int_32_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16)
+        }
+        pub fn int_40_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 17)
+        }
+        pub fn int_48_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 18)
+        }
+        pub fn int_56_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 19)
+        }
+        pub fn int_64_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 20)
+        }
+        pub fn enum_8(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 21)
+        }
+        pub fn enum_16(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 22)
+        }
+        pub fn float_single(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 23)
+        }
+        pub fn float_double(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 24)
+        }
+        pub fn octet_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 25)
+        }
+        pub fn list_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 26)
+        }
+        pub fn list_octet_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 27)
+        }
+        pub fn list_struct_octet_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 28)
+        }
+        pub fn long_octet_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 29)
+        }
+        pub fn char_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 30)
+        }
+        pub fn long_char_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 31)
+        }
+        pub fn epoch_us(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 32)
+        }
+        pub fn epoch_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 33)
+        }
+        pub fn vendor_id(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 34)
+        }
+        pub fn list_nullables_and_optionals_struct(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 35)
+        }
+        pub fn enum_attr(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 36)
+        }
+        pub fn struct_attr(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 37)
+        }
+        pub fn range_restricted_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 38)
+        }
+        pub fn range_restricted_int_8_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 39)
+        }
+        pub fn range_restricted_int_16_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 40)
+        }
+        pub fn range_restricted_int_16_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 41)
+        }
+        pub fn list_long_octet_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 42)
+        }
+        pub fn list_fabric_scoped(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 43)
+        }
+        pub fn timed_write_boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 48)
+        }
+        pub fn general_error_boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 49)
+        }
+        pub fn cluster_error_boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 50)
+        }
+        pub fn global_enum(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 51)
+        }
+        pub fn global_struct(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 52)
+        }
+        pub fn unsupported_attribute_requiring_admin_privilege(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 254)
+        }
+        pub fn unsupported(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 255)
+        }
+        pub fn read_failure_code(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 12288)
+        }
+        pub fn failure_int_32_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 12289)
+        }
+        pub fn nullable_boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16384)
+        }
+        pub fn nullable_bitmap_8(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16385)
+        }
+        pub fn nullable_bitmap_16(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16386)
+        }
+        pub fn nullable_bitmap_32(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16387)
+        }
+        pub fn nullable_bitmap_64(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16388)
+        }
+        pub fn nullable_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16389)
+        }
+        pub fn nullable_int_16_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16390)
+        }
+        pub fn nullable_int_24_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16391)
+        }
+        pub fn nullable_int_32_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16392)
+        }
+        pub fn nullable_int_40_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16393)
+        }
+        pub fn nullable_int_48_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16394)
+        }
+        pub fn nullable_int_56_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16395)
+        }
+        pub fn nullable_int_64_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16396)
+        }
+        pub fn nullable_int_8_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16397)
+        }
+        pub fn nullable_int_16_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16398)
+        }
+        pub fn nullable_int_24_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16399)
+        }
+        pub fn nullable_int_32_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16400)
+        }
+        pub fn nullable_int_40_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16401)
+        }
+        pub fn nullable_int_48_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16402)
+        }
+        pub fn nullable_int_56_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16403)
+        }
+        pub fn nullable_int_64_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16404)
+        }
+        pub fn nullable_enum_8(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16405)
+        }
+        pub fn nullable_enum_16(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16406)
+        }
+        pub fn nullable_float_single(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16407)
+        }
+        pub fn nullable_float_double(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16408)
+        }
+        pub fn nullable_octet_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16409)
+        }
+        pub fn nullable_char_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16414)
+        }
+        pub fn nullable_enum_attr(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16420)
+        }
+        pub fn nullable_struct(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16421)
+        }
+        pub fn nullable_range_restricted_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16422)
+        }
+        pub fn nullable_range_restricted_int_8_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16423)
+        }
+        pub fn nullable_range_restricted_int_16_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16424)
+        }
+        pub fn nullable_range_restricted_int_16_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16425)
+        }
+        pub fn write_only_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16426)
+        }
+        pub fn nullable_global_enum(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16435)
+        }
+        pub fn nullable_global_struct(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16436)
+        }
+        pub fn mei_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 4294070017)
+        }
+    }
+    #[doc = "IM-client extension trait for extracting `UnitTesting`-cluster per-attribute write statuses out of a generic [`rs_matter_crate::im::WriteResp`]. `use` this trait to call `.unit_testing_write_resp()` on a `WriteResp`; the returned [`UnitTestingWriteResponsesView`] exposes one iterator method per writable attribute, each yielding `(EndptId, Result<(), Error>)`."]
+    pub trait UnitTestingWriteResponses<'a> {
+        fn unit_testing_write_resp(&self) -> UnitTestingWriteResponsesView<'a, '_>;
+    }
+    impl<'a> UnitTestingWriteResponses<'a> for rs_matter_crate::im::WriteResp<'a> {
+        fn unit_testing_write_resp(&self) -> UnitTestingWriteResponsesView<'a, '_> {
+            UnitTestingWriteResponsesView { resp: self }
+        }
+    }
     #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `TestSpecificResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`TestSpecificResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
     pub struct TestSpecificResponseHandle<'a> {
         chunk: rs_matter_crate::im::client::InvokeRespChunk<'a>,

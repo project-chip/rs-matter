@@ -19,7 +19,7 @@
 
 use core::fmt;
 
-use crate::error::Error;
+use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, TLVArray, TLVElement, ToTLV};
 
 use super::{ClusterId, CmdId, EndptId, GenericPath, IMStatusCode, Status};
@@ -312,4 +312,140 @@ pub struct InvokeResp<'a> {
     pub invoke_responses: Option<TLVArray<'a, CmdResp<'a>>>,
     /// Whether there are more chunked messages coming
     pub more_chunks: Option<bool>,
+}
+
+impl<'a> InvokeResp<'a> {
+    /// Iterate the entries in `invoke_responses` whose path matches
+    /// the given `(cluster, cmd)` pair, in `(endpoint, result)` form.
+    ///
+    /// - **`Ok(R)`** — `CmdResp::Cmd` entry; the embedded `data` is
+    ///   decoded via `FromTLV` into `R`.
+    /// - **`Err(_)`** — `CmdResp::Status` entry; the `IMStatusCode` is
+    ///   converted to an [`Error`]. This covers access-check failures
+    ///   (`UnsupportedAccess` etc.) and all `Unsupported*` cases
+    ///   (`UnsupportedEndpoint`, `UnsupportedCluster`, `UnsupportedCommand`)
+    ///   uniformly — the peer echoes the requested path on status, so
+    ///   the filter still catches them.
+    /// - Entries with a non-matching cluster/cmd are silently filtered
+    ///   out (they belong to a *different* `.responses(...)` call).
+    /// - Entries with an absent endpoint in the path are skipped
+    ///   (the wire spec requires concrete paths on invoke responses;
+    ///   a missing endpoint indicates a malformed response).
+    ///
+    /// `R = ()` for `DefaultSuccess` commands. Codegen-emitted
+    /// response structs (e.g. `MoveToLevelResponse<'a>`) implement
+    /// `FromTLV` over `'a` and plug in directly.
+    ///
+    /// Multi-response: single-command invokes per Matter Core spec
+    /// §8.2.5 carry concrete paths only, but batched invokes
+    /// (multiple `CommandDataIB`s in one `InvokeRequestMessage`) can
+    /// produce multiple matching entries — the iterator yields one
+    /// per match, in wire order.
+    pub fn responses<R>(
+        &self,
+        cluster: ClusterId,
+        cmd: CmdId,
+    ) -> impl Iterator<Item = (EndptId, Result<R, Error>)> + use<'_, 'a, R>
+    where
+        R: FromTLV<'a> + 'a,
+    {
+        self.invoke_responses
+            .as_ref()
+            .into_iter()
+            .flat_map(|arr| arr.iter())
+            .filter_map(move |resp| filter_cmd_resp::<R>(resp.ok()?, cluster, cmd))
+    }
+
+    /// Counterpart of [`Self::responses`] for `DefaultSuccess`
+    /// commands — the ones whose IDL `output` is `DefaultSuccess` and
+    /// thus carry no per-command response payload. Filters the
+    /// `invoke_responses` list by `(cluster, cmd)` and yields
+    /// `(endpoint, Result<(), Error>)`:
+    ///
+    /// - **`Ok(())`** — a `CmdResp::Status(Success)` entry for the
+    ///   given path (this is what a batched DefaultSuccess command
+    ///   produces on the wire).
+    /// - **`Err(_)`** — a non-`Success` `CmdResp::Status`, with the
+    ///   same `IMStatusCode`-to-[`Error`] mapping as
+    ///   [`Self::responses`].
+    /// - `CmdResp::Cmd` entries (which would indicate the peer
+    ///   replied with payload data for a command we asked to be
+    ///   DefaultSuccess) are skipped silently.
+    /// - Entries with non-matching cluster/cmd or absent endpoint
+    ///   are skipped as in [`Self::responses`].
+    ///
+    /// Note: a *single-command* DefaultSuccess invoke produces a
+    /// top-level `StatusResponse(Success)` instead of an
+    /// `InvokeResponseMessage`, so the response array is absent
+    /// entirely and this iterator yields nothing — use
+    /// [`crate::im::client::InvokeRespChunk::is_status_only`] to
+    /// detect that case. The iterator here is only useful for
+    /// *batched* invokes that mix DefaultSuccess and response-bearing
+    /// commands.
+    pub fn statuses(
+        &self,
+        cluster: ClusterId,
+        cmd: CmdId,
+    ) -> impl Iterator<Item = (EndptId, Result<(), Error>)> + '_ {
+        self.invoke_responses
+            .as_ref()
+            .into_iter()
+            .flat_map(|arr| arr.iter())
+            .filter_map(move |resp| match resp.ok()? {
+                CmdResp::Status(s) => {
+                    if s.path.cluster != Some(cluster) || s.path.cmd != Some(cmd) {
+                        return None;
+                    }
+                    let endpoint = s.path.endpoint?;
+                    let result = if s.status.status == IMStatusCode::Success {
+                        Ok(())
+                    } else {
+                        let err: Error = s
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(ErrorCode::Failure)
+                            .into();
+                        Err(err)
+                    };
+                    Some((endpoint, result))
+                }
+                CmdResp::Cmd(_) => None,
+            })
+    }
+}
+
+/// Helper for [`InvokeResp::responses`] — extracts `(endpoint,
+/// Result<R, Error>)` from a single `CmdResp` if it matches the
+/// requested `(cluster, cmd)` filter.
+fn filter_cmd_resp<'a, R>(
+    resp: CmdResp<'a>,
+    cluster: ClusterId,
+    cmd: CmdId,
+) -> Option<(EndptId, Result<R, Error>)>
+where
+    R: FromTLV<'a>,
+{
+    match resp {
+        CmdResp::Cmd(data) => {
+            if data.path.cluster != Some(cluster) || data.path.cmd != Some(cmd) {
+                return None;
+            }
+            let endpoint = data.path.endpoint?;
+            Some((endpoint, R::from_tlv(&data.data)))
+        }
+        CmdResp::Status(s) => {
+            if s.path.cluster != Some(cluster) || s.path.cmd != Some(cmd) {
+                return None;
+            }
+            let endpoint = s.path.endpoint?;
+            let err: Error = s
+                .status
+                .status
+                .to_error_code()
+                .unwrap_or(ErrorCode::Failure)
+                .into();
+            Some((endpoint, Err(err)))
+        }
+    }
 }

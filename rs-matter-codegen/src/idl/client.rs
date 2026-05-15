@@ -117,12 +117,18 @@ pub fn client_im(
     let cmd_requests = cmd_requests_trait(cluster, context);
     let attr_reads = attr_reads_trait(cluster, context);
     let attr_writes = attr_writes_trait(cluster, entities, context);
+    let cmd_responses = cmd_responses_trait(cluster, context);
+    let attr_responses = attr_responses_trait(cluster, entities, context);
+    let write_responses = write_responses_trait(cluster, context);
     let client = client_trait(cluster, entities, context);
 
     quote!(
         #cmd_requests
         #attr_reads
         #attr_writes
+        #cmd_responses
+        #attr_responses
+        #write_responses
         #client
     )
 }
@@ -525,6 +531,307 @@ fn cmd_requests_trait(cluster: &Cluster, context: &IdlGenerateContext) -> TokenS
         {
             fn #entry_method(self) -> #view_name<P> {
                 #view_name { array: self }
+            }
+        }
+    )
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Response-side extension traits
+// ─────────────────────────────────────────────────────────────────────
+
+/// Emit the `<ClusterName>CmdResponses<'a>` extension trait on
+/// [`rs_matter::im::InvokeResp<'a>`], plus the cluster-scoped view
+/// struct `<ClusterName>CmdResponsesView<'a, 'r>`.
+///
+/// Same single-entry-method-plus-view shape as the request-side
+/// extensions (see [`cmd_requests_trait`]). The trait surface is a
+/// single method `<cluster_snake>_inv_resp(&self) -> <…>View<'a, '_>`;
+/// per-command iterator methods live on the view.
+///
+/// Method shape per command:
+/// - **DefaultSuccess** (`cmd.output == NO_RESPONSE`): yields
+///   `(EndptId, Result<(), Error>)` — see
+///   [`rs_matter::im::InvokeResp::statuses`]. Useful for batched
+///   invokes that mix DefaultSuccess and response-bearing commands;
+///   single-command DefaultSuccess invokes don't populate
+///   `invoke_responses` at all.
+/// - **Response-bearing**: yields `(EndptId, Result<<Output><'a>, Error>)` —
+///   see [`rs_matter::im::InvokeResp::responses`]. The codegen-emitted
+///   response struct (e.g. `MoveToLevelResponse<'a>`) is `FromTLV`-able
+///   over the lifetime `'a` of the underlying RX buffer.
+fn cmd_responses_trait(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
+    let krate = context.rs_matter_crate.clone();
+
+    let cluster_snake = idl_field_name_to_rs_name(&cluster.id);
+    let cluster_camel = idl_field_name_to_rs_type_name(&cluster.id);
+    let trait_name = ident(&format!("{cluster_camel}CmdResponses"));
+    let view_name = ident(&format!("{cluster_camel}CmdResponsesView"));
+    let entry_method = ident(&format!("{cluster_snake}_inv_resp"));
+    let cluster_code = Literal::u32_unsuffixed(cluster.code as u32);
+
+    let cmd_methods = cluster.commands.iter().map(|cmd| {
+        let method_name = ident(&view_cmd_method_name(&cmd.id));
+        let cmd_code = Literal::u32_unsuffixed(cmd.code as u32);
+
+        if cmd.output == NO_RESPONSE {
+            // DefaultSuccess: iterator of (EndptId, Result<(), Error>)
+            quote!(
+                pub fn #method_name(
+                    &self,
+                ) -> impl Iterator<Item = (
+                    #krate::dm::EndptId,
+                    Result<(), #krate::error::Error>,
+                )> + '_ {
+                    self.resp.statuses(#cluster_code, #cmd_code)
+                }
+            )
+        } else {
+            let resp_ty = ident(&cmd.output);
+            quote!(
+                pub fn #method_name(
+                    &self,
+                ) -> impl Iterator<Item = (
+                    #krate::dm::EndptId,
+                    Result<#resp_ty<'a>, #krate::error::Error>,
+                )> + use<'_, 'a, 'r> {
+                    self.resp.responses::<#resp_ty<'a>>(#cluster_code, #cmd_code)
+                }
+            )
+        }
+    });
+
+    let trait_doc = Literal::string(&format!(
+        "IM-client extension trait for extracting `{cluster_id}`-cluster \
+         command responses out of a generic [`{krate}::im::InvokeResp`]. \
+         `use` this trait to call `.{cluster_snake}_inv_resp()` on an \
+         `InvokeResp`; the returned [`{cluster_camel}CmdResponsesView`] \
+         exposes one iterator method per command, each yielding \
+         `(EndptId, Result<<Output>, Error>)` — see \
+         [`{krate}::im::InvokeResp::responses`] / \
+         [`{krate}::im::InvokeResp::statuses`] for the per-entry \
+         semantics.",
+        cluster_id = cluster.id,
+    ));
+    let view_doc = Literal::string(&format!(
+        "Cluster-scoped response view onto a [`{krate}::im::InvokeResp`] \
+         for the `{cluster_id}` cluster. Each method returns an \
+         iterator of `(EndptId, Result<R, Error>)` over the entries \
+         in `invoke_responses` whose path matches that command. \
+         Command names that would collide with the view's own \
+         inherent methods (see `RESERVED_VIEW_METHOD_NAMES` in the \
+         codegen) get a `cmd_` prefix.",
+        cluster_id = cluster.id,
+    ));
+
+    quote!(
+        #[doc = #view_doc]
+        pub struct #view_name<'a, 'r> {
+            resp: &'r #krate::im::InvokeResp<'a>,
+        }
+
+        impl<'a, 'r> #view_name<'a, 'r> {
+            #(#cmd_methods)*
+        }
+
+        #[doc = #trait_doc]
+        pub trait #trait_name<'a> {
+            fn #entry_method(&self) -> #view_name<'a, '_>;
+        }
+
+        impl<'a> #trait_name<'a> for #krate::im::InvokeResp<'a> {
+            fn #entry_method(&self) -> #view_name<'a, '_> {
+                #view_name { resp: self }
+            }
+        }
+    )
+}
+
+/// Emit the `<ClusterName>AttrResponses<'a>` extension trait on
+/// [`rs_matter::im::ReportDataResp<'a>`], plus the cluster-scoped
+/// view struct `<ClusterName>AttrResponsesView<'a, 'r>`.
+///
+/// Single entry method per cluster (`<cluster_snake>_read_resp`);
+/// per-attribute iterator methods on the view. Per Matter Core spec
+/// §8.4, attribute reads support wildcards, so the iterator may
+/// yield multiple `(endpoint, …)` entries (one per expansion). The
+/// per-entry semantics — `Ok(T)` for data, `Err(_)` for status —
+/// match [`rs_matter::im::ReportDataResp::attrs`].
+///
+/// **Scope:** emits one method per *scalar* attribute (same constraint
+/// as `client_trait`'s read methods — `BuilderPolicy::NonCopyAndStrings`
+/// with `is_builder == false`). Non-scalar attribute types
+/// (struct, list, string) require their own FromTLV-able value type;
+/// callers can use `ReportDataResp::attrs::<T>(cluster, attr)` with
+/// the codegen-emitted struct type for those.
+fn attr_responses_trait(
+    cluster: &Cluster,
+    entities: &EntityContext,
+    context: &IdlGenerateContext,
+) -> TokenStream {
+    let krate = context.rs_matter_crate.clone();
+
+    let cluster_snake = idl_field_name_to_rs_name(&cluster.id);
+    let cluster_camel = idl_field_name_to_rs_type_name(&cluster.id);
+    let trait_name = ident(&format!("{cluster_camel}AttrResponses"));
+    let view_name = ident(&format!("{cluster_camel}AttrResponsesView"));
+    let entry_method = ident(&format!("{cluster_snake}_read_resp"));
+    let cluster_code = Literal::u32_unsuffixed(cluster.code as u32);
+
+    let attr_methods = cluster.attributes.iter().filter_map(|attr| {
+        let parent_dummy = quote!(());
+        let (value_ty, is_builder) = field_type_builder(
+            &attr.field.field.data_type,
+            attr.field.is_nullable,
+            attr.field.is_optional,
+            BuilderPolicy::NonCopyAndStrings,
+            parent_dummy,
+            entities,
+            &krate,
+        );
+        if is_builder {
+            return None;
+        }
+
+        let method_name = ident(&view_attr_method_name(&attr.field.field.id));
+        let attr_code = Literal::u32_unsuffixed(attr.field.field.code as u32);
+
+        Some(quote!(
+            pub fn #method_name(
+                &self,
+            ) -> impl Iterator<Item = (
+                #krate::dm::EndptId,
+                Result<#value_ty, #krate::error::Error>,
+            )> + '_ {
+                self.resp.attrs::<#value_ty>(#cluster_code, #attr_code)
+            }
+        ))
+    });
+
+    let trait_doc = Literal::string(&format!(
+        "IM-client extension trait for extracting `{cluster_id}`-cluster \
+         attribute reports out of a generic \
+         [`{krate}::im::ReportDataResp`]. `use` this trait to call \
+         `.{cluster_snake}_read_resp()` on a `ReportDataResp`; the \
+         returned [`{cluster_camel}AttrResponsesView`] exposes one \
+         iterator method per scalar attribute, each yielding \
+         `(EndptId, Result<T, Error>)`. Non-scalar attributes (struct, \
+         list, string) require `ReportDataResp::attrs::<T>(cluster, \
+         attr)` directly with the right FromTLV-able type.",
+        cluster_id = cluster.id,
+    ));
+    let view_doc = Literal::string(&format!(
+        "Cluster-scoped response view onto a \
+         [`{krate}::im::ReportDataResp`] for the `{cluster_id}` \
+         cluster. Each method returns an iterator of \
+         `(EndptId, Result<T, Error>)` over the entries in \
+         `attr_reports` whose path matches that attribute. Attribute \
+         names that would collide with the view's own inherent \
+         methods (see `RESERVED_VIEW_METHOD_NAMES` in the codegen) \
+         get an `attr_` prefix.",
+        cluster_id = cluster.id,
+    ));
+
+    quote!(
+        #[doc = #view_doc]
+        pub struct #view_name<'a, 'r> {
+            resp: &'r #krate::im::ReportDataResp<'a>,
+        }
+
+        impl<'a, 'r> #view_name<'a, 'r> {
+            #(#attr_methods)*
+        }
+
+        #[doc = #trait_doc]
+        pub trait #trait_name<'a> {
+            fn #entry_method(&self) -> #view_name<'a, '_>;
+        }
+
+        impl<'a> #trait_name<'a> for #krate::im::ReportDataResp<'a> {
+            fn #entry_method(&self) -> #view_name<'a, '_> {
+                #view_name { resp: self }
+            }
+        }
+    )
+}
+
+/// Emit the `<ClusterName>WriteResponses<'a>` extension trait on
+/// [`rs_matter::im::WriteResp<'a>`], plus the cluster-scoped view
+/// struct `<ClusterName>WriteResponsesView<'a, 'r>`.
+///
+/// Single entry method per cluster (`<cluster_snake>_write_resp`);
+/// per-*writable* attribute iterator methods on the view. Each yields
+/// `(EndptId, Result<(), Error>)` — see
+/// [`rs_matter::im::WriteResp::statuses`]. Wildcards expand per the
+/// Matter spec; the iterator yields one entry per expanded path.
+fn write_responses_trait(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
+    let krate = context.rs_matter_crate.clone();
+
+    let cluster_snake = idl_field_name_to_rs_name(&cluster.id);
+    let cluster_camel = idl_field_name_to_rs_type_name(&cluster.id);
+    let trait_name = ident(&format!("{cluster_camel}WriteResponses"));
+    let view_name = ident(&format!("{cluster_camel}WriteResponsesView"));
+    let entry_method = ident(&format!("{cluster_snake}_write_resp"));
+    let cluster_code = Literal::u32_unsuffixed(cluster.code as u32);
+
+    let writable = || cluster.attributes.iter().filter(|a| !a.is_read_only);
+
+    let attr_methods = writable().map(|attr| {
+        let method_name = ident(&view_attr_method_name(&attr.field.field.id));
+        let attr_code = Literal::u32_unsuffixed(attr.field.field.code as u32);
+
+        quote!(
+            pub fn #method_name(
+                &self,
+            ) -> impl Iterator<Item = (
+                #krate::dm::EndptId,
+                Result<(), #krate::error::Error>,
+            )> + '_ {
+                self.resp.statuses(#cluster_code, #attr_code)
+            }
+        )
+    });
+
+    let trait_doc = Literal::string(&format!(
+        "IM-client extension trait for extracting `{cluster_id}`-cluster \
+         per-attribute write statuses out of a generic \
+         [`{krate}::im::WriteResp`]. `use` this trait to call \
+         `.{cluster_snake}_write_resp()` on a `WriteResp`; the returned \
+         [`{cluster_camel}WriteResponsesView`] exposes one iterator \
+         method per writable attribute, each yielding \
+         `(EndptId, Result<(), Error>)`.",
+        cluster_id = cluster.id,
+    ));
+    let view_doc = Literal::string(&format!(
+        "Cluster-scoped write-status view onto a \
+         [`{krate}::im::WriteResp`] for the `{cluster_id}` cluster. \
+         Each method returns an iterator of \
+         `(EndptId, Result<(), Error>)` over the entries in \
+         `write_responses` whose path matches that attribute. \
+         Attribute names that would collide with the view's own \
+         inherent methods (see `RESERVED_VIEW_METHOD_NAMES` in the \
+         codegen) get an `attr_` prefix.",
+        cluster_id = cluster.id,
+    ));
+
+    quote!(
+        #[doc = #view_doc]
+        pub struct #view_name<'a, 'r> {
+            resp: &'r #krate::im::WriteResp<'a>,
+        }
+
+        impl<'a, 'r> #view_name<'a, 'r> {
+            #(#attr_methods)*
+        }
+
+        #[doc = #trait_doc]
+        pub trait #trait_name<'a> {
+            fn #entry_method(&self) -> #view_name<'a, '_>;
+        }
+
+        impl<'a> #trait_name<'a> for #krate::im::WriteResp<'a> {
+            fn #entry_method(&self) -> #view_name<'a, '_> {
+                #view_name { resp: self }
             }
         }
     )
