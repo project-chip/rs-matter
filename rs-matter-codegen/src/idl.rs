@@ -19,6 +19,7 @@ use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
 mod bitmap;
+mod client;
 mod cluster;
 mod enumeration;
 mod event;
@@ -161,6 +162,8 @@ fn cluster_content_internal(
     let handler_inherent_impl = handler::handler(false, true, cluster, globals, context);
     let handler_adaptor = handler::handler_adaptor(false, cluster, globals, context);
 
+    let client_im_glue = client::client_im(cluster, entities, context);
+
     let quote = quote!(
         #bitmaps
 
@@ -195,6 +198,8 @@ fn cluster_content_internal(
         #handler_inherent_impl
 
         #handler_adaptor
+
+        #client_im_glue
     );
 
     if with_async {
@@ -27104,9 +27109,8 @@ pub mod unit_testing {
         ) -> Result<(), rs_matter_crate::error::Error> {
             if let Some(mut writer) = reply.with_dataver(self.0.dataver())? {
                 if ctx.attr().is_system() {
-                    ctx.attr().cluster(ctx.metadata(), |cluster| {
-                        cluster.read(ctx.attr(), writer)
-                    })
+                    ctx.attr()
+                        .cluster(ctx.metadata(), |cluster| cluster.read(ctx.attr(), writer))
                 } else {
                     match AttributeId::try_from(ctx.attr().attr_id)? {
                         AttributeId::Boolean => {
@@ -34020,6 +34024,13106 @@ pub mod unit_testing {
         }
     }
     impl<T> rs_matter_crate::dm::NonBlockingHandler for HandlerAdaptor<T> where T: ClusterHandler {}
+    #[doc = "Cluster-scoped view onto a [`rs_matter_crate::im::CmdDataArrayBuilder`] for the `UnitTesting` cluster. Empty-request commands push and return `Self`; parameterized commands return the codegen-emitted typed request builder (whose parent chain bypasses the view — close back to the array via Data + CmdData `.end()?`s). `.end()` closes the wrapped array. Command names that would collide with the view's own inherent methods (see `RESERVED_VIEW_METHOD_NAMES` in the codegen — currently `end`, which the WebRTC cluster uses) get a `cmd_` prefix."]
+    pub struct UnitTestingCmdRequestsView<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        array: rs_matter_crate::im::CmdDataArrayBuilder<P>,
+    }
+    impl<P> UnitTestingCmdRequestsView<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        pub fn test(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 0)?
+                .data(|w| {
+                    w.start_struct(&rs_matter_crate::tlv::TLVTag::Context(
+                        rs_matter_crate::im::CmdDataTag::Data as u8,
+                    ))?;
+                    w.end_container()
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn test_not_handled(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 1)?
+                .data(|w| {
+                    w.start_struct(&rs_matter_crate::tlv::TLVTag::Context(
+                        rs_matter_crate::im::CmdDataTag::Data as u8,
+                    ))?;
+                    w.end_container()
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn test_specific(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 2)?
+                .data(|w| {
+                    w.start_struct(&rs_matter_crate::tlv::TLVTag::Context(
+                        rs_matter_crate::im::CmdDataTag::Data as u8,
+                    ))?;
+                    w.end_container()
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn test_unknown_command(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 3)?
+                .data(|w| {
+                    w.start_struct(&rs_matter_crate::tlv::TLVTag::Context(
+                        rs_matter_crate::im::CmdDataTag::Data as u8,
+                    ))?;
+                    w.end_container()
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn test_add_arguments(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestAddArgumentsRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 4)?
+                .data_builder()
+        }
+        pub fn test_simple_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestSimpleArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 5)?
+                .data_builder()
+        }
+        pub fn test_struct_array_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestStructArrayArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 6)?
+                .data_builder()
+        }
+        pub fn test_struct_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestStructArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 7)?
+                .data_builder()
+        }
+        pub fn test_nested_struct_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestNestedStructArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 8)?
+                .data_builder()
+        }
+        pub fn test_list_struct_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestListStructArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 9)?
+                .data_builder()
+        }
+        pub fn test_list_int_8_u_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestListInt8UArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 10)?
+                .data_builder()
+        }
+        pub fn test_nested_struct_list_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestNestedStructListArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 11)?
+                .data_builder()
+        }
+        pub fn test_list_nested_struct_list_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestListNestedStructListArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 12)?
+                .data_builder()
+        }
+        pub fn test_list_int_8_u_reverse_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestListInt8UReverseRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 13)?
+                .data_builder()
+        }
+        pub fn test_enums_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestEnumsRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 14)?
+                .data_builder()
+        }
+        pub fn test_nullable_optional_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestNullableOptionalRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 15)?
+                .data_builder()
+        }
+        pub fn test_complex_nullable_optional_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestComplexNullableOptionalRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 16)?
+                .data_builder()
+        }
+        pub fn simple_struct_echo_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            SimpleStructEchoRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 17)?
+                .data_builder()
+        }
+        pub fn timed_invoke_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 18)?
+                .data(|w| {
+                    w.start_struct(&rs_matter_crate::tlv::TLVTag::Context(
+                        rs_matter_crate::im::CmdDataTag::Data as u8,
+                    ))?;
+                    w.end_container()
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn test_simple_optional_argument_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestSimpleOptionalArgumentRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 19)?
+                .data_builder()
+        }
+        pub fn test_emit_test_event_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestEmitTestEventRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 20)?
+                .data_builder()
+        }
+        pub fn test_emit_test_fabric_scoped_event_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestEmitTestFabricScopedEventRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 21)?
+                .data_builder()
+        }
+        pub fn test_batch_helper_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestBatchHelperRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 22)?
+                .data_builder()
+        }
+        pub fn test_second_batch_helper_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestSecondBatchHelperRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 23)?
+                .data_builder()
+        }
+        pub fn string_echo_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            StringEchoRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 24)?
+                .data_builder()
+        }
+        pub fn global_echo_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            GlobalEchoRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 25)?
+                .data_builder()
+        }
+        pub fn test_check_command_flags(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 26)?
+                .data(|w| {
+                    w.start_struct(&rs_matter_crate::tlv::TLVTag::Context(
+                        rs_matter_crate::im::CmdDataTag::Data as u8,
+                    ))?;
+                    w.end_container()
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn test_different_vendor_mei_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestDifferentVendorMeiRequestRequestBuilder<
+                rs_matter_crate::im::CmdDataBuilder<rs_matter_crate::im::CmdDataArrayBuilder<P>, 2>,
+                0,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 4294049962)?
+                .data_builder()
+        }
+        #[doc = r" Close the wrapped array and return its parent."]
+        pub fn end(self) -> Result<P, rs_matter_crate::error::Error> {
+            self.array.end()
+        }
+    }
+    #[doc = "IM-client extension trait for the `UnitTesting` cluster's commands. `use` this trait to call `.unit_testing_inv()` on a [`rs_matter_crate::im::CmdDataArrayBuilder`]; the returned [`UnitTestingCmdRequestsView`] exposes one method per command (cluster-prefix-free). `.end()` on the view closes the wrapped array."]
+    pub trait UnitTestingCmdRequests<P>: Sized
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn unit_testing_inv(self) -> UnitTestingCmdRequestsView<P>;
+    }
+    impl<P> UnitTestingCmdRequests<P> for rs_matter_crate::im::CmdDataArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn unit_testing_inv(self) -> UnitTestingCmdRequestsView<P> {
+            UnitTestingCmdRequestsView { array: self }
+        }
+    }
+    #[doc = "Cluster-scoped view onto an [`rs_matter_crate::im::AttrPathArrayBuilder`] for the `UnitTesting` cluster. Each method pushes one `AttrPath` (cluster ID baked in) and returns `Self` for chaining; `.end()` closes the underlying array. Attribute names that would collide with the view's own inherent methods (see `RESERVED_VIEW_METHOD_NAMES` in the codegen) get an `attr_` prefix."]
+    pub struct UnitTestingAttrReadsView<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        array: rs_matter_crate::im::AttrPathArrayBuilder<P>,
+    }
+    impl<P> UnitTestingAttrReadsView<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        pub fn boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(0)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn bitmap_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(1)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn bitmap_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(2)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn bitmap_32(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(3)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn bitmap_64(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(4)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(5)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(6)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_24_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(7)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_32_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(8)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_40_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(9)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_48_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(10)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_56_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(11)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_64_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(12)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(13)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(14)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_24_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(15)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_32_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_40_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(17)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_48_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(18)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_56_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(19)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_64_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(20)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn enum_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(21)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn enum_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(22)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn float_single(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(23)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn float_double(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(24)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(25)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn list_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(26)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn list_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(27)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn list_struct_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(28)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn long_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(29)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn char_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(30)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn long_char_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(31)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn epoch_us(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(32)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn epoch_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(33)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn vendor_id(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(34)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn list_nullables_and_optionals_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(35)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn enum_attr(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(36)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn struct_attr(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(37)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn range_restricted_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(38)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn range_restricted_int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(39)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn range_restricted_int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(40)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn range_restricted_int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(41)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn list_long_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(42)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn list_fabric_scoped(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(43)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn timed_write_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(48)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn general_error_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(49)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn cluster_error_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(50)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn global_enum(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(51)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn global_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(52)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn unsupported_attribute_requiring_admin_privilege(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(254)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn unsupported(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(255)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn read_failure_code(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(12288)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn failure_int_32_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(12289)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16384)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_bitmap_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16385)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_bitmap_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16386)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_bitmap_32(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16387)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_bitmap_64(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16388)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16389)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16390)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_24_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16391)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_32_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16392)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_40_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16393)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_48_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16394)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_56_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16395)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_64_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16396)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16397)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16398)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_24_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16399)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_32_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16400)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_40_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16401)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_48_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16402)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_56_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16403)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_64_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16404)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_enum_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16405)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_enum_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16406)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_float_single(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16407)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_float_double(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16408)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16409)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_char_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16414)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_enum_attr(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16420)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16421)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_range_restricted_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16422)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_range_restricted_int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16423)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_range_restricted_int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16424)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_range_restricted_int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16425)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn write_only_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16426)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_global_enum(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16435)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_global_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(16436)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn generated_command_list(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(65528)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn accepted_command_list(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(65529)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn attribute_list(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(65531)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn feature_map(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(65532)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn cluster_revision(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(65533)?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn mei_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .endpoint(endpoint)?
+                .cluster(4294048773)?
+                .attr(4294070017)?
+                .end()?;
+            Ok(Self { array })
+        }
+        #[doc = r" Close the wrapped array and return its parent."]
+        pub fn end(self) -> Result<P, rs_matter_crate::error::Error> {
+            self.array.end()
+        }
+    }
+    #[doc = "IM-client extension trait for the `UnitTesting` cluster's attribute reads. `use` this trait to call `.unit_testing_read()` on an [`rs_matter_crate::im::AttrPathArrayBuilder`]; the returned [`UnitTestingAttrReadsView`] exposes one method per attribute (cluster-prefix-free). `.end()` on the view closes the wrapped array."]
+    pub trait UnitTestingAttrReads<P>: Sized
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn unit_testing_read(self) -> UnitTestingAttrReadsView<P>;
+    }
+    impl<P> UnitTestingAttrReads<P> for rs_matter_crate::im::AttrPathArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn unit_testing_read(self) -> UnitTestingAttrReadsView<P> {
+            UnitTestingAttrReadsView { array: self }
+        }
+    }
+    #[doc = "Cluster-scoped view onto an [`rs_matter_crate::im::AttrDataArrayBuilder`] for the `UnitTesting` cluster. Scalar-valued attrs push and return `Self` for chaining; struct/list-valued attrs return the codegen-emitted typed value builder (whose parent chain bypasses the view — close back to the array via Data + AttrData `.end()?`s). `.end()` closes the wrapped array. Attribute names that would collide with the view's own inherent methods (see `RESERVED_VIEW_METHOD_NAMES` in the codegen) get an `attr_` prefix."]
+    pub struct UnitTestingAttrWritesView<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        array: rs_matter_crate::im::AttrDataArrayBuilder<P>,
+    }
+    impl<P> UnitTestingAttrWritesView<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        pub fn boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 0)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn bitmap_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: Bitmap8MaskMap,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 1)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn bitmap_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: Bitmap16MaskMap,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 2)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn bitmap_32(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: Bitmap32MaskMap,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 3)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn bitmap_64(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: Bitmap64MaskMap,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 4)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 5)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u16,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 6)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_24_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u32,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 7)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_32_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u32,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 8)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_40_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 9)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_48_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 10)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_56_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 11)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_64_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 12)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i8,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 13)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i16,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 14)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_24_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i32,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 15)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_32_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i32,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_40_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 17)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_48_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 18)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_56_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 19)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn int_64_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 20)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn enum_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 21)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn enum_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u16,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 22)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn float_single(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: f32,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 23)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn float_double(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: f64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 24)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::OctetStr<'_>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 25)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn list_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            rs_matter_crate::tlv::ToTLVArrayBuilder<
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+                u8,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 26)?
+                .data_builder()
+        }
+        pub fn list_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            rs_matter_crate::tlv::OctetsArrayBuilder<
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 27)?
+                .data_builder()
+        }
+        pub fn list_struct_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestListStructOctetArrayBuilder<
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 28)?
+                .data_builder()
+        }
+        pub fn long_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::OctetStr<'_>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 29)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn char_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Utf8Str<'_>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 30)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn long_char_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Utf8Str<'_>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 31)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn epoch_us(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 32)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn epoch_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u32,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 33)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn vendor_id(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u16,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 34)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn list_nullables_and_optionals_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            NullablesAndOptionalsStructArrayBuilder<
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 35)?
+                .data_builder()
+        }
+        pub fn enum_attr(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: SimpleEnum,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 36)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn struct_attr(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            SimpleStructBuilder<
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 37)?
+                .data_builder()
+        }
+        pub fn range_restricted_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 38)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn range_restricted_int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i8,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 39)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn range_restricted_int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u16,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 40)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn range_restricted_int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i16,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 41)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn list_long_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            rs_matter_crate::tlv::OctetsArrayBuilder<
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 42)?
+                .data_builder()
+        }
+        pub fn list_fabric_scoped(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestFabricScopedArrayBuilder<
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 43)?
+                .data_builder()
+        }
+        pub fn timed_write_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 48)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn general_error_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 49)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn cluster_error_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 50)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn global_enum(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: TestGlobalEnum,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 51)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn global_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            TestGlobalStructBuilder<
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 52)?
+                .data_builder()
+        }
+        pub fn unsupported_attribute_requiring_admin_privilege(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 254)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn unsupported(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 255)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn read_failure_code(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 12288)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn failure_int_32_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u32,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 12289)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_boolean(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<bool>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16384)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_bitmap_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16385)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_bitmap_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16386)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_bitmap_32(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16387)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_bitmap_64(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16388)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u8>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16389)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u16>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16390)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_24_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u32>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16391)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_32_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u32>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16392)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_40_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16393)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_48_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16394)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_56_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16395)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_64_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16396)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i8>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16397)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i16>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16398)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_24_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i32>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16399)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_32_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i32>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16400)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_40_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16401)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_48_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16402)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_56_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16403)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_int_64_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16404)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_enum_8(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u8>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16405)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_enum_16(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u16>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16406)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_float_single(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<f32>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16407)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_float_double(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<f64>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16408)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_octet_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::OctetStr<'_>>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16409)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_char_string(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::Utf8Str<'_>>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16414)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_enum_attr(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<SimpleEnum>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16420)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            rs_matter_crate::tlv::NullableBuilder<
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+                SimpleStructBuilder<
+                    rs_matter_crate::im::AttrDataBuilder<
+                        rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                        3,
+                    >,
+                >,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 16421)?
+                .data_builder()
+        }
+        pub fn nullable_range_restricted_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u8>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16422)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_range_restricted_int_8_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i8>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16423)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_range_restricted_int_16_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u16>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16424)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_range_restricted_int_16_s(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i16>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16425)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn write_only_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16426)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_global_enum(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<TestGlobalEnum>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 16435)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        pub fn nullable_global_struct(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<
+            rs_matter_crate::tlv::NullableBuilder<
+                rs_matter_crate::im::AttrDataBuilder<
+                    rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                    3,
+                >,
+                TestGlobalStructBuilder<
+                    rs_matter_crate::im::AttrDataBuilder<
+                        rs_matter_crate::im::AttrDataArrayBuilder<P>,
+                        3,
+                    >,
+                >,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            self.array
+                .push()?
+                .path(endpoint, 4294048773, 16436)?
+                .data_builder()
+        }
+        pub fn mei_int_8_u(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            let array = self
+                .array
+                .push()?
+                .path(endpoint, 4294048773, 4294070017)?
+                .data(|w| {
+                    rs_matter_crate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &rs_matter_crate::tlv::TLVTag::Context(
+                            rs_matter_crate::im::AttrDataTag::Data as u8,
+                        ),
+                        w,
+                    )
+                })?
+                .end()?;
+            Ok(Self { array })
+        }
+        #[doc = r" Close the wrapped array and return its parent."]
+        pub fn end(self) -> Result<P, rs_matter_crate::error::Error> {
+            self.array.end()
+        }
+    }
+    #[doc = "IM-client extension trait for the `UnitTesting` cluster's attribute writes. `use` this trait to call `.unit_testing_write()` on an [`rs_matter_crate::im::AttrDataArrayBuilder`]; the returned [`UnitTestingAttrWritesView`] exposes one method per writable attribute (cluster-prefix-free). `.end()` on the view closes the wrapped array."]
+    pub trait UnitTestingAttrWrites<P>: Sized
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn unit_testing_write(self) -> UnitTestingAttrWritesView<P>;
+    }
+    impl<P> UnitTestingAttrWrites<P> for rs_matter_crate::im::AttrDataArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn unit_testing_write(self) -> UnitTestingAttrWritesView<P> {
+            UnitTestingAttrWritesView { array: self }
+        }
+    }
+    #[doc = "Cluster-scoped response view onto a [`rs_matter_crate::im::InvokeResp`] for the `UnitTesting` cluster. Each method returns an iterator of `(EndptId, Result<R, Error>)` over the entries in `invoke_responses` whose path matches that command. Command names that would collide with the view's own inherent methods (see `RESERVED_VIEW_METHOD_NAMES` in the codegen) get a `cmd_` prefix."]
+    pub struct UnitTestingCmdResponsesView<'a, 'r> {
+        resp: &'r rs_matter_crate::im::InvokeResp<'a>,
+    }
+    impl<'a, 'r> UnitTestingCmdResponsesView<'a, 'r> {
+        pub fn test(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 0)
+        }
+        pub fn test_not_handled(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 1)
+        }
+        pub fn test_specific(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestSpecificResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestSpecificResponse<'a>>(4294048773, 2)
+        }
+        pub fn test_unknown_command(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 3)
+        }
+        pub fn test_add_arguments(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestAddArgumentsResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestAddArgumentsResponse<'a>>(4294048773, 4)
+        }
+        pub fn test_simple_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestSimpleArgumentResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestSimpleArgumentResponse<'a>>(4294048773, 5)
+        }
+        pub fn test_struct_array_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestStructArrayArgumentResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestStructArrayArgumentResponse<'a>>(4294048773, 6)
+        }
+        pub fn test_struct_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<BooleanResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp.responses::<BooleanResponse<'a>>(4294048773, 7)
+        }
+        pub fn test_nested_struct_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<BooleanResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp.responses::<BooleanResponse<'a>>(4294048773, 8)
+        }
+        pub fn test_list_struct_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<BooleanResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp.responses::<BooleanResponse<'a>>(4294048773, 9)
+        }
+        pub fn test_list_int_8_u_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<BooleanResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp.responses::<BooleanResponse<'a>>(4294048773, 10)
+        }
+        pub fn test_nested_struct_list_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<BooleanResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp.responses::<BooleanResponse<'a>>(4294048773, 11)
+        }
+        pub fn test_list_nested_struct_list_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<BooleanResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp.responses::<BooleanResponse<'a>>(4294048773, 12)
+        }
+        pub fn test_list_int_8_u_reverse_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestListInt8UReverseResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestListInt8UReverseResponse<'a>>(4294048773, 13)
+        }
+        pub fn test_enums_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestEnumsResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp.responses::<TestEnumsResponse<'a>>(4294048773, 14)
+        }
+        pub fn test_nullable_optional_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestNullableOptionalResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestNullableOptionalResponse<'a>>(4294048773, 15)
+        }
+        pub fn test_complex_nullable_optional_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestComplexNullableOptionalResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestComplexNullableOptionalResponse<'a>>(4294048773, 16)
+        }
+        pub fn simple_struct_echo_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<SimpleStructResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<SimpleStructResponse<'a>>(4294048773, 17)
+        }
+        pub fn timed_invoke_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 18)
+        }
+        pub fn test_simple_optional_argument_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 19)
+        }
+        pub fn test_emit_test_event_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestEmitTestEventResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestEmitTestEventResponse<'a>>(4294048773, 20)
+        }
+        pub fn test_emit_test_fabric_scoped_event_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestEmitTestFabricScopedEventResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestEmitTestFabricScopedEventResponse<'a>>(4294048773, 21)
+        }
+        pub fn test_batch_helper_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestBatchHelperResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestBatchHelperResponse<'a>>(4294048773, 22)
+        }
+        pub fn test_second_batch_helper_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestBatchHelperResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestBatchHelperResponse<'a>>(4294048773, 23)
+        }
+        pub fn string_echo_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<StringEchoResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<StringEchoResponse<'a>>(4294048773, 24)
+        }
+        pub fn global_echo_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<GlobalEchoResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<GlobalEchoResponse<'a>>(4294048773, 25)
+        }
+        pub fn test_check_command_flags(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 26)
+        }
+        pub fn test_different_vendor_mei_request(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestDifferentVendorMeiResponse<'a>, rs_matter_crate::error::Error>,
+            ),
+        > + use<'_, 'a, 'r> {
+            self.resp
+                .responses::<TestDifferentVendorMeiResponse<'a>>(4294048773, 4294049962)
+        }
+    }
+    #[doc = "IM-client extension trait for extracting `UnitTesting`-cluster command responses out of a generic [`rs_matter_crate::im::InvokeResp`]. `use` this trait to call `.unit_testing_inv_resp()` on an `InvokeResp`; the returned [`UnitTestingCmdResponsesView`] exposes one iterator method per command, each yielding `(EndptId, Result<<Output>, Error>)` — see [`rs_matter_crate::im::InvokeResp::responses`] / [`rs_matter_crate::im::InvokeResp::statuses`] for the per-entry semantics."]
+    pub trait UnitTestingCmdResponses<'a> {
+        fn unit_testing_inv_resp(&self) -> UnitTestingCmdResponsesView<'a, '_>;
+    }
+    impl<'a> UnitTestingCmdResponses<'a> for rs_matter_crate::im::InvokeResp<'a> {
+        fn unit_testing_inv_resp(&self) -> UnitTestingCmdResponsesView<'a, '_> {
+            UnitTestingCmdResponsesView { resp: self }
+        }
+    }
+    #[doc = "Cluster-scoped response view onto a [`rs_matter_crate::im::ReportDataResp`] for the `UnitTesting` cluster. Each method returns an iterator of `(EndptId, Result<T, Error>)` over the entries in `attr_reports` whose path matches that attribute. Attribute names that would collide with the view's own inherent methods (see `RESERVED_VIEW_METHOD_NAMES` in the codegen) get an `attr_` prefix."]
+    pub struct UnitTestingAttrResponsesView<'a, 'r> {
+        resp: &'r rs_matter_crate::im::ReportDataResp<'a>,
+    }
+    impl<'a, 'r> UnitTestingAttrResponsesView<'a, 'r> {
+        pub fn boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<bool, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<bool>(4294048773, 0)
+        }
+        pub fn bitmap_8(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Bitmap8MaskMap, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Bitmap8MaskMap>(4294048773, 1)
+        }
+        pub fn bitmap_16(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Bitmap16MaskMap, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Bitmap16MaskMap>(4294048773, 2)
+        }
+        pub fn bitmap_32(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Bitmap32MaskMap, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Bitmap32MaskMap>(4294048773, 3)
+        }
+        pub fn bitmap_64(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Bitmap64MaskMap, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Bitmap64MaskMap>(4294048773, 4)
+        }
+        pub fn int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u8, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u8>(4294048773, 5)
+        }
+        pub fn int_16_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u16, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u16>(4294048773, 6)
+        }
+        pub fn int_24_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u32, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u32>(4294048773, 7)
+        }
+        pub fn int_32_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u32, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u32>(4294048773, 8)
+        }
+        pub fn int_40_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u64>(4294048773, 9)
+        }
+        pub fn int_48_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u64>(4294048773, 10)
+        }
+        pub fn int_56_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u64>(4294048773, 11)
+        }
+        pub fn int_64_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u64>(4294048773, 12)
+        }
+        pub fn int_8_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i8, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i8>(4294048773, 13)
+        }
+        pub fn int_16_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i16, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i16>(4294048773, 14)
+        }
+        pub fn int_24_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i32, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i32>(4294048773, 15)
+        }
+        pub fn int_32_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i32, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i32>(4294048773, 16)
+        }
+        pub fn int_40_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i64>(4294048773, 17)
+        }
+        pub fn int_48_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i64>(4294048773, 18)
+        }
+        pub fn int_56_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i64>(4294048773, 19)
+        }
+        pub fn int_64_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i64>(4294048773, 20)
+        }
+        pub fn enum_8(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u8, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u8>(4294048773, 21)
+        }
+        pub fn enum_16(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u16, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u16>(4294048773, 22)
+        }
+        pub fn float_single(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<f32, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<f32>(4294048773, 23)
+        }
+        pub fn float_double(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<f64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<f64>(4294048773, 24)
+        }
+        pub fn epoch_us(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u64, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u64>(4294048773, 32)
+        }
+        pub fn epoch_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u32, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u32>(4294048773, 33)
+        }
+        pub fn vendor_id(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u16, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u16>(4294048773, 34)
+        }
+        pub fn enum_attr(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<SimpleEnum, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<SimpleEnum>(4294048773, 36)
+        }
+        pub fn range_restricted_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u8, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u8>(4294048773, 38)
+        }
+        pub fn range_restricted_int_8_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i8, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i8>(4294048773, 39)
+        }
+        pub fn range_restricted_int_16_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u16, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u16>(4294048773, 40)
+        }
+        pub fn range_restricted_int_16_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<i16, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<i16>(4294048773, 41)
+        }
+        pub fn timed_write_boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<bool, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<bool>(4294048773, 48)
+        }
+        pub fn general_error_boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<bool, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<bool>(4294048773, 49)
+        }
+        pub fn cluster_error_boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<bool, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<bool>(4294048773, 50)
+        }
+        pub fn global_enum(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<TestGlobalEnum, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<TestGlobalEnum>(4294048773, 51)
+        }
+        pub fn unsupported_attribute_requiring_admin_privilege(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Option<bool>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Option<bool>>(4294048773, 254)
+        }
+        pub fn unsupported(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Option<bool>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Option<bool>>(4294048773, 255)
+        }
+        pub fn read_failure_code(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Option<u8>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Option<u8>>(4294048773, 12288)
+        }
+        pub fn failure_int_32_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Option<u32>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Option<u32>>(4294048773, 12289)
+        }
+        pub fn nullable_boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<bool>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<bool>>(4294048773, 16384)
+        }
+        pub fn nullable_bitmap_8(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<
+                    rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
+                    rs_matter_crate::error::Error,
+                >,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>>(4294048773, 16385)
+        }
+        pub fn nullable_bitmap_16(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<
+                    rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
+                    rs_matter_crate::error::Error,
+                >,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>>(4294048773, 16386)
+        }
+        pub fn nullable_bitmap_32(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<
+                    rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
+                    rs_matter_crate::error::Error,
+                >,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>>(4294048773, 16387)
+        }
+        pub fn nullable_bitmap_64(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<
+                    rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
+                    rs_matter_crate::error::Error,
+                >,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>>(4294048773, 16388)
+        }
+        pub fn nullable_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u8>>(4294048773, 16389)
+        }
+        pub fn nullable_int_16_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u16>>(4294048773, 16390)
+        }
+        pub fn nullable_int_24_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u32>>(4294048773, 16391)
+        }
+        pub fn nullable_int_32_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u32>>(4294048773, 16392)
+        }
+        pub fn nullable_int_40_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u64>>(4294048773, 16393)
+        }
+        pub fn nullable_int_48_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u64>>(4294048773, 16394)
+        }
+        pub fn nullable_int_56_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u64>>(4294048773, 16395)
+        }
+        pub fn nullable_int_64_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u64>>(4294048773, 16396)
+        }
+        pub fn nullable_int_8_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i8>>(4294048773, 16397)
+        }
+        pub fn nullable_int_16_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i16>>(4294048773, 16398)
+        }
+        pub fn nullable_int_24_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i32>>(4294048773, 16399)
+        }
+        pub fn nullable_int_32_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i32>>(4294048773, 16400)
+        }
+        pub fn nullable_int_40_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i64>>(4294048773, 16401)
+        }
+        pub fn nullable_int_48_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i64>>(4294048773, 16402)
+        }
+        pub fn nullable_int_56_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i64>>(4294048773, 16403)
+        }
+        pub fn nullable_int_64_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i64>>(4294048773, 16404)
+        }
+        pub fn nullable_enum_8(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u8>>(4294048773, 16405)
+        }
+        pub fn nullable_enum_16(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u16>>(4294048773, 16406)
+        }
+        pub fn nullable_float_single(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<f32>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<f32>>(4294048773, 16407)
+        }
+        pub fn nullable_float_double(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<f64>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<f64>>(4294048773, 16408)
+        }
+        pub fn nullable_enum_attr(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<SimpleEnum>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<SimpleEnum>>(4294048773, 16420)
+        }
+        pub fn nullable_range_restricted_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u8>>(4294048773, 16422)
+        }
+        pub fn nullable_range_restricted_int_8_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i8>>(4294048773, 16423)
+        }
+        pub fn nullable_range_restricted_int_16_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<u16>>(4294048773, 16424)
+        }
+        pub fn nullable_range_restricted_int_16_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<i16>>(4294048773, 16425)
+        }
+        pub fn write_only_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<Option<u8>, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<Option<u8>>(4294048773, 16426)
+        }
+        pub fn nullable_global_enum(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<
+                    rs_matter_crate::tlv::Nullable<TestGlobalEnum>,
+                    rs_matter_crate::error::Error,
+                >,
+            ),
+        > + '_ {
+            self.resp
+                .attrs::<rs_matter_crate::tlv::Nullable<TestGlobalEnum>>(4294048773, 16435)
+        }
+        pub fn feature_map(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u32, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u32>(4294048773, 65532)
+        }
+        pub fn cluster_revision(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u16, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u16>(4294048773, 65533)
+        }
+        pub fn mei_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<u8, rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.attrs::<u8>(4294048773, 4294070017)
+        }
+    }
+    #[doc = "IM-client extension trait for extracting `UnitTesting`-cluster attribute reports out of a generic [`rs_matter_crate::im::ReportDataResp`]. `use` this trait to call `.unit_testing_read_resp()` on a `ReportDataResp`; the returned [`UnitTestingAttrResponsesView`] exposes one iterator method per scalar attribute, each yielding `(EndptId, Result<T, Error>)`. Non-scalar attributes (struct, list, string) require `ReportDataResp::attrs::<T>(cluster, attr)` directly with the right FromTLV-able type."]
+    pub trait UnitTestingAttrResponses<'a> {
+        fn unit_testing_read_resp(&self) -> UnitTestingAttrResponsesView<'a, '_>;
+    }
+    impl<'a> UnitTestingAttrResponses<'a> for rs_matter_crate::im::ReportDataResp<'a> {
+        fn unit_testing_read_resp(&self) -> UnitTestingAttrResponsesView<'a, '_> {
+            UnitTestingAttrResponsesView { resp: self }
+        }
+    }
+    #[doc = "Cluster-scoped write-status view onto a [`rs_matter_crate::im::WriteResp`] for the `UnitTesting` cluster. Each method returns an iterator of `(EndptId, Result<(), Error>)` over the entries in `write_responses` whose path matches that attribute. Attribute names that would collide with the view's own inherent methods (see `RESERVED_VIEW_METHOD_NAMES` in the codegen) get an `attr_` prefix."]
+    pub struct UnitTestingWriteResponsesView<'a, 'r> {
+        resp: &'r rs_matter_crate::im::WriteResp<'a>,
+    }
+    impl<'a, 'r> UnitTestingWriteResponsesView<'a, 'r> {
+        pub fn boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 0)
+        }
+        pub fn bitmap_8(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 1)
+        }
+        pub fn bitmap_16(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 2)
+        }
+        pub fn bitmap_32(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 3)
+        }
+        pub fn bitmap_64(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 4)
+        }
+        pub fn int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 5)
+        }
+        pub fn int_16_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 6)
+        }
+        pub fn int_24_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 7)
+        }
+        pub fn int_32_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 8)
+        }
+        pub fn int_40_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 9)
+        }
+        pub fn int_48_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 10)
+        }
+        pub fn int_56_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 11)
+        }
+        pub fn int_64_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 12)
+        }
+        pub fn int_8_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 13)
+        }
+        pub fn int_16_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 14)
+        }
+        pub fn int_24_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 15)
+        }
+        pub fn int_32_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16)
+        }
+        pub fn int_40_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 17)
+        }
+        pub fn int_48_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 18)
+        }
+        pub fn int_56_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 19)
+        }
+        pub fn int_64_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 20)
+        }
+        pub fn enum_8(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 21)
+        }
+        pub fn enum_16(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 22)
+        }
+        pub fn float_single(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 23)
+        }
+        pub fn float_double(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 24)
+        }
+        pub fn octet_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 25)
+        }
+        pub fn list_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 26)
+        }
+        pub fn list_octet_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 27)
+        }
+        pub fn list_struct_octet_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 28)
+        }
+        pub fn long_octet_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 29)
+        }
+        pub fn char_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 30)
+        }
+        pub fn long_char_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 31)
+        }
+        pub fn epoch_us(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 32)
+        }
+        pub fn epoch_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 33)
+        }
+        pub fn vendor_id(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 34)
+        }
+        pub fn list_nullables_and_optionals_struct(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 35)
+        }
+        pub fn enum_attr(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 36)
+        }
+        pub fn struct_attr(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 37)
+        }
+        pub fn range_restricted_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 38)
+        }
+        pub fn range_restricted_int_8_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 39)
+        }
+        pub fn range_restricted_int_16_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 40)
+        }
+        pub fn range_restricted_int_16_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 41)
+        }
+        pub fn list_long_octet_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 42)
+        }
+        pub fn list_fabric_scoped(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 43)
+        }
+        pub fn timed_write_boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 48)
+        }
+        pub fn general_error_boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 49)
+        }
+        pub fn cluster_error_boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 50)
+        }
+        pub fn global_enum(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 51)
+        }
+        pub fn global_struct(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 52)
+        }
+        pub fn unsupported_attribute_requiring_admin_privilege(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 254)
+        }
+        pub fn unsupported(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 255)
+        }
+        pub fn read_failure_code(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 12288)
+        }
+        pub fn failure_int_32_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 12289)
+        }
+        pub fn nullable_boolean(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16384)
+        }
+        pub fn nullable_bitmap_8(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16385)
+        }
+        pub fn nullable_bitmap_16(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16386)
+        }
+        pub fn nullable_bitmap_32(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16387)
+        }
+        pub fn nullable_bitmap_64(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16388)
+        }
+        pub fn nullable_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16389)
+        }
+        pub fn nullable_int_16_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16390)
+        }
+        pub fn nullable_int_24_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16391)
+        }
+        pub fn nullable_int_32_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16392)
+        }
+        pub fn nullable_int_40_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16393)
+        }
+        pub fn nullable_int_48_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16394)
+        }
+        pub fn nullable_int_56_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16395)
+        }
+        pub fn nullable_int_64_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16396)
+        }
+        pub fn nullable_int_8_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16397)
+        }
+        pub fn nullable_int_16_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16398)
+        }
+        pub fn nullable_int_24_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16399)
+        }
+        pub fn nullable_int_32_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16400)
+        }
+        pub fn nullable_int_40_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16401)
+        }
+        pub fn nullable_int_48_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16402)
+        }
+        pub fn nullable_int_56_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16403)
+        }
+        pub fn nullable_int_64_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16404)
+        }
+        pub fn nullable_enum_8(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16405)
+        }
+        pub fn nullable_enum_16(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16406)
+        }
+        pub fn nullable_float_single(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16407)
+        }
+        pub fn nullable_float_double(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16408)
+        }
+        pub fn nullable_octet_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16409)
+        }
+        pub fn nullable_char_string(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16414)
+        }
+        pub fn nullable_enum_attr(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16420)
+        }
+        pub fn nullable_struct(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16421)
+        }
+        pub fn nullable_range_restricted_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16422)
+        }
+        pub fn nullable_range_restricted_int_8_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16423)
+        }
+        pub fn nullable_range_restricted_int_16_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16424)
+        }
+        pub fn nullable_range_restricted_int_16_s(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16425)
+        }
+        pub fn write_only_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16426)
+        }
+        pub fn nullable_global_enum(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16435)
+        }
+        pub fn nullable_global_struct(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 16436)
+        }
+        pub fn mei_int_8_u(
+            &self,
+        ) -> impl Iterator<
+            Item = (
+                rs_matter_crate::dm::EndptId,
+                Result<(), rs_matter_crate::error::Error>,
+            ),
+        > + '_ {
+            self.resp.statuses(4294048773, 4294070017)
+        }
+    }
+    #[doc = "IM-client extension trait for extracting `UnitTesting`-cluster per-attribute write statuses out of a generic [`rs_matter_crate::im::WriteResp`]. `use` this trait to call `.unit_testing_write_resp()` on a `WriteResp`; the returned [`UnitTestingWriteResponsesView`] exposes one iterator method per writable attribute, each yielding `(EndptId, Result<(), Error>)`."]
+    pub trait UnitTestingWriteResponses<'a> {
+        fn unit_testing_write_resp(&self) -> UnitTestingWriteResponsesView<'a, '_>;
+    }
+    impl<'a> UnitTestingWriteResponses<'a> for rs_matter_crate::im::WriteResp<'a> {
+        fn unit_testing_write_resp(&self) -> UnitTestingWriteResponsesView<'a, '_> {
+            UnitTestingWriteResponsesView { resp: self }
+        }
+    }
+    #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `TestSpecificResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`TestSpecificResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
+    pub struct TestSpecificResponseHandle<'a> {
+        chunk: rs_matter_crate::im::client::InvokeRespChunk<'a>,
+    }
+    impl<'a> TestSpecificResponseHandle<'a> {
+        #[doc = r" Borrowed access to the parsed response. The returned"]
+        #[doc = r" value points into the exchange's RX buffer, which"]
+        #[doc = r" stays valid until this handle is dropped or"]
+        #[doc = r" `.complete()`d."]
+        pub fn response(&self) -> Result<TestSpecificResponse<'_>, rs_matter_crate::error::Error> {
+            let invoke_resp = self
+                .chunk
+                .response()?
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let invoke_responses = invoke_resp
+                .invoke_responses
+                .as_ref()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let cmd_resp = invoke_responses
+                .iter()
+                .next()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+            match cmd_resp {
+                rs_matter_crate::im::CmdResp::Cmd(data) => {
+                    rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)
+                }
+                rs_matter_crate::im::CmdResp::Status(s) => Err(s
+                    .status
+                    .status
+                    .to_error_code()
+                    .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                    .into()),
+            }
+        }
+        #[doc = r" Send the trailing `StatusResponse(Success)` and close"]
+        #[doc = r" the exchange. Call this once after the borrowed"]
+        #[doc = r" response is no longer needed. Forgetting it lets the"]
+        #[doc = r" peer time out and resend — functional but wasteful."]
+        pub async fn complete(self) -> Result<(), rs_matter_crate::error::Error> {
+            let mut chunk = self.chunk;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+    }
+    #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `TestAddArgumentsResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`TestAddArgumentsResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
+    pub struct TestAddArgumentsResponseHandle<'a> {
+        chunk: rs_matter_crate::im::client::InvokeRespChunk<'a>,
+    }
+    impl<'a> TestAddArgumentsResponseHandle<'a> {
+        #[doc = r" Borrowed access to the parsed response. The returned"]
+        #[doc = r" value points into the exchange's RX buffer, which"]
+        #[doc = r" stays valid until this handle is dropped or"]
+        #[doc = r" `.complete()`d."]
+        pub fn response(
+            &self,
+        ) -> Result<TestAddArgumentsResponse<'_>, rs_matter_crate::error::Error> {
+            let invoke_resp = self
+                .chunk
+                .response()?
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let invoke_responses = invoke_resp
+                .invoke_responses
+                .as_ref()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let cmd_resp = invoke_responses
+                .iter()
+                .next()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+            match cmd_resp {
+                rs_matter_crate::im::CmdResp::Cmd(data) => {
+                    rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)
+                }
+                rs_matter_crate::im::CmdResp::Status(s) => Err(s
+                    .status
+                    .status
+                    .to_error_code()
+                    .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                    .into()),
+            }
+        }
+        #[doc = r" Send the trailing `StatusResponse(Success)` and close"]
+        #[doc = r" the exchange. Call this once after the borrowed"]
+        #[doc = r" response is no longer needed. Forgetting it lets the"]
+        #[doc = r" peer time out and resend — functional but wasteful."]
+        pub async fn complete(self) -> Result<(), rs_matter_crate::error::Error> {
+            let mut chunk = self.chunk;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+    }
+    #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `TestSimpleArgumentResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`TestSimpleArgumentResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
+    pub struct TestSimpleArgumentResponseHandle<'a> {
+        chunk: rs_matter_crate::im::client::InvokeRespChunk<'a>,
+    }
+    impl<'a> TestSimpleArgumentResponseHandle<'a> {
+        #[doc = r" Borrowed access to the parsed response. The returned"]
+        #[doc = r" value points into the exchange's RX buffer, which"]
+        #[doc = r" stays valid until this handle is dropped or"]
+        #[doc = r" `.complete()`d."]
+        pub fn response(
+            &self,
+        ) -> Result<TestSimpleArgumentResponse<'_>, rs_matter_crate::error::Error> {
+            let invoke_resp = self
+                .chunk
+                .response()?
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let invoke_responses = invoke_resp
+                .invoke_responses
+                .as_ref()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let cmd_resp = invoke_responses
+                .iter()
+                .next()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+            match cmd_resp {
+                rs_matter_crate::im::CmdResp::Cmd(data) => {
+                    rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)
+                }
+                rs_matter_crate::im::CmdResp::Status(s) => Err(s
+                    .status
+                    .status
+                    .to_error_code()
+                    .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                    .into()),
+            }
+        }
+        #[doc = r" Send the trailing `StatusResponse(Success)` and close"]
+        #[doc = r" the exchange. Call this once after the borrowed"]
+        #[doc = r" response is no longer needed. Forgetting it lets the"]
+        #[doc = r" peer time out and resend — functional but wasteful."]
+        pub async fn complete(self) -> Result<(), rs_matter_crate::error::Error> {
+            let mut chunk = self.chunk;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+    }
+    #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `TestStructArrayArgumentResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`TestStructArrayArgumentResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
+    pub struct TestStructArrayArgumentResponseHandle<'a> {
+        chunk: rs_matter_crate::im::client::InvokeRespChunk<'a>,
+    }
+    impl<'a> TestStructArrayArgumentResponseHandle<'a> {
+        #[doc = r" Borrowed access to the parsed response. The returned"]
+        #[doc = r" value points into the exchange's RX buffer, which"]
+        #[doc = r" stays valid until this handle is dropped or"]
+        #[doc = r" `.complete()`d."]
+        pub fn response(
+            &self,
+        ) -> Result<TestStructArrayArgumentResponse<'_>, rs_matter_crate::error::Error> {
+            let invoke_resp = self
+                .chunk
+                .response()?
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let invoke_responses = invoke_resp
+                .invoke_responses
+                .as_ref()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let cmd_resp = invoke_responses
+                .iter()
+                .next()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+            match cmd_resp {
+                rs_matter_crate::im::CmdResp::Cmd(data) => {
+                    rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)
+                }
+                rs_matter_crate::im::CmdResp::Status(s) => Err(s
+                    .status
+                    .status
+                    .to_error_code()
+                    .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                    .into()),
+            }
+        }
+        #[doc = r" Send the trailing `StatusResponse(Success)` and close"]
+        #[doc = r" the exchange. Call this once after the borrowed"]
+        #[doc = r" response is no longer needed. Forgetting it lets the"]
+        #[doc = r" peer time out and resend — functional but wasteful."]
+        pub async fn complete(self) -> Result<(), rs_matter_crate::error::Error> {
+            let mut chunk = self.chunk;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+    }
+    #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `BooleanResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`BooleanResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
+    pub struct BooleanResponseHandle<'a> {
+        chunk: rs_matter_crate::im::client::InvokeRespChunk<'a>,
+    }
+    impl<'a> BooleanResponseHandle<'a> {
+        #[doc = r" Borrowed access to the parsed response. The returned"]
+        #[doc = r" value points into the exchange's RX buffer, which"]
+        #[doc = r" stays valid until this handle is dropped or"]
+        #[doc = r" `.complete()`d."]
+        pub fn response(&self) -> Result<BooleanResponse<'_>, rs_matter_crate::error::Error> {
+            let invoke_resp = self
+                .chunk
+                .response()?
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let invoke_responses = invoke_resp
+                .invoke_responses
+                .as_ref()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let cmd_resp = invoke_responses
+                .iter()
+                .next()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+            match cmd_resp {
+                rs_matter_crate::im::CmdResp::Cmd(data) => {
+                    rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)
+                }
+                rs_matter_crate::im::CmdResp::Status(s) => Err(s
+                    .status
+                    .status
+                    .to_error_code()
+                    .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                    .into()),
+            }
+        }
+        #[doc = r" Send the trailing `StatusResponse(Success)` and close"]
+        #[doc = r" the exchange. Call this once after the borrowed"]
+        #[doc = r" response is no longer needed. Forgetting it lets the"]
+        #[doc = r" peer time out and resend — functional but wasteful."]
+        pub async fn complete(self) -> Result<(), rs_matter_crate::error::Error> {
+            let mut chunk = self.chunk;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+    }
+    #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `TestListInt8UReverseResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`TestListInt8UReverseResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
+    pub struct TestListInt8UReverseResponseHandle<'a> {
+        chunk: rs_matter_crate::im::client::InvokeRespChunk<'a>,
+    }
+    impl<'a> TestListInt8UReverseResponseHandle<'a> {
+        #[doc = r" Borrowed access to the parsed response. The returned"]
+        #[doc = r" value points into the exchange's RX buffer, which"]
+        #[doc = r" stays valid until this handle is dropped or"]
+        #[doc = r" `.complete()`d."]
+        pub fn response(
+            &self,
+        ) -> Result<TestListInt8UReverseResponse<'_>, rs_matter_crate::error::Error> {
+            let invoke_resp = self
+                .chunk
+                .response()?
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let invoke_responses = invoke_resp
+                .invoke_responses
+                .as_ref()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let cmd_resp = invoke_responses
+                .iter()
+                .next()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+            match cmd_resp {
+                rs_matter_crate::im::CmdResp::Cmd(data) => {
+                    rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)
+                }
+                rs_matter_crate::im::CmdResp::Status(s) => Err(s
+                    .status
+                    .status
+                    .to_error_code()
+                    .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                    .into()),
+            }
+        }
+        #[doc = r" Send the trailing `StatusResponse(Success)` and close"]
+        #[doc = r" the exchange. Call this once after the borrowed"]
+        #[doc = r" response is no longer needed. Forgetting it lets the"]
+        #[doc = r" peer time out and resend — functional but wasteful."]
+        pub async fn complete(self) -> Result<(), rs_matter_crate::error::Error> {
+            let mut chunk = self.chunk;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+    }
+    #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `TestEnumsResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`TestEnumsResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
+    pub struct TestEnumsResponseHandle<'a> {
+        chunk: rs_matter_crate::im::client::InvokeRespChunk<'a>,
+    }
+    impl<'a> TestEnumsResponseHandle<'a> {
+        #[doc = r" Borrowed access to the parsed response. The returned"]
+        #[doc = r" value points into the exchange's RX buffer, which"]
+        #[doc = r" stays valid until this handle is dropped or"]
+        #[doc = r" `.complete()`d."]
+        pub fn response(&self) -> Result<TestEnumsResponse<'_>, rs_matter_crate::error::Error> {
+            let invoke_resp = self
+                .chunk
+                .response()?
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let invoke_responses = invoke_resp
+                .invoke_responses
+                .as_ref()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let cmd_resp = invoke_responses
+                .iter()
+                .next()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+            match cmd_resp {
+                rs_matter_crate::im::CmdResp::Cmd(data) => {
+                    rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)
+                }
+                rs_matter_crate::im::CmdResp::Status(s) => Err(s
+                    .status
+                    .status
+                    .to_error_code()
+                    .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                    .into()),
+            }
+        }
+        #[doc = r" Send the trailing `StatusResponse(Success)` and close"]
+        #[doc = r" the exchange. Call this once after the borrowed"]
+        #[doc = r" response is no longer needed. Forgetting it lets the"]
+        #[doc = r" peer time out and resend — functional but wasteful."]
+        pub async fn complete(self) -> Result<(), rs_matter_crate::error::Error> {
+            let mut chunk = self.chunk;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+    }
+    #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `TestNullableOptionalResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`TestNullableOptionalResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
+    pub struct TestNullableOptionalResponseHandle<'a> {
+        chunk: rs_matter_crate::im::client::InvokeRespChunk<'a>,
+    }
+    impl<'a> TestNullableOptionalResponseHandle<'a> {
+        #[doc = r" Borrowed access to the parsed response. The returned"]
+        #[doc = r" value points into the exchange's RX buffer, which"]
+        #[doc = r" stays valid until this handle is dropped or"]
+        #[doc = r" `.complete()`d."]
+        pub fn response(
+            &self,
+        ) -> Result<TestNullableOptionalResponse<'_>, rs_matter_crate::error::Error> {
+            let invoke_resp = self
+                .chunk
+                .response()?
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let invoke_responses = invoke_resp
+                .invoke_responses
+                .as_ref()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let cmd_resp = invoke_responses
+                .iter()
+                .next()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+            match cmd_resp {
+                rs_matter_crate::im::CmdResp::Cmd(data) => {
+                    rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)
+                }
+                rs_matter_crate::im::CmdResp::Status(s) => Err(s
+                    .status
+                    .status
+                    .to_error_code()
+                    .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                    .into()),
+            }
+        }
+        #[doc = r" Send the trailing `StatusResponse(Success)` and close"]
+        #[doc = r" the exchange. Call this once after the borrowed"]
+        #[doc = r" response is no longer needed. Forgetting it lets the"]
+        #[doc = r" peer time out and resend — functional but wasteful."]
+        pub async fn complete(self) -> Result<(), rs_matter_crate::error::Error> {
+            let mut chunk = self.chunk;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+    }
+    #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `TestComplexNullableOptionalResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`TestComplexNullableOptionalResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
+    pub struct TestComplexNullableOptionalResponseHandle<'a> {
+        chunk: rs_matter_crate::im::client::InvokeRespChunk<'a>,
+    }
+    impl<'a> TestComplexNullableOptionalResponseHandle<'a> {
+        #[doc = r" Borrowed access to the parsed response. The returned"]
+        #[doc = r" value points into the exchange's RX buffer, which"]
+        #[doc = r" stays valid until this handle is dropped or"]
+        #[doc = r" `.complete()`d."]
+        pub fn response(
+            &self,
+        ) -> Result<TestComplexNullableOptionalResponse<'_>, rs_matter_crate::error::Error>
+        {
+            let invoke_resp = self
+                .chunk
+                .response()?
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let invoke_responses = invoke_resp
+                .invoke_responses
+                .as_ref()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let cmd_resp = invoke_responses
+                .iter()
+                .next()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+            match cmd_resp {
+                rs_matter_crate::im::CmdResp::Cmd(data) => {
+                    rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)
+                }
+                rs_matter_crate::im::CmdResp::Status(s) => Err(s
+                    .status
+                    .status
+                    .to_error_code()
+                    .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                    .into()),
+            }
+        }
+        #[doc = r" Send the trailing `StatusResponse(Success)` and close"]
+        #[doc = r" the exchange. Call this once after the borrowed"]
+        #[doc = r" response is no longer needed. Forgetting it lets the"]
+        #[doc = r" peer time out and resend — functional but wasteful."]
+        pub async fn complete(self) -> Result<(), rs_matter_crate::error::Error> {
+            let mut chunk = self.chunk;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+    }
+    #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `SimpleStructResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`SimpleStructResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
+    pub struct SimpleStructResponseHandle<'a> {
+        chunk: rs_matter_crate::im::client::InvokeRespChunk<'a>,
+    }
+    impl<'a> SimpleStructResponseHandle<'a> {
+        #[doc = r" Borrowed access to the parsed response. The returned"]
+        #[doc = r" value points into the exchange's RX buffer, which"]
+        #[doc = r" stays valid until this handle is dropped or"]
+        #[doc = r" `.complete()`d."]
+        pub fn response(&self) -> Result<SimpleStructResponse<'_>, rs_matter_crate::error::Error> {
+            let invoke_resp = self
+                .chunk
+                .response()?
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let invoke_responses = invoke_resp
+                .invoke_responses
+                .as_ref()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let cmd_resp = invoke_responses
+                .iter()
+                .next()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+            match cmd_resp {
+                rs_matter_crate::im::CmdResp::Cmd(data) => {
+                    rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)
+                }
+                rs_matter_crate::im::CmdResp::Status(s) => Err(s
+                    .status
+                    .status
+                    .to_error_code()
+                    .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                    .into()),
+            }
+        }
+        #[doc = r" Send the trailing `StatusResponse(Success)` and close"]
+        #[doc = r" the exchange. Call this once after the borrowed"]
+        #[doc = r" response is no longer needed. Forgetting it lets the"]
+        #[doc = r" peer time out and resend — functional but wasteful."]
+        pub async fn complete(self) -> Result<(), rs_matter_crate::error::Error> {
+            let mut chunk = self.chunk;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+    }
+    #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `TestEmitTestEventResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`TestEmitTestEventResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
+    pub struct TestEmitTestEventResponseHandle<'a> {
+        chunk: rs_matter_crate::im::client::InvokeRespChunk<'a>,
+    }
+    impl<'a> TestEmitTestEventResponseHandle<'a> {
+        #[doc = r" Borrowed access to the parsed response. The returned"]
+        #[doc = r" value points into the exchange's RX buffer, which"]
+        #[doc = r" stays valid until this handle is dropped or"]
+        #[doc = r" `.complete()`d."]
+        pub fn response(
+            &self,
+        ) -> Result<TestEmitTestEventResponse<'_>, rs_matter_crate::error::Error> {
+            let invoke_resp = self
+                .chunk
+                .response()?
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let invoke_responses = invoke_resp
+                .invoke_responses
+                .as_ref()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let cmd_resp = invoke_responses
+                .iter()
+                .next()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+            match cmd_resp {
+                rs_matter_crate::im::CmdResp::Cmd(data) => {
+                    rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)
+                }
+                rs_matter_crate::im::CmdResp::Status(s) => Err(s
+                    .status
+                    .status
+                    .to_error_code()
+                    .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                    .into()),
+            }
+        }
+        #[doc = r" Send the trailing `StatusResponse(Success)` and close"]
+        #[doc = r" the exchange. Call this once after the borrowed"]
+        #[doc = r" response is no longer needed. Forgetting it lets the"]
+        #[doc = r" peer time out and resend — functional but wasteful."]
+        pub async fn complete(self) -> Result<(), rs_matter_crate::error::Error> {
+            let mut chunk = self.chunk;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+    }
+    #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `TestEmitTestFabricScopedEventResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`TestEmitTestFabricScopedEventResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
+    pub struct TestEmitTestFabricScopedEventResponseHandle<'a> {
+        chunk: rs_matter_crate::im::client::InvokeRespChunk<'a>,
+    }
+    impl<'a> TestEmitTestFabricScopedEventResponseHandle<'a> {
+        #[doc = r" Borrowed access to the parsed response. The returned"]
+        #[doc = r" value points into the exchange's RX buffer, which"]
+        #[doc = r" stays valid until this handle is dropped or"]
+        #[doc = r" `.complete()`d."]
+        pub fn response(
+            &self,
+        ) -> Result<TestEmitTestFabricScopedEventResponse<'_>, rs_matter_crate::error::Error>
+        {
+            let invoke_resp = self
+                .chunk
+                .response()?
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let invoke_responses = invoke_resp
+                .invoke_responses
+                .as_ref()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let cmd_resp = invoke_responses
+                .iter()
+                .next()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+            match cmd_resp {
+                rs_matter_crate::im::CmdResp::Cmd(data) => {
+                    rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)
+                }
+                rs_matter_crate::im::CmdResp::Status(s) => Err(s
+                    .status
+                    .status
+                    .to_error_code()
+                    .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                    .into()),
+            }
+        }
+        #[doc = r" Send the trailing `StatusResponse(Success)` and close"]
+        #[doc = r" the exchange. Call this once after the borrowed"]
+        #[doc = r" response is no longer needed. Forgetting it lets the"]
+        #[doc = r" peer time out and resend — functional but wasteful."]
+        pub async fn complete(self) -> Result<(), rs_matter_crate::error::Error> {
+            let mut chunk = self.chunk;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+    }
+    #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `TestBatchHelperResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`TestBatchHelperResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
+    pub struct TestBatchHelperResponseHandle<'a> {
+        chunk: rs_matter_crate::im::client::InvokeRespChunk<'a>,
+    }
+    impl<'a> TestBatchHelperResponseHandle<'a> {
+        #[doc = r" Borrowed access to the parsed response. The returned"]
+        #[doc = r" value points into the exchange's RX buffer, which"]
+        #[doc = r" stays valid until this handle is dropped or"]
+        #[doc = r" `.complete()`d."]
+        pub fn response(
+            &self,
+        ) -> Result<TestBatchHelperResponse<'_>, rs_matter_crate::error::Error> {
+            let invoke_resp = self
+                .chunk
+                .response()?
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let invoke_responses = invoke_resp
+                .invoke_responses
+                .as_ref()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let cmd_resp = invoke_responses
+                .iter()
+                .next()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+            match cmd_resp {
+                rs_matter_crate::im::CmdResp::Cmd(data) => {
+                    rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)
+                }
+                rs_matter_crate::im::CmdResp::Status(s) => Err(s
+                    .status
+                    .status
+                    .to_error_code()
+                    .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                    .into()),
+            }
+        }
+        #[doc = r" Send the trailing `StatusResponse(Success)` and close"]
+        #[doc = r" the exchange. Call this once after the borrowed"]
+        #[doc = r" response is no longer needed. Forgetting it lets the"]
+        #[doc = r" peer time out and resend — functional but wasteful."]
+        pub async fn complete(self) -> Result<(), rs_matter_crate::error::Error> {
+            let mut chunk = self.chunk;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+    }
+    #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `StringEchoResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`StringEchoResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
+    pub struct StringEchoResponseHandle<'a> {
+        chunk: rs_matter_crate::im::client::InvokeRespChunk<'a>,
+    }
+    impl<'a> StringEchoResponseHandle<'a> {
+        #[doc = r" Borrowed access to the parsed response. The returned"]
+        #[doc = r" value points into the exchange's RX buffer, which"]
+        #[doc = r" stays valid until this handle is dropped or"]
+        #[doc = r" `.complete()`d."]
+        pub fn response(&self) -> Result<StringEchoResponse<'_>, rs_matter_crate::error::Error> {
+            let invoke_resp = self
+                .chunk
+                .response()?
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let invoke_responses = invoke_resp
+                .invoke_responses
+                .as_ref()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let cmd_resp = invoke_responses
+                .iter()
+                .next()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+            match cmd_resp {
+                rs_matter_crate::im::CmdResp::Cmd(data) => {
+                    rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)
+                }
+                rs_matter_crate::im::CmdResp::Status(s) => Err(s
+                    .status
+                    .status
+                    .to_error_code()
+                    .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                    .into()),
+            }
+        }
+        #[doc = r" Send the trailing `StatusResponse(Success)` and close"]
+        #[doc = r" the exchange. Call this once after the borrowed"]
+        #[doc = r" response is no longer needed. Forgetting it lets the"]
+        #[doc = r" peer time out and resend — functional but wasteful."]
+        pub async fn complete(self) -> Result<(), rs_matter_crate::error::Error> {
+            let mut chunk = self.chunk;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+    }
+    #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `GlobalEchoResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`GlobalEchoResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
+    pub struct GlobalEchoResponseHandle<'a> {
+        chunk: rs_matter_crate::im::client::InvokeRespChunk<'a>,
+    }
+    impl<'a> GlobalEchoResponseHandle<'a> {
+        #[doc = r" Borrowed access to the parsed response. The returned"]
+        #[doc = r" value points into the exchange's RX buffer, which"]
+        #[doc = r" stays valid until this handle is dropped or"]
+        #[doc = r" `.complete()`d."]
+        pub fn response(&self) -> Result<GlobalEchoResponse<'_>, rs_matter_crate::error::Error> {
+            let invoke_resp = self
+                .chunk
+                .response()?
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let invoke_responses = invoke_resp
+                .invoke_responses
+                .as_ref()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let cmd_resp = invoke_responses
+                .iter()
+                .next()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+            match cmd_resp {
+                rs_matter_crate::im::CmdResp::Cmd(data) => {
+                    rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)
+                }
+                rs_matter_crate::im::CmdResp::Status(s) => Err(s
+                    .status
+                    .status
+                    .to_error_code()
+                    .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                    .into()),
+            }
+        }
+        #[doc = r" Send the trailing `StatusResponse(Success)` and close"]
+        #[doc = r" the exchange. Call this once after the borrowed"]
+        #[doc = r" response is no longer needed. Forgetting it lets the"]
+        #[doc = r" peer time out and resend — functional but wasteful."]
+        pub async fn complete(self) -> Result<(), rs_matter_crate::error::Error> {
+            let mut chunk = self.chunk;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+    }
+    #[doc = "Single-shot handle wrapping the [`InvokeRespChunk`] of a `TestDifferentVendorMeiResponse` response. Holds the exchange's RX buffer alive; `response()` parses the embedded `CommandDataIB` into a borrowed [`TestDifferentVendorMeiResponse`]. The trailing `StatusResponse(Success)` is sent when the caller `.complete().await?`s the handle.\n\nSingle-command invokes never chunk per Matter Core spec §10.7.10, so a single `response()` call is sufficient."]
+    pub struct TestDifferentVendorMeiResponseHandle<'a> {
+        chunk: rs_matter_crate::im::client::InvokeRespChunk<'a>,
+    }
+    impl<'a> TestDifferentVendorMeiResponseHandle<'a> {
+        #[doc = r" Borrowed access to the parsed response. The returned"]
+        #[doc = r" value points into the exchange's RX buffer, which"]
+        #[doc = r" stays valid until this handle is dropped or"]
+        #[doc = r" `.complete()`d."]
+        pub fn response(
+            &self,
+        ) -> Result<TestDifferentVendorMeiResponse<'_>, rs_matter_crate::error::Error> {
+            let invoke_resp = self
+                .chunk
+                .response()?
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let invoke_responses = invoke_resp
+                .invoke_responses
+                .as_ref()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+            let cmd_resp = invoke_responses
+                .iter()
+                .next()
+                .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+            match cmd_resp {
+                rs_matter_crate::im::CmdResp::Cmd(data) => {
+                    rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)
+                }
+                rs_matter_crate::im::CmdResp::Status(s) => Err(s
+                    .status
+                    .status
+                    .to_error_code()
+                    .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                    .into()),
+            }
+        }
+        #[doc = r" Send the trailing `StatusResponse(Success)` and close"]
+        #[doc = r" the exchange. Call this once after the borrowed"]
+        #[doc = r" response is no longer needed. Forgetting it lets the"]
+        #[doc = r" peer time out and resend — functional but wasteful."]
+        pub async fn complete(self) -> Result<(), rs_matter_crate::error::Error> {
+            let mut chunk = self.chunk;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+    }
+    #[doc = "Per-exchange view onto the `UnitTesting` cluster's client operations. Returned by [`UnitTestingClient::unit_testing`]. Each method consumes the view (and therefore the underlying [`rs_matter_crate::transport::exchange::Exchange`]) — one exchange is one IM transaction."]
+    pub struct UnitTestingClientView<'a> {
+        exchange: rs_matter_crate::transport::exchange::Exchange<'a>,
+    }
+    impl<'a> UnitTestingClientView<'a> {
+        pub async fn test(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                msg.invoke_requests()?
+                    .unit_testing_inv()
+                    .test(endpoint)?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+        pub async fn test_not_handled(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                msg.invoke_requests()?
+                    .unit_testing_inv()
+                    .test_not_handled(endpoint)?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+        pub async fn test_specific(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<TestSpecificResponseHandle<'a>, rs_matter_crate::error::Error> {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                msg.invoke_requests()?
+                    .unit_testing_inv()
+                    .test_specific(endpoint)?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            Ok(TestSpecificResponseHandle { chunk })
+        }
+        pub async fn test_unknown_command(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                msg.invoke_requests()?
+                    .unit_testing_inv()
+                    .test_unknown_command(endpoint)?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+        pub async fn test_add_arguments<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<TestAddArgumentsResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestAddArgumentsRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_add_arguments(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(TestAddArgumentsResponseHandle { chunk })
+        }
+        pub async fn test_simple_argument_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<TestSimpleArgumentResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestSimpleArgumentRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_simple_argument_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(TestSimpleArgumentResponseHandle { chunk })
+        }
+        pub async fn test_struct_array_argument_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<TestStructArrayArgumentResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestStructArrayArgumentRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_struct_array_argument_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(TestStructArrayArgumentResponseHandle { chunk })
+        }
+        pub async fn test_struct_argument_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<BooleanResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestStructArgumentRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_struct_argument_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(BooleanResponseHandle { chunk })
+        }
+        pub async fn test_nested_struct_argument_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<BooleanResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestNestedStructArgumentRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_nested_struct_argument_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(BooleanResponseHandle { chunk })
+        }
+        pub async fn test_list_struct_argument_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<BooleanResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestListStructArgumentRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_list_struct_argument_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(BooleanResponseHandle { chunk })
+        }
+        pub async fn test_list_int_8_u_argument_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<BooleanResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestListInt8UArgumentRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_list_int_8_u_argument_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(BooleanResponseHandle { chunk })
+        }
+        pub async fn test_nested_struct_list_argument_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<BooleanResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestNestedStructListArgumentRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_nested_struct_list_argument_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(BooleanResponseHandle { chunk })
+        }
+        pub async fn test_list_nested_struct_list_argument_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<BooleanResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestListNestedStructListArgumentRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_list_nested_struct_list_argument_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(BooleanResponseHandle { chunk })
+        }
+        pub async fn test_list_int_8_u_reverse_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<TestListInt8UReverseResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestListInt8UReverseRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_list_int_8_u_reverse_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(TestListInt8UReverseResponseHandle { chunk })
+        }
+        pub async fn test_enums_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<TestEnumsResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestEnumsRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_enums_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(TestEnumsResponseHandle { chunk })
+        }
+        pub async fn test_nullable_optional_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<TestNullableOptionalResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestNullableOptionalRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_nullable_optional_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(TestNullableOptionalResponseHandle { chunk })
+        }
+        pub async fn test_complex_nullable_optional_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<TestComplexNullableOptionalResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestComplexNullableOptionalRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_complex_nullable_optional_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(TestComplexNullableOptionalResponseHandle { chunk })
+        }
+        pub async fn simple_struct_echo_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<SimpleStructResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                SimpleStructEchoRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.simple_struct_echo_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(SimpleStructResponseHandle { chunk })
+        }
+        pub async fn timed_invoke_request(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                msg.invoke_requests()?
+                    .unit_testing_inv()
+                    .timed_invoke_request(endpoint)?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+        pub async fn test_simple_optional_argument_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<(), rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestSimpleOptionalArgumentRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_simple_optional_argument_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+        pub async fn test_emit_test_event_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<TestEmitTestEventResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestEmitTestEventRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_emit_test_event_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(TestEmitTestEventResponseHandle { chunk })
+        }
+        pub async fn test_emit_test_fabric_scoped_event_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<TestEmitTestFabricScopedEventResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestEmitTestFabricScopedEventRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_emit_test_fabric_scoped_event_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(TestEmitTestFabricScopedEventResponseHandle { chunk })
+        }
+        pub async fn test_batch_helper_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<TestBatchHelperResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestBatchHelperRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_batch_helper_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(TestBatchHelperResponseHandle { chunk })
+        }
+        pub async fn test_second_batch_helper_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<TestBatchHelperResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestSecondBatchHelperRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_second_batch_helper_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(TestBatchHelperResponseHandle { chunk })
+        }
+        pub async fn string_echo_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<StringEchoResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                StringEchoRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.string_echo_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(StringEchoResponseHandle { chunk })
+        }
+        pub async fn global_echo_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<GlobalEchoResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                GlobalEchoRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.global_echo_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(GlobalEchoResponseHandle { chunk })
+        }
+        pub async fn test_check_command_flags(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                msg.invoke_requests()?
+                    .unit_testing_inv()
+                    .test_check_command_flags(endpoint)?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(())
+        }
+        pub async fn test_different_vendor_mei_request<F>(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            mut request: F,
+        ) -> Result<TestDifferentVendorMeiResponseHandle<'a>, rs_matter_crate::error::Error>
+        where
+            F: FnMut(
+                TestDifferentVendorMeiRequestRequestBuilder<
+                    rs_matter_crate::im::CmdDataBuilder<
+                        rs_matter_crate::im::CmdDataArrayBuilder<
+                            rs_matter_crate::im::InvReqBuilder<
+                                rs_matter_crate::im::client::InvokeSender<'a>,
+                                3,
+                            >,
+                        >,
+                        2,
+                    >,
+                    0,
+                >,
+            ) -> Result<
+                rs_matter_crate::im::CmdDataBuilder<
+                    rs_matter_crate::im::CmdDataArrayBuilder<
+                        rs_matter_crate::im::InvReqBuilder<
+                            rs_matter_crate::im::client::InvokeSender<'a>,
+                            3,
+                        >,
+                    >,
+                    2,
+                >,
+                rs_matter_crate::error::Error,
+            >,
+        {
+            use self::UnitTestingCmdRequests as _Cmds;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let chunk = _ImClient::invoke_with(self.exchange, None, |msg| {
+                let view = msg.invoke_requests()?.unit_testing_inv();
+                let req_builder = view.test_different_vendor_mei_request(endpoint)?;
+                let cmd_data = request(req_builder)?;
+                cmd_data.end()?.end()?.end()
+            })
+            .await?;
+            Ok(TestDifferentVendorMeiResponseHandle { chunk })
+        }
+        pub async fn boolean_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<bool, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .boolean(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn bitmap_8_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Bitmap8MaskMap, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .bitmap_8(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn bitmap_16_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Bitmap16MaskMap, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .bitmap_16(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn bitmap_32_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Bitmap32MaskMap, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .bitmap_32(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn bitmap_64_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Bitmap64MaskMap, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .bitmap_64(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn int_8_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u8, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .int_8_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn int_16_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u16, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .int_16_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn int_24_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u32, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .int_24_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn int_32_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u32, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .int_32_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn int_40_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u64, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .int_40_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn int_48_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u64, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .int_48_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn int_56_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u64, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .int_56_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn int_64_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u64, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .int_64_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn int_8_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<i8, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .int_8_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn int_16_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<i16, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .int_16_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn int_24_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<i32, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .int_24_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn int_32_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<i32, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .int_32_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn int_40_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<i64, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .int_40_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn int_48_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<i64, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .int_48_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn int_56_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<i64, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .int_56_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn int_64_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<i64, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .int_64_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn enum_8_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u8, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .enum_8(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn enum_16_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u16, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .enum_16(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn float_single_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<f32, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .float_single(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn float_double_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<f64, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .float_double(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn epoch_us_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u64, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .epoch_us(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn epoch_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u32, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .epoch_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn vendor_id_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u16, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .vendor_id(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn enum_attr_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<SimpleEnum, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .enum_attr(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn range_restricted_int_8_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u8, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .range_restricted_int_8_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn range_restricted_int_8_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<i8, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .range_restricted_int_8_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn range_restricted_int_16_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u16, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .range_restricted_int_16_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn range_restricted_int_16_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<i16, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .range_restricted_int_16_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn timed_write_boolean_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<bool, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .timed_write_boolean(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn general_error_boolean_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<bool, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .general_error_boolean(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn cluster_error_boolean_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<bool, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .cluster_error_boolean(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn global_enum_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<TestGlobalEnum, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .global_enum(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn unsupported_attribute_requiring_admin_privilege_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Option<bool>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .unsupported_attribute_requiring_admin_privilege(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn unsupported_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Option<bool>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .unsupported(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn read_failure_code_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Option<u8>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .read_failure_code(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn failure_int_32_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Option<u32>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .failure_int_32_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_boolean_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<bool>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_boolean(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_bitmap_8_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>, rs_matter_crate::error::Error>
+        {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_bitmap_8(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_bitmap_16_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>, rs_matter_crate::error::Error>
+        {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_bitmap_16(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_bitmap_32_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>, rs_matter_crate::error::Error>
+        {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_bitmap_32(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_bitmap_64_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>, rs_matter_crate::error::Error>
+        {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_bitmap_64(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_int_8_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_int_8_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_int_16_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_int_16_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_int_24_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_int_24_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_int_32_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_int_32_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_int_40_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_int_40_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_int_48_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_int_48_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_int_56_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_int_56_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_int_64_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_int_64_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_int_8_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_int_8_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_int_16_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_int_16_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_int_24_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_int_24_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_int_32_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_int_32_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_int_40_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_int_40_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_int_48_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_int_48_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_int_56_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_int_56_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_int_64_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_int_64_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_enum_8_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_enum_8(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_enum_16_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_enum_16(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_float_single_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<f32>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_float_single(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_float_double_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<f64>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_float_double(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_enum_attr_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<SimpleEnum>, rs_matter_crate::error::Error>
+        {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_enum_attr(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_range_restricted_int_8_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_range_restricted_int_8_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_range_restricted_int_8_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_range_restricted_int_8_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_range_restricted_int_16_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_range_restricted_int_16_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_range_restricted_int_16_s_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_range_restricted_int_16_s(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn write_only_int_8_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<Option<u8>, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .write_only_int_8_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn nullable_global_enum_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<rs_matter_crate::tlv::Nullable<TestGlobalEnum>, rs_matter_crate::error::Error>
+        {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .nullable_global_enum(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn feature_map_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u32, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .feature_map(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn cluster_revision_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u16, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .cluster_revision(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn mei_int_8_u_read(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+        ) -> Result<u8, rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrReads as _Reads;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .unit_testing_read()
+                    .mei_int_8_u(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+            let value = {
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(rs_matter_crate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| rs_matter_crate::error::ErrorCode::InvalidData)?;
+                match attr_resp {
+                    rs_matter_crate::im::AttrResp::Data(data) => {
+                        rs_matter_crate::tlv::FromTLV::from_tlv(&data.data)?
+                    }
+                    rs_matter_crate::im::AttrResp::Status(status) => {
+                        return Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                            .into());
+                    }
+                }
+            };
+            while let Some(next) = chunk.complete().await? {
+                chunk = next;
+            }
+            Ok(value)
+        }
+        pub async fn boolean_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .boolean(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn bitmap_8_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: Bitmap8MaskMap,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .bitmap_8(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn bitmap_16_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: Bitmap16MaskMap,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .bitmap_16(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn bitmap_32_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: Bitmap32MaskMap,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .bitmap_32(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn bitmap_64_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: Bitmap64MaskMap,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .bitmap_64(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .int_8_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn int_16_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u16,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .int_16_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn int_24_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u32,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .int_24_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn int_32_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u32,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .int_32_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn int_40_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .int_40_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn int_48_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .int_48_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn int_56_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .int_56_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn int_64_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .int_64_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn int_8_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i8,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .int_8_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn int_16_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i16,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .int_16_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn int_24_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i32,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .int_24_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn int_32_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i32,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .int_32_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn int_40_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i64,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .int_40_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn int_48_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i64,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .int_48_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn int_56_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i64,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .int_56_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn int_64_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i64,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .int_64_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn enum_8_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .enum_8(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn enum_16_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u16,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .enum_16(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn float_single_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: f32,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .float_single(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn float_double_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: f64,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .float_double(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn epoch_us_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u64,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .epoch_us(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn epoch_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u32,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .epoch_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn vendor_id_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u16,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .vendor_id(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn enum_attr_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: SimpleEnum,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .enum_attr(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn range_restricted_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .range_restricted_int_8_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn range_restricted_int_8_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i8,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .range_restricted_int_8_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn range_restricted_int_16_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u16,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .range_restricted_int_16_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn range_restricted_int_16_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: i16,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .range_restricted_int_16_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn timed_write_boolean_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .timed_write_boolean(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn general_error_boolean_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .general_error_boolean(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn cluster_error_boolean_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .cluster_error_boolean(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn global_enum_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: TestGlobalEnum,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .global_enum(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn unsupported_attribute_requiring_admin_privilege_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .unsupported_attribute_requiring_admin_privilege(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn unsupported_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: bool,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .unsupported(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn read_failure_code_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .read_failure_code(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn failure_int_32_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u32,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .failure_int_32_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_boolean_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<bool>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_boolean(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_bitmap_8_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_bitmap_8(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_bitmap_16_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_bitmap_16(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_bitmap_32_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_bitmap_32(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_bitmap_64_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_bitmap_64(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u8>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_int_8_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_int_16_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u16>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_int_16_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_int_24_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u32>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_int_24_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_int_32_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u32>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_int_32_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_int_40_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_int_40_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_int_48_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_int_48_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_int_56_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_int_56_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_int_64_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_int_64_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_int_8_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i8>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_int_8_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_int_16_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i16>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_int_16_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_int_24_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i32>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_int_24_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_int_32_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i32>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_int_32_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_int_40_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_int_40_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_int_48_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_int_48_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_int_56_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_int_56_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_int_64_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_int_64_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_enum_8_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u8>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_enum_8(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_enum_16_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u16>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_enum_16(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_float_single_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<f32>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_float_single(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_float_double_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<f64>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_float_double(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_enum_attr_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<SimpleEnum>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_enum_attr(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_range_restricted_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u8>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_range_restricted_int_8_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_range_restricted_int_8_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i8>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_range_restricted_int_8_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_range_restricted_int_16_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<u16>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_range_restricted_int_16_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_range_restricted_int_16_s_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<i16>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_range_restricted_int_16_s(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn write_only_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .write_only_int_8_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn nullable_global_enum_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: rs_matter_crate::tlv::Nullable<TestGlobalEnum>,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .nullable_global_enum(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+        pub async fn mei_int_8_u_write(
+            self,
+            endpoint: rs_matter_crate::dm::EndptId,
+            value: u8,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            use self::UnitTestingAttrWrites as _Writes;
+            use rs_matter_crate::im::client::ImClient as _ImClient;
+            let handle = _ImClient::write_with(self.exchange, None, |msg| {
+                msg.write_requests()?
+                    .unit_testing_write()
+                    .mei_int_8_u(endpoint, value.clone())?
+                    .end()?
+                    .end()
+            })
+            .await?;
+            let resp = handle.response()?;
+            for status in resp.write_responses.iter() {
+                let status = status?;
+                if status.status.status != rs_matter_crate::im::IMStatusCode::Success {
+                    return Err(status
+                        .status
+                        .status
+                        .to_error_code()
+                        .unwrap_or(rs_matter_crate::error::ErrorCode::Failure)
+                        .into());
+                }
+            }
+            Ok(())
+        }
+    }
+    #[doc = "Single-shot IM-client convenience trait for the `UnitTesting` cluster. `use` this trait to call `.unit_testing()` on an [`rs_matter_crate::transport::exchange::Exchange`]; the returned [`UnitTestingClientView`] exposes one method per command and per scalar attribute (read / write). The cluster ID, command/attribute ID, request opcode, retransmit loop, response-chunk iteration, and status-only handling are all baked in. DefaultSuccess commands return `Result<(), Error>` and drain the response internally; response-bearing commands return `Result<<RespStruct>Handle<'a>, Error>` — the handle keeps the RX buffer alive so the caller can read the borrowed response via `.response()?` before `.complete().await?`ing the exchange.\n\nThe indirection through `UnitTestingClientView` keeps each cluster's API surface narrow: at the call site `exchange.unit_testing().` shows only this cluster's methods in IDE completion."]
+    pub trait UnitTestingClient<'a>: rs_matter_crate::im::client::ImClient<'a> {
+        #[doc = r" Enter this cluster's client view. Consumes the"]
+        #[doc = r" exchange — call methods on the returned view to drive"]
+        #[doc = r" a single IM transaction (one command invoke or one"]
+        #[doc = r" attribute read/write)."]
+        fn unit_testing(self) -> UnitTestingClientView<'a> {
+            UnitTestingClientView {
+                exchange: self.into(),
+            }
+        }
+    }
+    impl<'a> UnitTestingClient<'a> for rs_matter_crate::transport::exchange::Exchange<'a> {}
 }
 "#;
 }

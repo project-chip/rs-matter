@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2025 Project CHIP Authors
+ *    Copyright (c) 2025-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -17,7 +17,8 @@
 
 use core::fmt;
 
-use crate::error::Error;
+use crate::dm::{AttrId, ClusterId, EndptId};
+use crate::error::{Error, ErrorCode};
 use crate::im::{AttrData, AttrStatus};
 use crate::tlv::{FromTLV, TLVArray, TLVElement, ToTLV};
 
@@ -117,6 +118,58 @@ pub enum WriteReqTag {
 #[tlvargs(lifetime = "'a")]
 pub struct WriteResp<'a> {
     pub write_responses: TLVArray<'a, AttrStatus>,
+}
+
+impl<'a> WriteResp<'a> {
+    /// Iterate the entries in `write_responses` whose path matches
+    /// the given `(cluster, attr)` pair, in `(endpoint, result)` form.
+    ///
+    /// - **`Ok(())`** — the per-attribute write succeeded
+    ///   (`IMStatusCode::Success`).
+    /// - **`Err(_)`** — non-`Success` status; the `IMStatusCode`
+    ///   becomes an [`Error`], covering access-check and
+    ///   `Unsupported{Endpoint,Cluster,Attribute}` failures uniformly.
+    /// - Entries with non-matching cluster/attr are skipped.
+    /// - Entries with an absent endpoint in the path are skipped.
+    ///
+    /// Wildcard write requests (path missing endpoint, cluster, or
+    /// attr) produce one status entry per expanded path; the
+    /// iterator yields them in wire order.
+    pub fn statuses(
+        &self,
+        cluster: ClusterId,
+        attr: AttrId,
+    ) -> impl Iterator<Item = (EndptId, Result<(), Error>)> + '_ {
+        self.write_responses
+            .iter()
+            .filter_map(move |status| filter_attr_status(status.ok()?, cluster, attr))
+    }
+}
+
+/// Helper for [`WriteResp::statuses`] — extracts `(endpoint, Result<(),
+/// Error>)` from a single `AttrStatus` if it matches the requested
+/// `(cluster, attr)` filter.
+fn filter_attr_status(
+    s: AttrStatus,
+    cluster: ClusterId,
+    attr: AttrId,
+) -> Option<(EndptId, Result<(), Error>)> {
+    if s.path.cluster != Some(cluster) || s.path.attr != Some(attr) {
+        return None;
+    }
+    let endpoint = s.path.endpoint?;
+    let result = if s.status.status == crate::im::IMStatusCode::Success {
+        Ok(())
+    } else {
+        let err: Error = s
+            .status
+            .status
+            .to_error_code()
+            .unwrap_or(ErrorCode::Failure)
+            .into();
+        Err(err)
+    };
+    Some((endpoint, result))
 }
 
 /// Create a new `WriteResp` from a `TLVElement`.

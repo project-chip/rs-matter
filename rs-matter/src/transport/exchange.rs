@@ -18,6 +18,7 @@
 use core::fmt::{self, Display};
 use core::pin::pin;
 
+use either::Either as EitherIo;
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_time::{Duration, Instant, Timer};
 
@@ -855,6 +856,155 @@ impl<'a> Sender<'a> {
     }
 }
 
+/// Owned-`Self` counterpart to [`SenderTx`].
+///
+/// Holds the [`Exchange`] by value (rather than via a `&mut` through
+/// the parent [`Sender`]), so consumers that consume their exchange
+/// can drive the retransmit loop without a self-referential struct.
+/// Returned by [`OwnedSender::tx`] when the framework needs the
+/// message bytes (re-)built into a fresh TX slot.
+///
+/// Pair with [`SenderTx`] for the borrowed-self mirror.
+pub struct OwnedSenderTx<'a> {
+    exchange: Exchange<'a>,
+    message: TxMessage<'a>,
+}
+
+impl<'a> OwnedSenderTx<'a> {
+    /// Get a `(borrowed-exchange, payload-slice)` pair for inspecting
+    /// the exchange and writing the message bytes.
+    pub fn split(&mut self) -> (&Exchange<'_>, &mut [u8]) {
+        (&self.exchange, self.message.payload())
+    }
+
+    /// Get a mutable reference to the payload slice the bytes go into.
+    pub fn payload(&mut self) -> &mut [u8] {
+        self.message.payload()
+    }
+
+    /// Commit the bytes currently in the slot. The framework dispatches
+    /// the wire-level send asynchronously; this call returns the
+    /// [`OwnedSender`] so the caller can ask for the next event
+    /// (retransmit, ACK).
+    pub fn complete(
+        self,
+        payload_start: usize,
+        payload_end: usize,
+        meta: MessageMeta,
+    ) -> Result<OwnedSender<'a>, Error> {
+        self.message.complete(payload_start, payload_end, meta)?;
+
+        Ok(OwnedSender {
+            exchange: self.exchange,
+            initial: false,
+            complete: false,
+        })
+    }
+}
+
+/// Owned-`Self` counterpart to [`Sender`].
+///
+/// Consumes the [`Exchange`] on construction (via
+/// [`Exchange::into_sender`]) and returns it back to the caller when
+/// the retransmit loop is done (i.e. when [`OwnedSender::tx`]
+/// completes with `Either::Right`, meaning the message has been
+/// ACK-ed by the peer or did not require ACK).
+///
+/// Use cases:
+/// - The Interaction Model client (`im::client::ImClient`) consumes
+///   an exchange to drive a single IM transaction end-to-end, and
+///   wants to walk the retransmit loop while still owning the
+///   `Exchange` for the subsequent receive phase. The owned-`Self`
+///   shape avoids a self-referential struct that would otherwise hold
+///   both an owned `Exchange` and a `&mut`-Sender on it.
+///
+/// User loop pattern (mirrors [`Sender`]):
+///
+/// ```ignore
+/// let mut sender = exchange.into_sender()?;
+/// let exchange = loop {
+///     match sender.tx().await? {
+///         Either::Left(mut slot) => {
+///             let (_, payload) = slot.split();
+///             // Write the message bytes (same every iteration —
+///             // retransmission is idempotent w.r.t. the message).
+///             let (start, end, meta) = /* … */;
+///             sender = slot.complete(start, end, meta)?;
+///         }
+///         Either::Right(exchange) => break exchange,
+///     }
+/// };
+/// // `exchange` is yours again.
+/// ```
+pub struct OwnedSender<'a> {
+    exchange: Exchange<'a>,
+    initial: bool,
+    complete: bool,
+}
+
+impl<'a> OwnedSender<'a> {
+    fn new(exchange: Exchange<'a>) -> Result<Self, Error> {
+        exchange.id.check_no_pending_retrans(exchange.matter)?;
+
+        Ok(Self {
+            exchange,
+            initial: true,
+            complete: false,
+        })
+    }
+
+    /// Next event from the framework. Owned-`Self` mirror of
+    /// [`Sender::tx`]:
+    /// - `Either::Left(slot)` — a TX slot is ready; (re-)build the
+    ///   message bytes into it and call `slot.complete(...)` to get
+    ///   the `OwnedSender` back for the next iteration.
+    /// - `Either::Right(exchange)` — the message has been ACK-ed (or
+    ///   did not need an ACK); the loop is done and the exchange is
+    ///   returned to the caller.
+    pub async fn tx(mut self) -> Result<EitherIo<OwnedSenderTx<'a>, Exchange<'a>>, Error> {
+        trace!(
+            "OwnedSender::tx called, initial={}, complete={}",
+            self.initial,
+            self.complete
+        );
+        if self.complete {
+            trace!("OwnedSender::tx - already complete, returning exchange");
+            return Ok(EitherIo::Right(self.exchange));
+        }
+
+        if !self.initial {
+            trace!("OwnedSender::tx - not initial, calling wait_tx");
+            let outcome = self.exchange.id.wait_tx(self.exchange.matter).await?;
+            trace!("OwnedSender::tx - wait_tx returned {:?}", outcome);
+            if outcome.is_done() {
+                // No need to re-transmit
+                self.complete = true;
+                trace!("OwnedSender::tx - ACK received, returning exchange");
+                return Ok(EitherIo::Right(self.exchange));
+            }
+            trace!("OwnedSender::tx - need to retransmit");
+        }
+
+        let id = self.exchange.id;
+        let matter = self.exchange.matter;
+
+        trace!("OwnedSender::tx - calling init_send");
+        let tx = id.init_send(matter).await?;
+        trace!("OwnedSender::tx - init_send returned");
+
+        if self.initial || id.pending_retrans(matter)? {
+            trace!("OwnedSender::tx - returning Left(OwnedSenderTx)");
+            Ok(EitherIo::Left(OwnedSenderTx {
+                exchange: self.exchange,
+                message: tx,
+            }))
+        } else {
+            trace!("OwnedSender::tx - no pending retrans, returning exchange");
+            Ok(EitherIo::Right(self.exchange))
+        }
+    }
+}
+
 /// An exchange within a Matter stack, representing a session and an exchange within that session.
 ///
 /// This is the main API for sending and receiving messages within the Matter stack.
@@ -1163,6 +1313,23 @@ impl<'a> Exchange<'a> {
         self.rx = None;
 
         Sender::new(self)
+    }
+
+    /// Owned-`Self` counterpart to [`Exchange::sender`].
+    ///
+    /// Consumes the exchange and returns an [`OwnedSender`] that
+    /// owns it for the lifetime of the retransmit loop. Once the
+    /// loop completes ([`OwnedSender::tx`] returns
+    /// `Either::Right(exchange)`), the exchange is handed back to
+    /// the caller.
+    ///
+    /// Used by consumers — such as the IM client — that take an
+    /// `Exchange` by value and need to drive a send + receive cycle
+    /// in sequence without giving up ownership.
+    pub fn into_sender(mut self) -> Result<OwnedSender<'a>, Error> {
+        self.rx = None;
+
+        OwnedSender::new(self)
     }
 
     /// Utility for sending a message on this exchange that automatically handles all re-transmission logic

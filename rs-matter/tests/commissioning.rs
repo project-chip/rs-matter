@@ -64,12 +64,10 @@ use rs_matter::dm::{
     IMBuffer, Node,
 };
 use rs_matter::error::Error;
-use rs_matter::im::client::ImClient;
-use rs_matter::im::{AttrResp, CmdResp, IMStatusCode};
+use rs_matter::im::IMStatusCode;
 use rs_matter::persist::DummyKvBlobStoreAccess;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::{PaseInitiator, MAX_COMM_WINDOW_TIMEOUT_SECS};
-use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::mdns::{CommissionableFilter, DiscoveredDevice};
 use rs_matter::transport::network::tcp::TcpNetwork;
@@ -79,7 +77,6 @@ use rs_matter::utils::epoch::sys_epoch;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::utils::storage::WriteBuf;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
 use socket2::{Domain, Protocol, Socket, Type};
@@ -96,9 +93,6 @@ const TEST_PASSCODE: u32 = 20202021;
 /// Discriminator used by `TEST_DEV_COMM`
 const TEST_DISCRIMINATOR: u16 = 3840;
 
-const CLUSTER_ON_OFF: u32 = 0x0006;
-const ATTR_ON_OFF: u32 = 0x0000;
-const CMD_TOGGLE: u32 = 0x0002;
 const PASE_TIMEOUT_SECS: u64 = 30;
 const IM_TIMEOUT_SECS: u64 = 10;
 const DISCOVERY_TIMEOUT_MS: u32 = 30_000;
@@ -307,7 +301,10 @@ async fn run_controller_flow<C: Crypto>(
     info!("=== Phase 2: PASE Session Establishment ===");
     establish_pase_session(matter, crypto, peer_addr, TEST_PASSCODE).await?;
 
-    info!("=== Phase 3: Interaction Model Operations ===");
+    info!("=== Phase 3: ArmFailSafe (response-bearing command) ===");
+    test_arm_failsafe(matter).await?;
+
+    info!("=== Phase 4: Interaction Model Operations ===");
     test_onoff_cluster(matter).await?;
 
     info!("=== All commissioning test phases completed successfully! ===");
@@ -545,10 +542,10 @@ async fn test_onoff_cluster(matter: &Matter<'_>) -> Result<(), Error> {
 }
 
 async fn read_onoff_with_timeout(matter: &Matter<'_>) -> Result<bool, Error> {
-    let mut exchange = Exchange::initiate(matter, 0, 0, true).await?;
+    let exchange = Exchange::initiate(matter, 0, 0, true).await?;
     debug!("IM read exchange initiated: {}", exchange.id());
 
-    let mut read_fut = pin!(read_onoff(&mut exchange));
+    let mut read_fut = pin!(read_onoff(exchange));
     let mut timeout = pin!(Timer::after(Duration::from_secs(IM_TIMEOUT_SECS)));
 
     match select(&mut read_fut, &mut timeout).await {
@@ -560,23 +557,21 @@ async fn read_onoff_with_timeout(matter: &Matter<'_>) -> Result<bool, Error> {
     }
 }
 
-async fn read_onoff(exchange: &mut Exchange<'_>) -> Result<bool, Error> {
-    let resp = ImClient::read_single_attr(exchange, 1, CLUSTER_ON_OFF, ATTR_ON_OFF, true).await?;
+async fn read_onoff(exchange: Exchange<'_>) -> Result<bool, Error> {
+    use rs_matter::dm::clusters::app::on_off::OnOffClient;
 
-    match resp {
-        AttrResp::Data(data) => data.data.bool(),
-        AttrResp::Status(status) => {
-            warn!("Read returned status: {:?}", status.status);
-            Err(rs_matter::error::ErrorCode::InvalidData.into())
-        }
-    }
+    // Single-shot: cluster ID, attribute ID, fabric_filtered=true,
+    // retransmit loop, response parsing, status-to-error conversion,
+    // and chunk drain (trailing StatusResponse) are all baked into
+    // the codegen-emitted `on_off_on_off_read`.
+    exchange.on_off().on_off_read(1).await
 }
 
 async fn invoke_toggle_with_timeout(matter: &Matter<'_>) -> Result<IMStatusCode, Error> {
-    let mut exchange = Exchange::initiate(matter, 0, 0, true).await?;
+    let exchange = Exchange::initiate(matter, 0, 0, true).await?;
     debug!("Invoke exchange initiated: {}", exchange.id());
 
-    let mut invoke_fut = pin!(invoke_toggle(&mut exchange));
+    let mut invoke_fut = pin!(invoke_toggle(exchange));
     let mut timeout = pin!(Timer::after(Duration::from_secs(IM_TIMEOUT_SECS)));
 
     match select(&mut invoke_fut, &mut timeout).await {
@@ -588,29 +583,69 @@ async fn invoke_toggle_with_timeout(matter: &Matter<'_>) -> Result<IMStatusCode,
     }
 }
 
-async fn invoke_toggle(exchange: &mut Exchange<'_>) -> Result<IMStatusCode, Error> {
-    let mut buf = [0u8; 8];
-    let tail = {
-        let mut wb = WriteBuf::new(&mut buf);
-        wb.start_struct(&TLVTag::Anonymous)?;
-        wb.end_container()?;
-        wb.get_tail()
+async fn invoke_toggle(exchange: Exchange<'_>) -> Result<IMStatusCode, Error> {
+    use rs_matter::dm::clusters::app::on_off::OnOffClient;
+
+    // `OnOff::Toggle` is an empty-request DefaultSuccess command —
+    // `on_off_toggle` returns `Ok(())` on success and converts the
+    // IM status to an `Error` otherwise. The remaining `IMStatusCode`
+    // return type is preserved for the caller — on the happy path it
+    // is always `Success`.
+    exchange.on_off().toggle(1).await?;
+    Ok(IMStatusCode::Success)
+}
+
+// ============================================================================
+// Phase 3: ArmFailSafe — exercises the response-bearing client-trait method
+// ============================================================================
+
+async fn test_arm_failsafe(matter: &Matter<'_>) -> Result<(), Error> {
+    let exchange = Exchange::initiate(matter, 0, 0, true).await?;
+    debug!("ArmFailSafe exchange initiated: {}", exchange.id());
+
+    let mut fut = pin!(invoke_arm_failsafe(exchange));
+    let mut timeout = pin!(Timer::after(Duration::from_secs(IM_TIMEOUT_SECS)));
+
+    match select(&mut fut, &mut timeout).await {
+        Either::First(result) => result,
+        Either::Second(_) => {
+            warn!("ArmFailSafe timed out");
+            Err(rs_matter::error::ErrorCode::RxTimeout.into())
+        }
+    }
+}
+
+async fn invoke_arm_failsafe(exchange: Exchange<'_>) -> Result<(), Error> {
+    use rs_matter::dm::clusters::gen_comm::{
+        ArmFailSafeResponseHandle, CommissioningErrorEnum, GeneralCommissioningClient,
     };
 
-    let resp = ImClient::invoke_single_cmd(
-        exchange,
-        1,
-        CLUSTER_ON_OFF,
-        CMD_TOGGLE,
-        TLVElement::new(&buf[..tail]),
-        None,
-    )
-    .await?;
+    // `ArmFailSafe(expiry=60s, breadcrumb=0)` on the root endpoint —
+    // the response-bearing single-shot. The codegen-emitted
+    // `general_commissioning_arm_fail_safe` returns the typed
+    // `ArmFailSafeResponseHandle<'_>`, which keeps the exchange's RX
+    // buffer alive so the caller can read the borrowed response;
+    // then `.complete().await?` sends the trailing
+    // `StatusResponse(Success)` and closes the exchange.
+    let handle: ArmFailSafeResponseHandle<'_> = exchange
+        .general_commissioning()
+        .arm_fail_safe(0, |req| req.expiry_length_seconds(60)?.breadcrumb(0)?.end())
+        .await?;
 
-    match resp {
-        CmdResp::Status(s) => Ok(s.status.status),
-        CmdResp::Cmd(_) => Ok(IMStatusCode::Success),
-    }
+    let (error_code, debug_text_len) = {
+        let resp = handle.response()?;
+        let error_code = resp.error_code()?;
+        let debug_text_len = resp.debug_text()?.len();
+        (error_code, debug_text_len)
+    };
+    info!("ArmFailSafe response: error_code={error_code:?}, debug_text_len={debug_text_len}");
+    assert_eq!(
+        error_code,
+        CommissioningErrorEnum::OK,
+        "ArmFailSafe should succeed"
+    );
+
+    handle.complete().await
 }
 
 // ============================================================================

@@ -1334,12 +1334,12 @@ mod tests {
                 ::core::assert_eq!(header.rcode(), Rcode::NOERROR);
 
                 Answer::validate_section_records(
-                    message.answer().unwrap().into_iter(),
+                    message.answer().unwrap(),
                     expected_answers,
                     &mut answer_idx,
                 );
                 Answer::validate_section_records(
-                    message.additional().unwrap().into_iter(),
+                    message.additional().unwrap(),
                     expected_additional,
                     &mut additional_idx,
                 );

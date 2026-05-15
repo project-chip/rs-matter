@@ -77,29 +77,24 @@ use core::cell::{Cell, RefCell};
 use core::future::Future;
 
 use crate::dm::clusters::decl::globals::{
-    ICECandidateStruct, ICECandidateStructArrayBuilder, StreamUsageEnum, WebRTCEndReasonEnum,
-    WebRTCSessionStructArrayBuilder, WebRTCSessionStructBuilder,
+    ICECandidateStruct, StreamUsageEnum, WebRTCEndReasonEnum, WebRTCSessionStructArrayBuilder,
+    WebRTCSessionStructBuilder,
 };
 use crate::dm::{
     ArrayAttributeRead, Cluster, Dataver, EndptId, HandlerContext, InvokeContext, ReadContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::im::client::ImClient;
-use crate::tlv::{Nullable, TLVArray, TLVBuilderParent, TLVElement, TLVTag, TLVWriteParent};
+use crate::tlv::{Nullable, TLVArray, TLVBuilderParent};
 use crate::transport::exchange::Exchange;
-use crate::utils::storage::{Vec, WriteBuf};
+use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
 use crate::with;
 
 use super::super::decl::web_rtc_transport_provider as decl;
-use super::super::decl::web_rtc_transport_requestor as req_decl;
+use super::super::decl::web_rtc_transport_requestor::WebRtcTransportRequestorClient;
 
 #[allow(unused_imports)]
 pub use crate::dm::clusters::decl::web_rtc_transport_provider::*;
-
-/// Cluster ID of `WebRTCTransportRequestor` (spec 1.5, §1.16), the peer
-/// cluster we invoke for outbound trickle-ICE and session-end pushes.
-const REQUESTOR_CLUSTER_ID: u32 = 0x0554;
 
 /// Errors surfaced by [`WebRtcHooks`] implementations. These map to
 /// Matter cluster-status codes.
@@ -192,9 +187,10 @@ pub struct AnswerOutcome {
 /// [`WebRtcProvHandler::run`].
 ///
 /// The payload itself is NOT carried here: for [`OutboundWork::IceCandidates`]
-/// the handler calls [`WebRtcHooks::fill_ice_candidates`] with a TLV
-/// array builder and the hook streams queued candidates into it directly,
-/// avoiding any owned intermediate buffer.
+/// the handler calls [`WebRtcHooks::take_ice_candidates`] before opening
+/// the invoke, snapshotting the queue once into a stack-allocated buffer;
+/// the sync build closure then iterates that snapshot, so MRP retransmits
+/// re-emit the same TLV array.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OutboundWork {
@@ -231,6 +227,43 @@ pub enum OutboundWork {
         /// Reason for termination.
         reason: WebRTCEndReasonEnum,
     },
+}
+
+/// Receiver for [`WebRtcHooks::take_ice_candidates`]. The hook pushes
+/// one candidate SDP string at a time; storage (size, layout, backing
+/// allocator) is owned by the caller — typically
+/// [`WebRtcProvHandler::push_outbound`], which stack-allocates a
+/// bounded buffer for the duration of one outbound `IceCandidates`
+/// invoke.
+pub trait IceCandidateSink {
+    /// Append `candidate` to the snapshot. Returns
+    /// [`WebRtcError::ResourceExhausted`] if the sink's bounded
+    /// storage is full — the hook MAY choose to drop further
+    /// candidates and continue (deliver next round) or surface the
+    /// error to the caller.
+    fn push(&mut self, candidate: &str) -> Result<(), WebRtcError>;
+}
+
+/// Default `IceCandidateSink` backed by a `crate::utils::storage::Vec`
+/// of bounded-length `heapless::String`s. `WebRtcProvHandler::push_outbound`
+/// stack-allocates one of these per outbound `IceCandidates` invoke and
+/// passes a `&mut` to the hook.
+struct VecCandidateSink<'a, const CAND_LEN: usize, const MAX_CAND: usize> {
+    buf: &'a mut Vec<heapless::String<CAND_LEN>, MAX_CAND>,
+}
+
+impl<const CAND_LEN: usize, const MAX_CAND: usize> IceCandidateSink
+    for VecCandidateSink<'_, CAND_LEN, MAX_CAND>
+{
+    fn push(&mut self, candidate: &str) -> Result<(), WebRtcError> {
+        let mut s = heapless::String::<CAND_LEN>::new();
+        s.push_str(candidate)
+            .map_err(|_| WebRtcError::ResourceExhausted)?;
+        self.buf
+            .push(s)
+            .map_err(|_| WebRtcError::ResourceExhausted)?;
+        Ok(())
+    }
 }
 
 /// The device-side WebRTC media-plane plumbing. Cluster state (session
@@ -299,20 +332,30 @@ pub trait WebRtcHooks {
         core::future::pending().await
     }
 
-    /// Fill the `ICECandidates` array of an outbound `ICECandidates`
-    /// request. Called by the handler immediately after
-    /// [`Self::next_outbound`] returns [`OutboundWork::IceCandidates`].
-    /// Implementations MUST push every candidate queued for `session_id`
-    /// and then `end()` the array builder.
+    /// Snapshot-and-consume the queued ICE candidates for
+    /// `session_id` into `out`, in queue order. Called by the handler
+    /// **outside** the sync build closure of an outbound
+    /// `IceCandidates` invoke — analogous to [`Self::take_offer_sdp`] /
+    /// [`Self::take_answer_sdp`]. The handler then iterates the
+    /// snapshot inside the (sync, idempotent) build closure to write
+    /// the wire array; MRP retransmits re-iterate the same snapshot,
+    /// so the closure stays idempotent without the hook seeing the
+    /// retransmit.
     ///
-    /// Default: errors out — override when overriding [`Self::next_outbound`]
-    /// to emit [`OutboundWork::IceCandidates`].
-    async fn fill_ice_candidates<P: TLVBuilderParent>(
+    /// If the invoke fails after this hook returns, the snapshotted
+    /// candidates are lost — same semantics as the SDP paths. The
+    /// implementation MAY decide to keep a backup if it wants
+    /// at-least-once delivery, but the default contract is at-most-once.
+    ///
+    /// Default: returns `Err(WebRtcError::InvalidInState)` — override
+    /// alongside [`Self::next_outbound`] when emitting
+    /// [`OutboundWork::IceCandidates`].
+    async fn take_ice_candidates(
         &self,
         _session_id: u16,
-        _candidates: ICECandidateStructArrayBuilder<P>,
-    ) -> Result<P, Error> {
-        Err(ErrorCode::Invalid.into())
+        _out: &mut dyn IceCandidateSink,
+    ) -> Result<(), WebRtcError> {
+        Err(WebRtcError::InvalidInState)
     }
 
     /// Write the SDP Answer bytes for `session_id` into the supplied
@@ -404,12 +447,12 @@ where
         (*self).next_outbound()
     }
 
-    fn fill_ice_candidates<P: TLVBuilderParent>(
+    fn take_ice_candidates(
         &self,
         session_id: u16,
-        candidates: ICECandidateStructArrayBuilder<P>,
-    ) -> impl Future<Output = Result<P, Error>> {
-        (*self).fill_ice_candidates(session_id, candidates)
+        out: &mut dyn IceCandidateSink,
+    ) -> impl Future<Output = Result<(), WebRtcError>> {
+        (*self).take_ice_candidates(session_id, out)
     }
 
     fn take_answer_sdp(
@@ -471,6 +514,8 @@ pub struct WebRtcProvHandler<
     const N_SESSIONS: usize,
     const SDP_LEN: usize,
     const OUT_LEN: usize,
+    const CAND_LEN: usize,
+    const MAX_CAND: usize,
 > {
     dataver: Dataver,
     endpoint_id: EndptId,
@@ -479,8 +524,14 @@ pub struct WebRtcProvHandler<
     next_id: Mutex<Cell<u16>>,
 }
 
-impl<H: WebRtcHooks, const N_SESSIONS: usize, const SDP_LEN: usize, const OUT_LEN: usize>
-    WebRtcProvHandler<H, N_SESSIONS, SDP_LEN, OUT_LEN>
+impl<
+        H: WebRtcHooks,
+        const N_SESSIONS: usize,
+        const SDP_LEN: usize,
+        const OUT_LEN: usize,
+        const CAND_LEN: usize,
+        const MAX_CAND: usize,
+    > WebRtcProvHandler<H, N_SESSIONS, SDP_LEN, OUT_LEN, CAND_LEN, MAX_CAND>
 {
     /// Cluster metadata exposed to the data-model dispatcher.
     pub const CLUSTER: Cluster<'static> = decl::FULL_CLUSTER
@@ -621,85 +672,126 @@ impl<H: WebRtcHooks, const N_SESSIONS: usize, const SDP_LEN: usize, const OUT_LE
             return Ok(());
         };
 
-        let mut buf = [0u8; OUT_LEN];
-        let mut wb = WriteBuf::new(&mut buf);
-        let cmd_id = match work {
-            OutboundWork::Offer { .. } => req_decl::CommandId::Offer as u32,
-            OutboundWork::Answer { .. } => req_decl::CommandId::Answer as u32,
-            OutboundWork::IceCandidates { .. } => req_decl::CommandId::ICECandidates as u32,
-            OutboundWork::End { .. } => req_decl::CommandId::End as u32,
+        // Pre-fetch any async-supplied request payload (SDPs for
+        // Offer/Answer; the ICE-candidate snapshot is similarly
+        // taken outside its own build closure further down). The
+        // `take_*` hooks consume the respective queues, so they must
+        // run exactly once — outside the sync `FnMut` build closure
+        // that MRP may re-invoke on retransmit. The build closure
+        // then works off the snapshot and stays idempotent.
+        // `OutboundWork::End` carries its parameters by value and
+        // needs no pre-fetch.
+        let mut sdp_buf = [0u8; SDP_LEN];
+        let sdp_len = match &work {
+            OutboundWork::Offer { session_id } => self
+                .hooks
+                .take_offer_sdp(*session_id, &mut sdp_buf)
+                .await
+                .map_err(Error::from)?,
+            OutboundWork::Answer { session_id } => self
+                .hooks
+                .take_answer_sdp(*session_id, &mut sdp_buf)
+                .await
+                .map_err(Error::from)?,
+            _ => 0,
         };
+        let sdp = core::str::from_utf8(&sdp_buf[..sdp_len])
+            .map_err(|_| Error::from(ErrorCode::Invalid))?;
 
-        match work {
-            OutboundWork::Offer { session_id } => {
-                let mut sdp_buf = [0u8; SDP_LEN];
-                let sdp_len = self
-                    .hooks
-                    .take_offer_sdp(session_id, &mut sdp_buf)
-                    .await
-                    .map_err(Error::from)?;
-                let sdp = core::str::from_utf8(&sdp_buf[..sdp_len])
-                    .map_err(|_| Error::from(ErrorCode::Invalid))?;
-                let parent = TLVWriteParent::new((), &mut wb);
-                let _ = req_decl::OfferRequestBuilder::new(parent, &TLVTag::Anonymous)?
-                    .web_rtc_session_id(session_id)?
-                    .sdp(sdp)?
-                    .ice_servers()?
-                    .none()
-                    .ice_transport_policy(None)?
-                    .end()?;
-                // Now that the Offer is on the wire, transition the
-                // session to AwaitingAnswer so a subsequent
-                // ProvideAnswer is accepted.
-                self.set_state(session_id, SessionState::AwaitingAnswer);
-            }
-            OutboundWork::Answer { session_id } => {
-                let mut sdp_buf = [0u8; SDP_LEN];
-                let sdp_len = self
-                    .hooks
-                    .take_answer_sdp(session_id, &mut sdp_buf)
-                    .await
-                    .map_err(Error::from)?;
-                let sdp = core::str::from_utf8(&sdp_buf[..sdp_len])
-                    .map_err(|_| Error::from(ErrorCode::Invalid))?;
-                let parent = TLVWriteParent::new((), &mut wb);
-                let _ = req_decl::AnswerRequestBuilder::new(parent, &TLVTag::Anonymous)?
-                    .web_rtc_session_id(session_id)?
-                    .sdp(sdp)?
-                    .end()?;
-            }
-            OutboundWork::IceCandidates { session_id } => {
-                let parent = TLVWriteParent::new((), &mut wb);
-                let req = req_decl::ICECandidatesRequestBuilder::new(parent, &TLVTag::Anonymous)?
-                    .web_rtc_session_id(session_id)?;
-                let arr = req.ice_candidates()?;
-                let req = self.hooks.fill_ice_candidates(session_id, arr).await?;
-                let _ = req.end()?;
-            }
-            OutboundWork::End { session_id, reason } => {
-                let parent = TLVWriteParent::new((), &mut wb);
-                let _ = req_decl::EndRequestBuilder::new(parent, &TLVTag::Anonymous)?
-                    .web_rtc_session_id(session_id)?
-                    .reason(reason)?
-                    .end()?;
-            }
+        // Offer side-effect: transition the session to AwaitingAnswer
+        // so a subsequent ProvideAnswer is accepted. Doing this here
+        // (rather than inside the build closure) keeps the transition
+        // idempotent under retransmit.
+        if let OutboundWork::Offer { session_id } = &work {
+            self.set_state(*session_id, SessionState::AwaitingAnswer);
         }
 
-        let element = TLVElement::new(wb.as_slice());
-
-        let mut exchange =
+        let exchange =
             Exchange::initiate(ctx.matter(), session.fab_idx, session.peer_node_id, true).await?;
 
-        let _resp = ImClient::invoke_single_cmd(
-            &mut exchange,
-            session.peer_endpoint_id,
-            REQUESTOR_CLUSTER_ID,
-            cmd_id,
-            element,
-            None,
-        )
-        .await?;
-
+        // Single-shot client-trait invoke for all four commands. The
+        // codegen `WebRtcTransportRequestorClient` methods bake in
+        // cluster ID (0x0554), command ID, the request opcode
+        // (`InvokeRequest`), the MRP retransmit loop, chunk draining
+        // (trailing `StatusResponse(Success)` ACK) and IM-status-to-
+        // `Error` conversion. The build closure is a sync `FnMut`,
+        // so it must be idempotent under MRP retransmit; any state-
+        // changing hook (e.g. consuming the trickle-ICE queue) runs
+        // *outside* the closure.
+        let endpoint = session.peer_endpoint_id;
+        match &work {
+            OutboundWork::Offer { session_id } => {
+                let session_id = *session_id;
+                exchange
+                    .web_rtc_transport_requestor()
+                    .offer(endpoint, |req| {
+                        req.web_rtc_session_id(session_id)?
+                            .sdp(sdp)?
+                            .ice_servers()?
+                            .none()
+                            .ice_transport_policy(None)?
+                            .end()
+                    })
+                    .await?;
+            }
+            OutboundWork::Answer { session_id } => {
+                let session_id = *session_id;
+                exchange
+                    .web_rtc_transport_requestor()
+                    .answer(endpoint, |req| {
+                        req.web_rtc_session_id(session_id)?.sdp(sdp)?.end()
+                    })
+                    .await?;
+            }
+            OutboundWork::IceCandidates { session_id } => {
+                let session_id = *session_id;
+                // Snapshot the candidates OUTSIDE the build closure
+                // (mirrors `take_offer_sdp` / `take_answer_sdp`). The
+                // hook consumes the queue; the sync FnMut build
+                // closure below iterates the snapshot, so MRP
+                // retransmits re-iterate the same data and the
+                // closure stays idempotent. `CAND_LEN` / `MAX_CAND`
+                // bound the per-invoke snapshot — candidates beyond
+                // the bound are dropped by `IceCandidateSink::push`
+                // and will not be sent this round (or any future one,
+                // since the hook consumed them).
+                let mut ice_buf: crate::utils::storage::Vec<heapless::String<CAND_LEN>, MAX_CAND> =
+                    crate::utils::storage::Vec::new();
+                {
+                    let mut sink = VecCandidateSink { buf: &mut ice_buf };
+                    self.hooks
+                        .take_ice_candidates(session_id, &mut sink)
+                        .await
+                        .map_err(Error::from)?;
+                }
+                exchange
+                    .web_rtc_transport_requestor()
+                    .ice_candidates(endpoint, |req| {
+                        let req = req.web_rtc_session_id(session_id)?;
+                        let mut arr = req.ice_candidates()?;
+                        for cand in ice_buf.iter() {
+                            arr = arr
+                                .push()?
+                                .candidate(cand.as_str())?
+                                .sdp_mid(Nullable::none())?
+                                .sdpm_line_index(Nullable::none())?
+                                .end()?;
+                        }
+                        arr.end()?.end()
+                    })
+                    .await?;
+            }
+            OutboundWork::End { session_id, reason } => {
+                let session_id = *session_id;
+                let reason = *reason;
+                exchange
+                    .web_rtc_transport_requestor()
+                    .end(endpoint, |req| {
+                        req.web_rtc_session_id(session_id)?.reason(reason)?.end()
+                    })
+                    .await?;
+            }
+        }
         Ok(())
     }
 }
@@ -708,8 +800,15 @@ impl<H: WebRtcHooks, const N_SESSIONS: usize, const SDP_LEN: usize, const OUT_LE
 // ClusterAsyncHandler
 // ──────────────────────────────────────────────────────────────────────
 
-impl<H: WebRtcHooks, const N_SESSIONS: usize, const SDP_LEN: usize, const OUT_LEN: usize>
-    decl::ClusterAsyncHandler for WebRtcProvHandler<H, N_SESSIONS, SDP_LEN, OUT_LEN>
+impl<
+        H: WebRtcHooks,
+        const N_SESSIONS: usize,
+        const SDP_LEN: usize,
+        const OUT_LEN: usize,
+        const CAND_LEN: usize,
+        const MAX_CAND: usize,
+    > decl::ClusterAsyncHandler
+    for WebRtcProvHandler<H, N_SESSIONS, SDP_LEN, OUT_LEN, CAND_LEN, MAX_CAND>
 {
     const CLUSTER: Cluster<'static> = Self::CLUSTER;
 

@@ -15,12 +15,15 @@
  *    limitations under the License.
  */
 
-//! Client-side read tests exercising the `ReadSender` API.
+//! Client-side subscribe tests exercising the `SubscribeSender` API
+//! and the establishment-phase response handling
+//! (`SubscribePrimingChunk::complete` →
+//! [`SubscribeOutcome::Established`]).
 
 use embassy_futures::block_on;
 use embassy_futures::select::select;
 
-use rs_matter::im::client::{ImClient, TxOutcome};
+use rs_matter::im::client::{ImClient, SubscribeOutcome, TxOutcome};
 use rs_matter::im::{AttrPath, GenericPath};
 use rs_matter::utils::select::Coalesce;
 
@@ -28,10 +31,13 @@ use crate::common::e2e::im::echo_cluster;
 use crate::common::e2e::new_default_runner;
 use crate::common::init_env_logger;
 
-/// `ReadSender::tx` + `ReadRespChunk`. Mirrors
-/// `test_client_invoke_sender_non_chunked`.
+/// `SubscribeSender::tx` + priming-chunk loop + terminal
+/// `SubscribeEstablished`. Mirrors `test_client_read_sender_non_chunked`
+/// but on the subscribe path: one priming `ReportData` chunk for the
+/// single concrete attribute, followed by the `SubscribeResponse`
+/// carrying `subscription_id` + `max_int`.
 #[test]
-fn test_client_read_sender_non_chunked() {
+fn test_client_subscribe_sender_non_chunked() {
     init_env_logger();
 
     let im = new_default_runner();
@@ -41,7 +47,7 @@ fn test_client_read_sender_non_chunked() {
     block_on(
         select(im.run(handler), async {
             let exchange = im.initiate_exchange().await?;
-            let mut sender = exchange.read_sender().await?;
+            let mut sender = exchange.subscribe_sender().await?;
 
             let path = AttrPath::from_gp(&GenericPath::new(
                 Some(0),
@@ -50,11 +56,16 @@ fn test_client_read_sender_non_chunked() {
             ));
             let paths = [path];
 
-            // Drive the retransmit loop.
+            // Drive the retransmit loop. `min_int_floor=0`,
+            // `max_int_ceil=60` are bounds the test responder
+            // accepts; `keep_subs=true` is the typical client value.
             let mut chunk = loop {
                 match sender.tx().await? {
                     TxOutcome::BuildRequest(builder) => {
                         sender = builder
+                            .keep_subs(true)?
+                            .min_int_floor(0)?
+                            .max_int_ceil(60)?
                             .attr_requests_from(&paths)?
                             .fabric_filtered(false)?
                             .end()?;
@@ -63,10 +74,11 @@ fn test_client_read_sender_non_chunked() {
                 }
             };
 
-            // Iterate response chunks. Non-chunked read → exactly one chunk.
+            // One concrete attribute → one priming ReportData chunk →
+            // SubscribeResponse. Walk the outcome enum.
             let mut chunk_count = 0u32;
             let mut attr_count = 0u32;
-            loop {
+            let established = loop {
                 chunk_count += 1;
                 {
                     let resp = chunk.response()?;
@@ -79,13 +91,25 @@ fn test_client_read_sender_non_chunked() {
                     }
                 }
                 match chunk.complete().await? {
-                    Some(next) => chunk = next,
-                    None => break,
+                    SubscribeOutcome::NextChunk(next) => chunk = next,
+                    SubscribeOutcome::Established(est) => break est,
                 }
-            }
+            };
 
-            assert_eq!(chunk_count, 1, "Non-chunked read should have 1 chunk");
+            assert_eq!(
+                chunk_count, 1,
+                "Single-attr subscribe should have 1 priming chunk"
+            );
             assert_eq!(attr_count, 1, "Should have received 1 attribute report");
+            assert_ne!(
+                established.subscription_id, 0,
+                "Subscription id should be non-zero"
+            );
+            assert!(
+                established.max_int >= 40,
+                "Server should clamp max_int to at least 40s (saw {})",
+                established.max_int
+            );
 
             Ok(())
         })
@@ -94,13 +118,14 @@ fn test_client_read_sender_non_chunked() {
     .unwrap()
 }
 
-/// Chunked wildcard read — verifies the chunk loop on
-/// `InvokeRespChunk` / `ReadRespChunk` correctly iterates multiple
-/// chunks when the server signals `more_chunks=true`. Reading every
-/// attribute on every endpoint should produce > 1 chunk and many
-/// attribute reports.
+/// Chunked wildcard subscribe — mirrors
+/// `test_client_read_sender_chunked_wildcard`. Subscribing to every
+/// attribute on every endpoint forces the priming-read side of the
+/// establishment to chunk; the test verifies the chunk loop on
+/// [`SubscribePrimingChunk`] correctly iterates and lands on the
+/// terminal [`SubscribeOutcome::Established`].
 #[test]
-fn test_client_read_sender_chunked_wildcard() {
+fn test_client_subscribe_sender_chunked_wildcard() {
     init_env_logger();
 
     let im = new_default_runner();
@@ -110,9 +135,8 @@ fn test_client_read_sender_chunked_wildcard() {
     block_on(
         select(im.run(handler), async {
             let exchange = im.initiate_exchange().await?;
-            let mut sender = exchange.read_sender().await?;
+            let mut sender = exchange.subscribe_sender().await?;
 
-            // Wildcard path: every attribute on every endpoint.
             let path = AttrPath::from_gp(&GenericPath::new(None, None, None));
             let paths = [path];
 
@@ -120,6 +144,9 @@ fn test_client_read_sender_chunked_wildcard() {
                 match sender.tx().await? {
                     TxOutcome::BuildRequest(builder) => {
                         sender = builder
+                            .keep_subs(true)?
+                            .min_int_floor(0)?
+                            .max_int_ceil(60)?
                             .attr_requests_from(&paths)?
                             .fabric_filtered(false)?
                             .end()?;
@@ -129,35 +156,36 @@ fn test_client_read_sender_chunked_wildcard() {
             };
 
             let mut chunk_count = 0u32;
-            let mut total_attr_count = 0u32;
-            loop {
+            let mut attr_count = 0u32;
+            let established = loop {
                 chunk_count += 1;
                 {
                     let resp = chunk.response()?;
                     if let Some(attr_reports) = &resp.attr_reports {
                         for attr_resp in attr_reports.iter() {
                             if attr_resp.is_ok() {
-                                total_attr_count += 1;
+                                attr_count += 1;
                             }
                         }
                     }
                 }
                 match chunk.complete().await? {
-                    Some(next) => chunk = next,
-                    None => break,
+                    SubscribeOutcome::NextChunk(next) => chunk = next,
+                    SubscribeOutcome::Established(est) => break est,
                 }
-            }
+            };
 
             assert!(
                 chunk_count > 1,
-                "Wildcard read should produce multiple chunks, got {}",
+                "Wildcard subscribe priming should chunk (got {})",
                 chunk_count
             );
             assert!(
-                total_attr_count > 100,
-                "Wildcard read should return many attributes, got {}",
-                total_attr_count
+                attr_count > 1,
+                "Wildcard subscribe should report many attributes (got {})",
+                attr_count
             );
+            assert_ne!(established.subscription_id, 0);
 
             Ok(())
         })

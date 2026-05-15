@@ -1497,7 +1497,7 @@ mod test {
 
         let metadata = SwappableMetadata::new(initial);
 
-        let mut expander = PathExpanderIterator::new(
+        let expander = PathExpanderIterator::new(
             &metadata,
             &accessor,
             false,
@@ -1506,11 +1506,9 @@ mod test {
         );
 
         let mut actual: alloc::vec::Vec<_> = alloc::vec::Vec::new();
-        let mut i = 0;
-        while let Some(result) = expander.next() {
+        for (i, result) in expander.enumerate() {
             actual.push(result.map_err(|e| e.code()));
             after_yield(i, &metadata);
-            i += 1;
         }
 
         assert_eq!(actual.as_slice(), expected);

@@ -15,24 +15,22 @@
  *    limitations under the License.
  */
 
-//! Client-side invoke tests exercising `ImClient::invoke`, `ImClient::invoke_single`,
-//! and `ImClient::invoke_single_cmd`.
+//! Client-side invoke tests exercising the `InvokeSender` API.
 
 use embassy_futures::block_on;
 use embassy_futures::select::select;
 
-use rs_matter::im::client::ImClient;
-use rs_matter::im::{CmdData, CmdPath, CmdResp};
-use rs_matter::tlv::TLVElement;
+use rs_matter::im::client::{ImClient, TxOutcome};
+use rs_matter::im::CmdDataTag;
+use rs_matter::tlv::{TLVTag, TLVWrite};
 use rs_matter::utils::select::Coalesce;
 
 use crate::common::e2e::im::echo_cluster;
 use crate::common::e2e::new_default_runner;
 use crate::common::init_env_logger;
 
-/// Test that a non-chunked invoke works correctly via `ImClient::invoke`.
 #[test]
-fn test_client_invoke_non_chunked() {
+fn test_client_invoke_sender_non_chunked() {
     init_env_logger();
 
     let im = new_default_runner();
@@ -41,130 +39,66 @@ fn test_client_invoke_non_chunked() {
 
     block_on(
         select(im.run(handler), async {
-            let mut exchange = im.initiate_exchange().await?;
+            let exchange = im.initiate_exchange().await?;
+            let mut sender = exchange.invoke_sender(None).await?;
 
-            let path = CmdPath {
-                endpoint: Some(0),
-                cluster: Some(echo_cluster::ID),
-                cmd: Some(echo_cluster::Commands::EchoReq as u32),
+            // Drive the retransmit loop until the framework hands us
+            // the first response chunk.
+            let mut chunk = loop {
+                match sender.tx().await? {
+                    TxOutcome::BuildRequest(builder) => {
+                        sender = builder
+                            .suppress_response(false)?
+                            .timed_request(false)?
+                            .invoke_requests()?
+                            .push()?
+                            .path(0, echo_cluster::ID, echo_cluster::Commands::EchoReq as u32)?
+                            .data(|w| {
+                                // EchoReq body: anonymous TLV u8 retagged at
+                                // CmdDataTag::Data — same on-wire form as the
+                                // existing invoke test (`[0x04, 5u8]`).
+                                w.u8(&TLVTag::Context(CmdDataTag::Data as u8), 5)
+                            })?
+                            .end()? // close CmdData entry
+                            .end()? // close InvokeRequests array
+                            .end()?; // close InvokeRequestMessage → InvokeSender
+                    }
+                    TxOutcome::GotResponse(c) => break c,
+                }
             };
 
-            // EchoReq takes a u8 value; encode as anonymous TLV u8
-            let echo_data = [0x04, 5u8]; // TLV unsigned int tag=anonymous, value=5
-            let cmd = CmdData {
-                path,
-                data: TLVElement::new(&echo_data),
-                command_ref: None,
-            };
-
+            // Iterate the response-chunk loop. Non-chunked EchoReq
+            // gives exactly one chunk before `complete()` returns None.
             let mut chunk_count = 0u32;
             let mut got_response = false;
-
-            ImClient::invoke(&mut exchange, &[cmd], None, |resp| {
+            loop {
                 chunk_count += 1;
-
-                if let Some(invoke_responses) = &resp.invoke_responses {
-                    for cmd_resp in invoke_responses.iter() {
-                        if cmd_resp.is_ok() {
-                            got_response = true;
+                {
+                    // `response()` returns `Option` — `None` for
+                    // DefaultSuccess (status-only) commands; EchoReq
+                    // is *not* DefaultSuccess so we expect `Some`.
+                    let resp = chunk
+                        .response()?
+                        .expect("EchoReq has a real InvokeResponse");
+                    if let Some(invoke_responses) = &resp.invoke_responses {
+                        for cmd_resp in invoke_responses.iter() {
+                            if cmd_resp.is_ok() {
+                                got_response = true;
+                            }
                         }
                     }
                 }
-
-                Ok(())
-            })
-            .await?;
+                match chunk.complete().await? {
+                    Some(next) => chunk = next,
+                    None => break,
+                }
+            }
 
             assert_eq!(
                 chunk_count, 1,
                 "Non-chunked invoke should have exactly 1 chunk"
             );
             assert!(got_response, "Should have received an invoke response");
-
-            Ok(())
-        })
-        .coalesce(),
-    )
-    .unwrap()
-}
-
-/// Test that `ImClient::invoke_single` works correctly with the callback-based `invoke`.
-#[test]
-fn test_client_invoke_single() {
-    init_env_logger();
-
-    let im = new_default_runner();
-    im.add_default_acl();
-    let handler = im.handler();
-
-    block_on(
-        select(im.run(handler), async {
-            let mut exchange = im.initiate_exchange().await?;
-
-            // EchoReq on endpoint 0 with value 5; multiplier is 2, so expect 10
-            let echo_data = [0x04, 5u8]; // TLV unsigned int tag=anonymous, value=5
-
-            let value = ImClient::invoke_single(
-                &mut exchange,
-                0,
-                echo_cluster::ID,
-                echo_cluster::Commands::EchoReq as u32,
-                TLVElement::new(&echo_data),
-                None,
-                |resp| match resp {
-                    CmdResp::Cmd(data) => Ok(data.data.u8()?),
-                    CmdResp::Status(status) => {
-                        panic!("Unexpected status response: {:?}", status.status);
-                    }
-                },
-            )
-            .await?;
-
-            // EchoHandler on endpoint 0 has multiplier 2, so 5 * 2 = 10
-            assert_eq!(value, 10, "EchoResp should return 5 * 2 = 10");
-
-            Ok(())
-        })
-        .coalesce(),
-    )
-    .unwrap()
-}
-
-/// Test that `ImClient::invoke_single_cmd` returns zero-copy response data.
-#[test]
-fn test_client_invoke_single_cmd() {
-    init_env_logger();
-
-    let im = new_default_runner();
-    im.add_default_acl();
-    let handler = im.handler();
-
-    block_on(
-        select(im.run(handler), async {
-            let mut exchange = im.initiate_exchange().await?;
-
-            // EchoReq on endpoint 0 with value 7; multiplier is 2, so expect 14
-            let echo_data = [0x04, 7u8]; // TLV unsigned int tag=anonymous, value=7
-
-            let resp = ImClient::invoke_single_cmd(
-                &mut exchange,
-                0,
-                echo_cluster::ID,
-                echo_cluster::Commands::EchoReq as u32,
-                TLVElement::new(&echo_data),
-                None,
-            )
-            .await?;
-
-            match resp {
-                CmdResp::Cmd(data) => {
-                    let value = data.data.u8()?;
-                    assert_eq!(value, 14, "EchoResp should return 7 * 2 = 14");
-                }
-                CmdResp::Status(status) => {
-                    panic!("Unexpected status response: {:?}", status.status);
-                }
-            }
 
             Ok(())
         })

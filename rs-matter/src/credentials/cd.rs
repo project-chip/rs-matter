@@ -787,14 +787,16 @@ mod tests {
     // -> dac_origin_product_id is not present
 
     fn expected_cd_01() -> CertificationElements {
-        let mut cd = CertificationElements::default();
-        cd.format_version = 1;
-        cd.vendor_id = 0xFFF1;
+        let mut cd = CertificationElements {
+            format_version: 1,
+            vendor_id: 0xFFF1,
+            product_ids_count: 1,
+            device_type_id: 0x1234,
+            version_number: 0x2694,
+            ..CertificationElements::default()
+        };
         cd.product_ids[0] = 0x8000;
-        cd.product_ids_count = 1;
-        cd.device_type_id = 0x1234;
         cd.certificate_id.copy_from_slice(b"ZIG20141ZB330001-24");
-        cd.version_number = 0x2694;
         cd
     }
 
@@ -838,18 +840,20 @@ mod tests {
     // -> dac_origin_product_id = 0x8000
 
     fn expected_cd_02() -> CertificationElements {
-        let mut cd = CertificationElements::default();
-        cd.format_version = 1;
-        cd.vendor_id = 0xFFF2;
+        let mut cd = CertificationElements {
+            format_version: 1,
+            vendor_id: 0xFFF2,
+            product_ids_count: 2,
+            device_type_id: 0x1234,
+            version_number: 0x2694,
+            dac_origin_vendor_id: 0xFFF1,
+            dac_origin_product_id: 0x8000,
+            dac_origin_vid_pid_present: true,
+            ..CertificationElements::default()
+        };
         cd.product_ids[0] = 0x8001;
         cd.product_ids[1] = 0x8002;
-        cd.product_ids_count = 2;
-        cd.device_type_id = 0x1234;
         cd.certificate_id.copy_from_slice(b"ZIG20142ZB330002-24");
-        cd.version_number = 0x2694;
-        cd.dac_origin_vendor_id = 0xFFF1;
-        cd.dac_origin_product_id = 0x8000;
-        cd.dac_origin_vid_pid_present = true;
         cd
     }
 

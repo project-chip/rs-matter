@@ -472,7 +472,7 @@ mod tests {
         assert_eq!(generator.fabric_id(), fabric_id);
 
         // Verify RCAC was generated
-        assert!(generator.root_cert().len() > 0);
+        assert!(!generator.root_cert().is_empty());
 
         // Verify RCAC ID was set
         assert!(generator.rcac_id() > 0);
@@ -522,7 +522,7 @@ mod tests {
         let icac = unwrap!(generator.generate_icac(&crypto));
 
         // ICAC should be non-empty
-        assert!(icac.len() > 0);
+        assert!(!icac.is_empty());
 
         // Should be able to parse as TLV
         let _cert_ref = CertRef::new(TLVElement::new(icac));
@@ -544,7 +544,7 @@ mod tests {
 
         // After generation, icac_cert() should return Some
         assert!(generator.icac_cert().is_some());
-        assert!(generator.icac_cert().unwrap().len() > 0);
+        assert!(!generator.icac_cert().unwrap().is_empty());
 
         // After generation, icac_id() should return Some
         assert!(generator.icac_id().is_some());
@@ -587,7 +587,7 @@ mod tests {
         let creds = unwrap!(generator.generate_noc(&crypto, GOOD_CSR, node_id, &[]));
 
         // NOC should be non-empty
-        assert!(creds.noc.len() > 0);
+        assert!(!creds.noc.is_empty());
 
         // Node ID should match
         assert_eq!(creds.node_id, node_id);
@@ -609,7 +609,7 @@ mod tests {
         let creds = unwrap!(generator.generate_noc(&crypto, GOOD_CSR, node_id, &[]));
 
         // NOC should be generated successfully
-        assert!(creds.noc.len() > 0);
+        assert!(!creds.noc.is_empty());
         assert_eq!(creds.node_id, node_id);
 
         // Should be able to parse
@@ -628,7 +628,7 @@ mod tests {
         let creds = unwrap!(generator.generate_noc(&crypto, GOOD_CSR, node_id, &cat_ids));
 
         // NOC should be generated successfully with CAT IDs
-        assert!(creds.noc.len() > 0);
+        assert!(!creds.noc.is_empty());
         assert_eq!(creds.node_id, node_id);
 
         // Parse and verify CAT IDs are present

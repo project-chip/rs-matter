@@ -17,4 +17,5 @@
 
 mod client_invokes;
 mod client_reads;
+mod client_subscribes;
 mod client_writes;

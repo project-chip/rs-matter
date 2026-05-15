@@ -734,11 +734,12 @@ mod tests {
         vendor_id: u16,
         product_id: u16,
     ) -> DiscoveredDevice<MAX_ADDRESSES_PER_DEVICE> {
-        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
-        device.discriminator = discriminator;
-        device.vendor_id = vendor_id;
-        device.product_id = product_id;
-        device
+        DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE> {
+            discriminator,
+            vendor_id,
+            product_id,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -1614,8 +1615,10 @@ mod tests {
 
     #[test]
     fn device_add_address_single() {
-        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
-        device.port = 5540;
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE> {
+            port: 5540,
+            ..Default::default()
+        };
         device.add_address(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
 
         assert_eq!(device.addresses().len(), 1);
@@ -1630,8 +1633,10 @@ mod tests {
 
     #[test]
     fn device_add_address_maintains_priority_order() {
-        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
-        device.port = 5540;
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE> {
+            port: 5540,
+            ..Default::default()
+        };
 
         // Add in wrong order - IPv4 first, then link-local IPv6
         device.add_address(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
@@ -1716,8 +1721,10 @@ mod tests {
 
     #[test]
     fn device_socket_addresses_iterator() {
-        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
-        device.port = 5540;
+        let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE> {
+            port: 5540,
+            ..Default::default()
+        };
         device.add_address(IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)));
         device.add_address(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
 

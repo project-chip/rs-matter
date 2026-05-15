@@ -15,23 +15,22 @@
  *    limitations under the License.
  */
 
-//! Client-side write tests exercising `ImClient::write`.
+//! Client-side write tests exercising the `WriteSender` API.
 
 use embassy_futures::block_on;
 use embassy_futures::select::select;
 
-use rs_matter::im::client::ImClient;
-use rs_matter::im::{AttrData, AttrPath, IMStatusCode};
-use rs_matter::tlv::TLVElement;
+use rs_matter::im::client::{ImClient, TxOutcome};
+use rs_matter::im::{AttrDataTag, IMStatusCode};
+use rs_matter::tlv::{TLVElement, TLVTag, ToTLV};
 use rs_matter::utils::select::Coalesce;
 
 use crate::common::e2e::im::echo_cluster;
 use crate::common::e2e::new_default_runner;
 use crate::common::init_env_logger;
 
-/// Test that `ImClient::write` can write an attribute and receive a success response.
 #[test]
-fn test_client_write() {
+fn test_client_write_sender() {
     init_env_logger();
 
     let im = new_default_runner();
@@ -40,41 +39,55 @@ fn test_client_write() {
 
     block_on(
         select(im.run(handler), async {
-            let mut exchange = im.initiate_exchange().await?;
+            let exchange = im.initiate_exchange().await?;
+            let mut sender = exchange.write_sender(None).await?;
 
-            let path = AttrPath {
-                endpoint: Some(0),
-                cluster: Some(echo_cluster::ID),
-                attr: Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
-                ..Default::default()
+            // Encode a u16 value (0x0539) as anonymous TLV. Same wire
+            // form as the snapshot-API test above.
+            let value_tlv = [0x05, 0x39, 0x05];
+            let value = TLVElement::new(&value_tlv);
+
+            // Drive the retransmit loop.
+            let handle = loop {
+                match sender.tx().await? {
+                    TxOutcome::BuildRequest(builder) => {
+                        // Skip SuppressResponse + TimedRequest (implicit).
+                        let entries = builder.write_requests()?;
+                        // One AttrData entry: write echo_cluster::AttWrite on endpoint 0.
+                        let entry = entries
+                            .push()?
+                            // Skip DataVersion (implicit) → state 2 via path().
+                            .path(
+                                0,
+                                echo_cluster::ID,
+                                echo_cluster::AttributesDiscriminants::AttWrite as u32,
+                            )?
+                            .data(|w| value.to_tlv(&TLVTag::Context(AttrDataTag::Data as u8), w))?
+                            .end()?; // close AttrData → AttrDataArrayBuilder
+                        sender = entry.end()?.end()?; // close array, close msg
+                    }
+                    TxOutcome::GotResponse(h) => break h,
+                }
             };
 
-            // Encode a u16 value as anonymous TLV
-            let value_tlv = [0x05, 0x39, 0x05]; // TLV u16 tag=anonymous, value=0x0539
-            let attr = AttrData {
-                data_ver: None,
-                path,
-                data: TLVElement::new(&value_tlv),
-            };
-
-            let resp = ImClient::write(&mut exchange, &[attr], None).await?;
-
-            // Check that we got exactly one write response with Success status
-            let mut status_count = 0u32;
-            for status in resp.write_responses.iter() {
-                let status = status.unwrap();
+            // Inspect the parsed WriteResp.
+            {
+                let resp = handle.response()?;
+                let mut status_count = 0u32;
+                for status in resp.write_responses.iter() {
+                    let status = status.unwrap();
+                    assert_eq!(
+                        status.status.status,
+                        IMStatusCode::Success,
+                        "Write should succeed"
+                    );
+                    status_count += 1;
+                }
                 assert_eq!(
-                    status.status.status,
-                    IMStatusCode::Success,
-                    "Write should succeed"
+                    status_count, 1,
+                    "Should have exactly 1 write response status"
                 );
-                status_count += 1;
             }
-
-            assert_eq!(
-                status_count, 1,
-                "Should have exactly 1 write response status"
-            );
 
             Ok(())
         })

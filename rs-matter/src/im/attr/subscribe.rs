@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2025 Project CHIP Authors
+ *    Copyright (c) 2025-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -106,6 +106,26 @@ impl defmt::Format for SubscribeReq<'_> {
             self.dataver_filters(),
         )
     }
+}
+
+/// Tags corresponding to the fields in the `SubscribeRequestMessage`
+/// TLV structure (Matter Core spec §10.7.8). Used by the streaming
+/// subscribe-request builder and any low-level TLV serde callers.
+///
+/// Note the gap at tag 6 — the spec leaves it reserved and the
+/// `FabricFiltered` field jumps from 5 to 7.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(u8)]
+pub enum SubscribeReqTag {
+    KeepSubs = 0,
+    MinIntFloor = 1,
+    MaxIntCeil = 2,
+    AttrRequests = 3,
+    EventRequests = 4,
+    EventFilters = 5,
+    FabricFiltered = 7,
+    DataVersionFilters = 8,
 }
 
 /// A response to a subscription request.

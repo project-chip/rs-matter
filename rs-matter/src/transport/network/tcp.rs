@@ -1264,13 +1264,12 @@ mod tests {
             let mut received = 0;
             for _ in 0..3 {
                 // Use wait_available + recv_from
-                if NetworkReceive::wait_available(&mut { net }).await.is_ok() {
-                    if NetworkReceive::recv_from(&mut { net }, &mut buf)
+                if NetworkReceive::wait_available(&mut { net }).await.is_ok()
+                    && NetworkReceive::recv_from(&mut { net }, &mut buf)
                         .await
                         .is_ok()
-                    {
-                        received += 1;
-                    }
+                {
+                    received += 1;
                 }
             }
 

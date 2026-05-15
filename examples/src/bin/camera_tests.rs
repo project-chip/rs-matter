@@ -359,9 +359,14 @@ const PUSH_NC: usize = 4;
 const N_SESSIONS: usize = 4;
 const SDP_LEN: usize = 8 * 1024;
 const OUT_LEN: usize = SDP_LEN + 1024;
+// Per-invoke ICE candidate snapshot bounds — see `webrtc_camera.rs` for
+// the rationale. The stub hook doesn't actually emit candidates, but
+// `WebRtcProvHandler` still needs the const generics to compile.
+const CAND_LEN: usize = 256;
+const MAX_CAND: usize = 16;
 
 type CamAv = CameraAvStreamHandler<'static, StubCamHooks, CAM_AV_NV, CAM_AV_NA>;
-type WebRtc = WebRtcProvHandler<StubWebRtcHooks, N_SESSIONS, SDP_LEN, OUT_LEN>;
+type WebRtc = WebRtcProvHandler<StubWebRtcHooks, N_SESSIONS, SDP_LEN, OUT_LEN, CAND_LEN, MAX_CAND>;
 
 // ---------------------------------------------------------------------------
 // Static storage

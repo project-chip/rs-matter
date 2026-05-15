@@ -1955,6 +1955,7 @@ mod tests {
     //     Predicate-based removal is covered by `remove_invokes_predicate_*`.
 
     /// Helper: add a subscription with sensible defaults and return its `ReportContext`.
+    #[allow(clippy::too_many_arguments)]
     fn add_sub<'a, 's, const N: usize, const B: usize>(
         subs: &'s Subscriptions<N>,
         subs_bufs: &'s SubscriptionsBuffers<'a, TestPool<B>, N>,
