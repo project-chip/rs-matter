@@ -274,9 +274,6 @@ impl<'a> ReportDataReq<'a> {
 /// Report Data Message
 ///
 /// Corresponds to the `ReportDataMessage` TLV structure in the Interaction Model.
-///
-/// Only used in unitand integration tests. The Data Model layer in `rs-matter` does not
-/// use this structure directly, utilizing on-the-fly serialization via `ReportDataTag` instead.
 #[derive(FromTLV, ToTLV, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]

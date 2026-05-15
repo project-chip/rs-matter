@@ -18,7 +18,14 @@
 //! Interaction Model Client implementation.
 //!
 //! This module provides client-side functionality for sending IM requests
-//! (Read, Write, Invoke) to Matter devices and processing their responses.
+//! (Read, Write, Invoke, Subscribe) to Matter devices and processing their
+//! responses.
+//!
+//! Subscribe support covers the *establishment* phase only — the
+//! `SubscribeRequest`, the priming `ReportData` chunks and the
+//! terminal `SubscribeResponse`. Server-initiated post-establishment
+//! reports arrive on new exchanges over the same session and require
+//! a separate listening abstraction layered on top of the transport.
 
 use either::Either;
 
@@ -117,9 +124,9 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// Perform an IM write transaction.
     ///
     /// # Arguments
-    /// - `build` closure that writes the `WriteRequestMessage` TLV body
-    ///  NOTE: The closure is `FnMut` because the MRP layer may retransmit the
-    ///  request multiple times; it MUST produce the same TLV output on every call.
+    /// - `build` closure that writes the `WriteRequestMessage` TLV body.
+    ///   NOTE: the closure is `FnMut` because the MRP layer may retransmit the
+    ///   request multiple times; it MUST produce the same TLV output on every call.
     ///
     /// # Returns
     /// - `Ok(WriteRespHandle)` once the request is ACK-ed and the response is parsed; call
@@ -174,8 +181,8 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     ///   request multiple times; it MUST produce the same TLV output on every call.
     ///
     /// # Returns
-    /// - `Ok(InvokeRespChunk)` once the request is ACK-ed and the first response chunk is parsed; multi-chunk
-    ///  `InvokeResponse` streams iterate via `InvokeRespChunk::complete()`.
+    /// - `Ok(InvokeRespChunk)` once the request is ACK-ed and the first response chunk is parsed;
+    ///   multi-chunk `InvokeResponse` streams iterate via `InvokeRespChunk::complete()`.
     /// - `Err` if the transaction fails at any point (request build, I/O, response parsing, etc.)
     async fn invoke_with<B>(
         self,
@@ -207,8 +214,8 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
     /// - `timed_timeout_ms` if `Some`, perform the initial handshake via a `TimedRequest` with the given timeout (in milliseconds)
     ///
     /// # Returns
-    /// - `Ok(InvokeSender)` ready for the caller to drive manually via `InvokeSender::tx()`
-    ///  The first call to [`InvokeSender::tx`] yields the initial builder.
+    /// - `Ok(InvokeSender)` ready for the caller to drive manually via `InvokeSender::tx()`.
+    ///   The first call to [`InvokeSender::tx`] yields the initial builder.
     /// - `Err` if the transaction fails at any point (I/O, etc.)
     ///
     /// # Lifecycle
@@ -224,6 +231,72 @@ pub trait ImClient<'a>: Sized + Into<Exchange<'a>> {
         let sender = exchange.into_sender()?;
         Ok(InvokeSender {
             state: InvokeSenderState::Ready(sender),
+        })
+    }
+
+    /// Perform the *establishment* phase of an IM subscribe
+    /// transaction.
+    ///
+    /// On the wire the establishment is a sequence of priming
+    /// `ReportData` chunks (each ACK-ed by the client with
+    /// `StatusResponse(Success)`) followed by a single
+    /// `SubscribeResponse` carrying `subscription_id` and the chosen
+    /// `max_int`. This method drives the request side and hands the
+    /// caller back the first priming chunk; the caller iterates
+    /// further priming chunks (and gets the terminal
+    /// [`SubscribeEstablished`]) via [`SubscribePrimingChunk::complete`].
+    ///
+    /// # Arguments
+    /// - `build` — closure that writes the `SubscribeRequestMessage`
+    ///   TLV body via the streaming [`SubscribeReqBuilder`]. NOTE:
+    ///   `FnMut` because the MRP layer may retransmit the request;
+    ///   it MUST produce the same TLV output on every call.
+    ///
+    /// # Returns
+    /// - `Ok(SubscribePrimingChunk)` for the first priming chunk;
+    ///   walk the chunk loop via [`SubscribePrimingChunk::complete`].
+    /// - `Err` on any failure (request build, I/O, response parsing,
+    ///   peer-side validation `StatusResponse(non-Success)`, …)
+    ///
+    /// # Scope: establishment only
+    ///
+    /// The *active* subscription phase — server-initiated
+    /// `ReportData` messages arriving on new exchanges throughout
+    /// the lifetime of the subscription — is **not** covered by
+    /// this method. That requires a listening loop on the
+    /// fabric/peer-node pair and is a separate piece of
+    /// infrastructure to layer on top. Once the
+    /// [`SubscribeEstablished`] is returned, the
+    /// fabric+peer+subscription-id triple identifies the active
+    /// subscription for any such future incoming reports.
+    async fn subscribe_with<B>(self, mut build: B) -> Result<SubscribePrimingChunk<'a>, Error>
+    where
+        B: FnMut(SubscribeReqBuilder<SubscribeSender<'a>>) -> Result<SubscribeSender<'a>, Error>,
+    {
+        let mut sender = self.subscribe_sender().await?;
+        loop {
+            match sender.tx().await? {
+                TxOutcome::BuildRequest(builder) => {
+                    sender = build(builder)?;
+                }
+                TxOutcome::GotResponse(chunk) => return Ok(chunk),
+            }
+        }
+    }
+
+    /// Perform the establishment phase of an IM subscribe transaction
+    /// without using a closure.
+    ///
+    /// # Returns
+    /// - `Ok(SubscribeSender)` ready to be driven manually via
+    ///   [`SubscribeSender::tx`]. The first call yields the initial
+    ///   [`SubscribeReqBuilder`].
+    /// - `Err` if the underlying exchange handoff fails.
+    async fn subscribe_sender(self) -> Result<SubscribeSender<'a>, Error> {
+        let exchange: Exchange<'a> = self.into();
+        let sender = exchange.into_sender()?;
+        Ok(SubscribeSender {
+            state: SubscribeSenderState::Ready(sender),
         })
     }
 }
@@ -923,6 +996,314 @@ impl<'a> InvokeRespChunk<'a> {
             Ok(None)
         }
     }
+}
+
+// =====================================================================
+// Transaction types for the `subscribe` opcode.
+//
+// On the wire the establishment of a subscription is:
+//   1. Client → SubscribeRequest
+//   2. Server → ReportData (priming, with `more_chunks=true` until
+//      the last chunk has `more_chunks=false`); client ACKs each
+//      with `StatusResponse(Success)`
+//   3. Server → SubscribeResponse (carries `subscription_id` and
+//      the chosen `max_int`)
+//
+// `SubscribeSender` drives the request side; `SubscribePrimingChunk`
+// owns the response stream during priming. The terminal
+// `complete()` returns either another priming chunk (more reports
+// coming) or `SubscribeEstablished` carrying the subscription id /
+// max interval. The exchange is dropped at that point; ongoing
+// (post-establishment) report messages arrive on server-initiated
+// exchanges and require a separate listening abstraction.
+// =====================================================================
+
+/// Cornerstone `subscribe` transaction. See module docs for the
+/// pattern. Returned by [`ImClient::subscribe_sender`].
+pub struct SubscribeSender<'a> {
+    state: SubscribeSenderState<'a>,
+}
+
+enum SubscribeSenderState<'a> {
+    Ready(OwnedSender<'a>),
+    Slot(SubscribeSenderSlot<'a>),
+}
+
+impl<'a> SubscribeSender<'a> {
+    /// Drive one round of the MRP retransmit loop. Same shape as
+    /// [`ReadSender::tx`] except the right arm holds a
+    /// [`SubscribePrimingChunk`] (the first priming `ReportData`).
+    pub async fn tx(
+        mut self,
+    ) -> Result<TxOutcome<SubscribeReqBuilder<SubscribeSender<'a>>, SubscribePrimingChunk<'a>>, Error>
+    {
+        let sender = match self.state {
+            SubscribeSenderState::Slot(slot) => slot.commit()?,
+            SubscribeSenderState::Ready(s) => s,
+        };
+
+        match sender.tx().await? {
+            Either::Left(tx) => {
+                self.state = SubscribeSenderState::Slot(SubscribeSenderSlot { tx, cursor: 0 });
+                let builder = SubscribeReqBuilder::new(self, &TLVTag::Anonymous)?;
+                Ok(TxOutcome::BuildRequest(builder))
+            }
+            Either::Right(exchange) => Ok(TxOutcome::GotResponse(
+                SubscribePrimingChunk::receive(exchange).await?,
+            )),
+        }
+    }
+}
+
+impl<'a> TLVBuilderParent for SubscribeSender<'a> {
+    type Write = SubscribeSenderSlot<'a>;
+
+    fn writer(&mut self) -> &mut Self::Write {
+        match &mut self.state {
+            SubscribeSenderState::Slot(slot) => slot,
+            SubscribeSenderState::Ready(_) => panic!(
+                "SubscribeSender::writer() called outside the build phase — \
+                 only reachable via a SubscribeReqBuilder yielded by SubscribeSender::tx."
+            ),
+        }
+    }
+}
+
+impl<'a> core::fmt::Debug for SubscribeSender<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "SubscribeSender")
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<'a> defmt::Format for SubscribeSender<'a> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "SubscribeSender")
+    }
+}
+
+/// Internal serialization handle for the in-flight build of a
+/// [`SubscribeSender`]. Same role as [`InvokeSenderSlot`] —
+/// see its docs for why this type exists.
+pub struct SubscribeSenderSlot<'a> {
+    tx: OwnedSenderTx<'a>,
+    cursor: usize,
+}
+
+impl<'a> SubscribeSenderSlot<'a> {
+    fn commit(self) -> Result<OwnedSender<'a>, Error> {
+        self.tx
+            .complete(0, self.cursor, OpCode::SubscribeRequest.into())
+    }
+}
+
+impl<'a> TLVWrite for SubscribeSenderSlot<'a> {
+    type Position = usize;
+
+    fn write(&mut self, byte: u8) -> Result<(), Error> {
+        let payload = self.tx.payload();
+        if self.cursor >= payload.len() {
+            return Err(ErrorCode::NoSpace.into());
+        }
+        payload[self.cursor] = byte;
+        self.cursor += 1;
+        Ok(())
+    }
+
+    fn get_tail(&self) -> Self::Position {
+        self.cursor
+    }
+
+    fn rewind_to(&mut self, pos: Self::Position) {
+        self.cursor = pos;
+    }
+}
+
+impl<'a> core::fmt::Debug for SubscribeSenderSlot<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "SubscribeSenderSlot({})", self.cursor)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<'a> defmt::Format for SubscribeSenderSlot<'a> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "SubscribeSenderSlot({})", self.cursor)
+    }
+}
+
+/// First (possibly only) priming `ReportData` chunk of a subscribe
+/// transaction. Returned by [`SubscribeSender::tx`] once the peer has
+/// ACK-ed the `SubscribeRequest` and the first `ReportData` is
+/// parsed. Same `response()` shape as [`ReadRespChunk`].
+///
+/// Walk the priming sequence — and pick up the final
+/// [`SubscribeEstablished`] — via [`Self::complete`].
+pub struct SubscribePrimingChunk<'a> {
+    exchange: Exchange<'a>,
+}
+
+impl<'a> core::fmt::Debug for SubscribePrimingChunk<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "SubscribePrimingChunk")
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<'a> defmt::Format for SubscribePrimingChunk<'a> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "SubscribePrimingChunk")
+    }
+}
+
+impl<'a> SubscribePrimingChunk<'a> {
+    async fn receive(mut exchange: Exchange<'a>) -> Result<Self, Error> {
+        exchange.recv_fetch().await?;
+        {
+            let rx = exchange.rx()?;
+            check_opcode(rx.meta().proto_opcode, OpCode::ReportData)?;
+        }
+        Ok(Self { exchange })
+    }
+
+    /// Borrowed access to the parsed `ReportDataResp` for this
+    /// priming chunk. The returned value points into the exchange's
+    /// RX buffer; its lifetime is the borrow of this chunk.
+    pub fn response(&self) -> Result<ReportDataResp<'_>, Error> {
+        let rx = self.exchange.rx()?;
+        let element = TLVElement::new(rx.payload());
+        ReportDataResp::from_tlv(&element)
+    }
+
+    /// ACK the current priming chunk and advance to the next stage:
+    ///
+    /// - If the chunk's `more_chunks=true`: send
+    ///   `StatusResponse(Success)`, fetch the next priming
+    ///   `ReportData`, and return `Ok(NextChunk(self))`.
+    /// - If `more_chunks=false`: send the trailing
+    ///   `StatusResponse(Success)`, then await + parse the peer's
+    ///   `SubscribeResponse`, and return `Ok(Established(...))` with
+    ///   the subscription id and chosen max interval.
+    /// - If the priming stream is aborted (peer sends
+    ///   `StatusResponse(non-Success)` instead of either `ReportData`
+    ///   or `SubscribeResponse`), return `Err`.
+    pub async fn complete(mut self) -> Result<SubscribeOutcome<'a>, Error> {
+        let (more_chunks, suppress_response) = {
+            let resp = self.response()?;
+            (
+                resp.more_chunks.unwrap_or(false),
+                resp.suppress_response.unwrap_or(false),
+            )
+        };
+
+        if more_chunks {
+            // Spec forbids suppress_response=true alongside
+            // more_chunks=true (same constraint as ReadRespChunk).
+            if suppress_response {
+                send_abort(&mut self.exchange).await?;
+                return Err(ErrorCode::InvalidData.into());
+            }
+
+            // ACK with StatusResponse(Success), fetch next ReportData.
+            self.exchange
+                .send_with(|_, wb| {
+                    StatusResp::write(wb, IMStatusCode::Success)?;
+                    Ok(Some(OpCode::StatusResponse.into()))
+                })
+                .await?;
+
+            self.exchange.recv_fetch().await?;
+            {
+                let rx = self.exchange.rx()?;
+                check_opcode(rx.meta().proto_opcode, OpCode::ReportData)?;
+            }
+
+            Ok(SubscribeOutcome::NextChunk(self))
+        } else {
+            // Last priming ReportData. Send the trailing
+            // StatusResponse(Success) (unless the server explicitly
+            // suppressed it — unusual for subscribe but legal) and
+            // wait for the peer's SubscribeResponse.
+            if !suppress_response {
+                self.exchange
+                    .send_with(|_, wb| {
+                        StatusResp::write(wb, IMStatusCode::Success)?;
+                        Ok(Some(OpCode::StatusResponse.into()))
+                    })
+                    .await?;
+            }
+
+            self.exchange.recv_fetch().await?;
+            let opcode = self.exchange.rx()?.meta().proto_opcode;
+
+            if opcode == OpCode::SubscribeResponse as u8 {
+                let (subscription_id, max_int) = {
+                    let rx = self.exchange.rx()?;
+                    let resp = SubscribeResp::from_tlv(&TLVElement::new(rx.payload()))?;
+                    (resp.subs_id, resp.max_int)
+                };
+                // ACK the SubscribeResponse at the MRP layer. After
+                // this the establishment exchange is terminal; the
+                // ongoing subscription lives on the (fab, peer, sub_id)
+                // triple via server-initiated future exchanges.
+                self.exchange.acknowledge().await?;
+                Ok(SubscribeOutcome::Established(SubscribeEstablished {
+                    subscription_id,
+                    max_int,
+                }))
+            } else if opcode == OpCode::StatusResponse as u8 {
+                // Peer aborted the establishment after the last
+                // priming chunk — e.g. ran out of subscription
+                // slots. Translate the status into an Error.
+                let status = {
+                    let rx = self.exchange.rx()?;
+                    StatusResp::from_tlv(&TLVElement::new(rx.payload()))?.status
+                };
+                self.exchange.acknowledge().await?;
+                error!(
+                    "Subscribe establishment aborted: StatusResponse({:?})",
+                    status
+                );
+                Err(status.to_error_code().unwrap_or(ErrorCode::Failure).into())
+            } else {
+                Err(ErrorCode::InvalidOpcode.into())
+            }
+        }
+    }
+}
+
+/// What [`SubscribePrimingChunk::complete`] returns: either the
+/// next priming chunk in the sequence, or the terminal
+/// [`SubscribeEstablished`] carrying the negotiated subscription
+/// identity.
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum SubscribeOutcome<'a> {
+    /// More priming `ReportData` chunks coming — process this one
+    /// and call `complete()` again on it.
+    NextChunk(SubscribePrimingChunk<'a>),
+    /// Establishment complete: subscription is active on the peer.
+    /// The exchange is no longer needed (it has been dropped); the
+    /// `(fabric, peer_node_id, subscription_id)` triple identifies
+    /// the subscription for any server-initiated future reports.
+    Established(SubscribeEstablished),
+}
+
+/// Result of a successful subscribe-establishment: the
+/// subscription-identifier issued by the peer plus the maximum
+/// reporting interval (seconds) the peer committed to.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct SubscribeEstablished {
+    /// Subscription identifier chosen by the peer (Matter Core spec
+    /// §8.5.2). Combined with the accessing fabric and the peer
+    /// node id, this is the lookup key for the active subscription.
+    pub subscription_id: u32,
+    /// Maximum reporting interval (seconds) the peer committed to.
+    /// The peer MUST report no less frequently than this — see
+    /// Matter Core spec §8.5.3. Use this to drive a watchdog if the
+    /// caller wants to detect a silently-broken subscription.
+    pub max_int: u16,
 }
 
 // =====================================================================
