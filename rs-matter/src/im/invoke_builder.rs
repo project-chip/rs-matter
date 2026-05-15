@@ -35,12 +35,15 @@
 //! | 1   | TimedRequest     | bool           | **yes**  |
 //! | 2   | InvokeRequests   | array[CmdData] | **yes**  |
 //!
-//! All three are mandatory per the spec (and Matter 1.5
+//! All three are mandatory on the wire per the spec — and Matter 1.5
 //! strictly-validating peers like SmartThings reject requests with
-//! either bool field absent). The typestate machine therefore
-//! requires `suppress_response()`, `timed_request()`, and
-//! `invoke_requests()` to be called in order — there's no
-//! implicit-skip on this builder for the first two fields.
+//! either bool field absent — so the builder always emits all three.
+//! At the API level, however, the two booleans are *optional*: the
+//! caller may skip `suppress_response()` and/or `timed_request()` and
+//! the builder will fill them in with their default value (`false`)
+//! automatically. The default matches what every normal client
+//! wants — receive a response, no timed-request handshake — so the
+//! common-case ceremony collapses to just `invoke_requests()?`.
 //!
 //! `CmdData` (`CommandDataIB`) is a struct with:
 //!
@@ -60,9 +63,9 @@
 //! ```ignore
 //! exchange.send_with(|_, wb| {
 //!     let parent = TLVWriteParent::new("InvokeRequest", wb);
+//!     // `suppress_response` and `timed_request` are skipped here —
+//!     // the builder fills them in as `false` on the wire.
 //!     InvReqBuilder::new(parent)?
-//!         .suppress_response(false)?
-//!         .timed_request(false)?
 //!         .invoke_requests()?
 //!             .push()?
 //!                 .path(1, 0x0006 /* OnOff */, 0x02 /* Toggle */)?
@@ -88,12 +91,15 @@ use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite, ToTLV};
 /// Streaming builder for an `InvokeRequestMessage`. Type-state-tagged
 /// so the compiler enforces in-order field writes.
 ///
-/// **No implicit-skip on the top-level fields** — Matter Core spec
-/// §8.8.5 makes `SuppressResponse`, `TimedRequest`, and
-/// `InvokeRequests` all mandatory, so the user must call each
-/// setter. The CmdData entries inside the array do have an
-/// optional `CommandRef`, which is implicitly skipped per the
-/// `write_builder` convention.
+/// All three top-level fields (`SuppressResponse`, `TimedRequest`,
+/// `InvokeRequests`) are mandatory on the wire per Matter Core spec
+/// §8.8.5, and the builder always emits all three. The two booleans
+/// are *optional at the API level* though — skipping either setter
+/// causes the builder to write the field with its default value
+/// (`false`) before opening the next state. This matches the
+/// `write_builder` ergonomics and keeps the common-case ceremony to
+/// `invoke_requests()?` only. The CmdData entries inside the array
+/// have an optional `CommandRef`, also implicitly skippable.
 ///
 /// Field-state values:
 /// - `0`: nothing written yet
@@ -115,16 +121,6 @@ where
         p.writer().start_struct(tag)?;
         Ok(Self { p })
     }
-
-    /// Write the mandatory `SuppressResponse` field. `false` is the
-    /// typical value — most commands have a response and the client
-    /// wants to receive it.
-    pub fn suppress_response(mut self, value: bool) -> Result<InvReqBuilder<P, 1>, Error> {
-        self.p
-            .writer()
-            .bool(&TLVTag::Context(InvReqTag::SupressResponse as u8), value)?;
-        Ok(InvReqBuilder { p: self.p })
-    }
 }
 
 impl<P> TLVBuilder<P> for InvReqBuilder<P, 0>
@@ -140,13 +136,57 @@ where
     }
 }
 
+// ---------------------------------------------------------------------
+// `suppress_response` — optional in the *API* but mandatory on the
+// *wire*. Settable from state 0 (advances to state 1). Skipping —
+// going straight to `timed_request` or `invoke_requests` — causes the
+// builder to emit the field with its default value (`false`)
+// automatically, so strictly-validating peers (e.g. Matter 1.5
+// SmartThings) still see all three top-level fields present.
+// ---------------------------------------------------------------------
+impl<P> InvReqBuilder<P, 0>
+where
+    P: TLVBuilderParent,
+{
+    /// Write the `SuppressResponse` field. Omitting this call is
+    /// equivalent to `suppress_response(false)` (i.e. the typical
+    /// case — most clients want a response); the builder emits the
+    /// default automatically when `timed_request` or
+    /// `invoke_requests` is called from state 0. Set to `true` only
+    /// for fire-and-forget commands.
+    pub fn suppress_response(mut self, value: bool) -> Result<InvReqBuilder<P, 1>, Error> {
+        self.p
+            .writer()
+            .bool(&TLVTag::Context(InvReqTag::SupressResponse as u8), value)?;
+        Ok(InvReqBuilder { p: self.p })
+    }
+}
+
+// ---------------------------------------------------------------------
+// `timed_request` — same shape: optional in the API (defaults to
+// `false`), mandatory on the wire. Settable from state 0 or 1.
+// ---------------------------------------------------------------------
+impl<P> InvReqBuilder<P, 0>
+where
+    P: TLVBuilderParent,
+{
+    /// Write the `TimedRequest` field, implicitly emitting
+    /// `SuppressResponse(false)` first (the common-case default).
+    pub fn timed_request(self, value: bool) -> Result<InvReqBuilder<P, 2>, Error> {
+        self.suppress_response(false)?.timed_request(value)
+    }
+}
+
 impl<P> InvReqBuilder<P, 1>
 where
     P: TLVBuilderParent,
 {
-    /// Write the mandatory `TimedRequest` field. Set to `true` only
-    /// when the surrounding flow sent a `TimedRequest` IM message
-    /// first (some commands like ACL writes require this).
+    /// Write the `TimedRequest` field. Omitting this call is
+    /// equivalent to `timed_request(false)`; the builder emits the
+    /// default automatically when `invoke_requests` is called from
+    /// state 1. Set to `true` only when the surrounding flow sent a
+    /// `TimedRequest` IM message first (some commands like ACL
+    /// writes require this).
     pub fn timed_request(mut self, value: bool) -> Result<InvReqBuilder<P, 2>, Error> {
         self.p
             .writer()
@@ -155,13 +195,40 @@ where
     }
 }
 
+// ---------------------------------------------------------------------
+// `invoke_requests` — required; openable from state 0, 1, or 2.
+// Calling from 0 or 1 fills in the missing default fields first so
+// the wire layout always contains all three top-level fields.
+// ---------------------------------------------------------------------
+impl<P> InvReqBuilder<P, 0>
+where
+    P: TLVBuilderParent,
+{
+    /// Open the `InvokeRequests` array, implicitly emitting
+    /// `SuppressResponse(false)` and `TimedRequest(false)` first.
+    pub fn invoke_requests(self) -> Result<CmdDataArrayBuilder<InvReqBuilder<P, 3>>, Error> {
+        self.suppress_response(false)?.invoke_requests()
+    }
+}
+
+impl<P> InvReqBuilder<P, 1>
+where
+    P: TLVBuilderParent,
+{
+    /// Open the `InvokeRequests` array, implicitly emitting
+    /// `TimedRequest(false)` first.
+    pub fn invoke_requests(self) -> Result<CmdDataArrayBuilder<InvReqBuilder<P, 3>>, Error> {
+        self.timed_request(false)?.invoke_requests()
+    }
+}
+
 impl<P> InvReqBuilder<P, 2>
 where
     P: TLVBuilderParent,
 {
-    /// Open the mandatory `InvokeRequests` array. Each `.push()`
-    /// starts one [`CmdDataBuilder`]; close with `.end()` to return
-    /// to the message builder.
+    /// Open the `InvokeRequests` array. Each `.push()` starts one
+    /// [`CmdDataBuilder`]; close with `.end()` to return to the
+    /// message builder.
     pub fn invoke_requests(self) -> Result<CmdDataArrayBuilder<InvReqBuilder<P, 3>>, Error> {
         CmdDataArrayBuilder::new(
             InvReqBuilder { p: self.p },

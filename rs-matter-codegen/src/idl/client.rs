@@ -590,10 +590,11 @@ fn client_trait(
                     use self::#cmd_requests_trait_name as _Cmds;
 
                     #chunk_binding = _ImClient::invoke_with(self, None, |msg| {
-                        let entries = msg
-                            .suppress_response(false)?
-                            .timed_request(false)?
-                            .invoke_requests()?;
+                        // `suppress_response` and `timed_request` are
+                        // skipped — `InvReqBuilder` fills them in as
+                        // `false` on the wire (the common-case
+                        // default).
+                        let entries = msg.invoke_requests()?;
                         let req_builder = entries.#push_method(endpoint)?;
                         let cmd_data = request(req_builder)?;
                         cmd_data.end()?.end()?.end()
@@ -618,9 +619,9 @@ fn client_trait(
                     use self::#cmd_requests_trait_name as _Cmds;
 
                     #chunk_binding = _ImClient::invoke_with(self, None, |msg| {
-                        msg.suppress_response(false)?
-                            .timed_request(false)?
-                            .invoke_requests()?
+                        // `suppress_response` / `timed_request`
+                        // skipped — see the parameterized branch.
+                        msg.invoke_requests()?
                             .#push_method(endpoint)?
                             .end()?
                             .end()

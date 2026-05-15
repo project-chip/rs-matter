@@ -38750,9 +38750,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::invoke_with(self, None, |msg| {
-                msg.suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?
+                msg.invoke_requests()?
                     .push_unit_testing_test(endpoint)?
                     .end()?
                     .end()
@@ -38770,9 +38768,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::invoke_with(self, None, |msg| {
-                msg.suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?
+                msg.invoke_requests()?
                     .push_unit_testing_test_not_handled(endpoint)?
                     .end()?
                     .end()
@@ -38790,9 +38786,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                msg.suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?
+                msg.invoke_requests()?
                     .push_unit_testing_test_specific(endpoint)?
                     .end()?
                     .end()
@@ -38807,9 +38801,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::invoke_with(self, None, |msg| {
-                msg.suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?
+                msg.invoke_requests()?
                     .push_unit_testing_test_unknown_command(endpoint)?
                     .end()?
                     .end()
@@ -38855,10 +38847,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder = entries.push_unit_testing_test_add_arguments(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
@@ -38901,10 +38890,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_simple_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -38948,10 +38934,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_struct_array_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -38995,10 +38978,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_struct_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39042,10 +39022,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_nested_struct_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39089,10 +39066,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_list_struct_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39136,10 +39110,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_list_int_8_u_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39183,10 +39154,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_nested_struct_list_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39230,10 +39198,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder = entries
                     .push_unit_testing_test_list_nested_struct_list_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39277,10 +39242,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_list_int_8_u_reverse_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39324,10 +39286,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder = entries.push_unit_testing_test_enums_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
@@ -39370,10 +39329,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_nullable_optional_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39417,10 +39373,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_complex_nullable_optional_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39464,10 +39417,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder = entries.push_unit_testing_simple_struct_echo_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
@@ -39482,9 +39432,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::invoke_with(self, None, |msg| {
-                msg.suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?
+                msg.invoke_requests()?
                     .push_unit_testing_timed_invoke_request(endpoint)?
                     .end()?
                     .end()
@@ -39530,10 +39478,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_simple_optional_argument_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39580,10 +39525,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_emit_test_event_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39627,10 +39569,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder = entries
                     .push_unit_testing_test_emit_test_fabric_scoped_event_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39674,10 +39613,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder = entries.push_unit_testing_test_batch_helper_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
@@ -39720,10 +39656,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_second_batch_helper_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
@@ -39767,10 +39700,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder = entries.push_unit_testing_string_echo_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
@@ -39813,10 +39743,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder = entries.push_unit_testing_global_echo_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
                 cmd_data.end()?.end()?.end()
@@ -39831,9 +39758,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let mut chunk = _ImClient::invoke_with(self, None, |msg| {
-                msg.suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?
+                msg.invoke_requests()?
                     .push_unit_testing_test_check_command_flags(endpoint)?
                     .end()?
                     .end()
@@ -39879,10 +39804,7 @@ pub mod unit_testing {
             use self::UnitTestingCmdRequests as _Cmds;
             use rs_matter_crate::im::client::ImClient as _ImClient;
             let chunk = _ImClient::invoke_with(self, None, |msg| {
-                let entries = msg
-                    .suppress_response(false)?
-                    .timed_request(false)?
-                    .invoke_requests()?;
+                let entries = msg.invoke_requests()?;
                 let req_builder =
                     entries.push_unit_testing_test_different_vendor_mei_request(endpoint)?;
                 let cmd_data = request(req_builder)?;
