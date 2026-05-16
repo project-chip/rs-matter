@@ -37,6 +37,7 @@ pub mod grp_key_mgmt;
 pub mod identify;
 pub mod net_comm;
 pub mod noc;
+pub mod sw_diag;
 pub mod thread_diag;
 pub mod unit_testing;
 pub mod user_label;

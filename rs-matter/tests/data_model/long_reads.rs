@@ -15,22 +15,25 @@
  *    limitations under the License.
  */
 
+use std::collections::BTreeSet;
+
+use embassy_futures::block_on;
+use embassy_futures::select::select;
+
 use rs_matter::dm::clusters::app::on_off;
 use rs_matter::dm::clusters::{
     acl, adm_comm, basic_info, desc, gen_comm, gen_diag, grp_key_mgmt, net_comm, noc,
 };
 use rs_matter::dm::GlobalElements;
+use rs_matter::im::client::{ImClient, SubscribeOutcome, TxOutcome};
 use rs_matter::im::AttrPath;
+use rs_matter::im::AttrResp;
 use rs_matter::im::GenericPath;
-use rs_matter::im::IMStatusCode;
-use rs_matter::im::{StatusResp, SubscribeResp};
+use rs_matter::utils::select::Coalesce;
 
 use crate::common::e2e::im::attributes::TestAttrResp;
-use crate::common::e2e::im::{echo_cluster as echo, ReplyProcessor, TestSubscribeReq};
-use crate::common::e2e::im::{TestReadReq, TestReportDataMsg};
+use crate::common::e2e::im::echo_cluster as echo;
 use crate::common::e2e::new_default_runner;
-use crate::common::e2e::test::E2eTest;
-use crate::common::e2e::tlv::TLVTest;
 use crate::common::init_env_logger;
 use crate::{attr_data, attr_data_lel};
 
@@ -105,6 +108,13 @@ static ATTR_RESPS: &[TestAttrResp<'static>] = &[
     attr_data!(0, 51, GlobalElements::AttributeList, None),
     attr_data!(0, 51, GlobalElements::FeatureMap, None),
     attr_data!(0, 51, GlobalElements::ClusterRevision, None),
+    // SoftwareDiagnostics (0x0034 = 52): stub handler exposing only
+    // required globals (no feature bits claimed, no concrete attrs).
+    attr_data!(0, 52, GlobalElements::GeneratedCmdList, None),
+    attr_data!(0, 52, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 52, GlobalElements::AttributeList, None),
+    attr_data!(0, 52, GlobalElements::FeatureMap, None),
+    attr_data!(0, 52, GlobalElements::ClusterRevision, None),
     attr_data!(0, 60, adm_comm::AttributeId::WindowStatus, None),
     attr_data!(0, 60, adm_comm::AttributeId::AdminFabricIndex, None),
     attr_data!(0, 60, adm_comm::AttributeId::AdminVendorId, None),
@@ -265,6 +275,13 @@ static ATTR_SUBSCR_RESPS: &[TestAttrResp<'static>] = &[
     attr_data!(0, 51, GlobalElements::AttributeList, None),
     attr_data!(0, 51, GlobalElements::FeatureMap, None),
     attr_data!(0, 51, GlobalElements::ClusterRevision, None),
+    // SoftwareDiagnostics (0x0034 = 52): stub handler exposing only
+    // required globals (no feature bits claimed, no concrete attrs).
+    attr_data!(0, 52, GlobalElements::GeneratedCmdList, None),
+    attr_data!(0, 52, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 52, GlobalElements::AttributeList, None),
+    attr_data!(0, 52, GlobalElements::FeatureMap, None),
+    attr_data!(0, 52, GlobalElements::ClusterRevision, None),
     attr_data!(0, 60, adm_comm::AttributeId::WindowStatus, None),
     attr_data!(0, 60, adm_comm::AttributeId::AdminFabricIndex, None),
     attr_data!(0, 60, adm_comm::AttributeId::AdminVendorId, None),
@@ -354,153 +371,213 @@ static ATTR_SUBSCR_RESPS: &[TestAttrResp<'static>] = &[
     attr_data!(1, echo::ID, GlobalElements::ClusterRevision, None),
 ];
 
-#[test]
-fn test_long_read_success() {
-    const PART_1: usize = 38;
-    const PART_2: usize = 37;
-    const PART_3: usize = 37;
-    const PART_4: usize = 34;
-
-    // Read the entire attribute database, which requires multiple reads to complete
-    init_env_logger();
-
-    let im = new_default_runner();
-    let handler = im.handler();
-
-    im.add_default_acl();
-
-    im.test_all(
-        &handler,
-        [
-            &TLVTest::read(
-                TestReadReq::reqs(&[AttrPath::from_gp(&GenericPath::new(None, None, None))]),
-                TestReportDataMsg {
-                    attr_reports: Some(&ATTR_RESPS[..PART_1]),
-                    more_chunks: Some(true),
-                    ..Default::default()
-                },
-                ReplyProcessor::remove_attr_data,
-            ) as &dyn E2eTest,
-            &TLVTest::continue_report(
-                StatusResp {
-                    status: IMStatusCode::Success,
-                    ..Default::default()
-                },
-                TestReportDataMsg {
-                    attr_reports: Some(&ATTR_RESPS[PART_1..][..PART_2]),
-                    more_chunks: Some(true),
-                    ..Default::default()
-                },
-                ReplyProcessor::remove_attr_data,
-            ),
-            &TLVTest::continue_report(
-                StatusResp {
-                    status: IMStatusCode::Success,
-                    ..Default::default()
-                },
-                TestReportDataMsg {
-                    attr_reports: Some(&ATTR_RESPS[PART_1..][PART_2..][..PART_3]),
-                    more_chunks: Some(true),
-                    ..Default::default()
-                },
-                ReplyProcessor::remove_attr_data,
-            ),
-            &TLVTest::continue_report(
-                StatusResp {
-                    status: IMStatusCode::Success,
-                    ..Default::default()
-                },
-                TestReportDataMsg {
-                    attr_reports: Some(&ATTR_RESPS[PART_1..][PART_2..][PART_3..][..PART_4]),
-                    suppress_response: Some(true),
-                    ..Default::default()
-                },
-                ReplyProcessor::remove_attr_data,
-            ),
-        ],
-    );
+/// Collect the expected `(endpoint, cluster, attr)` triples out of
+/// the test-friendly `TestAttrResp` array (which mixes `AttrData`
+/// and `AttrStatus`; we keep only the data entries). Sorted into a
+/// `BTreeSet` so set-difference produces deterministic diff output
+/// on failure.
+fn expected_paths(resps: &[TestAttrResp<'_>]) -> BTreeSet<(u16, u32, u32)> {
+    resps
+        .iter()
+        .filter_map(|r| match r {
+            TestAttrResp::AttrData(d) => {
+                let ep = d.path.endpoint?;
+                let cl = d.path.cluster?;
+                let at = d.path.attr?;
+                Some((ep, cl, at))
+            }
+            TestAttrResp::AttrStatus(_) => None,
+        })
+        .collect()
 }
 
-#[test]
-fn test_long_read_subscription_success() {
-    const PART_1: usize = 38;
-    const PART_2: usize = 37;
-    const PART_3: usize = 37;
-    const PART_4: usize = 34;
+/// Pretty-print a path-set diff in two halves: paths the test
+/// expected but didn't see, then paths the device sent that the
+/// test wasn't expecting. Empty sections are omitted.
+fn pretty_diff(expected: &BTreeSet<(u16, u32, u32)>, actual: &BTreeSet<(u16, u32, u32)>) -> String {
+    use core::fmt::Write;
+    let missing: Vec<_> = expected.difference(actual).copied().collect();
+    let extra: Vec<_> = actual.difference(expected).copied().collect();
+    let mut s = String::new();
+    if !missing.is_empty() {
+        writeln!(s, "  expected but missing ({}):", missing.len()).unwrap();
+        for (ep, cl, at) in &missing {
+            writeln!(s, "    ep={ep} cluster=0x{cl:04x} attr=0x{at:04x}").unwrap();
+        }
+    }
+    if !extra.is_empty() {
+        writeln!(s, "  unexpected in response ({}):", extra.len()).unwrap();
+        for (ep, cl, at) in &extra {
+            writeln!(s, "    ep={ep} cluster=0x{cl:04x} attr=0x{at:04x}").unwrap();
+        }
+    }
+    s
+}
 
-    // Subscribe to the entire attribute database, which requires multiple reads to complete
+/// Drive a full-wildcard read through the IM client, walk every
+/// response chunk, and aggregate the `(endpoint, cluster, attr)`
+/// triples actually delivered into a deduplicated set.
+///
+/// Why a set (and not the exact sequence as the test used to do):
+/// the byte-budget chunk boundary is sensitive to *every* attribute
+/// on every endpoint, so adding a single cluster (or a single attr
+/// to an existing cluster) reshuffles chunk contents and may flip
+/// list-typed attributes between one-blob and per-element streaming.
+/// What we actually want to verify is invariant under all of that:
+/// the device emits exactly the expected set of paths across the
+/// chunked stream, and the chunked stream does chunk (i.e. multi-MTU).
+/// `listIndex` is intentionally dropped — list-element streaming
+/// produces multiple `AttrData` entries with the same path differing
+/// only by `listIndex`/data, which collapses to a single path here.
+#[test]
+fn test_long_read_success() {
     init_env_logger();
 
     let im = new_default_runner();
     let handler = im.handler();
-
     im.add_default_acl();
 
-    im.test_all(
-        &handler,
-        [
-            &TLVTest::subscribe(
-                TestSubscribeReq {
-                    min_int_floor: 1,
-                    max_int_ceil: 10,
-                    ..TestSubscribeReq::reqs(&[AttrPath::from_gp(&GenericPath::new(
-                        None, None, None,
-                    ))])
-                },
-                TestReportDataMsg {
-                    subscription_id: Some(1),
-                    attr_reports: Some(&ATTR_SUBSCR_RESPS[..PART_1]),
-                    more_chunks: Some(true),
-                    ..Default::default()
-                },
-                ReplyProcessor::remove_attr_data,
-            ) as &dyn E2eTest,
-            &TLVTest::continue_report(
-                StatusResp {
-                    status: IMStatusCode::Success,
-                    ..Default::default()
-                },
-                TestReportDataMsg {
-                    subscription_id: Some(1),
-                    attr_reports: Some(&ATTR_SUBSCR_RESPS[PART_1..][..PART_2]),
-                    more_chunks: Some(true),
-                    ..Default::default()
-                },
-                ReplyProcessor::remove_attr_data,
-            ),
-            &TLVTest::continue_report(
-                StatusResp {
-                    status: IMStatusCode::Success,
-                    ..Default::default()
-                },
-                TestReportDataMsg {
-                    subscription_id: Some(1),
-                    attr_reports: Some(&ATTR_SUBSCR_RESPS[PART_1..][PART_2..][..PART_3]),
-                    more_chunks: Some(true),
-                    ..Default::default()
-                },
-                ReplyProcessor::remove_attr_data,
-            ),
-            &TLVTest::continue_report(
-                StatusResp {
-                    status: IMStatusCode::Success,
-                    ..Default::default()
-                },
-                TestReportDataMsg {
-                    subscription_id: Some(1),
-                    attr_reports: Some(&ATTR_SUBSCR_RESPS[PART_1..][PART_2..][PART_3..][..PART_4]),
-                    ..Default::default()
-                },
-                ReplyProcessor::remove_attr_data,
-            ),
-            &TLVTest::subscribe_final(
-                StatusResp {
-                    status: IMStatusCode::Success,
-                    ..Default::default()
-                },
-                SubscribeResp::new(1, 40),
-                ReplyProcessor::none,
-            ),
-        ],
-    );
+    let expected = expected_paths(ATTR_RESPS);
+
+    block_on(
+        select(im.run(handler), async {
+            let exchange = im.initiate_exchange().await?;
+            let mut sender = exchange.read_sender().await?;
+
+            let paths = [AttrPath::from_gp(&GenericPath::new(None, None, None))];
+
+            let mut chunk = loop {
+                match sender.tx().await? {
+                    TxOutcome::BuildRequest(builder) => {
+                        sender = builder
+                            .attr_requests_from(&paths)?
+                            .fabric_filtered(false)?
+                            .end()?;
+                    }
+                    TxOutcome::GotResponse(c) => break c,
+                }
+            };
+
+            let mut actual: BTreeSet<(u16, u32, u32)> = BTreeSet::new();
+            let mut chunk_count = 0u32;
+            loop {
+                chunk_count += 1;
+                {
+                    let resp = chunk.response()?;
+                    if let Some(reports) = &resp.attr_reports {
+                        for r in reports.iter() {
+                            if let Ok(AttrResp::Data(d)) = r {
+                                if let (Some(ep), Some(cl), Some(at)) =
+                                    (d.path.endpoint, d.path.cluster, d.path.attr)
+                                {
+                                    actual.insert((ep, cl, at));
+                                }
+                            }
+                        }
+                    }
+                }
+                match chunk.complete().await? {
+                    Some(next) => chunk = next,
+                    None => break,
+                }
+            }
+
+            assert!(
+                chunk_count > 1,
+                "Wildcard read of the full attribute database should produce a chunked \
+                 stream (>1 ReportData), but got only {chunk_count} chunk(s)"
+            );
+            assert!(
+                expected == actual,
+                "Path set mismatch after a full-wildcard read:\n{}",
+                pretty_diff(&expected, &actual)
+            );
+
+            Ok(())
+        })
+        .coalesce(),
+    )
+    .unwrap()
+}
+
+/// Subscribe variant of `test_long_read_success`: same set-based
+/// path check on the priming `ReportData` chunks, plus the terminal
+/// `SubscribeResponse` (subscription id assigned, max-int clamped
+/// to the server's floor).
+#[test]
+fn test_long_read_subscription_success() {
+    init_env_logger();
+
+    let im = new_default_runner();
+    let handler = im.handler();
+    im.add_default_acl();
+
+    let expected = expected_paths(ATTR_SUBSCR_RESPS);
+
+    block_on(
+        select(im.run(handler), async {
+            let exchange = im.initiate_exchange().await?;
+            let mut sender = exchange.subscribe_sender().await?;
+
+            let paths = [AttrPath::from_gp(&GenericPath::new(None, None, None))];
+
+            let mut chunk = loop {
+                match sender.tx().await? {
+                    TxOutcome::BuildRequest(builder) => {
+                        sender = builder
+                            .keep_subs(true)?
+                            .min_int_floor(1)?
+                            .max_int_ceil(10)?
+                            .attr_requests_from(&paths)?
+                            .fabric_filtered(false)?
+                            .end()?;
+                    }
+                    TxOutcome::GotResponse(c) => break c,
+                }
+            };
+
+            let mut actual: BTreeSet<(u16, u32, u32)> = BTreeSet::new();
+            let mut chunk_count = 0u32;
+            let established = loop {
+                chunk_count += 1;
+                {
+                    let resp = chunk.response()?;
+                    if let Some(reports) = &resp.attr_reports {
+                        for r in reports.iter() {
+                            if let Ok(AttrResp::Data(d)) = r {
+                                if let (Some(ep), Some(cl), Some(at)) =
+                                    (d.path.endpoint, d.path.cluster, d.path.attr)
+                                {
+                                    actual.insert((ep, cl, at));
+                                }
+                            }
+                        }
+                    }
+                }
+                match chunk.complete().await? {
+                    SubscribeOutcome::NextChunk(next) => chunk = next,
+                    SubscribeOutcome::Established(est) => break est,
+                }
+            };
+
+            assert!(
+                chunk_count > 1,
+                "Wildcard subscribe priming should produce a chunked stream \
+                 (>1 ReportData), but got only {chunk_count} chunk(s)"
+            );
+            assert!(
+                expected == actual,
+                "Path set mismatch after a full-wildcard subscribe priming:\n{}",
+                pretty_diff(&expected, &actual)
+            );
+            assert_ne!(
+                established.subscription_id, 0,
+                "Server should have assigned a non-zero subscription id"
+            );
+
+            Ok(())
+        })
+        .coalesce(),
+    )
+    .unwrap()
 }
