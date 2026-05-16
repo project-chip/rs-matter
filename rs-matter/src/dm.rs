@@ -32,7 +32,7 @@ use crate::error::{Error, ErrorCode};
 use crate::im::{
     AttrPath, EventPriority, EventResp, EventStatus, IMStatusCode, InvReq, InvRespTag, OpCode,
     ReadReq, ReportDataReq, ReportDataRespTag, StatusResp, SubscribeReq, SubscribeResp, TimedReq,
-    WriteReq, WriteRespTag, PROTO_ID_INTERACTION_MODEL,
+    WriteReq, WriteRespTag, IM_REVISION, PROTO_ID_INTERACTION_MODEL,
 };
 use crate::persist::KvBlobStoreAccess;
 use crate::respond::ExchangeHandler;
@@ -1512,6 +1512,15 @@ where
             }
         };
 
+        // InteractionModelRevision is mandatory in all IM messages from
+        // Matter 1.0 onward (TLV tag 0xFF). matter.js validates this
+        // strictly and refuses to commission devices that omit it; the
+        // reference chip-tool happens to tolerate the absence.
+        wb.u8(
+            &TLVTag::Context(GlobalElements::InteractionModelRevision as u8),
+            IM_REVISION,
+        )?;
+
         wb.end_container()?;
 
         Ok(())
@@ -1581,6 +1590,12 @@ where
         }
 
         wb.end_container()?;
+        // Mandatory `interactionModelRevision` (tag 0xFF); see note in
+        // the ReportData emitter above.
+        wb.u8(
+            &TLVTag::Context(GlobalElements::InteractionModelRevision as u8),
+            IM_REVISION,
+        )?;
         wb.end_container()?;
 
         self.invoker
@@ -1655,6 +1670,13 @@ where
             wb.end_container()?;
         }
 
+        // Mandatory `interactionModelRevision` (tag 0xFF) at the end of
+        // every IM message — see the matching note in the ReportData
+        // emitter above.
+        wb.u8(
+            &TLVTag::Context(GlobalElements::InteractionModelRevision as u8),
+            IM_REVISION,
+        )?;
         wb.end_container()?;
 
         self.invoker

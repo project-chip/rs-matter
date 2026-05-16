@@ -19,6 +19,7 @@
 
 use core::fmt;
 
+use crate::dm::GlobalElements;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, TLVArray, TLVElement, ToTLV};
 
@@ -312,6 +313,11 @@ pub struct InvokeResp<'a> {
     pub invoke_responses: Option<TLVArray<'a, CmdResp<'a>>>,
     /// Whether there are more chunked messages coming
     pub more_chunks: Option<bool>,
+    /// `interactionModelRevision` (TLV context tag `0xFF`). Mandatory in
+    /// every IM message we send; modelled as `Option<u8>` so we tolerate
+    /// peers that omit it (the C++ SDK is tolerant in practice).
+    #[tagval(GlobalElements::InteractionModelRevision as u8)]
+    pub interaction_model_revision: Option<u8>,
 }
 
 impl<'a> InvokeResp<'a> {

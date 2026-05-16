@@ -74,6 +74,9 @@ impl core::fmt::Display for Attribute {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum GlobalElements {
+    /// `interactionModelRevision` — TLV context tag for the trailing
+    /// IM-revision field on every IM message. See [`crate::im::IM_REVISION`].
+    InteractionModelRevision = 0xFF,
     FabricIndex = 0xFE,
     GeneratedCmdList = 0xFFF8,
     AcceptedCmdList = 0xFFF9,

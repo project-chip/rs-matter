@@ -49,6 +49,21 @@ pub(crate) mod types;
 /// Interaction Model ID as per the Matter Core spec
 pub const PROTO_ID_INTERACTION_MODEL: u16 = 0x01;
 
+/// `interactionModelRevision` value emitted on every outgoing IM message
+/// rs-matter sends — both responder-side (ReportData / WriteResponse /
+/// InvokeResponse / StatusResponse / SubscribeResponse, in [`crate::dm`]
+/// and [`crate::im::status`] / [`crate::im::attr::subscribe`]) and
+/// requestor-side (the client builders in [`crate::im::client`] and
+/// [`crate::im::TimedReq`]).
+///
+/// The TLV context tag is [`GlobalElements::InteractionModelRevision`]
+/// (= `0xFF`).
+///
+/// `13` has been the spec-mandated value since Matter 1.3; see the
+/// Matter 1.5 Core Specification, §8.1.1 ("Revision History"), p. 545
+/// (doc 23-27349-009_Matter-1.5-Core-Specification.pdf).
+pub const IM_REVISION: u8 = 13;
+
 /// An enumeration of all possible error codes that can be returned by the Interaction Model.
 #[derive(FromPrimitive, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

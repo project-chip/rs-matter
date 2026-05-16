@@ -19,9 +19,10 @@
 
 use bitflags::bitflags;
 
+use rs_matter::dm::GlobalElements;
 use rs_matter::error::Error;
 use rs_matter::im::{AttrPath, AttrResp, AttrStatus, DataVersionFilter, EventFilter, EventPath};
-use rs_matter::im::{OpCode, PROTO_ID_INTERACTION_MODEL};
+use rs_matter::im::{OpCode, IM_REVISION, PROTO_ID_INTERACTION_MODEL};
 use rs_matter::im::{ReportDataResp, WriteReqTag};
 use rs_matter::tlv::{FromTLV, Slice, TLVElement, TLVTag, TLVWrite, ToTLV};
 use rs_matter::transport::exchange::MessageMeta;
@@ -164,12 +165,21 @@ impl TestToTLV for TestWriteReq<'_> {
 #[tlvargs(lifetime = "'a")]
 pub struct TestWriteResp<'a> {
     pub write_responses: Slice<'a, AttrStatus>,
+    /// `interactionModelRevision`. Mirrors the production `WriteResp`
+    /// struct in `rs-matter/src/im/attr/write.rs`. Tests using
+    /// `..Default::default()` get the (None) default; tests that want a
+    /// spec-compliant emission set `Some(IM_REVISION)` explicitly.
+    #[tagval(GlobalElements::InteractionModelRevision as u8)]
+    pub interaction_model_revision: Option<u8>,
 }
 
 impl<'a> TestWriteResp<'a> {
     /// Create a new `TestWriteResp` instance with the provided write responses.
     pub const fn resp(write_responses: &'a [AttrStatus]) -> Self {
-        Self { write_responses }
+        Self {
+            write_responses,
+            interaction_model_revision: Some(IM_REVISION),
+        }
     }
 }
 
@@ -302,6 +312,13 @@ impl TestToTLV for TestReportDataMsg<'_> {
             tw.bool(&TLVTag::Context(4), suppress_response)?;
         }
 
+        // Mandatory `interactionModelRevision` (TLV tag 0xFF). Mirrors the
+        // production `ReportDataMessage` emitter in `rs-matter/src/dm.rs`.
+        tw.u8(
+            &TLVTag::Context(GlobalElements::InteractionModelRevision as u8),
+            IM_REVISION,
+        )?;
+
         tw.end_container()?;
 
         Ok(())
@@ -405,6 +422,13 @@ impl TestToTLV for TestInvResp<'_> {
             tw.end_container()?;
         }
 
+        // Mandatory `interactionModelRevision` (TLV tag 0xFF). Mirrors the
+        // production `InvokeResponseMessage` emitter in `rs-matter/src/dm.rs`.
+        tw.u8(
+            &TLVTag::Context(GlobalElements::InteractionModelRevision as u8),
+            IM_REVISION,
+        )?;
+
         tw.end_container()?;
 
         Ok(())
@@ -486,6 +510,19 @@ impl ReplyProcessor {
 
         if let Some(suppress_response) = report_data.suppress_response {
             wb.bool(&TLVTag::Context(4), suppress_response)?;
+        }
+
+        // `interactionModelRevision` (TLV tag 0xFF) is preserved from the
+        // received report — if the production emitter forgets to send it,
+        // the re-encoded bytes also lack it and the downstream comparison
+        // against the expected payload will diff. Synthesizing
+        // `IM_REVISION` here unconditionally would silently mask any such
+        // regression.
+        if let Some(rev) = report_data.interaction_model_revision {
+            wb.u8(
+                &TLVTag::Context(GlobalElements::InteractionModelRevision as u8),
+                rev,
+            )?;
         }
 
         wb.end_container()?;

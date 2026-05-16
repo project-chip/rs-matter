@@ -91,6 +91,7 @@ fn test_timed_write_fail_and_success() {
             },
             expected_payload: StatusResp {
                 status: IMStatusCode::TimedRequestMisMatch,
+                ..Default::default()
             },
             process_reply: ReplyProcessor::none,
             setup: Setup::none,
@@ -105,9 +106,10 @@ fn test_timed_write_fail_and_success() {
             &TLVTest {
                 delay_ms: Some(100),
                 ..TLVTest::timed(
-                    TimedReq { timeout: 1 },
+                    TimedReq::new(1),
                     StatusResp {
                         status: IMStatusCode::Success,
+                        ..Default::default()
                     },
                     ReplyProcessor::none,
                 )
@@ -127,6 +129,7 @@ fn test_timed_write_fail_and_success() {
                 },
                 expected_payload: StatusResp {
                     status: IMStatusCode::TimedRequestMisMatch,
+                    ..Default::default()
                 },
                 process_reply: ReplyProcessor::none,
                 setup: Setup::none,
@@ -142,9 +145,10 @@ fn test_timed_write_fail_and_success() {
             &TLVTest {
                 delay_ms: Some(100),
                 ..TLVTest::timed(
-                    TimedReq { timeout: 1 },
+                    TimedReq::new(1),
                     StatusResp {
                         status: IMStatusCode::Success,
+                        ..Default::default()
                     },
                     ReplyProcessor::none,
                 )
@@ -167,6 +171,7 @@ fn test_timed_write_fail_and_success() {
                 },
                 expected_payload: StatusResp {
                     status: IMStatusCode::Timeout,
+                    ..Default::default()
                 },
                 process_reply: ReplyProcessor::none,
                 setup: Setup::none,
@@ -182,9 +187,10 @@ fn test_timed_write_fail_and_success() {
             &TLVTest {
                 delay_ms: None,
                 ..TLVTest::timed(
-                    TimedReq { timeout: 500 },
+                    TimedReq::new(500),
                     StatusResp {
                         status: IMStatusCode::Success,
+                        ..Default::default()
                     },
                     ReplyProcessor::none,
                 )
@@ -228,9 +234,10 @@ fn test_timed_cmd_success() {
             &TLVTest {
                 delay_ms: None,
                 ..TLVTest::timed(
-                    TimedReq { timeout: 2000 },
+                    TimedReq::new(2000),
                     StatusResp {
                         status: IMStatusCode::Success,
+                        ..Default::default()
                     },
                     ReplyProcessor::none,
                 )
@@ -264,9 +271,10 @@ fn test_timed_cmd_timeout() {
             &TLVTest {
                 delay_ms: Some(500),
                 ..TLVTest::timed(
-                    TimedReq { timeout: 1 },
+                    TimedReq::new(1),
                     StatusResp {
                         status: IMStatusCode::Success,
+                        ..Default::default()
                     },
                     ReplyProcessor::none,
                 )
@@ -289,6 +297,7 @@ fn test_timed_cmd_timeout() {
                 },
                 expected_payload: StatusResp {
                     status: IMStatusCode::Timeout,
+                    ..Default::default()
                 },
                 process_reply: ReplyProcessor::none,
                 setup: Setup::none,
@@ -330,6 +339,7 @@ fn test_timed_cmd_timeout_mismatch() {
             },
             expected_payload: StatusResp {
                 status: IMStatusCode::TimedRequestMisMatch,
+                ..Default::default()
             },
             process_reply: ReplyProcessor::none,
             setup: Setup::none,
@@ -344,9 +354,10 @@ fn test_timed_cmd_timeout_mismatch() {
             &TLVTest {
                 delay_ms: None,
                 ..TLVTest::timed(
-                    TimedReq { timeout: 1 },
+                    TimedReq::new(1),
                     StatusResp {
                         status: IMStatusCode::Success,
+                        ..Default::default()
                     },
                     ReplyProcessor::none,
                 )
@@ -366,6 +377,7 @@ fn test_timed_cmd_timeout_mismatch() {
                 },
                 expected_payload: StatusResp {
                     status: IMStatusCode::TimedRequestMisMatch,
+                    ..Default::default()
                 },
                 process_reply: ReplyProcessor::none,
                 setup: Setup::none,

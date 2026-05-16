@@ -384,6 +384,7 @@ fn test_long_read_success() {
             &TLVTest::continue_report(
                 StatusResp {
                     status: IMStatusCode::Success,
+                    ..Default::default()
                 },
                 TestReportDataMsg {
                     attr_reports: Some(&ATTR_RESPS[PART_1..][..PART_2]),
@@ -395,6 +396,7 @@ fn test_long_read_success() {
             &TLVTest::continue_report(
                 StatusResp {
                     status: IMStatusCode::Success,
+                    ..Default::default()
                 },
                 TestReportDataMsg {
                     attr_reports: Some(&ATTR_RESPS[PART_1..][PART_2..][..PART_3]),
@@ -406,6 +408,7 @@ fn test_long_read_success() {
             &TLVTest::continue_report(
                 StatusResp {
                     status: IMStatusCode::Success,
+                    ..Default::default()
                 },
                 TestReportDataMsg {
                     attr_reports: Some(&ATTR_RESPS[PART_1..][PART_2..][PART_3..][..PART_4]),
@@ -455,6 +458,7 @@ fn test_long_read_subscription_success() {
             &TLVTest::continue_report(
                 StatusResp {
                     status: IMStatusCode::Success,
+                    ..Default::default()
                 },
                 TestReportDataMsg {
                     subscription_id: Some(1),
@@ -467,6 +471,7 @@ fn test_long_read_subscription_success() {
             &TLVTest::continue_report(
                 StatusResp {
                     status: IMStatusCode::Success,
+                    ..Default::default()
                 },
                 TestReportDataMsg {
                     subscription_id: Some(1),
@@ -479,6 +484,7 @@ fn test_long_read_subscription_success() {
             &TLVTest::continue_report(
                 StatusResp {
                     status: IMStatusCode::Success,
+                    ..Default::default()
                 },
                 TestReportDataMsg {
                     subscription_id: Some(1),
@@ -490,12 +496,9 @@ fn test_long_read_subscription_success() {
             &TLVTest::subscribe_final(
                 StatusResp {
                     status: IMStatusCode::Success,
-                },
-                SubscribeResp {
-                    subs_id: 1,
-                    max_int: 40,
                     ..Default::default()
                 },
+                SubscribeResp::new(1, 40),
                 ReplyProcessor::none,
             ),
         ],

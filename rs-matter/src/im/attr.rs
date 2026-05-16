@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+use crate::dm::GlobalElements;
 use crate::error::{Error, ErrorCode};
 use crate::im::{EventFilter, NodeId};
 use crate::tlv::{FromTLV, Nullable, TLVArray, TLVElement, ToTLV};
@@ -283,6 +284,11 @@ pub struct ReportDataResp<'a> {
     pub event_reports: Option<TLVArray<'a, EventResp<'a>>>,
     pub more_chunks: Option<bool>,
     pub suppress_response: Option<bool>,
+    /// `interactionModelRevision` (TLV context tag `0xFF`). Mandatory in
+    /// every IM message we send; modelled as `Option<u8>` so we tolerate
+    /// peers that omit it (the C++ SDK is tolerant in practice).
+    #[tagval(GlobalElements::InteractionModelRevision as u8)]
+    pub interaction_model_revision: Option<u8>,
 }
 
 impl<'a> ReportDataResp<'a> {
