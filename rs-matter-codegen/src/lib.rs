@@ -87,16 +87,17 @@ pub fn generate(rs_matter_crate: &str, dest_dir: &Path) {
     root.push_str(&globals_formatted);
     root.push('\n');
 
-    for (module_name, file_path) in &cluster_files {
+    for (module_name, _file_path) in &cluster_files {
         root.push_str(&format!(
             "/// Generated cluster module\n\
              #[allow(async_fn_in_trait)]\n\
              #[allow(unknown_lints)]\n\
              #[allow(clippy::uninlined_format_args)]\n\
              #[allow(unexpected_cfgs)]\n\
-             #[path = r\"{}\"]\n\
-             pub mod {};\n\n",
-            file_path, module_name
+             pub mod {} {{\n\
+                 include!(concat!(env!(\"OUT_DIR\"), \"/clusters_generated/{}.rs\"));\n\
+             }}\n\n",
+            module_name, module_name
         ));
     }
 
