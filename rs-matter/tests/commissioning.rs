@@ -60,8 +60,7 @@ use rs_matter::dm::events::NoEvents;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
-    endpoints, Async, DataModel, DataModelHandler, Dataver, EmptyHandler, Endpoint, EpClMatcher,
-    IMBuffer, Node,
+    endpoints, Async, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, IMBuffer, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::im::IMStatusCode;
@@ -132,21 +131,15 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 ) -> impl DataModelHandler + 'a {
     (
         NODE,
-        endpoints::with_eth_sys(
-            &false,
-            &(),
-            &UnixNetifs,
-            rand,
-            EmptyHandler
-                .chain(
-                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                    on_off::HandlerAsyncAdaptor(on_off),
-                ),
-        ),
+        endpoints::with_eth_sys(&false, &(), &UnixNetifs, rand)
+            .chain(
+                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                on_off::HandlerAsyncAdaptor(on_off),
+            ),
     )
 }
 

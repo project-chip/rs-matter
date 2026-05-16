@@ -61,8 +61,8 @@ use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
-    ArrayAttributeRead, Async, Cluster, DataModel, DataModelHandler, Dataver, EmptyHandler,
-    Endpoint, EpClMatcher, InvokeContext, Node, ReadContext,
+    ArrayAttributeRead, Async, Cluster, DataModel, DataModelHandler, Dataver, Endpoint,
+    EpClMatcher, InvokeContext, Node, ReadContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::qr::QrTextType;
@@ -187,33 +187,27 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 ) -> impl DataModelHandler + 'a {
     (
         NODE,
-        endpoints::with_eth_sys(
-            &false,
-            &(),
-            &SysNetifs,
-            rand,
-            EmptyHandler
-                .chain(
-                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(MediaHandler::CLUSTER.id)),
-                    MediaHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(ContentHandler::CLUSTER.id)),
-                    ContentHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(KeypadInputHandler::CLUSTER.id)),
-                    KeypadInputHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                    on_off::HandlerAsyncAdaptor(on_off),
-                ),
-        ),
+        endpoints::with_eth_sys(&false, &(), &SysNetifs, rand)
+            .chain(
+                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(MediaHandler::CLUSTER.id)),
+                MediaHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(ContentHandler::CLUSTER.id)),
+                ContentHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(KeypadInputHandler::CLUSTER.id)),
+                KeypadInputHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                on_off::HandlerAsyncAdaptor(on_off),
+            ),
     )
 }
 
