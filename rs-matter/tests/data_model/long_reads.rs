@@ -22,7 +22,7 @@ use embassy_futures::select::select;
 
 use rs_matter::dm::clusters::app::on_off;
 use rs_matter::dm::clusters::{
-    acl, adm_comm, basic_info, desc, gen_comm, gen_diag, grp_key_mgmt, net_comm, noc,
+    acl, adm_comm, basic_info, desc, gen_comm, gen_diag, grp_key_mgmt, net_comm, noc, time_sync,
 };
 use rs_matter::dm::GlobalElements;
 use rs_matter::im::client::{ImClient, SubscribeOutcome, TxOutcome};
@@ -115,6 +115,18 @@ static ATTR_RESPS: &[TestAttrResp<'static>] = &[
     attr_data!(0, 52, GlobalElements::AttributeList, None),
     attr_data!(0, 52, GlobalElements::FeatureMap, None),
     attr_data!(0, 52, GlobalElements::ClusterRevision, None),
+    // TimeSynchronization (0x0038 = 56): stub handler — `UTCTime` Null,
+    // `Granularity` NoTime, `TimeSource` None (opted-in so the Python
+    // test harness's `has_attribute(TimeSource)` gate on
+    // `TC_TIMESYNC_2_1` matches), no features, no commands.
+    attr_data!(0, 56, time_sync::AttributeId::UTCTime, None),
+    attr_data!(0, 56, time_sync::AttributeId::Granularity, None),
+    attr_data!(0, 56, time_sync::AttributeId::TimeSource, None),
+    attr_data!(0, 56, GlobalElements::GeneratedCmdList, None),
+    attr_data!(0, 56, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 56, GlobalElements::AttributeList, None),
+    attr_data!(0, 56, GlobalElements::FeatureMap, None),
+    attr_data!(0, 56, GlobalElements::ClusterRevision, None),
     attr_data!(0, 60, adm_comm::AttributeId::WindowStatus, None),
     attr_data!(0, 60, adm_comm::AttributeId::AdminFabricIndex, None),
     attr_data!(0, 60, adm_comm::AttributeId::AdminVendorId, None),
@@ -282,6 +294,18 @@ static ATTR_SUBSCR_RESPS: &[TestAttrResp<'static>] = &[
     attr_data!(0, 52, GlobalElements::AttributeList, None),
     attr_data!(0, 52, GlobalElements::FeatureMap, None),
     attr_data!(0, 52, GlobalElements::ClusterRevision, None),
+    // TimeSynchronization (0x0038 = 56): stub handler — `UTCTime` Null,
+    // `Granularity` NoTime, `TimeSource` None (opted-in so the Python
+    // test harness's `has_attribute(TimeSource)` gate on
+    // `TC_TIMESYNC_2_1` matches), no features, no commands.
+    attr_data!(0, 56, time_sync::AttributeId::UTCTime, None),
+    attr_data!(0, 56, time_sync::AttributeId::Granularity, None),
+    attr_data!(0, 56, time_sync::AttributeId::TimeSource, None),
+    attr_data!(0, 56, GlobalElements::GeneratedCmdList, None),
+    attr_data!(0, 56, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 56, GlobalElements::AttributeList, None),
+    attr_data!(0, 56, GlobalElements::FeatureMap, None),
+    attr_data!(0, 56, GlobalElements::ClusterRevision, None),
     attr_data!(0, 60, adm_comm::AttributeId::WindowStatus, None),
     attr_data!(0, 60, adm_comm::AttributeId::AdminFabricIndex, None),
     attr_data!(0, 60, adm_comm::AttributeId::AdminVendorId, None),
