@@ -42,7 +42,7 @@ pub struct E2eTestHandler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
         EpClMatcher => Async<EchoHandler>,
         EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'static>>>,
         EpClMatcher => Async<EchoHandler>
-        | EthSysHandler<'a, EmptyHandler>),
+        | EthSysHandler<'a>),
 );
 
 impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
@@ -66,25 +66,23 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
     };
 
     pub fn new(mut rand: impl RngCore + Copy, on_off: on_off::OnOffHandler<'a, OH, LH>) -> Self {
-        let handler = with_eth_sys(&false, &(), &(), rand, EmptyHandler);
-
-        let handler = ChainedHandler::new(
-            EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(echo_cluster::ID)),
-            Async(EchoHandler::new(2, Dataver::new_rand(&mut rand))),
-            handler,
-        )
-        .chain(
-            EpClMatcher::new(Some(1), Some(DescHandler::CLUSTER.id)),
-            Async(DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-        )
-        .chain(
-            EpClMatcher::new(Some(1), Some(echo_cluster::ID)),
-            Async(EchoHandler::new(3, Dataver::new_rand(&mut rand))),
-        )
-        .chain(
-            EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-            on_off::HandlerAsyncAdaptor(on_off),
-        );
+        let handler = with_eth_sys(&false, &(), &(), rand)
+            .chain(
+                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(echo_cluster::ID)),
+                Async(EchoHandler::new(2, Dataver::new_rand(&mut rand))),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(DescHandler::CLUSTER.id)),
+                Async(DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(echo_cluster::ID)),
+                Async(EchoHandler::new(3, Dataver::new_rand(&mut rand))),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                on_off::HandlerAsyncAdaptor(on_off),
+            );
 
         Self(handler)
     }

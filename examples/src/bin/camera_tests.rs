@@ -78,8 +78,8 @@ use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{endpoints, DataModel};
 use rs_matter::dm::{
-    ArrayAttributeRead, Async, DataModelHandler, Dataver, DeviceType, EmptyHandler, Endpoint,
-    EpClMatcher, InvokeContext, Node, ReadContext, WriteContext,
+    ArrayAttributeRead, Async, DataModelHandler, Dataver, DeviceType, Endpoint, EpClMatcher,
+    InvokeContext, Node, ReadContext, WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::FabricIndex;
@@ -686,54 +686,44 @@ fn dm_handler<'a>(
 ) -> impl DataModelHandler + 'a {
     (
         NODE,
-        endpoints::with_eth_sys(
-            &false,
-            &(),
-            &SysNetifs,
-            rand,
-            EmptyHandler
-                .chain(
-                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
-                    Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(CamAv::CLUSTER_VIDEO_AUDIO.id)),
-                    rs_matter::dm::clusters::app::cam_av_stream::HandlerAsyncAdaptor(cam_av),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(CLUSTER_DPTZ_ONLY.id)),
-                    rs_matter::dm::clusters::app::cam_av_settings::HandlerAsyncAdaptor(
-                        cam_av_settings,
-                    ),
-                )
-                .chain(
-                    EpClMatcher::new(
-                        Some(1),
-                        Some(
-                            ZoneMgmtHandler::<StubZoneHooks, ZONE_NZ, ZONE_NV, ZONE_NT>::CLUSTER.id,
-                        ),
-                    ),
-                    ZoneMgmtAdaptor(zone_mgmt),
-                )
-                .chain(
-                    EpClMatcher::new(
-                        Some(1),
-                        Some(PushAvStreamHandler::<StubPushHooks, PUSH_NC>::CLUSTER.id),
-                    ),
-                    rs_matter::dm::clusters::app::push_av_stream::HandlerAsyncAdaptor(push_av),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(WebRtc::CLUSTER.id)),
-                    WebRtcAdaptor(webrtc),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(chime_decl::FULL_CLUSTER.id)),
-                    Async(ChimeHandlerAdaptor(chime)),
+        endpoints::with_eth_sys(&false, &(), &SysNetifs, rand)
+            .chain(
+                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(CamAv::CLUSTER_VIDEO_AUDIO.id)),
+                rs_matter::dm::clusters::app::cam_av_stream::HandlerAsyncAdaptor(cam_av),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(CLUSTER_DPTZ_ONLY.id)),
+                rs_matter::dm::clusters::app::cam_av_settings::HandlerAsyncAdaptor(cam_av_settings),
+            )
+            .chain(
+                EpClMatcher::new(
+                    Some(1),
+                    Some(ZoneMgmtHandler::<StubZoneHooks, ZONE_NZ, ZONE_NV, ZONE_NT>::CLUSTER.id),
                 ),
-        ),
+                ZoneMgmtAdaptor(zone_mgmt),
+            )
+            .chain(
+                EpClMatcher::new(
+                    Some(1),
+                    Some(PushAvStreamHandler::<StubPushHooks, PUSH_NC>::CLUSTER.id),
+                ),
+                rs_matter::dm::clusters::app::push_av_stream::HandlerAsyncAdaptor(push_av),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(WebRtc::CLUSTER.id)),
+                WebRtcAdaptor(webrtc),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(chime_decl::FULL_CLUSTER.id)),
+                Async(ChimeHandlerAdaptor(chime)),
+            ),
     )
 }

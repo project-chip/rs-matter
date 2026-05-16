@@ -41,7 +41,7 @@ use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::IMBuffer;
-use rs_matter::dm::{Async, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, EpClMatcher, Node};
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -58,12 +58,11 @@ use static_cell::StaticCell;
 #[path = "../common/mdns.rs"]
 mod mdns;
 
-type AppHandler<'a> = handler_chain_type!(
+type AppDmHandler<'a> = handler_chain_type!(
     EpClMatcher => on_off::HandlerAsyncAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>,
     EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>
-    | EmptyHandler
+    | EthSysHandler<'a>
 );
-type AppDmHandler<'a> = EthSysHandler<'a, AppHandler<'a>>;
 
 // Statically allocate in BSS the bigger objects
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
@@ -256,21 +255,15 @@ fn dm_handler<'a>(
     mut rand: impl RngCore + Copy,
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
 ) -> AppDmHandler<'a> {
-    endpoints::with_eth_sys(
-        &false,
-        &(),
-        &SysNetifs,
-        rand,
-        EmptyHandler
-            .chain(
-                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-            )
-            .chain(
-                EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                on_off::HandlerAsyncAdaptor(on_off),
-            ),
-    )
+    endpoints::with_eth_sys(&false, &(), &SysNetifs, rand)
+        .chain(
+            EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+            Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+        )
+        .chain(
+            EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+            on_off::HandlerAsyncAdaptor(on_off),
+        )
 }
 
 // For now, as `thread_rng` is not `Send`

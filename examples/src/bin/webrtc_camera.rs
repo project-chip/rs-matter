@@ -114,7 +114,7 @@ use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::DataModel;
 use rs_matter::dm::DeviceType;
 use rs_matter::dm::IMBuffer;
-use rs_matter::dm::{DataModelHandler, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{DataModelHandler, Dataver, Endpoint, EpClMatcher, Node};
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -1398,53 +1398,41 @@ fn dm_handler<'a>(
 ) -> impl DataModelHandler + 'a {
     (
         NODE,
-        endpoints::with_eth_sys(
-            &false,
-            &(),
-            &UnixNetifs,
-            rand,
-            EmptyHandler
-                .chain(
-                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                    rs_matter::dm::Async(
-                        desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-                    ),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
-                    rs_matter::dm::Async(
-                        groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt(),
-                    ),
-                )
-                .chain(
-                    EpClMatcher::new(
-                        Some(1),
-                        Some(CameraAvStreamHandler::<Str0mCamHooks, CAM_AV_NV>::CLUSTER.id),
-                    ),
-                    rs_matter::dm::clusters::app::cam_av_stream::HandlerAsyncAdaptor(cam_av),
-                )
-                .chain(
-                    EpClMatcher::new(
-                        Some(1),
-                        Some(rs_matter::dm::clusters::app::cam_av_settings::CLUSTER_DPTZ_ONLY.id),
-                    ),
-                    rs_matter::dm::clusters::app::cam_av_settings::HandlerAsyncAdaptor(
-                        cam_av_settings,
-                    ),
-                )
-                .chain(
-                    EpClMatcher::new(
-                        Some(1),
-                        Some(
-                            ZoneMgmtHandler::<DemoZoneHooks, ZONE_NZ, ZONE_NV, ZONE_NT>::CLUSTER.id,
-                        ),
-                    ),
-                    ZoneMgmtAdaptor(zone_mgmt),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(WebRtc::CLUSTER.id)),
-                    WebRtcAdaptor(webrtc),
+        endpoints::with_eth_sys(&false, &(), &UnixNetifs, rand)
+            .chain(
+                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                rs_matter::dm::Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                rs_matter::dm::Async(
+                    groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt(),
                 ),
-        ),
+            )
+            .chain(
+                EpClMatcher::new(
+                    Some(1),
+                    Some(CameraAvStreamHandler::<Str0mCamHooks, CAM_AV_NV>::CLUSTER.id),
+                ),
+                rs_matter::dm::clusters::app::cam_av_stream::HandlerAsyncAdaptor(cam_av),
+            )
+            .chain(
+                EpClMatcher::new(
+                    Some(1),
+                    Some(rs_matter::dm::clusters::app::cam_av_settings::CLUSTER_DPTZ_ONLY.id),
+                ),
+                rs_matter::dm::clusters::app::cam_av_settings::HandlerAsyncAdaptor(cam_av_settings),
+            )
+            .chain(
+                EpClMatcher::new(
+                    Some(1),
+                    Some(ZoneMgmtHandler::<DemoZoneHooks, ZONE_NZ, ZONE_NV, ZONE_NT>::CLUSTER.id),
+                ),
+                ZoneMgmtAdaptor(zone_mgmt),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(WebRtc::CLUSTER.id)),
+                WebRtcAdaptor(webrtc),
+            ),
     )
 }
