@@ -266,9 +266,16 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_DGSW_2_1",
     "TC_DGSW_2_2",
     //
-    // Python tests — Time Synchronization (optional system cluster)
+    // Python tests — Time Synchronization (system cluster)
     //
-    "TC_TIMESYNC_2_1", // TimeSynchronization not implemented (optional, Matter spec §11.16); `@run_if_endpoint_matches(has_cluster(TimeSynchronization) and has_attribute(TimeSource))` skips cleanly via `no_fail_on_skipped.py`.
+    // rs-matter ships a no-feature stub of TimeSynchronization on the
+    // root endpoint (UTCTime=Null, Granularity=NoTime, TimeSource=None,
+    // no commands). `TC_TIMESYNC_2_1` (which gates on
+    // `has_attribute(TimeSource)`) now actually runs and exercises the
+    // attribute-read path. The remaining `TC_TIMESYNC_2_2..` tests
+    // need the feature-gated read/write/invoke paths (TimeZone, NTP
+    // client/server, trusted-time-source) — follow-up work.
+    "TC_TIMESYNC_2_1",
     // "TC_TIMESYNC_2_2",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
     // "TC_TIMESYNC_2_4",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
     // "TC_TIMESYNC_2_5",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
@@ -953,9 +960,8 @@ impl ITests {
     ///    on the DUT satisfies the predicate, calls `asserts.skip(...)`
     ///    before the test body ever runs. Tests targeting a cluster that
     ///    rs-matter does not implement *anywhere* (e.g.
-    ///    `TimeSynchronization`, `LocalizationConfiguration`, `Switch`, …)
-    ///    match no endpoint and skip cleanly without needing any PIXIT
-    ///    supply.
+    ///    `LocalizationConfiguration`, `Switch`, …) match no endpoint
+    ///    and skip cleanly without needing any PIXIT supply.
     fn needs_no_fail_on_skipped(test_name: &str) -> bool {
         matches!(
             test_name,
@@ -969,7 +975,6 @@ impl ITests {
                 | "TC_CGEN_2_11"
                 // Pattern 2: `@run_if_endpoint_matches(...)` against clusters/
                 // features rs-matter does not implement on any endpoint.
-                | "TC_TIMESYNC_2_1"  // has_cluster(TimeSynchronization) and has_attribute(TimeSource)
                 | "TC_LCFG_2_1"      // has_cluster(LocalizationConfiguration)
                 | "TC_LTIME_3_1"     // has_cluster(TimeFormatLocalization)
                 | "TC_LUNIT_3_1"     // has_cluster(UnitLocalization) and has_attribute(TemperatureUnit)

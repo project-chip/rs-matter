@@ -33,6 +33,7 @@ use super::clusters::net_comm::{
 use super::clusters::noc::{self, ClusterHandler as _, NocHandler};
 use super::clusters::sw_diag::{self, ClusterHandler as _, SwDiagHandler};
 use super::clusters::thread_diag::{self, ClusterHandler as _, ThreadDiag, ThreadDiagHandler};
+use super::clusters::time_sync::{self, ClusterHandler as _, TimeSyncHandler};
 use super::clusters::wifi_diag::{self, ClusterHandler as _, WifiDiag, WifiDiagHandler};
 use super::networks::eth::EthNetCtl;
 use super::types::{Async, ChainedHandler, Dataver, EndptId, EpClMatcher};
@@ -92,6 +93,7 @@ pub type SysHandler<'a, T, H> = handler_chain_type!(
     EpClMatcher => Async<acl::HandlerAdaptor<acl::AclHandler>>,
     EpClMatcher => Async<grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>,
     EpClMatcher => Async<sw_diag::HandlerAdaptor<SwDiagHandler>>,
+    EpClMatcher => Async<time_sync::HandlerAdaptor<TimeSyncHandler>>,
     EpClMatcher => Async<gen_diag::HandlerAdaptor<GenDiagHandler<'a>>>,
     EpClMatcher => net_comm::HandlerAsyncAdaptor<NetCommHandler<T>>
     | H
@@ -219,6 +221,10 @@ where
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GenDiagHandler::CLUSTER.id)),
         Async(GenDiagHandler::new(Dataver::new_rand(&mut rand), gen_diag, netif_diag).adapt()),
+    )
+    .chain(
+        EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(TimeSyncHandler::CLUSTER.id)),
+        Async(TimeSyncHandler::new(Dataver::new_rand(&mut rand)).adapt()),
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(SwDiagHandler::CLUSTER.id)),
