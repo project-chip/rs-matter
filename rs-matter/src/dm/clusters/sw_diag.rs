@@ -17,35 +17,47 @@
 
 //! Implementation of the Software Diagnostics cluster.
 //!
-//! The cluster is advertised on the root endpoint with **no feature
-//! bits claimed** (so `CurrentHeapHighWatermark` and the
-//! `ResetWatermarks` command stay off), but the three feature-free
-//! optional attributes — `ThreadMetrics`, `CurrentHeapFree`,
-//! `CurrentHeapUsed` — are opted in. All three are independently
-//! optional per Matter Core spec §11.13, and exposing them lets a
-//! real implementation surface useful telemetry without further
-//! plumbing.
+//! # Cluster-shape selection — endpoint-side, via [`Options`]
+//!
+//! Matter features (`WATERMARKS`) and spec-independent-optional
+//! attribute toggles (`HEAP` for the heap counters, `THREAD` for the
+//! `ThreadMetrics` list) are unified into a single [`Options`]
+//! bitflags type, consumed by the [`cluster`] `const fn` which
+//! returns the matching `Cluster<'static>` metadata.
+//!
+//! The shape is picked **endpoint-side**, on the `clusters!` /
+//! `root_endpoint!` macros — e.g. `clusters!(sys, sw_diag(heap,
+//! watermarks); …)` — not on the handler. [`SwDiagHandler`] itself
+//! is non-generic and its [`Self::CLUSTER`](ClusterHandler::CLUSTER)
+//! is pinned to the empty-options shape; only `CLUSTER.id` is
+//! actually consulted by the dispatcher, and the per-attribute /
+//! per-command dispatch is driven by what the endpoint advertises.
+//!
+//! This decoupling means a single handler instance can be installed
+//! against any cluster shape — what gets dispatched to it is decided
+//! by the endpoint metadata, and the [`SwDiag`] trait carries methods
+//! for every option. Methods corresponding to un-advertised options
+//! are simply never called.
 //!
 //! # Pluggable data source — [`SwDiag`]
 //!
 //! [`SwDiagHandler`] borrows a `&dyn SwDiag` data provider and
-//! forwards each attribute read to it. The no-op default — `impl
-//! SwDiag for ()`, used via `&()` — returns `0` for every scalar
-//! counter and emits an empty thread list (spec-legal; both mean
-//! "not tracked"). A real implementation backed by the device's
-//! allocator and threading runtime surfaces real numbers on the
-//! wire without any further plumbing.
+//! forwards every attribute read / command invoke to it. The trait
+//! is intentionally abstract (no default methods) — the implementor
+//! is forced to make an explicit choice for each method, paired
+//! with the [`Feature`] set they've picked.
+//!
+//! [`impl SwDiag for ()`] is the canonical "we don't track
+//! anything" provider (heap counters return `0`, thread iteration
+//! emits nothing, `ResetWatermarks` refuses with `UnsupportedAccess`).
+//! Pass `&()` when no real telemetry is available.
 //!
 //! Thread metrics use a visitor-style callback
-//! ([`SwDiag::thread_metrics`]) rather than returning an
-//! allocated `Vec` so MCU implementations can stream the list
-//! straight out of their internal thread table.
-//!
-//! The `ResetWatermarks` command is gated by the `WTRMRK` feature
-//! we don't claim, so the trait method has a default of "refuse
-//! cleanly". An implementor that wants real watermarks would
-//! override both the cluster's feature mask (a future variant of
-//! this handler) and the trait method.
+//! ([`SwDiag::thread_metrics`]) rather than returning an allocated
+//! `Vec` so MCU implementations can stream the list straight out of
+//! their internal thread table.
+
+use bitflags::bitflags;
 
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
@@ -53,6 +65,40 @@ use crate::tlv::TLVBuilderParent;
 use crate::with;
 
 pub use crate::dm::clusters::decl::software_diagnostics::*;
+
+bitflags! {
+    /// Cluster-shape selectors for the [`SwDiagHandler`]. Each bit
+    /// turns on one orthogonal piece of the cluster surface — Matter
+    /// `Feature` bits (`WATERMARKS`) and spec-independent-optional
+    /// attribute toggles (`HEAP`, `THREAD`) are unified into a single
+    /// enumset so the user picks the whole shape with one literal.
+    ///
+    /// Used as the argument to [`cluster`] to compute the matching
+    /// `Cluster<'static>` metadata, which is then installed onto the
+    /// endpoint via the `clusters!` / `root_endpoint!` macros (e.g.
+    /// `clusters!(sys, sw_diag(heap, watermarks); …)`).
+    ///
+    /// `WATERMARKS` is the Matter `WATERMARKS` feature — it exposes
+    /// `CurrentHeapHighWatermark` + the `ResetWatermarks` command and
+    /// implies `HEAP` (the watermark tracks heap usage).
+    #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    pub struct Options: u8 {
+        /// Advertise the heap counters `CurrentHeapFree` and
+        /// `CurrentHeapUsed`. Independently optional per Matter Core
+        /// spec §11.13.
+        const HEAP = 0x1;
+        /// Claim the Matter `WATERMARKS` feature — adds
+        /// `CurrentHeapHighWatermark` + the `ResetWatermarks`
+        /// command, and surfaces the `WATERMARKS` bit in `FeatureMap`.
+        /// Implies [`Options::HEAP`].
+        const WATERMARKS = 0x2;
+        /// Advertise the `ThreadMetrics` list attribute. Set only on
+        /// devices that actually run multiple threads; a single-task
+        /// Wi-Fi MCU should leave this off so the cluster doesn't
+        /// misadvertise non-existent threads.
+        const THREAD = 0x4;
+    }
+}
 
 /// One thread's snapshot for the `ThreadMetrics` attribute. Yielded
 /// by the implementor of [`SwDiag::thread_metrics`] via a visitor
@@ -70,7 +116,7 @@ pub struct ThreadMetric<'a> {
     /// Free stack bytes right now.
     pub stack_free_current: Option<u32>,
     /// Lowest free-stack value observed since boot (or since the
-    /// last `ResetWatermarks` if the `WTRMRK` feature is claimed).
+    /// last `ResetWatermarks` if the `WATERMARKS` feature is claimed).
     pub stack_free_minimum: Option<u32>,
     /// Total stack size in bytes.
     pub stack_size: Option<u32>,
@@ -90,7 +136,7 @@ pub trait SwDiag {
 
     /// Maximum used bytes observed since boot or since the last
     /// `ResetWatermarks` invocation. Default `0`. Only meaningful
-    /// when the handler is configured to claim the `WTRMRK` feature.
+    /// when the handler is configured to claim the `WATERMARKS` feature.
     fn current_heap_high_watermark(&self) -> Result<u64, Error>;
 
     /// Stream per-thread metrics into `visit`. The implementor calls
@@ -111,7 +157,7 @@ pub trait SwDiag {
 
     /// Reset the high-watermark tracker. Default refuses with
     /// `UnsupportedAccess` — `ResetWatermarks` is gated on the
-    /// `WTRMRK` feature, which the current handler doesn't claim.
+    /// `WATERMARKS` feature, which the current handler doesn't claim.
     fn reset_watermarks(&self) -> Result<(), Error>;
 }
 
@@ -166,12 +212,76 @@ impl SwDiag for () {
     }
 }
 
+/// Compute the `Cluster<'static>` metadata for a SwDiag handler
+/// whose advertised surface is described by `options`. See the
+/// [`Options`] flags for the per-bit detail.
+///
+/// `Options::WATERMARKS` implies `Options::HEAP` — the watermark
+/// tracks heap usage, so requesting a watermark without claiming
+/// the heap counters is meaningless and the implication is folded
+/// in here. Pair the returned shape with a [`SwDiag`]
+/// implementation whose corresponding methods return real values
+/// for the chosen options; the handler forwards every trait method
+/// unconditionally, and methods for un-advertised attributes /
+/// commands are simply never dispatched by the DM.
+pub const fn cluster(options: Options) -> Cluster<'static> {
+    let heap = options.bits() & Options::HEAP.bits() != 0
+        || options.bits() & Options::WATERMARKS.bits() != 0;
+    let watermarks = options.bits() & Options::WATERMARKS.bits() != 0;
+    let thread = options.bits() & Options::THREAD.bits() != 0;
+
+    let matter_features = if watermarks {
+        Feature::WATERMARKS.bits()
+    } else {
+        0
+    };
+    let cluster = FULL_CLUSTER.with_features(matter_features);
+
+    match (heap, watermarks, thread) {
+        (false, _, false) => cluster.with_attrs(with!(required)).with_cmds(with!()),
+        (false, _, true) => cluster
+            .with_attrs(with!(required; AttributeId::ThreadMetrics))
+            .with_cmds(with!()),
+        (true, false, false) => cluster
+            .with_attrs(with!(required;
+                AttributeId::CurrentHeapFree | AttributeId::CurrentHeapUsed))
+            .with_cmds(with!()),
+        (true, false, true) => cluster
+            .with_attrs(with!(required;
+                AttributeId::ThreadMetrics
+                    | AttributeId::CurrentHeapFree
+                    | AttributeId::CurrentHeapUsed))
+            .with_cmds(with!()),
+        (true, true, false) => cluster
+            .with_attrs(with!(required;
+                AttributeId::CurrentHeapFree
+                    | AttributeId::CurrentHeapUsed
+                    | AttributeId::CurrentHeapHighWatermark))
+            .with_cmds(with!(CommandId::ResetWatermarks)),
+        (true, true, true) => cluster
+            .with_attrs(with!(required;
+                AttributeId::ThreadMetrics
+                    | AttributeId::CurrentHeapFree
+                    | AttributeId::CurrentHeapUsed
+                    | AttributeId::CurrentHeapHighWatermark))
+            .with_cmds(with!(CommandId::ResetWatermarks)),
+    }
+}
+
 /// Handler for the Software Diagnostics Matter cluster.
 ///
 /// Borrows a `&dyn SwDiag` data provider for the lifetime `'a` and
-/// forwards each attribute read to it. Cluster metadata: required
-/// globals + `CurrentHeapFree` + `CurrentHeapUsed`, no features,
-/// no commands.
+/// forwards every attribute read / command invoke to it.
+///
+/// The handler is **not** parameterized by cluster shape:
+/// [`Self::CLUSTER`](ClusterHandler::CLUSTER) is pinned to the
+/// empty-options form and only its `id` is consulted by the
+/// dispatcher. The on-wire shape — which optional attributes /
+/// commands / features are advertised — is decided by the cluster
+/// metadata supplied on the endpoint side (e.g. `clusters!(sys,
+/// sw_diag(heap, watermarks); …)`); per-attribute dispatch follows
+/// the endpoint's metadata, so the handler answers exactly what
+/// the endpoint exposes.
 #[derive(Clone)]
 pub struct SwDiagHandler<'a> {
     dataver: Dataver,
@@ -180,8 +290,8 @@ pub struct SwDiagHandler<'a> {
 
 impl<'a> SwDiagHandler<'a> {
     /// Create a new handler bound to `sw_diag` for its lifetime.
-    /// Pass `&()` (the no-op [`SwDiag`] impl) when no real
-    /// heap-telemetry source is available.
+    /// Pass `&()` (the no-op [`SwDiag`] impl) when no real telemetry
+    /// source is available.
     pub const fn new(dataver: Dataver, sw_diag: &'a dyn SwDiag) -> Self {
         Self { dataver, sw_diag }
     }
@@ -193,13 +303,7 @@ impl<'a> SwDiagHandler<'a> {
 }
 
 impl ClusterHandler for SwDiagHandler<'_> {
-    const CLUSTER: Cluster<'static> = FULL_CLUSTER
-        .with_attrs(with!(required;
-            AttributeId::ThreadMetrics
-                | AttributeId::CurrentHeapFree
-                | AttributeId::CurrentHeapUsed
-        ))
-        .with_cmds(with!());
+    const CLUSTER: Cluster<'static> = cluster(Options::empty());
 
     fn dataver(&self) -> u32 {
         self.dataver.get()
@@ -215,6 +319,10 @@ impl ClusterHandler for SwDiagHandler<'_> {
 
     fn current_heap_used(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
         self.sw_diag.current_heap_used()
+    }
+
+    fn current_heap_high_watermark(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
+        self.sw_diag.current_heap_high_watermark()
     }
 
     fn thread_metrics<P: TLVBuilderParent>(
@@ -280,10 +388,7 @@ impl ClusterHandler for SwDiagHandler<'_> {
     }
 
     fn handle_reset_watermarks(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
-        // Optional command (gated by the `WTRMRK` feature, which we
-        // don't claim). The DM should never dispatch to us here;
-        // refuse cleanly regardless.
-        Err(ErrorCode::CommandNotFound.into())
+        self.sw_diag.reset_watermarks()
     }
 }
 

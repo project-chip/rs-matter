@@ -22,8 +22,7 @@ use embassy_futures::select::select;
 
 use rs_matter::dm::clusters::app::on_off;
 use rs_matter::dm::clusters::{
-    acl, adm_comm, basic_info, desc, gen_comm, gen_diag, grp_key_mgmt, net_comm, noc, sw_diag,
-    time_sync,
+    acl, adm_comm, basic_info, desc, gen_comm, gen_diag, grp_key_mgmt, net_comm, noc, time_sync,
 };
 use rs_matter::dm::GlobalElements;
 use rs_matter::im::client::{ImClient, SubscribeOutcome, TxOutcome};
@@ -109,13 +108,10 @@ static ATTR_RESPS: &[TestAttrResp<'static>] = &[
     attr_data!(0, 51, GlobalElements::AttributeList, None),
     attr_data!(0, 51, GlobalElements::FeatureMap, None),
     attr_data!(0, 51, GlobalElements::ClusterRevision, None),
-    // SoftwareDiagnostics (0x0034 = 52): handler exposes
-    // ThreadMetrics (list — defaults to empty for `&()`),
-    // CurrentHeapFree, CurrentHeapUsed + required globals. No
-    // features claimed, no commands.
-    attr_data!(0, 52, sw_diag::AttributeId::ThreadMetrics, None),
-    attr_data!(0, 52, sw_diag::AttributeId::CurrentHeapFree, None),
-    attr_data!(0, 52, sw_diag::AttributeId::CurrentHeapUsed, None),
+    // SoftwareDiagnostics (0x0034 = 52): handler defaults expose
+    // only required globals — heap counters and thread metrics are
+    // opt-in via the handler's `HEAP` / `THREAD_METRICS` const
+    // generics; the test runner uses the all-defaults shape.
     attr_data!(0, 52, GlobalElements::GeneratedCmdList, None),
     attr_data!(0, 52, GlobalElements::AcceptedCmdList, None),
     attr_data!(0, 52, GlobalElements::AttributeList, None),
@@ -293,13 +289,10 @@ static ATTR_SUBSCR_RESPS: &[TestAttrResp<'static>] = &[
     attr_data!(0, 51, GlobalElements::AttributeList, None),
     attr_data!(0, 51, GlobalElements::FeatureMap, None),
     attr_data!(0, 51, GlobalElements::ClusterRevision, None),
-    // SoftwareDiagnostics (0x0034 = 52): handler exposes
-    // ThreadMetrics (list — defaults to empty for `&()`),
-    // CurrentHeapFree, CurrentHeapUsed + required globals. No
-    // features claimed, no commands.
-    attr_data!(0, 52, sw_diag::AttributeId::ThreadMetrics, None),
-    attr_data!(0, 52, sw_diag::AttributeId::CurrentHeapFree, None),
-    attr_data!(0, 52, sw_diag::AttributeId::CurrentHeapUsed, None),
+    // SoftwareDiagnostics (0x0034 = 52): handler defaults expose
+    // only required globals — heap counters and thread metrics are
+    // opt-in via the handler's `HEAP` / `THREAD_METRICS` const
+    // generics; the test runner uses the all-defaults shape.
     attr_data!(0, 52, GlobalElements::GeneratedCmdList, None),
     attr_data!(0, 52, GlobalElements::AcceptedCmdList, None),
     attr_data!(0, 52, GlobalElements::AttributeList, None),

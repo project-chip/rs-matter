@@ -41,13 +41,13 @@ use super::types::{Async, ChainedHandler, Dataver, EndptId, EpClMatcher};
 
 /// A macro to generate the meta-data for the root endpoint (Endpoint 0).
 ///
-/// Valid arguments:
-/// - `sys` - includes all system model clusters EXCEPT the concrete Network Diagnostics cluster (i.e. Ethernet, Thread or Wifi).
-///   Typically, you would prefer to use `eth`, `wifi` or `thread` instead of `sys`, which do include the appropriate
-///   Network Diagnostics cluster based on the network type.
-/// - `eth` - includes all system model clusters + the Ethernet Network Diagnostics cluster.
-/// - `wifi` - includes all system model clusters + the Wi-Fi Network Diagnostics cluster.
-/// - `thread` - includes all system model clusters + the Thread Network Diagnostics cluster.
+/// Net-type token (pick one): `sys`, `eth`, `wifi`, `thread` — same meaning
+/// as the corresponding tokens on the [`crate::clusters!`] macro.
+///
+/// Optional cluster-shape modifier: `sw_diag(heap | watermarks | thread, …)`,
+/// forwarded to [`crate::clusters!`] to shape the Software Diagnostics
+/// cluster's advertised surface. See the [`crate::clusters!`] docs for the
+/// token semantics.
 ///
 /// The Groups cluster is intentionally not part of any of these presets — it
 /// is not a Root Node device-type cluster and has no defined behavior on the
@@ -56,11 +56,11 @@ use super::types::{Async, ChainedHandler, Dataver, EndptId, EpClMatcher};
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! root_endpoint {
-    ($t:ident) => {
+    ($t:ident $(, sw_diag($($sw_opt:ident),* $(,)?))?) => {
         $crate::dm::Endpoint {
             id: $crate::dm::endpoints::ROOT_ENDPOINT_ID,
             device_types: $crate::devices!($crate::dm::devices::DEV_TYPE_ROOT_NODE),
-            clusters: $crate::clusters!($t;),
+            clusters: $crate::clusters!($t $(, sw_diag($($sw_opt),*))?;),
             client_clusters: &[],
         }
     }
