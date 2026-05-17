@@ -575,35 +575,41 @@ impl defmt::Format for Cluster<'_> {
 
 /// A macro to generate the clusters' meta-data for an endpoint.
 ///
-/// Valid arguments:
-/// - `sys;` - includes all system model clusters EXCEPT the concrete Network Diagnostics cluster (i.e. Ethernet, Thread or Wifi).
-///   Typically, you would prefer to use `eth;`, `wifi;` or `thread;` instead of `sys;`, which do include the appropriate
-///   Network Diagnostics cluster based on the network type.
-/// - `eth;` - includes all system model clusters + the Ethernet Network Diagnostics cluster.
-/// - `wifi;` - includes all system model clusters + the Wi-Fi Network Diagnostics cluster.
-/// - `thread;` - includes all system model clusters + the Thread Network Diagnostics cluster.
+/// Net-type tokens (pick exactly one):
+/// - `sys;` - all system model clusters except the concrete Network Diagnostics
+///   cluster. Usually you want `eth;` / `wifi;` / `thread;` instead.
+/// - `eth;` / `wifi;` / `thread;` - same as `sys;` plus the matching Network
+///   Diagnostics cluster.
 ///
-/// You can also specify additional clusters to be included in the generated list of clusters by passing them as arguments to the macro, for example:
-/// `clusters!(eth; custom_cluster1, custom_cluster2)` - includes all system model clusters +
-/// the Ethernet Network Diagnostics cluster + `custom_cluster1` and `custom_cluster2`.
+/// Optional cluster-shape modifiers (zero or more, after the net-type token):
+/// - `sw_diag(heap | watermarks | thread, …)` - shape the Software Diagnostics
+///   cluster's advertised attribute/command surface. Tokens map to
+///   [`crate::dm::clusters::sw_diag::Options`]: `heap` → `HEAP`,
+///   `watermarks` → `WATERMARKS` (claims the Matter `WATERMARKS` feature and
+///   implies `HEAP`), `thread` → `THREAD` (advertises `ThreadMetrics`; unrelated
+///   to the Thread network protocol). Omitting `sw_diag(...)` advertises the
+///   empty-options shape: required globals only, no features, no commands.
 ///
-/// Note: the Groups cluster is intentionally *not* included in any of these
-/// presets, because the Root Node device type (Matter Device Library §2.1.5)
-/// does not list Groups, and the Groups cluster is scoped to per-endpoint
-/// group membership (Matter Application Cluster Specification §1.3) which has
-/// no defined behavior on the Root Node. Wire `GroupsHandler::CLUSTER` onto
-/// the application endpoint(s) where it actually has meaning instead.
+/// Trailing positional arguments are additional `Cluster<'static>` literals
+/// merged into the slice — e.g. `clusters!(eth, sw_diag(heap); my_cluster)`.
+///
+/// The Groups cluster is intentionally *not* included in any of these presets:
+/// Root Node (Matter Device Library §2.1.5) does not list Groups, and Groups
+/// (Matter Application Cluster Specification §1.3) is scoped to per-endpoint
+/// group membership which has no defined behavior on the Root Node. Wire
+/// `GroupsHandler::CLUSTER` onto the application endpoint(s) where it actually
+/// has meaning instead.
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! clusters {
-    (sys; $($cluster:expr $(,)?)*) => {
+    (sys, sw_diag($($sw_opt:ident),* $(,)?); $($cluster:expr $(,)?)*) => {
         $crate::clusters!(
             <$crate::dm::clusters::desc::DescHandler as $crate::dm::clusters::desc::ClusterHandler>::CLUSTER,
             <$crate::dm::clusters::acl::AclHandler as $crate::dm::clusters::acl::ClusterHandler>::CLUSTER,
             <$crate::dm::clusters::basic_info::BasicInfoHandler as $crate::dm::clusters::basic_info::ClusterHandler>::CLUSTER,
             <$crate::dm::clusters::gen_comm::GenCommHandler as $crate::dm::clusters::gen_comm::ClusterHandler>::CLUSTER,
             <$crate::dm::clusters::gen_diag::GenDiagHandler as $crate::dm::clusters::gen_diag::ClusterHandler>::CLUSTER,
-            <$crate::dm::clusters::sw_diag::SwDiagHandler as $crate::dm::clusters::sw_diag::ClusterHandler>::CLUSTER,
+            $crate::dm::clusters::sw_diag::cluster($crate::__sw_diag_options!($($sw_opt),*)),
             <$crate::dm::clusters::time_sync::TimeSyncHandler as $crate::dm::clusters::time_sync::ClusterHandler>::CLUSTER,
             <$crate::dm::clusters::adm_comm::AdminCommHandler as $crate::dm::clusters::adm_comm::ClusterHandler>::CLUSTER,
             <$crate::dm::clusters::noc::NocHandler as $crate::dm::clusters::noc::ClusterHandler>::CLUSTER,
@@ -611,35 +617,79 @@ macro_rules! clusters {
             $($cluster,)*
         )
     };
-    (eth; $($cluster:expr $(,)?)*) => {
+    (sys; $($cluster:expr $(,)?)*) => {
+        $crate::clusters!(sys, sw_diag(); $($cluster,)*)
+    };
+    (eth, sw_diag($($sw_opt:ident),* $(,)?); $($cluster:expr $(,)?)*) => {
         $crate::clusters!(
-            sys;
+            sys, sw_diag($($sw_opt),*);
             $crate::dm::clusters::net_comm::NetworkType::Ethernet.cluster(),
             <$crate::dm::clusters::eth_diag::EthDiagHandler as $crate::dm::clusters::eth_diag::ClusterHandler>::CLUSTER,
             $($cluster,)*
         )
     };
-    (thread; $($cluster:expr $(,)?)*) => {
+    (eth; $($cluster:expr $(,)?)*) => {
+        $crate::clusters!(eth, sw_diag(); $($cluster,)*)
+    };
+    (thread, sw_diag($($sw_opt:ident),* $(,)?); $($cluster:expr $(,)?)*) => {
         $crate::clusters!(
-            sys;
+            sys, sw_diag($($sw_opt),*);
             $crate::dm::clusters::net_comm::NetworkType::Thread.cluster(),
             <$crate::dm::clusters::thread_diag::ThreadDiagHandler as $crate::dm::clusters::thread_diag::ClusterHandler>::CLUSTER,
             $($cluster,)*
         )
     };
-    (wifi; $($cluster:expr $(,)?)*) => {
+    (thread; $($cluster:expr $(,)?)*) => {
+        $crate::clusters!(thread, sw_diag(); $($cluster,)*)
+    };
+    (wifi, sw_diag($($sw_opt:ident),* $(,)?); $($cluster:expr $(,)?)*) => {
         $crate::clusters!(
-            sys;
+            sys, sw_diag($($sw_opt),*);
             $crate::dm::clusters::net_comm::NetworkType::Wifi.cluster(),
             <$crate::dm::clusters::wifi_diag::WifiDiagHandler as $crate::dm::clusters::wifi_diag::ClusterHandler>::CLUSTER,
             $($cluster,)*
         )
+    };
+    (wifi; $($cluster:expr $(,)?)*) => {
+        $crate::clusters!(wifi, sw_diag(); $($cluster,)*)
     };
     ($($cluster:expr $(,)?)*) => {
         &[
             $($cluster,)*
         ]
     }
+}
+
+/// Internal helper: turn a comma-separated list of `sw_diag(...)` lowercase
+/// tokens into the corresponding [`crate::dm::clusters::sw_diag::Options`]
+/// bitset value. `heap` → `HEAP`, `watermarks` → `WATERMARKS`, `thread`
+/// → `THREAD`.
+#[allow(unused_macros)]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __sw_diag_options {
+    () => { $crate::dm::clusters::sw_diag::Options::empty() };
+    ($($opt:ident),+ $(,)?) => {
+        $crate::dm::clusters::sw_diag::Options::empty()
+            $(.union($crate::__sw_diag_option_bit!($opt)))+
+    };
+}
+
+/// Internal helper: map one lowercase `sw_diag(...)` token to the matching
+/// [`crate::dm::clusters::sw_diag::Options`] constant.
+#[allow(unused_macros)]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __sw_diag_option_bit {
+    (heap) => {
+        $crate::dm::clusters::sw_diag::Options::HEAP
+    };
+    (watermarks) => {
+        $crate::dm::clusters::sw_diag::Options::WATERMARKS
+    };
+    (thread) => {
+        $crate::dm::clusters::sw_diag::Options::THREAD
+    };
 }
 
 /// A macro that generates a "with" fn for matching attributes and commands
