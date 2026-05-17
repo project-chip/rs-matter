@@ -57,12 +57,12 @@ use esp_rtos::embassy::Executor;
 
 use rs_matter::crypto::backend::rustcrypto::RustCrypto;
 use rs_matter::crypto::{Crypto, RngCore, WeakTestOnlyRand};
+use rs_matter::dm::clusters::app::on_off::NoLevelControl;
+use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::clusters::net_comm::{
     NetCtl, NetCtlError, NetworkScanInfo, NetworkType, SharedNetworks, WirelessCreds,
 };
-use rs_matter::dm::clusters::app::on_off::NoLevelControl;
-use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::wifi_diag::{
     SecurityTypeEnum, WiFiVersionEnum, WifiDiag, WirelessDiag,
 };
@@ -464,11 +464,9 @@ fn main() -> ! {
             .matter
             .print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP));
 
-        unwrap!(stack.matter.open_basic_comm_window(
-            MAX_COMM_WINDOW_TIMEOUT_SECS,
-            crypto,
-            &(),
-        ));
+        unwrap!(stack
+            .matter
+            .open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, crypto, &()));
     }
 
     executor.run(|spawner| {
@@ -552,7 +550,11 @@ fn mdns_task_fut<'a, C: Crypto + 'a>(
 }
 
 #[embassy_executor::task]
-async fn mdns_task(mdns: &'static mut BuiltinMdnsResponder, matter: &'static Matter<'static>, crypto: &'static AppCrypto) {
+async fn mdns_task(
+    mdns: &'static mut BuiltinMdnsResponder,
+    matter: &'static Matter<'static>,
+    crypto: &'static AppCrypto,
+) {
     info!("Starting mDNS task...");
     unwrap!(mdns_task_fut(mdns, matter, crypto).await);
 }
@@ -651,22 +653,15 @@ fn dm_handler<'a>(
     wifi_diag: &'a dyn WifiDiag,
     net_ctl: &'a AppNetCtl,
 ) -> AppDmHandler<'a> {
-    endpoints::with_wifi_sys(
-        &true,
-        &(),
-        &(),
-        wifi_diag,
-        net_ctl,
-        rand,
-    )
-    .chain(
-        EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-        Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-    )
-    .chain(
-        EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-        on_off::HandlerAsyncAdaptor(on_off),
-    )
+    endpoints::with_wifi_sys(&true, &(), &(), wifi_diag, &(), &(), net_ctl, rand)
+        .chain(
+            EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+            Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+        )
+        .chain(
+            EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+            on_off::HandlerAsyncAdaptor(on_off),
+        )
 }
 
 /// A fake UDP implementation
