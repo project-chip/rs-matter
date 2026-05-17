@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025 Project CHIP Authors
+ * Copyright (c) 2024-2026 Project CHIP Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ mod tlv_encoding_tests {
     use bitflags::bitflags;
     use rs_matter::bitflags_tlv;
     use rs_matter::error::Error;
+    use rs_matter::im::CmdPath;
     use rs_matter::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
     use rs_matter::utils::storage::WriteBuf;
 
@@ -138,5 +139,78 @@ mod tlv_encoding_tests {
         let b = asserted_ok!(decode_from_tlv(&encoded), "Decode from tlv");
 
         assert_eq!(a, b);
+    }
+
+    /// Regression test for the `CmdPath` decoder dropping the optional
+    /// `endpointId` (context tag 0) when a peer writes the IB members in
+    /// any order other than 0, 1, 2.
+    ///
+    /// Matter Core spec §10.6.1 ("Tag Rules", 1.5 / 1.5.1) requires
+    /// context tags to be emitted in the order defined by the IB, so
+    /// encoders that re-order are non-conformant. matter.js (and hence
+    /// matterjs-server / Home Assistant Matter in beta mode) violates
+    /// this rule for `CommandPathIB`: it writes `clusterId (tag 1),
+    /// commandId (tag 2), endpointId (tag 0)`. See
+    /// matter-js/matter.js#3747 for the upstream-side discussion. A
+    /// `scan_ctx`-based linear decoder (the previous rs-matter default,
+    /// now opt-in via `#[tlvargs(assume_ordered)]`) would pass tag 0
+    /// before checking it and silently report `endpoint = None`, which
+    /// then triggers wildcard endpoint expansion on the receiver. The
+    /// new `find_ctx`-based decoder (the current default) tolerates any
+    /// member order, matching the C++ SDK's status quo.
+    #[test]
+    fn cmd_path_decodes_with_out_of_order_tags() {
+        // CommandPathIB list, members in matter.js order:
+        //   0x37 0x00              // List, context tag 0 (commandPath field)
+        //     0x24 0x01 0x06       // U8 ctx-tag 1: clusterId = 0x06 (OnOff)
+        //     0x24 0x02 0x01       // U8 ctx-tag 2: commandId = 0x01 (On)
+        //     0x24 0x00 0x01       // U8 ctx-tag 0: endpointId = 0x01
+        //   0x18                   // End of List
+        //
+        // Decode as a bare list, anchored at the List opener.
+        let bytes: [u8; 12] = [
+            0x37, 0x00, 0x24, 0x01, 0x06, 0x24, 0x02, 0x01, 0x24, 0x00, 0x01, 0x18,
+        ];
+
+        let element = TLVElement::new(&bytes);
+        let decoded = asserted_ok!(CmdPath::from_tlv(&element), "Decoding CmdPath from TLV");
+
+        assert_eq!(decoded.endpoint, Some(1), "endpointId (tag 0) must decode");
+        assert_eq!(decoded.cluster, Some(6), "clusterId (tag 1) must decode");
+        assert_eq!(decoded.cmd, Some(1), "commandId (tag 2) must decode");
+    }
+
+    /// Sibling of the test above for another non-conformant ordering
+    /// (tags 0, 2, 1 — `endpoint, command, cluster`). Spec-compliant
+    /// encoders emit 0, 1, 2; this exercises the unordered scan from a
+    /// different direction so a future "optimization" that re-introduces
+    /// ordered scanning fails here too.
+    #[test]
+    fn cmd_path_decodes_with_tag_1_after_tag_2() {
+        let bytes: [u8; 12] = [
+            0x37, 0x00, 0x24, 0x00, 0x01, 0x24, 0x02, 0x01, 0x24, 0x01, 0x06, 0x18,
+        ];
+
+        let element = TLVElement::new(&bytes);
+        let decoded = asserted_ok!(CmdPath::from_tlv(&element), "Decoding CmdPath from TLV");
+
+        assert_eq!(decoded.endpoint, Some(1));
+        assert_eq!(decoded.cluster, Some(6));
+        assert_eq!(decoded.cmd, Some(1));
+    }
+
+    /// Wildcard endpoint (tag 0 omitted) must still decode cleanly as
+    /// `endpoint = None`. This is the legitimate use of the option per spec.
+    #[test]
+    fn cmd_path_wildcard_endpoint_still_decodes() {
+        // List with only cluster and command members.
+        let bytes: [u8; 9] = [0x37, 0x00, 0x24, 0x01, 0x06, 0x24, 0x02, 0x01, 0x18];
+
+        let element = TLVElement::new(&bytes);
+        let decoded = asserted_ok!(CmdPath::from_tlv(&element), "Decoding CmdPath from TLV");
+
+        assert_eq!(decoded.endpoint, None);
+        assert_eq!(decoded.cluster, Some(6));
+        assert_eq!(decoded.cmd, Some(1));
     }
 }
