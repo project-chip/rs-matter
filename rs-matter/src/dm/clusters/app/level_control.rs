@@ -1775,7 +1775,7 @@ pub mod test {
         const MAX_LEVEL: u8 = 254;
         const FASTEST_RATE: u8 = 50;
         const CLUSTER: Cluster<'static> = FULL_CLUSTER
-            .with_revision(5)
+            .with_revision(6)
             .with_features(Feature::ON_OFF.bits())
             .with_attrs(with!(
                 required;
@@ -1825,5 +1825,31 @@ pub mod test {
                 .lock(|state| state.borrow_mut().start_up_current_level = value);
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test::TestLevelControlDeviceLogic;
+    use super::{AttributeDefaults, LevelControlHandler};
+    use crate::dm::clusters::app::on_off::test::TestOnOffDeviceLogic;
+    use crate::dm::clusters::app::on_off::OnOffHandler;
+    use crate::dm::Dataver;
+
+    /// Catches drift between `TestLevelControlDeviceLogic::CLUSTER` and
+    /// `LevelControlHandler::validate()`.
+    #[test]
+    fn test_logic_passes_handler_validate() {
+        let level_logic = TestLevelControlDeviceLogic::new();
+        let on_off_logic = TestOnOffDeviceLogic::new(false);
+        let level = LevelControlHandler::new(
+            Dataver::new(1),
+            1,
+            &level_logic,
+            AttributeDefaults::default(),
+        );
+        let on_off = OnOffHandler::new(Dataver::new(2), 1, &on_off_logic);
+        on_off.init(Some(&level));
+        level.init(Some(&on_off));
     }
 }
