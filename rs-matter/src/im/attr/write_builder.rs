@@ -101,9 +101,9 @@
 
 use core::marker::PhantomData;
 
-use crate::dm::{AttrId, ClusterId, EndptId};
+use crate::dm::{AttrId, ClusterId, EndptId, GlobalElements};
 use crate::error::Error;
-use crate::im::{AttrDataTag, AttrPathTag, WriteReqTag};
+use crate::im::{AttrDataTag, AttrPathTag, WriteReqTag, IM_REVISION};
 use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite};
 
 /// Streaming builder for a `WriteRequestMessage`. Type-state-tagged
@@ -118,6 +118,9 @@ use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite};
 /// - `2`: past `TimedRequest`
 /// - `3`: past `WriteRequests` array (closed)
 /// - `4`: past `MoreChunkedMessages`
+/// - `5`: past `InteractionModelRevision` (auto-injected at default
+///   value [`IM_REVISION`] by `end()` if the optional setter wasn't
+///   called)
 ///
 /// In practice almost every call is `WriteReqBuilder::new(p)?
 /// .write_requests()? … .end()?` — `SuppressResponse` and
@@ -267,7 +270,47 @@ where
     }
 }
 
+impl<P> WriteReqBuilder<P, 3>
+where
+    P: TLVBuilderParent,
+{
+    /// Write `InteractionModelRevision`, implicitly skipping
+    /// `MoreChunkedMessages`. This is a typestate skip-shim mirroring
+    /// the pattern PR #447 established for `SuppressResponse` /
+    /// `TimedRequest` on `InvReqBuilder`: callers who don't populate
+    /// the optional preceding field can advance straight to setting
+    /// (or auto-injecting) `InteractionModelRevision` without an
+    /// explicit no-op transition.
+    pub fn interaction_model_revision(self, value: u8) -> Result<WriteReqBuilder<P, 5>, Error> {
+        WriteReqBuilder::<P, 4> { p: self.p }.interaction_model_revision(value)
+    }
+}
+
 impl<P> WriteReqBuilder<P, 4>
+where
+    P: TLVBuilderParent,
+{
+    /// Write the mandatory-on-the-wire `InteractionModelRevision`
+    /// field (Matter Core §8.1.1, p. 545: value is `13` since Matter
+    /// 1.3, unchanged in 1.4 and 1.5). Optional at the API level —
+    /// omit and `end()` injects [`IM_REVISION`] automatically.
+    pub fn interaction_model_revision(mut self, value: u8) -> Result<WriteReqBuilder<P, 5>, Error> {
+        self.p.writer().u8(
+            &TLVTag::Context(GlobalElements::InteractionModelRevision as u8),
+            value,
+        )?;
+        Ok(WriteReqBuilder { p: self.p })
+    }
+
+    /// Close the message struct, auto-injecting
+    /// `InteractionModelRevision` at its default value
+    /// [`IM_REVISION`]. Returns the parent.
+    pub fn end(self) -> Result<P, Error> {
+        self.interaction_model_revision(IM_REVISION)?.end()
+    }
+}
+
+impl<P> WriteReqBuilder<P, 5>
 where
     P: TLVBuilderParent,
 {
