@@ -44,10 +44,13 @@ use super::types::{Async, ChainedHandler, Dataver, EndptId, EpClMatcher};
 /// Net-type token (pick one): `sys`, `eth`, `wifi`, `thread` — same meaning
 /// as the corresponding tokens on the [`crate::clusters!`] macro.
 ///
-/// Optional cluster-shape modifier: `sw_diag(heap | watermarks | thread, …)`,
-/// forwarded to [`crate::clusters!`] to shape the Software Diagnostics
-/// cluster's advertised surface. See the [`crate::clusters!`] docs for the
-/// token semantics.
+/// Optional cluster-shape modifiers (in order):
+/// - `sw_diag(heap | watermarks | thread, …)` — shapes the Software
+///   Diagnostics cluster.
+/// - `time_sync(time_zone | ntp_client | ntp_server | time_sync_client, …)` —
+///   shapes the Time Synchronization cluster.
+///
+/// See the [`crate::clusters!`] docs for the token semantics.
 ///
 /// The Groups cluster is intentionally not part of any of these presets — it
 /// is not a Root Node device-type cluster and has no defined behavior on the
@@ -56,11 +59,19 @@ use super::types::{Async, ChainedHandler, Dataver, EndptId, EpClMatcher};
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! root_endpoint {
-    ($t:ident $(, sw_diag($($sw_opt:ident),* $(,)?))?) => {
+    ($t:ident
+        $(, sw_diag($($sw_opt:ident),* $(,)?))?
+        $(, time_sync($($ts_opt:ident),* $(,)?))?
+    ) => {
         $crate::dm::Endpoint {
             id: $crate::dm::endpoints::ROOT_ENDPOINT_ID,
             device_types: $crate::devices!($crate::dm::devices::DEV_TYPE_ROOT_NODE),
-            clusters: $crate::clusters!($t $(, sw_diag($($sw_opt),*))?;),
+            clusters: $crate::clusters!(
+                $t
+                $(, sw_diag($($sw_opt),*))?
+                $(, time_sync($($ts_opt),*))?
+                ;
+            ),
             client_clusters: &[],
         }
     }
