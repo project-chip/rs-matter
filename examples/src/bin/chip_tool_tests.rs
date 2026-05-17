@@ -67,7 +67,7 @@ use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
-    Async, Cluster, DataModel, DataModelHandler, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
+    Async, Cluster, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -619,108 +619,101 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 ) -> impl DataModelHandler + 'a {
     (
         node,
-        endpoints::with_eth_sys(
-            &false,
-            gen_diag,
-            &SysNetifs,
-            rand,
-            EmptyHandler
-                // Groups handler at the root endpoint. The library-level
-                // `with_*_sys()` chain in `rs-matter/src/dm/endpoints.rs`
-                // intentionally does *not* bind Groups at root anymore —
-                // Groups is not part of the Root Node device type
-                // (Matter Device Library §2.1.5). We re-add it here
-                // because the `TestGroupMessaging` YAML test exercises
-                // group-addressed writes against root-endpoint
-                // attributes (e.g. `BasicInformation::NodeLabel`), which
-                // requires this endpoint to be a member of the target
-                // multicast group via per-endpoint Groups membership
-                // (App Cluster spec §1.3). The matching metadata entry
-                // is in `NODE` and `NODE_BINFO_CV_EXPOSED` above.
-                .chain(
-                    EpClMatcher::new(
-                        Some(ROOT_ENDPOINT_ID),
-                        Some(groups::GroupsHandler::CLUSTER.id),
-                    ),
-                    Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                // UserLabel handler at the root endpoint. Wired here for
-                // the same per-fixture-exception reason as Groups above:
-                // `TestUserLabelClusterConstraints` and the persistence-
-                // focused `TestUserLabelCluster` write / read the cluster
-                // at `endpoint: 0`. The handler is owned by `main` so we
-                // can call `load_persist` *before* the data model is
-                // exposed; we hand it in by reference here and wrap it
-                // with `user_label::HandlerAdaptor` (rather than the
-                // owning-`.adapt()`) so the chain doesn't take ownership.
-                .chain(
-                    EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(user_label::CLUSTER.id)),
-                    Async(user_label::HandlerAdaptor(user_label_handler)),
-                )
-                // Binding handler at the root endpoint — owned by main
-                // (so `load_persist` can run before commissioner
-                // traffic), borrowed by reference into the chain.
-                // `TestBinding` exercises writes against EP0.
-                .chain(
-                    EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(binding::CLUSTER.id)),
-                    Async(binding::HandlerAdaptor(binding_handler_ep0)),
-                )
-                // Clusters for Endpoint 1
-                .chain(
-                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(identify::CLUSTER.id)),
-                    Async(IdentifyHandler::new(Dataver::new_rand(&mut rand))),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
-                    Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(fixed_label::CLUSTER.id)),
-                    Async(
-                        FixedLabelHandler::new(Dataver::new_rand(&mut rand), FIXED_LABELS_EP1)
-                            .adapt(),
-                    ),
-                )
-                // Binding handler at EP1 — same registry as EP0,
-                // separate facade so the per-cluster-instance Dataver
-                // stays granular per Matter Core §7.13.2.1.
-                .chain(
-                    EpClMatcher::new(Some(1), Some(binding::CLUSTER.id)),
-                    Async(binding::HandlerAdaptor(binding_handler_ep1)),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                    on_off::HandlerAsyncAdaptor(on_off_1),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(UnitTestingHandler::CLUSTER.id)),
-                    Async(
-                        UnitTestingHandler::new(Dataver::new_rand(&mut rand), unit_testing_data)
-                            .adapt(),
-                    ),
-                )
-                // (mostly) Similar Clusters for Endpoint 2
-                .chain(
-                    EpClMatcher::new(Some(2), Some(desc::DescHandler::CLUSTER.id)),
-                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(2), Some(identify::CLUSTER.id)),
-                    Async(IdentifyHandler::new(Dataver::new_rand(&mut rand))),
-                )
-                .chain(
-                    EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
-                    Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                    on_off::HandlerAsyncAdaptor(on_off_2),
+        endpoints::with_eth_sys(&false, gen_diag, &SysNetifs, &(), &(), rand)
+            // Groups handler at the root endpoint. The library-level
+            // `with_*_sys()` chain in `rs-matter/src/dm/endpoints.rs`
+            // intentionally does *not* bind Groups at root anymore —
+            // Groups is not part of the Root Node device type
+            // (Matter Device Library §2.1.5). We re-add it here
+            // because the `TestGroupMessaging` YAML test exercises
+            // group-addressed writes against root-endpoint
+            // attributes (e.g. `BasicInformation::NodeLabel`), which
+            // requires this endpoint to be a member of the target
+            // multicast group via per-endpoint Groups membership
+            // (App Cluster spec §1.3). The matching metadata entry
+            // is in `NODE` and `NODE_BINFO_CV_EXPOSED` above.
+            .chain(
+                EpClMatcher::new(
+                    Some(ROOT_ENDPOINT_ID),
+                    Some(groups::GroupsHandler::CLUSTER.id),
                 ),
-        ),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            // UserLabel handler at the root endpoint. Wired here for
+            // the same per-fixture-exception reason as Groups above:
+            // `TestUserLabelClusterConstraints` and the persistence-
+            // focused `TestUserLabelCluster` write / read the cluster
+            // at `endpoint: 0`. The handler is owned by `main` so we
+            // can call `load_persist` *before* the data model is
+            // exposed; we hand it in by reference here and wrap it
+            // with `user_label::HandlerAdaptor` (rather than the
+            // owning-`.adapt()`) so the chain doesn't take ownership.
+            .chain(
+                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(user_label::CLUSTER.id)),
+                Async(user_label::HandlerAdaptor(user_label_handler)),
+            )
+            // Binding handler at the root endpoint — owned by main
+            // (so `load_persist` can run before commissioner
+            // traffic), borrowed by reference into the chain.
+            // `TestBinding` exercises writes against EP0.
+            .chain(
+                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(binding::CLUSTER.id)),
+                Async(binding::HandlerAdaptor(binding_handler_ep0)),
+            )
+            // Clusters for Endpoint 1
+            .chain(
+                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(identify::CLUSTER.id)),
+                Async(IdentifyHandler::new(Dataver::new_rand(&mut rand))),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(fixed_label::CLUSTER.id)),
+                Async(
+                    FixedLabelHandler::new(Dataver::new_rand(&mut rand), FIXED_LABELS_EP1).adapt(),
+                ),
+            )
+            // Binding handler at EP1 — same registry as EP0,
+            // separate facade so the per-cluster-instance Dataver
+            // stays granular per Matter Core §7.13.2.1.
+            .chain(
+                EpClMatcher::new(Some(1), Some(binding::CLUSTER.id)),
+                Async(binding::HandlerAdaptor(binding_handler_ep1)),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                on_off::HandlerAsyncAdaptor(on_off_1),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(UnitTestingHandler::CLUSTER.id)),
+                Async(
+                    UnitTestingHandler::new(Dataver::new_rand(&mut rand), unit_testing_data)
+                        .adapt(),
+                ),
+            )
+            // (mostly) Similar Clusters for Endpoint 2
+            .chain(
+                EpClMatcher::new(Some(2), Some(desc::DescHandler::CLUSTER.id)),
+                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(2), Some(identify::CLUSTER.id)),
+                Async(IdentifyHandler::new(Dataver::new_rand(&mut rand))),
+            )
+            .chain(
+                EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                on_off::HandlerAsyncAdaptor(on_off_2),
+            ),
     )
 }
 

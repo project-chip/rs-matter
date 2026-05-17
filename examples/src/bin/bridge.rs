@@ -41,8 +41,8 @@ use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
-    Async, Cluster, DataModel, DataModelHandler, Dataver, EmptyHandler, Endpoint, EpClMatcher,
-    InvokeContext, Node, ReadContext,
+    Async, Cluster, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, InvokeContext,
+    Node, ReadContext,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -208,68 +208,62 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 ) -> impl DataModelHandler + 'a {
     (
         NODE,
-        endpoints::with_eth_sys(
-            &false,
-            &(),
-            &SysNetifs,
-            rand,
-            EmptyHandler
-                // The next chain is the handler for the "aggregator" endpoint 1.
-                //
-                // Note how the descriptor cluster is a bit different compared to the normal ones.
-                // The `Aggregator` descriptor cluster takes care of declaring all bridged endpoints
-                // as such.
-                //
-                // Implementing the "Actions" cluster (and declaring it in the ep1 meta-data)
-                // would allow one to designate locations/areas to the bridged devices. However, this is
-                // not yet supported by Google home and Apple, as per
-                // https://www.1home.io/docs/en/server/configure-devices#manage-rooms
-                .chain(
-                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                    Async(desc::DescHandler::new_aggregator(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                // The following chains are the handlers for the bridged devices corresponding to ep 2 and ep3.
-                //
-                // In addition to the usual clusters, every bridged endpoint needs to implement the
-                // "Bridged" cluster as well.
-                //
-                // Note also that we are re-using here the ready-made `OnOffHandler` from `rs-matter` for demoing purposes.
-                // In production setups, user is expected to define their own handler for their bridge device cluster(s)
-                // which is likely to do remote calls over a proprietary protocol so as to e.g. retrieve the state of
-                // the lamp, or to switch it on/off.
-                .chain(
-                    EpClMatcher::new(Some(2), Some(desc::DescHandler::CLUSTER.id)),
-                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
-                    Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                    on_off::HandlerAsyncAdaptor(on_off_ep2),
-                )
-                .chain(
-                    EpClMatcher::new(Some(2), Some(BridgedHandler::CLUSTER.id)),
-                    Async(BridgedHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(3), Some(desc::DescHandler::CLUSTER.id)),
-                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(3), Some(groups::GroupsHandler::CLUSTER.id)),
-                    Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(3), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                    on_off::HandlerAsyncAdaptor(on_off_ep3),
-                )
-                .chain(
-                    EpClMatcher::new(Some(3), Some(BridgedHandler::CLUSTER.id)),
-                    Async(BridgedHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                ),
-        ),
+        endpoints::with_eth_sys(&false, &(), &SysNetifs, &(), &(), rand)
+            // The next chain is the handler for the "aggregator" endpoint 1.
+            //
+            // Note how the descriptor cluster is a bit different compared to the normal ones.
+            // The `Aggregator` descriptor cluster takes care of declaring all bridged endpoints
+            // as such.
+            //
+            // Implementing the "Actions" cluster (and declaring it in the ep1 meta-data)
+            // would allow one to designate locations/areas to the bridged devices. However, this is
+            // not yet supported by Google home and Apple, as per
+            // https://www.1home.io/docs/en/server/configure-devices#manage-rooms
+            .chain(
+                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                Async(desc::DescHandler::new_aggregator(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            // The following chains are the handlers for the bridged devices corresponding to ep 2 and ep3.
+            //
+            // In addition to the usual clusters, every bridged endpoint needs to implement the
+            // "Bridged" cluster as well.
+            //
+            // Note also that we are re-using here the ready-made `OnOffHandler` from `rs-matter` for demoing purposes.
+            // In production setups, user is expected to define their own handler for their bridge device cluster(s)
+            // which is likely to do remote calls over a proprietary protocol so as to e.g. retrieve the state of
+            // the lamp, or to switch it on/off.
+            .chain(
+                EpClMatcher::new(Some(2), Some(desc::DescHandler::CLUSTER.id)),
+                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                on_off::HandlerAsyncAdaptor(on_off_ep2),
+            )
+            .chain(
+                EpClMatcher::new(Some(2), Some(BridgedHandler::CLUSTER.id)),
+                Async(BridgedHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(3), Some(desc::DescHandler::CLUSTER.id)),
+                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(3), Some(groups::GroupsHandler::CLUSTER.id)),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(3), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                on_off::HandlerAsyncAdaptor(on_off_ep3),
+            )
+            .chain(
+                EpClMatcher::new(Some(3), Some(BridgedHandler::CLUSTER.id)),
+                Async(BridgedHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            ),
     )
 }
 

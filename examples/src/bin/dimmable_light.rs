@@ -53,7 +53,7 @@ use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{
-    Async, Cluster, DataModel, DataModelHandler, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
+    Async, Cluster, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, Node,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::qr::QrTextType;
@@ -274,29 +274,23 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
 ) -> impl DataModelHandler + 'a {
     (
         NODE,
-        endpoints::with_eth_sys(
-            &false,
-            &(),
-            &SysNetifs,
-            rand,
-            EmptyHandler
-                .chain(
-                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
-                    Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(OnOffDeviceLogic::CLUSTER.id)),
-                    on_off::HandlerAsyncAdaptor(on_off),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(LevelControlDeviceLogic::CLUSTER.id)),
-                    level_control::HandlerAsyncAdaptor(level_control),
-                ),
-        ),
+        endpoints::with_eth_sys(&false, &(), &SysNetifs, &(), &(), rand)
+            .chain(
+                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(OnOffDeviceLogic::CLUSTER.id)),
+                on_off::HandlerAsyncAdaptor(on_off),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(LevelControlDeviceLogic::CLUSTER.id)),
+                level_control::HandlerAsyncAdaptor(level_control),
+            ),
     )
 }
 

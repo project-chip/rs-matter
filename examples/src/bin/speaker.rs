@@ -42,9 +42,7 @@ use rs_matter::dm::events::Events;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
-use rs_matter::dm::{
-    Async, DataModel, DataModelHandler, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
-};
+use rs_matter::dm::{Async, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, Node};
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -186,24 +184,18 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
 ) -> impl DataModelHandler + 'a {
     (
         NODE,
-        endpoints::with_eth_sys(
-            &false,
-            &(),
-            &SysNetifs,
-            rand,
-            EmptyHandler
-                .chain(
-                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(TestLevelControlDeviceLogic::CLUSTER.id)),
-                    level_control::HandlerAsyncAdaptor(level_control),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                    on_off::HandlerAsyncAdaptor(on_off),
-                ),
-        ),
+        endpoints::with_eth_sys(&false, &(), &SysNetifs, &(), &(), rand)
+            .chain(
+                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(TestLevelControlDeviceLogic::CLUSTER.id)),
+                level_control::HandlerAsyncAdaptor(level_control),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                on_off::HandlerAsyncAdaptor(on_off),
+            ),
     )
 }
