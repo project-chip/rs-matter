@@ -134,7 +134,7 @@ impl BasicConstraints {
 
 #[derive(Debug, Clone, FromTLV, ToTLV, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(start = 1, lifetime = "'a", datatype = "naked", unordered)]
+#[tlvargs(start = 1, lifetime = "'a", datatype = "naked")]
 enum Extension<'a> {
     BasicConstraints(BasicConstraints),
     KeyUsage(u16),

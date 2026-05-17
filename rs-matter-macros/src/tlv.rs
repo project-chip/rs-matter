@@ -28,7 +28,19 @@ struct TlvArgs {
     rs_matter_crate: String,
     start: u8,
     datatype: String,
-    unordered: bool,
+    /// If `true`, the derived `FromTLV` implementation assumes incoming
+    /// context tags appear in strictly increasing order (`scan_ctx`,
+    /// linear scan, O(n)). If `false` (the default), it tolerates
+    /// arbitrary tag order (`find_ctx`, quadratic in the number of
+    /// fields). The default is tolerant because Matter Core spec
+    /// §10.6.1 ("Tag Rules") only *recommends* in-order emission ("to
+    /// reduce receiver side complexity in having to deal with arbitrary
+    /// order tags") and does not require receivers to reject out-of-
+    /// order tags; matching the C++ SDK's "accept any order, emit
+    /// in-order" status quo avoids silent interop failures against
+    /// senders that don't strictly order their tags (see e.g.
+    /// matter-js/matter.js#3747).
+    assume_ordered: bool,
     lifetime: syn::Lifetime,
     lifetime_explicit: bool,
 }
@@ -39,7 +51,7 @@ impl Default for TlvArgs {
             start: 0,
             rs_matter_crate: "".to_string(),
             datatype: "struct".to_string(),
-            unordered: false,
+            assume_ordered: false,
             lifetime: Lifetime::new("'_", Span::call_site()),
             lifetime_explicit: false,
         }
@@ -59,9 +71,9 @@ impl TlvArgs {
             self.lifetime_explicit = true;
         } else if meta.path.is_ident("datatype") {
             self.datatype = meta.value()?.parse::<LitStr>()?.value();
-        } else if meta.path.is_ident("unordered") {
+        } else if meta.path.is_ident("assume_ordered") {
             assert!(meta.input.is_empty());
-            self.unordered = true;
+            self.assume_ordered = true;
         } else {
             return Err(meta.error(format!("unsupported attribute: {:?}", meta.path)));
         }
@@ -602,7 +614,14 @@ fn gen_fromtlv_for_struct_named(
     }
 
     let krate = Ident::new(&tlvargs.rs_matter_crate, Span::call_site());
-    let seq_method = format_ident!("{}_ctx", if tlvargs.unordered { "find" } else { "scan" });
+    let seq_method = format_ident!(
+        "{}_ctx",
+        if tlvargs.assume_ordered {
+            "scan"
+        } else {
+            "find"
+        }
+    );
 
     quote! {
         impl #impl_generics #krate::tlv::FromTLV<#lifetime> for #struct_name #generics {
@@ -836,7 +855,7 @@ fn normalize_fromtlv_type(ty: &syn::Type) -> TokenStream {
 /// structure, sequentially, will get Context tags starting from 0
 /// Some configurations are possible through the 'tlvargs' attributes.
 /// For example:
-///  #[tlvargs(lifetime = "'a", start = 1, datatype = "list", unordered)]
+///  #[tlvargs(lifetime = "'a", start = 1, datatype = "list", assume_ordered)]
 ///
 /// start: This can be used to override the default tag from which the
 ///        decoding starts (Default: 0)
@@ -846,8 +865,14 @@ fn normalize_fromtlv_type(ty: &syn::Type) -> TokenStream {
 /// lifetime: If the structure has a lifetime annotation, use this variable
 ///        to indicate that. The 'impl' will then use that lifetime
 ///        indicator.
-/// unordered: By default, the decoder expects that the tags are in
-///        sequentially increasing order. Set this if that is not the case.
+/// assume_ordered: By default, the decoder tolerates incoming context
+///        tags appearing in arbitrary order (matches the C++ SDK and
+///        is safe per Matter Core spec §10.6.1). Set this to switch
+///        to a linear scan that assumes strictly increasing tag order
+///        — faster (O(n) vs O(n²) populate), but rejects valid wire
+///        bytes that happen not to be in spec-recommended order, so
+///        use only for structs whose senders are guaranteed in-order
+///        (e.g. internally generated, never received over the wire).
 ///
 /// Additionally, structure members can use the tagval attribute to
 /// define a specific tag to be used
@@ -895,7 +920,7 @@ mod tests {
         );
 
         let ast: DeriveInput = syn::parse2(quote!(
-            #[tlvargs(unordered)]
+            #[tlvargs(assume_ordered)]
             enum Unused {}
         ))
         .unwrap();
@@ -903,7 +928,7 @@ mod tests {
             parse_tlvargs(&ast, "crate".to_string()),
             TlvArgs {
                 rs_matter_crate: "crate".to_string(),
-                unordered: true,
+                assume_ordered: true,
                 ..Default::default()
             }
         );
@@ -1009,11 +1034,11 @@ mod tests {
                         let mut seq = element.r#struct()?;
 
                         Ok(Self {
-                            field1: u8::from_tlv(&seq.scan_ctx(0u8)?)?,
-                            field2: u32::from_tlv(&seq.scan_ctx(1u8)?)?,
-                            field_opt: Option::from_tlv(&seq.scan_ctx(2u8)?)?,
+                            field1: u8::from_tlv(&seq.find_ctx(0u8)?)?,
+                            field2: u32::from_tlv(&seq.find_ctx(1u8)?)?,
+                            field_opt: Option::from_tlv(&seq.find_ctx(2u8)?)?,
                             field_null: rs_matter_maybe_renamed::tlv::Nullable::from_tlv(
-                                &seq.scan_ctx(3u8)?,
+                                &seq.find_ctx(3u8)?,
                             )?,
                         })
                     }
@@ -1029,10 +1054,10 @@ mod tests {
                             let mut seq = element.r#struct()?;
 
                             let init = rs_matter_maybe_renamed::utils::init::try_init!(Self {
-                                field1 <- u8::init_from_tlv(seq.scan_ctx(0u8)?),
-                                field2 <- u32::init_from_tlv(seq.scan_ctx(1u8)?),
-                                field_opt <- Option::init_from_tlv(seq.scan_ctx(2u8)?),
-                                field_null <- rs_matter_maybe_renamed::tlv::Nullable::init_from_tlv(seq.scan_ctx(3u8)?),
+                                field1 <- u8::init_from_tlv(seq.find_ctx(0u8)?),
+                                field2 <- u32::init_from_tlv(seq.find_ctx(1u8)?),
+                                field_opt <- Option::init_from_tlv(seq.find_ctx(2u8)?),
+                                field_null <- rs_matter_maybe_renamed::tlv::Nullable::init_from_tlv(seq.find_ctx(3u8)?),
                             }? rs_matter_maybe_renamed::error::Error);
 
                             Ok(init)
