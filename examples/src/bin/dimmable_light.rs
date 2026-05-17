@@ -274,7 +274,7 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
 ) -> impl DataModelHandler + 'a {
     (
         NODE,
-        endpoints::with_eth_sys(&false, &(), &SysNetifs, rand)
+        endpoints::with_eth_sys(&false, &(), &SysNetifs, &(), &(), rand)
             .chain(
                 EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),

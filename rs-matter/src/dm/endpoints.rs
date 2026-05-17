@@ -32,9 +32,9 @@ use super::clusters::net_comm::{
     self, ClusterAsyncHandler as _, NetCommHandler, NetCtl, NetCtlStatus,
 };
 use super::clusters::noc::{self, ClusterHandler as _, NocHandler};
-use super::clusters::sw_diag::{self, ClusterHandler as _, SwDiagHandler};
+use super::clusters::sw_diag::{self, ClusterHandler as _, SwDiag, SwDiagHandler};
 use super::clusters::thread_diag::{self, ClusterHandler as _, ThreadDiag, ThreadDiagHandler};
-use super::clusters::time_sync::{self, ClusterHandler as _, TimeSyncHandler};
+use super::clusters::time_sync::{self, ClusterHandler as _, TimeSync, TimeSyncHandler};
 use super::clusters::wifi_diag::{self, ClusterHandler as _, WifiDiag, WifiDiagHandler};
 use super::networks::eth::EthNetCtl;
 use super::types::{Async, ChainedHandler, Dataver, EndptId, EpClMatcher};
@@ -87,8 +87,8 @@ pub type SysHandler<'a, T, N> = handler_chain_type!(
         EpClMatcher => noc::HandlerAdaptor<NocHandler>,
         EpClMatcher => acl::HandlerAdaptor<acl::AclHandler>,
         EpClMatcher => grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>,
-        EpClMatcher => sw_diag::HandlerAdaptor<SwDiagHandler>,
-        EpClMatcher => time_sync::HandlerAdaptor<TimeSyncHandler>,
+        EpClMatcher => sw_diag::HandlerAdaptor<SwDiagHandler<'a>>,
+        EpClMatcher => time_sync::HandlerAdaptor<TimeSyncHandler<'a>>,
         EpClMatcher => gen_diag::HandlerAdaptor<GenDiagHandler<'a>>,
         EpClMatcher => N
     )>
@@ -104,18 +104,28 @@ pub const ROOT_ENDPOINT_ID: EndptId = 0;
 /// - `comm_policy`: The `CommPolicy` implementation.
 /// - `gen_diag`: The `GenDiag` implementation.
 /// - `netif_diag`: The `NetifDiag` implementation.
+/// - `time_sync`: The `TimeSync` implementation (pass `&()` for the
+///   no-op default: `UTCTime = Null`, `Granularity = NoTime`,
+///   `TimeSource = None`).
+/// - `sw_diag`: The `SwDiag` implementation (pass `&()` for the
+///   no-op default: heap counters report `0`).
 /// - `rand`: A random number generator.
 /// - `handler`: The handler to be decorated with the system model and Ethernet Network Diagnostics handlers
+#[allow(clippy::too_many_arguments)]
 pub fn with_eth_sys<'a, R: RngCore>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
+    time_sync: &'a dyn TimeSync,
+    sw_diag: &'a dyn SwDiag,
     mut rand: R,
 ) -> EthSysHandler<'a> {
     with_sys(
         comm_policy,
         gen_diag,
         netif_diag,
+        time_sync,
+        sw_diag,
         EthNetCtl,
         EthDiagHandler::CLUSTER.id,
         EthDiagHandler::new(Dataver::new_rand(&mut rand)).adapt(),
@@ -131,14 +141,19 @@ pub fn with_eth_sys<'a, R: RngCore>(
 /// - `gen_diag`: The `GenDiag` implementation.
 /// - `netif_diag`: The `NetifDiag` implementation.
 /// - `wifi_diag`: The `WifiDiag` implementation.
+/// - `time_sync`: The `TimeSync` implementation (pass `&()` for the no-op default).
+/// - `sw_diag`: The `SwDiag` implementation (pass `&()` for the no-op default).
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `rand`: A random number generator.
 /// - `handler`: The handler to be decorated with the system model and Wifi Network Diagnostics handlers
+#[allow(clippy::too_many_arguments)]
 pub fn with_wifi_sys<'a, R: RngCore, T>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
     wifi_diag: &'a dyn WifiDiag,
+    time_sync: &'a dyn TimeSync,
+    sw_diag: &'a dyn SwDiag,
     net_ctl: T,
     mut rand: R,
 ) -> WifiSysHandler<'a, T>
@@ -149,6 +164,8 @@ where
         comm_policy,
         gen_diag,
         netif_diag,
+        time_sync,
+        sw_diag,
         net_ctl,
         WifiDiagHandler::CLUSTER.id,
         WifiDiagHandler::new(Dataver::new_rand(&mut rand), wifi_diag).adapt(),
@@ -164,14 +181,19 @@ where
 /// - `gen_diag`: The `GenDiag` implementation.
 /// - `netif_diag`: The `NetifDiag` implementation.
 /// - `thread_diag`: The `ThreadDiag` implementation.
+/// - `time_sync`: The `TimeSync` implementation (pass `&()` for the no-op default).
+/// - `sw_diag`: The `SwDiag` implementation (pass `&()` for the no-op default).
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `rand`: A random number generator.
 /// - `handler`: The handler to be decorated with the system model and Thread Network Diagnostics handlers
+#[allow(clippy::too_many_arguments)]
 pub fn with_thread_sys<'a, R: RngCore, T>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
     thread_diag: &'a dyn ThreadDiag,
+    time_sync: &'a dyn TimeSync,
+    sw_diag: &'a dyn SwDiag,
     net_ctl: T,
     mut rand: R,
 ) -> ThreadSysHandler<'a, T>
@@ -182,6 +204,8 @@ where
         comm_policy,
         gen_diag,
         netif_diag,
+        time_sync,
+        sw_diag,
         net_ctl,
         ThreadDiagHandler::CLUSTER.id,
         ThreadDiagHandler::new(Dataver::new_rand(&mut rand), thread_diag).adapt(),
@@ -207,6 +231,8 @@ fn with_sys<'a, R: RngCore, T, N>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
+    time_sync: &'a dyn TimeSync,
+    sw_diag: &'a dyn SwDiag,
     net_ctl: T,
     netw_diag_cluster_id: ClusterId,
     netw_diag: N,
@@ -233,11 +259,11 @@ where
             )
             .chain(
                 EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(TimeSyncHandler::CLUSTER.id)),
-                TimeSyncHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+                TimeSyncHandler::new(Dataver::new_rand(&mut rand), time_sync).adapt(),
             )
             .chain(
                 EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(SwDiagHandler::CLUSTER.id)),
-                SwDiagHandler::new(Dataver::new_rand(&mut rand)).adapt(),
+                SwDiagHandler::new(Dataver::new_rand(&mut rand), sw_diag).adapt(),
             )
             .chain(
                 EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GrpKeyMgmtHandler::CLUSTER.id)),

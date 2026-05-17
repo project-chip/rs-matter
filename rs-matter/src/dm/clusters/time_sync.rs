@@ -15,38 +15,43 @@
  *    limitations under the License.
  */
 
-//! Stub implementation of the Time Synchronization cluster.
+//! Implementation of the Time Synchronization cluster.
 //!
-//! This handler advertises the cluster on the root endpoint with **no
-//! features claimed** — i.e. no time-zone support, no NTP client/
-//! server, no trusted-time-source support. The mandatory `UTCTime`
-//! and `Granularity` attributes are served with spec-compliant
-//! "we don't know the time" defaults:
+//! The cluster is advertised on the root endpoint with **no feature
+//! bits claimed** — no time-zone support, no NTP client/server, no
+//! trusted-time-source support. What the cluster *does* expose:
 //!
-//! - `UTCTime` → `Null` (no current time available)
-//! - `Granularity` → `NoTimeGranularity` (paired-state, required
-//!   when `UTCTime` is Null per Matter Core spec §11.16.8)
-//!
-//! `TimeSource` is also opted in (advertised in `AttributeList` so the
-//! Matter test harness's `has_attribute(TimeSource)` gate passes; the
-//! attribute itself is spec-optional when no time-sync features are
-//! claimed), returning `None` — "no time source configured".
+//! - The two mandatory attributes (`UTCTime`, `Granularity`).
+//! - `TimeSource` (spec-optional when no features are claimed; we
+//!   opt in so the Matter test harness's `has_attribute(TimeSource)`
+//!   gate on `TC_TIMESYNC_2_1` matches and the test runs rather
+//!   than skipping).
 //!
 //! All five commands (`SetUTCTime`, `SetTrustedTimeSource`,
 //! `SetTimeZone`, `SetDSTOffset`, `SetDefaultNTP`) are stubbed to
-//! return `CommandNotFound`. The cluster metadata still advertises
-//! them via codegen `FULL_CLUSTER`, but with no feature bits set
-//! they should never be dispatched on a conformance peer; returning
-//! `CommandNotFound` cleanly refuses any peer probe.
+//! return `CommandNotFound` — they're feature-gated and no conformant
+//! peer should dispatch them with no features claimed.
 //!
-//! Wiring this minimal handler unlocks `TC_TIMESYNC_2_1` — the only
-//! TimeSync conformance test gated by `run_if_endpoint_matches`
-//! (`has_cluster(TimeSynchronization) and has_attribute(TimeSource)`).
-//! The other TimeSync tests (TC_TIMESYNC_2_2 onwards) use bare
-//! `@async_test_body` and exercise the feature-gated paths; making
-//! them pass requires actually claiming the relevant features and
-//! implementing the corresponding read/write/invoke logic — a
-//! follow-up.
+//! # Pluggable data source — [`TimeSync`]
+//!
+//! [`TimeSyncHandler`] is **not** a fixed-value stub: it borrows a
+//! `&dyn TimeSync` data provider and forwards each attribute read to
+//! it. A real implementation backed by the device's wall clock
+//! exposes real time on the wire; the no-op default — `impl TimeSync
+//! for ()`, used via `&()` — returns the "we don't know the time"
+//! triple (`UTCTime = Null`, `Granularity = NoTimeGranularity`,
+//! `TimeSource = None`) and is spec-compliant per Matter Core spec
+//! §11.16.8 ("when `UTCTime` is `Null`, `Granularity` MUST be
+//! `NoTimeGranularity`").
+//!
+//! # Scope and follow-ups
+//!
+//! Wiring this handler unlocks `TC_TIMESYNC_2_1`. The other TimeSync
+//! tests (TC_TIMESYNC_2_2 onwards) use bare `@async_test_body` and
+//! exercise the feature-gated paths; making them pass requires
+//! actually claiming the relevant features (`TimeZone`, `NTPClient`,
+//! `NTPServer`, `TimeSyncClient`) and implementing the corresponding
+//! read/write/invoke logic — a future expansion of [`TimeSync`].
 
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
@@ -55,18 +60,86 @@ use crate::with;
 
 pub use crate::dm::clusters::decl::time_synchronization::*;
 
-/// The system implementation of a handler for the Time Synchronization
-/// Matter cluster.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct TimeSyncHandler {
-    dataver: Dataver,
+/// Pluggable data source for the TimeSync cluster handler.
+///
+/// All methods have sensible "we don't know" defaults so an
+/// implementor can opt in to just the bits the device can actually
+/// provide. `impl TimeSync for ()` lets `&()` stand in as the no-op
+/// provider when a caller has nothing real to plug in yet.
+///
+/// # Spec invariant (Matter Core spec §11.16.8)
+///
+/// When [`utc_time`](Self::utc_time) returns `Nullable::none()`,
+/// [`granularity`](Self::granularity) **MUST** return
+/// `GranularityEnum::NoTimeGranularity`. The default implementations
+/// satisfy this; custom implementors that override one but not the
+/// other should preserve the pairing.
+pub trait TimeSync {
+    /// Current wall-clock time as microseconds since the Matter epoch
+    /// (2000-01-01T00:00:00Z UTC), or `Null` if no time is currently
+    /// available.
+    fn utc_time(&self) -> Result<Nullable<u64>, Error>;
+
+    /// Granularity of the value reported by
+    /// [`utc_time`](Self::utc_time). Must be `NoTimeGranularity`
+    /// whenever `utc_time` returns `Null`.
+    fn granularity(&self) -> Result<GranularityEnum, Error>;
+
+    /// Where the device got its current time from. `None` means
+    /// "no source configured".
+    fn time_source(&self) -> Result<TimeSourceEnum, Error>;
 }
 
-impl TimeSyncHandler {
-    /// Create a new instance of `TimeSyncHandler` with the given `Dataver`.
-    pub const fn new(dataver: Dataver) -> Self {
-        Self { dataver }
+impl<T> TimeSync for &T
+where
+    T: TimeSync,
+{
+    fn utc_time(&self) -> Result<Nullable<u64>, Error> {
+        (*self).utc_time()
+    }
+    fn granularity(&self) -> Result<GranularityEnum, Error> {
+        (*self).granularity()
+    }
+    fn time_source(&self) -> Result<TimeSourceEnum, Error> {
+        (*self).time_source()
+    }
+}
+
+/// No-op `TimeSync` provider used as `&()` to mean "we don't know
+/// the time" — matches the convention used by [`WifiDiag`], etc.
+impl TimeSync for () {
+    fn utc_time(&self) -> Result<Nullable<u64>, Error> {
+        Ok(Nullable::none())
+    }
+
+    fn granularity(&self) -> Result<GranularityEnum, Error> {
+        Ok(GranularityEnum::NoTimeGranularity)
+    }
+
+    fn time_source(&self) -> Result<TimeSourceEnum, Error> {
+        Ok(TimeSourceEnum::None)
+    }
+}
+
+/// Handler for the Time Synchronization Matter cluster.
+///
+/// Borrows a `&dyn TimeSync` data provider for the lifetime `'a`
+/// and forwards each attribute read into it. The cluster's wire
+/// metadata is fixed at the type-level (`CLUSTER` const): required
+/// globals + the two mandatory attrs + `TimeSource`, no features,
+/// no commands.
+#[derive(Clone)]
+pub struct TimeSyncHandler<'a> {
+    dataver: Dataver,
+    time_sync: &'a dyn TimeSync,
+}
+
+impl<'a> TimeSyncHandler<'a> {
+    /// Create a new handler bound to `time_sync` for its lifetime.
+    /// Pass `&()` (the no-op [`TimeSync`] impl) when no real time
+    /// source is available.
+    pub const fn new(dataver: Dataver, time_sync: &'a dyn TimeSync) -> Self {
+        Self { dataver, time_sync }
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
@@ -75,11 +148,7 @@ impl TimeSyncHandler {
     }
 }
 
-impl ClusterHandler for TimeSyncHandler {
-    // Cluster metadata: required globals + the two mandatory attrs
-    // (`UTCTime`, `Granularity`) + `TimeSource` (opted in so the
-    // Python `has_attribute(TimeSource)` gate on TC_TIMESYNC_2_1
-    // passes). No feature bits, no commands.
+impl ClusterHandler for TimeSyncHandler<'_> {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
         .with_attrs(with!(required; AttributeId::TimeSource))
         .with_cmds(with!());
@@ -93,21 +162,15 @@ impl ClusterHandler for TimeSyncHandler {
     }
 
     fn utc_time(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
-        // We don't track wall-clock time. Pair with Granularity =
-        // NoTimeGranularity below — see Matter Core spec §11.16.8:
-        // when `UTCTime` is `Null`, `Granularity` MUST be
-        // `NoTimeGranularity`.
-        Ok(Nullable::none())
+        self.time_sync.utc_time()
     }
 
     fn granularity(&self, _ctx: impl ReadContext) -> Result<GranularityEnum, Error> {
-        Ok(GranularityEnum::NoTimeGranularity)
+        self.time_sync.granularity()
     }
 
     fn time_source(&self, _ctx: impl ReadContext) -> Result<TimeSourceEnum, Error> {
-        // "No time source configured" — sane companion to a Null
-        // `UTCTime` / `NoTimeGranularity` pair.
-        Ok(TimeSourceEnum::None)
+        self.time_sync.time_source()
     }
 
     // ---- Commands: feature-gated; we claim no features so the peer
@@ -153,5 +216,20 @@ impl ClusterHandler for TimeSyncHandler {
         _request: SetDefaultNTPRequest<'_>,
     ) -> Result<(), Error> {
         Err(ErrorCode::CommandNotFound.into())
+    }
+}
+
+impl core::fmt::Debug for TimeSyncHandler<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("TimeSyncHandler")
+            .field("dataver", &self.dataver)
+            .finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for TimeSyncHandler<'_> {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "TimeSyncHandler {{ dataver: {} }}", self.dataver.get());
     }
 }
