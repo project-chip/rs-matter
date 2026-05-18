@@ -77,17 +77,17 @@ macro_rules! root_endpoint {
     }
 }
 
-/// A type alias for the handler chain returned by `with_eth_sys()`.
+/// A type alias for the handler chain returned by `eth_sys_handler()`.
 pub type EthSysHandler<'a> = SysHandler<'a, EthNetCtl, eth_diag::HandlerAdaptor<EthDiagHandler>>;
 
-/// A type alias for the handler chain returned by `with_wifi_sys()`.
+/// A type alias for the handler chain returned by `wifi_sys_handler()`.
 pub type WifiSysHandler<'a, T> = SysHandler<'a, T, wifi_diag::HandlerAdaptor<WifiDiagHandler<'a>>>;
 
-/// A type alias for the handler chain returned by `with_thread_sys()`.
+/// A type alias for the handler chain returned by `thread_sys_handler()`.
 pub type ThreadSysHandler<'a, T> =
     SysHandler<'a, T, thread_diag::HandlerAdaptor<ThreadDiagHandler<'a>>>;
 
-/// A type alias for the handler chain returned by `with_sys()`.
+/// A type alias for the handler chain returned by `sys_handler()`.
 pub type SysHandler<'a, T, N> = handler_chain_type!(
     EpClMatcher => net_comm::HandlerAsyncAdaptor<NetCommHandler<T>>
     | Async<handler_chain_type!(
@@ -108,8 +108,8 @@ pub type SysHandler<'a, T, N> = handler_chain_type!(
 /// The ID of the root endpoint (Endpoint 0)
 pub const ROOT_ENDPOINT_ID: EndptId = 0;
 
-/// Decorate the provided `handler` with the system model handlers installed on the root endpoint (Endpoint 0).
-/// Use this decorator for devices that use Ethernet as the Matter Operational Network.
+/// Return a system handler for the root endpoint (Endpoint 0).
+/// Use this handler for devices that use Ethernet as the Matter Operational Network.
 ///
 /// # Arguments:
 /// - `comm_policy`: The `CommPolicy` implementation.
@@ -121,9 +121,8 @@ pub const ROOT_ENDPOINT_ID: EndptId = 0;
 /// - `sw_diag`: The `SwDiag` implementation (pass `&()` for the
 ///   no-op default: heap counters report `0`).
 /// - `rand`: A random number generator.
-/// - `handler`: The handler to be decorated with the system model and Ethernet Network Diagnostics handlers
 #[allow(clippy::too_many_arguments)]
-pub fn with_eth_sys<'a, R: RngCore>(
+pub fn eth_sys_handler<'a, R: RngCore>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
@@ -131,7 +130,7 @@ pub fn with_eth_sys<'a, R: RngCore>(
     sw_diag: &'a dyn SwDiag,
     mut rand: R,
 ) -> EthSysHandler<'a> {
-    with_sys(
+    sys_handler(
         comm_policy,
         gen_diag,
         netif_diag,
@@ -144,8 +143,8 @@ pub fn with_eth_sys<'a, R: RngCore>(
     )
 }
 
-/// Decorate the provided `handler` with the system model handlers installed on the root endpoint (Endpoint 0).
-/// Use this decorator for devices that use Wifi as the Matter Operational Network.
+/// Return a system handler for the root endpoint (Endpoint 0).
+/// Use this handler for devices that use Wifi as the Matter Operational Network.
 ///
 /// # Arguments:
 /// - `comm_policy`: The `CommPolicy` implementation.
@@ -156,9 +155,8 @@ pub fn with_eth_sys<'a, R: RngCore>(
 /// - `sw_diag`: The `SwDiag` implementation (pass `&()` for the no-op default).
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `rand`: A random number generator.
-/// - `handler`: The handler to be decorated with the system model and Wifi Network Diagnostics handlers
 #[allow(clippy::too_many_arguments)]
-pub fn with_wifi_sys<'a, R: RngCore, T>(
+pub fn wifi_sys_handler<'a, R: RngCore, T>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
@@ -171,7 +169,7 @@ pub fn with_wifi_sys<'a, R: RngCore, T>(
 where
     T: NetCtl + NetCtlStatus,
 {
-    with_sys(
+    sys_handler(
         comm_policy,
         gen_diag,
         netif_diag,
@@ -184,8 +182,8 @@ where
     )
 }
 
-/// Decorate the provided `handler` with the system model handlers installed on the root endpoint (Endpoint 0).
-/// Use this decorator for devices that use Thread as the Matter Operational Network.
+/// Return a system handler for the root endpoint (Endpoint 0).
+/// Use this handler for devices that use Thread as the Matter Operational Network.
 ///
 /// # Arguments:
 /// - `comm_policy`: The `CommPolicy` implementation.
@@ -196,9 +194,8 @@ where
 /// - `sw_diag`: The `SwDiag` implementation (pass `&()` for the no-op default).
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `rand`: A random number generator.
-/// - `handler`: The handler to be decorated with the system model and Thread Network Diagnostics handlers
 #[allow(clippy::too_many_arguments)]
-pub fn with_thread_sys<'a, R: RngCore, T>(
+pub fn thread_sys_handler<'a, R: RngCore, T>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
@@ -211,7 +208,7 @@ pub fn with_thread_sys<'a, R: RngCore, T>(
 where
     T: NetCtl + NetCtlStatus,
 {
-    with_sys(
+    sys_handler(
         comm_policy,
         gen_diag,
         netif_diag,
@@ -224,11 +221,12 @@ where
     )
 }
 
-/// Decorate the provided `handler` with the system model handlers installed on the root endpoint (Endpoint 0).
-/// Note that this decoration does not include the Network Diagnostic handler, which is dependent on
+/// Return a system handler for the root endpoint (Endpoint 0).
+/// Note that this handler does not include the Network Diagnostic handler, which is dependent on
 /// the network type and thus is not included in this function.
 ///
-/// Use `with_eth_sys()`, `with_wifi_sys()` or `with_thread_sys()` instead to get the appropriate Network Diagnostic handler included in the decoration.
+/// Use `eth_sys_handler()`, `wifi_sys_handler()` or `thread_sys_handler()` instead to get the appropriate
+/// Network Diagnostic handler included in the handler.
 ///
 /// # Arguments:
 /// - `comm_policy`: The `CommPolicy` implementation.
@@ -238,7 +236,7 @@ where
 /// - `net_ctl`: The `NetCtl` implementation.
 /// - `rand`: A random number generator.
 #[allow(clippy::too_many_arguments)]
-fn with_sys<'a, R: RngCore, T, N>(
+fn sys_handler<'a, R: RngCore, T, N>(
     comm_policy: &'a dyn CommPolicy,
     gen_diag: &'a dyn GenDiag,
     netif_diag: &'a dyn NetifDiag,
