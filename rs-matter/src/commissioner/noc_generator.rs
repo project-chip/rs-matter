@@ -123,9 +123,22 @@ impl NocGenerator {
             ca_id: Some(rcac_id),
         };
 
+        // NotBefore MUST NOT be 0 (Matter epoch start, 2000-01-01).
+        // CHIP's ChipEpochToASN1Time treats epoch=0 as the "no
+        // well-defined expiration date" sentinel and re-emits it as
+        // GeneralizedTime "99991231235959Z" regardless of which field
+        // it appears in (see CHIPCert.cpp:1076-1106 and the
+        // explanatory comment about CHIP epoch 0 NotBefore producing
+        // an invalid TBS signature on round-trip).
+        //
+        // We sign over UTCTime "000101000000Z" (Matter epoch); CHIP
+        // would reconstruct GeneralizedTime "99991231235959Z" and the
+        // hash would mismatch.  Using 1 second past the Matter epoch
+        // avoids the sentinel collision while keeping the cert
+        // effectively unbounded on the lower end.
         let validity = crate::cert::builder::Validity {
-            not_before: 0, // epoch start
-            not_after: 0,  // no expiry
+            not_before: 1, // 2000-01-01 00:00:01 — past CHIP's epoch=0 sentinel
+            not_after: 0,  // no expiry (NotAfter sentinel is legitimate)
         };
 
         let cert_len = RcacBuilder::new(&mut cert_buf).build(
@@ -234,9 +247,22 @@ impl NocGenerator {
             ca_id: Some(icac_id),
         };
 
+        // NotBefore MUST NOT be 0 (Matter epoch start, 2000-01-01).
+        // CHIP's ChipEpochToASN1Time treats epoch=0 as the "no
+        // well-defined expiration date" sentinel and re-emits it as
+        // GeneralizedTime "99991231235959Z" regardless of which field
+        // it appears in (see CHIPCert.cpp:1076-1106 and the
+        // explanatory comment about CHIP epoch 0 NotBefore producing
+        // an invalid TBS signature on round-trip).
+        //
+        // We sign over UTCTime "000101000000Z" (Matter epoch); CHIP
+        // would reconstruct GeneralizedTime "99991231235959Z" and the
+        // hash would mismatch.  Using 1 second past the Matter epoch
+        // avoids the sentinel collision while keeping the cert
+        // effectively unbounded on the lower end.
         let validity = crate::cert::builder::Validity {
-            not_before: 0, // epoch start
-            not_after: 0,  // no expiry
+            not_before: 1, // 2000-01-01 00:00:01 — past CHIP's epoch=0 sentinel
+            not_after: 0,  // no expiry (NotAfter sentinel is legitimate)
         };
 
         let issuer = crate::cert::builder::IssuerDN {
@@ -330,9 +356,22 @@ impl NocGenerator {
             ca_id: None,
         };
 
+        // NotBefore MUST NOT be 0 (Matter epoch start, 2000-01-01).
+        // CHIP's ChipEpochToASN1Time treats epoch=0 as the "no
+        // well-defined expiration date" sentinel and re-emits it as
+        // GeneralizedTime "99991231235959Z" regardless of which field
+        // it appears in (see CHIPCert.cpp:1076-1106 and the
+        // explanatory comment about CHIP epoch 0 NotBefore producing
+        // an invalid TBS signature on round-trip).
+        //
+        // We sign over UTCTime "000101000000Z" (Matter epoch); CHIP
+        // would reconstruct GeneralizedTime "99991231235959Z" and the
+        // hash would mismatch.  Using 1 second past the Matter epoch
+        // avoids the sentinel collision while keeping the cert
+        // effectively unbounded on the lower end.
         let validity = crate::cert::builder::Validity {
-            not_before: 0, // epoch start
-            not_after: 0,  // no expiry
+            not_before: 1, // 2000-01-01 00:00:01 — past CHIP's epoch=0 sentinel
+            not_after: 0,  // no expiry (NotAfter sentinel is legitimate)
         };
 
         let cert_len = NocBuilder::new(&mut cert_buf).build(

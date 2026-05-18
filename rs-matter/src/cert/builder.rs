@@ -263,20 +263,23 @@ impl<'a> CertBuilderCore<'a> {
         subject_key_id: &KeyId,
         authority_key_id: &KeyId,
     ) -> Result<(), Error> {
-        // 1. Basic Constraints
+        // 1. Basic Constraints — per Matter Spec §6.5.11.1:
+        //   RCAC: cA = TRUE,  pathLenConstraint SHALL NOT be present
+        //   ICAC: cA = TRUE,  pathLenConstraint = 0
+        //   NOC:  cA = FALSE, pathLenConstraint SHALL NOT be present
         tw.start_struct(&TLVTag::Context(1))?;
         match cert_type {
             CertType::Rcac => {
-                tw.bool(&TLVTag::Context(1), true)?; // is_ca = true
-                tw.u8(&TLVTag::Context(2), 1)?; // path_len = 1
+                tw.bool(&TLVTag::Context(1), true)?;
+                // No path_len for RCAC (was incorrectly set to 1 prior;
+                // CHIP would accept it but it's a spec violation).
             }
             CertType::Icac => {
-                tw.bool(&TLVTag::Context(1), true)?; // is_ca = true
+                tw.bool(&TLVTag::Context(1), true)?;
                 tw.u8(&TLVTag::Context(2), 0)?; // path_len = 0
             }
             CertType::Noc => {
-                tw.bool(&TLVTag::Context(1), false)?; // is_ca = false
-                                                      // No path_len for end entity
+                tw.bool(&TLVTag::Context(1), false)?;
             }
         }
         tw.end_container()?;
@@ -657,6 +660,48 @@ mod tests {
 
         assert!(len > 100);
         assert!(len < MAX_CERT_TLV_LEN);
+    }
+
+    /// Round-trip: build an RCAC, then re-parse and self-verify the
+    /// signature using rs-matter's own `CertVerifier`. If this passes,
+    /// the TLV→ASN.1→hash→verify pipeline is internally consistent.
+    /// If it fails, our signing flow is broken regardless of whether
+    /// CHIP can parse it.
+    #[test]
+    fn test_rcac_self_verify() {
+        let crypto = test_only_crypto();
+        let rcac_secret_key = unwrap!(crypto.generate_secret_key());
+        let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
+
+        let subject = SubjectDN {
+            node_id: None,
+            fabric_id: Some(0x0000_0000_0000_0001),
+            cat_ids: &[],
+            ca_id: Some(0x1122_3344_5566_7788),
+        };
+        let validity = Validity {
+            not_before: 0,
+            not_after: 0,
+        };
+        let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+        let mut builder = RcacBuilder::new(&mut cert_buf);
+        let len = unwrap!(builder.build(
+            &crypto,
+            subject,
+            validity,
+            &rcac_pubkey,
+            &rcac_secret_key,
+            &[0x01],
+        ));
+
+        // Re-parse the just-built RCAC and self-verify.
+        let cert = CertRef::new(crate::tlv::TLVElement::new(&cert_buf[..len]));
+        let mut scratch = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+        let res = cert.verify_chain_start(&crypto).finalise(&mut scratch);
+        assert!(
+            res.is_ok(),
+            "RCAC built by RcacBuilder failed self-verification: {res:?}"
+        );
     }
 
     /// Test building an ICAC signed by RCAC
