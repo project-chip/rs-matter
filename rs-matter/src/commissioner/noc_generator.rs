@@ -373,6 +373,16 @@ impl NocGenerator {
         self.rcac_id
     }
 
+    /// Get a reference to the Root CA private key, for persistence.
+    ///
+    /// Pair with [`NocGenerator::from_root_ca`] on the reload side to
+    /// restore a generator that signs new NOCs identically to before.
+    /// Treat the returned bytes as highly sensitive — they're the
+    /// trust anchor for the entire fabric.
+    pub fn root_secret_key(&self) -> crate::crypto::CanonPkcSecretKeyRef<'_> {
+        self.root_privkey.reference()
+    }
+
     /// Get the ICAC ID (if ICAC was generated).
     pub fn icac_id(&self) -> Option<u64> {
         self.icac_id

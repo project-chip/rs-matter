@@ -261,6 +261,49 @@ impl FabricCredentials {
     pub fn set_ipk(&mut self, ipk: CanonAeadKeyRef<'_>) {
         self.ipk.load(ipk);
     }
+
+    /// Get a reference to the Root CA private key for persistence.
+    ///
+    /// Forwards to [`crate::commissioner::NocGenerator::root_secret_key`].
+    /// Pair with [`Self::from_persisted`] (below) on the reload side
+    /// to recreate the fabric credentials with identical signing
+    /// capability — i.e., devices commissioned before reload remain
+    /// valid because their NOCs are signed by the same key.
+    pub fn root_secret_key(&self) -> crate::crypto::CanonPkcSecretKeyRef<'_> {
+        self.noc_generator.root_secret_key()
+    }
+
+    /// Get the RCAC ID for persistence.
+    pub fn rcac_id(&self) -> u64 {
+        self.noc_generator.rcac_id()
+    }
+
+    /// Restore fabric credentials from previously-persisted bytes.
+    ///
+    /// `root_privkey`, `root_cert`, `fabric_id`, `rcac_id`, `ipk_bytes`,
+    /// and `next_node_id` all come from a prior [`Self::root_secret_key`]
+    /// /  [`Self::root_cert`] /  [`Self::fabric_id`] /  [`Self::rcac_id`] /
+    /// [`Self::ipk`] / [`Self::peek_next_node_id`] snapshot saved to
+    /// stable storage. This is the inverse of `new()`.
+    pub fn from_persisted<C: Crypto>(
+        crypto: &C,
+        root_privkey: crate::crypto::CanonPkcSecretKey,
+        root_cert: &[u8],
+        fabric_id: u64,
+        rcac_id: u64,
+        ipk_bytes: CanonAeadKeyRef<'_>,
+        next_node_id: u64,
+    ) -> Result<Self, Error> {
+        let noc_generator =
+            NocGenerator::from_root_ca(crypto, root_privkey, root_cert, fabric_id, rcac_id)?;
+        let mut ipk = CanonAeadKey::new();
+        ipk.load(ipk_bytes);
+        Ok(Self {
+            noc_generator,
+            ipk,
+            next_node_id,
+        })
+    }
 }
 
 #[cfg(test)]

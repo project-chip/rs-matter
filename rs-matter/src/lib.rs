@@ -75,6 +75,7 @@ pub(crate) mod fmt;
 pub mod acl;
 pub mod cert;
 pub mod commissioner;
+pub mod controller;
 pub mod credentials;
 pub mod crypto;
 pub mod dm;
