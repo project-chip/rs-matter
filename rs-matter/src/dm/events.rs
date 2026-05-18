@@ -17,6 +17,8 @@
 
 use core::fmt::Debug;
 
+use embassy_time::Instant;
+
 use crate::dm::{ClusterId, EndptId, EventId};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
@@ -28,7 +30,6 @@ use crate::tlv::{
     FromTLV, TLVBuilderParent, TLVElement, TLVSequence, TLVSequenceIter, TLVTag, TLVWrite,
 };
 use crate::utils::cell::RefCell;
-use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
 use crate::utils::sync::blocking::Mutex;
 
@@ -58,37 +59,19 @@ const EVENT_NUMBER_EPOCH_SIZE: EventNumber = 10000;
 /// If the app emits no events, this subsystem can be disabled by using the `NoEvents` type alias.
 pub struct Events<const N: usize = DEFAULT_MAX_EVENTS_BUF_SIZE> {
     inner: Mutex<RefCell<EventsInner<N>>>,
-    epoch: Epoch,
 }
 
 impl<const N: usize> Events<N> {
     #[inline(always)]
-    pub const fn new(epoch: Epoch) -> Self {
+    pub const fn new() -> Self {
         Self {
             inner: Mutex::new(RefCell::new(EventsInner::new())),
-            epoch,
         }
     }
 
-    #[cfg(feature = "std")]
-    #[inline(always)]
-    pub const fn new_default() -> Self {
-        use crate::utils::epoch::sys_epoch;
-        Self::new(sys_epoch)
-    }
-
-    pub fn init(epoch: Epoch) -> impl Init<Self> {
+    pub fn init() -> impl Init<Self> {
         init!(Self {
             inner <- Mutex::init(RefCell::init(EventsInner::init())),
-            epoch,
-        })
-    }
-
-    #[cfg(feature = "std")]
-    pub fn init_default() -> impl Init<Self> {
-        init!(Self {
-            inner <- Mutex::init(RefCell::init(EventsInner::init())),
-            epoch: crate::utils::epoch::sys_epoch,
         })
     }
 
@@ -170,7 +153,12 @@ impl<const N: usize> Events<N> {
 
             let event_number = state.next_event_number(&mut persist)?;
 
-            let timestamp = EventDataTimestamp::EpochTimestamp((self.epoch)().as_millis() as u64);
+            // TODO: Support `EpochTimestamp` / `PosixTimestamp` variants too
+            // for devices that have a real-time clock available, gated on a
+            // future wall-clock hook. `SystemTimestamp` (ms since boot) is
+            // spec-compliant per Matter Core §10.7.3.5 and always available
+            // via the monotonic clock.
+            let timestamp = EventDataTimestamp::SystemTimestamp(Instant::now().as_millis());
 
             state.push(
                 endpoint_id,
@@ -188,6 +176,12 @@ impl<const N: usize> Events<N> {
         persist.run()?;
 
         Ok(event_number)
+    }
+}
+
+impl<const N: usize> Default for Events<N> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

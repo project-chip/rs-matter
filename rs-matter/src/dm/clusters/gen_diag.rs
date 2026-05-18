@@ -285,18 +285,29 @@ impl ClusterHandler for GenDiagHandler<'_> {
 
     fn handle_time_snapshot<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         response: TimeSnapshotResponseBuilder<P>,
     ) -> Result<P, Error> {
         // `SystemTimeMs` is the monotonic since-boot timestamp; we delegate
-        // to `GenDiag::uptime_ms`. `PosixTimeMs` is null when the device
-        // does not implement the Time Synchronization cluster (rs-matter
-        // does not), which is what TC_DGGEN_2_4 expects on the
-        // not-supported branch.
+        // to `GenDiag::uptime_ms`.
         let system_time_ms = self.diag.uptime_ms()?;
+
+        // `PosixTimeMs` (Matter Core spec §11.12.7.3): SHALL be null only
+        // when the device doesn't support the TimeSynchronization cluster
+        // (we do) or when its `UTCTime` attribute is null. We read the
+        // Matter-wide current UTC time directly from `Matter::utc_time`
+        // and convert (Matter-epoch microseconds) → POSIX-epoch ms.
+        let posix_time_ms = match ctx.matter().with_state(|state| state.rtc.utc_time()) {
+            Some(utc_us) => Nullable::some(
+                (utc_us / 1000)
+                    .saturating_add(crate::utils::epoch::MATTER_EPOCH_SECS.saturating_mul(1000)),
+            ),
+            None => Nullable::none(),
+        };
+
         response
             .system_time_ms(system_time_ms)?
-            .posix_time_ms(Nullable::none())?
+            .posix_time_ms(posix_time_ms)?
             .end()
     }
 

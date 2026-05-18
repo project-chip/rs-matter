@@ -21,8 +21,8 @@
 //! of the PASE protocol for establishing secure sessions using a shared passcode.
 
 use core::num::NonZeroU8;
-use core::ops::Add;
-use core::time::Duration;
+
+use embassy_time::{Duration, Instant};
 
 use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
@@ -34,7 +34,6 @@ use crate::sc::pase::spake2p::{
 use crate::sc::SessionParameters;
 use crate::tlv::{FromTLV, OctetStr, ToTLV};
 use crate::transport::exchange::{Exchange, ExchangeId};
-use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
 use crate::utils::maybe::Maybe;
 use crate::MatterService;
@@ -95,7 +94,7 @@ pub struct CommWindow {
     /// The opener info
     opener: Option<CommWindowOpener>,
     /// The window expiry instant
-    window_expiry: Duration,
+    window_expiry: Instant,
     /// Number of failed PAKE handshake attempts within this window.
     /// Per Matter Core spec section 11.18.6.1.5, the window SHALL be
     /// revoked after 20 unsuccessful handshakes.
@@ -118,7 +117,7 @@ impl CommWindow {
         salt: Spake2pVerifierSaltRef<'a>,
         discriminator: u16,
         opener: Option<CommWindowOpener>,
-        window_expiry: Duration,
+        window_expiry: Instant,
     ) -> impl Init<Self> + 'a {
         init!(Self {
             mdns_id,
@@ -146,7 +145,7 @@ impl CommWindow {
         count: u32,
         discriminator: u16,
         opener: Option<CommWindowOpener>,
-        window_expiry: Duration,
+        window_expiry: Instant,
     ) -> impl Init<Self> + 'a {
         init!(Self {
             mdns_id,
@@ -189,34 +188,23 @@ pub struct Pase {
     /// The (one and only) PASE session timeout tracker
     /// If there is no active PASE session, this is `None`
     pub(crate) session_timeout: Option<SessionEstTimeout>,
-    /// The epoch function
-    pub(crate) epoch: Epoch,
 }
 
 impl Pase {
     /// Create a new PASE state
-    ///
-    /// # Arguments
-    /// - `epoch` - The epoch function
     #[inline(always)]
-    pub const fn new(epoch: Epoch) -> Self {
+    pub const fn new() -> Self {
         Self {
             comm_window: Maybe::none(),
             session_timeout: None,
-            epoch,
         }
     }
 
     /// Return an in-place initializer for the PASE manager
-    ///
-    /// # Arguments
-    /// - `epoch` - The epoch function
-    /// - `rand` - The random number generator
-    pub fn init(epoch: Epoch) -> impl Init<Self> {
+    pub fn init() -> impl Init<Self> {
         init!(Self {
             comm_window <- Maybe::init_none(),
             session_timeout: None,
-            epoch,
         })
     }
 
@@ -232,7 +220,7 @@ impl Pase {
         let expired = self
             .comm_window
             .as_opt_ref()
-            .map(|comm_window| (self.epoch)() > comm_window.window_expiry)
+            .map(|comm_window| Instant::now() > comm_window.window_expiry)
             .unwrap_or(false);
 
         if expired {
@@ -285,7 +273,7 @@ impl Pase {
             Err(ErrorCode::InvalidCommand)?;
         }
 
-        let window_expiry = (self.epoch)().add(Duration::from_secs(timeout_secs as _));
+        let window_expiry = Instant::now().saturating_add(Duration::from_secs(timeout_secs as _));
 
         self.comm_window
             .reinit(Maybe::init_some(CommWindow::init_with_pw(
@@ -342,7 +330,7 @@ impl Pase {
             Err(ErrorCode::InvalidCommand)?;
         }
 
-        let window_expiry = (self.epoch)().add(Duration::from_secs(timeout_secs as _));
+        let window_expiry = Instant::now().saturating_add(Duration::from_secs(timeout_secs as _));
 
         self.comm_window.reinit(Maybe::init_some(CommWindow::init(
             mdns_id,
@@ -433,6 +421,12 @@ impl Pase {
     }
 }
 
+impl Default for Pase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The timeout tracker for a PASE session establishment
 const PASE_SESSION_EST_TIMEOUT_SECS: Duration = Duration::from_secs(60);
 
@@ -442,30 +436,23 @@ pub(crate) const SPAKE2_SESSION_KEYS_INFO: &[u8] = b"SessionKeys";
 /// The PASE session establishment timeout tracker
 pub(crate) struct SessionEstTimeout {
     /// The session expiry instant
-    session_est_expiry: Duration,
+    session_est_expiry: Instant,
     /// The exchange identifier
     pub(crate) exch_id: ExchangeId,
 }
 
 impl SessionEstTimeout {
-    /// Create a new session establishment timeout tracker
-    ///
-    /// # Arguments
-    /// - `exchange` - The exchange
-    /// - `epoch` - The epoch function
-    pub(crate) fn new(exchange: &Exchange, epoch: Epoch) -> Self {
+    /// Create a new session establishment timeout tracker.
+    pub(crate) fn new(exchange: &Exchange) -> Self {
         Self {
-            session_est_expiry: epoch().add(PASE_SESSION_EST_TIMEOUT_SECS),
+            session_est_expiry: Instant::now().saturating_add(PASE_SESSION_EST_TIMEOUT_SECS),
             exch_id: exchange.id(),
         }
     }
 
-    /// Check if the session establishment has expired
-    ///
-    /// # Arguments
-    /// - `epoch` - The current epoch
-    pub(crate) fn is_sess_expired(&self, epoch: Epoch) -> bool {
-        epoch() > self.session_est_expiry
+    /// Check if the session establishment has expired.
+    pub(crate) fn is_sess_expired(&self) -> bool {
+        Instant::now() > self.session_est_expiry
     }
 }
 

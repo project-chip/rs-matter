@@ -247,6 +247,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         check_opcode(exchange, OpCode::CASESigma3)?;
 
         let status = exchange.with_state(|state| {
+            let lkg_utc_secs = state.lkg_utc_secs();
             let sess = exchange.id().session(&mut state.sessions);
 
             let fabric = NonZeroU8::new(self.casep.local_fabric_idx())
@@ -316,6 +317,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                 let buf = &mut buf[..];
                 if let Err(e) = self.casep.validate_certs(
                     self.crypto,
+                    lkg_utc_secs,
                     fabric,
                     &initiator_noc,
                     initiator_icac.as_ref(),

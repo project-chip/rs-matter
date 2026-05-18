@@ -168,18 +168,22 @@ where
     fn current_heap_free(&self) -> Result<u64, Error> {
         (*self).current_heap_free()
     }
+
     fn current_heap_used(&self) -> Result<u64, Error> {
         (*self).current_heap_used()
     }
+
     fn current_heap_high_watermark(&self) -> Result<u64, Error> {
         (*self).current_heap_high_watermark()
     }
+
     fn thread_metrics(
         &self,
         visit: &mut dyn FnMut(&ThreadMetric<'_>) -> Result<(), Error>,
     ) -> Result<(), Error> {
         (*self).thread_metrics(visit)
     }
+
     fn reset_watermarks(&self) -> Result<(), Error> {
         (*self).reset_watermarks()
     }
@@ -235,6 +239,7 @@ pub const fn cluster(options: Options) -> Cluster<'static> {
     } else {
         0
     };
+
     let cluster = FULL_CLUSTER.with_features(matter_features);
 
     match (heap, watermarks, thread) {

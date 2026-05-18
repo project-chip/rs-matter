@@ -17,7 +17,7 @@
 
 use core::fmt;
 use core::num::NonZeroU8;
-use core::time::Duration;
+use embassy_time::Instant;
 
 use cfg_if::cfg_if;
 
@@ -30,7 +30,6 @@ use crate::group_keys::KeySet;
 use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::ReliableMessage;
 use crate::transport::TransportRunner;
-use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::storage::{ParseBuf, Vec, WriteBuf};
 use crate::{Matter, MatterState};
@@ -108,7 +107,7 @@ pub struct Session {
     rx_ctr_state: RxCtrState,
     mode: SessionMode,
     pub(crate) exchanges: Vec<Option<ExchangeState>, MAX_EXCHANGES>,
-    last_use: Duration,
+    last_use: Instant,
     /// If `true` then the session is considered "expired". Session expiration happens
     /// for the session on behalf of which a fabric is removed.
     ///
@@ -125,7 +124,6 @@ impl Session {
         reserved: bool,
         peer_addr: Address,
         peer_nodeid: Option<u64>,
-        epoch: Epoch,
     ) -> Self {
         Self {
             id,
@@ -142,7 +140,7 @@ impl Session {
             rx_ctr_state: RxCtrState::new(0),
             mode: SessionMode::PlainText,
             exchanges: Vec::new(),
-            last_use: epoch(),
+            last_use: Instant::now(),
             expired: false,
         }
     }
@@ -153,7 +151,6 @@ impl Session {
         reserved: bool,
         peer_addr: Address,
         peer_nodeid: Option<u64>,
-        epoch: Epoch,
     ) -> impl Init<Self> {
         init!(Self {
             id,
@@ -170,7 +167,7 @@ impl Session {
             rx_ctr_state: RxCtrState::new(0),
             mode: SessionMode::PlainText,
             exchanges <- Vec::init(),
-            last_use: epoch(),
+            last_use: Instant::now(),
             expired: false,
         })
     }
@@ -315,7 +312,7 @@ impl Session {
     /// Update the session state with the data in the received packet headers.
     ///
     /// Return `true` if a new exchange was created, and `false` otherwise.
-    pub(crate) fn post_recv(&mut self, rx_header: &PacketHdr, epoch: Epoch) -> Result<bool, Error> {
+    pub(crate) fn post_recv(&mut self, rx_header: &PacketHdr) -> Result<bool, Error> {
         if !self
             .rx_ctr_state
             .post_recv(rx_header.plain.ctr, self.is_encrypted())
@@ -327,7 +324,7 @@ impl Session {
         if let Some(exch_index) = exch_index {
             let exch = unwrap!(self.exchanges[exch_index].as_mut());
 
-            exch.post_recv(&rx_header.plain, &rx_header.proto, epoch)?;
+            exch.post_recv(&rx_header.plain, &rx_header.proto)?;
 
             Ok(false)
         } else {
@@ -346,7 +343,7 @@ impl Session {
                 // unwrap is safe as we just created the exchange
                 let exch = unwrap!(self.exchanges[exch_index].as_mut());
 
-                exch.post_recv(&rx_header.plain, &rx_header.proto, epoch)?;
+                exch.post_recv(&rx_header.plain, &rx_header.proto)?;
 
                 Ok(true)
             } else {
@@ -432,8 +429,8 @@ impl Session {
         tx.encode(crypto, self.get_enc_key(), self.local_nodeid, wb)
     }
 
-    fn update_last_used(&mut self, epoch: Epoch) {
-        self.last_use = epoch();
+    fn update_last_used(&mut self) {
+        self.last_use = Instant::now();
     }
 
     pub(crate) fn get_exch_for_rx(&self, rx_proto: &ProtoHdr) -> Option<usize> {
@@ -729,32 +726,29 @@ pub struct Sessions {
     next_exch_id: u16,
     sessions: Vec<Session, MAX_SESSIONS>,
     group_ctr_store: GroupCtrStore,
-    pub(crate) epoch: Epoch,
 }
 
 impl Sessions {
     /// Create a new Sessions instance.
     #[inline(always)]
-    pub const fn new(epoch: Epoch) -> Self {
+    pub const fn new() -> Self {
         Self {
             sessions: Vec::new(),
             group_ctr_store: GroupCtrStore::new(),
             next_sess_unique_id: 0,
             next_sess_id: 1,
             next_exch_id: 1,
-            epoch,
         }
     }
 
     /// Create an in-place initializer for a new Sessions instance.
-    pub fn init(epoch: Epoch) -> impl Init<Self> {
+    pub fn init() -> impl Init<Self> {
         init!(Self {
             sessions <- Vec::init(),
             group_ctr_store: GroupCtrStore::new(),
             next_sess_unique_id: 0,
             next_sess_id: 1,
             next_exch_id: 1,
-            epoch,
         })
     }
 
@@ -887,7 +881,6 @@ impl Sessions {
         }
 
         // Create ephemeral group session
-        let epoch = self.epoch;
         let peer = packet.peer;
         let mut rand = crypto.weak_rand()?;
         let session = match self.add(rand.next_u32(), false, peer, Some(src_nodeid)) {
@@ -913,7 +906,7 @@ impl Sessions {
 
         // Re-borrow the current created session for returning
         let session = unwrap!(self.sessions.last_mut());
-        session.update_last_used(epoch);
+        session.update_last_used();
 
         Ok((session, payload_range))
     }
@@ -1005,7 +998,7 @@ impl Sessions {
 
     pub fn get_session_for_eviction(&mut self) -> Option<&mut Session> {
         let mut lru_index = None;
-        let mut lru_ts = (self.epoch)();
+        let mut lru_ts = Instant::now();
         for (i, s) in self.sessions.iter().enumerate() {
             if (s.expired || s.last_use < lru_ts)
                 && !s.reserved
@@ -1040,14 +1033,7 @@ impl Sessions {
             self.next_sess_unique_id = 0;
         }
 
-        let session = Session::init(
-            session_id,
-            msg_ctr,
-            reserved,
-            peer_addr,
-            peer_nodeid,
-            self.epoch,
-        );
+        let session = Session::init(session_id, msg_ctr, reserved, peer_addr, peer_nodeid);
 
         self.sessions
             .push_init(session.into_fallible::<Error>(), || {
@@ -1106,7 +1092,7 @@ impl Sessions {
         let mut session = self.sessions.iter_mut().find(|sess| sess.id == id);
 
         if let Some(session) = session.as_mut() {
-            session.update_last_used(self.epoch);
+            session.update_last_used();
         }
 
         session
@@ -1132,7 +1118,7 @@ impl Sessions {
 
         let session = &mut self.sessions[idx];
 
-        session.update_last_used(self.epoch);
+        session.update_last_used();
 
         Some(session)
     }
@@ -1152,7 +1138,7 @@ impl Sessions {
             .find(|sess| !sess.expired && sess.is_for_rx(rx_peer, rx_plain));
 
         if let Some(session) = session.as_mut() {
-            session.update_last_used(self.epoch);
+            session.update_last_used();
         }
 
         session
@@ -1165,7 +1151,7 @@ impl Sessions {
             .find(|sess| sess.is_for_tx(session_id));
 
         if let Some(session) = session.as_mut() {
-            session.update_last_used(self.epoch);
+            session.update_last_used();
         }
 
         session
@@ -1191,9 +1177,8 @@ impl Sessions {
             .next();
 
         if let Some((id, exch_index)) = exch {
-            let epoch = self.epoch;
             let session = unwrap!(self.get(id));
-            session.update_last_used(epoch);
+            session.update_last_used();
 
             Some((session, exch_index))
         } else {
@@ -1250,6 +1235,12 @@ impl Sessions {
     }
 }
 
+impl Default for Sessions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl fmt::Display for Sessions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "{{[")?;
@@ -1294,13 +1285,12 @@ pub fn derive_group_session_id<C: Crypto>(
 mod tests {
     use crate::crypto::{test_only_crypto, AEAD_KEY_ZEROED};
     use crate::transport::network::Address;
-    use crate::utils::epoch::dummy_epoch;
 
     use super::*;
 
     #[test]
     fn test_next_sess_id_doesnt_reuse() {
-        let mut sm = Sessions::new(dummy_epoch);
+        let mut sm = Sessions::new();
         let sess = unwrap!(sm.add(0, false, Address::default(), None));
         sess.set_local_sess_id(1);
         assert_eq!(sm.get_next_sess_id(), 2);
@@ -1312,7 +1302,7 @@ mod tests {
 
     #[test]
     fn test_next_sess_id_overflows() {
-        let mut sm = Sessions::new(dummy_epoch);
+        let mut sm = Sessions::new();
         let sess = unwrap!(sm.add(0, false, Address::default(), None));
         sess.set_local_sess_id(1);
         assert_eq!(sm.get_next_sess_id(), 2);

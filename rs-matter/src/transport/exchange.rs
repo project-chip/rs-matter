@@ -29,7 +29,6 @@ use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
 use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
 use crate::transport::session::Sessions;
 use crate::transport::TxPayloadState;
-use crate::utils::epoch::Epoch;
 use crate::utils::storage::WriteBuf;
 use crate::{Matter, MatterState};
 
@@ -433,13 +432,8 @@ impl ExchangeState {
             && rx_proto.is_initiator() == matches!(self.role, Role::Responder(_))
     }
 
-    pub fn post_recv(
-        &mut self,
-        rx_plain: &PlainHdr,
-        rx_proto: &ProtoHdr,
-        epoch: Epoch,
-    ) -> Result<(), Error> {
-        self.mrp.post_recv(rx_plain, rx_proto, epoch)?;
+    pub fn post_recv(&mut self, rx_plain: &PlainHdr, rx_proto: &ProtoHdr) -> Result<(), Error> {
+        self.mrp.post_recv(rx_plain, rx_proto)?;
 
         Ok(())
     }
@@ -1111,11 +1105,9 @@ impl<'a> Exchange<'a> {
         received_timeout_ms: u32,
     ) -> Result<Self, Error> {
         if received_timeout_ms > 0 {
-            let epoch = matter.epoch();
-
             loop {
                 let mut accept = pin!(matter.transport.accept_if(matter, |_, exch, _| {
-                    exch.mrp.has_rx_timed_out(received_timeout_ms as _, epoch)
+                    exch.mrp.has_rx_timed_out(received_timeout_ms as _)
                 }));
 
                 let mut timer = pin!(Timer::after(embassy_time::Duration::from_millis(
@@ -1456,19 +1448,11 @@ mod tests {
     use crate::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
     use crate::error::ErrorCode;
     use crate::transport::session::SessionMode;
-    use crate::utils::epoch::Epoch;
     use crate::Matter;
-    use core::time::Duration;
     use futures_lite::future::block_on;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
-    fn monotonic_test_epoch() -> Duration {
-        static TICKS: AtomicU64 = AtomicU64::new(0);
-        Duration::from_millis(TICKS.fetch_add(1, Ordering::Relaxed))
-    }
-
-    fn test_matter(epoch: Epoch) -> Matter<'static> {
-        Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, epoch, 0)
+    fn test_matter() -> Matter<'static> {
+        Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0)
     }
 
     fn fill_sessions(matter: &Matter<'_>, reserved: bool) {
@@ -1485,7 +1469,7 @@ mod tests {
 
     #[test]
     fn test_initiate_unsecured_creates_initiator_exchange() {
-        let matter = test_matter(monotonic_test_epoch);
+        let matter = test_matter();
         let crypto = test_only_crypto();
         let peer = network::Address::new();
 
@@ -1508,7 +1492,7 @@ mod tests {
 
     #[test]
     fn test_initiate_unsecured_retries_after_eviction() {
-        let matter = test_matter(monotonic_test_epoch);
+        let matter = test_matter();
         let crypto = test_only_crypto();
         let peer = network::Address::new();
 
@@ -1533,7 +1517,7 @@ mod tests {
 
     #[test]
     fn test_initiate_unsecured_fails_when_no_session_can_be_evicted() {
-        let matter = test_matter(monotonic_test_epoch);
+        let matter = test_matter();
         let crypto = test_only_crypto();
         let peer = network::Address::new();
 

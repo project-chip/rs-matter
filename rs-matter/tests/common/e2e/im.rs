@@ -447,8 +447,13 @@ bitflags! {
     #[repr(transparent)]
     #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct ReplyProcessor: u8 {
-        const REMOVE_ATTRDATA_DATAVER = 0b01;
-        const REMOVE_ATTRDATA_VALUE = 0b10;
+        const REMOVE_ATTRDATA_DATAVER = 0b001;
+        const REMOVE_ATTRDATA_VALUE = 0b010;
+        /// Normalize the timestamp on every `EventReport.Data` to
+        /// `SystemTimestamp(0)`. Pairs with the canonical
+        /// `SystemTimestamp(0)` used in expected event fixtures, so
+        /// the test framework doesn't need a mock monotonic clock.
+        const NORMALIZE_EVENT_TIMESTAMP = 0b100;
     }
 }
 
@@ -458,13 +463,20 @@ impl ReplyProcessor {
     pub fn process(&self, element: &TLVElement, buf: &mut [u8]) -> Result<usize, Error> {
         let mut wb = WriteBuf::new(buf);
 
+        // Empty flag-set, or the message isn't a `ReportDataResp` (e.g.
+        // `StatusResp` / `SubscribeResp` flowing through a subscribe
+        // exchange) → pass through unchanged. The flags below only
+        // describe `ReportDataResp` mutations.
         if self.is_empty() {
             element.to_tlv(&TLVTag::Anonymous, &mut wb)?;
 
             return Ok(wb.get_tail());
         }
 
-        let report_data = ReportDataResp::from_tlv(element)?;
+        let Ok(report_data) = ReportDataResp::from_tlv(element) else {
+            element.to_tlv(&TLVTag::Anonymous, &mut wb)?;
+            return Ok(wb.get_tail());
+        };
 
         wb.start_struct(&TLVTag::Anonymous)?;
 
@@ -498,7 +510,15 @@ impl ReplyProcessor {
             wb.start_array(&TLVTag::Context(2))?;
 
             for event_report in event_reports {
-                event_report?.to_tlv(&TLVTag::Anonymous, &mut wb)?;
+                let mut event_report = event_report?;
+
+                if self.contains(Self::NORMALIZE_EVENT_TIMESTAMP) {
+                    if let rs_matter::im::EventResp::Data(ref mut data) = event_report {
+                        data.timestamp = rs_matter::im::EventDataTimestamp::SystemTimestamp(0);
+                    }
+                }
+
+                event_report.to_tlv(&TLVTag::Anonymous, &mut wb)?;
             }
 
             wb.end_container()?;
@@ -543,6 +563,12 @@ impl ReplyProcessor {
     /// Process the supplied element with removing the data value from the `AttrData` payload
     pub fn remove_attr_data(element: &TLVElement, buf: &mut [u8]) -> Result<usize, Error> {
         (Self::REMOVE_ATTRDATA_VALUE | Self::REMOVE_ATTRDATA_DATAVER).process(element, buf)
+    }
+
+    /// Process the supplied element, normalizing every `EventReport.Data`
+    /// timestamp to `SystemTimestamp(0)` for deterministic comparison.
+    pub fn normalize_event_timestamp(element: &TLVElement, buf: &mut [u8]) -> Result<usize, Error> {
+        Self::NORMALIZE_EVENT_TIMESTAMP.process(element, buf)
     }
 }
 
@@ -786,7 +812,7 @@ impl<'a>
         Self::read(
             TestReadReq::event_reqs(input),
             TestReportDataMsg::event_reports(expected),
-            ReplyProcessor::none,
+            ReplyProcessor::normalize_event_timestamp,
         )
     }
 }

@@ -18,7 +18,6 @@
 use core::future::Future;
 use core::num::NonZeroU8;
 use core::pin::pin;
-use core::time::Duration;
 
 use embassy_futures::select::select3;
 use embassy_time::{Instant, Timer};
@@ -375,7 +374,7 @@ where
     async fn write(
         &self,
         exchange: &mut Exchange<'_>,
-        timeout_instant: Option<Duration>,
+        timeout_instant: Option<Instant>,
         is_groupcast: bool,
     ) -> Result<(), Error> {
         while exchange.rx().is_ok() {
@@ -418,7 +417,7 @@ where
     async fn invoke(
         &self,
         exchange: &mut Exchange<'_>,
-        timeout_instant: Option<Duration>,
+        timeout_instant: Option<Instant>,
         is_groupcast: bool,
     ) -> Result<(), Error> {
         let Some((mut tx, rx)) = self.buffers(exchange).await? else {
@@ -725,11 +724,11 @@ where
     }
 
     /// Process a `TimedReq` request, which is used to set a timeout for the following Write/Invoke request.
-    async fn timed(&self, exchange: &mut Exchange<'_>) -> Result<Duration, Error> {
+    async fn timed(&self, exchange: &mut Exchange<'_>) -> Result<Instant, Error> {
         let req = TimedReq::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
         debug!("IM: Timed request: {:?}", req);
 
-        let timeout_instant = req.timeout_instant(exchange.matter().epoch());
+        let timeout_instant = req.timeout_instant();
 
         Self::send_status(exchange, IMStatusCode::Success).await?;
 
@@ -740,14 +739,14 @@ where
     async fn timed_out(
         &self,
         exchange: &mut Exchange<'_>,
-        timeout_instant: Option<Duration>,
+        timeout_instant: Option<Instant>,
         timed_req: bool,
     ) -> Result<bool, Error> {
         let status = {
             if timed_req != timeout_instant.is_some() {
                 Some(IMStatusCode::TimedRequestMisMatch)
             } else if timeout_instant
-                .map(|timeout_instant| (exchange.matter().epoch())() > timeout_instant)
+                .map(|timeout_instant| Instant::now() > timeout_instant)
                 .unwrap_or(false)
             {
                 Some(IMStatusCode::Timeout)

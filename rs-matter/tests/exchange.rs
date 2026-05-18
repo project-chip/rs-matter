@@ -33,7 +33,7 @@ use rs_matter::sc::{OpCode, SecureChannel, PROTO_ID_SECURE_CHANNEL};
 use rs_matter::tlv::{OctetStr, TLVTag, TLVWrite, ToTLV};
 use rs_matter::transport::exchange::{Exchange, MessageMeta};
 use rs_matter::transport::network::{Address, NoNetwork};
-use rs_matter::utils::epoch::sys_epoch;
+
 use rs_matter::utils::select::Coalesce;
 use rs_matter::Matter;
 
@@ -52,10 +52,9 @@ fn test_unsecured_exchange_over_udp() {
 
     futures_lite::future::block_on(async {
         // Create device-side and controller-side Matter instances
-        let device_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, sys_epoch, 0);
+        let device_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
 
-        let controller_matter =
-            Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, sys_epoch, 0);
+        let controller_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
 
         let crypto = test_only_crypto();
 

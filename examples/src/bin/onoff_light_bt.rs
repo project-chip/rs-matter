@@ -119,13 +119,13 @@ fn main() -> Result<(), Error> {
 
 fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), Error> {
     // Create the Matter object
-    let mut matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+    let mut matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
     // A storage for the Wifi networks
     let mut networks = WifiNetworks::<3>::new();
 
     // Create the event queue
-    let mut events: Events = Events::new_default();
+    let mut events: Events = Events::new();
 
     // Persistence
     let mut kv_buf = [0; 4096];

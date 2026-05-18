@@ -253,10 +253,12 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
                     .map(|icac| CertRef::new(TLVElement::new(icac.0)));
 
                 let mut tmp_buf = alloc!([0u8; CASE_LARGE_BUF_SIZE]); // TODO LARGE BUFFER
+                let lkg_utc_secs = state.lkg_utc_secs();
                 initiator
                     .casep
                     .validate_certs(
                         crypto,
+                        lkg_utc_secs,
                         fabric,
                         &responder_noc,
                         icac_cert.as_ref(),

@@ -102,7 +102,7 @@ fn test_read_event_filtered() {
                 event_data_path!(ep1_event1, 4, EventPriority::Critical, Some(&0x44u8)),
                 event_data_path!(ep1_event2, 5, EventPriority::Critical, Some(&0x45u8)),
             ]),
-            ReplyProcessor::none,
+            ReplyProcessor::normalize_event_timestamp,
         ),
     );
 
@@ -125,7 +125,7 @@ fn test_read_event_filtered() {
                 event_data_path!(ep0_event1, 2, EventPriority::Critical, Some(&0x42u8)),
                 event_data_path!(ep0_event1, 3, EventPriority::Critical, Some(&0x43u8)),
             ]),
-            ReplyProcessor::none,
+            ReplyProcessor::normalize_event_timestamp,
         ),
     );
 
@@ -149,7 +149,7 @@ fn test_read_event_filtered() {
                 event_data_path!(ep0_event1, 3, EventPriority::Critical, Some(&0x43u8)),
                 event_data_path!(ep1_event1, 4, EventPriority::Critical, Some(&0x44u8)),
             ]),
-            ReplyProcessor::none,
+            ReplyProcessor::normalize_event_timestamp,
         ),
     );
 
@@ -169,7 +169,7 @@ fn test_read_event_filtered() {
             TestReportDataMsg::event_reports(&[
                 // no events on node 1337
             ]),
-            ReplyProcessor::none,
+            ReplyProcessor::normalize_event_timestamp,
         ),
     );
 
@@ -187,7 +187,7 @@ fn test_read_event_filtered() {
                 }])
             },
             TestReportDataMsg::event_reports(&[]),
-            ReplyProcessor::none,
+            ReplyProcessor::normalize_event_timestamp,
         ),
     );
 }
@@ -234,7 +234,7 @@ fn test_subscribe_events() {
                     )]),
                     ..Default::default()
                 },
-                ReplyProcessor::none,
+                ReplyProcessor::normalize_event_timestamp,
             ) as &dyn E2eTest,
             &TLVTest {
                 delay_ms: Some(1),
@@ -244,6 +244,11 @@ fn test_subscribe_events() {
                         ..Default::default()
                     },
                     SubscribeResp::new(1, 40),
+                    // The final step returns a `SubscribeResp` rather
+                    // than a `ReportDataResp`, so don't run the event-
+                    // timestamp normaliser (it tries to deserialise as
+                    // `ReportDataResp` first and panics on the wrong
+                    // tag shape).
                     ReplyProcessor::none,
                 )
             },
@@ -258,7 +263,7 @@ fn test_subscribe_events() {
                     EventPriority::Critical,
                     Some(&0x41u8)
                 )]),
-                ReplyProcessor::none,
+                ReplyProcessor::normalize_event_timestamp,
             ),
             &TLVTest::subscription_report(
                 || -> Result<(), Error> {
@@ -288,7 +293,7 @@ fn test_subscribe_events() {
                     )]),
                     ..Default::default()
                 },
-                ReplyProcessor::none,
+                ReplyProcessor::normalize_event_timestamp,
                 StatusResp {
                     status: IMStatusCode::Success,
                     ..Default::default()
@@ -332,7 +337,7 @@ fn test_long_read_events() {
                     more_chunks: Some(true),
                     ..Default::default()
                 },
-                ReplyProcessor::none,
+                ReplyProcessor::normalize_event_timestamp,
             ) as &dyn E2eTest,
             &TLVTest::continue_report(
                 StatusResp {
@@ -349,7 +354,7 @@ fn test_long_read_events() {
                     suppress_response: Some(true),
                     ..Default::default()
                 },
-                ReplyProcessor::none,
+                ReplyProcessor::normalize_event_timestamp,
             ),
         ],
     );

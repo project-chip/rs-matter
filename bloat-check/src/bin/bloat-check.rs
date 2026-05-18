@@ -89,7 +89,6 @@ use rs_matter::transport::network::mdns::builtin::{BuiltinMdnsResponder, Host};
 use rs_matter::transport::network::{
     Address, ChainedNetwork, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend, NoNetwork,
 };
-use rs_matter::utils::epoch::dummy_epoch;
 use rs_matter::utils::init::{init, Init, InitMaybeUninit};
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::sync::DynBase;
@@ -174,12 +173,11 @@ impl<'a> MatterStack<'a> {
                 &TEST_DEV_DET,
                 TEST_DEV_COMM,
                 &TEST_DEV_ATT,
-                dummy_epoch,
                 MATTER_PORT,
             ),
             buffers <- PooledBuffers::init(0),
             subscriptions <- Subscriptions::init(),
-            events <- Events::init(dummy_epoch),
+            events <- Events::init(),
             networks <- SharedNetworks::init(WifiNetworks::init()),
             net_ctl_state <- NetCtlState::init_with_mutex(),
             btp <- Btp::init(),

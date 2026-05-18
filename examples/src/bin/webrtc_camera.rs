@@ -1166,7 +1166,6 @@ fn main() -> Result<(), Error> {
         &BASIC_INFO,
         TEST_DEV_COMM,
         &TEST_DEV_ATT,
-        rs_matter::utils::epoch::sys_epoch,
         MATTER_PORT,
     ));
 
@@ -1301,7 +1300,7 @@ fn main() -> Result<(), Error> {
         DemoZoneHooks,
     ));
 
-    let events = NoEvents::new_default();
+    let events = NoEvents::new();
     let dm = DataModel::new(
         matter,
         &crypto,

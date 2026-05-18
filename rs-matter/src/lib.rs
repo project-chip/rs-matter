@@ -32,12 +32,15 @@
 use core::future::Future;
 
 use crate::crypto::Crypto;
-use crate::dm::clusters::basic_info::AttributeId;
-use crate::dm::clusters::basic_info::FULL_CLUSTER as BASIC_INFO_CLUSTER;
-use crate::dm::clusters::basic_info::{BasicInfoConfig, BasicInfoSettings};
+use crate::dm::clusters::basic_info::{
+    self, BasicInfoConfig, BasicInfoSettings, FULL_CLUSTER as BASIC_INFO_CLUSTER,
+};
 use crate::dm::clusters::dev_att::DeviceAttestation;
+use crate::dm::clusters::time_sync::{
+    self, ClusterHandler as _, GranularityEnum, TimeSourceEnum, TimeSyncHandler,
+};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
-use crate::dm::AttrChangeNotifier;
+use crate::dm::{AttrChangeNotifier, AttrId, ClusterId, EndptId};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::Fabrics;
 use crate::failsafe::FailSafe;
@@ -45,10 +48,7 @@ use crate::pairing::qr::{
     no_optional_data, CommFlowType, NoOptionalData, Qr, QrPayload, QrTextType,
 };
 use crate::pairing::DiscoveryCapabilities;
-use crate::persist::KvBlobStore;
-use crate::persist::KvBlobStoreAccess;
-use crate::persist::Persist;
-use crate::persist::BASIC_INFO_KEY;
+use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, BASIC_INFO_KEY, LKG_UTC_KEY};
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
 use crate::sc::pase::Pase;
 use crate::transport::network::mdns::MatterService;
@@ -58,7 +58,6 @@ use crate::transport::{
     PacketBufferExternalAccess, Transport, TransportRunner, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE,
 };
 use crate::utils::cell::RefCell;
-use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::pooled::BufferAccess;
 use crate::utils::sync::blocking::Mutex;
@@ -147,8 +146,6 @@ pub struct Matter<'a> {
     session_removed: Notification,
     /// A notification that the groups have been modified
     groups_modified: Notification,
-    /// The function to get the current epoch time in milliseconds
-    epoch: Epoch,
     /// The basic information configuration for this Matter device
     dev_det: &'a BasicInfoConfig<'a>,
     /// The basic commissioning data for this Matter device
@@ -160,7 +157,7 @@ pub struct Matter<'a> {
 }
 
 impl<'a> Matter<'a> {
-    /// Create a new Matter object when support for the Rust Standard Library is enabled.
+    /// Create a new Matter object.
     ///
     /// # Parameters
     /// * dev_det: An object of type [BasicInfoConfig].
@@ -169,47 +166,20 @@ impl<'a> Matter<'a> {
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
     ///   requires a set of device attestation certificates and keys. It is the responsibility of
     ///   this object to return the device attestation details when queried upon.
-    /// * port: The port number on which the Matter stack will listen for incoming connections.
-    #[cfg(feature = "std")]
-    #[inline(always)]
-    pub const fn new_default(
-        dev_det: &'a BasicInfoConfig<'a>,
-        dev_comm: BasicCommData,
-        dev_att: &'a dyn DeviceAttestation,
-        port: u16,
-    ) -> Self {
-        use crate::utils::epoch::sys_epoch;
-
-        Self::new(dev_det, dev_comm, dev_att, sys_epoch, port)
-    }
-
-    /// Create a new Matter object
-    ///
-    /// # Parameters
-    /// * dev_det: An object of type [BasicInfoConfig].
-    /// * dev_comm: An object of type [BasicCommData]. This object contains the basic commissioning
-    ///   data required for the device.
-    /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
-    ///   requires a set of device attestation certificates and keys. It is the responsibility of
-    ///   this object to return the device attestation details when queried upon.
-    /// * epoch: A function of type [Epoch]. This function is responsible for providing the current
-    ///   "unix" time in milliseconds
     /// * port: The port number on which the Matter stack will listen for incoming connections.
     #[inline(always)]
     pub const fn new(
         dev_det: &'a BasicInfoConfig<'a>,
         dev_comm: BasicCommData,
         dev_att: &'a dyn DeviceAttestation,
-        epoch: Epoch,
         port: u16,
     ) -> Self {
         Self {
-            state: Mutex::new(RefCell::new(MatterState::new(epoch))),
+            state: Mutex::new(RefCell::new(MatterState::new())),
             transport: Transport::new(dev_det),
             mdns_changed: Notification::new(),
             session_removed: Notification::new(),
             groups_modified: Notification::new(),
-            epoch,
             dev_det,
             dev_comm,
             dev_att,
@@ -217,8 +187,7 @@ impl<'a> Matter<'a> {
         }
     }
 
-    /// Create an in-place initializer for a Matter object
-    /// when support for the Rust Standard Library is enabled.
+    /// Create an in-place initializer for a Matter object.
     ///
     /// # Parameters
     /// * dev_det: An object of type [BasicInfoConfig].
@@ -227,46 +196,20 @@ impl<'a> Matter<'a> {
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
     ///   requires a set of device attestation certificates and keys. It is the responsibility of
     ///   this object to return the device attestation details when queried upon.
-    /// * port: The port number on which the Matter stack will listen for incoming connections.
-    #[cfg(feature = "std")]
-    pub fn init_default(
-        dev_det: &'a BasicInfoConfig<'a>,
-        dev_comm: BasicCommData,
-        dev_att: &'a dyn DeviceAttestation,
-        port: u16,
-    ) -> impl Init<Self> {
-        use crate::utils::epoch::sys_epoch;
-
-        Self::init(dev_det, dev_comm, dev_att, sys_epoch, port)
-    }
-
-    /// Create an in-place initializer for a Matter object
-    ///
-    /// # Parameters
-    /// * dev_det: An object of type [BasicInfoConfig].
-    /// * dev_comm: An object of type [BasicCommData]. This object contains the basic commissioning
-    ///   data required for the device.
-    /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
-    ///   requires a set of device attestation certificates and keys. It is the responsibility of
-    ///   this object to return the device attestation details when queried upon.
-    /// * epoch: A function of type [Epoch]. This function is responsible for providing the current
-    ///   "unix" time in milliseconds
     /// * port: The port number on which the Matter stack will listen for incoming connections.
     pub fn init(
         dev_det: &'a BasicInfoConfig<'a>,
         dev_comm: BasicCommData,
         dev_att: &'a dyn DeviceAttestation,
-        epoch: Epoch,
         port: u16,
     ) -> impl Init<Self> {
         init!(
             Self {
-                state <- Mutex::init(RefCell::init(MatterState::init(epoch))),
+                state <- Mutex::init(RefCell::init(MatterState::init())),
                 transport <- Transport::init(dev_det),
                 mdns_changed: Notification::new(),
                 session_removed: Notification::new(),
                 groups_modified: Notification::new(),
-                epoch,
                 dev_det,
                 dev_comm,
                 dev_att,
@@ -289,10 +232,6 @@ impl<'a> Matter<'a> {
 
     pub fn port(&self) -> u16 {
         self.port
-    }
-
-    pub fn epoch(&self) -> Epoch {
-        self.epoch
     }
 
     pub fn transport_rx_buffer(&self) -> PacketBufferExternalAccess<'_, MAX_RX_BUF_SIZE> {
@@ -519,7 +458,7 @@ impl<'a> Matter<'a> {
             notify.notify_attr_changed(
                 ROOT_ENDPOINT_ID,
                 BASIC_INFO_CLUSTER.id,
-                AttributeId::ConfigurationVersion as _,
+                basic_info::AttributeId::ConfigurationVersion as _,
             );
 
             Ok::<_, Error>(new_version)
@@ -572,6 +511,50 @@ impl<'a> Matter<'a> {
         })
     }
 
+    /// Update the Last-Known-Good UTC Time (Matter Core spec
+    /// §3.5.6.1), capturing a fresh monotonic anchor so subsequent
+    /// [`Self::utc_time`] reads advance from the supplied value.
+    ///
+    /// Per §11.17.9.1: the supplied `granularity` is recorded
+    /// stepped-down by one level (with a floor of
+    /// `MinutesGranularity` per §11.17.8.2); the supplied `source`
+    /// is recorded verbatim.
+    ///
+    /// The new value is written to the in-memory state immediately.
+    /// Persistence to `LKG_UTC_KEY` happens separately — the
+    /// TimeSync cluster handler invokes this from inside a
+    /// `kv.access(...)` closure and writes through the same handle.
+    /// Direct callers that need on-disk durability should call
+    /// [`Self::persist_lkg_utc`] explicitly.
+    ///
+    /// Returns the previous LKG value (Matter-epoch microseconds).
+    pub async fn set_utc_time<S: KvBlobStoreAccess>(
+        &self,
+        utc_us: u64,
+        granularity: GranularityEnum,
+        source: TimeSourceEnum,
+        kv: S,
+        notify: &dyn AttrChangeNotifier,
+    ) -> Result<u64, Error> {
+        let mut persist = Persist::new(kv);
+
+        let time = self.with_state(|state| {
+            let time = state
+                .rtc
+                .set_utc_time(utc_us, granularity, source, |e, c, a| {
+                    notify.notify_attr_changed(e, c, a)
+                });
+
+            persist.store_tlv(LKG_UTC_KEY, utc_us.to_le_bytes())?;
+
+            Ok::<_, Error>(time)
+        })?;
+
+        persist.run()?;
+
+        Ok(time)
+    }
+
     /// Reset the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
     /// NOTE: User should be careful _not_ to call this method while the transport layer and/or the built-in mDNS is running.
     pub fn reset_transport(&self) -> Result<(), Error> {
@@ -607,6 +590,7 @@ impl<'a> Matter<'a> {
                 .basic_info_settings
                 .reset_persist(&mut kv, buf)
                 .await?;
+            state.rtc.reset_persist(&mut kv, buf).await?;
         }
 
         self.notify_mdns_changed();
@@ -630,6 +614,7 @@ impl<'a> Matter<'a> {
 
             state.fabrics.load_persist(&mut kv, buf).await?;
             state.basic_info_settings.load_persist(&mut kv, buf).await?;
+            state.rtc.load_persist(&mut kv, buf).await?;
         }
 
         self.notify_mdns_changed();
@@ -699,43 +684,271 @@ pub struct MatterState {
     failsafe: FailSafe,
     /// The mutable basic information settings
     basic_info_settings: BasicInfoSettings,
+    /// Real Time Clock state and Last-Known-Good UTC Time tracking (Matter Core spec §3.5.6.1).
+    rtc: RtcState,
 }
 
 impl MatterState {
+    /// Return the persisted Last-Known-Good UTC Time as **Matter-epoch
+    /// seconds**, the unit cert path validation needs (cert `NotBefore`
+    /// / `NotAfter` are u32 Matter-epoch seconds).
+    #[inline(always)]
+    pub(crate) fn lkg_utc_secs(&self) -> u64 {
+        self.rtc.utc_us / 1_000_000
+    }
+
     /// Create a new instance of MatterState
     #[inline(always)]
-    const fn new(epoch: Epoch) -> Self {
+    const fn new() -> Self {
         Self {
             fabrics: Fabrics::new(),
-            sessions: Sessions::new(epoch),
-            pase: Pase::new(epoch),
-            failsafe: FailSafe::new(epoch),
+            sessions: Sessions::new(),
+            pase: Pase::new(),
+            failsafe: FailSafe::new(),
             basic_info_settings: BasicInfoSettings::new(),
+            rtc: RtcState::new(),
         }
     }
 
     /// Return an in-place initializer for MatterState
-    fn init(epoch: Epoch) -> impl Init<Self> {
+    fn init() -> impl Init<Self> {
         init!(Self {
             fabrics <- Fabrics::init(),
-            sessions <- Sessions::init(epoch),
-            pase <- Pase::init(epoch),
-            failsafe <- FailSafe::init(epoch),
+            sessions <- Sessions::init(),
+            pase <- Pase::init(),
+            failsafe <- FailSafe::init(),
             basic_info_settings <- BasicInfoSettings::init(),
+            rtc <- RtcState::init(),
         })
+    }
+}
+
+/// Last-Known-Good UTC Time tracking for the device (Matter Core spec
+/// §3.5.6.1). The persisted `utc_us` field is the spec-mandated stored
+/// fallback used by cert path validation when no live time
+/// synchronization is available; it is seeded from
+/// [`crate::utils::epoch::FIRMWARE_BUILD_MATTER_US`] on a
+/// freshly-flashed device.
+///
+/// `anchor`, `granularity`, and `source` are **volatile** — they
+/// describe the current monotonic-clock anchoring around the most
+/// recent [`Matter::set_utc_time`] call. After reboot, `anchor` is
+/// `None` (no live current-time tracking is active), so the TimeSync
+/// cluster reports `UTCTime = Null`, `Granularity = NoTimeGranularity`
+/// and `TimeSource = None` (per §11.17.8.2 / §11.17.8.3) — while
+/// `utc_us` still carries the persisted LKG value for cert validity.
+pub struct RtcState {
+    /// Last-Known-Good UTC time, Matter-epoch microseconds. Persisted
+    /// (per §3.5.6.1's "SHALL maintain a stored Last Known Good UTC
+    /// Time"). Initialized from
+    /// [`crate::utils::epoch::FIRMWARE_BUILD_MATTER_US`] on a
+    /// freshly-flashed device.
+    utc_us: u64,
+    /// Granularity at the time of the last `set_utc_time` call, with
+    /// §11.17.9.1's "one level lower than supplied" step-down already
+    /// applied and floored at `MinutesGranularity` (§11.17.8.2).
+    /// **Not persisted** — resets to `NoTimeGranularity` at boot,
+    /// matching the `anchor = None` post-reboot state.
+    granularity: GranularityEnum,
+    /// Authority that last called `set_utc_time`. **Not persisted** —
+    /// resets to `None` at boot.
+    source: TimeSourceEnum,
+    /// `Instant::now()` captured at the last `set_utc_time` call.
+    /// Volatile — `None` after reboot until next set.
+    anchor: Option<embassy_time::Instant>,
+}
+
+impl RtcState {
+    #[inline(always)]
+    const fn new() -> Self {
+        Self {
+            utc_us: utils::epoch::FIRMWARE_BUILD_MATTER_US,
+            granularity: GranularityEnum::NoTimeGranularity,
+            source: TimeSourceEnum::None,
+            anchor: None,
+        }
+    }
+
+    /// Return an in-place initializer for `LkgUtc`.
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            utc_us: utils::epoch::FIRMWARE_BUILD_MATTER_US,
+            granularity: crate::dm::clusters::time_sync::GranularityEnum::NoTimeGranularity,
+            source: crate::dm::clusters::time_sync::TimeSourceEnum::None,
+            anchor: None,
+        })
+    }
+
+    fn reset(&mut self) {
+        self.utc_us = utils::epoch::FIRMWARE_BUILD_MATTER_US;
+        self.granularity = GranularityEnum::NoTimeGranularity;
+        self.source = TimeSourceEnum::None;
+        self.anchor = None;
+    }
+
+    pub async fn reset_persist<S: KvBlobStore>(
+        &mut self,
+        mut store: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        self.reset();
+
+        store.remove(LKG_UTC_KEY, buf)
+    }
+
+    pub async fn load_persist<S: KvBlobStore>(
+        &mut self,
+        mut kv: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        self.reset();
+
+        // Load the persisted Last-Known-Good UTC Time, if any.
+        // Floor at `FIRMWARE_BUILD_MATTER_US` per Matter Core spec
+        // §3.5.6.1 — the on-disk value must never regress us
+        // below the build timestamp (the documented lower bound
+        // we never adjust backwards past).
+        if let Some(data) = kv.load(LKG_UTC_KEY, buf)? {
+            if data.len() == 8 {
+                let mut bytes = [0u8; 8];
+                bytes.copy_from_slice(data);
+                let stored = u64::from_le_bytes(bytes);
+                let floor = crate::utils::epoch::FIRMWARE_BUILD_MATTER_US;
+
+                self.utc_us = stored.max(floor);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Return the persisted Last-Known-Good UTC Time as Matter-epoch
+    /// microseconds (Matter Core spec §3.5.6.1).
+    ///
+    /// This value is always defined — seeded from
+    /// [`crate::utils::epoch::FIRMWARE_BUILD_MATTER_US`] on first
+    /// boot, persisted across reboots, and updated on every
+    /// [`Self::set_utc_time`] call. It is the time source consulted by
+    /// rs-matter's cert path validation, the NOC attestation
+    /// timestamp, and the TimeSync cluster's mandatory members.
+    pub fn last_known_utc_time(&self) -> u64 {
+        self.utc_us
+    }
+
+    /// Return the current UTC time as Matter-epoch microseconds —
+    /// `Some(utc)` if [`Self::set_utc_time`] has been called since
+    /// boot (advancing monotonically via [`embassy_time::Instant`]
+    /// from the captured anchor), or `None` if no current-time
+    /// tracking is currently active.
+    ///
+    /// Note that even when this returns `None`,
+    /// [`Self::last_known_utc_time`] still carries the persisted
+    /// LKG value usable as a cert-validity lower bound per spec
+    /// §3.5.6.
+    pub fn utc_time(&self) -> Option<u64> {
+        let anchor = self.anchor?;
+        let elapsed_us = embassy_time::Instant::now()
+            .checked_duration_since(anchor)
+            .map(|d| d.as_micros())
+            .unwrap_or(0);
+
+        Some(self.utc_us.saturating_add(elapsed_us))
+    }
+
+    /// Return the Granularity reported on the wire for the TimeSync
+    /// cluster's `Granularity` attribute, derived from the most
+    /// recent [`Self::set_utc_time`] (with the spec-required
+    /// step-down and floor already applied) — or `NoTimeGranularity`
+    /// if no `set_utc_time` has been called since boot (per
+    /// §11.17.8.2, which forbids `NoTimeGranularity` only while
+    /// `UTCTime ≠ Null`).
+    pub fn utc_time_granularity(&self) -> GranularityEnum {
+        if self.anchor.is_some() {
+            self.granularity
+        } else {
+            GranularityEnum::NoTimeGranularity
+        }
+    }
+
+    /// Return the TimeSource reported on the wire for the TimeSync
+    /// cluster's `TimeSource` attribute — `None` until the first
+    /// [`Self::set_utc_time`] (per §11.17.8.3).
+    pub fn utc_time_source(&self) -> TimeSourceEnum {
+        if self.anchor.is_some() {
+            self.source
+        } else {
+            TimeSourceEnum::None
+        }
+    }
+
+    /// Update the Last-Known-Good UTC Time (Matter Core spec
+    /// §3.5.6.1), capturing a fresh monotonic anchor so subsequent
+    /// [`Self::utc_time`] reads advance from the supplied value.
+    ///
+    /// Per §11.17.9.1: the supplied `granularity` is recorded
+    /// stepped-down by one level (with a floor of
+    /// `MinutesGranularity` per §11.17.8.2); the supplied `source`
+    /// is recorded verbatim.
+    ///
+    /// The new value is written to the in-memory state immediately.
+    /// Persistence to `LKG_UTC_KEY` happens separately — the
+    /// TimeSync cluster handler invokes this from inside a
+    /// `kv.access(...)` closure and writes through the same handle.
+    /// Direct callers that need on-disk durability should call
+    /// [`Self::persist_lkg_utc`] explicitly.
+    ///
+    /// Returns the previous LKG value (Matter-epoch microseconds).
+    pub fn set_utc_time(
+        &mut self,
+        utc_us: u64,
+        granularity: GranularityEnum,
+        source: TimeSourceEnum,
+        mut notify_change: impl FnMut(EndptId, ClusterId, AttrId),
+    ) -> u64 {
+        let stepped = match granularity {
+            GranularityEnum::MicrosecondsGranularity => GranularityEnum::MillisecondsGranularity,
+            GranularityEnum::MillisecondsGranularity => GranularityEnum::SecondsGranularity,
+            GranularityEnum::SecondsGranularity => GranularityEnum::MinutesGranularity,
+            // Minutes / NoTime → floor at Minutes (§11.17.8.2 forbids
+            // NoTime while UTCTime is non-null).
+            _ => GranularityEnum::MinutesGranularity,
+        };
+
+        let previous = self.utc_us;
+        self.utc_us = utc_us;
+        self.granularity = stepped;
+        self.source = source;
+        self.anchor = Some(embassy_time::Instant::now());
+
+        notify_change(
+            0,
+            TimeSyncHandler::CLUSTER.id,
+            time_sync::AttributeId::UTCTime as _,
+        );
+        notify_change(
+            0,
+            TimeSyncHandler::CLUSTER.id,
+            time_sync::AttributeId::Granularity as _,
+        );
+        notify_change(
+            0,
+            TimeSyncHandler::CLUSTER.id,
+            time_sync::AttributeId::TimeSource as _,
+        );
+
+        previous
     }
 }
 
 #[cfg(test)]
 pub mod test {
-    use crate::{utils::epoch::dummy_epoch, Matter};
+    use crate::Matter;
 
     pub fn test_matter() -> Matter<'static> {
         Matter::new(
             &crate::dm::devices::test::TEST_DEV_DET,
             crate::dm::devices::test::TEST_DEV_COMM,
             &crate::dm::devices::test::TEST_DEV_ATT,
-            dummy_epoch,
             0,
         )
     }

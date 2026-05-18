@@ -99,7 +99,6 @@ fn run() -> Result<(), Error> {
         &TEST_DEV_DET,
         TEST_DEV_COMM,
         &TEST_DEV_ATT,
-        rs_matter::utils::epoch::sys_epoch,
         MATTER_PORT,
     ));
 
@@ -126,7 +125,7 @@ fn run() -> Result<(), Error> {
         TestOnOffDeviceLogic::new(true),
     );
 
-    let events = NoEvents::new_default();
+    let events = NoEvents::new();
 
     // Create the Data Model instance
     let dm = DataModel::new(

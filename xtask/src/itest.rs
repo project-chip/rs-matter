@@ -276,18 +276,18 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // need the feature-gated read/write/invoke paths (TimeZone, NTP
     // client/server, trusted-time-source) — follow-up work.
     "TC_TIMESYNC_2_1",
-    // "TC_TIMESYNC_2_2",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_4",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_5",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_6",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_7",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_8",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_9",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_10", // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_11", // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_12", // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_13", // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_3_1",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
+    // "TC_TIMESYNC_2_2",
+    // "TC_TIMESYNC_2_4",
+    // "TC_TIMESYNC_2_5",
+    // "TC_TIMESYNC_2_6",
+    // "TC_TIMESYNC_2_7",
+    // "TC_TIMESYNC_2_8",
+    // "TC_TIMESYNC_2_9",
+    // "TC_TIMESYNC_2_10",
+    // "TC_TIMESYNC_2_11",
+    // "TC_TIMESYNC_2_12",
+    // "TC_TIMESYNC_2_13",
+    // "TC_TIMESYNC_3_1",
 
     //
     // Python tests — ICD Management (optional system cluster)
@@ -1265,6 +1265,10 @@ impl ITests {
             // DGGEN (General Diagnostics) lives on the root endpoint.
             | "TC_DGGEN_2_4"
             | "TC_DGGEN_3_2"
+            // TIMESYNC (Time Synchronization) lives on the root endpoint
+            // — `@run_if_endpoint_matches(has_cluster(TimeSynchronization))`
+            // skips unless we point the runner at EP0.
+            | "TC_TIMESYNC_2_1"
             | "TC_TestEventTrigger" => "--endpoint 0",
             // TC_G_2_2 sends Groups commands against
             // `self.matter_test_config.endpoint` (e.g. lines 125/133/172/197)

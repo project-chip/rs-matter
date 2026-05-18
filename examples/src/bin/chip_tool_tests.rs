@@ -146,16 +146,13 @@ fn main() -> Result<(), Error> {
         comm_data.discriminator, passcode, port,
     );
 
-    let matter = MATTER.uninit().init_with(Matter::init(
-        &BASIC_INFO,
-        comm_data,
-        &TEST_DEV_ATT,
-        rs_matter::utils::epoch::sys_epoch,
-        port,
-    ));
+    let matter =
+        MATTER
+            .uninit()
+            .init_with(Matter::init(&BASIC_INFO, comm_data, &TEST_DEV_ATT, port));
 
     // Create the event queue
-    let events = EVENTS.uninit().init_with(Events::init_default());
+    let events = EVENTS.uninit().init_with(Events::init());
 
     // Persistence
     let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();

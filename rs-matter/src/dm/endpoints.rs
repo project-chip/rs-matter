@@ -336,8 +336,14 @@ pub struct EthSysHandlerBuilder<'a> {
     sw_diag: &'a dyn SwDiag,
 }
 
+impl Default for EthSysHandlerBuilder<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'a> EthSysHandlerBuilder<'a> {
-    /// Create a builder with all hooks defaulted to their no-op providers.
+    /// Create a builder. Every hook defaults to a no-op provider.
     pub const fn new() -> Self {
         Self {
             comm_policy: &true,
@@ -366,7 +372,13 @@ impl<'a> EthSysHandlerBuilder<'a> {
         self
     }
 
-    /// Set the `TimeSync` hook (Time Synchronization data provider).
+    /// Set the `TimeSync` hook (feature-gated members of the Time
+    /// Synchronization cluster — `TIME_ZONE` / `NTP_CLIENT` /
+    /// `NTP_SERVER` / `TIME_SYNC_CLIENT`). The mandatory members
+    /// (`UTCTime`, `Granularity`, `TimeSource`, `SetUTCTime`) are
+    /// always served from the Matter-wide
+    /// [Last-Known-Good UTC Time](crate::Matter::last_known_utc_time)
+    /// state and don't need a provider.
     pub const fn time_sync(mut self, time_sync: &'a dyn TimeSync) -> Self {
         self.time_sync = time_sync;
         self
@@ -391,12 +403,6 @@ impl<'a> EthSysHandlerBuilder<'a> {
     }
 }
 
-impl Default for EthSysHandlerBuilder<'_> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Builder for a Wi-Fi root-endpoint system handler.
 ///
 /// `net_ctl` and `wifi_diag` are required (no sensible default) and supplied
@@ -415,8 +421,8 @@ impl<'a, T> WifiSysHandlerBuilder<'a, T>
 where
     T: NetCtl + NetCtlStatus,
 {
-    /// Create a builder. `net_ctl` and `wifi_diag` are required; every other
-    /// hook defaults to a no-op provider.
+    /// Create a builder. `net_ctl` and `wifi_diag` are required;
+    /// every other hook defaults to a no-op provider.
     pub const fn new(net_ctl: T, wifi_diag: &'a dyn WifiDiag) -> Self {
         Self {
             comm_policy: &true,
@@ -447,7 +453,8 @@ where
         self
     }
 
-    /// Set the `TimeSync` hook.
+    /// Set the `TimeSync` hook (feature-gated members only — see
+    /// [`EthSysHandlerBuilder::time_sync`]).
     pub const fn time_sync(mut self, time_sync: &'a dyn TimeSync) -> Self {
         self.time_sync = time_sync;
         self
@@ -492,8 +499,8 @@ impl<'a, T> ThreadSysHandlerBuilder<'a, T>
 where
     T: NetCtl + NetCtlStatus,
 {
-    /// Create a builder. `net_ctl` and `thread_diag` are required; every
-    /// other hook defaults to a no-op provider.
+    /// Create a builder. `net_ctl` and `thread_diag` are required;
+    /// every other hook defaults to a no-op provider.
     pub const fn new(net_ctl: T, thread_diag: &'a dyn ThreadDiag) -> Self {
         Self {
             comm_policy: &true,
@@ -524,7 +531,8 @@ where
         self
     }
 
-    /// Set the `TimeSync` hook.
+    /// Set the `TimeSync` hook (feature-gated members only — see
+    /// [`EthSysHandlerBuilder::time_sync`]).
     pub const fn time_sync(mut self, time_sync: &'a dyn TimeSync) -> Self {
         self.time_sync = time_sync;
         self

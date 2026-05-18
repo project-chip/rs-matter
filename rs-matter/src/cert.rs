@@ -701,8 +701,22 @@ impl<'a> CertRef<'a> {
         Ok(w.as_slice().len())
     }
 
-    pub fn verify_chain_start<C: Crypto>(&self, crypto: C) -> CertVerifier<'_, C> {
-        CertVerifier::new(self, crypto)
+    /// Start a chain verification of this certificate.
+    ///
+    /// Every cert added to the chain (the leaf here, intermediates via
+    /// [`CertVerifier::add_cert`], and the self-signed root via
+    /// [`CertVerifier::finalise`]) is checked against `lkg_utc_secs`
+    /// for its `NotBefore` / `NotAfter` validity window, per Matter
+    /// Core spec §3.5.6 which mandates use of the Last-Known-Good UTC
+    /// Time when no live trusted real-time-clock value is available.
+    /// Callers snapshot the value from
+    /// [`crate::Matter::last_known_utc_time`] (Matter-epoch seconds).
+    pub fn verify_chain_start<C: Crypto>(
+        &'a self,
+        crypto: C,
+        lkg_utc_secs: u64,
+    ) -> CertVerifier<'a, C> {
+        CertVerifier::new(self, crypto, lkg_utc_secs)
     }
 
     fn encode(&self, w: &mut dyn CertConsumer) -> Result<(), Error> {
@@ -778,18 +792,31 @@ impl fmt::Display for CertRef<'_> {
 pub struct CertVerifier<'a, C> {
     cert: &'a CertRef<'a>,
     crypto: C,
+    /// Last-Known-Good UTC Time as Matter-epoch seconds, snapshot at
+    /// the start of chain verification. Per Matter Core spec §3.5.6
+    /// this is the time value used against cert `NotBefore`/`NotAfter`
+    /// when no live trusted real-time-clock is available — and the
+    /// stored LKG (§3.5.6.1) is exactly that.
+    lkg_utc_secs: u64,
 }
 
 impl<'a, C: Crypto> CertVerifier<'a, C> {
-    pub fn new(cert: &'a CertRef<'a>, crypto: C) -> Self {
-        Self { cert, crypto }
+    pub fn new(cert: &'a CertRef<'a>, crypto: C, lkg_utc_secs: u64) -> Self {
+        Self {
+            cert,
+            crypto,
+            lkg_utc_secs,
+        }
     }
 
     pub fn add_cert<'p>(
         self,
         parent: &'p CertRef<'p>,
         buf: &mut [u8],
-    ) -> Result<CertVerifier<'p, C>, Error> {
+    ) -> Result<CertVerifier<'p, C>, Error>
+    where
+        'a: 'p,
+    {
         if !self.cert.is_authority(parent)? {
             Err(ErrorCode::InvalidAuthKey)?;
         }
@@ -808,8 +835,19 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
             }
         }
 
-        // TODO: other validation checks
-        Ok(CertVerifier::new(parent, self.crypto))
+        // Validity-period check against the Last-Known-Good UTC Time
+        // (Matter Core spec §3.5.6). `NotBefore` / `NotAfter` are u32
+        // Matter-epoch seconds; `NotAfter = 0` means unconstrained per
+        // §6.5.5.
+        let not_before = self.cert.not_before()? as u64;
+        let not_after = self.cert.not_after()?;
+        if self.lkg_utc_secs < not_before
+            || (not_after != 0 && self.lkg_utc_secs > not_after as u64)
+        {
+            Err(ErrorCode::InvalidTime)?;
+        }
+
+        Ok(CertVerifier::new(parent, self.crypto, self.lkg_utc_secs))
     }
 
     pub fn finalise(self, buf: &mut [u8]) -> Result<(), Error> {
@@ -886,7 +924,8 @@ mod tests {
         let noc = CertRef::new(TLVElement::new(NOC1_SUCCESS));
         let icac = CertRef::new(TLVElement::new(ICAC1_SUCCESS));
         let rca = CertRef::new(TLVElement::new(RCA1_SUCCESS));
-        let a = noc.verify_chain_start(test_only_crypto());
+        let lkg = unwrap!(noc.not_before()) as u64;
+        let a = noc.verify_chain_start(test_only_crypto(), lkg);
         unwrap!(
             unwrap!(unwrap!(a.add_cert(&icac, &mut buf)).add_cert(&rca, &mut buf))
                 .finalise(&mut buf)
@@ -900,7 +939,8 @@ mod tests {
         let mut buf = [0; 1000];
         let noc = CertRef::new(TLVElement::new(NOC1_SUCCESS));
         let icac = CertRef::new(TLVElement::new(ICAC1_SUCCESS));
-        let a = noc.verify_chain_start(test_only_crypto());
+        let lkg = unwrap!(noc.not_before()) as u64;
+        let a = noc.verify_chain_start(test_only_crypto(), lkg);
         assert_eq!(
             Err(ErrorCode::InvalidAuthKey),
             unwrap!(a.add_cert(&icac, &mut buf))
@@ -914,7 +954,7 @@ mod tests {
         let mut buf = [0; 1000];
         let noc = CertRef::new(TLVElement::new(NOC1_AUTH_KEY_FAIL));
         let icac = CertRef::new(TLVElement::new(ICAC1_SUCCESS));
-        let a = noc.verify_chain_start(test_only_crypto());
+        let a = noc.verify_chain_start(test_only_crypto(), 0);
         assert_eq!(
             Err(ErrorCode::InvalidAuthKey),
             a.add_cert(&icac, &mut buf)
@@ -929,7 +969,8 @@ mod tests {
         let noc = CertRef::new(TLVElement::new(NOC_NOT_AFTER_ZERO));
         let rca = CertRef::new(TLVElement::new(RCA_FOR_NOC_NOT_AFTER_ZERO));
 
-        let v = noc.verify_chain_start(test_only_crypto());
+        let lkg = unwrap!(noc.not_before()) as u64;
+        let v = noc.verify_chain_start(test_only_crypto(), lkg);
         let v = unwrap!(v.add_cert(&rca, &mut buf));
         unwrap!(v.finalise(&mut buf));
     }
@@ -939,7 +980,7 @@ mod tests {
         let mut buf = [0; 1000];
         let noc = CertRef::new(TLVElement::new(NOC1_CORRUPT_CERT));
         let icac = CertRef::new(TLVElement::new(ICAC1_SUCCESS));
-        let a = noc.verify_chain_start(test_only_crypto());
+        let a = noc.verify_chain_start(test_only_crypto(), 0);
         assert_eq!(
             Err(ErrorCode::InvalidSignature),
             a.add_cert(&icac, &mut buf)

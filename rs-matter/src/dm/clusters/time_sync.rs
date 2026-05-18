@@ -39,18 +39,17 @@
 //!
 //! # Pluggable data source — [`TimeSync`]
 //!
-//! [`TimeSyncHandler`] borrows a `&dyn TimeSync` data provider and
-//! forwards every attribute read / command invoke to it. The trait
-//! carries methods for every feature-gated attribute and command; the
-//! three always-exposed reads (`utc_time`, `granularity`, `time_source`)
-//! have no defaults — implementors must answer them explicitly — while
-//! feature-gated members have sensible "we don't expose this" defaults
-//! (empty lists, `Null`, `CommandNotFound`) so an implementor only
-//! overrides the methods matching the options they picked.
+//! The cluster's mandatory members (`UTCTime`, `Granularity`,
+//! `TimeSource`, and the `SetUTCTime` command) are handled by
+//! [`TimeSyncHandler`] directly against the Matter-wide
+//! [Last-Known-Good UTC Time](crate::Matter::last_known_utc_time)
+//! state — they require no implementor input.
 //!
-//! [`impl TimeSync for ()`] is the canonical no-op provider —
-//! `UTCTime = Null`, `Granularity = NoTimeGranularity`,
-//! `TimeSource = None`, spec-compliant per Matter Core spec §11.16.8.
+//! [`TimeSync`] only carries the feature-gated members
+//! (`TIME_ZONE` / `NTP_CLIENT` / `NTP_SERVER` / `TIME_SYNC_CLIENT`).
+//! Every method has a "no value" default so `impl TimeSync for ()`
+//! is a fully usable no-op provider; implementors only override the
+//! methods matching the options they advertised.
 
 use bitflags::bitflags;
 
@@ -137,35 +136,18 @@ pub struct TrustedTimeSourceData {
     pub endpoint: u16,
 }
 
-/// Pluggable data source for the Time Synchronization cluster
-/// handler. The three always-exposed reads (`utc_time`, `granularity`,
-/// `time_source`) have no defaults — every implementor must answer
-/// them explicitly. Feature-gated members have "no value" defaults so
-/// an implementor only overrides what matches the options they picked.
+/// Pluggable data source for the feature-gated members of the Time
+/// Synchronization cluster (`TIME_ZONE` / `NTP_CLIENT` / `NTP_SERVER`
+/// / `TIME_SYNC_CLIENT`). The mandatory members — `UTCTime`,
+/// `Granularity`, `TimeSource`, and the `SetUTCTime` command — are
+/// handled by [`TimeSyncHandler`] directly against the Matter-wide
+/// [Last-Known-Good UTC Time](crate::Matter::last_known_utc_time)
+/// state and do **not** appear on this trait.
 ///
-/// # Spec invariant (Matter Core spec §11.16.8)
-///
-/// When [`utc_time`](Self::utc_time) returns `Nullable::none()`,
-/// [`granularity`](Self::granularity) **MUST** return
-/// `GranularityEnum::NoTimeGranularity`. Custom implementors that
-/// override one but not the other should preserve the pairing.
+/// Every method has a "no value" default, so `impl TimeSync for ()`
+/// is a fully usable no-op provider — implementors only override
+/// what matches the options they advertised on the endpoint.
 pub trait TimeSync {
-    // ---- Always-exposed reads (mandatory + TimeSource opt-in)
-
-    /// Current wall-clock time as microseconds since the Matter epoch
-    /// (2000-01-01T00:00:00Z UTC), or `Null` if no time is currently
-    /// available.
-    fn utc_time(&self) -> Result<Nullable<u64>, Error>;
-
-    /// Granularity of the value reported by
-    /// [`utc_time`](Self::utc_time). Must be `NoTimeGranularity`
-    /// whenever `utc_time` returns `Null`.
-    fn granularity(&self) -> Result<GranularityEnum, Error>;
-
-    /// Where the device got its current time from. `None` means "no
-    /// source configured".
-    fn time_source(&self) -> Result<TimeSourceEnum, Error>;
-
     // ---- TIME_SYNC_CLIENT feature
 
     /// Currently-configured trusted time source, or `Null` if none.
@@ -236,11 +218,6 @@ pub trait TimeSync {
 
     // ---- Commands (feature-gated; default to `CommandNotFound`)
 
-    /// Handle `SetUTCTime`. Mandatory when any feature is claimed.
-    fn set_utc_time(&self, _request: &SetUTCTimeRequest<'_>) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
-    }
-
     /// Handle `SetTrustedTimeSource` — gated by `TIME_SYNC_CLIENT`.
     fn set_trusted_time_source(
         &self,
@@ -270,101 +247,98 @@ impl<T> TimeSync for &T
 where
     T: TimeSync,
 {
-    fn utc_time(&self) -> Result<Nullable<u64>, Error> {
-        (*self).utc_time()
-    }
-    fn granularity(&self) -> Result<GranularityEnum, Error> {
-        (*self).granularity()
-    }
-    fn time_source(&self) -> Result<TimeSourceEnum, Error> {
-        (*self).time_source()
-    }
     fn trusted_time_source(&self) -> Result<Nullable<TrustedTimeSourceData>, Error> {
         (*self).trusted_time_source()
     }
+
     fn default_ntp(&self) -> Result<Nullable<&str>, Error> {
         (*self).default_ntp()
     }
+
     fn supports_dns_resolve(&self) -> Result<bool, Error> {
         (*self).supports_dns_resolve()
     }
+
     fn ntp_server_available(&self) -> Result<bool, Error> {
         (*self).ntp_server_available()
     }
+
     fn time_zone(
         &self,
         visit: &mut dyn FnMut(&TimeZoneEntry<'_>) -> Result<(), Error>,
     ) -> Result<(), Error> {
         (*self).time_zone(visit)
     }
+
     fn dst_offset(
         &self,
         visit: &mut dyn FnMut(&DSTOffsetEntry) -> Result<(), Error>,
     ) -> Result<(), Error> {
         (*self).dst_offset(visit)
     }
+
     fn local_time(&self) -> Result<Nullable<u64>, Error> {
         (*self).local_time()
     }
+
     fn time_zone_database(&self) -> Result<TimeZoneDatabaseEnum, Error> {
         (*self).time_zone_database()
     }
+
     fn time_zone_list_max_size(&self) -> Result<u8, Error> {
         (*self).time_zone_list_max_size()
     }
+
     fn dst_offset_list_max_size(&self) -> Result<u8, Error> {
         (*self).dst_offset_list_max_size()
     }
-    fn set_utc_time(&self, request: &SetUTCTimeRequest<'_>) -> Result<(), Error> {
-        (*self).set_utc_time(request)
-    }
+
     fn set_trusted_time_source(
         &self,
         request: &SetTrustedTimeSourceRequest<'_>,
     ) -> Result<(), Error> {
         (*self).set_trusted_time_source(request)
     }
+
     fn set_time_zone(&self, request: &SetTimeZoneRequest<'_>) -> Result<bool, Error> {
         (*self).set_time_zone(request)
     }
+
     fn set_dst_offset(&self, request: &SetDSTOffsetRequest<'_>) -> Result<(), Error> {
         (*self).set_dst_offset(request)
     }
+
     fn set_default_ntp(&self, request: &SetDefaultNTPRequest<'_>) -> Result<(), Error> {
         (*self).set_default_ntp(request)
     }
 }
 
-/// No-op `TimeSync` provider used as `&()` to mean "we don't know the
-/// time and we expose no time-related features" — spec-compliant
-/// minimum.
-impl TimeSync for () {
-    fn utc_time(&self) -> Result<Nullable<u64>, Error> {
-        Ok(Nullable::none())
-    }
-
-    fn granularity(&self) -> Result<GranularityEnum, Error> {
-        Ok(GranularityEnum::NoTimeGranularity)
-    }
-
-    fn time_source(&self) -> Result<TimeSourceEnum, Error> {
-        Ok(TimeSourceEnum::None)
-    }
-}
+/// No-op [`TimeSync`] implementation. Suitable for devices that don't
+/// advertise any of the feature-gated members
+/// (`TIME_ZONE` / `NTP_CLIENT` / `NTP_SERVER` / `TIME_SYNC_CLIENT`) —
+/// the mandatory members (`UTCTime`, `Granularity`, `TimeSource`,
+/// `SetUTCTime`) are handled by [`TimeSyncHandler`] directly against
+/// the Matter-wide
+/// [Last-Known-Good UTC Time](crate::Matter::last_known_utc_time)
+/// state and don't need any provider input.
+impl TimeSync for () {}
 
 // ---- Cluster-shape selection -------------------------------------------------
 
-fn time_sync_attrs<const OPTS: u8>(attr: &Attribute, _: u16, _: u32) -> bool {
+const fn time_sync_attrs<const OPTS: u8>(attr: &Attribute, _: u16, _: u32) -> bool {
     use AttributeId as A;
+
     // Mandatory always (UTCTime, Granularity)
     if !attr.quality.contains(Quality::OPTIONAL) {
         return true;
     }
+
     // TimeSource: always exposed independently of features so the
     // Matter test harness's TC_TIMESYNC_2_1 gate matches.
     if attr.id == A::TimeSource as u32 {
         return true;
     }
+
     let opts = Options::from_bits_truncate(OPTS);
     if opts.contains(Options::TIME_ZONE)
         && (attr.id == A::TimeZone as u32
@@ -376,41 +350,51 @@ fn time_sync_attrs<const OPTS: u8>(attr: &Attribute, _: u16, _: u32) -> bool {
     {
         return true;
     }
+
     if opts.contains(Options::NTP_CLIENT)
         && (attr.id == A::DefaultNTP as u32 || attr.id == A::SupportsDNSResolve as u32)
     {
         return true;
     }
+
     if opts.contains(Options::NTP_SERVER) && attr.id == A::NTPServerAvailable as u32 {
         return true;
     }
+
     if opts.contains(Options::TIME_SYNC_CLIENT) && attr.id == A::TrustedTimeSource as u32 {
         return true;
     }
+
     false
 }
 
-fn time_sync_cmds<const OPTS: u8>(cmd: &Command, _: u16, _: u32) -> bool {
+const fn time_sync_cmds<const OPTS: u8>(cmd: &Command, _: u16, _: u32) -> bool {
     use CommandId as C;
-    let opts = Options::from_bits_truncate(OPTS);
-    if opts.is_empty() {
-        return false;
-    }
-    // `SetUTCTime` is mandatory whenever any feature is claimed.
+
+    // `SetUTCTime` is mandatory whenever the cluster is present
+    // (Matter Core spec §11.17.9, conformance `M`), independent of
+    // features. Devices reporting `Granularity = NoTimeGranularity`
+    // are additionally required by §11.17.9.1 to accept it.
     if cmd.id == C::SetUTCTime as u32 {
         return true;
     }
+
+    let opts = Options::from_bits_truncate(OPTS);
+
     if opts.contains(Options::TIME_ZONE)
         && (cmd.id == C::SetTimeZone as u32 || cmd.id == C::SetDSTOffset as u32)
     {
         return true;
     }
+
     if opts.contains(Options::NTP_CLIENT) && cmd.id == C::SetDefaultNTP as u32 {
         return true;
     }
+
     if opts.contains(Options::TIME_SYNC_CLIENT) && cmd.id == C::SetTrustedTimeSource as u32 {
         return true;
     }
+
     false
 }
 
@@ -422,19 +406,25 @@ fn time_sync_cmds<const OPTS: u8>(cmd: &Command, _: u16, _: u32) -> bool {
 /// methods supply real values for the corresponding option bits.
 pub const fn cluster<const OPTS: u8>() -> Cluster<'static> {
     let opts = Options::from_bits_truncate(OPTS);
+
     let mut features = 0u32;
+
     if opts.contains(Options::TIME_ZONE) {
         features |= Feature::TIME_ZONE.bits();
     }
+
     if opts.contains(Options::NTP_CLIENT) {
         features |= Feature::NTP_CLIENT.bits();
     }
+
     if opts.contains(Options::NTP_SERVER) {
         features |= Feature::NTP_SERVER.bits();
     }
+
     if opts.contains(Options::TIME_SYNC_CLIENT) {
         features |= Feature::TIME_SYNC_CLIENT.bits();
     }
+
     Cluster {
         feature_map: features,
         with_attrs: time_sync_attrs::<OPTS>,
@@ -490,18 +480,26 @@ impl ClusterHandler for TimeSyncHandler<'_> {
         self.dataver.changed();
     }
 
-    // ---- Always-on reads
+    // ---- Always-on reads (served from Matter-wide LKG state, not
+    // from the user-supplied `TimeSync` provider).
 
-    fn utc_time(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
-        self.time_sync.utc_time()
+    fn utc_time(&self, ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
+        Ok(
+            match ctx.matter().with_state(|state| state.rtc.utc_time()) {
+                Some(us) => Nullable::some(us),
+                None => Nullable::none(),
+            },
+        )
     }
 
-    fn granularity(&self, _ctx: impl ReadContext) -> Result<GranularityEnum, Error> {
-        self.time_sync.granularity()
+    fn granularity(&self, ctx: impl ReadContext) -> Result<GranularityEnum, Error> {
+        Ok(ctx
+            .matter()
+            .with_state(|state| state.rtc.utc_time_granularity()))
     }
 
-    fn time_source(&self, _ctx: impl ReadContext) -> Result<TimeSourceEnum, Error> {
-        self.time_sync.time_source()
+    fn time_source(&self, ctx: impl ReadContext) -> Result<TimeSourceEnum, Error> {
+        Ok(ctx.matter().with_state(|state| state.rtc.utc_time_source()))
     }
 
     // ---- Feature-gated reads
@@ -649,10 +647,23 @@ impl ClusterHandler for TimeSyncHandler<'_> {
 
     fn handle_set_utc_time(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: SetUTCTimeRequest<'_>,
     ) -> Result<(), Error> {
-        self.time_sync.set_utc_time(&request)
+        // Matter Core spec §11.17.9.1: regardless of the optional
+        // `TimeSource` field in the request, the device SHALL set
+        // `TimeSource` to `Admin` when `SetUTCTime` populates UTCTime.
+        let utc_us = request.utc_time()?;
+        let granularity = request.granularity()?;
+        ctx.matter().with_state(|state| {
+            state
+                .rtc
+                .set_utc_time(utc_us, granularity, TimeSourceEnum::Admin, |e, c, a| {
+                    ctx.notify_attr_changed(e, c, a)
+                })
+        });
+
+        Ok(())
     }
 
     fn handle_set_trusted_time_source(

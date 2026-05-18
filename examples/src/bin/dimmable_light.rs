@@ -125,12 +125,11 @@ fn run() -> Result<(), Error> {
         &TEST_DEV_DET,
         TEST_DEV_COMM,
         &TEST_DEV_ATT,
-        rs_matter::utils::epoch::sys_epoch,
         MATTER_PORT,
     ));
 
     // Create the event queue
-    let events = EVENTS.uninit().init_with(Events::init_default());
+    let events = EVENTS.uninit().init_with(Events::init());
 
     // Persistence
     let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();

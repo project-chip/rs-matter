@@ -16,7 +16,8 @@
  */
 
 use core::num::NonZeroU8;
-use core::time::Duration;
+
+use embassy_time::{Duration, Instant};
 
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
 use crate::crypto::{
@@ -34,7 +35,6 @@ use crate::sc::pase::Pase;
 use crate::tlv::TLVElement;
 use crate::transport::session::SessionMode;
 use crate::utils::bitflags::bitflags;
-use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::Vec;
 
@@ -53,7 +53,7 @@ bitflags! {
 
 #[derive(PartialEq)]
 pub struct ArmedCtx {
-    armed_at: Duration,
+    armed_at: Instant,
     timeout_secs: u16,
     fab_idx: u8,
     flags: NocFlags,
@@ -91,28 +91,25 @@ pub struct FailSafe {
     state: State,
     secret_key: CanonPkcSecretKey,
     root_ca: Vec<u8, { MAX_CERT_TLV_LEN }>,
-    epoch: Epoch,
     breadcrumb: u64,
 }
 
 impl FailSafe {
     #[inline(always)]
-    pub const fn new(epoch: Epoch) -> Self {
+    pub const fn new() -> Self {
         Self {
             state: State::Idle,
             secret_key: PKC_SECRET_KEY_ZEROED,
             root_ca: Vec::new(),
-            epoch,
             breadcrumb: 0,
         }
     }
 
-    pub fn init(epoch: Epoch) -> impl Init<Self> {
+    pub fn init() -> impl Init<Self> {
         init!(Self {
             state: State::Idle,
             secret_key <- CanonPkcSecretKey::init(),
             root_ca <- Vec::init(),
-            epoch,
             breadcrumb: 0
         })
     }
@@ -136,8 +133,12 @@ impl FailSafe {
         N: NetworksAccess,
     {
         if let State::Armed(ctx) = &self.state {
-            let now = (self.epoch)();
-            if now >= ctx.armed_at + Duration::from_secs(ctx.timeout_secs as u64) {
+            let now = Instant::now();
+            if now
+                >= ctx
+                    .armed_at
+                    .saturating_add(Duration::from_secs(ctx.timeout_secs as u64))
+            {
                 // Timeout path: no caller exchange to preserve, so wipe
                 // every PASE session along with the fabric / networks
                 // rollback.
@@ -270,7 +271,7 @@ impl FailSafe {
             // }
 
             self.state = State::Armed(ArmedCtx {
-                armed_at: (self.epoch)(),
+                armed_at: Instant::now(),
                 timeout_secs,
                 fab_idx: session_mode.fab_idx(),
                 flags: NocFlags::empty(),
@@ -295,7 +296,7 @@ impl FailSafe {
         };
 
         if timeout_secs > 0 {
-            ctx.armed_at = (self.epoch)();
+            ctx.armed_at = Instant::now();
             ctx.timeout_secs = timeout_secs;
             self.breadcrumb = breadcrumb;
         } else {
@@ -401,6 +402,7 @@ impl FailSafe {
     pub fn add_trusted_root_cert<C: Crypto>(
         &mut self,
         crypto: C,
+        lkg_utc_secs: u64,
         session_mode: &SessionMode,
         root_ca: &[u8],
         buf: &mut [u8],
@@ -421,7 +423,7 @@ impl FailSafe {
         {
             let root_ref = CertRef::new(TLVElement::new(root_ca));
             root_ref
-                .verify_chain_start(&crypto)
+                .verify_chain_start(&crypto, lkg_utc_secs)
                 .finalise(buf)
                 .map_err(|_| ErrorCode::InvalidCommand)?;
         }
@@ -484,6 +486,7 @@ impl FailSafe {
     pub fn update_noc<'a, C: Crypto>(
         &mut self,
         crypto: C,
+        lkg_utc_secs: u64,
         fabrics: &'a mut Fabrics,
         session_mode: &SessionMode,
         icac: Option<&[u8]>,
@@ -524,8 +527,15 @@ impl FailSafe {
             // signature verification (or that doesn't chain back to the
             // staged root) is reported as `kInvalidNOC` cluster status per
             // Matter Core spec section 11.18.6.7 (`UpdateNOC`).
-            Self::validate_certs(&crypto, &noc_ref, icac_ref.as_ref(), &root_ref, buf)
-                .map_err(|_| ErrorCode::NocInvalidNoc)?;
+            Self::validate_certs(
+                &crypto,
+                lkg_utc_secs,
+                &noc_ref,
+                icac_ref.as_ref(),
+                &root_ref,
+                buf,
+            )
+            .map_err(|_| ErrorCode::NocInvalidNoc)?;
 
             // The NOC's public key must match the public key derived from
             // the most recent `CSRRequest(isForUpdateNOC=true)` (Matter
@@ -580,6 +590,7 @@ impl FailSafe {
     pub fn add_noc<'a, C: Crypto>(
         &mut self,
         crypto: C,
+        lkg_utc_secs: u64,
         fabrics: &'a mut Fabrics,
         session_mode: &SessionMode,
         vendor_id: u16,
@@ -614,8 +625,15 @@ impl FailSafe {
             // signature verification (or that doesn't chain back to the
             // staged root) is reported as `kInvalidNOC` cluster status per
             // Matter Core spec section 11.18.6.6 (`AddNOC`).
-            Self::validate_certs(&crypto, &noc_ref, icac_ref.as_ref(), &root_ref, buf)
-                .map_err(|_| ErrorCode::NocInvalidNoc)?;
+            Self::validate_certs(
+                &crypto,
+                lkg_utc_secs,
+                &noc_ref,
+                icac_ref.as_ref(),
+                &root_ref,
+                buf,
+            )
+            .map_err(|_| ErrorCode::NocInvalidNoc)?;
 
             // The NOC's public key must match the public key derived from
             // the most recent `CSRRequest` (Matter Core spec section
@@ -696,14 +714,16 @@ impl FailSafe {
         self.breadcrumb = value;
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn validate_certs<C: Crypto>(
         crypto: C,
+        lkg_utc_secs: u64,
         noc: &CertRef,
         icac: Option<&CertRef>,
         root: &CertRef,
         buf: &mut [u8],
     ) -> Result<(), Error> {
-        let mut verifier = noc.verify_chain_start(crypto);
+        let mut verifier = noc.verify_chain_start(crypto, lkg_utc_secs);
 
         if let Some(icac) = icac {
             // If ICAC is present handle it. Reject the case where the
@@ -800,5 +820,11 @@ impl FailSafe {
             State::Armed(ctx) => ctx.flags |= flags,
             _ => panic!("Not armed"),
         }
+    }
+}
+
+impl Default for FailSafe {
+    fn default() -> Self {
+        Self::new()
     }
 }

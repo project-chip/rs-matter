@@ -15,8 +15,9 @@
  *    limitations under the License.
  */
 
+use embassy_time::Instant;
+
 use crate::error::*;
-use crate::utils::epoch::Epoch;
 
 use super::{plain_hdr::PlainHdr, proto_hdr::ProtoHdr};
 
@@ -121,7 +122,7 @@ impl AckEntry {
 pub struct ReliableMessage {
     pub(crate) retrans: Option<RetransEntry>,
     pub(crate) ack: Option<AckEntry>,
-    pub(crate) received_at_ms: Option<u64>,
+    pub(crate) received_at: Option<Instant>,
 }
 
 impl ReliableMessage {
@@ -140,12 +141,12 @@ impl ReliableMessage {
             .unwrap_or(false)
     }
 
-    pub fn has_rx_timed_out(&self, timeout_ms: u64, epoch: Epoch) -> bool {
-        self.received_at_ms
-            .and_then(|received_at_ms| {
-                received_at_ms
-                    .checked_add(timeout_ms)
-                    .map(|d| d <= epoch().as_millis() as u64)
+    pub fn has_rx_timed_out(&self, timeout_ms: u64) -> bool {
+        self.received_at
+            .map(|received_at| {
+                let deadline =
+                    received_at.saturating_add(embassy_time::Duration::from_millis(timeout_ms));
+                Instant::now() >= deadline
             })
             .unwrap_or(false)
     }
@@ -183,7 +184,7 @@ impl ReliableMessage {
             }
         }
 
-        self.received_at_ms = None;
+        self.received_at = None;
 
         Ok(())
     }
@@ -198,12 +199,7 @@ impl ReliableMessage {
     /// - there can be only one pending ACK per exchange (so this is per-exchange)
     /// - there can be only one pending retransmission per exchange (so this is per-exchange)
     /// - duplicate detection should happen per session (obviously), so that part is per-session
-    pub fn post_recv(
-        &mut self,
-        rx_plain: &PlainHdr,
-        rx_proto: &ProtoHdr,
-        epoch: Epoch,
-    ) -> Result<(), Error> {
+    pub fn post_recv(&mut self, rx_plain: &PlainHdr, rx_proto: &ProtoHdr) -> Result<(), Error> {
         if let Some(ack_msg_ctr) = rx_proto.get_ack() {
             // Handle received Acks
             if let Some(entry) = &self.retrans {
@@ -237,7 +233,7 @@ impl ReliableMessage {
             self.ack = Some(AckEntry::new(rx_plain.ctr)?);
         }
 
-        self.received_at_ms = Some(epoch().as_millis() as u64);
+        self.received_at = Some(Instant::now());
 
         Ok(())
     }

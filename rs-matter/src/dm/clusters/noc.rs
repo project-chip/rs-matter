@@ -68,8 +68,22 @@ impl NodeOperationalCertStatusEnum {
 }
 
 /// The system implementation of a handler for the Node Operational Credentials Matter cluster.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+///
+/// Two cluster behaviours consume calendar time, and both source it
+/// from [`crate::Matter::last_known_utc_time`] (the Last-Known-Good
+/// UTC Time stored on the [`crate::Matter`] object — see Matter Core
+/// spec §3.5.6.1):
+///
+/// - The `AttestationResponse` `timestamp` field (§11.18.5.5).
+/// - The NOC / RCAC / ICAC validity-period check during `AddNOC` /
+///   `UpdateNOC` / `AddTrustedRootCertificate`.
+///
+/// On a freshly-flashed device with no `SetUTCTime` received yet,
+/// `last_known_utc_time` is seeded from
+/// [`crate::utils::epoch::FIRMWARE_BUILD_MATTER_US`], which
+/// satisfies §3.5.6.1's "initial out-of-box Last Known Good UTC time
+/// SHALL be the compile-time of the firmware."
+#[derive(Clone)]
 pub struct NocHandler {
     dataver: Dataver,
 }
@@ -99,6 +113,21 @@ impl NocHandler {
         dac_key.sign(attest_element.as_slice(), signature)?;
 
         Ok(())
+    }
+}
+
+impl core::fmt::Debug for NocHandler {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("NocHandler")
+            .field("dataver", &self.dataver)
+            .finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for NocHandler {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "NocHandler {{ dataver: {} }}", self.dataver.get());
     }
 }
 
@@ -314,7 +343,14 @@ impl ClusterHandler for NocHandler {
             // Struct is already started
             // writer.start_struct(&CmdDataWriter::TAG)?;
 
-            let epoch = (ctx.exchange().matter().epoch())().as_secs() as u32;
+            // Attestation timestamp (`AttestationElements.timestamp`,
+            // Matter Core spec §11.18.5.5) — Matter-epoch seconds.
+            // Sourced from the device's Last-Known-Good UTC Time
+            // (§3.5.6.1); on a freshly-flashed device with no
+            // `SetUTCTime` yet, this is the firmware build timestamp.
+            // Read directly from the already-held `state` — re-entering
+            // `Matter::with_state` here would deadlock the inner mutex.
+            let epoch = (state.rtc.last_known_utc_time() / 1_000_000) as u32;
 
             let mut signature = MaybeUninit::uninit();
             let signature = signature.init_with(CanonPkcSignature::init()); // TODO MEDIUM BUFFER
@@ -494,10 +530,12 @@ impl ClusterHandler for NocHandler {
         let status = NodeOperationalCertStatusEnum::map(GenCommHandler::with_armed_failsafe(
             &ctx,
             |state, mut notify_mdns| {
+                let lkg_utc_secs = state.lkg_utc_secs();
                 let sess = ctx.exchange().id().session(&mut state.sessions);
 
                 let fabric = state.failsafe.add_noc(
                     ctx.crypto(),
+                    lkg_utc_secs,
                     &mut state.fabrics,
                     sess.get_session_mode(),
                     request.admin_vendor_id()?,
@@ -583,10 +621,12 @@ impl ClusterHandler for NocHandler {
         let status = NodeOperationalCertStatusEnum::map(GenCommHandler::with_armed_failsafe(
             &ctx,
             |state, notify_mdns| {
+                let lkg_utc_secs = state.lkg_utc_secs();
                 let sess = ctx.exchange().id().session(&mut state.sessions);
 
                 state.failsafe.update_noc(
                     ctx.crypto(),
+                    lkg_utc_secs,
                     &mut state.fabrics,
                     sess.get_session_mode(),
                     icac,
@@ -752,10 +792,12 @@ impl ClusterHandler for NocHandler {
         let mut buf = [0u8; crate::cert::MAX_CERT_ASN1_LEN];
 
         GenCommHandler::with_armed_failsafe(&ctx, |state, _| {
+            let lkg_utc_secs = state.lkg_utc_secs();
             let sess = ctx.exchange().id().session(&mut state.sessions);
 
             state.failsafe.add_trusted_root_cert(
                 ctx.crypto(),
+                lkg_utc_secs,
                 sess.get_session_mode(),
                 request.root_ca_certificate()?.0,
                 &mut buf,
