@@ -32,8 +32,8 @@ use rs_matter::{crypto::Crypto, error::Error};
 #[allow(unused)]
 pub async fn run_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(), Error> {
     #[cfg(feature = "astro-dnssd")]
-    rs_matter::transport::network::mdns::astro::AstroMdnsResponder::new(matter)
-        .run()
+    rs_matter::transport::network::mdns::astro::AstroMdnsResponder::new()
+        .run(matter)
         .await?;
 
     #[cfg(all(feature = "zeroconf", not(feature = "astro-dnssd")))]

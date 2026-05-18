@@ -338,18 +338,18 @@ async fn discover_and_resolve_device(timeout_ms: u32, use_tcp: bool) -> Result<A
 
 #[cfg(feature = "astro-dnssd")]
 async fn discover_device<const A: usize>(
-    discriminator: u16,
+    filter: &CommissionableFilter,
     timeout_ms: u32,
 ) -> Result<DiscoveredDevice<A>, Error> {
     use rs_matter::transport::network::mdns::astro;
 
+    let filter_owned = filter.clone();
     let (tx, rx) = async_channel::bounded(1);
     std::thread::spawn(move || {
-        let filter = CommissionableFilter {
-            discriminator: Some(discriminator),
-            ..Default::default()
-        };
-        let _ = tx.send_blocking(astro::discover_commissionable::<A>(&filter, timeout_ms));
+        let _ = tx.send_blocking(astro::discover_commissionable::<A>(
+            &filter_owned,
+            timeout_ms,
+        ));
     });
 
     let devices = rx
@@ -358,7 +358,10 @@ async fn discover_device<const A: usize>(
         .map_err(|_| Error::from(rs_matter::error::ErrorCode::Failure))??;
 
     devices.into_iter().next().ok_or_else(|| {
-        warn!("No devices found matching discriminator {discriminator}");
+        warn!(
+            "No devices found matching discriminator {:?}",
+            filter.discriminator
+        );
         rs_matter::error::ErrorCode::NotFound.into()
     })
 }
