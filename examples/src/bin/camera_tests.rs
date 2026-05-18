@@ -686,7 +686,9 @@ fn dm_handler<'a>(
 ) -> impl DataModelHandler + 'a {
     (
         NODE,
-        endpoints::eth_sys_handler(&false, &(), &SysNetifs, &(), &(), rand)
+        endpoints::EthSysHandlerBuilder::new()
+            .netif_diag(&SysNetifs)
+            .build(rand)
             .chain(
                 EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),

@@ -653,7 +653,7 @@ fn dm_handler<'a>(
     wifi_diag: &'a dyn WifiDiag,
     net_ctl: &'a AppNetCtl,
 ) -> AppDmHandler<'a> {
-    endpoints::wifi_sys_handler(&true, &(), &(), wifi_diag, &(), &(), net_ctl, rand)
+    endpoints::WifiSysHandlerBuilder::new(net_ctl, wifi_diag).build(rand)
         .chain(
             EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
             Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),

@@ -280,7 +280,9 @@ where
 {
     (
         NODE,
-        endpoints::wifi_sys_handler(&true, &(), &UnixNetifs, wifi_diag, &(), &(), net_ctl, rand)
+        endpoints::WifiSysHandlerBuilder::new(net_ctl, wifi_diag)
+            .netif_diag(&UnixNetifs)
+            .build(rand)
             .chain(
                 EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
                 Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),

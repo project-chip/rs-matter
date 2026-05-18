@@ -619,7 +619,10 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 ) -> impl DataModelHandler + 'a {
     (
         node,
-        endpoints::eth_sys_handler(&false, gen_diag, &SysNetifs, &(), &(), rand)
+        endpoints::EthSysHandlerBuilder::new()
+            .gen_diag(gen_diag)
+            .netif_diag(&SysNetifs)
+            .build(rand)
             // Groups handler at the root endpoint. The library-level
             // `with_*_sys()` chain in `rs-matter/src/dm/endpoints.rs`
             // intentionally does *not* bind Groups at root anymore —

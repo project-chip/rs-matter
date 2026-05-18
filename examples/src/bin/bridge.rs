@@ -208,7 +208,9 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 ) -> impl DataModelHandler + 'a {
     (
         NODE,
-        endpoints::eth_sys_handler(&false, &(), &SysNetifs, &(), &(), rand)
+        endpoints::EthSysHandlerBuilder::new()
+            .netif_diag(&SysNetifs)
+            .build(rand)
             // The next chain is the handler for the "aggregator" endpoint 1.
             //
             // Note how the descriptor cluster is a bit different compared to the normal ones.

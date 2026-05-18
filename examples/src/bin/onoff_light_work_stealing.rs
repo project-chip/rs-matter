@@ -255,7 +255,9 @@ fn dm_handler<'a>(
     mut rand: impl RngCore + Copy,
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
 ) -> AppDmHandler<'a> {
-    endpoints::eth_sys_handler(&false, &(), &SysNetifs, &(), &(), rand)
+    endpoints::EthSysHandlerBuilder::new()
+        .netif_diag(&SysNetifs)
+        .build(rand)
         .chain(
             EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
             Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),

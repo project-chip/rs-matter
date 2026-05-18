@@ -305,3 +305,248 @@ where
         ),
     )
 }
+
+// ---- Sys-handler builders ----------------------------------------------------
+//
+// Thin builders over the `eth_sys_handler` / `wifi_sys_handler` /
+// `thread_sys_handler` free fns: each cluster-data hook is a setter, unset
+// ones fall back to the canonical no-op default (`&true` for `CommPolicy`,
+// `&()` for every other trait — `bool: CommPolicy` and `(): GenDiag` /
+// `NetifDiag` / `TimeSync` / `SwDiag` are already impls in the crate). New
+// hooks can be added later by extending one struct + adding a setter, with
+// no churn on existing call sites.
+
+/// Builder for an Ethernet root-endpoint system handler.
+///
+/// Unset hooks fall back to no-op defaults: `&true` for `CommPolicy`
+/// (commissioning open / allowed) and `&()` for every other trait
+/// (reports nothing / no-op).
+///
+/// ```ignore
+/// let h = EthSysHandlerBuilder::new()
+///     .gen_diag(&my_gen_diag)
+///     .netif_diag(&SysNetifs)
+///     .build(rand);
+/// ```
+pub struct EthSysHandlerBuilder<'a> {
+    comm_policy: &'a dyn CommPolicy,
+    gen_diag: &'a dyn GenDiag,
+    netif_diag: &'a dyn NetifDiag,
+    time_sync: &'a dyn TimeSync,
+    sw_diag: &'a dyn SwDiag,
+}
+
+impl<'a> EthSysHandlerBuilder<'a> {
+    /// Create a builder with all hooks defaulted to their no-op providers.
+    pub const fn new() -> Self {
+        Self {
+            comm_policy: &true,
+            gen_diag: &(),
+            netif_diag: &(),
+            time_sync: &(),
+            sw_diag: &(),
+        }
+    }
+
+    /// Set the `CommPolicy` hook (commissioning window policy).
+    pub const fn comm_policy(mut self, comm_policy: &'a dyn CommPolicy) -> Self {
+        self.comm_policy = comm_policy;
+        self
+    }
+
+    /// Set the `GenDiag` hook (General Diagnostics data provider).
+    pub const fn gen_diag(mut self, gen_diag: &'a dyn GenDiag) -> Self {
+        self.gen_diag = gen_diag;
+        self
+    }
+
+    /// Set the `NetifDiag` hook (network-interface enumeration).
+    pub const fn netif_diag(mut self, netif_diag: &'a dyn NetifDiag) -> Self {
+        self.netif_diag = netif_diag;
+        self
+    }
+
+    /// Set the `TimeSync` hook (Time Synchronization data provider).
+    pub const fn time_sync(mut self, time_sync: &'a dyn TimeSync) -> Self {
+        self.time_sync = time_sync;
+        self
+    }
+
+    /// Set the `SwDiag` hook (Software Diagnostics data provider).
+    pub const fn sw_diag(mut self, sw_diag: &'a dyn SwDiag) -> Self {
+        self.sw_diag = sw_diag;
+        self
+    }
+
+    /// Build the Ethernet system handler.
+    pub fn build<R: RngCore>(self, rand: R) -> EthSysHandler<'a> {
+        eth_sys_handler(
+            self.comm_policy,
+            self.gen_diag,
+            self.netif_diag,
+            self.time_sync,
+            self.sw_diag,
+            rand,
+        )
+    }
+}
+
+impl Default for EthSysHandlerBuilder<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Builder for a Wi-Fi root-endpoint system handler.
+///
+/// `net_ctl` and `wifi_diag` are required (no sensible default) and supplied
+/// to [`Self::new`]; everything else falls back to no-op defaults.
+pub struct WifiSysHandlerBuilder<'a, T> {
+    comm_policy: &'a dyn CommPolicy,
+    gen_diag: &'a dyn GenDiag,
+    netif_diag: &'a dyn NetifDiag,
+    wifi_diag: &'a dyn WifiDiag,
+    time_sync: &'a dyn TimeSync,
+    sw_diag: &'a dyn SwDiag,
+    net_ctl: T,
+}
+
+impl<'a, T> WifiSysHandlerBuilder<'a, T>
+where
+    T: NetCtl + NetCtlStatus,
+{
+    /// Create a builder. `net_ctl` and `wifi_diag` are required; every other
+    /// hook defaults to a no-op provider.
+    pub const fn new(net_ctl: T, wifi_diag: &'a dyn WifiDiag) -> Self {
+        Self {
+            comm_policy: &true,
+            gen_diag: &(),
+            netif_diag: &(),
+            wifi_diag,
+            time_sync: &(),
+            sw_diag: &(),
+            net_ctl,
+        }
+    }
+
+    /// Set the `CommPolicy` hook.
+    pub const fn comm_policy(mut self, comm_policy: &'a dyn CommPolicy) -> Self {
+        self.comm_policy = comm_policy;
+        self
+    }
+
+    /// Set the `GenDiag` hook.
+    pub const fn gen_diag(mut self, gen_diag: &'a dyn GenDiag) -> Self {
+        self.gen_diag = gen_diag;
+        self
+    }
+
+    /// Set the `NetifDiag` hook.
+    pub const fn netif_diag(mut self, netif_diag: &'a dyn NetifDiag) -> Self {
+        self.netif_diag = netif_diag;
+        self
+    }
+
+    /// Set the `TimeSync` hook.
+    pub const fn time_sync(mut self, time_sync: &'a dyn TimeSync) -> Self {
+        self.time_sync = time_sync;
+        self
+    }
+
+    /// Set the `SwDiag` hook.
+    pub const fn sw_diag(mut self, sw_diag: &'a dyn SwDiag) -> Self {
+        self.sw_diag = sw_diag;
+        self
+    }
+
+    /// Build the Wi-Fi system handler.
+    pub fn build<R: RngCore>(self, rand: R) -> WifiSysHandler<'a, T> {
+        wifi_sys_handler(
+            self.comm_policy,
+            self.gen_diag,
+            self.netif_diag,
+            self.wifi_diag,
+            self.time_sync,
+            self.sw_diag,
+            self.net_ctl,
+            rand,
+        )
+    }
+}
+
+/// Builder for a Thread root-endpoint system handler.
+///
+/// `net_ctl` and `thread_diag` are required (no sensible default) and supplied
+/// to [`Self::new`]; everything else falls back to no-op defaults.
+pub struct ThreadSysHandlerBuilder<'a, T> {
+    comm_policy: &'a dyn CommPolicy,
+    gen_diag: &'a dyn GenDiag,
+    netif_diag: &'a dyn NetifDiag,
+    thread_diag: &'a dyn ThreadDiag,
+    time_sync: &'a dyn TimeSync,
+    sw_diag: &'a dyn SwDiag,
+    net_ctl: T,
+}
+
+impl<'a, T> ThreadSysHandlerBuilder<'a, T>
+where
+    T: NetCtl + NetCtlStatus,
+{
+    /// Create a builder. `net_ctl` and `thread_diag` are required; every
+    /// other hook defaults to a no-op provider.
+    pub const fn new(net_ctl: T, thread_diag: &'a dyn ThreadDiag) -> Self {
+        Self {
+            comm_policy: &true,
+            gen_diag: &(),
+            netif_diag: &(),
+            thread_diag,
+            time_sync: &(),
+            sw_diag: &(),
+            net_ctl,
+        }
+    }
+
+    /// Set the `CommPolicy` hook.
+    pub const fn comm_policy(mut self, comm_policy: &'a dyn CommPolicy) -> Self {
+        self.comm_policy = comm_policy;
+        self
+    }
+
+    /// Set the `GenDiag` hook.
+    pub const fn gen_diag(mut self, gen_diag: &'a dyn GenDiag) -> Self {
+        self.gen_diag = gen_diag;
+        self
+    }
+
+    /// Set the `NetifDiag` hook.
+    pub const fn netif_diag(mut self, netif_diag: &'a dyn NetifDiag) -> Self {
+        self.netif_diag = netif_diag;
+        self
+    }
+
+    /// Set the `TimeSync` hook.
+    pub const fn time_sync(mut self, time_sync: &'a dyn TimeSync) -> Self {
+        self.time_sync = time_sync;
+        self
+    }
+
+    /// Set the `SwDiag` hook.
+    pub const fn sw_diag(mut self, sw_diag: &'a dyn SwDiag) -> Self {
+        self.sw_diag = sw_diag;
+        self
+    }
+
+    /// Build the Thread system handler.
+    pub fn build<R: RngCore>(self, rand: R) -> ThreadSysHandler<'a, T> {
+        thread_sys_handler(
+            self.comm_policy,
+            self.gen_diag,
+            self.netif_diag,
+            self.thread_diag,
+            self.time_sync,
+            self.sw_diag,
+            self.net_ctl,
+            rand,
+        )
+    }
+}
