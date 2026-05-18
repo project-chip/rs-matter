@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2025 Project CHIP Authors
+ *    Copyright (c) 2025-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -20,5 +20,6 @@
 pub mod avahi;
 pub mod bluez;
 pub mod nm;
+pub mod openthread;
 pub mod resolve;
 pub mod wpa_supp;
