@@ -268,27 +268,31 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Time Synchronization (system cluster)
     //
-    // rs-matter ships a no-feature stub of TimeSynchronization on the
-    // root endpoint (UTCTime=Null, Granularity=NoTime, TimeSource=None,
-    // no commands). `TC_TIMESYNC_2_1` (which gates on
-    // `has_attribute(TimeSource)`) now actually runs and exercises the
-    // attribute-read path. The remaining `TC_TIMESYNC_2_2..` tests
-    // need the feature-gated read/write/invoke paths (TimeZone, NTP
-    // client/server, trusted-time-source) — follow-up work.
+    // rs-matter implements the spec-mandatory TimeSynchronization
+    // surface on the root endpoint: the `UTCTime` / `Granularity` /
+    // `TimeSource` attributes and the `SetUTCTime` command, all
+    // wired to the Matter-wide Last-Known-Good UTC Time state on
+    // `Matter`/`MatterState` (Matter Core spec §3.5.6.1, §11.17.8,
+    // §11.17.9.1).
+    //
+    // The remaining (commented-out) tests gate on feature bits we
+    // don't claim yet:
+    //   - `F00` (TimeZone):       2_4, 2_5, 2_7..2_12
+    //   - `F01` (NTP_CLIENT):     2_6
+    //   - `F03` (TIME_SYNC_CLIENT): 2_13
     "TC_TIMESYNC_2_1",
-    // "TC_TIMESYNC_2_2",
-    // "TC_TIMESYNC_2_4",
-    // "TC_TIMESYNC_2_5",
-    // "TC_TIMESYNC_2_6",
-    // "TC_TIMESYNC_2_7",
-    // "TC_TIMESYNC_2_8",
-    // "TC_TIMESYNC_2_9",
-    // "TC_TIMESYNC_2_10",
-    // "TC_TIMESYNC_2_11",
-    // "TC_TIMESYNC_2_12",
-    // "TC_TIMESYNC_2_13",
-    // "TC_TIMESYNC_3_1",
-
+    "TC_TIMESYNC_2_2",
+    // "TC_TIMESYNC_2_4",  // Skipped: needs Feature `F00` (TimeZone) — TimeZone / DSTOffset attribute set + SetTimeZone / SetDSTOffset commands.
+    // "TC_TIMESYNC_2_5",  // Skipped: needs `F00`.
+    // "TC_TIMESYNC_2_6",  // Skipped: needs `F01` (NTP_CLIENT) — DefaultNTP / SupportsDNSResolve + SetDefaultNTP.
+    // "TC_TIMESYNC_2_7",  // Skipped: needs `F00`.
+    // "TC_TIMESYNC_2_8",  // Skipped: needs `F00`.
+    // "TC_TIMESYNC_2_9",  // Skipped: needs `F00`.
+    // "TC_TIMESYNC_2_10", // Skipped: needs `F00`.
+    // "TC_TIMESYNC_2_11", // Skipped: needs `F00`.
+    // "TC_TIMESYNC_2_12", // Skipped: needs `F00`.
+    // "TC_TIMESYNC_2_13", // Skipped: needs `F03` (TIME_SYNC_CLIENT) — TrustedTimeSource attribute + SetTrustedTimeSource + MissingTrustedTimeSource event.
+    "TC_TIMESYNC_3_1",
     //
     // Python tests — ICD Management (optional system cluster)
     //
@@ -1269,6 +1273,18 @@ impl ITests {
             // — `@run_if_endpoint_matches(has_cluster(TimeSynchronization))`
             // skips unless we point the runner at EP0.
             | "TC_TIMESYNC_2_1"
+            | "TC_TIMESYNC_2_2"
+            | "TC_TIMESYNC_2_4"
+            | "TC_TIMESYNC_2_5"
+            | "TC_TIMESYNC_2_6"
+            | "TC_TIMESYNC_2_7"
+            | "TC_TIMESYNC_2_8"
+            | "TC_TIMESYNC_2_9"
+            | "TC_TIMESYNC_2_10"
+            | "TC_TIMESYNC_2_11"
+            | "TC_TIMESYNC_2_12"
+            | "TC_TIMESYNC_2_13"
+            | "TC_TIMESYNC_3_1"
             | "TC_TestEventTrigger" => "--endpoint 0",
             // TC_G_2_2 sends Groups commands against
             // `self.matter_test_config.endpoint` (e.g. lines 125/133/172/197)
