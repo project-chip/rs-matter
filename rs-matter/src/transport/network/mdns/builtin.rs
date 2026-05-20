@@ -158,10 +158,6 @@ impl BuiltinMdnsResponder {
 
             select(&mut notification, &mut timeout).await;
 
-            let tx_buf = matter.transport_tx_buffer();
-            let mut tx_buf = tx_buf.get().await.ok_or(ErrorCode::ResourceExhausted)?;
-            let tx_buf = &mut *tx_buf;
-
             let mut send_guard = send.lock().await;
 
             let send_guard = &mut *send_guard;
@@ -190,7 +186,6 @@ impl BuiltinMdnsResponder {
                         ipv6_interface,
                         matter,
                         &crypto,
-                        tx_buf,
                     )
                     .await?;
                 }
@@ -208,7 +203,6 @@ impl BuiltinMdnsResponder {
                     ipv6_interface,
                     matter,
                     &crypto,
-                    tx_buf,
                 )
                 .await?;
             }
@@ -230,7 +224,6 @@ impl BuiltinMdnsResponder {
         ipv6_interface: Option<u32>,
         matter: &Matter<'_>,
         crypto: C,
-        buf: &mut [u8],
     ) -> Result<(), Error>
     where
         S: NetworkSend,
@@ -238,30 +231,40 @@ impl BuiltinMdnsResponder {
     {
         let ttl = if service_remove { 0 } else { 60 };
 
-        let (service, buf) = service.service(matter.dev_det(), matter.port(), buf)?;
-        let len = host.broadcast(&service, buf, 60, ttl)?;
+        for addr in Iterator::chain(
+            ipv4_interface
+                .map(|_| SocketAddr::V4(SocketAddrV4::new(MDNS_IPV4_BROADCAST_ADDR, MDNS_PORT)))
+                .into_iter(),
+            ipv6_interface.map(|interface| {
+                SocketAddr::V6(SocketAddrV6::new(
+                    MDNS_IPV6_BROADCAST_ADDR,
+                    MDNS_PORT,
+                    0,
+                    interface,
+                ))
+            }),
+        ) {
+            Self::rand_delay(&crypto).await?;
 
-        if len > 0 {
-            for addr in Iterator::chain(
-                ipv4_interface
-                    .map(|_| SocketAddr::V4(SocketAddrV4::new(MDNS_IPV4_BROADCAST_ADDR, MDNS_PORT)))
-                    .into_iter(),
-                ipv6_interface.map(|interface| {
-                    SocketAddr::V6(SocketAddrV6::new(
-                        MDNS_IPV6_BROADCAST_ADDR,
-                        MDNS_PORT,
-                        0,
-                        interface,
-                    ))
-                }),
-            ) {
-                Self::rand_delay(&crypto).await?;
+            // Acquire the Matter transport TX buffer *per send-target*
+            // rather than across the whole broadcast iteration. Holding
+            // it across the iteration would starve the Matter IM
+            // responder of TX, especially during the post-`OpenCommissioningWindow`
+            // announce burst.
+            let tx_buf = matter.transport_tx_buffer();
+            let mut tx_buf = tx_buf.get().await.ok_or(ErrorCode::ResourceExhausted)?;
+            let buf = &mut *tx_buf;
 
-                if let Err(e) = send.send_to(&buf[..len], Address::Udp(addr)).await {
-                    warn!("Failed to send mDNS broadcast to {}: {}", addr, e);
-                } else {
-                    debug!("Broadcasting mDNS entry to {}", addr);
-                }
+            let (service_dns, buf) = service.service(matter.dev_det(), matter.port(), buf)?;
+            let len = host.broadcast(&service_dns, buf, 60, ttl)?;
+            if len == 0 {
+                continue;
+            }
+
+            if let Err(e) = send.send_to(&buf[..len], Address::Udp(addr)).await {
+                warn!("Failed to send mDNS broadcast to {}: {}", addr, e);
+            } else {
+                debug!("Broadcasting mDNS entry to {}", addr);
             }
         }
 
@@ -287,10 +290,12 @@ impl BuiltinMdnsResponder {
             recv.wait_available().await?;
 
             {
-                let tx_buf = matter.transport_tx_buffer();
-                let mut tx_buf = tx_buf.get().await.ok_or(ErrorCode::ResourceExhausted)?;
-                let tx_buf = &mut *tx_buf;
-
+                // NOTE: We only hold the Matter transport RX buffer for the
+                // duration of the `recv_from` + `services_new` snapshot +
+                // per-service response dispatch — the TX buffer is taken
+                // per-send by `respond_one` so the Matter IM responder can
+                // interleave with us. See the matching change in
+                // `broadcast_one` for why this matters (TC_IDM_1_2 flake).
                 let rx_buf = matter.transport_rx_buffer();
                 let mut rx_buf = rx_buf.get().await.ok_or(ErrorCode::ResourceExhausted)?;
                 let rx_buf = &mut *rx_buf;
@@ -327,7 +332,6 @@ impl BuiltinMdnsResponder {
                         ipv6_interface,
                         matter,
                         &crypto,
-                        tx_buf,
                     )
                     .await?;
                 }
@@ -346,12 +350,18 @@ impl BuiltinMdnsResponder {
         ipv6_interface: Option<u32>,
         matter: &Matter<'_>,
         crypto: C,
-        buf: &mut [u8],
     ) -> Result<(), Error>
     where
         S: NetworkSend,
         C: Crypto,
     {
+        // Acquire the Matter transport TX buffer only for the
+        // duration of this one response so as not to starve the Matter
+        // send loop.
+        let tx_buf = matter.transport_tx_buffer();
+        let mut tx_buf = tx_buf.get().await.ok_or(ErrorCode::ResourceExhausted)?;
+        let buf = &mut *tx_buf;
+
         let (service, buf) = service.service(matter.dev_det(), matter.port(), buf)?;
 
         // RFC 6762 §6.7: a query whose UDP source port is not 5353 comes from
