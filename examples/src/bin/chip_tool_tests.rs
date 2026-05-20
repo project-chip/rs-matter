@@ -463,7 +463,13 @@ const NODE: Node<'static> = Node {
             ROOT_ENDPOINT_ID,
             devices!(DEV_TYPE_ROOT_NODE),
             clusters!(
-                eth;
+                eth,
+                // Claim `TimeSynchronization.TIME_SYNC_CLIENT` (Matter Core
+                // spec §11.17.13) so the device advertises the
+                // `TrustedTimeSource` attribute + `SetTrustedTimeSource`
+                // command — exercised by `TC_TIMESYNC_2_13` and
+                // consumed by [`time_sync::client::TimeSyncClient`].
+                time_sync(time_sync_client);
                 groups::GroupsHandler::CLUSTER,
                 user_label::CLUSTER,
                 binding::CLUSTER

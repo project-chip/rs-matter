@@ -247,7 +247,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         check_opcode(exchange, OpCode::CASESigma3)?;
 
         let status = exchange.with_state(|state| {
-            let lkg_utc_secs = state.lkg_utc_secs();
+            let lkg_utc_secs = state.rtc.utc_time_best_effort() / 1_000_000;
             let sess = exchange.id().session(&mut state.sessions);
 
             let fabric = NonZeroU8::new(self.casep.local_fabric_idx())

@@ -51,15 +51,379 @@
 //! is a fully usable no-op provider; implementors only override the
 //! methods matching the options they advertised.
 
+use core::num::NonZeroU8;
+
 use bitflags::bitflags;
 
+use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{
-    ArrayAttributeRead, Attribute, Cluster, Command, Dataver, InvokeContext, Quality, ReadContext,
+    ArrayAttributeRead, AttrChangeNotifier, Attribute, Cluster, Command, Dataver, EndptId,
+    EventEmitter, InvokeContext, NodeId, Quality, ReadContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{Nullable, NullableBuilder, TLVBuilderParent, Utf8StrBuilder};
+use crate::persist::{
+    KvBlobStore, KvBlobStoreAccess, Persist, LKG_UTC_KEY, TRUSTED_TIME_SOURCE_KEY,
+};
+use crate::tlv::{
+    FromTLV, Nullable, NullableBuilder, TLVBuilderParent, TLVElement, ToTLV, Utf8StrBuilder,
+};
+use crate::utils::epoch::FIRMWARE_BUILD_MATTER_US;
+use crate::utils::init::{init, Init};
 
 pub use crate::dm::clusters::decl::time_synchronization::*;
+
+pub mod client;
+
+/// Last-Known-Good UTC Time tracking for the device (Matter Core spec
+/// §3.5.6.1).
+///
+/// The persisted `utc_us` field is the spec-mandated stored
+/// fallback used by cert path validation when no live time
+/// synchronization is available; it is seeded from
+/// [`crate::utils::epoch::FIRMWARE_BUILD_MATTER_US`] on a
+/// freshly-flashed device.
+///
+/// `anchor`, `granularity`, and `source` are **volatile** — they
+/// describe the current monotonic-clock anchoring around the most
+/// recent [`Matter::set_utc_time`] call. After reboot, `anchor` is
+/// `None` (no live current-time tracking is active), so the TimeSync
+/// cluster reports `UTCTime = Null`, `Granularity = NoTimeGranularity`
+/// and `TimeSource = None` (per §11.17.8.2 / §11.17.8.3) — while
+/// `utc_us` still carries the persisted LKG value for cert validity.
+pub struct Rtc {
+    /// Last-Known-Good UTC time, Matter-epoch microseconds.
+    utc_us: u64,
+    /// Same as `utc_us` except always equal to the last persisted value.
+    utc_us_persisted: u64,
+    /// Granularity at the time of the last `set_utc_time` call, with
+    /// §11.17.9.1's "one level lower than supplied" step-down already
+    /// applied and floored at `MinutesGranularity` (§11.17.8.2).
+    /// **Not persisted** — resets to `NoTimeGranularity` at boot,
+    /// matching the `anchor = None` post-reboot state.
+    granularity: GranularityEnum,
+    /// Authority that last called `set_utc_time`. **Not persisted** —
+    /// resets to `None` at boot.
+    source: TimeSourceEnum,
+    /// `Instant::now()` captured at the last `set_utc_time` call.
+    /// Volatile — `None` after reboot until next set.
+    anchor: Option<embassy_time::Instant>,
+    /// Configured Trusted Time Source for the device (Matter Core spec
+    /// §11.17.8.7 / §11.17.9.7). At most one entry; the fabric that
+    /// installed it owns it and is cleared on fabric removal.
+    /// Persisted under [`crate::persist::TRUSTED_TIME_SOURCE_KEY`].
+    trusted_time_source: Option<TrustedTimeSource>,
+}
+
+impl Rtc {
+    #[inline(always)]
+    pub(crate) const fn new() -> Self {
+        Self {
+            utc_us: FIRMWARE_BUILD_MATTER_US,
+            utc_us_persisted: FIRMWARE_BUILD_MATTER_US,
+            granularity: GranularityEnum::NoTimeGranularity,
+            source: TimeSourceEnum::None,
+            anchor: None,
+            trusted_time_source: None,
+        }
+    }
+
+    /// Return an in-place initializer for `LkgUtc`.
+    pub(crate) fn init() -> impl Init<Self> {
+        init!(Self {
+            utc_us: FIRMWARE_BUILD_MATTER_US,
+            utc_us_persisted: FIRMWARE_BUILD_MATTER_US,
+            granularity: GranularityEnum::NoTimeGranularity,
+            source: TimeSourceEnum::None,
+            anchor: None,
+            trusted_time_source: None,
+        })
+    }
+
+    fn reset(&mut self) {
+        self.utc_us = FIRMWARE_BUILD_MATTER_US;
+        self.utc_us_persisted = FIRMWARE_BUILD_MATTER_US;
+        self.granularity = GranularityEnum::NoTimeGranularity;
+        self.source = TimeSourceEnum::None;
+        self.anchor = None;
+        self.trusted_time_source = None;
+    }
+
+    pub async fn reset_persist<S: KvBlobStore>(
+        &mut self,
+        mut store: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        self.reset();
+
+        store.remove(LKG_UTC_KEY, buf)?;
+        store.remove(TRUSTED_TIME_SOURCE_KEY, buf)?;
+        Ok(())
+    }
+
+    pub async fn load_persist<S: KvBlobStore>(
+        &mut self,
+        mut kv: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        self.reset();
+
+        // Load the persisted Last-Known-Good UTC Time, if any.
+        // Floor at `FIRMWARE_BUILD_MATTER_US` per Matter Core spec
+        // §3.5.6.1 — the on-disk value must never regress us
+        // below the build timestamp (the documented lower bound
+        // we never adjust backwards past).
+        if let Some(data) = kv.load(LKG_UTC_KEY, buf)? {
+            let stored = u64::from_tlv(&TLVElement::new(data))?;
+            let floor = FIRMWARE_BUILD_MATTER_US;
+
+            self.utc_us_persisted = stored;
+            self.utc_us = stored.max(floor);
+        }
+
+        // Load the persisted Trusted Time Source, if any.
+        if let Some(data) = kv.load(TRUSTED_TIME_SOURCE_KEY, buf)? {
+            self.trusted_time_source = Some(TrustedTimeSource::from_tlv(&TLVElement::new(data))?);
+        }
+
+        Ok(())
+    }
+
+    /// Return the configured Trusted Time Source, or `None` if unset
+    /// (Matter Core spec §11.17.8.7).
+    pub fn trusted_time_source(&self) -> Option<TrustedTimeSource> {
+        self.trusted_time_source
+    }
+
+    /// Install or clear the Trusted Time Source (Matter Core spec
+    /// §11.17.9.7). `fab_idx` is the fabric performing the change —
+    /// recorded so that fabric removal can clear an entry it owns.
+    pub fn set_trusted_time_source<E: EventEmitter>(
+        &mut self,
+        source: Option<TrustedTimeSource>,
+        change_notifier: &dyn AttrChangeNotifier,
+        event_emitter: E,
+    ) -> Result<(), Error> {
+        if self.trusted_time_source != source {
+            let previous = self.trusted_time_source;
+
+            self.trusted_time_source = source;
+
+            change_notifier.notify_attr_changed(
+                ROOT_ENDPOINT_ID,
+                TimeSyncHandler::CLUSTER.id,
+                AttributeId::TrustedTimeSource as _,
+            );
+
+            // Matter Core spec §11.17.10.1: emit `MissingTrustedTimeSource`
+            // when SetTrustedTimeSource clears a previously-set entry (null
+            // request payload, transitioning from `Some(..)` → `None`).
+            if self.trusted_time_source.is_none() && previous.is_some() {
+                MissingTrustedTimeSource::emit_for(event_emitter, ROOT_ENDPOINT_ID, |b| b.end())?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Install or clear the Trusted Time Source (Matter Core spec
+    /// §11.17.9.7). `fab_idx` is the fabric performing the change —
+    /// recorded so that fabric removal can clear an entry it owns.
+    /// `source = None` clears any existing entry.
+    ///
+    /// Updates in-memory state, persists under
+    /// [`crate::persist::TRUSTED_TIME_SOURCE_KEY`], and notifies
+    /// subscribers of the `TrustedTimeSource` attribute change.
+    pub fn set_trusted_time_source_persist<S: KvBlobStoreAccess, E: EventEmitter>(
+        &mut self,
+        source: Option<TrustedTimeSource>,
+        persist: &mut Persist<S>,
+        change_notifier: &dyn AttrChangeNotifier,
+        event_emitter: E,
+    ) -> Result<(), Error> {
+        if self.trusted_time_source != source {
+            self.set_trusted_time_source(source, change_notifier, event_emitter)?;
+
+            match source {
+                Some(source) => {
+                    persist.store_tlv(TRUSTED_TIME_SOURCE_KEY, source)?;
+                }
+                None => {
+                    persist.remove(TRUSTED_TIME_SOURCE_KEY)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Return the persisted Last-Known-Good UTC Time as Matter-epoch
+    /// microseconds (Matter Core spec §3.5.6.1).
+    ///
+    /// This value is always defined — seeded from
+    /// [`crate::utils::epoch::FIRMWARE_BUILD_MATTER_US`] on first
+    /// boot, persisted across reboots, and updated on every
+    /// [`Self::set_utc_time`] call. It is the time source consulted by
+    /// rs-matter's cert path validation, the NOC attestation
+    /// timestamp, and the TimeSync cluster's mandatory members.
+    pub fn last_known_utc_time(&self) -> u64 {
+        self.utc_us
+    }
+
+    /// Return the current UTC time as Matter-epoch microseconds —
+    /// `Some(utc)` if [`Self::set_utc_time`] has been called since
+    /// boot (advancing monotonically via [`embassy_time::Instant`]
+    /// from the captured anchor), or `None` if no current-time
+    /// tracking is currently active.
+    ///
+    /// Note that even when this returns `None`,
+    /// [`Self::last_known_utc_time`] still carries the persisted
+    /// LKG value usable as a cert-validity lower bound per spec
+    /// §3.5.6.
+    pub fn utc_time(&self) -> Option<u64> {
+        let anchor = self.anchor?;
+        let elapsed_us = embassy_time::Instant::now()
+            .checked_duration_since(anchor)
+            .map(|d| d.as_micros())
+            .unwrap_or(0);
+
+        Some(self.utc_us.saturating_add(elapsed_us))
+    }
+
+    /// Return the current UTC time if available, or the persisted LKG UTC otherwise.
+    pub fn utc_time_best_effort(&self) -> u64 {
+        self.utc_time().unwrap_or(self.utc_us)
+    }
+
+    /// Return the Granularity reported on the wire for the TimeSync
+    /// cluster's `Granularity` attribute, derived from the most
+    /// recent [`Self::set_utc_time`] (with the spec-required
+    /// step-down and floor already applied) — or `NoTimeGranularity`
+    /// if no `set_utc_time` has been called since boot (per
+    /// §11.17.8.2, which forbids `NoTimeGranularity` only while
+    /// `UTCTime ≠ Null`).
+    pub fn utc_time_granularity(&self) -> GranularityEnum {
+        if self.anchor.is_some() {
+            self.granularity
+        } else {
+            GranularityEnum::NoTimeGranularity
+        }
+    }
+
+    /// Return the TimeSource reported on the wire for the TimeSync
+    /// cluster's `TimeSource` attribute — `None` until the first
+    /// [`Self::set_utc_time`] (per §11.17.8.3).
+    pub fn utc_time_source(&self) -> TimeSourceEnum {
+        if self.anchor.is_some() {
+            self.source
+        } else {
+            TimeSourceEnum::None
+        }
+    }
+
+    /// Update the Last-Known-Good UTC Time (Matter Core spec
+    /// §3.5.6.1), capturing a fresh monotonic anchor so subsequent
+    /// [`Self::utc_time`] reads advance from the supplied value.
+    ///
+    /// Per §11.17.9.1: the supplied `granularity` is recorded
+    /// stepped-down by one level (with a floor of
+    /// `MinutesGranularity` per §11.17.8.2); the supplied `source`
+    /// is recorded verbatim.
+    ///
+    /// The new value is written to the in-memory state immediately.
+    /// Persistence to `LKG_UTC_KEY` happens separately — the
+    /// TimeSync cluster handler invokes this from inside a
+    /// `kv.access(...)` closure and writes through the same handle.
+    /// Direct callers that need on-disk durability should call
+    /// [`Self::persist_lkg_utc`] explicitly.
+    pub fn set_utc_time(
+        &mut self,
+        utc_us: u64,
+        granularity: GranularityEnum,
+        source: TimeSourceEnum,
+        change_notifier: &dyn AttrChangeNotifier,
+    ) -> bool {
+        let stepped = match granularity {
+            GranularityEnum::MicrosecondsGranularity => GranularityEnum::MillisecondsGranularity,
+            GranularityEnum::MillisecondsGranularity => GranularityEnum::SecondsGranularity,
+            GranularityEnum::SecondsGranularity => GranularityEnum::MinutesGranularity,
+            // Minutes / NoTime → floor at Minutes (§11.17.8.2 forbids
+            // NoTime while UTCTime is non-null).
+            _ => GranularityEnum::MinutesGranularity,
+        };
+
+        let changed = self.utc_us != utc_us || self.granularity != stepped || self.source != source;
+
+        if changed || self.anchor.is_none() {
+            self.utc_us = utc_us;
+            self.granularity = stepped;
+            self.source = source;
+            self.anchor = Some(embassy_time::Instant::now());
+
+            change_notifier.notify_attr_changed(
+                ROOT_ENDPOINT_ID,
+                TimeSyncHandler::CLUSTER.id,
+                AttributeId::UTCTime as _,
+            );
+            change_notifier.notify_attr_changed(
+                ROOT_ENDPOINT_ID,
+                TimeSyncHandler::CLUSTER.id,
+                AttributeId::Granularity as _,
+            );
+            change_notifier.notify_attr_changed(
+                ROOT_ENDPOINT_ID,
+                TimeSyncHandler::CLUSTER.id,
+                AttributeId::TimeSource as _,
+            );
+        }
+
+        changed
+    }
+
+    pub fn set_utc_time_persist<S: KvBlobStoreAccess>(
+        &mut self,
+        utc_us: u64,
+        granularity: GranularityEnum,
+        source: TimeSourceEnum,
+        persist: &mut Persist<S>,
+        change_notifier: &dyn AttrChangeNotifier,
+    ) -> Result<(), Error> {
+        const DELTA: u64 = 24 * 60 * 60 * 1_000_000; // 1 day in microseconds
+
+        let delta = self.utc_us_persisted.abs_diff(utc_us);
+
+        self.set_utc_time(utc_us, granularity, source, change_notifier);
+
+        if delta >= DELTA {
+            // As per the Matter Core spec, we have to persist the new LKG UTC at least once per month
+            // Since this would be an involved math, we instead persist if the new LKG UTC is different
+            // by more than a day than the previous one, which should be good enough to cover the requirement
+            // without needing a separate timer for periodic persistence.
+
+            info!("TimeSync: UTC time changed by more than a day, persisting");
+
+            persist.store_tlv(LKG_UTC_KEY, utc_us.to_le_bytes())?;
+            self.utc_us_persisted = utc_us;
+        }
+
+        Ok(())
+    }
+}
+
+/// Persisted Trusted Time Source descriptor (Matter Core spec §11.17.8.7).
+/// Records which fabric configured the source so that fabric removal can
+/// clear it and emit `MissingTrustedTimeSource`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct TrustedTimeSource {
+    /// Fabric that installed the source (the `FabricIndex` injected by
+    /// the IM dispatcher into the `SetTrustedTimeSource` invoke).
+    pub fab_idx: NonZeroU8,
+    /// Node ID of the trusted source on that fabric.
+    pub node_id: NodeId,
+    /// Endpoint on the trusted source's node that hosts the TimeSync
+    /// cluster server.
+    pub endpoint: EndptId,
+}
 
 bitflags! {
     /// Cluster-shape selectors for the [`TimeSyncHandler`]. Each bit
@@ -138,23 +502,134 @@ pub struct TrustedTimeSourceData {
 
 /// Pluggable data source for the feature-gated members of the Time
 /// Synchronization cluster (`TIME_ZONE` / `NTP_CLIENT` / `NTP_SERVER`
-/// / `TIME_SYNC_CLIENT`). The mandatory members — `UTCTime`,
-/// `Granularity`, `TimeSource`, and the `SetUTCTime` command — are
-/// handled by [`TimeSyncHandler`] directly against the Matter-wide
-/// [Last-Known-Good UTC Time](crate::Matter::last_known_utc_time)
-/// state and do **not** appear on this trait.
+/// / `TIME_SYNC_CLIENT`).
 ///
-/// Every method has a "no value" default, so `impl TimeSync for ()`
-/// is a fully usable no-op provider — implementors only override
-/// what matches the options they advertised on the endpoint.
+/// The mandatory members — `UTCTime`, `Granularity`, `TimeSource`,
+/// and the `SetUTCTime` command — are handled by [`TimeSyncHandler`] directly
+/// against the built-in Matter RTC state and do **not** appear on this trait.
+///
+/// The `TIME_SYNC_CLIENT` feature (if enabled) is also handled by the handler
+/// directly against the `TrustedTimeSource` entry in the built-in Matter RTC state,
+/// so it also doesn't appear here.
 pub trait TimeSync {
-    // ---- TIME_SYNC_CLIENT feature
+    // ---- NTP_CLIENT feature
 
-    /// Currently-configured trusted time source, or `Null` if none.
-    fn trusted_time_source(&self) -> Result<Nullable<TrustedTimeSourceData>, Error> {
-        Ok(Nullable::none())
+    /// Hostname or IP address of the default NTP server, or `Null` if
+    /// none is configured.
+    fn default_ntp(&self) -> Result<Nullable<&str>, Error>;
+
+    /// Whether the device's NTP-client resolver supports DNS names
+    /// (vs. only literal IP addresses).
+    fn supports_dns_resolve(&self) -> Result<bool, Error>;
+
+    // ---- NTP_SERVER feature
+
+    /// Whether the device is currently serving NTP queries.
+    fn ntp_server_available(&self) -> Result<bool, Error>;
+
+    // ---- TIME_ZONE feature
+
+    /// Stream the active time-zone entries into `visit`.
+    fn time_zone(
+        &self,
+        _visit: &mut dyn FnMut(&TimeZoneEntry<'_>) -> Result<(), Error>,
+    ) -> Result<(), Error>;
+
+    /// Stream the active DST-offset entries into `visit`.
+    fn dst_offset(
+        &self,
+        _visit: &mut dyn FnMut(&DSTOffsetEntry) -> Result<(), Error>,
+    ) -> Result<(), Error>;
+
+    /// Current local time in Matter-epoch microseconds, or `Null`.
+    fn local_time(&self) -> Result<Nullable<u64>, Error>;
+
+    /// How complete the device's IANA time-zone database is.
+    fn time_zone_database(&self) -> Result<TimeZoneDatabaseEnum, Error>;
+
+    /// Maximum length of the `TimeZone` list this device accepts.
+    fn time_zone_list_max_size(&self) -> Result<u8, Error>;
+
+    /// Maximum length of the `DSTOffset` list this device accepts.
+    fn dst_offset_list_max_size(&self) -> Result<u8, Error>;
+
+    // ---- Commands (feature-gated; default to `CommandNotFound`)
+
+    /// Handle `SetTimeZone` — gated by `TIME_ZONE`. Returns the
+    /// `DSTOffsetRequired` field for the response.
+    fn set_time_zone(&self, _request: &SetTimeZoneRequest<'_>) -> Result<bool, Error>;
+
+    /// Handle `SetDSTOffset` — gated by `TIME_ZONE`.
+    fn set_dst_offset(&self, _request: &SetDSTOffsetRequest<'_>) -> Result<(), Error>;
+
+    /// Handle `SetDefaultNTP` — gated by `NTP_CLIENT`.
+    fn set_default_ntp(&self, _request: &SetDefaultNTPRequest<'_>) -> Result<(), Error>;
+}
+
+impl<T> TimeSync for &T
+where
+    T: TimeSync,
+{
+    fn default_ntp(&self) -> Result<Nullable<&str>, Error> {
+        (*self).default_ntp()
     }
 
+    fn supports_dns_resolve(&self) -> Result<bool, Error> {
+        (*self).supports_dns_resolve()
+    }
+
+    fn ntp_server_available(&self) -> Result<bool, Error> {
+        (*self).ntp_server_available()
+    }
+
+    fn time_zone(
+        &self,
+        visit: &mut dyn FnMut(&TimeZoneEntry<'_>) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        (*self).time_zone(visit)
+    }
+
+    fn dst_offset(
+        &self,
+        visit: &mut dyn FnMut(&DSTOffsetEntry) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        (*self).dst_offset(visit)
+    }
+
+    fn local_time(&self) -> Result<Nullable<u64>, Error> {
+        (*self).local_time()
+    }
+
+    fn time_zone_database(&self) -> Result<TimeZoneDatabaseEnum, Error> {
+        (*self).time_zone_database()
+    }
+
+    fn time_zone_list_max_size(&self) -> Result<u8, Error> {
+        (*self).time_zone_list_max_size()
+    }
+
+    fn dst_offset_list_max_size(&self) -> Result<u8, Error> {
+        (*self).dst_offset_list_max_size()
+    }
+
+    fn set_time_zone(&self, request: &SetTimeZoneRequest<'_>) -> Result<bool, Error> {
+        (*self).set_time_zone(request)
+    }
+
+    fn set_dst_offset(&self, request: &SetDSTOffsetRequest<'_>) -> Result<(), Error> {
+        (*self).set_dst_offset(request)
+    }
+
+    fn set_default_ntp(&self, request: &SetDefaultNTPRequest<'_>) -> Result<(), Error> {
+        (*self).set_default_ntp(request)
+    }
+}
+
+/// Default [`TimeSync`] implementation.
+///
+/// Suitable for devices that don't advertise the features
+/// `TIME_ZONE` / `NTP_CLIENT` / `NTP_SERVER`.
+impl TimeSync for () {
     // ---- NTP_CLIENT feature
 
     /// Hostname or IP address of the default NTP server, or `Null` if
@@ -218,14 +693,6 @@ pub trait TimeSync {
 
     // ---- Commands (feature-gated; default to `CommandNotFound`)
 
-    /// Handle `SetTrustedTimeSource` — gated by `TIME_SYNC_CLIENT`.
-    fn set_trusted_time_source(
-        &self,
-        _request: &SetTrustedTimeSourceRequest<'_>,
-    ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
-    }
-
     /// Handle `SetTimeZone` — gated by `TIME_ZONE`. Returns the
     /// `DSTOffsetRequired` field for the response.
     fn set_time_zone(&self, _request: &SetTimeZoneRequest<'_>) -> Result<bool, Error> {
@@ -242,86 +709,6 @@ pub trait TimeSync {
         Err(ErrorCode::CommandNotFound.into())
     }
 }
-
-impl<T> TimeSync for &T
-where
-    T: TimeSync,
-{
-    fn trusted_time_source(&self) -> Result<Nullable<TrustedTimeSourceData>, Error> {
-        (*self).trusted_time_source()
-    }
-
-    fn default_ntp(&self) -> Result<Nullable<&str>, Error> {
-        (*self).default_ntp()
-    }
-
-    fn supports_dns_resolve(&self) -> Result<bool, Error> {
-        (*self).supports_dns_resolve()
-    }
-
-    fn ntp_server_available(&self) -> Result<bool, Error> {
-        (*self).ntp_server_available()
-    }
-
-    fn time_zone(
-        &self,
-        visit: &mut dyn FnMut(&TimeZoneEntry<'_>) -> Result<(), Error>,
-    ) -> Result<(), Error> {
-        (*self).time_zone(visit)
-    }
-
-    fn dst_offset(
-        &self,
-        visit: &mut dyn FnMut(&DSTOffsetEntry) -> Result<(), Error>,
-    ) -> Result<(), Error> {
-        (*self).dst_offset(visit)
-    }
-
-    fn local_time(&self) -> Result<Nullable<u64>, Error> {
-        (*self).local_time()
-    }
-
-    fn time_zone_database(&self) -> Result<TimeZoneDatabaseEnum, Error> {
-        (*self).time_zone_database()
-    }
-
-    fn time_zone_list_max_size(&self) -> Result<u8, Error> {
-        (*self).time_zone_list_max_size()
-    }
-
-    fn dst_offset_list_max_size(&self) -> Result<u8, Error> {
-        (*self).dst_offset_list_max_size()
-    }
-
-    fn set_trusted_time_source(
-        &self,
-        request: &SetTrustedTimeSourceRequest<'_>,
-    ) -> Result<(), Error> {
-        (*self).set_trusted_time_source(request)
-    }
-
-    fn set_time_zone(&self, request: &SetTimeZoneRequest<'_>) -> Result<bool, Error> {
-        (*self).set_time_zone(request)
-    }
-
-    fn set_dst_offset(&self, request: &SetDSTOffsetRequest<'_>) -> Result<(), Error> {
-        (*self).set_dst_offset(request)
-    }
-
-    fn set_default_ntp(&self, request: &SetDefaultNTPRequest<'_>) -> Result<(), Error> {
-        (*self).set_default_ntp(request)
-    }
-}
-
-/// No-op [`TimeSync`] implementation. Suitable for devices that don't
-/// advertise any of the feature-gated members
-/// (`TIME_ZONE` / `NTP_CLIENT` / `NTP_SERVER` / `TIME_SYNC_CLIENT`) —
-/// the mandatory members (`UTCTime`, `Granularity`, `TimeSource`,
-/// `SetUTCTime`) are handled by [`TimeSyncHandler`] directly against
-/// the Matter-wide
-/// [Last-Known-Good UTC Time](crate::Matter::last_known_utc_time)
-/// state and don't need any provider input.
-impl TimeSync for () {}
 
 // ---- Cluster-shape selection -------------------------------------------------
 
@@ -438,7 +825,7 @@ pub const fn cluster<const OPTS: u8>() -> Cluster<'static> {
 /// Handler for the Time Synchronization Matter cluster.
 ///
 /// Borrows a `&dyn TimeSync` data provider for the lifetime `'a` and
-/// forwards every attribute read / command invoke to it.
+/// forwards every non-builtin attribute read / command invoke to it.
 ///
 /// The handler is **not** parameterized by cluster shape:
 /// [`Self::CLUSTER`](ClusterHandler::CLUSTER) is pinned to the
@@ -504,17 +891,23 @@ impl ClusterHandler for TimeSyncHandler<'_> {
 
     // ---- Feature-gated reads
 
+    // Served directly from the Matter-wide TrustedTimeSource state
+    // (Matter Core spec §11.17.8.7) — fabric-scoped storage lives on
+    // `MatterState::rtc`, not on the user-supplied `TimeSync` provider.
     fn trusted_time_source<P: TLVBuilderParent>(
         &self,
-        _ctx: impl ReadContext,
+        ctx: impl ReadContext,
         builder: NullableBuilder<P, TrustedTimeSourceStructBuilder<P>>,
     ) -> Result<P, Error> {
-        match self.time_sync.trusted_time_source()?.into_option() {
-            Some(data) => builder
+        match ctx
+            .matter()
+            .with_state(|state| state.rtc.trusted_time_source())
+        {
+            Some(tts) => builder
                 .non_null()?
-                .fabric_index(data.fabric_index)?
-                .node_id(data.node_id)?
-                .endpoint(data.endpoint)?
+                .fabric_index(tts.fab_idx.get())?
+                .node_id(tts.node_id)?
+                .endpoint(tts.endpoint)?
                 .end(),
             None => builder.null(),
         }
@@ -658,20 +1051,46 @@ impl ClusterHandler for TimeSyncHandler<'_> {
         ctx.matter().with_state(|state| {
             state
                 .rtc
-                .set_utc_time(utc_us, granularity, TimeSourceEnum::Admin, |e, c, a| {
-                    ctx.notify_attr_changed(e, c, a)
-                })
+                .set_utc_time(utc_us, granularity, TimeSourceEnum::Admin, &ctx)
         });
 
         Ok(())
     }
 
+    // Matter Core spec §11.17.9.7 — installs or clears the per-device
+    // Trusted Time Source. The fabric performing the change is
+    // recorded so that fabric removal can clear an entry it owns
+    // (§11.17.8.7) and emit `MissingTrustedTimeSource` (§11.17.10.1).
     fn handle_set_trusted_time_source(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: SetTrustedTimeSourceRequest<'_>,
     ) -> Result<(), Error> {
-        self.time_sync.set_trusted_time_source(&request)
+        let fab_idx = NonZeroU8::new(ctx.cmd().fab_idx).ok_or(ErrorCode::InvalidCommand)?;
+
+        let source = request
+            .trusted_time_source()?
+            .into_option()
+            .map(|tts| {
+                Ok::<_, Error>(TrustedTimeSource {
+                    fab_idx,
+                    node_id: tts.node_id()?,
+                    endpoint: tts.endpoint()?,
+                })
+            })
+            .transpose()?;
+
+        let mut persist = Persist::new(ctx.kv());
+
+        ctx.matter().with_state(|state| {
+            state
+                .rtc
+                .set_trusted_time_source_persist(source, &mut persist, &ctx, &ctx)
+        })?;
+
+        persist.run()?;
+
+        Ok(())
     }
 
     fn handle_set_time_zone<P: TLVBuilderParent>(

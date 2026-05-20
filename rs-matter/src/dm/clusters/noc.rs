@@ -68,22 +68,8 @@ impl NodeOperationalCertStatusEnum {
 }
 
 /// The system implementation of a handler for the Node Operational Credentials Matter cluster.
-///
-/// Two cluster behaviours consume calendar time, and both source it
-/// from [`crate::Matter::last_known_utc_time`] (the Last-Known-Good
-/// UTC Time stored on the [`crate::Matter`] object — see Matter Core
-/// spec §3.5.6.1):
-///
-/// - The `AttestationResponse` `timestamp` field (§11.18.5.5).
-/// - The NOC / RCAC / ICAC validity-period check during `AddNOC` /
-///   `UpdateNOC` / `AddTrustedRootCertificate`.
-///
-/// On a freshly-flashed device with no `SetUTCTime` received yet,
-/// `last_known_utc_time` is seeded from
-/// [`crate::utils::epoch::FIRMWARE_BUILD_MATTER_US`], which
-/// satisfies §3.5.6.1's "initial out-of-box Last Known Good UTC time
-/// SHALL be the compile-time of the firmware."
-#[derive(Clone)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NocHandler {
     dataver: Dataver,
 }
@@ -113,21 +99,6 @@ impl NocHandler {
         dac_key.sign(attest_element.as_slice(), signature)?;
 
         Ok(())
-    }
-}
-
-impl core::fmt::Debug for NocHandler {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("NocHandler")
-            .field("dataver", &self.dataver)
-            .finish()
-    }
-}
-
-#[cfg(feature = "defmt")]
-impl defmt::Format for NocHandler {
-    fn format(&self, f: defmt::Formatter) {
-        defmt::write!(f, "NocHandler {{ dataver: {} }}", self.dataver.get());
     }
 }
 
@@ -530,7 +501,7 @@ impl ClusterHandler for NocHandler {
         let status = NodeOperationalCertStatusEnum::map(GenCommHandler::with_armed_failsafe(
             &ctx,
             |state, mut notify_mdns| {
-                let lkg_utc_secs = state.lkg_utc_secs();
+                let lkg_utc_secs = state.rtc.utc_time_best_effort() / 1_000_000;
                 let sess = ctx.exchange().id().session(&mut state.sessions);
 
                 let fabric = state.failsafe.add_noc(
@@ -621,7 +592,7 @@ impl ClusterHandler for NocHandler {
         let status = NodeOperationalCertStatusEnum::map(GenCommHandler::with_armed_failsafe(
             &ctx,
             |state, notify_mdns| {
-                let lkg_utc_secs = state.lkg_utc_secs();
+                let lkg_utc_secs = state.rtc.utc_time_best_effort() / 1_000_000;
                 let sess = ctx.exchange().id().session(&mut state.sessions);
 
                 state.failsafe.update_noc(
@@ -739,6 +710,18 @@ impl ClusterHandler for NocHandler {
 
                 persist.remove(fab_idx)?;
 
+                // Matter Core spec §11.17.8.7: if the removed fabric is the
+                // one that installed the TrustedTimeSource, the device SHALL
+                // clear the attribute (and emit `MissingTrustedTimeSource`).
+                if state.rtc.trusted_time_source().map(|tts| tts.fab_idx) == Some(fab_idx) {
+                    state.rtc.set_trusted_time_source_persist(
+                        None,
+                        persist.persist_mut(),
+                        &ctx,
+                        &ctx,
+                    )?;
+                }
+
                 info!("Removed operational fabric with local index {}", fab_idx);
 
                 // If the removed fabric was the one that opened the current
@@ -792,7 +775,7 @@ impl ClusterHandler for NocHandler {
         let mut buf = [0u8; crate::cert::MAX_CERT_ASN1_LEN];
 
         GenCommHandler::with_armed_failsafe(&ctx, |state, _| {
-            let lkg_utc_secs = state.lkg_utc_secs();
+            let lkg_utc_secs = state.rtc.utc_time_best_effort() / 1_000_000;
             let sess = ctx.exchange().id().session(&mut state.sessions);
 
             state.failsafe.add_trusted_root_cert(

@@ -279,7 +279,6 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // don't claim yet:
     //   - `F00` (TimeZone):       2_4, 2_5, 2_7..2_12
     //   - `F01` (NTP_CLIENT):     2_6
-    //   - `F03` (TIME_SYNC_CLIENT): 2_13
     "TC_TIMESYNC_2_1",
     "TC_TIMESYNC_2_2",
     // "TC_TIMESYNC_2_4",  // Skipped: needs Feature `F00` (TimeZone) — TimeZone / DSTOffset attribute set + SetTimeZone / SetDSTOffset commands.
@@ -291,7 +290,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // "TC_TIMESYNC_2_10", // Skipped: needs `F00`.
     // "TC_TIMESYNC_2_11", // Skipped: needs `F00`.
     // "TC_TIMESYNC_2_12", // Skipped: needs `F00`.
-    // "TC_TIMESYNC_2_13", // Skipped: needs `F03` (TIME_SYNC_CLIENT) — TrustedTimeSource attribute + SetTrustedTimeSource + MissingTrustedTimeSource event.
+    "TC_TIMESYNC_2_13",
     "TC_TIMESYNC_3_1",
     //
     // Python tests — ICD Management (optional system cluster)

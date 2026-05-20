@@ -24,6 +24,7 @@ use embassy_time::{Duration, Instant, Timer};
 
 use crate::acl::Accessor;
 use crate::crypto::Crypto;
+use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
 use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
 use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
@@ -1038,7 +1039,7 @@ impl<'a> Exchange<'a> {
     pub async fn initiate(
         matter: &'a Matter<'a>,
         fabric_idx: u8,
-        peer_node_id: u64,
+        peer_node_id: NodeId,
         secure: bool,
     ) -> Result<Self, Error> {
         matter

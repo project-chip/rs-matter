@@ -26,6 +26,7 @@ use rand_core::RngCore;
 
 use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::BasicInfoConfig;
+use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{MAX_FABRICS, MAX_GROUPS_PER_FABRIC};
 use crate::fmt::Bytes;
@@ -204,7 +205,7 @@ impl Transport {
         &self,
         matter: &'a Matter<'a>,
         fabric_idx: u8,
-        peer_node_id: u64,
+        peer_node_id: NodeId,
         secure: bool,
     ) -> Result<Exchange<'a>, Error> {
         // TODO: Future: once we have mDNS lookups in place
