@@ -26,7 +26,9 @@ use std::net::UdpSocket;
 
 use async_signal::{Signal, Signals};
 
-use embassy_futures::select::{select3, select4};
+use embassy_futures::select::select4;
+
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
 use futures_lite::StreamExt;
 
@@ -55,6 +57,7 @@ use rs_matter::dm::clusters::grp_key_mgmt::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
 use rs_matter::dm::clusters::net_comm::{self, SharedNetworks};
 use rs_matter::dm::clusters::noc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::sw_diag::SoftwareFault;
 use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
 };
@@ -80,6 +83,7 @@ use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
+use rs_matter::utils::sync::Notification;
 use rs_matter::BasicCommData;
 use rs_matter::{clusters, devices, Matter, MATTER_PORT};
 
@@ -106,6 +110,8 @@ static USER_LABELS: StaticCell<UserLabels<1, 4>> = StaticCell::new();
 // that step pass. Two fabrics × ~8 entries per fabric is comfortably
 // above what the YAML's per-fabric scenarios actually exercise.
 static BINDINGS: StaticCell<Bindings<16>> = StaticCell::new();
+
+static SW_FAULT_NOTIFY: Notification<CriticalSectionRawMutex> = Notification::new();
 
 fn main() -> Result<(), Error> {
     // Enable detailed backtraces for debugging test failures
@@ -371,12 +377,14 @@ fn main() -> Result<(), Error> {
         Ok(())
     });
 
+    let mut sw_fault_emitter = pin!(emit_software_fault_on_trigger(&dm));
+
     // Combine all async tasks in a single one
     let all = select4(
         &mut transport,
         &mut mdns,
         &mut app_pipe_actions,
-        select3(&mut respond, &mut dm_job, &mut term).coalesce(),
+        select4(&mut respond, &mut dm_job, &mut sw_fault_emitter, &mut term).coalesce(),
     );
 
     // Run with a simple `block_on`. Any local executor would do.
@@ -819,13 +827,54 @@ impl GenDiag for TestEventTriggerDiag {
         if key.iter().all(|&b| b == 0) || key != self.enable_key {
             return Err(rs_matter::error::ErrorCode::ConstraintError.into());
         }
-        // Mirror CHIP's `SampleTestEventTriggerDelegate`: only the canonical
-        // CHIP test trigger code is recognised.
-        const VALID_TRIGGER: u64 = 0xFFFF_FFFF_FFF1_0000;
-        if trigger == VALID_TRIGGER {
-            Ok(())
-        } else {
-            Err(rs_matter::error::ErrorCode::InvalidCommand.into())
+        // Mirror CHIP's `SampleTestEventTriggerDelegate`: the canonical CHIP
+        // test trigger code is accepted by `TC_TestEventTrigger`.
+        const TC_TEST_EVENT_TRIGGER: u64 = 0xFFFF_FFFF_FFF1_0000;
+        // SoftwareDiagnostics `SoftwareFault` test trigger (Matter Core spec
+        // §11.13.7). `TC_DGSW_2_2` invokes this trigger and then waits for a
+        // `SoftwareFault` event. We signal `SW_FAULT_NOTIFY` so the
+        // top-level async task can emit the event (the trait method
+        // itself is sync and has no event-emitter context).
+        const SW_FAULT_TRIGGER: u64 = 0x0034_0000_0000_0000;
+        match trigger {
+            TC_TEST_EVENT_TRIGGER => Ok(()),
+            SW_FAULT_TRIGGER => {
+                SW_FAULT_NOTIFY.notify();
+                Ok(())
+            }
+            _ => Err(rs_matter::error::ErrorCode::InvalidCommand.into()),
+        }
+    }
+}
+
+/// Drains [`SW_FAULT_NOTIFY`] and emits a stub
+/// `SoftwareDiagnostics::SoftwareFault` event each time it fires. Bridges
+/// the sync `GenDiag::test_event_trigger` trait method (which can't carry
+/// an event-emitter context) to the async event-emission path on
+/// `DataModel`. The emitted event's fields (`id`, `name`,
+/// `faultRecording`) are vendor-defined; we ship plausible stub values
+/// that satisfy `TC_DGSW_2_2`'s `validate_soft_fault_event_data` shape
+/// checks (uint64 / Utf8 / OctetStr).
+async fn emit_software_fault_on_trigger<E>(emitter: &E) -> Result<(), Error>
+where
+    E: rs_matter::dm::EventEmitter,
+{
+    loop {
+        SW_FAULT_NOTIFY.wait().await;
+
+        let res = SoftwareFault::emit_for(emitter, ROOT_ENDPOINT_ID, |b| {
+            b.id(1)?
+                .name(Some("rs-matter chip_tool_tests"))?
+                .fault_recording(Some(rs_matter::tlv::Octets::new(&[])))?
+                .end()
+        });
+
+        match res {
+            Ok(_) => info!("TestEventTrigger: emitted SoftwareDiagnostics::SoftwareFault event"),
+            Err(e) => warn!(
+                "TestEventTrigger: failed to emit SoftwareFault event: {:?}",
+                e
+            ),
         }
     }
 }

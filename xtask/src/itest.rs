@@ -1135,6 +1135,13 @@ impl ITests {
             // wrapper around `()` that flips `TestEventTriggersEnabled` to
             // true and validates the key/trigger per spec §11.12.7.1.
             "TC_TestEventTrigger" => Some("--enable-key 000102030405060708090a0b0c0d0e0f"),
+            // TC_DGSW_2_2 triggers a `SoftwareFault` event via
+            // `GeneralDiagnostics::TestEventTrigger` (trigger code
+            // 0x0034000000000000, Matter spec §11.13.7). The Python helper
+            // `send_test_event_triggers` defaults `enableKey` to the canonical
+            // sequence below — wire the same value into the DUT so the
+            // key check in `TestEventTriggerDiag::test_event_trigger` accepts.
+            "TC_DGSW_2_2" => Some("--enable-key 000102030405060708090a0b0c0d0e0f"),
             _ => None,
         }
     }
@@ -1268,6 +1275,11 @@ impl ITests {
             // DGGEN (General Diagnostics) lives on the root endpoint.
             | "TC_DGGEN_2_4"
             | "TC_DGGEN_3_2"
+            // DGSW (Software Diagnostics) lives on the root endpoint
+            // — `@run_if_endpoint_matches(has_cluster(SoftwareDiagnostics))`
+            // skips unless we point the runner at EP0.
+            | "TC_DGSW_2_1"
+            | "TC_DGSW_2_2"
             // TIMESYNC (Time Synchronization) lives on the root endpoint
             // — `@run_if_endpoint_matches(has_cluster(TimeSynchronization))`
             // skips unless we point the runner at EP0.
