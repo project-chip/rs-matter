@@ -32,10 +32,11 @@
 use core::future::Future;
 
 use crate::crypto::Crypto;
-use crate::dm::clusters::basic_info::AttributeId;
-use crate::dm::clusters::basic_info::FULL_CLUSTER as BASIC_INFO_CLUSTER;
-use crate::dm::clusters::basic_info::{BasicInfoConfig, BasicInfoSettings};
+use crate::dm::clusters::basic_info::{
+    self, BasicInfoConfig, BasicInfoSettings, FULL_CLUSTER as BASIC_INFO_CLUSTER,
+};
 use crate::dm::clusters::dev_att::DeviceAttestation;
+use crate::dm::clusters::time_sync::Rtc;
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::AttrChangeNotifier;
 use crate::error::{Error, ErrorCode};
@@ -45,10 +46,7 @@ use crate::pairing::qr::{
     no_optional_data, CommFlowType, NoOptionalData, Qr, QrPayload, QrTextType,
 };
 use crate::pairing::DiscoveryCapabilities;
-use crate::persist::KvBlobStore;
-use crate::persist::KvBlobStoreAccess;
-use crate::persist::Persist;
-use crate::persist::BASIC_INFO_KEY;
+use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, BASIC_INFO_KEY};
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
 use crate::sc::pase::Pase;
 use crate::transport::network::mdns::MatterService;
@@ -58,7 +56,6 @@ use crate::transport::{
     PacketBufferExternalAccess, Transport, TransportRunner, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE,
 };
 use crate::utils::cell::RefCell;
-use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::pooled::BufferAccess;
 use crate::utils::sync::blocking::Mutex;
@@ -147,8 +144,6 @@ pub struct Matter<'a> {
     session_removed: Notification,
     /// A notification that the groups have been modified
     groups_modified: Notification,
-    /// The function to get the current epoch time in milliseconds
-    epoch: Epoch,
     /// The basic information configuration for this Matter device
     dev_det: &'a BasicInfoConfig<'a>,
     /// The basic commissioning data for this Matter device
@@ -160,7 +155,7 @@ pub struct Matter<'a> {
 }
 
 impl<'a> Matter<'a> {
-    /// Create a new Matter object when support for the Rust Standard Library is enabled.
+    /// Create a new Matter object.
     ///
     /// # Parameters
     /// * dev_det: An object of type [BasicInfoConfig].
@@ -169,47 +164,20 @@ impl<'a> Matter<'a> {
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
     ///   requires a set of device attestation certificates and keys. It is the responsibility of
     ///   this object to return the device attestation details when queried upon.
-    /// * port: The port number on which the Matter stack will listen for incoming connections.
-    #[cfg(feature = "std")]
-    #[inline(always)]
-    pub const fn new_default(
-        dev_det: &'a BasicInfoConfig<'a>,
-        dev_comm: BasicCommData,
-        dev_att: &'a dyn DeviceAttestation,
-        port: u16,
-    ) -> Self {
-        use crate::utils::epoch::sys_epoch;
-
-        Self::new(dev_det, dev_comm, dev_att, sys_epoch, port)
-    }
-
-    /// Create a new Matter object
-    ///
-    /// # Parameters
-    /// * dev_det: An object of type [BasicInfoConfig].
-    /// * dev_comm: An object of type [BasicCommData]. This object contains the basic commissioning
-    ///   data required for the device.
-    /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
-    ///   requires a set of device attestation certificates and keys. It is the responsibility of
-    ///   this object to return the device attestation details when queried upon.
-    /// * epoch: A function of type [Epoch]. This function is responsible for providing the current
-    ///   "unix" time in milliseconds
     /// * port: The port number on which the Matter stack will listen for incoming connections.
     #[inline(always)]
     pub const fn new(
         dev_det: &'a BasicInfoConfig<'a>,
         dev_comm: BasicCommData,
         dev_att: &'a dyn DeviceAttestation,
-        epoch: Epoch,
         port: u16,
     ) -> Self {
         Self {
-            state: Mutex::new(RefCell::new(MatterState::new(epoch))),
+            state: Mutex::new(RefCell::new(MatterState::new())),
             transport: Transport::new(dev_det),
             mdns_changed: Notification::new(),
             session_removed: Notification::new(),
             groups_modified: Notification::new(),
-            epoch,
             dev_det,
             dev_comm,
             dev_att,
@@ -217,8 +185,7 @@ impl<'a> Matter<'a> {
         }
     }
 
-    /// Create an in-place initializer for a Matter object
-    /// when support for the Rust Standard Library is enabled.
+    /// Create an in-place initializer for a Matter object.
     ///
     /// # Parameters
     /// * dev_det: An object of type [BasicInfoConfig].
@@ -227,46 +194,20 @@ impl<'a> Matter<'a> {
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
     ///   requires a set of device attestation certificates and keys. It is the responsibility of
     ///   this object to return the device attestation details when queried upon.
-    /// * port: The port number on which the Matter stack will listen for incoming connections.
-    #[cfg(feature = "std")]
-    pub fn init_default(
-        dev_det: &'a BasicInfoConfig<'a>,
-        dev_comm: BasicCommData,
-        dev_att: &'a dyn DeviceAttestation,
-        port: u16,
-    ) -> impl Init<Self> {
-        use crate::utils::epoch::sys_epoch;
-
-        Self::init(dev_det, dev_comm, dev_att, sys_epoch, port)
-    }
-
-    /// Create an in-place initializer for a Matter object
-    ///
-    /// # Parameters
-    /// * dev_det: An object of type [BasicInfoConfig].
-    /// * dev_comm: An object of type [BasicCommData]. This object contains the basic commissioning
-    ///   data required for the device.
-    /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
-    ///   requires a set of device attestation certificates and keys. It is the responsibility of
-    ///   this object to return the device attestation details when queried upon.
-    /// * epoch: A function of type [Epoch]. This function is responsible for providing the current
-    ///   "unix" time in milliseconds
     /// * port: The port number on which the Matter stack will listen for incoming connections.
     pub fn init(
         dev_det: &'a BasicInfoConfig<'a>,
         dev_comm: BasicCommData,
         dev_att: &'a dyn DeviceAttestation,
-        epoch: Epoch,
         port: u16,
     ) -> impl Init<Self> {
         init!(
             Self {
-                state <- Mutex::init(RefCell::init(MatterState::init(epoch))),
+                state <- Mutex::init(RefCell::init(MatterState::init())),
                 transport <- Transport::init(dev_det),
                 mdns_changed: Notification::new(),
                 session_removed: Notification::new(),
                 groups_modified: Notification::new(),
-                epoch,
                 dev_det,
                 dev_comm,
                 dev_att,
@@ -289,10 +230,6 @@ impl<'a> Matter<'a> {
 
     pub fn port(&self) -> u16 {
         self.port
-    }
-
-    pub fn epoch(&self) -> Epoch {
-        self.epoch
     }
 
     pub fn transport_rx_buffer(&self) -> PacketBufferExternalAccess<'_, MAX_RX_BUF_SIZE> {
@@ -519,7 +456,7 @@ impl<'a> Matter<'a> {
             notify.notify_attr_changed(
                 ROOT_ENDPOINT_ID,
                 BASIC_INFO_CLUSTER.id,
-                AttributeId::ConfigurationVersion as _,
+                basic_info::AttributeId::ConfigurationVersion as _,
             );
 
             Ok::<_, Error>(new_version)
@@ -572,6 +509,14 @@ impl<'a> Matter<'a> {
         })
     }
 
+    /// Access the Real-Time-clock by invoking a closure with a mutable reference to it.
+    pub fn with_rtc<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut Rtc) -> R,
+    {
+        self.with_state(|state| f(&mut state.rtc))
+    }
+
     /// Reset the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
     /// NOTE: User should be careful _not_ to call this method while the transport layer and/or the built-in mDNS is running.
     pub fn reset_transport(&self) -> Result<(), Error> {
@@ -607,6 +552,7 @@ impl<'a> Matter<'a> {
                 .basic_info_settings
                 .reset_persist(&mut kv, buf)
                 .await?;
+            state.rtc.reset_persist(&mut kv, buf).await?;
         }
 
         self.notify_mdns_changed();
@@ -630,6 +576,7 @@ impl<'a> Matter<'a> {
 
             state.fabrics.load_persist(&mut kv, buf).await?;
             state.basic_info_settings.load_persist(&mut kv, buf).await?;
+            state.rtc.load_persist(&mut kv, buf).await?;
         }
 
         self.notify_mdns_changed();
@@ -699,43 +646,46 @@ pub struct MatterState {
     failsafe: FailSafe,
     /// The mutable basic information settings
     basic_info_settings: BasicInfoSettings,
+    /// Real Time Clock state and Last-Known-Good UTC Time tracking (Matter Core spec §3.5.6.1).
+    rtc: Rtc,
 }
 
 impl MatterState {
     /// Create a new instance of MatterState
     #[inline(always)]
-    const fn new(epoch: Epoch) -> Self {
+    const fn new() -> Self {
         Self {
             fabrics: Fabrics::new(),
-            sessions: Sessions::new(epoch),
-            pase: Pase::new(epoch),
-            failsafe: FailSafe::new(epoch),
+            sessions: Sessions::new(),
+            pase: Pase::new(),
+            failsafe: FailSafe::new(),
             basic_info_settings: BasicInfoSettings::new(),
+            rtc: Rtc::new(),
         }
     }
 
     /// Return an in-place initializer for MatterState
-    fn init(epoch: Epoch) -> impl Init<Self> {
+    fn init() -> impl Init<Self> {
         init!(Self {
             fabrics <- Fabrics::init(),
-            sessions <- Sessions::init(epoch),
-            pase <- Pase::init(epoch),
-            failsafe <- FailSafe::init(epoch),
+            sessions <- Sessions::init(),
+            pase <- Pase::init(),
+            failsafe <- FailSafe::init(),
             basic_info_settings <- BasicInfoSettings::init(),
+            rtc <- Rtc::init(),
         })
     }
 }
 
 #[cfg(test)]
 pub mod test {
-    use crate::{utils::epoch::dummy_epoch, Matter};
+    use crate::Matter;
 
     pub fn test_matter() -> Matter<'static> {
         Matter::new(
             &crate::dm::devices::test::TEST_DEV_DET,
             crate::dm::devices::test::TEST_DEV_COMM,
             &crate::dm::devices::test::TEST_DEV_ATT,
-            dummy_epoch,
             0,
         )
     }

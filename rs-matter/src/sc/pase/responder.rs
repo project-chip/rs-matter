@@ -432,7 +432,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                 .pase
                 .session_timeout
                 .as_ref()
-                .map(|sd| sd.is_sess_expired(state.pase.epoch))
+                .map(|sd| sd.is_sess_expired())
                 .unwrap_or(false)
             {
                 state.pase.session_timeout = None;
@@ -443,14 +443,12 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                     debug!("Another PAKE session in progress");
                     Ok(Some(SCStatusCodes::Busy))
                 } else {
-                    state.pase.session_timeout =
-                        Some(super::SessionEstTimeout::new(exchange, state.pase.epoch));
+                    state.pase.session_timeout = Some(super::SessionEstTimeout::new(exchange));
 
                     Ok(None)
                 }
             } else if new {
-                state.pase.session_timeout =
-                    Some(super::SessionEstTimeout::new(exchange, state.pase.epoch));
+                state.pase.session_timeout = Some(super::SessionEstTimeout::new(exchange));
 
                 Ok(None)
             } else {

@@ -60,8 +60,7 @@ use rs_matter::dm::events::NoEvents;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
-    endpoints, Async, DataModel, DataModelHandler, Dataver, EmptyHandler, Endpoint, EpClMatcher,
-    IMBuffer, Node,
+    endpoints, Async, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, IMBuffer, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::im::IMStatusCode;
@@ -73,7 +72,6 @@ use rs_matter::transport::network::mdns::{CommissionableFilter, DiscoveredDevice
 use rs_matter::transport::network::tcp::TcpNetwork;
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
-use rs_matter::utils::epoch::sys_epoch;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
@@ -132,21 +130,17 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
 ) -> impl DataModelHandler + 'a {
     (
         NODE,
-        endpoints::with_eth_sys(
-            &false,
-            &(),
-            &UnixNetifs,
-            rand,
-            EmptyHandler
-                .chain(
-                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-                )
-                .chain(
-                    EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                    on_off::HandlerAsyncAdaptor(on_off),
-                ),
-        ),
+        endpoints::EthSysHandlerBuilder::new()
+            .netif_diag(&UnixNetifs)
+            .build(rand)
+            .chain(
+                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                on_off::HandlerAsyncAdaptor(on_off),
+            ),
     )
 }
 
@@ -184,7 +178,6 @@ macro_rules! commissioning_test {
                 &TEST_DEV_DET,
                 TEST_DEV_COMM,
                 &TEST_DEV_ATT,
-                sys_epoch,
                 MATTER_PORT,
             ));
 
@@ -200,7 +193,7 @@ macro_rules! commissioning_test {
                 TestOnOffDeviceLogic::new(false),
             );
 
-            let events = NoEvents::new_default();
+            let events = NoEvents::new();
 
             let dm = DataModel::new(
                 device_matter,
@@ -230,7 +223,6 @@ macro_rules! commissioning_test {
                 &TEST_DEV_DET,
                 TEST_DEV_COMM,
                 &TEST_DEV_ATT,
-                sys_epoch,
                 0,
             ));
             let ctrl_crypto = test_only_crypto();

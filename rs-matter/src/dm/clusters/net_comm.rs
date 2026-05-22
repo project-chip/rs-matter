@@ -31,7 +31,6 @@ use crate::tlv::{
     ToTLVArrayBuilder, ToTLVBuilder,
 };
 use crate::utils::cell::RefCell;
-use crate::utils::future::delayed_ready;
 use crate::utils::init::{init, Init};
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{DynBase, Notification};
@@ -1032,21 +1031,21 @@ where
     }
 
     fn max_networks(&self, ctx: impl ReadContext) -> impl Future<Output = Result<u8, Error>> {
-        delayed_ready(move || ctx.networks().access(|networks| networks.max_networks()))
+        ready(ctx.networks().access(|networks| networks.max_networks()))
     }
 
     fn connect_max_time_seconds(
         &self,
         _ctx: impl ReadContext,
     ) -> impl Future<Output = Result<u8, Error>> {
-        delayed_ready(move || Ok(self.net_ctl.connect_max_time_seconds()))
+        ready(Ok(self.net_ctl.connect_max_time_seconds()))
     }
 
     fn scan_max_time_seconds(
         &self,
         _ctx: impl ReadContext,
     ) -> impl Future<Output = Result<u8, Error>> {
-        delayed_ready(move || Ok(self.net_ctl.scan_max_time_seconds()))
+        ready(Ok(self.net_ctl.scan_max_time_seconds()))
     }
 
     fn supported_wi_fi_bands<P: TLVBuilderParent>(
@@ -1057,7 +1056,7 @@ where
             ToTLVBuilder<P, WiFiBandEnum>,
         >,
     ) -> impl Future<Output = Result<P, Error>> {
-        delayed_ready(move || match builder {
+        ready(match builder {
             ArrayAttributeRead::ReadAll(builder) => builder.with(|builder| {
                 let mut builder = Some(builder);
 
@@ -1074,9 +1073,65 @@ where
                 let mut builder = Some(builder);
                 let mut parent = None;
 
-                self.net_ctl.supported_wifi_bands(|band| {
+                match self.net_ctl.supported_wifi_bands(|band| {
                     if current == index {
                         parent = Some(unwrap!(builder.take()).set(&band)?);
+                    }
+
+                    current += 1;
+
+                    Ok(())
+                }) {
+                    Err(e) => Err(e),
+                    Ok(()) => {
+                        if let Some(parent) = parent {
+                            Ok(parent)
+                        } else {
+                            Err(ErrorCode::ConstraintError.into())
+                        }
+                    }
+                }
+            }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
+        })
+    }
+
+    fn supported_thread_features(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> impl Future<Output = Result<ThreadCapabilitiesBitmap, Error>> {
+        ready(Ok(self.net_ctl.supported_thread_features()))
+    }
+
+    fn thread_version(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u16, Error>> {
+        ready(Ok(self.net_ctl.thread_version()))
+    }
+
+    fn networks<P: TLVBuilderParent>(
+        &self,
+        ctx: impl ReadContext,
+        builder: ArrayAttributeRead<NetworkInfoStructArrayBuilder<P>, NetworkInfoStructBuilder<P>>,
+    ) -> impl Future<Output = Result<P, Error>> {
+        ready(ctx.networks().access(|networks| match builder {
+            ArrayAttributeRead::ReadAll(builder) => builder.with(|builder| {
+                let mut builder = Some(builder);
+
+                networks.networks(&mut |ni| {
+                    builder = Some(ni.read_into(unwrap!(builder.take()).push()?)?);
+
+                    Ok(())
+                })?;
+
+                unwrap!(builder.take()).end()
+            }),
+            ArrayAttributeRead::ReadOne(index, builder) => {
+                let mut current = 0;
+                let mut builder = Some(builder);
+                let mut parent = None;
+
+                networks.networks(&mut |ni| {
+                    if current == index {
+                        parent = Some(ni.read_into(unwrap!(builder.take()))?);
                     }
 
                     current += 1;
@@ -1091,76 +1146,21 @@ where
                 }
             }
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
-        })
-    }
-
-    fn supported_thread_features(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> impl Future<Output = Result<ThreadCapabilitiesBitmap, Error>> {
-        delayed_ready(move || Ok(self.net_ctl.supported_thread_features()))
-    }
-
-    fn thread_version(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u16, Error>> {
-        delayed_ready(move || Ok(self.net_ctl.thread_version()))
-    }
-
-    fn networks<P: TLVBuilderParent>(
-        &self,
-        ctx: impl ReadContext,
-        builder: ArrayAttributeRead<NetworkInfoStructArrayBuilder<P>, NetworkInfoStructBuilder<P>>,
-    ) -> impl Future<Output = Result<P, Error>> {
-        delayed_ready(move || {
-            ctx.networks().access(|networks| match builder {
-                ArrayAttributeRead::ReadAll(builder) => builder.with(|builder| {
-                    let mut builder = Some(builder);
-
-                    networks.networks(&mut |ni| {
-                        builder = Some(ni.read_into(unwrap!(builder.take()).push()?)?);
-
-                        Ok(())
-                    })?;
-
-                    unwrap!(builder.take()).end()
-                }),
-                ArrayAttributeRead::ReadOne(index, builder) => {
-                    let mut current = 0;
-                    let mut builder = Some(builder);
-                    let mut parent = None;
-
-                    networks.networks(&mut |ni| {
-                        if current == index {
-                            parent = Some(ni.read_into(unwrap!(builder.take()))?);
-                        }
-
-                        current += 1;
-
-                        Ok(())
-                    })?;
-
-                    if let Some(parent) = parent {
-                        Ok(parent)
-                    } else {
-                        Err(ErrorCode::ConstraintError.into())
-                    }
-                }
-                ArrayAttributeRead::ReadNone(builder) => builder.end(),
-            })
-        })
+        }))
     }
 
     fn interface_enabled(
         &self,
         ctx: impl ReadContext,
     ) -> impl Future<Output = Result<bool, Error>> {
-        delayed_ready(move || ctx.networks().access(|networks| networks.enabled()))
+        ready(ctx.networks().access(|networks| networks.enabled()))
     }
 
     fn last_networking_status(
         &self,
         _ctx: impl ReadContext,
     ) -> impl Future<Output = Result<Nullable<NetworkCommissioningStatusEnum>, Error>> {
-        delayed_ready(move || Ok(Nullable::new(self.net_ctl.last_networking_status()?)))
+        ready(self.net_ctl.last_networking_status().map(Nullable::new))
     }
 
     fn last_network_id<P: TLVBuilderParent>(
@@ -1168,22 +1168,20 @@ where
         _ctx: impl ReadContext,
         builder: NullableBuilder<P, OctetsBuilder<P>>,
     ) -> impl Future<Output = Result<P, Error>> {
-        delayed_ready(move || {
-            self.net_ctl.last_network_id(|network_id| {
-                if let Some(network_id) = network_id {
-                    builder.non_null()?.set(Octets::new(network_id))
-                } else {
-                    builder.null()
-                }
-            })
-        })
+        ready(self.net_ctl.last_network_id(|network_id| {
+            if let Some(network_id) = network_id {
+                builder.non_null()?.set(Octets::new(network_id))
+            } else {
+                builder.null()
+            }
+        }))
     }
 
     fn last_connect_error_value(
         &self,
         _ctx: impl ReadContext,
     ) -> impl Future<Output = Result<Nullable<i32>, Error>> {
-        delayed_ready(move || Ok(Nullable::new(self.net_ctl.last_connect_error_value()?)))
+        ready(self.net_ctl.last_connect_error_value().map(Nullable::new))
     }
 
     async fn set_interface_enabled(

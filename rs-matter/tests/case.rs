@@ -35,7 +35,7 @@ use rs_matter::sc::case::CaseInitiator;
 use rs_matter::sc::SecureChannel;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{Address, NoNetwork};
-use rs_matter::utils::epoch::sys_epoch;
+
 use rs_matter::utils::select::Coalesce;
 use rs_matter::Matter;
 
@@ -97,10 +97,9 @@ fn test_case_handshake() {
 
         // ---- 2. Set up two Matter instances ----
 
-        let device_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, sys_epoch, 0);
+        let device_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
 
-        let controller_matter =
-            Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, sys_epoch, 0);
+        let controller_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
 
         // ---- 3. Populate both FabricMgrs with matching fabric ----
 

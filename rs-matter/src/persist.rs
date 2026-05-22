@@ -51,6 +51,19 @@ pub const USER_LABELS_KEY: u16 = NETWORKS_KEY + 1;
 /// endpoint+fabric pair that hosts the Binding cluster.
 pub const BINDINGS_KEY: u16 = USER_LABELS_KEY + 1;
 
+/// The key used for storing the Last-Known-Good UTC Time value
+/// (Matter Core spec §3.5.6.1). A single u64 Matter-epoch microseconds
+/// payload, updated synchronously from
+/// [`crate::Matter::set_utc_time`].
+pub const LKG_UTC_KEY: u16 = BINDINGS_KEY + 1;
+
+/// The key used for storing the Trusted Time Source configured by
+/// the `SetTrustedTimeSource` command (Matter Core spec §11.17.9.7).
+/// A single 11-byte payload: `[fab_idx:1 | node_id:8 (LE) | endpoint:2 (LE)]`,
+/// updated synchronously from [`crate::Matter::set_trusted_time_source`].
+/// The key is absent on disk when no trusted source is configured.
+pub const TRUSTED_TIME_SOURCE_KEY: u16 = LKG_UTC_KEY + 1;
+
 /// A trait representing a key-value BLOB storage.
 ///
 /// NOTE: For now, the trait is deliberately modeled as non-async, so that it can be used from

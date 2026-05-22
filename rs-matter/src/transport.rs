@@ -26,6 +26,7 @@ use rand_core::RngCore;
 
 use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::BasicInfoConfig;
+use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{MAX_FABRICS, MAX_GROUPS_PER_FABRIC};
 use crate::fmt::Bytes;
@@ -204,7 +205,7 @@ impl Transport {
         &self,
         matter: &'a Matter<'a>,
         fabric_idx: u8,
-        peer_node_id: u64,
+        peer_node_id: NodeId,
         secure: bool,
     ) -> Result<Exchange<'a>, Error> {
         // TODO: Future: once we have mDNS lookups in place
@@ -835,8 +836,6 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         }
 
         self.matter.with_state(|state| {
-            let epoch = state.sessions.epoch;
-
             let Some(session) = state
                 .sessions
                 .get_for_rx(&packet.peer, &packet.header.plain)
@@ -854,7 +853,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
             if !matches!(
                 exchange.role,
                 Role::Responder(ResponderState::AcceptPending)
-            ) || !exchange.mrp.has_rx_timed_out(ACCEPT_TIMEOUT_MS, epoch)
+            ) || !exchange.mrp.has_rx_timed_out(ACCEPT_TIMEOUT_MS)
             {
                 return false;
             }
@@ -1001,8 +1000,6 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
             let mut pb = ParseBuf::new(&mut packet.buf[packet.payload_start..]);
             packet.header.plain.decode(&mut pb)?;
 
-            let epoch = state.sessions.epoch;
-
             let set_payload = |packet: &mut Packet<N>, (start, end)| {
                 packet.payload_start = start;
                 packet.buf.truncate(end);
@@ -1018,7 +1015,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     session.decode_remaining(&self.crypto, &mut packet.header, pb)?;
                 set_payload(packet, payload_range);
 
-                return session.post_recv(&packet.header, epoch);
+                return session.post_recv(&packet.header);
             }
 
             // No existing session: we either have to create one, or return an error
@@ -1048,7 +1045,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     )?;
 
                     // Session created successfully: decode, indicate packet payload slice and process further
-                    return session.post_recv(&packet.header, epoch);
+                    return session.post_recv(&packet.header);
                 }
             } else if packet.header.plain.is_group_session() {
                 // Group (multicast) message — derive keys on-the-fly and decrypt
@@ -1059,7 +1056,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 )?;
                 set_payload(packet, payload_range);
 
-                return session.post_recv(&packet.header, epoch);
+                return session.post_recv(&packet.header);
             } else {
                 // Encrypted unicast packet with no matching session — cannot be decoded
                 set_payload(packet, (0, 0));
@@ -1691,10 +1688,9 @@ mod tests {
     use super::*;
     use crate::crypto::test_only_crypto;
     use crate::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
-    use crate::utils::epoch::dummy_epoch;
 
     fn test_matter() -> Matter<'static> {
-        Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, dummy_epoch, 0)
+        Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0)
     }
 
     #[test]

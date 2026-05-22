@@ -435,12 +435,17 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
     pub fn validate_certs(
         &self,
         crypto: &C,
+        lkg_utc_secs: u64,
         fabric: &Fabric,
         noc: &CertRef,
         icac: Option<&CertRef>,
         tmp_buf: &mut [u8],
     ) -> Result<(), Error> {
-        let mut verifier = noc.verify_chain_start(crypto);
+        // Validate the NOC chain (signatures + `NotBefore` / `NotAfter`
+        // against the device's Last-Known-Good UTC Time, per Matter Core
+        // spec §3.5.6). Callers snapshot `lkg_utc_secs` from
+        // `Matter::last_known_utc_time` and divide by 1_000_000.
+        let mut verifier = noc.verify_chain_start(crypto, lkg_utc_secs);
 
         if fabric.fabric_id() != noc.get_fabric_id()? {
             Err(ErrorCode::Invalid)?;

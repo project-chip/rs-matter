@@ -51,8 +51,11 @@ macro_rules! event_data_req {
             path: rs_matter::im::EventPath::from_gp(&$path),
             event_number: $event_no,
             priority: $prio,
-            // Test harness is hardcoded, for events, for the clock to stay at 1337ms past the epoch
-            timestamp: rs_matter::im::EventDataTimestamp::EpochTimestamp(1337),
+            // The framework's `ReplyProcessor::normalize_event_timestamp`
+            // rewrites every emitted `Data` event timestamp to
+            // `SystemTimestamp(0)` so wall-clock-free, monotonic-only
+            // events compare deterministically against this fixture.
+            timestamp: rs_matter::im::EventDataTimestamp::SystemTimestamp(0),
             data: $data,
         }
     };

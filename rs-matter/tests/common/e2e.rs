@@ -37,7 +37,6 @@ use rs_matter::transport::network::{
     Address, NetworkReceive, NetworkSend, NoNetwork, MAX_RX_PACKET_SIZE, MAX_TX_PACKET_SIZE,
 };
 use rs_matter::transport::session::{NocCatIds, ReservedSession, SessionMode};
-use rs_matter::utils::epoch::Epoch;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::sync::blocking::raw::MatterRawMutex;
@@ -95,14 +94,13 @@ impl<C: Crypto> E2eRunner<C> {
 
     /// Create a new runner with the given category IDs.
     pub fn new(crypto: C, cat_ids: NocCatIds) -> E2eRunner<C> {
-        let epoch: Epoch = || core::time::Duration::from_millis(1337);
         E2eRunner {
             matter: Self::new_matter(),
             matter_client: Self::new_matter(),
             crypto,
             buffers: PooledBuffers::new(0),
             subscriptions: Subscriptions::new(),
-            events: Events::new(epoch),
+            events: Events::new(),
             cat_ids,
         }
     }
@@ -216,22 +214,10 @@ impl<C: Crypto> E2eRunner<C> {
     }
 
     fn new_matter() -> Matter<'static> {
-        #[cfg(feature = "std")]
-        use rs_matter::utils::epoch::sys_epoch as epoch;
-
-        #[cfg(not(feature = "std"))]
-        use rs_matter::utils::epoch::dummy_epoch as epoch;
-
         #[cfg(not(feature = "std"))]
         use rs_matter::utils::rand::dummy_rand as rand;
 
-        let matter = Matter::new(
-            &TEST_DEV_DET,
-            TEST_DEV_COMM,
-            &TEST_DEV_ATT,
-            epoch,
-            MATTER_PORT,
-        );
+        let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
         matter.with_state(|state| {
             state.fabrics.add_with_post_init(|_| Ok(())).unwrap();

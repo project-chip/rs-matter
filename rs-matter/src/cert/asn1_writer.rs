@@ -15,14 +15,13 @@
  *    limitations under the License.
  */
 
+use core::fmt::Write;
+
 use time::OffsetDateTime;
 
 use super::{CertConsumer, MAX_DEPTH};
-use crate::{
-    error::{Error, ErrorCode},
-    utils::epoch::MATTER_EPOCH_SECS,
-};
-use core::fmt::Write;
+use crate::error::{Error, ErrorCode};
+use crate::utils::epoch::MATTER_EPOCH_SECS;
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

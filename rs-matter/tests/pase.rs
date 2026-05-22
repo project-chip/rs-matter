@@ -34,7 +34,7 @@ use rs_matter::sc::pase::{PaseInitiator, MAX_COMM_WINDOW_TIMEOUT_SECS};
 use rs_matter::sc::SecureChannel;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{Address, NoNetwork};
-use rs_matter::utils::epoch::sys_epoch;
+
 use rs_matter::utils::select::Coalesce;
 use rs_matter::Matter;
 
@@ -52,10 +52,9 @@ fn test_pase_handshake() {
     init_env_logger();
 
     futures_lite::future::block_on(async {
-        let device_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, sys_epoch, 0);
+        let device_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
 
-        let controller_matter =
-            Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, sys_epoch, 0);
+        let controller_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
 
         let crypto = test_only_crypto();
 

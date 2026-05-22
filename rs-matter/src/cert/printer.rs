@@ -15,11 +15,13 @@
  *    limitations under the License.
  */
 
+use core::fmt;
+
 use time::OffsetDateTime;
 
 use super::{CertConsumer, MAX_DEPTH};
-use crate::{error::Error, utils::epoch::MATTER_EPOCH_SECS};
-use core::fmt;
+use crate::error::Error;
+use crate::utils::epoch::MATTER_EPOCH_SECS;
 
 pub struct CertPrinter<'a, 'b> {
     level: usize,

@@ -257,30 +257,41 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_DGGEN_3_2",
     "TC_TestEventTrigger",
     //
-    // Python tests — Software Diagnostics (optional system cluster)
+    // Python tests — Software Diagnostics (system cluster)
     //
-    // SoftwareDiagnostics cluster not implemented by rs-matter (optional, Matter spec §11.13);
-    // both tests use `@run_if_endpoint_matches(has_cluster(SoftwareDiagnostics))` which skips cleanly
-    // via `no_fail_on_skipped.py`.
+    // rs-matter ships a minimal stub handler (no heap/thread metrics features
+    // claimed, no optional commands), which is enough for these conformance
+    // tests to find the cluster on the root endpoint and exercise the
+    // required globals.
     "TC_DGSW_2_1",
     "TC_DGSW_2_2",
     //
-    // Python tests — Time Synchronization (optional system cluster)
+    // Python tests — Time Synchronization (system cluster)
     //
-    "TC_TIMESYNC_2_1", // TimeSynchronization not implemented (optional, Matter spec §11.16); `@run_if_endpoint_matches(has_cluster(TimeSynchronization) and has_attribute(TimeSource))` skips cleanly via `no_fail_on_skipped.py`.
-    // "TC_TIMESYNC_2_2",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_4",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_5",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_6",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_7",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_8",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_9",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_10", // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_11", // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_12", // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_2_13", // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-    // "TC_TIMESYNC_3_1",  // Skipped: TimeSynchronization cluster not implemented by rs-matter.
-
+    // rs-matter implements the spec-mandatory TimeSynchronization
+    // surface on the root endpoint: the `UTCTime` / `Granularity` /
+    // `TimeSource` attributes and the `SetUTCTime` command, all
+    // wired to the Matter-wide Last-Known-Good UTC Time state on
+    // `Matter`/`MatterState` (Matter Core spec §3.5.6.1, §11.17.8,
+    // §11.17.9.1).
+    //
+    // The remaining (commented-out) tests gate on feature bits we
+    // don't claim yet:
+    //   - `F00` (TimeZone):       2_4, 2_5, 2_7..2_12
+    //   - `F01` (NTP_CLIENT):     2_6
+    "TC_TIMESYNC_2_1",
+    "TC_TIMESYNC_2_2",
+    // "TC_TIMESYNC_2_4",  // Skipped: needs Feature `F00` (TimeZone) — TimeZone / DSTOffset attribute set + SetTimeZone / SetDSTOffset commands.
+    // "TC_TIMESYNC_2_5",  // Skipped: needs `F00`.
+    // "TC_TIMESYNC_2_6",  // Skipped: needs `F01` (NTP_CLIENT) — DefaultNTP / SupportsDNSResolve + SetDefaultNTP.
+    // "TC_TIMESYNC_2_7",  // Skipped: needs `F00`.
+    // "TC_TIMESYNC_2_8",  // Skipped: needs `F00`.
+    // "TC_TIMESYNC_2_9",  // Skipped: needs `F00`.
+    // "TC_TIMESYNC_2_10", // Skipped: needs `F00`.
+    // "TC_TIMESYNC_2_11", // Skipped: needs `F00`.
+    // "TC_TIMESYNC_2_12", // Skipped: needs `F00`.
+    "TC_TIMESYNC_2_13",
+    "TC_TIMESYNC_3_1",
     //
     // Python tests — ICD Management (optional system cluster)
     //
@@ -952,8 +963,7 @@ impl ITests {
     ///    on the DUT satisfies the predicate, calls `asserts.skip(...)`
     ///    before the test body ever runs. Tests targeting a cluster that
     ///    rs-matter does not implement *anywhere* (e.g.
-    ///    `TimeSynchronization`, `SoftwareDiagnostics`,
-    ///    `LocalizationConfiguration`, `Switch`, ...) match no endpoint
+    ///    `LocalizationConfiguration`, `Switch`, …) match no endpoint
     ///    and skip cleanly without needing any PIXIT supply.
     fn needs_no_fail_on_skipped(test_name: &str) -> bool {
         matches!(
@@ -968,9 +978,6 @@ impl ITests {
                 | "TC_CGEN_2_11"
                 // Pattern 2: `@run_if_endpoint_matches(...)` against clusters/
                 // features rs-matter does not implement on any endpoint.
-                | "TC_TIMESYNC_2_1"  // has_cluster(TimeSynchronization) and has_attribute(TimeSource)
-                | "TC_DGSW_2_1"      // has_cluster(SoftwareDiagnostics)
-                | "TC_DGSW_2_2"      // has_cluster(SoftwareDiagnostics)
                 | "TC_LCFG_2_1"      // has_cluster(LocalizationConfiguration)
                 | "TC_LTIME_3_1"     // has_cluster(TimeFormatLocalization)
                 | "TC_LUNIT_3_1"     // has_cluster(UnitLocalization) and has_attribute(TemperatureUnit)
@@ -1128,6 +1135,13 @@ impl ITests {
             // wrapper around `()` that flips `TestEventTriggersEnabled` to
             // true and validates the key/trigger per spec §11.12.7.1.
             "TC_TestEventTrigger" => Some("--enable-key 000102030405060708090a0b0c0d0e0f"),
+            // TC_DGSW_2_2 triggers a `SoftwareFault` event via
+            // `GeneralDiagnostics::TestEventTrigger` (trigger code
+            // 0x0034000000000000, Matter spec §11.13.7). The Python helper
+            // `send_test_event_triggers` defaults `enableKey` to the canonical
+            // sequence below — wire the same value into the DUT so the
+            // key check in `TestEventTriggerDiag::test_event_trigger` accepts.
+            "TC_DGSW_2_2" => Some("--enable-key 000102030405060708090a0b0c0d0e0f"),
             _ => None,
         }
     }
@@ -1261,6 +1275,27 @@ impl ITests {
             // DGGEN (General Diagnostics) lives on the root endpoint.
             | "TC_DGGEN_2_4"
             | "TC_DGGEN_3_2"
+            // DGSW (Software Diagnostics) lives on the root endpoint
+            // — `@run_if_endpoint_matches(has_cluster(SoftwareDiagnostics))`
+            // skips unless we point the runner at EP0.
+            | "TC_DGSW_2_1"
+            | "TC_DGSW_2_2"
+            // TIMESYNC (Time Synchronization) lives on the root endpoint
+            // — `@run_if_endpoint_matches(has_cluster(TimeSynchronization))`
+            // skips unless we point the runner at EP0.
+            | "TC_TIMESYNC_2_1"
+            | "TC_TIMESYNC_2_2"
+            | "TC_TIMESYNC_2_4"
+            | "TC_TIMESYNC_2_5"
+            | "TC_TIMESYNC_2_6"
+            | "TC_TIMESYNC_2_7"
+            | "TC_TIMESYNC_2_8"
+            | "TC_TIMESYNC_2_9"
+            | "TC_TIMESYNC_2_10"
+            | "TC_TIMESYNC_2_11"
+            | "TC_TIMESYNC_2_12"
+            | "TC_TIMESYNC_2_13"
+            | "TC_TIMESYNC_3_1"
             | "TC_TestEventTrigger" => "--endpoint 0",
             // TC_G_2_2 sends Groups commands against
             // `self.matter_test_config.endpoint` (e.g. lines 125/133/172/197)

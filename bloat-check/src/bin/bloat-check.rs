@@ -57,12 +57,12 @@ use esp_rtos::embassy::Executor;
 
 use rs_matter::crypto::backend::rustcrypto::RustCrypto;
 use rs_matter::crypto::{Crypto, RngCore, WeakTestOnlyRand};
-use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
-use rs_matter::dm::clusters::net_comm::{
-    NetCtl, NetCtlError, NetCtlStatus, NetworkScanInfo, NetworkType, SharedNetworks, WirelessCreds,
-};
 use rs_matter::dm::clusters::app::on_off::NoLevelControl;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
+use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
+use rs_matter::dm::clusters::net_comm::{
+    NetCtl, NetCtlError, NetworkScanInfo, NetworkType, SharedNetworks, WirelessCreds,
+};
 use rs_matter::dm::clusters::wifi_diag::{
     SecurityTypeEnum, WiFiVersionEnum, WifiDiag, WirelessDiag,
 };
@@ -76,7 +76,7 @@ use rs_matter::dm::networks::wireless::{
 use rs_matter::dm::networks::NetChangeNotif;
 use rs_matter::dm::subscriptions::{Subscriptions, DEFAULT_MAX_SUBSCRIPTIONS};
 use rs_matter::dm::{endpoints, IMBuffer};
-use rs_matter::dm::{Async, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, EpClMatcher, Node};
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -89,7 +89,6 @@ use rs_matter::transport::network::mdns::builtin::{BuiltinMdnsResponder, Host};
 use rs_matter::transport::network::{
     Address, ChainedNetwork, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend, NoNetwork,
 };
-use rs_matter::utils::epoch::dummy_epoch;
 use rs_matter::utils::init::{init, Init, InitMaybeUninit};
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::sync::DynBase;
@@ -174,12 +173,11 @@ impl<'a> MatterStack<'a> {
                 &TEST_DEV_DET,
                 TEST_DEV_COMM,
                 &TEST_DEV_ATT,
-                dummy_epoch,
                 MATTER_PORT,
             ),
             buffers <- PooledBuffers::init(0),
             subscriptions <- Subscriptions::init(),
-            events <- Events::init(dummy_epoch),
+            events <- Events::init(),
             networks <- SharedNetworks::init(WifiNetworks::init()),
             net_ctl_state <- NetCtlState::init_with_mutex(),
             btp <- Btp::init(),
@@ -196,13 +194,12 @@ type AppNetworks = SharedNetworks<WifiNetworks<3>>;
 type AppNetCtl<'a> = NetCtlWithStatusImpl<'a, FakeWifi>;
 type AppWirelessMgr<'a> = WirelessMgr<'a, &'a AppNetworks, &'a AppNetCtl<'a>>;
 type AppTransport<'a> = ChainedNetwork<FakeUdp, &'a Btp, fn(&Address) -> bool>;
-type AppHandler<'a> = handler_chain_type!(
+type AppDmHandler<'a> = handler_chain_type!(
     EpClMatcher => on_off::HandlerAsyncAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>,
     EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>
-    | EmptyHandler
+    | WifiSysHandler<'a, &'a AppNetCtl<'a>>
 );
 type AppCrypto = RustCrypto<'static, WeakTestOnlyRand>;
-type AppDmHandler<'a> = WifiSysHandler<'a, &'a AppNetCtl<'a>, AppHandler<'a>>;
 type AppDataModel<'a> = DataModel<
     'a,
     DEFAULT_MAX_SUBSCRIPTIONS,
@@ -465,11 +462,9 @@ fn main() -> ! {
             .matter
             .print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP));
 
-        unwrap!(stack.matter.open_basic_comm_window(
-            MAX_COMM_WINDOW_TIMEOUT_SECS,
-            crypto,
-            &(),
-        ));
+        unwrap!(stack
+            .matter
+            .open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, crypto, &()));
     }
 
     executor.run(|spawner| {
@@ -553,7 +548,11 @@ fn mdns_task_fut<'a, C: Crypto + 'a>(
 }
 
 #[embassy_executor::task]
-async fn mdns_task(mdns: &'static mut BuiltinMdnsResponder, matter: &'static Matter<'static>, crypto: &'static AppCrypto) {
+async fn mdns_task(
+    mdns: &'static mut BuiltinMdnsResponder,
+    matter: &'static Matter<'static>,
+    crypto: &'static AppCrypto,
+) {
     info!("Starting mDNS task...");
     unwrap!(mdns_task_fut(mdns, matter, crypto).await);
 }
@@ -646,32 +645,21 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a, T>(
+fn dm_handler<'a>(
     mut rand: impl RngCore + Copy,
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
     wifi_diag: &'a dyn WifiDiag,
-    net_ctl: T,
-) -> WifiSysHandler<'a, T, AppHandler<'a>>
-where
-    T: NetCtl + NetCtlStatus + WifiDiag,
-{
-    endpoints::with_wifi_sys(
-        &true,
-        &(),
-        &(),
-        wifi_diag,
-        net_ctl,
-        rand,
-        EmptyHandler
-            .chain(
-                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-            )
-            .chain(
-                EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                on_off::HandlerAsyncAdaptor(on_off),
-            ),
-    )
+    net_ctl: &'a AppNetCtl,
+) -> AppDmHandler<'a> {
+    endpoints::WifiSysHandlerBuilder::new(net_ctl, wifi_diag).build(rand)
+        .chain(
+            EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+            Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+        )
+        .chain(
+            EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+            on_off::HandlerAsyncAdaptor(on_off),
+        )
 }
 
 /// A fake UDP implementation

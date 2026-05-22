@@ -77,6 +77,7 @@ mod mutex {
         }
 
         /// Creates a critical section and grants temporary access to the protected data.
+        #[inline(always)]
         pub fn lock<U>(&self, f: impl FnOnce(&T) -> U) -> U {
             self.raw.lock(|| {
                 let ptr = self.data.get() as *const T;
@@ -150,6 +151,7 @@ pub mod raw {
             #[allow(clippy::declare_interior_mutable_const)]
             const INIT: Self = StdRawMutex(std::sync::Mutex::new(()));
 
+            #[inline(always)]
             fn lock<R>(&self, f: impl FnOnce() -> R) -> R {
                 let _guard = unwrap!(self.0.lock(), "Mutex lock failed");
 
