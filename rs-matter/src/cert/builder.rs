@@ -43,13 +43,6 @@ enum CertType {
     Noc,
 }
 
-/// Internal shared certificate builder implementation.
-///
-/// Contains all the common logic for building Noc, Icac, and Rcac certificates.
-struct CertBuilderCore<'a> {
-    buf: &'a mut [u8],
-}
-
 pub struct IssuerDN {
     pub(crate) ca_id: Option<u64>,
     pub(crate) fabric_id: Option<u64>,
@@ -64,10 +57,40 @@ pub struct SubjectDN<'a> {
     pub(crate) ca_id: Option<u64>,
 }
 
+/// Validity period for certificates, represented as seconds since the Matter epoch (2000-01-01T00:00:00Z).
 #[derive(Clone, Copy)]
 pub struct Validity {
-    pub(crate) not_before: u32,
-    pub(crate) not_after: u32,
+    /// NotBefore time (seconds since Matter epoch)
+    ///
+    /// This must not be 0 (the Matter epoch start) to avoid collision with CHIP's epoch=0 sentinel in ASN.1 time encoding.
+    pub not_before: u32,
+    /// NotAfter time (seconds since Matter epoch, 0 = no expiry)
+    pub not_after: u32,
+}
+
+// NotBefore MUST NOT be 0 (Matter epoch start, 2000-01-01).
+// CHIP's ChipEpochToASN1Time treats epoch=0 as the "no
+// well-defined expiration date" sentinel and re-emits it as
+// GeneralizedTime "99991231235959Z" regardless of which field
+// it appears in (see CHIPCert.cpp:1076-1106 and the
+// explanatory comment about CHIP epoch 0 NotBefore producing
+// an invalid TBS signature on round-trip).
+//
+// We sign over UTCTime "000101000000Z" (Matter epoch); CHIP
+// would reconstruct GeneralizedTime "99991231235959Z" and the
+// hash would mismatch.  Using 1 second past the Matter epoch
+// avoids the sentinel collision while keeping the cert
+// effectively unbounded on the lower end.
+pub const VALID_FOREVER: Validity = Validity {
+    not_before: 1, // 2000-01-01 00:00:01 — past CHIP's epoch=0 sentinel
+    not_after: 0,  // no expiry (NotAfter sentinel is legitimate)
+};
+
+/// Internal shared certificate builder implementation.
+///
+/// Contains all the common logic for building Noc, Icac, and Rcac certificates.
+struct CertBuilderCore<'a> {
+    buf: &'a mut [u8],
 }
 
 impl<'a> CertBuilderCore<'a> {
@@ -263,20 +286,21 @@ impl<'a> CertBuilderCore<'a> {
         subject_key_id: &KeyId,
         authority_key_id: &KeyId,
     ) -> Result<(), Error> {
-        // 1. Basic Constraints
+        // 1. Basic Constraints — per Matter Spec:
+        //   RCAC: cA = TRUE,  pathLenConstraint shall NOT be present
+        //   ICAC: cA = TRUE,  pathLenConstraint = 0
+        //   NOC:  cA = FALSE, pathLenConstraint shall NOT be present
         tw.start_struct(&TLVTag::Context(1))?;
         match cert_type {
             CertType::Rcac => {
-                tw.bool(&TLVTag::Context(1), true)?; // is_ca = true
-                tw.u8(&TLVTag::Context(2), 1)?; // path_len = 1
+                tw.bool(&TLVTag::Context(1), true)?;
             }
             CertType::Icac => {
-                tw.bool(&TLVTag::Context(1), true)?; // is_ca = true
+                tw.bool(&TLVTag::Context(1), true)?;
                 tw.u8(&TLVTag::Context(2), 0)?; // path_len = 0
             }
             CertType::Noc => {
-                tw.bool(&TLVTag::Context(1), false)?; // is_ca = false
-                                                      // No path_len for end entity
+                tw.bool(&TLVTag::Context(1), false)?;
             }
         }
         tw.end_container()?;
@@ -581,11 +605,12 @@ impl<'a> RcacBuilder<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{
         cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN},
         crypto::{test_only_crypto, CanonPkcPublicKey, PublicKey, SigningSecretKey},
     };
+
+    use super::*;
 
     #[test]
     fn test_validate_cat_id_valid() {
@@ -659,6 +684,41 @@ mod tests {
         assert!(len < MAX_CERT_TLV_LEN);
     }
 
+    #[test]
+    fn test_rcac_self_verify() {
+        let crypto = test_only_crypto();
+        let rcac_secret_key = unwrap!(crypto.generate_secret_key());
+        let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
+
+        let subject = SubjectDN {
+            node_id: None,
+            fabric_id: Some(0x0000_0000_0000_0001),
+            cat_ids: &[],
+            ca_id: Some(0x1122_3344_5566_7788),
+        };
+        let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+        let mut builder = RcacBuilder::new(&mut cert_buf);
+        let len = unwrap!(builder.build(
+            &crypto,
+            subject,
+            VALID_FOREVER,
+            &rcac_pubkey,
+            &rcac_secret_key,
+            &[0x01],
+        ));
+
+        // Re-parse the just-built RCAC and self-verify.
+        let cert = CertRef::new(crate::tlv::TLVElement::new(&cert_buf[..len]));
+        let mut scratch = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+        let res = cert
+            .verify_chain_start(&crypto, VALID_FOREVER.not_before as _)
+            .finalise(&mut scratch);
+        assert!(
+            res.is_ok(),
+            "RCAC built by RcacBuilder failed self-verification: {res:?}"
+        );
+    }
+
     /// Test building an ICAC signed by RCAC
     #[test]
     fn test_build_icac() {
@@ -676,19 +736,12 @@ mod tests {
         let icac_id = 0x1234u64;
         let rcac_id = 0x5678u64;
         let fabric_id = 0x0000000000000001u64;
-        let not_before = 0u32;
-        let not_after = 0u32;
 
         let subject = SubjectDN {
             node_id: None,
             fabric_id: Some(fabric_id),
             cat_ids: &[],
             ca_id: Some(icac_id),
-        };
-
-        let validity = Validity {
-            not_before,
-            not_after,
         };
 
         let issuer = IssuerDN {
@@ -703,7 +756,7 @@ mod tests {
         let len = unwrap!(builder.build(
             &crypto,
             subject,
-            validity,
+            VALID_FOREVER,
             &icac_pubkey,
             &rcac_pubkey,
             &rcac_secret_key,

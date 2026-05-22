@@ -21,6 +21,7 @@
 //! during commissioning. It combines NOC generation with IPK management
 //! and node ID assignment.
 
+use crate::cert::builder::Validity;
 use crate::cert::MAX_CERT_TLV_LEN;
 use crate::crypto::{CanonAeadKey, CanonAeadKeyRef, Crypto, RngCore, AEAD_CANON_KEY_LEN};
 use crate::error::Error;
@@ -90,8 +91,9 @@ impl FabricCredentials {
     /// # Arguments
     /// * `crypto` - Cryptographic backend
     /// * `fabric_id` - The fabric identifier
-    pub fn new<C: Crypto>(crypto: &C, fabric_id: u64) -> Result<Self, Error> {
-        let noc_generator = NocGenerator::new(crypto, fabric_id)?;
+    /// * `validity` - Validity period for generated certificates
+    pub fn new<C: Crypto>(crypto: &C, fabric_id: u64, validity: Validity) -> Result<Self, Error> {
+        let noc_generator = NocGenerator::new(crypto, fabric_id, validity)?;
         let mut ipk = CanonAeadKey::new();
         let mut ipk_bytes = [0u8; AEAD_CANON_KEY_LEN];
         crypto.rand()?.fill_bytes(&mut ipk_bytes);
@@ -110,15 +112,17 @@ impl FabricCredentials {
     /// * `crypto` - Cryptographic backend
     /// * `fabric_id` - The fabric identifier
     /// * `starting_node_id` - The first node ID to assign
+    /// * `validity` - Validity period for generated certificates
     pub fn with_starting_node_id<C: Crypto>(
         crypto: &C,
         fabric_id: u64,
         starting_node_id: u64,
+        validity: Validity,
     ) -> Result<Self, Error> {
         if starting_node_id < 1 {
             return Err(crate::error::ErrorCode::InvalidData.into());
         }
-        let mut creds = Self::new(crypto, fabric_id)?;
+        let mut creds = Self::new(crypto, fabric_id, validity)?;
         creds.next_node_id = starting_node_id;
         Ok(creds)
     }
@@ -265,10 +269,12 @@ impl FabricCredentials {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::cert::builder::VALID_FOREVER;
     use crate::cert::CertRef;
     use crate::crypto::{test_only_crypto, AEAD_KEY_ZEROED};
     use crate::tlv::TLVElement;
+
+    use super::*;
 
     /// Valid CSR from C++ test (TestChipCryptoPAL.cpp)
     /// This CSR has a valid signature and can be verified.
@@ -318,7 +324,7 @@ mod tests {
         let crypto = test_only_crypto();
         let fabric_id = 0x1234567890ABCDEFu64;
 
-        let creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         // Should have root cert
         assert!(!creds.root_cert().is_empty());
@@ -339,7 +345,8 @@ mod tests {
         let creds = unwrap!(FabricCredentials::with_starting_node_id(
             &crypto,
             fabric_id,
-            starting_node_id
+            starting_node_id,
+            VALID_FOREVER,
         ));
 
         assert_eq!(creds.peek_next_node_id(), starting_node_id);
@@ -349,7 +356,7 @@ mod tests {
     fn test_node_id_auto_increment() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         let csr = generate_test_csr();
 
@@ -370,7 +377,7 @@ mod tests {
     fn test_peek_next_node_id_doesnt_increment() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         let id1 = creds.peek_next_node_id();
         let id2 = creds.peek_next_node_id();
@@ -385,7 +392,7 @@ mod tests {
     fn test_custom_node_id_doesnt_affect_counter() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         let csr = generate_test_csr();
 
@@ -406,7 +413,7 @@ mod tests {
     fn test_generate_device_credentials_basic() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         let csr = generate_test_csr();
 
@@ -428,7 +435,7 @@ mod tests {
     fn test_device_credentials_with_cat_ids() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         let csr = generate_test_csr();
         let cat_ids = &[0x00011111u32, 0x00022222u32];
@@ -443,7 +450,7 @@ mod tests {
     fn test_enable_icac() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         // Initially no ICAC
         assert!(creds.icac_cert().is_none());
@@ -459,7 +466,7 @@ mod tests {
     fn test_device_credentials_includes_icac_when_enabled() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         let csr = generate_test_csr();
 
@@ -477,7 +484,7 @@ mod tests {
     fn test_icac_cert_available_after_enable() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         assert!(creds.icac_cert().is_none());
 
@@ -491,7 +498,7 @@ mod tests {
     fn test_noc_signed_by_icac_when_enabled() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         let csr = generate_test_csr();
 
@@ -511,7 +518,7 @@ mod tests {
     fn test_ipk_is_generated() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         let ipk = creds.ipk();
 
@@ -524,7 +531,7 @@ mod tests {
     fn test_set_custom_ipk() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         let custom_ipk = [0x42u8; AEAD_CANON_KEY_LEN];
         creds.set_ipk(CanonAeadKeyRef::new(&custom_ipk));
@@ -536,7 +543,7 @@ mod tests {
     fn test_root_cert_available() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         let root_cert = creds.root_cert();
         assert!(!root_cert.is_empty());
@@ -547,7 +554,7 @@ mod tests {
     fn test_root_cert_consistent() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         let csr = generate_test_csr();
 
@@ -568,7 +575,7 @@ mod tests {
     fn test_verify_noc_and_rcac_parse() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         let csr = generate_test_csr();
 
@@ -587,7 +594,7 @@ mod tests {
     fn test_generated_noc_contains_correct_node_id() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         let csr = generate_test_csr();
 
@@ -605,7 +612,7 @@ mod tests {
     fn test_generated_noc_contains_correct_fabric_id() {
         let crypto = test_only_crypto();
         let fabric_id = 0xABCDEF123456u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         let csr = generate_test_csr();
 
@@ -622,7 +629,7 @@ mod tests {
     fn test_cat_ids_present_in_noc_when_specified() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         let csr = generate_test_csr();
         let cat_ids = &[0x00011111u32, 0x00022222u32, 0x00033333u32];
@@ -642,7 +649,7 @@ mod tests {
     fn test_invalid_csr_fails() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         let invalid_csr = &[0x01, 0x02, 0x03, 0x04];
 
@@ -655,7 +662,7 @@ mod tests {
     fn test_four_cat_ids_fails() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id));
+        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
 
         let csr = generate_test_csr();
         let too_many_cat_ids = &[0x00011111u32, 0x00022222u32, 0x00033333u32, 0x00044444u32];
