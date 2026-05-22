@@ -27,6 +27,7 @@ use embassy_time::{Duration, Timer};
 use log::info;
 
 use rs_matter::commissioner::fabric_credentials::FabricCredentials;
+use rs_matter::commissioner::noc_generator::DEFAULT_VALIDITY;
 use rs_matter::crypto::{test_only_crypto, CanonPkcSecretKey, Crypto, SecretKey, SigningSecretKey};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::error::Error;
@@ -62,7 +63,8 @@ fn test_case_handshake() {
 
         // ---- 1. Generate credentials using FabricCredentials ----
 
-        let mut fabric_creds = FabricCredentials::new(&crypto, TEST_FABRIC_ID).unwrap();
+        let mut fabric_creds =
+            FabricCredentials::new(&crypto, TEST_FABRIC_ID, DEFAULT_VALIDITY).unwrap();
 
         // Generate controller credentials (keypair + CSR + NOC)
         let controller_secret_key = crypto.generate_secret_key().unwrap();
