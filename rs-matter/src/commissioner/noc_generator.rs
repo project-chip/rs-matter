@@ -32,24 +32,6 @@ use crate::crypto::{
 };
 use crate::error::{Error, ErrorCode};
 
-// NotBefore MUST NOT be 0 (Matter epoch start, 2000-01-01).
-// CHIP's ChipEpochToASN1Time treats epoch=0 as the "no
-// well-defined expiration date" sentinel and re-emits it as
-// GeneralizedTime "99991231235959Z" regardless of which field
-// it appears in (see CHIPCert.cpp:1076-1106 and the
-// explanatory comment about CHIP epoch 0 NotBefore producing
-// an invalid TBS signature on round-trip).
-//
-// We sign over UTCTime "000101000000Z" (Matter epoch); CHIP
-// would reconstruct GeneralizedTime "99991231235959Z" and the
-// hash would mismatch.  Using 1 second past the Matter epoch
-// avoids the sentinel collision while keeping the cert
-// effectively unbounded on the lower end.
-pub const DEFAULT_VALIDITY: Validity = Validity {
-    not_before: 1, // 2000-01-01 00:00:01 — past CHIP's epoch=0 sentinel
-    not_after: 0,  // no expiry (NotAfter sentinel is legitimate)
-};
-
 /// Generated NOC credentials for a device.
 #[derive(Debug)]
 pub struct NocCredentials {
@@ -428,6 +410,7 @@ impl NocGenerator {
 
 #[cfg(test)]
 mod tests {
+    use crate::cert::builder::VALID_FOREVER;
     use crate::cert::CertRef;
     use crate::crypto::test_only_crypto;
     use crate::tlv::TLVElement;
@@ -477,7 +460,7 @@ mod tests {
         let crypto = test_only_crypto();
         let fabric_id = 0x1234_5678_9ABC_DEF0;
 
-        let generator = unwrap!(NocGenerator::new(&crypto, fabric_id, DEFAULT_VALIDITY));
+        let generator = unwrap!(NocGenerator::new(&crypto, fabric_id, VALID_FOREVER));
 
         // Verify fabric_id is stored
         assert_eq!(generator.fabric_id(), fabric_id);
@@ -501,7 +484,7 @@ mod tests {
         let crypto = test_only_crypto();
         let fabric_id = 0xABCD;
 
-        let gen1 = unwrap!(NocGenerator::new(&crypto, fabric_id, DEFAULT_VALIDITY));
+        let gen1 = unwrap!(NocGenerator::new(&crypto, fabric_id, VALID_FOREVER));
         let root_cert = gen1.root_cert();
         let rcac_id = gen1.rcac_id();
 
@@ -516,7 +499,7 @@ mod tests {
             &root_cert_copy,
             fabric_id,
             rcac_id,
-            DEFAULT_VALIDITY,
+            VALID_FOREVER,
         ));
 
         // Verify credentials match
@@ -529,7 +512,7 @@ mod tests {
     fn test_generate_icac_creates_certificate() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1;
-        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, DEFAULT_VALIDITY));
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, VALID_FOREVER));
 
         let icac = unwrap!(generator.generate_icac(&crypto));
 
@@ -544,7 +527,7 @@ mod tests {
     fn test_icac_cert_available_after_generation() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1;
-        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, DEFAULT_VALIDITY));
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, VALID_FOREVER));
 
         // Before generation, icac_cert() should return None
         assert!(generator.icac_cert().is_none());
@@ -567,7 +550,7 @@ mod tests {
     fn test_multiple_icac_calls_replace_previous() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1;
-        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, DEFAULT_VALIDITY));
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, VALID_FOREVER));
 
         // Generate first ICAC
         unwrap!(generator.generate_icac(&crypto));
@@ -593,7 +576,7 @@ mod tests {
     fn test_generate_noc_basic() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1;
-        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, DEFAULT_VALIDITY));
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, VALID_FOREVER));
 
         let node_id = 0x1234;
         let creds = unwrap!(generator.generate_noc(&crypto, GOOD_CSR, node_id, &[]));
@@ -612,7 +595,7 @@ mod tests {
     fn test_generate_noc_with_icac() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1;
-        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, DEFAULT_VALIDITY));
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, VALID_FOREVER));
 
         // Generate ICAC first
         unwrap!(generator.generate_icac(&crypto));
@@ -632,7 +615,7 @@ mod tests {
     fn test_generate_noc_with_cat_ids() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1;
-        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, DEFAULT_VALIDITY));
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, VALID_FOREVER));
 
         let node_id = 0xABCD;
         let cat_ids = [0x0001_0001, 0x0001_0002, 0x0001_0003];
@@ -654,7 +637,7 @@ mod tests {
     fn test_generate_noc_increments_serial() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1;
-        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, DEFAULT_VALIDITY));
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, VALID_FOREVER));
 
         // Initial serial should be 1
         assert_eq!(generator.next_serial, 1);
@@ -676,7 +659,7 @@ mod tests {
     fn test_noc_contains_correct_node_id() {
         let crypto = test_only_crypto();
         let fabric_id = 0x9999;
-        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, DEFAULT_VALIDITY));
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, VALID_FOREVER));
 
         let node_id = 0xDEAD_BEEF_CAFE_BABE;
         let creds = unwrap!(generator.generate_noc(&crypto, GOOD_CSR, node_id, &[]));
@@ -692,7 +675,7 @@ mod tests {
     fn test_noc_contains_device_pubkey_from_csr() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1;
-        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, DEFAULT_VALIDITY));
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, VALID_FOREVER));
 
         let creds = unwrap!(generator.generate_noc(&crypto, GOOD_CSR, 1, &[]));
 
@@ -754,7 +737,7 @@ mod tests {
     fn test_generate_noc_bad_signature_fails() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1;
-        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, DEFAULT_VALIDITY));
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, VALID_FOREVER));
 
         // CSR with bad signature should fail verification
         let result = generator.generate_noc(&crypto, BAD_SIGNATURE_CSR, 1, &[]);
@@ -765,7 +748,7 @@ mod tests {
     fn test_generate_noc_too_many_cat_ids_fails() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1;
-        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, DEFAULT_VALIDITY));
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, VALID_FOREVER));
 
         // More than 3 CAT IDs should fail
         let too_many_cat_ids = [0x0001_0001, 0x0001_0002, 0x0001_0003, 0x0001_0004];
@@ -778,7 +761,7 @@ mod tests {
     fn test_generated_rcac_can_be_parsed() {
         let crypto = test_only_crypto();
         let fabric_id = 0x1234;
-        let generator = unwrap!(NocGenerator::new(&crypto, fabric_id, DEFAULT_VALIDITY));
+        let generator = unwrap!(NocGenerator::new(&crypto, fabric_id, VALID_FOREVER));
 
         let rcac = generator.root_cert();
 
@@ -794,7 +777,7 @@ mod tests {
     fn test_generated_icac_can_be_parsed() {
         let crypto = test_only_crypto();
         let fabric_id = 0x5678;
-        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, DEFAULT_VALIDITY));
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, VALID_FOREVER));
 
         let icac = unwrap!(generator.generate_icac(&crypto));
 
@@ -810,7 +793,7 @@ mod tests {
     fn test_generated_noc_can_be_parsed() {
         let crypto = test_only_crypto();
         let fabric_id = 0xABCD;
-        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, DEFAULT_VALIDITY));
+        let mut generator = unwrap!(NocGenerator::new(&crypto, fabric_id, VALID_FOREVER));
 
         let node_id = 0x9999;
         let creds = unwrap!(generator.generate_noc(&crypto, GOOD_CSR, node_id, &[]));

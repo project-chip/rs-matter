@@ -43,13 +43,6 @@ enum CertType {
     Noc,
 }
 
-/// Internal shared certificate builder implementation.
-///
-/// Contains all the common logic for building Noc, Icac, and Rcac certificates.
-struct CertBuilderCore<'a> {
-    buf: &'a mut [u8],
-}
-
 pub struct IssuerDN {
     pub(crate) ca_id: Option<u64>,
     pub(crate) fabric_id: Option<u64>,
@@ -64,10 +57,40 @@ pub struct SubjectDN<'a> {
     pub(crate) ca_id: Option<u64>,
 }
 
+/// Validity period for certificates, represented as seconds since the Matter epoch (2000-01-01T00:00:00Z).
 #[derive(Clone, Copy)]
 pub struct Validity {
-    pub(crate) not_before: u32,
-    pub(crate) not_after: u32,
+    /// NotBefore time (seconds since Matter epoch)
+    ///
+    /// This must not be 0 (the Matter epoch start) to avoid collision with CHIP's epoch=0 sentinel in ASN.1 time encoding.
+    pub not_before: u32,
+    /// NotAfter time (seconds since Matter epoch, 0 = no expiry)
+    pub not_after: u32,
+}
+
+// NotBefore MUST NOT be 0 (Matter epoch start, 2000-01-01).
+// CHIP's ChipEpochToASN1Time treats epoch=0 as the "no
+// well-defined expiration date" sentinel and re-emits it as
+// GeneralizedTime "99991231235959Z" regardless of which field
+// it appears in (see CHIPCert.cpp:1076-1106 and the
+// explanatory comment about CHIP epoch 0 NotBefore producing
+// an invalid TBS signature on round-trip).
+//
+// We sign over UTCTime "000101000000Z" (Matter epoch); CHIP
+// would reconstruct GeneralizedTime "99991231235959Z" and the
+// hash would mismatch.  Using 1 second past the Matter epoch
+// avoids the sentinel collision while keeping the cert
+// effectively unbounded on the lower end.
+pub const VALID_FOREVER: Validity = Validity {
+    not_before: 1, // 2000-01-01 00:00:01 — past CHIP's epoch=0 sentinel
+    not_after: 0,  // no expiry (NotAfter sentinel is legitimate)
+};
+
+/// Internal shared certificate builder implementation.
+///
+/// Contains all the common logic for building Noc, Icac, and Rcac certificates.
+struct CertBuilderCore<'a> {
+    buf: &'a mut [u8],
 }
 
 impl<'a> CertBuilderCore<'a> {
@@ -584,7 +607,6 @@ impl<'a> RcacBuilder<'a> {
 mod tests {
     use crate::{
         cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN},
-        commissioner::noc_generator::DEFAULT_VALIDITY,
         crypto::{test_only_crypto, CanonPkcPublicKey, PublicKey, SigningSecretKey},
     };
 
@@ -679,7 +701,7 @@ mod tests {
         let len = unwrap!(builder.build(
             &crypto,
             subject,
-            DEFAULT_VALIDITY,
+            VALID_FOREVER,
             &rcac_pubkey,
             &rcac_secret_key,
             &[0x01],
@@ -689,7 +711,7 @@ mod tests {
         let cert = CertRef::new(crate::tlv::TLVElement::new(&cert_buf[..len]));
         let mut scratch = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
         let res = cert
-            .verify_chain_start(&crypto, DEFAULT_VALIDITY.not_before as _)
+            .verify_chain_start(&crypto, VALID_FOREVER.not_before as _)
             .finalise(&mut scratch);
         assert!(
             res.is_ok(),
@@ -734,7 +756,7 @@ mod tests {
         let len = unwrap!(builder.build(
             &crypto,
             subject,
-            DEFAULT_VALIDITY,
+            VALID_FOREVER,
             &icac_pubkey,
             &rcac_pubkey,
             &rcac_secret_key,

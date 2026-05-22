@@ -17,17 +17,15 @@
 
 #![cfg(all(feature = "std", feature = "async-io"))]
 
-#[allow(dead_code)]
-mod common;
-
 use core::pin::pin;
 
 use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
+
 use log::info;
 
+use rs_matter::cert::builder::VALID_FOREVER;
 use rs_matter::commissioner::fabric_credentials::FabricCredentials;
-use rs_matter::commissioner::noc_generator::DEFAULT_VALIDITY;
 use rs_matter::crypto::{test_only_crypto, CanonPkcSecretKey, Crypto, SecretKey, SigningSecretKey};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::error::Error;
@@ -41,6 +39,9 @@ use rs_matter::utils::select::Coalesce;
 use rs_matter::Matter;
 
 use crate::common::{create_localhost_socket_pair, init_env_logger, run_device_controller};
+
+#[allow(dead_code)]
+mod common;
 
 const TEST_FABRIC_ID: u64 = 1;
 const CONTROLLER_NODE_ID: u64 = 100;
@@ -64,7 +65,7 @@ fn test_case_handshake() {
         // ---- 1. Generate credentials using FabricCredentials ----
 
         let mut fabric_creds =
-            FabricCredentials::new(&crypto, TEST_FABRIC_ID, DEFAULT_VALIDITY).unwrap();
+            FabricCredentials::new(&crypto, TEST_FABRIC_ID, VALID_FOREVER).unwrap();
 
         // Generate controller credentials (keypair + CSR + NOC)
         let controller_secret_key = crypto.generate_secret_key().unwrap();
