@@ -29,7 +29,7 @@
 //! - The attribute and logic related to the Scenes cluster are not fully implemented since the Scenes cluster is not yet implemented.
 
 use core::cell::Cell;
-use core::future::Future;
+use core::future::{ready, Future};
 use core::pin::pin;
 
 use embassy_futures::select::{select, select3, Either, Either3};
@@ -44,7 +44,6 @@ pub use crate::dm::clusters::decl::on_off::*;
 
 use crate::tlv::Nullable;
 use crate::utils::cell::RefCell;
-use crate::utils::future::delayed_ready;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Signal;
 
@@ -797,29 +796,29 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
 
     // Attribute accessors
     fn on_off(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<bool, Error>> {
-        delayed_ready(move || Ok(self.hooks.on_off()))
+        ready(Ok(self.hooks.on_off()))
     }
 
     fn global_scene_control(
         &self,
         _ctx: impl ReadContext,
     ) -> impl Future<Output = Result<bool, Error>> {
-        delayed_ready(move || Ok(self.with_state(|state| state.global_scene_control)))
+        ready(Ok(self.with_state(|state| state.global_scene_control)))
     }
 
     fn on_time(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u16, Error>> {
-        delayed_ready(move || Ok(self.with_state(|state| state.on_time)))
+        ready(Ok(self.with_state(|state| state.on_time)))
     }
 
     fn off_wait_time(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u16, Error>> {
-        delayed_ready(move || Ok(self.with_state(|state| state.off_wait_time)))
+        ready(Ok(self.with_state(|state| state.off_wait_time)))
     }
 
     fn start_up_on_off(
         &self,
         _ctx: impl ReadContext,
     ) -> impl Future<Output = Result<Nullable<StartUpOnOffEnum>, Error>> {
-        delayed_ready(move || Ok(self.hooks.start_up_on_off()))
+        ready(Ok(self.hooks.start_up_on_off()))
     }
 
     fn set_on_time(
@@ -827,13 +826,11 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
         ctx: impl WriteContext,
         value: u16,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
-            self.with_state(|state| {
-                state.on_time = value;
-                ctx.notify_changed();
-                Ok(())
-            })
-        })
+        ready(self.with_state(|state| {
+            state.on_time = value;
+            ctx.notify_changed();
+            Ok(())
+        }))
     }
 
     fn set_off_wait_time(
@@ -841,13 +838,11 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
         ctx: impl WriteContext,
         value: u16,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
-            self.with_state(|state| {
-                state.off_wait_time = value;
-                ctx.notify_changed();
-                Ok(())
-            })
-        })
+        ready(self.with_state(|state| {
+            state.off_wait_time = value;
+            ctx.notify_changed();
+            Ok(())
+        }))
     }
 
     fn set_start_up_on_off(
@@ -855,30 +850,32 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
         ctx: impl WriteContext,
         value: Nullable<StartUpOnOffEnum>,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
-            self.hooks.set_start_up_on_off(value)?;
-            ctx.notify_changed();
-            Ok(())
+        ready(match self.hooks.set_start_up_on_off(value) {
+            Ok(()) => {
+                ctx.notify_changed();
+                Ok(())
+            }
+            Err(e) => Err(e),
         })
     }
 
     // Commands
     fn handle_off(&self, _ctx: impl InvokeContext) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
+        ready({
             self.state_change_signal.signal(OnOffCommand::Off);
             Ok(())
         })
     }
 
     fn handle_on(&self, _ctx: impl InvokeContext) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
+        ready({
             self.state_change_signal.signal(OnOffCommand::On);
             Ok(())
         })
     }
 
     fn handle_toggle(&self, _ctx: impl InvokeContext) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
+        ready({
             self.state_change_signal.signal(OnOffCommand::Toggle);
             Ok(())
         })
@@ -889,37 +886,36 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
         _ctx: impl InvokeContext,
         request: OffWithEffectRequest<'_>,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
+        ready('a: {
             if !Self::supports_feature(on_off::Feature::LIGHTING.bits()) {
                 // This error is currently mapped to the IM status UnsupportedCommand.
-                return Err(ErrorCode::CommandNotFound.into());
+                break 'a Err(ErrorCode::CommandNotFound.into());
             }
 
-            let effect_variant = match request.effect_identifier()? {
-                EffectIdentifierEnum::DelayedAllOff => {
-                    match request.effect_variant()? {
-                        // todo Impl TryFrom for DelayedAllOffEffectVariantEnum and remove this match.
-                        0 => EffectVariantEnum::DelayedAllOff(
-                            DelayedAllOffEffectVariantEnum::DelayedOffFastFade,
-                        ),
-                        1 => {
-                            EffectVariantEnum::DelayedAllOff(DelayedAllOffEffectVariantEnum::NoFade)
-                        }
-                        2 => EffectVariantEnum::DelayedAllOff(
-                            DelayedAllOffEffectVariantEnum::DelayedOffSlowFade,
-                        ),
-                        _ => return Err(ErrorCode::Failure.into()),
+            let effect_variant = match request.effect_identifier() {
+                Err(e) => break 'a Err(e),
+                Ok(EffectIdentifierEnum::DelayedAllOff) => match request.effect_variant() {
+                    Err(e) => break 'a Err(e),
+                    // todo Impl TryFrom for DelayedAllOffEffectVariantEnum and remove this match.
+                    Ok(0) => EffectVariantEnum::DelayedAllOff(
+                        DelayedAllOffEffectVariantEnum::DelayedOffFastFade,
+                    ),
+                    Ok(1) => {
+                        EffectVariantEnum::DelayedAllOff(DelayedAllOffEffectVariantEnum::NoFade)
                     }
-                }
-                EffectIdentifierEnum::DyingLight => {
-                    match request.effect_variant()? {
-                        // todo Impl TryFrom for DyingLightEffectVariantEnum and remove this match.
-                        0 => EffectVariantEnum::DyingLight(
-                            DyingLightEffectVariantEnum::DyingLightFadeOff,
-                        ),
-                        _ => return Err(ErrorCode::Failure.into()),
-                    }
-                }
+                    Ok(2) => EffectVariantEnum::DelayedAllOff(
+                        DelayedAllOffEffectVariantEnum::DelayedOffSlowFade,
+                    ),
+                    Ok(_) => break 'a Err(ErrorCode::Failure.into()),
+                },
+                Ok(EffectIdentifierEnum::DyingLight) => match request.effect_variant() {
+                    Err(e) => break 'a Err(e),
+                    // todo Impl TryFrom for DyingLightEffectVariantEnum and remove this match.
+                    Ok(0) => EffectVariantEnum::DyingLight(
+                        DyingLightEffectVariantEnum::DyingLightFadeOff,
+                    ),
+                    Ok(_) => break 'a Err(ErrorCode::Failure.into()),
+                },
             };
 
             self.state_change_signal
@@ -933,27 +929,25 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
         &self,
         _ctx: impl InvokeContext,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
-            self.with_state(|state| {
-                // 1.5.7.5.1. Effect on Receipt
-                // On receipt of the OnWithRecallGlobalScene command, if the GlobalSceneControl attribute is equal
-                // to TRUE, the server SHALL discard the command.
-                if state.global_scene_control {
-                    return Ok(());
-                }
+        ready(self.with_state(|state| {
+            // 1.5.7.5.1. Effect on Receipt
+            // On receipt of the OnWithRecallGlobalScene command, if the GlobalSceneControl attribute is equal
+            // to TRUE, the server SHALL discard the command.
+            if state.global_scene_control {
+                return Ok(());
+            }
 
-                // If the GlobalSceneControl attribute is equal to FALSE, the Scene cluster server on the same endpoint
-                // SHALL recall its global scene, updating the OnOff attribute accordingly. The OnOff server SHALL
-                // then set the GlobalSceneControl attribute to TRUE.
-                // Additionally, when the OnTime and OffWaitTime attributes are both supported, if the value of the
-                // OnTime attribute is equal to 0, the server SHALL set the OffWaitTime attribute to 0.
-                // todo Implement the above statement once the Scene cluster is implemented.
-                // self.set_on(false);
+            // If the GlobalSceneControl attribute is equal to FALSE, the Scene cluster server on the same endpoint
+            // SHALL recall its global scene, updating the OnOff attribute accordingly. The OnOff server SHALL
+            // then set the GlobalSceneControl attribute to TRUE.
+            // Additionally, when the OnTime and OffWaitTime attributes are both supported, if the value of the
+            // OnTime attribute is equal to 0, the server SHALL set the OffWaitTime attribute to 0.
+            // todo Implement the above statement once the Scene cluster is implemented.
+            // self.set_on(false);
 
-                // This error is currently mapped to the IM status UnsupportedCommand.
-                Err(ErrorCode::CommandNotFound.into())
-            })
-        })
+            // This error is currently mapped to the IM status UnsupportedCommand.
+            Err(ErrorCode::CommandNotFound.into())
+        }))
     }
 
     fn handle_on_with_timed_off(
@@ -961,19 +955,18 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
         ctx: impl InvokeContext,
         request: OnWithTimedOffRequest<'_>,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
+        ready(match request.on_off_control() {
+            Err(e) => Err(e),
             // 1.5.7.6.4. Effect on Receipt
             // On receipt of this command, if the AcceptOnlyWhenOn sub-field of the OnOffControl field is set to 1,
             // and the value of the OnOff attribute is equal to FALSE, the command SHALL be discarded.
-            if request
-                .on_off_control()?
-                .contains(OnOffControlBitmap::ACCEPT_ONLY_WHEN_ON)
-                && !self.hooks.on_off()
+            Ok(ctrl)
+                if ctrl.contains(OnOffControlBitmap::ACCEPT_ONLY_WHEN_ON)
+                    && !self.hooks.on_off() =>
             {
-                return Ok(());
+                Ok(())
             }
-
-            self.with_state(|state| {
+            Ok(_) => self.with_state(|state| {
                 // If the value of the OffWaitTime attribute is greater than zero and the value of the OnOff attribute is
                 // equal to FALSE, then the server SHALL set the OffWaitTime attribute to the minimum of the
                 // OffWaitTime attribute and the value specified in the OffWaitTime field.
@@ -1016,7 +1009,7 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
                     .signal(OnOffCommand::OnWithTimedOff);
 
                 Ok(())
-            })
+            }),
         })
     }
 }

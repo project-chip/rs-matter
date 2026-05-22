@@ -45,7 +45,6 @@ use crate::dm::{
 use crate::error::{Error, ErrorCode};
 use crate::tlv::Nullable;
 use crate::utils::cell::RefCell;
-use crate::utils::future::delayed_ready;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Signal;
 
@@ -1283,7 +1282,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         &self,
         _ctx: impl ReadContext,
     ) -> impl Future<Output = Result<Nullable<u8>, Error>> {
-        delayed_ready(|| match self.hooks.current_level() {
+        ready(match self.hooks.current_level() {
             Some(level) => Ok(Nullable::some(level)),
             None => Ok(Nullable::none()),
         })
@@ -1293,7 +1292,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         &self,
         _ctx: impl ReadContext,
     ) -> impl Future<Output = Result<Nullable<u8>, Error>> {
-        delayed_ready(|| Ok(self.with_state(|state| state.on_level.clone())))
+        ready(Ok(self.with_state(|state| state.on_level.clone())))
     }
 
     fn set_on_level(
@@ -1301,10 +1300,10 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         ctx: impl WriteContext,
         value: Nullable<u8>,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(|| {
+        ready('a: {
             if let Some(level) = value.clone().into_option() {
                 if level > H::MAX_LEVEL || level < H::MIN_LEVEL {
-                    return Err(ErrorCode::ConstraintError.into());
+                    break 'a Err(ErrorCode::ConstraintError.into());
                 }
             }
 
@@ -1320,7 +1319,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         &self,
         _ctx: impl ReadContext,
     ) -> impl Future<Output = Result<OptionsBitmap, Error>> {
-        delayed_ready(|| Ok(self.with_state(|state| state.options)))
+        ready(Ok(self.with_state(|state| state.options)))
     }
 
     fn set_options(
@@ -1328,7 +1327,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         ctx: impl WriteContext,
         value: OptionsBitmap,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
+        ready({
             self.with_state_notify(ctx, |state| {
                 state.options = value;
             });
@@ -1338,22 +1337,22 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
     }
 
     fn remaining_time(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u16, Error>> {
-        delayed_ready(|| Ok(self.with_state(|state| state.remaining_time)))
+        ready(Ok(self.with_state(|state| state.remaining_time)))
     }
 
     fn max_level(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u8, Error>> {
-        delayed_ready(|| Ok(H::MAX_LEVEL))
+        ready(Ok(H::MAX_LEVEL))
     }
 
     fn min_level(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u8, Error>> {
-        delayed_ready(|| Ok(H::MIN_LEVEL))
+        ready(Ok(H::MIN_LEVEL))
     }
 
     fn on_off_transition_time(
         &self,
         _ctx: impl ReadContext,
     ) -> impl Future<Output = Result<u16, Error>> {
-        delayed_ready(|| Ok(self.with_state(|state| state.on_off_transition_time)))
+        ready(Ok(self.with_state(|state| state.on_off_transition_time)))
     }
 
     fn set_on_off_transition_time(
@@ -1361,7 +1360,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         ctx: impl WriteContext,
         value: u16,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
+        ready({
             self.with_state_notify(ctx, |state| {
                 state.on_off_transition_time = value;
             });
@@ -1374,7 +1373,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         &self,
         _ctx: impl ReadContext,
     ) -> impl Future<Output = Result<Nullable<u16>, Error>> {
-        delayed_ready(|| Ok(self.with_state(|state| state.on_transition_time.clone())))
+        ready(Ok(self.with_state(|state| state.on_transition_time.clone())))
     }
 
     fn set_on_transition_time(
@@ -1382,7 +1381,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         ctx: impl WriteContext,
         value: Nullable<u16>,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(|| {
+        ready({
             self.with_state_notify(ctx, |state| {
                 state.on_transition_time = value;
             });
@@ -1395,7 +1394,9 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         &self,
         _ctx: impl ReadContext,
     ) -> impl Future<Output = Result<Nullable<u16>, Error>> {
-        delayed_ready(|| Ok(self.with_state(|state| state.off_transition_time.clone())))
+        ready(Ok(
+            self.with_state(|state| state.off_transition_time.clone())
+        ))
     }
 
     fn set_off_transition_time(
@@ -1403,7 +1404,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         ctx: impl WriteContext,
         value: Nullable<u16>,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(|| {
+        ready({
             self.with_state_notify(ctx, |state| {
                 state.off_transition_time = value;
             });
@@ -1416,7 +1417,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         &self,
         _ctx: impl ReadContext,
     ) -> impl Future<Output = Result<Nullable<u8>, Error>> {
-        delayed_ready(|| Ok(self.with_state(|state| state.default_move_rate.clone())))
+        ready(Ok(self.with_state(|state| state.default_move_rate.clone())))
     }
 
     fn set_default_move_rate(
@@ -1424,12 +1425,12 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         ctx: impl WriteContext,
         value: Nullable<u8>,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
+        ready('a: {
             // The spec is not explicit about what should be done if this happens.
             // For now we error out if DefaultMoveRate is equal to 0 as this is invalid
             // until spec defines a behaviour.
             if Some(0) == value.clone().into_option() {
-                return Err(ErrorCode::InvalidData.into());
+                break 'a Err(ErrorCode::InvalidData.into());
             }
 
             self.with_state_notify(ctx, |state| {
@@ -1444,9 +1445,10 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         &self,
         _ctx: impl ReadContext,
     ) -> impl Future<Output = Result<Nullable<u8>, Error>> {
-        delayed_ready(|| match self.hooks.start_up_current_level()? {
-            Some(val) => Ok(Nullable::some(val)),
-            None => Ok(Nullable::none()),
+        ready(match self.hooks.start_up_current_level() {
+            Ok(Some(val)) => Ok(Nullable::some(val)),
+            Ok(None) => Ok(Nullable::none()),
+            Err(e) => Err(e),
         })
     }
 
@@ -1455,18 +1457,22 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         ctx: impl WriteContext,
         value: Nullable<u8>,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
+        ready('a: {
             // According to the current spec, this attribute does not have any constraints at this stage.
             // However, it's usage is bounded by min/max hence it makes sense to restrict the settable values to this range.
             if let Some(level) = value.clone().into_option() {
                 if level > H::MAX_LEVEL || level < H::MIN_LEVEL {
-                    return Err(ErrorCode::ConstraintError.into());
+                    break 'a Err(ErrorCode::ConstraintError.into());
                 }
             }
 
-            self.hooks.set_start_up_current_level(value.into_option())?;
-            ctx.notify_changed();
-            Ok(())
+            match self.hooks.set_start_up_current_level(value.into_option()) {
+                Ok(()) => {
+                    ctx.notify_changed();
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
         })
     }
 
@@ -1475,13 +1481,29 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         _ctx: impl InvokeContext,
         request: MoveToLevelRequest<'_>,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
+        ready('a: {
+            let level = match request.level() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
+            let transition_time = match request.transition_time() {
+                Ok(v) => v.into_option(),
+                Err(e) => break 'a Err(e),
+            };
+            let options_mask = match request.options_mask() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
+            let options_override = match request.options_override() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
             self.move_to_level(
                 false,
-                request.level()?,
-                request.transition_time()?.into_option(),
-                request.options_mask()?,
-                request.options_override()?,
+                level,
+                transition_time,
+                options_mask,
+                options_override,
             )
         })
     }
@@ -1491,18 +1513,16 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         _ctx: impl InvokeContext,
         request: MoveRequest<'_>,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
-            self.with_state(|state| {
-                self.move_command(
-                    state,
-                    false,
-                    request.move_mode()?,
-                    request.rate()?.into_option(),
-                    request.options_mask()?,
-                    request.options_override()?,
-                )
-            })
-        })
+        ready(self.with_state(|state| {
+            self.move_command(
+                state,
+                false,
+                request.move_mode()?,
+                request.rate()?.into_option(),
+                request.options_mask()?,
+                request.options_override()?,
+            )
+        }))
     }
 
     fn handle_step(
@@ -1510,14 +1530,34 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         _ctx: impl InvokeContext,
         request: StepRequest<'_>,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
+        ready('a: {
+            let step_mode = match request.step_mode() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
+            let step_size = match request.step_size() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
+            let transition_time = match request.transition_time() {
+                Ok(v) => v.into_option(),
+                Err(e) => break 'a Err(e),
+            };
+            let options_mask = match request.options_mask() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
+            let options_override = match request.options_override() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
             self.step(
                 false,
-                request.step_mode()?,
-                request.step_size()?,
-                request.transition_time()?.into_option(),
-                request.options_mask()?,
-                request.options_override()?,
+                step_mode,
+                step_size,
+                transition_time,
+                options_mask,
+                options_override,
             )
         })
     }
@@ -1527,13 +1567,16 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         ctx: impl InvokeContext,
         request: StopRequest<'_>,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
-            self.stop(
-                &ctx,
-                false,
-                request.options_mask()?,
-                request.options_override()?,
-            )
+        ready('a: {
+            let options_mask = match request.options_mask() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
+            let options_override = match request.options_override() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
+            self.stop(&ctx, false, options_mask, options_override)
         })
     }
 
@@ -1542,14 +1585,24 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         _ctx: impl InvokeContext,
         request: MoveToLevelWithOnOffRequest<'_>,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
-            self.move_to_level(
-                true,
-                request.level()?,
-                request.transition_time()?.into_option(),
-                request.options_mask()?,
-                request.options_override()?,
-            )
+        ready('a: {
+            let level = match request.level() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
+            let transition_time = match request.transition_time() {
+                Ok(v) => v.into_option(),
+                Err(e) => break 'a Err(e),
+            };
+            let options_mask = match request.options_mask() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
+            let options_override = match request.options_override() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
+            self.move_to_level(true, level, transition_time, options_mask, options_override)
         })
     }
 
@@ -1558,18 +1611,16 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         _ctx: impl InvokeContext,
         request: MoveWithOnOffRequest<'_>,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
-            self.with_state(|state| {
-                self.move_command(
-                    state,
-                    true,
-                    request.move_mode()?,
-                    request.rate()?.into_option(),
-                    request.options_mask()?,
-                    request.options_override()?,
-                )
-            })
-        })
+        ready(self.with_state(|state| {
+            self.move_command(
+                state,
+                true,
+                request.move_mode()?,
+                request.rate()?.into_option(),
+                request.options_mask()?,
+                request.options_override()?,
+            )
+        }))
     }
 
     fn handle_step_with_on_off(
@@ -1577,14 +1628,34 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         _ctx: impl InvokeContext,
         request: StepWithOnOffRequest<'_>,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
+        ready('a: {
+            let step_mode = match request.step_mode() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
+            let step_size = match request.step_size() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
+            let transition_time = match request.transition_time() {
+                Ok(v) => v.into_option(),
+                Err(e) => break 'a Err(e),
+            };
+            let options_mask = match request.options_mask() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
+            let options_override = match request.options_override() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
             self.step(
                 true,
-                request.step_mode()?,
-                request.step_size()?,
-                request.transition_time()?.into_option(),
-                request.options_mask()?,
-                request.options_override()?,
+                step_mode,
+                step_size,
+                transition_time,
+                options_mask,
+                options_override,
             )
         })
     }
@@ -1594,13 +1665,16 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
         ctx: impl InvokeContext,
         request: StopWithOnOffRequest<'_>,
     ) -> impl Future<Output = Result<(), Error>> {
-        delayed_ready(move || {
-            self.stop(
-                &ctx,
-                true,
-                request.options_mask()?,
-                request.options_override()?,
-            )
+        ready('a: {
+            let options_mask = match request.options_mask() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
+            let options_override = match request.options_override() {
+                Ok(v) => v,
+                Err(e) => break 'a Err(e),
+            };
+            self.stop(&ctx, true, options_mask, options_override)
         })
     }
 

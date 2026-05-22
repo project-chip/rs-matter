@@ -1333,7 +1333,7 @@ macro_rules! handler_chain_type {
 }
 
 mod asynch {
-    use core::future::Future;
+    use core::future::{ready, Future};
     use core::pin::pin;
 
     use either::Either;
@@ -1341,7 +1341,6 @@ mod asynch {
 
     use crate::dm::{HandlerContext, InvokeReply, MatchContext, Matcher, ReadReply};
     use crate::error::{Error, ErrorCode};
-    use crate::utils::future::delayed_ready;
     use crate::utils::select::Coalesce;
 
     use super::{
@@ -1592,11 +1591,11 @@ mod asynch {
             ctx: impl ReadContext,
             reply: impl ReadReply,
         ) -> impl Future<Output = Result<(), Error>> {
-            delayed_ready(|| Handler::read(&self.0, ctx, reply))
+            ready(Handler::read(&self.0, ctx, reply))
         }
 
         fn write(&self, ctx: impl WriteContext) -> impl Future<Output = Result<(), Error>> {
-            delayed_ready(|| Handler::write(&self.0, ctx))
+            ready(Handler::write(&self.0, ctx))
         }
 
         fn invoke(
@@ -1604,7 +1603,7 @@ mod asynch {
             ctx: impl InvokeContext,
             reply: impl InvokeReply,
         ) -> impl Future<Output = Result<(), Error>> {
-            delayed_ready(|| Handler::invoke(&self.0, ctx, reply))
+            ready(Handler::invoke(&self.0, ctx, reply))
         }
 
         fn bump_dataver(&self, ctx: impl MatchContext) {

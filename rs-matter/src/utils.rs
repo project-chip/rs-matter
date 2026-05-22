@@ -19,7 +19,6 @@ pub mod bitflags;
 pub mod cell;
 pub mod codec;
 pub mod epoch;
-pub mod future;
 pub mod init;
 pub mod ipv6;
 pub mod iter;
