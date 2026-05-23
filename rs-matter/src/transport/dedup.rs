@@ -45,7 +45,7 @@ impl RxCtrState {
     /// The method will return `false` if the message is detected to be duplicate, and therefore,
     /// the RX state had not been updated.
     pub fn post_recv(&mut self, msg_ctr: u32, is_encrypted: bool) -> bool {
-        let idiff = (msg_ctr as i32) - (self.max_ctr as i32);
+        let idiff = (msg_ctr as i32).wrapping_sub(self.max_ctr as i32);
         let udiff = idiff.unsigned_abs();
 
         if msg_ctr == self.max_ctr {
