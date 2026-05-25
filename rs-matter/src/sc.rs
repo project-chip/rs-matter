@@ -97,8 +97,11 @@ pub enum SCStatusCodes {
 
 impl SCStatusCodes {
     pub fn reliable(&self) -> bool {
-        // CloseSession and Busy are sent without the R flag raised
-        !matches!(self, SCStatusCodes::CloseSession | SCStatusCodes::Busy)
+        // CloseSession, Busy and SessionNotFound are sent without the R flag raised
+        !matches!(
+            self,
+            SCStatusCodes::CloseSession | SCStatusCodes::Busy | SCStatusCodes::SessionNotFound
+        )
     }
 
     pub fn as_report<'a>(&self, payload: &'a [u8]) -> StatusReport<'a> {

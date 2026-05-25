@@ -337,6 +337,14 @@ impl Session {
                 Err(ErrorCode::NoExchange)?;
             }
 
+            if self.expired {
+                // Per Matter Core spec section 4.7.1.3, an expired session must not
+                // accept new inbound messages. Skipping expired sessions here lets the
+                // caller surface a `SessionNotFound` to the peer rather than running
+                // the request through ACL checks against a removed fabric.
+                Err(ErrorCode::NoSession)?;
+            }
+
             if let Some(exch_index) =
                 self.add_exch(rx_header.proto.exch_id, Role::Responder(Default::default()))
             {
@@ -1128,14 +1136,10 @@ impl Sessions {
         rx_peer: &Address,
         rx_plain: &PlainHdr,
     ) -> Option<&mut Session> {
-        // Per Matter Core spec section 4.7.1.3, an expired session must not
-        // accept new inbound messages. Skipping expired sessions here lets the
-        // caller surface a `SessionNotFound` to the peer rather than running
-        // the request through ACL checks against a removed fabric.
         let mut session = self
             .sessions
             .iter_mut()
-            .find(|sess| !sess.expired && sess.is_for_rx(rx_peer, rx_plain));
+            .find(|sess| sess.is_for_rx(rx_peer, rx_plain));
 
         if let Some(session) = session.as_mut() {
             session.update_last_used();
