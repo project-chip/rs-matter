@@ -25,7 +25,7 @@ pub struct RxCtrState {
 }
 
 impl RxCtrState {
-    pub fn new(max_ctr: u32) -> Self {
+    pub const fn new(max_ctr: u32) -> Self {
         Self {
             max_ctr,
             ctr_bitmap: 0xffff,
@@ -40,18 +40,34 @@ impl RxCtrState {
         self.ctr_bitmap |= 1 << bit_number;
     }
 
-    /// Receive a message and update RX state accordingly
+    /// Receive a message and update RX state accordingly.
     ///
     /// The method will return `false` if the message is detected to be duplicate, and therefore,
     /// the RX state had not been updated.
-    pub fn post_recv(&mut self, msg_ctr: u32, is_encrypted: bool) -> bool {
-        let idiff = (msg_ctr as i32) - (self.max_ctr as i32);
-        let udiff = idiff.unsigned_abs();
-
+    ///
+    /// `with_rollover` selects how "forward" vs "behind" is computed:
+    /// - `false` (unicast): plain numeric comparison —
+    ///   the counter is monotonic and does not roll over within a session.
+    /// - `true` (group): modular comparison — a counter is forward
+    ///   iff `(msg_ctr - max_ctr) mod 2^32` falls in `[1, 2^31 - 1]`, otherwise behind.
+    pub fn post_recv(&mut self, msg_ctr: u32, is_encrypted: bool, with_rollover: bool) -> bool {
         if msg_ctr == self.max_ctr {
             // Duplicate
-            false
-        } else if (-(MSG_RX_STATE_BITMAP_LEN as i32)..0).contains(&idiff) {
+            return false;
+        }
+
+        let (is_forward, udiff) = if with_rollover {
+            let fwd = msg_ctr.wrapping_sub(self.max_ctr);
+            if fwd <= i32::MAX as u32 {
+                (true, fwd)
+            } else {
+                (false, self.max_ctr.wrapping_sub(msg_ctr))
+            }
+        } else {
+            (msg_ctr > self.max_ctr, msg_ctr.abs_diff(self.max_ctr))
+        };
+
+        if !is_forward && udiff <= MSG_RX_STATE_BITMAP_LEN {
             // In Rx Bitmap
             let index = udiff - 1;
             if self.contains(index) {
@@ -64,7 +80,7 @@ impl RxCtrState {
         }
         // Now the leftover cases are the new counter is outside of the bitmap as well as max_ctr
         // in either direction. Encrypted only allows in forward direction
-        else if msg_ctr > self.max_ctr {
+        else if is_forward {
             self.max_ctr = msg_ctr;
             if udiff < MSG_RX_STATE_BITMAP_LEN {
                 // The previous max_ctr is now the actual counter
@@ -130,8 +146,8 @@ impl GroupCtrStore {
         for entry in &mut self.entries {
             if entry.fab_idx == fab_idx && entry.src_nodeid == src_nodeid {
                 entry.last_used = self.clock;
-                // Group messages are always encrypted
-                return entry.rx_ctr.post_recv(msg_ctr, true);
+                // Group messages are always encrypted and use a rollover counter
+                return entry.rx_ctr.post_recv(msg_ctr, true, true);
             }
         }
 
@@ -181,16 +197,16 @@ mod tests {
     fn new_msg_ctr() {
         let mut s = RxCtrState::new(101);
 
-        assert_ndup(s.post_recv(103, ENCRYPTED));
-        assert_ndup(s.post_recv(104, ENCRYPTED));
-        assert_ndup(s.post_recv(106, ENCRYPTED));
+        assert_ndup(s.post_recv(103, ENCRYPTED, false));
+        assert_ndup(s.post_recv(104, ENCRYPTED, false));
+        assert_ndup(s.post_recv(106, ENCRYPTED, false));
         assert_eq!(s.max_ctr, 106);
         assert_eq!(s.ctr_bitmap, 0b1111_1111_1111_0110);
 
-        assert_ndup(s.post_recv(118, NOT_ENCRYPTED));
+        assert_ndup(s.post_recv(118, NOT_ENCRYPTED, false));
         assert_eq!(s.ctr_bitmap, 0b0110_1000_0000_0000);
-        assert_ndup(s.post_recv(119, NOT_ENCRYPTED));
-        assert_ndup(s.post_recv(121, NOT_ENCRYPTED));
+        assert_ndup(s.post_recv(119, NOT_ENCRYPTED, false));
+        assert_ndup(s.post_recv(121, NOT_ENCRYPTED, false));
         assert_eq!(s.ctr_bitmap, 0b0100_0000_0000_0110);
     }
 
@@ -198,9 +214,9 @@ mod tests {
     fn dup_max_ctr() {
         let mut s = RxCtrState::new(101);
 
-        assert_ndup(s.post_recv(103, ENCRYPTED));
-        assert_dup(s.post_recv(103, ENCRYPTED));
-        assert_dup(s.post_recv(103, NOT_ENCRYPTED));
+        assert_ndup(s.post_recv(103, ENCRYPTED, false));
+        assert_dup(s.post_recv(103, ENCRYPTED, false));
+        assert_dup(s.post_recv(103, NOT_ENCRYPTED, false));
 
         assert_eq!(s.max_ctr, 103);
         assert_eq!(s.ctr_bitmap, 0b1111_1111_1111_1110);
@@ -212,24 +228,24 @@ mod tests {
         let mut s = RxCtrState::new(101);
         for _ in 1..8 {
             ctr += 2;
-            assert_ndup(s.post_recv(ctr, ENCRYPTED));
+            assert_ndup(s.post_recv(ctr, ENCRYPTED, false));
         }
-        assert_ndup(s.post_recv(116, ENCRYPTED));
-        assert_ndup(s.post_recv(117, ENCRYPTED));
+        assert_ndup(s.post_recv(116, ENCRYPTED, false));
+        assert_ndup(s.post_recv(117, ENCRYPTED, false));
         assert_eq!(s.max_ctr, 117);
         assert_eq!(s.ctr_bitmap, 0b1010_1010_1010_1011);
 
         // duplicate on the left corner
-        assert_dup(s.post_recv(101, ENCRYPTED));
-        assert_dup(s.post_recv(101, NOT_ENCRYPTED));
+        assert_dup(s.post_recv(101, ENCRYPTED, false));
+        assert_dup(s.post_recv(101, NOT_ENCRYPTED, false));
 
         // duplicate on the right corner
-        assert_dup(s.post_recv(116, ENCRYPTED));
-        assert_dup(s.post_recv(116, NOT_ENCRYPTED));
+        assert_dup(s.post_recv(116, ENCRYPTED, false));
+        assert_dup(s.post_recv(116, NOT_ENCRYPTED, false));
 
         // valid insert
-        assert_ndup(s.post_recv(102, ENCRYPTED));
-        assert_dup(s.post_recv(102, ENCRYPTED));
+        assert_ndup(s.post_recv(102, ENCRYPTED, false));
+        assert_dup(s.post_recv(102, ENCRYPTED, false));
         assert_eq!(s.ctr_bitmap, 0b1110_1010_1010_1011);
     }
 
@@ -239,35 +255,46 @@ mod tests {
         let mut s = RxCtrState::new(101);
         for _ in 1..9 {
             ctr += 2;
-            assert_ndup(s.post_recv(ctr, ENCRYPTED));
+            assert_ndup(s.post_recv(ctr, ENCRYPTED, false));
         }
         assert_eq!(s.max_ctr, 118);
         assert_eq!(s.ctr_bitmap, 0b0010_1010_1010_1010);
 
         // valid insert on the left corner
-        assert_ndup(s.post_recv(102, ENCRYPTED));
+        assert_ndup(s.post_recv(102, ENCRYPTED, false));
         assert_eq!(s.ctr_bitmap, 0b1010_1010_1010_1010);
 
         // valid insert on the right corner
-        assert_ndup(s.post_recv(117, ENCRYPTED));
+        assert_ndup(s.post_recv(117, ENCRYPTED, false));
         assert_eq!(s.ctr_bitmap, 0b1010_1010_1010_1011);
+    }
+
+    #[test]
+    fn no_panic_on_large_diff() {
+        // Regression: previously `(msg_ctr as i32) - (max as i32)` overflowed in
+        // debug when one side was around `i32::MIN as u32`.
+        let mut s = RxCtrState::new(1);
+        assert_ndup(s.post_recv(0x8000_0000, ENCRYPTED, false));
+
+        let mut s = RxCtrState::new(0x8000_0000);
+        assert_dup(s.post_recv(1, ENCRYPTED, false));
     }
 
     #[test]
     fn encrypted_wraparound() {
         let mut s = RxCtrState::new(65534);
 
-        assert_ndup(s.post_recv(65535, ENCRYPTED));
-        assert_ndup(s.post_recv(65536, ENCRYPTED));
-        assert_dup(s.post_recv(0, ENCRYPTED));
+        assert_ndup(s.post_recv(65535, ENCRYPTED, false));
+        assert_ndup(s.post_recv(65536, ENCRYPTED, false));
+        assert_dup(s.post_recv(0, ENCRYPTED, false));
     }
 
     #[test]
     fn unencrypted_wraparound() {
         let mut s = RxCtrState::new(65534);
 
-        assert_ndup(s.post_recv(65536, NOT_ENCRYPTED));
-        assert_ndup(s.post_recv(0, NOT_ENCRYPTED));
+        assert_ndup(s.post_recv(65536, NOT_ENCRYPTED, false));
+        assert_ndup(s.post_recv(0, NOT_ENCRYPTED, false));
     }
 
     #[test]
@@ -278,8 +305,8 @@ mod tests {
         info!("Sub regular is {:?}", 2000_u16.overflowing_sub(1998));
         let mut s = RxCtrState::new(20010);
 
-        assert_ndup(s.post_recv(20011, NOT_ENCRYPTED));
-        assert_ndup(s.post_recv(0, NOT_ENCRYPTED));
+        assert_ndup(s.post_recv(20011, NOT_ENCRYPTED, false));
+        assert_ndup(s.post_recv(0, NOT_ENCRYPTED, false));
     }
 
     mod group_ctr {
@@ -312,6 +339,52 @@ mod tests {
             assert!(store.post_recv(1, 0x1111, 100));
             assert!(store.post_recv(1, 0x2222, 100)); // different src_nodeid
             assert!(store.post_recv(2, 0x1111, 100)); // different fab_idx
+        }
+
+        #[test]
+        fn rollover_accepts_counter_past_u32_max() {
+            // Spec §4.6.5.2.2: forward iff (msg - max) mod 2^32 in [1, 2^31 - 1].
+            // max near u32::MAX, msg just past zero is still forward.
+            let mut store = GroupCtrStore::new();
+            assert!(store.post_recv(1, 0x1111, u32::MAX - 1));
+            assert!(store.post_recv(1, 0x1111, u32::MAX));
+            assert!(store.post_recv(1, 0x1111, 0)); // rolls over
+            assert!(store.post_recv(1, 0x1111, 5));
+            assert!(!store.post_recv(1, 0x1111, 5)); // duplicate after rollover
+        }
+
+        #[test]
+        fn rollover_rejects_behind_window_as_replay() {
+            // After advancing past rollover, a counter that is "behind" in the
+            // modular sense (e.g. the previous max) is a replay → reject.
+            let mut store = GroupCtrStore::new();
+            assert!(store.post_recv(1, 0x1111, u32::MAX - 10));
+            assert!(store.post_recv(1, 0x1111, 100)); // forward by 111 across rollover
+                                                      // u32::MAX - 10 is now behind by 111 (mod 2^32), outside bitmap → duplicate.
+            assert!(!store.post_recv(1, 0x1111, u32::MAX - 10));
+        }
+
+        #[test]
+        fn rollover_bitmap_window_across_boundary() {
+            // Bitmap should still catch duplicates when the window straddles
+            // the u32 rollover boundary.
+            let mut store = GroupCtrStore::new();
+            assert!(store.post_recv(1, 0x1111, u32::MAX - 5));
+            assert!(store.post_recv(1, 0x1111, 2)); // max is now 2; old max is 8 behind (within bitmap)
+                                                    // Counter u32::MAX - 5 is within the new bitmap (8 behind, mod 2^32) and seen → duplicate.
+            assert!(!store.post_recv(1, 0x1111, u32::MAX - 5));
+            // A neighbouring counter within window that was NOT seen → accepted.
+            assert!(store.post_recv(1, 0x1111, u32::MAX - 4));
+        }
+
+        #[test]
+        fn rollover_antipode_is_behind() {
+            // Spec puts max + 2^31 exactly into the "behind" half-space.
+            let mut store = GroupCtrStore::new();
+            assert!(store.post_recv(1, 0x1111, 100));
+            // 100 + 0x8000_0000 is at the antipode → behind by 2^31, far outside
+            // the bitmap → duplicate.
+            assert!(!store.post_recv(1, 0x1111, 100u32.wrapping_add(0x8000_0000)));
         }
 
         #[test]
