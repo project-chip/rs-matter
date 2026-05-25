@@ -315,7 +315,7 @@ impl Session {
     pub(crate) fn post_recv(&mut self, rx_header: &PacketHdr) -> Result<bool, Error> {
         if !self
             .rx_ctr_state
-            .post_recv(rx_header.plain.ctr, self.is_encrypted())
+            .post_recv(rx_header.plain.ctr, self.is_encrypted(), false)
         {
             Err(ErrorCode::Duplicate)?;
         }
