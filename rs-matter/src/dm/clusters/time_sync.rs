@@ -74,6 +74,54 @@ pub use crate::dm::clusters::decl::time_synchronization::*;
 
 pub mod client;
 
+/// An enum describing the current UTC timestamp the real-time clock is aware of.
+///
+/// The timestamp is expressed as Matter-epoch microseconds.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum UtcTime {
+    /// The RTC is actively tracking the current time, anchored at the given Matter-epoch microseconds value.
+    Reliable(u64),
+    /// The RTC is not currently tracking the current time, but the given Matter-epoch microseconds value is
+    /// the last known good UTC time persisted on the device.
+    ///
+    /// Do note that a "last known" time is always available, as the firmware build timestamp is used as the
+    /// initial value on a freshly-flashed device.
+    LastKnown(u64),
+}
+
+impl UtcTime {
+    /// Return the current UTC time if available, or `None` if no reliable time is currently tracked.
+    pub const fn reliable(&self) -> Option<u64> {
+        match self {
+            UtcTime::Reliable(utc) => Some(*utc),
+            UtcTime::LastKnown(_) => None,
+        }
+    }
+
+    /// Return the current UTC time if available, or the persisted LKG UTC otherwise.
+    pub const fn any(&self) -> u64 {
+        match self {
+            UtcTime::Reliable(utc) | UtcTime::LastKnown(utc) => *utc,
+        }
+    }
+
+    /// Return the current UTC time in seconds if available, or `None` if no reliable time is currently tracked.
+    pub const fn reliable_secs(&self) -> Option<u64> {
+        match self {
+            UtcTime::Reliable(utc) => Some(*utc / 1_000_000),
+            UtcTime::LastKnown(_) => None,
+        }
+    }
+
+    /// Return the current UTC time in seconds if available, or the persisted LKG UTC otherwise.
+    pub const fn any_secs(&self) -> u64 {
+        match self {
+            UtcTime::Reliable(utc) | UtcTime::LastKnown(utc) => *utc / 1_000_000,
+        }
+    }
+}
+
 /// Last-Known-Good UTC Time tracking for the device (Matter Core spec
 /// §3.5.6.1).
 ///
@@ -256,42 +304,18 @@ impl Rtc {
         Ok(())
     }
 
-    /// Return the persisted Last-Known-Good UTC Time as Matter-epoch
-    /// microseconds (Matter Core spec §3.5.6.1).
-    ///
-    /// This value is always defined — seeded from
-    /// [`crate::utils::epoch::FIRMWARE_BUILD_MATTER_US`] on first
-    /// boot, persisted across reboots, and updated on every
-    /// [`Self::set_utc_time`] call. It is the time source consulted by
-    /// rs-matter's cert path validation, the NOC attestation
-    /// timestamp, and the TimeSync cluster's mandatory members.
-    pub fn last_known_utc_time(&self) -> u64 {
-        self.utc_us
-    }
+    /// Return the current UTC time if available, or the persisted Last-Known-Good UTC Time otherwise.
+    pub fn utc_time(&self) -> UtcTime {
+        if let Some(anchor) = self.anchor {
+            let elapsed_us = embassy_time::Instant::now()
+                .checked_duration_since(anchor)
+                .map(|d| d.as_micros())
+                .unwrap_or(0);
 
-    /// Return the current UTC time as Matter-epoch microseconds —
-    /// `Some(utc)` if [`Self::set_utc_time`] has been called since
-    /// boot (advancing monotonically via [`embassy_time::Instant`]
-    /// from the captured anchor), or `None` if no current-time
-    /// tracking is currently active.
-    ///
-    /// Note that even when this returns `None`,
-    /// [`Self::last_known_utc_time`] still carries the persisted
-    /// LKG value usable as a cert-validity lower bound per spec
-    /// §3.5.6.
-    pub fn utc_time(&self) -> Option<u64> {
-        let anchor = self.anchor?;
-        let elapsed_us = embassy_time::Instant::now()
-            .checked_duration_since(anchor)
-            .map(|d| d.as_micros())
-            .unwrap_or(0);
-
-        Some(self.utc_us.saturating_add(elapsed_us))
-    }
-
-    /// Return the current UTC time if available, or the persisted LKG UTC otherwise.
-    pub fn utc_time_best_effort(&self) -> u64 {
-        self.utc_time().unwrap_or(self.utc_us)
+            UtcTime::Reliable(self.utc_us.saturating_add(elapsed_us))
+        } else {
+            UtcTime::LastKnown(self.utc_us)
+        }
     }
 
     /// Return the Granularity reported on the wire for the TimeSync
@@ -871,12 +895,11 @@ impl ClusterHandler for TimeSyncHandler<'_> {
     // from the user-supplied `TimeSync` provider).
 
     fn utc_time(&self, ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
-        Ok(
-            match ctx.matter().with_state(|state| state.rtc.utc_time()) {
-                Some(us) => Nullable::some(us),
-                None => Nullable::none(),
-            },
-        )
+        Ok(Nullable::new(
+            ctx.matter()
+                .with_state(|state| state.rtc.utc_time())
+                .reliable(),
+        ))
     }
 
     fn granularity(&self, ctx: impl ReadContext) -> Result<GranularityEnum, Error> {

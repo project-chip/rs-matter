@@ -321,7 +321,7 @@ impl ClusterHandler for NocHandler {
             // `SetUTCTime` yet, this is the firmware build timestamp.
             // Read directly from the already-held `state` — re-entering
             // `Matter::with_state` here would deadlock the inner mutex.
-            let epoch = (state.rtc.last_known_utc_time() / 1_000_000) as u32;
+            let epoch = state.rtc.utc_time().any_secs() as u32;
 
             let mut signature = MaybeUninit::uninit();
             let signature = signature.init_with(CanonPkcSignature::init()); // TODO MEDIUM BUFFER
@@ -501,12 +501,11 @@ impl ClusterHandler for NocHandler {
         let status = NodeOperationalCertStatusEnum::map(GenCommHandler::with_armed_failsafe(
             &ctx,
             |state, mut notify_mdns| {
-                let lkg_utc_secs = state.rtc.utc_time_best_effort() / 1_000_000;
                 let sess = ctx.exchange().id().session(&mut state.sessions);
 
                 let fabric = state.failsafe.add_noc(
                     ctx.crypto(),
-                    lkg_utc_secs,
+                    state.rtc.utc_time(),
                     &mut state.fabrics,
                     sess.get_session_mode(),
                     request.admin_vendor_id()?,
@@ -592,12 +591,11 @@ impl ClusterHandler for NocHandler {
         let status = NodeOperationalCertStatusEnum::map(GenCommHandler::with_armed_failsafe(
             &ctx,
             |state, notify_mdns| {
-                let lkg_utc_secs = state.rtc.utc_time_best_effort() / 1_000_000;
                 let sess = ctx.exchange().id().session(&mut state.sessions);
 
                 state.failsafe.update_noc(
                     ctx.crypto(),
-                    lkg_utc_secs,
+                    state.rtc.utc_time(),
                     &mut state.fabrics,
                     sess.get_session_mode(),
                     icac,
@@ -775,12 +773,11 @@ impl ClusterHandler for NocHandler {
         let mut buf = [0u8; crate::cert::MAX_CERT_ASN1_LEN];
 
         GenCommHandler::with_armed_failsafe(&ctx, |state, _| {
-            let lkg_utc_secs = state.rtc.utc_time_best_effort() / 1_000_000;
             let sess = ctx.exchange().id().session(&mut state.sessions);
 
             state.failsafe.add_trusted_root_cert(
                 ctx.crypto(),
-                lkg_utc_secs,
+                state.rtc.utc_time(),
                 sess.get_session_mode(),
                 request.root_ca_certificate()?.0,
                 &mut buf,

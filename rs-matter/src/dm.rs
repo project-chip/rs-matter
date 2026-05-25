@@ -36,7 +36,9 @@ use crate::im::{
 use crate::persist::KvBlobStoreAccess;
 use crate::respond::ExchangeHandler;
 use crate::tlv::{get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV};
-use crate::transport::exchange::{Exchange, MAX_EXCHANGE_RX_BUF_SIZE, MAX_EXCHANGE_TX_BUF_SIZE};
+use crate::transport::exchange::{
+    Exchange, ExchangeId, MAX_EXCHANGE_RX_BUF_SIZE, MAX_EXCHANGE_TX_BUF_SIZE,
+};
 use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::BufferAccess;
 use crate::utils::storage::WriteBuf;
@@ -206,22 +208,30 @@ where
         loop {
             Timer::after_secs(CHECK_INTERVAL_SECS).await;
 
-            self.check_timeouts()?;
+            self.check_timeouts(None)?;
         }
     }
 
-    fn check_timeouts(&self) -> Result<(), Error> {
+    fn check_timeouts(&self, exch_id: Option<ExchangeId>) -> Result<(), Error> {
         let mut notify_mdns = || self.matter.notify_mdns_changed();
         let mut notify_change =
             |endpt_id, clust_id| self.notify_cluster_changed(endpt_id, clust_id);
 
         self.matter.with_state(|state| {
+            let expire_sess_id = exch_id.and_then(|exch_id| {
+                state
+                    .sessions
+                    .get(exch_id.session_id())
+                    .map(|sess| sess.id())
+            });
+
             // Disarm the failsafe on timeout
             state.failsafe.check_failsafe_timeout(
                 &mut state.fabrics,
                 &mut state.sessions,
                 &self.networks,
                 &self.kv,
+                expire_sess_id,
                 &mut notify_mdns,
                 &mut notify_change,
             )?;
@@ -265,7 +275,7 @@ where
             None
         };
 
-        self.check_timeouts()?;
+        self.check_timeouts(Some(exchange.id()))?;
 
         // TODO: Handle the cases where we receive a timeout request
         // before read and subscribe. This is probably not allowed.

@@ -25,6 +25,7 @@ use crate::crypto::{
     AEAD_CANON_KEY_LEN, AEAD_KEY_ZEROED, AEAD_TAG_LEN, AEAD_TAG_ZEROED, HASH_LEN, HASH_ZEROED,
     PKC_CANON_PUBLIC_KEY_LEN, PKC_PUBLIC_KEY_ZEROED, PKC_SHARED_SECRET_ZEROED,
 };
+use crate::dm::clusters::time_sync::UtcTime;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::Fabric;
 use crate::tlv::{Optional, TLVElement, TLVTag, TLVWrite};
@@ -424,6 +425,8 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
     /// Validate the certificate chain
     ///
     /// # Arguments
+    /// - `crypto` - The crypto provider
+    /// - `time` - The current UTC time for validating certificate validity periods
     /// - `fabric` - The local fabric
     /// - `noc` - The Node Operational Certificate
     /// - `icac` - The Intermediate Certificate Authority Certificate (optional)
@@ -435,17 +438,13 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
     pub fn validate_certs(
         &self,
         crypto: &C,
-        lkg_utc_secs: u64,
+        time: UtcTime,
         fabric: &Fabric,
         noc: &CertRef,
         icac: Option<&CertRef>,
         tmp_buf: &mut [u8],
     ) -> Result<(), Error> {
-        // Validate the NOC chain (signatures + `NotBefore` / `NotAfter`
-        // against the device's Last-Known-Good UTC Time, per Matter Core
-        // spec §3.5.6). Callers snapshot `lkg_utc_secs` from
-        // `Matter::last_known_utc_time` and divide by 1_000_000.
-        let mut verifier = noc.verify_chain_start(crypto, lkg_utc_secs);
+        let mut verifier = noc.verify_chain_start(crypto, time);
 
         if fabric.fabric_id() != noc.get_fabric_id()? {
             Err(ErrorCode::Invalid)?;

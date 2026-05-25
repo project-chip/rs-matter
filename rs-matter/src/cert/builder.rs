@@ -608,6 +608,7 @@ mod tests {
     use crate::{
         cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN},
         crypto::{test_only_crypto, CanonPkcPublicKey, PublicKey, SigningSecretKey},
+        dm::clusters::time_sync::UtcTime,
     };
 
     use super::*;
@@ -711,7 +712,10 @@ mod tests {
         let cert = CertRef::new(crate::tlv::TLVElement::new(&cert_buf[..len]));
         let mut scratch = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
         let res = cert
-            .verify_chain_start(&crypto, VALID_FOREVER.not_before as _)
+            .verify_chain_start(
+                &crypto,
+                UtcTime::Reliable(VALID_FOREVER.not_before as u64 * 1_000_000),
+            )
             .finalise(&mut scratch);
         assert!(
             res.is_ok(),
