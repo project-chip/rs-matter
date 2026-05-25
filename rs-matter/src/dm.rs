@@ -19,7 +19,7 @@ use core::future::Future;
 use core::num::NonZeroU8;
 use core::pin::pin;
 
-use embassy_futures::select::select3;
+use embassy_futures::select::{select, select3};
 use embassy_time::{Instant, Timer};
 
 use crate::acl::Accessor;
@@ -551,6 +551,12 @@ where
             rctx.set_keep();
 
             info!("Subscription {:?} primed", rctx.subscription().ids());
+
+            // Commit the subscription into the table now (its `report_complete`
+            // runs on `Drop`) and then wake the reporter so it can account for
+            // the new subscription's deadline.
+            drop(rctx);
+            self.subscriptions.notification.notify();
         }
 
         Ok(())
@@ -615,12 +621,27 @@ where
     /// and reporting them to the peers.
     async fn process_subscriptions(&self, matter: &Matter<'_>) -> Result<(), Error> {
         loop {
-            // TODO: Un-hardcode these 4 seconds of waiting when the more precise change detection logic is implemented
-            let mut timeout = pin!(Timer::after(embassy_time::Duration::from_secs(4)));
+            // Sleep until the soonest subscription deadline: the end of a
+            // `min_int` quiet period for a subscription holding back a change,
+            // or the chosen liveness wake point. A change, event, removal, a torn
+            // down session, or a newly accepted subscription (the accept path
+            // notifies) all wake the loop early. With no subscription there is
+            // no deadline, so just wait to be notified.
             let mut notification = pin!(self.subscriptions.notification.wait());
             let mut session_removed = pin!(matter.session_removed.wait());
 
-            select3(&mut notification, &mut timeout, &mut session_removed).await;
+            match self
+                .subscriptions
+                .next_report_at(self.events.watermark(), &self.subscriptions_buffers)
+            {
+                Some(deadline) => {
+                    let mut timeout = pin!(Timer::at(deadline));
+                    select3(&mut notification, &mut timeout, &mut session_removed).await;
+                }
+                None => {
+                    select(&mut notification, &mut session_removed).await;
+                }
+            }
 
             let now = Instant::now();
 
