@@ -23,6 +23,7 @@ use core::net::{Ipv4Addr, Ipv6Addr};
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{Nullable, Octets, TLVBuilder, TLVBuilderParent};
+use crate::utils::epoch::MATTER_EPOCH_SECS;
 use crate::utils::sync::DynBase;
 use crate::with;
 
@@ -297,13 +298,13 @@ impl ClusterHandler for GenDiagHandler<'_> {
         // (we do) or when its `UTCTime` attribute is null. We read the
         // Matter-wide current UTC time directly from `Matter::utc_time`
         // and convert (Matter-epoch microseconds) → POSIX-epoch ms.
-        let posix_time_ms = match ctx.matter().with_state(|state| state.rtc.utc_time()) {
-            Some(utc_us) => Nullable::some(
-                (utc_us / 1000)
-                    .saturating_add(crate::utils::epoch::MATTER_EPOCH_SECS.saturating_mul(1000)),
-            ),
-            None => Nullable::none(),
-        };
+        let posix_time_ms = Nullable::new(
+            ctx.matter()
+                .with_state(|state| state.rtc.utc_time())
+                .reliable()
+                .map(|us| us / 1000)
+                .map(|ms| ms.saturating_add(MATTER_EPOCH_SECS.saturating_mul(1000))),
+        );
 
         response
             .system_time_ms(system_time_ms)?

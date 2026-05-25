@@ -35,14 +35,14 @@
 /// Matter epoch (2000-01-01T00:00:00Z UTC). Add this constant to a
 /// Matter-epoch value to get a UNIX-epoch value, or subtract it from
 /// a UNIX-epoch value to get a Matter-epoch value.
-pub const MATTER_EPOCH_SECS: u64 = 946684800;
+pub const MATTER_EPOCH_SECS: u64 = 946_684_800;
 
 /// Matter-epoch value used in cert `NotAfter` fields to mean "no
 /// expiration" — corresponds to the X.509 `99991231235959Z`
 /// generalized-time sentinel translated to Matter-epoch seconds.
 ///
 /// `MATTER_CERT_DOESNT_EXPIRE = epoch(99991231235959Z) - MATTER_EPOCH_SECS`.
-pub const MATTER_CERT_DOESNT_EXPIRE: u64 = 252455615999;
+pub const MATTER_CERT_DOESNT_EXPIRE: u64 = 252_455_615_999;
 
 // Pulls in `pub const FIRMWARE_BUILD_MATTER_US: u64 = …;` written by
 // `build.rs`. Used by `MatterState::LkgUtc` as the seed value for the

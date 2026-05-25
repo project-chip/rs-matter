@@ -25,6 +25,7 @@ use crate::crypto::{
     SigningSecretKey, PKC_SECRET_KEY_ZEROED,
 };
 use crate::dm::clusters::net_comm::NetworksAccess;
+use crate::dm::clusters::time_sync::UtcTime;
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{ClusterId, EndptId};
 use crate::error::{Error, ErrorCode};
@@ -119,12 +120,14 @@ impl FailSafe {
     ///
     /// This should be called periodically to ensure that the fail-safe state is updated in a timely manner.
     /// Ideally, it should also be called at the beginning of any API that requires the fail-safe to be armed to ensure that the state is up to date.
+    #[allow(clippy::too_many_arguments)]
     pub fn check_failsafe_timeout<S, N>(
         &mut self,
         fabrics: &mut Fabrics,
         sessions: &mut crate::transport::session::Sessions,
         networks: N,
         kv: S,
+        expire_sess_id: Option<u32>,
         mdns_notif: impl FnMut(),
         notify_change: impl FnMut(EndptId, ClusterId),
     ) -> Result<bool, Error>
@@ -145,7 +148,7 @@ impl FailSafe {
                 self.expire(
                     fabrics,
                     sessions,
-                    None,
+                    expire_sess_id,
                     networks,
                     kv,
                     mdns_notif,
@@ -402,7 +405,7 @@ impl FailSafe {
     pub fn add_trusted_root_cert<C: Crypto>(
         &mut self,
         crypto: C,
-        lkg_utc_secs: u64,
+        time: UtcTime,
         session_mode: &SessionMode,
         root_ca: &[u8],
         buf: &mut [u8],
@@ -423,7 +426,7 @@ impl FailSafe {
         {
             let root_ref = CertRef::new(TLVElement::new(root_ca));
             root_ref
-                .verify_chain_start(&crypto, lkg_utc_secs)
+                .verify_chain_start(&crypto, time)
                 .finalise(buf)
                 .map_err(|_| ErrorCode::InvalidCommand)?;
         }
@@ -486,7 +489,7 @@ impl FailSafe {
     pub fn update_noc<'a, C: Crypto>(
         &mut self,
         crypto: C,
-        lkg_utc_secs: u64,
+        time: UtcTime,
         fabrics: &'a mut Fabrics,
         session_mode: &SessionMode,
         icac: Option<&[u8]>,
@@ -527,15 +530,8 @@ impl FailSafe {
             // signature verification (or that doesn't chain back to the
             // staged root) is reported as `kInvalidNOC` cluster status per
             // Matter Core spec section 11.18.6.7 (`UpdateNOC`).
-            Self::validate_certs(
-                &crypto,
-                lkg_utc_secs,
-                &noc_ref,
-                icac_ref.as_ref(),
-                &root_ref,
-                buf,
-            )
-            .map_err(|_| ErrorCode::NocInvalidNoc)?;
+            Self::validate_certs(&crypto, time, &noc_ref, icac_ref.as_ref(), &root_ref, buf)
+                .map_err(|_| ErrorCode::NocInvalidNoc)?;
 
             // The NOC's public key must match the public key derived from
             // the most recent `CSRRequest(isForUpdateNOC=true)` (Matter
@@ -590,7 +586,7 @@ impl FailSafe {
     pub fn add_noc<'a, C: Crypto>(
         &mut self,
         crypto: C,
-        lkg_utc_secs: u64,
+        time: UtcTime,
         fabrics: &'a mut Fabrics,
         session_mode: &SessionMode,
         vendor_id: u16,
@@ -625,15 +621,8 @@ impl FailSafe {
             // signature verification (or that doesn't chain back to the
             // staged root) is reported as `kInvalidNOC` cluster status per
             // Matter Core spec section 11.18.6.6 (`AddNOC`).
-            Self::validate_certs(
-                &crypto,
-                lkg_utc_secs,
-                &noc_ref,
-                icac_ref.as_ref(),
-                &root_ref,
-                buf,
-            )
-            .map_err(|_| ErrorCode::NocInvalidNoc)?;
+            Self::validate_certs(&crypto, time, &noc_ref, icac_ref.as_ref(), &root_ref, buf)
+                .map_err(|_| ErrorCode::NocInvalidNoc)?;
 
             // The NOC's public key must match the public key derived from
             // the most recent `CSRRequest` (Matter Core spec section
@@ -717,13 +706,13 @@ impl FailSafe {
     #[allow(clippy::too_many_arguments)]
     fn validate_certs<C: Crypto>(
         crypto: C,
-        lkg_utc_secs: u64,
+        time: UtcTime,
         noc: &CertRef,
         icac: Option<&CertRef>,
         root: &CertRef,
         buf: &mut [u8],
     ) -> Result<(), Error> {
-        let mut verifier = noc.verify_chain_start(crypto, lkg_utc_secs);
+        let mut verifier = noc.verify_chain_start(crypto, time);
 
         if let Some(icac) = icac {
             // If ICAC is present handle it. Reject the case where the
