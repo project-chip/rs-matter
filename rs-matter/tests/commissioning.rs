@@ -295,35 +295,31 @@ async fn run_controller_flow<C: Crypto>(
     info!("=== Phase 2: PASE Session Establishment ===");
     establish_pase_session(matter, crypto, peer_addr, TEST_PASSCODE).await?;
 
-    info!("=== Phase 3: Commissioner::commission() ===");
-    test_commission(matter, crypto).await?;
+    info!("=== Phase 3: Commissioner — commission() + complete_via_case() ===");
+    let (controller_fab_idx, device_node_id) = test_commission(matter, crypto, peer_addr).await?;
 
-    // Cherry on top: after `AddNOC` the device-side responder upgrades
-    // the PASE session's `fab_idx` to the newly-installed fabric and
-    // seeds the admin ACL entry for our controller. The (formerly-PASE)
-    // session is now fabric-scoped, so a fabric-only cluster like OnOff
-    // becomes reachable — exercising both that the session upgrade
-    // happened on the device, and that the operational ACL grants we
-    // bootstrapped via `AddNOC.CaseAdminSubject` actually authorise the
-    // controller's NodeId. (Phase 2 / CASE will eventually replace this
-    // session with a real CASE session before `CommissioningComplete`.)
-    info!("=== Phase 4: IM Operations against the commissioned device ===");
-    test_onoff_cluster(matter).await?;
+    // Cherry on top: after `CommissioningComplete` the device has
+    // committed our fabric, torn down PASE, and the only authenticated
+    // channel to it is the CASE session we just established. Open a
+    // fresh CASE-secured exchange (via `Exchange::initiate(matter,
+    // controller_fab_idx, device_node_id, secure=true)`) and exercise
+    // OnOff over it — proving the whole pipe end-to-end.
+    info!("=== Phase 4: IM Operations over the CASE session ===");
+    test_onoff_cluster(matter, controller_fab_idx, device_node_id).await?;
 
     info!("=== All commissioning test phases completed successfully! ===");
     Ok(())
 }
 
-/// Build a controller-side `FabricCredentials` and drive the post-PASE
-/// commissioning sequence via [`Commissioner::commission`] (phase 1 —
-/// up to `AddNOC`). Phase 2 (CASE + `CommissioningComplete`) lands as
-/// a follow-up; this test asserts the phase-1 contract.
-///
-/// Exercises the same code path that [`crate::examples::commissioner_test`]
-/// (the runnable example) uses, but in-process against rs-matter's own
-/// responder — so the test passes on every `cargo test` run without
-/// needing the upstream `chip-all-clusters-app` binary.
-async fn test_commission<C: Crypto>(matter: &Matter<'_>, crypto: &C) -> Result<(), Error> {
+/// Drive both phases of the commissioner flow against the peer that
+/// PASE was just negotiated with. Returns the
+/// `(controller_local_fab_idx, device_node_id)` needed to open
+/// post-commissioning CASE exchanges.
+async fn test_commission<C: Crypto>(
+    matter: &Matter<'_>,
+    crypto: &C,
+    peer_addr: Address,
+) -> Result<(core::num::NonZeroU8, u64), Error> {
     const FABRIC_ID: u64 = 1;
     let mut fabric_creds = FabricCredentials::new(crypto, FABRIC_ID, VALID_FOREVER)?;
     let mut commissioner = Commissioner::new(matter, crypto, &mut fabric_creds);
@@ -334,13 +330,27 @@ async fn test_commission<C: Crypto>(matter: &Matter<'_>, crypto: &C) -> Result<(
         ..CommissionOptions::default()
     };
 
+    // Phase 1 — over PASE: ArmFailSafe → ... → AddNOC.
     let result = commissioner.commission(&opts).await?;
     info!(
-        "commission() phase 1 returned: fabric_index={}, device_node_id=0x{:016x}",
+        "commission() phase 1 ok: device_fabric_index={}, device_node_id=0x{:016x}",
         result.fabric_index, result.device_node_id,
     );
-    assert!(result.fabric_index >= 1, "expected a non-zero fabric index");
-    Ok(())
+
+    // Phase 2 — establish CASE against the device's operational
+    // identity at the same address we used for PASE (the device
+    // announces on the same UDP/TCP port post-AddNOC), then drive
+    // CommissioningComplete on the new CASE session.
+    commissioner.complete_via_case(peer_addr, &result).await?;
+    let controller_fab_idx = commissioner
+        .self_fab_idx()
+        .expect("self_fab_idx should be Some after complete_via_case");
+    info!(
+        "complete_via_case() ok: controller_fab_idx={}, CASE+CommissioningComplete done",
+        controller_fab_idx,
+    );
+
+    Ok((controller_fab_idx, result.device_node_id))
 }
 
 // ============================================================================
@@ -547,18 +557,22 @@ async fn establish_pase_session<C: Crypto>(
 // Phase 3: Interaction Model Operations
 // ============================================================================
 
-async fn test_onoff_cluster(matter: &Matter<'_>) -> Result<(), Error> {
+async fn test_onoff_cluster(
+    matter: &Matter<'_>,
+    fab_idx: core::num::NonZeroU8,
+    peer_node_id: u64,
+) -> Result<(), Error> {
     info!("Step 3a: Reading initial OnOff attribute...");
-    let initial_value = read_onoff_with_timeout(matter).await?;
+    let initial_value = read_onoff_with_timeout(matter, fab_idx, peer_node_id).await?;
     info!("Initial OnOff value: {initial_value}");
     assert!(!initial_value, "Expected initial OnOff value to be false");
 
     info!("Step 3b: Invoking Toggle command...");
-    let status = invoke_toggle_with_timeout(matter).await?;
+    let status = invoke_toggle_with_timeout(matter, fab_idx, peer_node_id).await?;
     info!("Toggle completed with status: {status:?}");
 
     info!("Step 3c: Verifying toggle effect...");
-    let final_value = read_onoff_with_timeout(matter).await?;
+    let final_value = read_onoff_with_timeout(matter, fab_idx, peer_node_id).await?;
     info!("Final OnOff value: {final_value}");
 
     assert!(
@@ -570,8 +584,12 @@ async fn test_onoff_cluster(matter: &Matter<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-async fn read_onoff_with_timeout(matter: &Matter<'_>) -> Result<bool, Error> {
-    let exchange = Exchange::initiate(matter, 0, 0, true).await?;
+async fn read_onoff_with_timeout(
+    matter: &Matter<'_>,
+    fab_idx: core::num::NonZeroU8,
+    peer_node_id: u64,
+) -> Result<bool, Error> {
+    let exchange = Exchange::initiate(matter, fab_idx.get(), peer_node_id, true).await?;
     debug!("IM read exchange initiated: {}", exchange.id());
 
     let mut read_fut = pin!(read_onoff(exchange));
@@ -596,8 +614,12 @@ async fn read_onoff(exchange: Exchange<'_>) -> Result<bool, Error> {
     exchange.on_off().on_off_read(1).await
 }
 
-async fn invoke_toggle_with_timeout(matter: &Matter<'_>) -> Result<IMStatusCode, Error> {
-    let exchange = Exchange::initiate(matter, 0, 0, true).await?;
+async fn invoke_toggle_with_timeout(
+    matter: &Matter<'_>,
+    fab_idx: core::num::NonZeroU8,
+    peer_node_id: u64,
+) -> Result<IMStatusCode, Error> {
+    let exchange = Exchange::initiate(matter, fab_idx.get(), peer_node_id, true).await?;
     debug!("Invoke exchange initiated: {}", exchange.id());
 
     let mut invoke_fut = pin!(invoke_toggle(exchange));

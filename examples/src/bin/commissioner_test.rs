@@ -46,6 +46,7 @@
 //! commissioner_test: ok fabric_index=<u8> device_node_id=0x<hex>
 //! ```
 
+use core::num::NonZeroU8;
 use core::pin::pin;
 
 use std::net::{SocketAddr, UdpSocket};
@@ -171,9 +172,13 @@ async fn run(args: Args) -> Result<CommissionResult, Error> {
 /// Mirror of [`rs_matter::commissioner::CommissionResult`] — re-declared
 /// here so the `main` print doesn't have to import the lifetime-bound
 /// type through the public API just to format two scalars.
+///
+/// `fabric_index` is `NonZeroU8` because the device's `AddNOC` response
+/// (spec §11.18.6.10) reserves `0` for "no fabric" / PASE — a real
+/// commissioned fabric slot is always non-zero.
 #[derive(Debug, Clone, Copy)]
 struct CommissionResult {
-    fabric_index: u8,
+    fabric_index: NonZeroU8,
     device_node_id: u64,
 }
 
@@ -186,7 +191,7 @@ async fn run_commission<C: Crypto>(
     establish_pase(matter, crypto, args.peer_addr, args.passcode).await?;
     info!("PASE established");
 
-    info!("=== Commissioner::commission (phase 1) ===");
+    info!("=== Commissioner::commission (phase 1 — over PASE) ===");
     let mut fabric_creds = FabricCredentials::new(crypto, /*fabric_id=*/ 1, VALID_FOREVER)?;
     let mut commissioner = Commissioner::new(matter, crypto, &mut fabric_creds);
 
@@ -197,20 +202,40 @@ async fn run_commission<C: Crypto>(
         ..CommissionOptions::default()
     };
 
-    let mut commission_fut = pin!(commissioner.commission(&opts));
-    let mut timeout = pin!(Timer::after(Duration::from_secs(COMMISSION_TIMEOUT_SECS)));
-
-    let result = match select(&mut commission_fut, &mut timeout).await {
-        Either::First(r) => r?,
-        Either::Second(_) => {
-            error!("commission() timed out after {COMMISSION_TIMEOUT_SECS}s");
-            return Err(ErrorCode::RxTimeout.into());
+    let phase1 = {
+        let mut commission_fut = pin!(commissioner.commission(&opts));
+        let mut timeout = pin!(Timer::after(Duration::from_secs(COMMISSION_TIMEOUT_SECS)));
+        match select(&mut commission_fut, &mut timeout).await {
+            Either::First(r) => r?,
+            Either::Second(_) => {
+                error!("commission() timed out after {COMMISSION_TIMEOUT_SECS}s");
+                return Err(ErrorCode::RxTimeout.into());
+            }
         }
     };
+    info!(
+        "phase 1 ok: device_fabric_index={}, device_node_id=0x{:016x}",
+        phase1.fabric_index, phase1.device_node_id,
+    );
+
+    info!("=== complete_via_case (phase 2 — CASE + CommissioningComplete) ===");
+    {
+        let peer = Address::Udp(args.peer_addr);
+        let mut case_fut = pin!(commissioner.complete_via_case(peer, &phase1));
+        let mut timeout = pin!(Timer::after(Duration::from_secs(COMMISSION_TIMEOUT_SECS)));
+        match select(&mut case_fut, &mut timeout).await {
+            Either::First(r) => r?,
+            Either::Second(_) => {
+                error!("complete_via_case() timed out after {COMMISSION_TIMEOUT_SECS}s");
+                return Err(ErrorCode::RxTimeout.into());
+            }
+        }
+    }
+    info!("phase 2 ok: CASE established, CommissioningComplete acknowledged");
 
     Ok(CommissionResult {
-        fabric_index: result.fabric_index,
-        device_node_id: result.device_node_id,
+        fabric_index: phase1.fabric_index,
+        device_node_id: phase1.device_node_id,
     })
 }
 

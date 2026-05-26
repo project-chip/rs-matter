@@ -59,12 +59,17 @@
 //! // pending phase 2 (CASE + CommissioningComplete — follow-up PR).
 //! ```
 
-use crate::crypto::{Crypto, RngCore};
+use core::num::NonZeroU8;
+
+use crate::crypto::{
+    CanonAeadKeyRef, CanonPkcSecretKey, Crypto, RngCore, SecretKey, SigningSecretKey,
+};
 use crate::dm::clusters::gen_comm::{CommissioningErrorEnum, GeneralCommissioningClient};
 use crate::dm::clusters::noc::{NodeOperationalCertStatusEnum, OperationalCredentialsClient};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
+use crate::sc::case::CaseInitiator;
 use crate::tlv::{FromTLV, OctetStr, TLVElement};
 use crate::transport::exchange::Exchange;
 use crate::transport::network::Address;
@@ -160,15 +165,35 @@ impl Default for CommissionOptions {
 }
 
 /// What [`Commissioner::commission`] returns on success.
+///
+/// Also the handoff between phase 1 (`commission`) and phase 2
+/// ([`Commissioner::complete_via_case`]). All fields are required by
+/// the CASE establishment that follows, so they're packaged here.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CommissionResult {
-    /// Fabric slot the device assigned to us. Needed for subsequent
+    /// Fabric slot the **device** assigned to us. Needed for subsequent
     /// `UpdateNOC` / `RemoveFabric` / `UpdateFabricLabel` invocations.
-    pub fabric_index: u8,
+    /// (Independent of whatever local fabric index the **controller**
+    /// assigned to the same fabric.)
+    ///
+    /// `NonZeroU8` because the Matter Core spec reserves `fabric_index=0`
+    /// for "no fabric" / PASE — a successful `NOCResponse` carrying a
+    /// device-side fabric slot is, by definition, non-zero.
+    pub fabric_index: NonZeroU8,
     /// NodeID the controller assigned to the device. Persist this
     /// alongside the fabric — it's the operational address for CASE.
     pub device_node_id: NodeId,
+    /// NodeID the controller claimed for itself when issuing the
+    /// device's NOC (echo of [`CommissionOptions::admin_case_subject`]).
+    /// The same NodeID is used when the controller installs its own
+    /// fabric and signs its own operational NOC for CASE — and the
+    /// device's admin ACL grants this NodeID administer privilege.
+    pub controller_node_id: NodeId,
+    /// Vendor ID the controller declared in `AddNOC.AdminVendorId`
+    /// (echo of [`CommissionOptions::admin_vendor_id`]). Carried into
+    /// the controller's own fabric record for consistency.
+    pub admin_vendor_id: u16,
 }
 
 /// Stateful commissioner.
@@ -180,6 +205,16 @@ pub struct Commissioner<'a, C: Crypto> {
     matter: &'a Matter<'a>,
     crypto: C,
     fabric_creds: &'a mut FabricCredentials,
+    /// Local `fab_idx` of the controller's *own* fabric in
+    /// `matter.state.fabrics`, installed lazily on the first
+    /// [`Self::complete_via_case`] call. `None` until then.
+    ///
+    /// The controller needs an entry in its own fabric table to drive
+    /// CASE as initiator ([`CaseInitiator::initiate`] looks the fabric
+    /// up by this index). The entry holds the controller's signing
+    /// key, NOC, the fabric's RCAC + IPK — minted from
+    /// [`Self::fabric_creds`] the first time we need them.
+    self_fab_idx: Option<NonZeroU8>,
 }
 
 impl<'a, C: Crypto> Commissioner<'a, C> {
@@ -194,7 +229,19 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
             matter,
             crypto,
             fabric_creds,
+            self_fab_idx: None,
         }
+    }
+
+    /// Local `fab_idx` of the controller's own fabric in
+    /// `matter.state.fabrics`, once installed by
+    /// [`Self::complete_via_case`]. `None` before phase 2 has run.
+    ///
+    /// Callers use this with `Exchange::initiate(matter, fab_idx.get(),
+    /// device_node_id, true)` to open exchanges on the post-commissioning
+    /// CASE session.
+    pub fn self_fab_idx(&self) -> Option<NonZeroU8> {
+        self.self_fab_idx
     }
 
     /// Phase 1 — drive `ArmFailSafe` through `AddNOC` over PASE.
@@ -257,6 +304,8 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         Ok(CommissionResult {
             fabric_index,
             device_node_id,
+            controller_node_id: opts.admin_case_subject,
+            admin_vendor_id: opts.admin_vendor_id,
         })
     }
 
@@ -268,22 +317,108 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     /// can be the same address PASE used, since the device announces on
     /// the same UDP port post-AddNOC.
     ///
-    /// **Not yet implemented.** Returns [`ErrorCode::InvalidState`] so
-    /// callers can't accidentally treat phase 1 alone as a completed
-    /// commissioning. The follow-up adds:
-    ///   - operational mDNS lookup,
-    ///   - [`crate::sc::case::CaseInitiator::initiate`] over a fresh
-    ///     unsecured exchange to `peer_addr`,
-    ///   - `GeneralCommissioning::CommissioningComplete` on the new
-    ///     CASE session.
+    /// Steps:
+    ///   1. Install the **controller's** own fabric in
+    ///      `matter.state.fabrics` if not already installed (lazily —
+    ///      see [`Self::install_self_fabric`]).
+    ///   2. Open a fresh **unsecured** exchange to `peer_addr` and run
+    ///      [`CaseInitiator::initiate`] (Sigma1 → Sigma2 → Sigma3 →
+    ///      StatusReport). On success the new CASE session is keyed in
+    ///      `matter.state.sessions` at `(self_fab_idx, device_node_id,
+    ///      secure=true)`.
+    ///   3. Open a CASE-secured exchange on that session and invoke
+    ///      `GeneralCommissioning::CommissioningComplete`. The device
+    ///      disarms its fail-safe and persists the new fabric.
     pub async fn complete_via_case(
         &mut self,
-        _peer_addr: Address,
-        _phase1: &CommissionResult,
+        peer_addr: Address,
+        phase1: &CommissionResult,
     ) -> Result<(), Error> {
-        // TODO(commissioner flow phase 2): mDNS operational discovery →
-        // CaseInitiator::initiate → commissioning_complete().
-        Err(ErrorCode::InvalidState.into())
+        // 1. Ensure the controller's fabric is in the local fabric table.
+        let fab_idx =
+            self.install_self_fabric(phase1.controller_node_id, phase1.admin_vendor_id)?;
+
+        // 2. CASE handshake over a fresh unsecured exchange.
+        {
+            let mut exchange =
+                Exchange::initiate_unsecured(self.matter, &self.crypto, peer_addr).await?;
+
+            CaseInitiator::initiate(&mut exchange, &self.crypto, fab_idx, phase1.device_node_id)
+                .await?;
+
+            // The CASE-establishment exchange is one-shot; drop it
+            // here so we open a fresh one on the new CASE session.
+        }
+
+        // 3. CommissioningComplete on the CASE session.
+        self.commissioning_complete(fab_idx, phase1.device_node_id)
+            .await
+    }
+
+    /// Install the controller's own fabric in `matter.state.fabrics`,
+    /// or return the cached local `fab_idx` if it's already installed.
+    ///
+    /// Idempotent: the first call generates a controller signing
+    /// keypair, mints a self-signed NOC against [`Self::fabric_creds`],
+    /// hands the (key, NOC, RCAC, IPK) tuple to `Fabrics::add`, and
+    /// caches the resulting `fab_idx`. Subsequent calls return the
+    /// cached value.
+    fn install_self_fabric(
+        &mut self,
+        controller_node_id: NodeId,
+        admin_vendor_id: u16,
+    ) -> Result<NonZeroU8, Error> {
+        if let Some(fab_idx) = self.self_fab_idx {
+            return Ok(fab_idx);
+        }
+
+        // Generate the controller's operational signing keypair. The
+        // CSR side wants a `SecretKey` (to sign the PKCS#10), and the
+        // fabric-table install wants the same key in canonical-bytes
+        // form (for storage via `Fabric::secret_key`).
+        let signing_key = self.crypto.generate_secret_key()?;
+
+        let mut csr_buf = [0u8; 256]; // P-256 PKCS#10 CSRs are ~150B. TODO: LARGE BUFFER
+        let csr_der = signing_key.csr(&mut csr_buf)?;
+
+        let mut canon_secret_key = CanonPkcSecretKey::new();
+        signing_key.write_canon(&mut canon_secret_key)?;
+
+        // Mint the controller's own NOC against the fabric's RCAC
+        // (or ICAC if `fabric_creds.enable_icac()` was called).
+        let creds = self.fabric_creds.generate_device_credentials_with_node_id(
+            &self.crypto,
+            csr_der,
+            controller_node_id,
+            &[],
+        )?;
+
+        let icac_slice: &[u8] = creds.icac.as_deref().unwrap_or(&[]);
+
+        let ipk_ref: CanonAeadKeyRef<'_> = creds.ipk.reference();
+        let canon_ref = canon_secret_key.reference();
+
+        let crypto = &self.crypto;
+
+        let fab_idx = self.matter.with_state(|state| {
+            // `case_admin_subject = controller_node_id`: the
+            // controller administers its own fabric.
+            let fabric = state.fabrics.add(
+                crypto,
+                canon_ref,
+                &creds.root_cert,
+                &creds.noc,
+                icac_slice,
+                Some(ipk_ref),
+                admin_vendor_id,
+                controller_node_id,
+            )?;
+            Ok::<_, Error>(fabric.fab_idx())
+        })?;
+
+        self.self_fab_idx = Some(fab_idx);
+
+        Ok(fab_idx)
     }
 
     /// `GeneralCommissioning::ArmFailSafe(expiry, breadcrumb=0)`.
@@ -389,7 +524,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         ipk: &[u8],
         admin_case_subject: u64,
         admin_vendor_id: u16,
-    ) -> Result<u8, Error> {
+    ) -> Result<NonZeroU8, Error> {
         let exchange = self.open_pase_exchange().await?;
 
         let handle = exchange
@@ -419,17 +554,27 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
             return Err(ErrorCode::Failure.into());
         }
 
-        fabric_index.ok_or_else(|| ErrorCode::InvalidData.into())
+        // Spec reserves `fabric_index=0` for PASE / no-fabric; the
+        // device must assign a non-zero slot on a successful `AddNOC`.
+        // A missing field or a zero value is a peer-side bug — surface
+        // it as `InvalidData` rather than silently widening.
+        fabric_index
+            .and_then(NonZeroU8::new)
+            .ok_or_else(|| ErrorCode::InvalidData.into())
     }
 
-    /// `GeneralCommissioning::CommissioningComplete()`.
+    /// `GeneralCommissioning::CommissioningComplete()` over the CASE
+    /// session keyed by `(fab_idx, peer_node_id, secure=true)`.
     ///
     /// **Must be invoked over CASE**, not PASE — the device responder
-    /// rejects it over PASE (`Failsafe::disarm` requires a CASE fab_idx).
-    /// Phase 2 ([`Self::complete_via_case`]) is the caller.
-    #[allow(dead_code)] // wired up in phase 2 (CASE + CommissioningComplete)
-    pub(crate) async fn commissioning_complete(&self) -> Result<(), Error> {
-        let exchange = self.open_pase_exchange().await?;
+    /// rejects it over PASE (`Failsafe::disarm` requires a CASE
+    /// `fab_idx`). [`Self::complete_via_case`] is the only caller.
+    pub(crate) async fn commissioning_complete(
+        &self,
+        fab_idx: NonZeroU8,
+        peer_node_id: NodeId,
+    ) -> Result<(), Error> {
+        let exchange = Exchange::initiate(self.matter, fab_idx.get(), peer_node_id, true).await?;
 
         let handle = exchange
             .general_commissioning()
@@ -465,6 +610,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         if opts.allow_test_attestation {
             return Ok(());
         }
+
         Err(ErrorCode::Failure.into())
     }
 }
