@@ -51,7 +51,6 @@ use crate::cert::builder::Validity;
 use crate::cert::MAX_CERT_TLV_LEN;
 use crate::crypto::{
     CanonAeadKey, CanonAeadKeyRef, CanonPkcSecretKey, Crypto, RngCore, SecretKey, SigningSecretKey,
-    AEAD_CANON_KEY_LEN,
 };
 use crate::dm::NodeId;
 use crate::error::Error;
@@ -93,62 +92,112 @@ pub struct FabricSigningCredentials {
 }
 
 impl FabricSigningCredentials {
-    /// Bootstrap a brand-new controller fabric.
+    /// Bootstrap a brand-new controller fabric with the recommended
+    /// ICAC tier.
     ///
-    /// In one shot: generate the Root CA keypair + self-signed RCAC,
-    /// the fabric IPK, the controller's operational signing keypair
-    /// and self-issued NOC, then install the fabric into
-    /// `matter.state.fabrics`. Returns a [`FabricSigningCredentials`]
-    /// that remembers the resulting `fab_idx` plus the signing
-    /// material needed to commission other devices onto the same
-    /// fabric.
+    /// In one shot: generates the RCAC + ICAC chain (the RCAC private
+    /// key is used once to sign the ICAC and then discarded — see
+    /// [`NocGenerator::new_icac_signed`]), the fabric IPK, the
+    /// controller's operational signing keypair + ICAC-signed NOC,
+    /// and installs the fabric into `matter.state.fabrics`. Returns
+    /// a [`FabricSigningCredentials`] that remembers the resulting
+    /// `fab_idx` plus the ICAC private key (the only signing material
+    /// retained on the running controller — matches real-world Matter
+    /// PKI where the RCAC private key sits in an HSM).
+    ///
+    /// Use this for any real deployment. For tests / simpler setups
+    /// where the RCAC private key can live on the controller, see
+    /// [`Self::bootstrap_rcac_only`].
     ///
     /// One-shot per controller fabric. Subsequent commissionings (any
     /// number of devices) reuse the same `FabricSigningCredentials`.
-    /// Across a controller restart, persist the signing material +
-    /// fabric and use [`Self::from_persisted`] / the standard fabric
-    /// reload to rebuild the same state.
     pub fn bootstrap<C: Crypto>(
         matter: &Matter<'_>,
-        crypto: &C,
+        crypto: C,
         fabric_id: u64,
         controller_node_id: NodeId,
         admin_vendor_id: u16,
         validity: Validity,
     ) -> Result<Self, Error> {
-        // 1. Fresh Root CA: keypair + self-signed RCAC.
-        let (mut noc_generator, rcac) = NocGenerator::new(crypto, fabric_id, validity)?;
+        let (mut noc_generator, rcac, icac) =
+            NocGenerator::new_icac_signed(&crypto, fabric_id, validity)?;
+        let (canon_signing_key, controller_noc) =
+            Self::mint_controller_noc(&crypto, &mut noc_generator, controller_node_id)?;
+        Self::install(
+            matter,
+            &crypto,
+            &rcac,
+            &icac,
+            &controller_noc,
+            canon_signing_key,
+            controller_node_id,
+            admin_vendor_id,
+            noc_generator,
+        )
+    }
 
-        // 2. Fabric IPK (epoch key). 16 random bytes, used by every
-        //    fabric member as the group-key derivation input.
+    /// Bootstrap a brand-new controller fabric with RCAC-direct
+    /// signing (no ICAC tier).
+    ///
+    /// Simpler than [`Self::bootstrap`] — the chain is just
+    /// `[RCAC, NOC]` — but the controller retains the RCAC private
+    /// key. Fine for tests and small private deployments; not
+    /// appropriate where the RCAC key shouldn't live on the running
+    /// commissioner (most real fabrics).
+    pub fn bootstrap_rcac_only<C: Crypto>(
+        matter: &Matter<'_>,
+        crypto: C,
+        fabric_id: u64,
+        controller_node_id: NodeId,
+        admin_vendor_id: u16,
+        validity: Validity,
+    ) -> Result<Self, Error> {
+        let (mut noc_generator, rcac) =
+            NocGenerator::new_rcac_signed(&crypto, fabric_id, validity)?;
+        let (canon_signing_key, controller_noc) =
+            Self::mint_controller_noc(&crypto, &mut noc_generator, controller_node_id)?;
+        Self::install(
+            matter,
+            &crypto,
+            &rcac,
+            /*icac=*/ &[],
+            &controller_noc,
+            canon_signing_key,
+            controller_node_id,
+            admin_vendor_id,
+            noc_generator,
+        )
+    }
+
+    /// Tier-agnostic install path. Called by both bootstrap variants
+    /// after they've produced `(rcac, icac?, controller_noc, signing_key)`.
+    #[allow(clippy::too_many_arguments)]
+    fn install<C: Crypto>(
+        matter: &Matter<'_>,
+        crypto: C,
+        rcac: &[u8],
+        icac: &[u8],
+        controller_noc: &[u8],
+        canon_signing_key: CanonPkcSecretKey,
+        controller_node_id: NodeId,
+        admin_vendor_id: u16,
+        noc_generator: NocGenerator,
+    ) -> Result<Self, Error> {
+        // Random fabric IPK (epoch key) — shared across every fabric
+        // member, used as the group-key derivation input.
         let mut ipk = CanonAeadKey::new();
-        let mut ipk_bytes = [0u8; AEAD_CANON_KEY_LEN];
-        crypto.rand()?.fill_bytes(&mut ipk_bytes);
-        ipk.load_from_array(&ipk_bytes);
+        crypto.rand()?.fill_bytes(ipk.access_mut());
 
-        // 3. Controller's own operational signing keypair + CSR + NOC.
-        //    The keypair becomes the fabric record's `secret_key`
-        //    (used to sign CASE Sigma3); the NOC is the controller's
-        //    membership credential on the fabric.
-        let signing_key = crypto.generate_secret_key()?;
-        let mut csr_buf = [0u8; 256]; // P-256 PKCS#10 CSRs are ~150B.
-        let csr_der = signing_key.csr(&mut csr_buf)?;
-        let mut canon_signing_key = CanonPkcSecretKey::new();
-        signing_key.write_canon(&mut canon_signing_key)?;
-
-        let controller_noc =
-            noc_generator.generate_noc(crypto, csr_der, controller_node_id, &[])?;
-
-        // 4. Install the fabric in `matter.state.fabrics`. The
-        //    `case_admin_subject` is the controller's own NodeID —
-        //    administering its own fabric.
+        // Install the fabric in `matter.state.fabrics`. The
+        // `case_admin_subject` is the controller's own NodeID —
+        // administering its own fabric.
         let fab_idx = matter.with_state(|state| {
             let fabric = state.fabrics.add(
                 crypto,
                 canon_signing_key.reference(),
-                &rcac,
-                &controller_noc,
-                &[], // no ICAC
+                rcac,
+                controller_noc,
+                icac,
                 Some(ipk.reference()),
                 admin_vendor_id,
                 controller_node_id,
@@ -160,31 +209,75 @@ impl FabricSigningCredentials {
             fab_idx,
             noc_generator,
             ipk,
-            // NodeID `1` is the controller; devices start at `2`.
+            // Controller is `controller_node_id`; devices start at
+            // `controller_node_id + 1`, with `2` as a floor so the
+            // counter never lands on the conventional `1` reserved
+            // for the bootstrapping admin.
             next_node_id: controller_node_id.wrapping_add(1).max(2),
         })
     }
 
-    /// Restore from previously-persisted RCAC + IPK + counter,
+    /// Restore from a previously-persisted **ICAC-tier** snapshot,
     /// matching a fabric that's already in `matter.state.fabrics`
     /// (e.g. loaded from the fabric KV store).
+    ///
+    /// `icac_privkey` is the only signing material on the controller
+    /// — the RCAC private key isn't needed for ongoing operation
+    /// (it would only come back into play if rotating the ICAC).
     ///
     /// The caller is responsible for ensuring `fab_idx` actually
     /// refers to the controller's fabric (the one whose `secret_key`
     /// the controller knows the private side of).
     #[allow(clippy::too_many_arguments)]
     pub fn from_persisted<C: Crypto>(
-        crypto: &C,
+        crypto: C,
         fab_idx: NonZeroU8,
-        root_privkey: CanonPkcSecretKey,
+        icac_privkey: CanonPkcSecretKey,
+        fabric_id: u64,
+        rcac_id: u64,
+        icac_id: u64,
+        ipk: CanonAeadKeyRef<'_>,
+        next_node_id: NodeId,
+        validity: Validity,
+    ) -> Result<Self, Error> {
+        let noc_generator = NocGenerator::from_persisted_icac_signed(
+            &crypto,
+            icac_privkey,
+            fabric_id,
+            rcac_id,
+            icac_id,
+            validity,
+        )?;
+        let mut ipk_owned = CanonAeadKey::new();
+        ipk_owned.load(ipk);
+        Ok(Self {
+            fab_idx,
+            noc_generator,
+            ipk: ipk_owned,
+            next_node_id,
+        })
+    }
+
+    /// Restore from a previously-persisted **RCAC-direct** snapshot.
+    /// Counterpart of [`Self::bootstrap_rcac_only`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_persisted_rcac_only<C: Crypto>(
+        crypto: C,
+        fab_idx: NonZeroU8,
+        rcac_privkey: CanonPkcSecretKey,
         fabric_id: u64,
         rcac_id: u64,
         ipk: CanonAeadKeyRef<'_>,
         next_node_id: NodeId,
         validity: Validity,
     ) -> Result<Self, Error> {
-        let noc_generator =
-            NocGenerator::from_root_ca(crypto, root_privkey, fabric_id, rcac_id, validity)?;
+        let noc_generator = NocGenerator::from_persisted_rcac_signed(
+            &crypto,
+            rcac_privkey,
+            fabric_id,
+            rcac_id,
+            validity,
+        )?;
         let mut ipk_owned = CanonAeadKey::new();
         ipk_owned.load(ipk);
         Ok(Self {
@@ -262,6 +355,31 @@ impl FabricSigningCredentials {
         // refuse to commission a duplicate than wrap silently.
         self.next_node_id = self.next_node_id.checked_add(1).unwrap_or(NodeId::MAX);
         id
+    }
+
+    /// Helper shared by both bootstrap variants: generate the controller's
+    /// own operational signing keypair, build a CSR for it, hand the CSR
+    /// to `noc_generator` to mint the controller's NOC. Returns the
+    /// canonical signing key (to be planted into the fabric record) plus
+    /// the freshly-signed NOC bytes.
+    fn mint_controller_noc<C: Crypto>(
+        crypto: C,
+        noc_generator: &mut NocGenerator,
+        controller_node_id: NodeId,
+    ) -> Result<(CanonPkcSecretKey, heapless::Vec<u8, MAX_CERT_TLV_LEN>), Error> {
+        let signing_key = crypto.generate_secret_key()?;
+
+        // P-256 PKCS#10 CSRs are ~150B. 256B keeps headroom for the rare
+        // long CSR while not bloating the stack.
+        let mut csr_buf = [0u8; 256];
+        let csr_der = signing_key.csr(&mut csr_buf)?;
+
+        let mut canon_signing_key = CanonPkcSecretKey::new();
+        signing_key.write_canon(&mut canon_signing_key)?;
+
+        let controller_noc =
+            noc_generator.generate_noc(&crypto, csr_der, controller_node_id, &[])?;
+        Ok((canon_signing_key, controller_noc))
     }
 }
 

@@ -249,16 +249,21 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         })
         .await?;
 
-        // Snapshot RCAC bytes + admin scalars from the controller's
-        // installed fabric in `matter.state.fabrics` — the single
-        // source of truth. `Fabrics::add` reads everything via the
-        // `Fabric` entry; nothing lives in `FabricSigningCredentials`
-        // beyond the signing key + IPK + node-id counter.
+        // Snapshot RCAC bytes, ICAC bytes (empty in RCAC-direct mode),
+        // and admin scalars from the controller's installed fabric
+        // in `matter.state.fabrics` — the single source of truth.
+        // `Fabrics::add` reads everything via the `Fabric` entry;
+        // nothing lives in `FabricSigningCredentials` beyond the
+        // signing key + IPK + node-id counter.
         let mut rcac_buf: heapless::Vec<u8, MAX_CERT_TLV_LEN> = heapless::Vec::new();
+        let mut icac_buf: heapless::Vec<u8, MAX_CERT_TLV_LEN> = heapless::Vec::new();
         let (admin_node_id, admin_vendor_id) = self.matter.with_state(|state| {
             let fabric = state.fabrics.fabric(self.creds.fab_idx())?;
             rcac_buf
                 .extend_from_slice(fabric.root_ca())
+                .map_err(|_| ErrorCode::BufferTooSmall)?;
+            icac_buf
+                .extend_from_slice(fabric.icac())
                 .map_err(|_| ErrorCode::BufferTooSmall)?;
             Ok::<_, Error>((fabric.node_id(), fabric.vendor_id()))
         })?;
@@ -269,11 +274,14 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
 
         // AddNOC. IPK comes straight from the signing credentials
         // (it's the raw epoch key shared across every fabric member —
-        // not the per-fabric derived `op_key`).
+        // not the per-fabric derived `op_key`). `icac_buf` is empty
+        // for RCAC-direct fabrics and the codegen builder skips the
+        // field entirely; non-empty ⇒ the full `[RCAC, ICAC, NOC]`
+        // chain is shipped.
         let fabric_index = self
             .add_noc(
                 &device_creds.noc,
-                /*icac=*/ &[],
+                &icac_buf,
                 self.creds.ipk().access(),
                 admin_node_id,
                 admin_vendor_id,

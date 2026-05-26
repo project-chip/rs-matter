@@ -75,9 +75,11 @@ fn test_case_handshake() {
         // ---- 1. Generate shared fabric material: RCAC + IPK + NOCs ----
 
         // Single NOC generator → same RCAC signs both NOCs, ensuring
-        // controller and device land on the same fabric.
+        // controller and device land on the same fabric. Use the
+        // RCAC-direct mode to keep the test setup minimal (no ICAC
+        // bytes to install on each side).
         let (mut noc_generator, rcac) =
-            NocGenerator::new(&crypto, TEST_FABRIC_ID, VALID_FOREVER).unwrap();
+            NocGenerator::new_rcac_signed(&crypto, TEST_FABRIC_ID, VALID_FOREVER).unwrap();
 
         // Shared fabric IPK (16 random bytes).
         let mut ipk = CanonAeadKey::new();
