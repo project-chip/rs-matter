@@ -15,260 +15,253 @@
  *    limitations under the License.
  */
 
-//! Fabric credential management for Matter commissioning.
+//! Controller-side fabric signing credentials.
 //!
-//! This module provides a high-level API for managing fabric credentials
-//! during commissioning. It combines NOC generation with IPK management
-//! and node ID assignment.
+//! Holds the extra material a controller needs beyond fabric
+//! membership: the Root CA private key (and per-fabric metadata for
+//! issuing NOCs), the fabric IPK (sent on every `AddNOC` so devices
+//! join the same group-key group), and the `next_node_id` counter
+//! the commissioner consumes when minting NOCs for new devices.
+//!
+//! The fabric itself (RCAC bytes, operational secret key,
+//! controller NOC, IPK derivation, fabric ID, vendor ID, …) lives in
+//! [`crate::fabric::Fabric`] inside `Matter::state::fabrics` — same as
+//! on any other node. [`Self::bootstrap`] is the one-shot helper that
+//! installs the fabric there and remembers the resulting `fab_idx`.
+//!
+//! ```ignore
+//! // Once, at controller startup:
+//! let mut creds = FabricSigningCredentials::bootstrap(
+//!     matter, &crypto,
+//!     /*fabric_id=*/    1,
+//!     /*controller_node_id=*/ 112233,
+//!     /*admin_vendor_id=*/ 0xFFF1,
+//!     VALID_FOREVER,
+//! )?;
+//!
+//! // Per device (any number of times, all on the same fabric):
+//! let mut commissioner = Commissioner::new(matter, &crypto, &mut creds);
+//! let result = commissioner.commission(&opts).await?;
+//! commissioner.complete_via_case(peer_addr, &result).await?;
+//! ```
+
+use core::num::NonZeroU8;
 
 use crate::cert::builder::Validity;
 use crate::cert::MAX_CERT_TLV_LEN;
-use crate::crypto::{CanonAeadKey, CanonAeadKeyRef, Crypto, RngCore, AEAD_CANON_KEY_LEN};
+use crate::crypto::{
+    CanonAeadKey, CanonAeadKeyRef, CanonPkcSecretKey, Crypto, RngCore, SecretKey, SigningSecretKey,
+    AEAD_CANON_KEY_LEN,
+};
+use crate::dm::NodeId;
 use crate::error::Error;
+use crate::Matter;
 
 use super::noc_generator::NocGenerator;
 
-/// Credentials to provision to a device via AddNOC.
+/// NOC + assigned NodeID for a device being commissioned.
 ///
-/// This contains all the certificates and keys needed to add a device
-/// to a fabric.
+/// The RCAC and IPK that go along with this NOC live on the
+/// controller's `Fabric` and on [`FabricSigningCredentials`]
+/// respectively — [`crate::commissioner::Commissioner::commission`]
+/// reads them from those single sources of truth before calling
+/// `AddTrustedRootCertificate` / `AddNOC`.
 #[derive(Debug)]
 pub struct DeviceCredentials {
-    /// NOC certificate (TLV encoded)
+    /// NOC certificate, TLV-encoded.
     pub noc: heapless::Vec<u8, MAX_CERT_TLV_LEN>,
-    /// ICAC certificate (TLV encoded, optional)
-    pub icac: Option<heapless::Vec<u8, MAX_CERT_TLV_LEN>>,
-    /// Root CA certificate (TLV encoded)
-    pub root_cert: heapless::Vec<u8, MAX_CERT_TLV_LEN>,
-    /// IPK value
-    pub ipk: CanonAeadKey,
-    /// Assigned node ID
-    pub node_id: u64,
+    /// NodeID the controller assigned to the device.
+    pub node_id: NodeId,
 }
 
-/// Fabric credentials for commissioning devices.
-///
-/// This is the main high-level API for commissioners. It manages:
-/// - The CA certificate chain (RCAC, optional ICAC)
-/// - The IPK for the fabric
-/// - Node ID assignment
-///
-/// # Example
-///
-/// ```ignore
-/// // Create new fabric credentials
-/// let mut fabric_creds = FabricCredentials::new(&crypto, fabric_id)?;
-///
-/// // After PASE session is established, request a CSR from the device
-/// let csr = im_client.csr_request(&mut exchange, &nonce, false).await?;
-///
-/// // Generate credentials for the device
-/// let device_creds = fabric_creds.generate_device_credentials(&crypto, &csr, &[])?;
-///
-/// // Provision the device with the credentials
-/// im_client.add_trusted_root_certificate(&mut exchange, &device_creds.root_cert).await?;
-/// im_client.add_noc(
-///     &mut exchange,
-///     &device_creds.noc,
-///     device_creds.icac.as_deref(),
-///     &device_creds.ipk,
-///     admin_subject,
-///     vendor_id,
-/// ).await?;
-/// ```
-pub struct FabricCredentials {
-    /// NOC generator for this fabric
+/// Controller-only "ability to sign NOCs" attached to an installed
+/// fabric. See module docs.
+pub struct FabricSigningCredentials {
+    /// Index of the controller's fabric in `matter.state.fabrics`.
+    /// Set by [`Self::bootstrap`] (or [`Self::from_persisted`]); never
+    /// changes for the lifetime of this struct.
+    fab_idx: NonZeroU8,
+    /// RCAC private signing key + per-fabric metadata for issuing
+    /// NOCs to other devices joining the same fabric.
     noc_generator: NocGenerator,
-    /// IPK for this fabric
+    /// Fabric IPK (epoch key, 16 raw bytes). Sent verbatim in every
+    /// `AddNOC` so devices joining the fabric derive the same group
+    /// operational key.
     ipk: CanonAeadKey,
-    /// Next node ID to assign
-    next_node_id: u64,
+    /// Counter for the next NodeID assigned to a commissioned device.
+    next_node_id: NodeId,
 }
 
-impl FabricCredentials {
-    /// Create new fabric credentials with a new Root CA.
+impl FabricSigningCredentials {
+    /// Bootstrap a brand-new controller fabric.
     ///
-    /// # Arguments
-    /// * `crypto` - Cryptographic backend
-    /// * `fabric_id` - The fabric identifier
-    /// * `validity` - Validity period for generated certificates
-    pub fn new<C: Crypto>(crypto: C, fabric_id: u64, validity: Validity) -> Result<Self, Error> {
-        let noc_generator = NocGenerator::new(&crypto, fabric_id, validity)?;
+    /// In one shot: generate the Root CA keypair + self-signed RCAC,
+    /// the fabric IPK, the controller's operational signing keypair
+    /// and self-issued NOC, then install the fabric into
+    /// `matter.state.fabrics`. Returns a [`FabricSigningCredentials`]
+    /// that remembers the resulting `fab_idx` plus the signing
+    /// material needed to commission other devices onto the same
+    /// fabric.
+    ///
+    /// One-shot per controller fabric. Subsequent commissionings (any
+    /// number of devices) reuse the same `FabricSigningCredentials`.
+    /// Across a controller restart, persist the signing material +
+    /// fabric and use [`Self::from_persisted`] / the standard fabric
+    /// reload to rebuild the same state.
+    pub fn bootstrap<C: Crypto>(
+        matter: &Matter<'_>,
+        crypto: &C,
+        fabric_id: u64,
+        controller_node_id: NodeId,
+        admin_vendor_id: u16,
+        validity: Validity,
+    ) -> Result<Self, Error> {
+        // 1. Fresh Root CA: keypair + self-signed RCAC.
+        let (mut noc_generator, rcac) = NocGenerator::new(crypto, fabric_id, validity)?;
 
+        // 2. Fabric IPK (epoch key). 16 random bytes, used by every
+        //    fabric member as the group-key derivation input.
         let mut ipk = CanonAeadKey::new();
         let mut ipk_bytes = [0u8; AEAD_CANON_KEY_LEN];
-
         crypto.rand()?.fill_bytes(&mut ipk_bytes);
         ipk.load_from_array(&ipk_bytes);
 
+        // 3. Controller's own operational signing keypair + CSR + NOC.
+        //    The keypair becomes the fabric record's `secret_key`
+        //    (used to sign CASE Sigma3); the NOC is the controller's
+        //    membership credential on the fabric.
+        let signing_key = crypto.generate_secret_key()?;
+        let mut csr_buf = [0u8; 256]; // P-256 PKCS#10 CSRs are ~150B.
+        let csr_der = signing_key.csr(&mut csr_buf)?;
+        let mut canon_signing_key = CanonPkcSecretKey::new();
+        signing_key.write_canon(&mut canon_signing_key)?;
+
+        let controller_noc =
+            noc_generator.generate_noc(crypto, csr_der, controller_node_id, &[])?;
+
+        // 4. Install the fabric in `matter.state.fabrics`. The
+        //    `case_admin_subject` is the controller's own NodeID —
+        //    administering its own fabric.
+        let fab_idx = matter.with_state(|state| {
+            let fabric = state.fabrics.add(
+                crypto,
+                canon_signing_key.reference(),
+                &rcac,
+                &controller_noc,
+                &[], // no ICAC
+                Some(ipk.reference()),
+                admin_vendor_id,
+                controller_node_id,
+            )?;
+            Ok::<_, Error>(fabric.fab_idx())
+        })?;
+
         Ok(Self {
+            fab_idx,
             noc_generator,
             ipk,
-            next_node_id: 1,
+            // NodeID `1` is the controller; devices start at `2`.
+            next_node_id: controller_node_id.wrapping_add(1).max(2),
         })
     }
 
-    /// Create fabric credentials with a specific starting node ID.
+    /// Restore from previously-persisted RCAC + IPK + counter,
+    /// matching a fabric that's already in `matter.state.fabrics`
+    /// (e.g. loaded from the fabric KV store).
     ///
-    /// # Arguments
-    /// * `crypto` - Cryptographic backend
-    /// * `fabric_id` - The fabric identifier
-    /// * `starting_node_id` - The first node ID to assign
-    /// * `validity` - Validity period for generated certificates
-    pub fn with_starting_node_id<C: Crypto>(
-        crypto: C,
+    /// The caller is responsible for ensuring `fab_idx` actually
+    /// refers to the controller's fabric (the one whose `secret_key`
+    /// the controller knows the private side of).
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_persisted<C: Crypto>(
+        crypto: &C,
+        fab_idx: NonZeroU8,
+        root_privkey: CanonPkcSecretKey,
         fabric_id: u64,
-        starting_node_id: u64,
+        rcac_id: u64,
+        ipk: CanonAeadKeyRef<'_>,
+        next_node_id: NodeId,
         validity: Validity,
     ) -> Result<Self, Error> {
-        if starting_node_id < 1 {
-            return Err(crate::error::ErrorCode::InvalidData.into());
-        }
-
-        let mut creds = Self::new(crypto, fabric_id, validity)?;
-
-        creds.next_node_id = starting_node_id;
-
-        Ok(creds)
-    }
-
-    /// Enable ICAC for this fabric.
-    ///
-    /// By default, NOCs are signed directly by the RCAC. Calling this method
-    /// generates an ICAC and future NOCs will be signed by the ICAC instead.
-    pub fn enable_icac<C: Crypto>(&mut self, crypto: &C) -> Result<(), Error> {
-        self.noc_generator.generate_icac(crypto)?;
-        Ok(())
-    }
-
-    /// Generate credentials for a new device.
-    ///
-    /// This method:
-    /// 1. Parses and verifies the CSR
-    /// 2. Assigns a node ID
-    /// 3. Generates the NOC
-    /// 4. Returns all credentials needed for AddNOC
-    ///
-    /// # Arguments
-    /// * `crypto` - Cryptographic backend
-    /// * `csr` - The device's Certificate Signing Request (DER encoded)
-    /// * `cat_ids` - CASE Authentication Tags (up to 3)
-    pub fn generate_device_credentials<C: Crypto>(
-        &mut self,
-        crypto: C,
-        csr: &[u8],
-        cat_ids: &[u32],
-    ) -> Result<DeviceCredentials, Error> {
-        let node_id = self.next_node_id();
-
-        let noc_creds = self
-            .noc_generator
-            .generate_noc(&crypto, csr, node_id, cat_ids)?;
-
-        // Copy root cert
-        let mut root_cert = heapless::Vec::new();
-        root_cert
-            .extend_from_slice(self.noc_generator.root_cert())
-            .map_err(|_| crate::error::ErrorCode::BufferTooSmall)?;
-
-        // Copy ICAC if present
-        let icac = if let Some(icac_slice) = self.noc_generator.icac_cert() {
-            let mut icac_vec = heapless::Vec::new();
-            icac_vec
-                .extend_from_slice(icac_slice)
-                .map_err(|_| crate::error::ErrorCode::BufferTooSmall)?;
-            Some(icac_vec)
-        } else {
-            None
-        };
-
-        Ok(DeviceCredentials {
-            noc: noc_creds.noc,
-            icac,
-            root_cert,
-            ipk: CanonAeadKey::new_from_ref(self.ipk.reference()),
-            node_id,
+        let noc_generator =
+            NocGenerator::from_root_ca(crypto, root_privkey, fabric_id, rcac_id, validity)?;
+        let mut ipk_owned = CanonAeadKey::new();
+        ipk_owned.load(ipk);
+        Ok(Self {
+            fab_idx,
+            noc_generator,
+            ipk: ipk_owned,
+            next_node_id,
         })
     }
 
-    /// Generate credentials for a device with a specific node ID.
-    ///
-    /// Use this when you want to assign a specific node ID rather than
-    /// using auto-assignment.
-    pub fn generate_device_credentials_with_node_id<C: Crypto>(
-        &mut self,
-        crypto: C,
-        csr: &[u8],
-        node_id: u64,
-        cat_ids: &[u32],
-    ) -> Result<DeviceCredentials, Error> {
-        let noc_creds = self
-            .noc_generator
-            .generate_noc(crypto, csr, node_id, cat_ids)?;
-
-        // Copy root cert
-        let mut root_cert = heapless::Vec::new();
-        root_cert
-            .extend_from_slice(self.noc_generator.root_cert())
-            .map_err(|_| crate::error::ErrorCode::BufferTooSmall)?;
-
-        // Copy ICAC if present
-        let icac = if let Some(icac_slice) = self.noc_generator.icac_cert() {
-            let mut icac_vec = heapless::Vec::new();
-            icac_vec
-                .extend_from_slice(icac_slice)
-                .map_err(|_| crate::error::ErrorCode::BufferTooSmall)?;
-            Some(icac_vec)
-        } else {
-            None
-        };
-
-        Ok(DeviceCredentials {
-            noc: noc_creds.noc,
-            icac,
-            root_cert,
-            ipk: CanonAeadKey::new_from_ref(self.ipk.reference()),
-            node_id,
-        })
+    /// Index of the controller's fabric in `matter.state.fabrics`.
+    pub fn fab_idx(&self) -> NonZeroU8 {
+        self.fab_idx
     }
 
-    /// Get the Root CA certificate.
-    pub fn root_cert(&self) -> &[u8] {
-        self.noc_generator.root_cert()
-    }
-
-    /// Get the ICAC certificate (if enabled).
-    pub fn icac_cert(&self) -> Option<&[u8]> {
-        self.noc_generator.icac_cert()
-    }
-
-    /// Get the IPK value for AddNOC.
-    pub fn ipk(&self) -> CanonAeadKeyRef<'_> {
-        self.ipk.reference()
-    }
-
-    /// Get the fabric ID.
+    /// Fabric ID this controller signs NOCs for.
     pub fn fabric_id(&self) -> u64 {
         self.noc_generator.fabric_id()
     }
 
-    /// Get the next node ID without incrementing.
-    pub fn peek_next_node_id(&self) -> u64 {
+    /// Fabric IPK (epoch key, 16 bytes). Hand straight to `AddNOC`.
+    pub fn ipk(&self) -> CanonAeadKeyRef<'_> {
+        self.ipk.reference()
+    }
+
+    /// Next NodeID that [`Self::generate_device_credentials`] will
+    /// assign, without bumping the counter.
+    pub fn peek_next_node_id(&self) -> NodeId {
         self.next_node_id
     }
 
-    /// Get the next node ID and increment the counter.
-    fn next_node_id(&mut self) -> u64 {
-        let id = self.next_node_id;
-        self.next_node_id += 1;
-        id
+    /// Pin the next NodeID. Useful when reloading from persistence
+    /// (`next_node_id` is normally part of the persisted snapshot).
+    pub fn set_next_node_id(&mut self, node_id: NodeId) {
+        self.next_node_id = node_id;
     }
 
-    /// Set the IPK to a specific value.
+    /// Issue an NOC for a device and assign it a fresh NodeID.
     ///
-    /// Use this if you need to use a pre-existing IPK.
-    pub fn set_ipk(&mut self, ipk: CanonAeadKeyRef<'_>) {
-        self.ipk.load(ipk);
+    /// `csr` is the device's PKCS#10 CSR (returned by the device's
+    /// `CSRRequest` invoke). The CSR is verified before signing.
+    pub fn generate_device_credentials<C: Crypto>(
+        &mut self,
+        crypto: &C,
+        csr: &[u8],
+        cat_ids: &[u32],
+    ) -> Result<DeviceCredentials, Error> {
+        let node_id = self.bump_node_id();
+        let noc = self
+            .noc_generator
+            .generate_noc(crypto, csr, node_id, cat_ids)?;
+        Ok(DeviceCredentials { noc, node_id })
+    }
+
+    /// Issue an NOC for an explicit NodeID without touching the
+    /// counter. Use for re-issuing (e.g. UpdateNOC) where the device
+    /// keeps its existing NodeID.
+    pub fn generate_device_credentials_with_node_id<C: Crypto>(
+        &mut self,
+        crypto: &C,
+        csr: &[u8],
+        node_id: NodeId,
+        cat_ids: &[u32],
+    ) -> Result<DeviceCredentials, Error> {
+        let noc = self
+            .noc_generator
+            .generate_noc(crypto, csr, node_id, cat_ids)?;
+        Ok(DeviceCredentials { noc, node_id })
+    }
+
+    fn bump_node_id(&mut self) -> NodeId {
+        let id = self.next_node_id;
+        // Saturating increment — the controller can run out of NodeIDs
+        // before the universe ends, but if it ever does we'd rather
+        // refuse to commission a duplicate than wrap silently.
+        self.next_node_id = self.next_node_id.checked_add(1).unwrap_or(NodeId::MAX);
+        id
     }
 }
 
@@ -276,13 +269,17 @@ impl FabricCredentials {
 mod tests {
     use crate::cert::builder::VALID_FOREVER;
     use crate::cert::CertRef;
-    use crate::crypto::{test_only_crypto, AEAD_KEY_ZEROED};
+    use crate::crypto::test_only_crypto;
+    use crate::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
     use crate::tlv::TLVElement;
+    use crate::utils::init::InitMaybeUninit;
+    use crate::Matter;
+
+    use static_cell::StaticCell;
 
     use super::*;
 
-    /// Valid CSR from C++ test (TestChipCryptoPAL.cpp)
-    /// This CSR has a valid signature and can be verified.
+    /// Valid CSR from C++ test (TestChipCryptoPAL.cpp).
     const GOOD_CSR: &[u8] = &[
         0x30, 0x81, 0xca, 0x30, 0x70, 0x02, 0x01, 0x00, 0x30, 0x0e, 0x31, 0x0c, 0x30, 0x0a, 0x06,
         0x03, 0x55, 0x04, 0x0a, 0x0c, 0x03, 0x43, 0x53, 0x52, 0x30, 0x59, 0x30, 0x13, 0x06, 0x07,
@@ -300,380 +297,123 @@ mod tests {
         0x7a, 0xbf, 0x52, 0x05, 0x58, 0x68, 0xe0, 0xaa, 0xd2, 0x8e,
     ];
 
-    fn generate_test_csr() -> &'static [u8] {
-        GOOD_CSR
-    }
-
-    /// parse node_id from a NOC certificate (TLV encoded)
     fn extract_node_id_from_noc(noc_tlv: &[u8]) -> Result<u64, Error> {
-        let cert = CertRef::new(TLVElement::new(noc_tlv));
-        cert.get_node_id()
+        CertRef::new(TLVElement::new(noc_tlv)).get_node_id()
     }
 
-    /// parse fabric_id from a NOC certificate (TLV encoded)
     fn extract_fabric_id_from_noc(noc_tlv: &[u8]) -> Result<u64, Error> {
-        let cert = CertRef::new(TLVElement::new(noc_tlv));
-        cert.get_fabric_id()
+        CertRef::new(TLVElement::new(noc_tlv)).get_fabric_id()
     }
 
-    /// extract CAT IDs from a NOC certificate (TLV encoded)
-    fn extract_cat_ids_from_noc(noc_tlv: &[u8]) -> Result<[u32; 3], Error> {
-        let cert = CertRef::new(TLVElement::new(noc_tlv));
-        let mut cat_ids = [0u32; 3];
-        cert.get_cat_ids(&mut cat_ids)?;
-        Ok(cat_ids)
-    }
-
-    #[test]
-    fn test_create_fabric_credentials() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0x1234567890ABCDEFu64;
-
-        let creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
-
-        // Should have root cert
-        assert!(!creds.root_cert().is_empty());
-        // Should have IPK
-        assert_eq!(creds.ipk().access().len(), AEAD_CANON_KEY_LEN);
-        // Fabric ID should match
-        assert_eq!(creds.fabric_id(), fabric_id);
-        // Initial node is 1
-        assert_eq!(creds.peek_next_node_id(), 1);
+    /// Helper: build a Matter stack for the test's `bootstrap` call.
+    /// Each test gets its own static slot.
+    macro_rules! fresh_matter {
+        ($cell:expr) => {{
+            static SLOT: StaticCell<Matter> = StaticCell::new();
+            // Static guards against accidental reuse across tests
+            // running in the same process; each test gets a different
+            // StaticCell via $cell so they don't collide.
+            let _ = $cell;
+            SLOT.uninit()
+                .init_with(Matter::init(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0))
+        }};
     }
 
     #[test]
-    fn test_fabric_credentials_with_starting_node_id() {
+    fn bootstrap_installs_fabric_and_initialises_counter() {
         let crypto = test_only_crypto();
-        let fabric_id = 0x1111111111111111u64;
-        let starting_node_id = 100u64;
+        let matter = fresh_matter!(());
 
-        let creds = unwrap!(FabricCredentials::with_starting_node_id(
+        let creds = unwrap!(FabricSigningCredentials::bootstrap(
+            matter,
             &crypto,
-            fabric_id,
-            starting_node_id,
+            /*fabric_id=*/ 0x1234567890ABCDEF,
+            /*controller_node_id=*/ 1,
+            /*admin_vendor_id=*/ 0xFFF1,
             VALID_FOREVER,
         ));
 
-        assert_eq!(creds.peek_next_node_id(), starting_node_id);
+        assert_eq!(creds.fabric_id(), 0x1234567890ABCDEF);
+        // First commissionable device gets NodeID `2` (controller
+        // is `1`).
+        assert_eq!(creds.peek_next_node_id(), 2);
+
+        // The fabric is in the table.
+        matter.with_state(|state| {
+            let fabric = unwrap!(state.fabrics.fabric(creds.fab_idx()));
+            assert_eq!(fabric.fabric_id(), 0x1234567890ABCDEF);
+            assert_eq!(fabric.node_id(), 1);
+            assert_eq!(fabric.vendor_id(), 0xFFF1);
+            assert!(!fabric.root_ca().is_empty());
+            assert!(!fabric.noc().is_empty());
+        });
     }
 
     #[test]
-    fn test_node_id_auto_increment() {
+    fn generate_device_credentials_bumps_counter() {
         let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
+        let matter = fresh_matter!(0);
+        let mut creds = unwrap!(FabricSigningCredentials::bootstrap(
+            matter,
+            &crypto,
+            0x1,
+            /*controller_node_id=*/ 100,
+            0xFFF1,
+            VALID_FOREVER,
+        ));
 
-        let csr = generate_test_csr();
-
-        // Generate first device
-        let dev1 = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
-        assert_eq!(dev1.node_id, 1);
-
-        // Generate second device
-        let dev2 = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
-        assert_eq!(dev2.node_id, 2);
-
-        // Generate third device
-        let dev3 = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
-        assert_eq!(dev3.node_id, 3);
+        // First device after controller=100 → 101, then 102, then 103.
+        let dev1 = unwrap!(creds.generate_device_credentials(&crypto, GOOD_CSR, &[]));
+        let dev2 = unwrap!(creds.generate_device_credentials(&crypto, GOOD_CSR, &[]));
+        let dev3 = unwrap!(creds.generate_device_credentials(&crypto, GOOD_CSR, &[]));
+        assert_eq!(dev1.node_id, 101);
+        assert_eq!(dev2.node_id, 102);
+        assert_eq!(dev3.node_id, 103);
     }
 
     #[test]
-    fn test_peek_next_node_id_doesnt_increment() {
+    fn explicit_node_id_skips_counter() {
         let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
+        let matter = fresh_matter!(1);
+        let mut creds = unwrap!(FabricSigningCredentials::bootstrap(
+            matter,
+            &crypto,
+            0x1,
+            1,
+            0xFFF1,
+            VALID_FOREVER,
+        ));
 
-        let id1 = creds.peek_next_node_id();
-        let id2 = creds.peek_next_node_id();
-        let id3 = creds.peek_next_node_id();
+        // Counter starts at 2.
+        let auto = unwrap!(creds.generate_device_credentials(&crypto, GOOD_CSR, &[]));
+        assert_eq!(auto.node_id, 2);
 
-        assert_eq!(id1, id2);
-        assert_eq!(id2, id3);
-        assert_eq!(id1, 1);
+        // Explicit NodeID does NOT touch the counter.
+        let explicit =
+            unwrap!(creds.generate_device_credentials_with_node_id(&crypto, GOOD_CSR, 9999, &[]));
+        assert_eq!(explicit.node_id, 9999);
+
+        let next = unwrap!(creds.generate_device_credentials(&crypto, GOOD_CSR, &[]));
+        assert_eq!(next.node_id, 3);
     }
 
     #[test]
-    fn test_custom_node_id_doesnt_affect_counter() {
+    fn noc_carries_correct_fabric_and_node_ids() {
         let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
-
-        let csr = generate_test_csr();
-
-        // Generate with auto node ID
-        let dev1 = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
-        assert_eq!(dev1.node_id, 1);
-
-        // Generate with explicit node ID (should not affect counter)
-        let dev2 = unwrap!(creds.generate_device_credentials_with_node_id(&crypto, csr, 9999, &[]));
-        assert_eq!(dev2.node_id, 9999);
-
-        // Next auto assigned node ID should be 2, not 10000
-        let dev3 = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
-        assert_eq!(dev3.node_id, 2);
-    }
-
-    #[test]
-    fn test_generate_device_credentials_basic() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
-
-        let csr = generate_test_csr();
-
-        let dev = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
-
-        // NOC should be present and non-empty
-        assert!(!dev.noc.is_empty());
-        // Root cert should be present and non-empty
-        assert!(!dev.root_cert.is_empty());
-        // IPK should be 16 bytes
-        assert_eq!(dev.ipk.access().len(), AEAD_CANON_KEY_LEN);
-        // Node ID should be assigned
-        assert_eq!(dev.node_id, 1);
-        // ICAC none by default
-        assert!(dev.icac.is_none());
-    }
-
-    #[test]
-    fn test_device_credentials_with_cat_ids() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
-
-        let csr = generate_test_csr();
-        let cat_ids = &[0x00011111u32, 0x00022222u32];
-
-        let dev = unwrap!(creds.generate_device_credentials(&crypto, csr, cat_ids));
-
-        assert!(!dev.noc.is_empty());
-        assert_eq!(dev.node_id, 1);
-    }
-
-    #[test]
-    fn test_enable_icac() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
-
-        // Initially no ICAC
-        assert!(creds.icac_cert().is_none());
-
-        // Enable ICAC
-        unwrap!(creds.enable_icac(&crypto));
-
-        // ICAC should be available
-        assert!(creds.icac_cert().is_some());
-    }
-
-    #[test]
-    fn test_device_credentials_includes_icac_when_enabled() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
-
-        let csr = generate_test_csr();
-
-        // Enable ICAC
-        unwrap!(creds.enable_icac(&crypto));
-
-        let dev = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
-
-        // ICAC should be present
-        assert!(dev.icac.is_some());
-        assert!(!dev.icac.unwrap().is_empty());
-    }
-
-    #[test]
-    fn test_icac_cert_available_after_enable() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
-
-        assert!(creds.icac_cert().is_none());
-
-        unwrap!(creds.enable_icac(&crypto));
-
-        let icac = unwrap!(creds.icac_cert());
-        assert!(!icac.is_empty());
-    }
-
-    #[test]
-    fn test_noc_signed_by_icac_when_enabled() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
-
-        let csr = generate_test_csr();
-
-        // Enable ICAC
-        unwrap!(creds.enable_icac(&crypto));
-
-        let dev = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
-
-        // Should have ICAC
-        assert!(dev.icac.is_some());
-
-        // NOC should be present
-        assert!(!dev.noc.is_empty());
-    }
-
-    #[test]
-    fn test_ipk_is_generated() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
-
-        let ipk = creds.ipk();
-
-        // IPK should not be all zeros
-        assert_ne!(ipk.access(), AEAD_KEY_ZEROED.access());
-        assert_eq!(ipk.access().len(), AEAD_CANON_KEY_LEN);
-    }
-
-    #[test]
-    fn test_set_custom_ipk() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
-
-        let custom_ipk = [0x42u8; AEAD_CANON_KEY_LEN];
-        creds.set_ipk(CanonAeadKeyRef::new(&custom_ipk));
-
-        assert_eq!(creds.ipk().access(), &custom_ipk);
-    }
-
-    #[test]
-    fn test_root_cert_available() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
-
-        let root_cert = creds.root_cert();
-        assert!(!root_cert.is_empty());
-        assert!(root_cert.len() < MAX_CERT_TLV_LEN);
-    }
-
-    #[test]
-    fn test_root_cert_consistent() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
-
-        let csr = generate_test_csr();
-
-        let mut root_cert_before = heapless::Vec::<u8, 512>::new();
-        unwrap!(root_cert_before.extend_from_slice(creds.root_cert()));
-
-        // Generate device credentials
-        let dev1 = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
-        let dev2 = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
-
-        // Root cert should be the same
-        assert_eq!(dev1.root_cert.as_slice(), root_cert_before.as_slice());
-        assert_eq!(dev2.root_cert.as_slice(), root_cert_before.as_slice());
-        assert_eq!(dev1.root_cert.as_slice(), dev2.root_cert.as_slice());
-    }
-
-    #[test]
-    fn test_verify_noc_and_rcac_parse() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
-
-        let csr = generate_test_csr();
-
-        // Generate credentials
-        let dev = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
-
-        // Parse certificates - if they parse without error, the structure is valid
-        let _noc = CertRef::new(TLVElement::new(&dev.noc));
-        let _rcac = CertRef::new(TLVElement::new(&dev.root_cert));
-
-        // Successfully parsing both certificates means they have valid structure
-        // The NOC is signed by the RCAC during generation
-    }
-
-    #[test]
-    fn test_generated_noc_contains_correct_node_id() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
-
-        let csr = generate_test_csr();
-
-        let dev = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
-
-        // Parse NOC and extract node ID
-        let parsed_node_id = unwrap!(extract_node_id_from_noc(&dev.noc));
-
-        // Should match assigned node ID
-        assert_eq!(parsed_node_id, dev.node_id);
-        assert_eq!(parsed_node_id, 1);
-    }
-
-    #[test]
-    fn test_generated_noc_contains_correct_fabric_id() {
-        let crypto = test_only_crypto();
+        let matter = fresh_matter!(2);
         let fabric_id = 0xABCDEF123456u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
+        let mut creds = unwrap!(FabricSigningCredentials::bootstrap(
+            matter,
+            &crypto,
+            fabric_id,
+            1,
+            0xFFF1,
+            VALID_FOREVER,
+        ));
 
-        let csr = generate_test_csr();
+        let dev = unwrap!(creds.generate_device_credentials(&crypto, GOOD_CSR, &[]));
 
-        let dev = unwrap!(creds.generate_device_credentials(&crypto, csr, &[]));
-
-        // Parse NOC and extract fabric ID
-        let parsed_fabric_id = unwrap!(extract_fabric_id_from_noc(&dev.noc));
-
-        // Should match configured fabric ID
-        assert_eq!(parsed_fabric_id, fabric_id);
-    }
-
-    #[test]
-    fn test_cat_ids_present_in_noc_when_specified() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
-
-        let csr = generate_test_csr();
-        let cat_ids = &[0x00011111u32, 0x00022222u32, 0x00033333u32];
-
-        let dev = unwrap!(creds.generate_device_credentials(&crypto, csr, cat_ids));
-
-        // Parse NOC and extract CAT IDs
-        let parsed_cat_ids = unwrap!(extract_cat_ids_from_noc(&dev.noc));
-
-        // Should match specified CAT IDs
-        assert_eq!(parsed_cat_ids[0], 0x00011111u32);
-        assert_eq!(parsed_cat_ids[1], 0x00022222u32);
-        assert_eq!(parsed_cat_ids[2], 0x00033333u32);
-    }
-
-    #[test]
-    fn test_invalid_csr_fails() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
-
-        let invalid_csr = &[0x01, 0x02, 0x03, 0x04];
-
-        let result = creds.generate_device_credentials(&crypto, invalid_csr, &[]);
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_four_cat_ids_fails() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0x1u64;
-        let mut creds = unwrap!(FabricCredentials::new(&crypto, fabric_id, VALID_FOREVER));
-
-        let csr = generate_test_csr();
-        let too_many_cat_ids = &[0x00011111u32, 0x00022222u32, 0x00033333u32, 0x00044444u32];
-
-        let result = creds.generate_device_credentials(&crypto, csr, too_many_cat_ids);
-
-        assert!(result.is_err());
+        assert_eq!(unwrap!(extract_fabric_id_from_noc(&dev.noc)), fabric_id);
+        assert_eq!(unwrap!(extract_node_id_from_noc(&dev.noc)), dev.node_id);
     }
 }

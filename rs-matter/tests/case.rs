@@ -25,8 +25,11 @@ use embassy_time::{Duration, Timer};
 use log::info;
 
 use rs_matter::cert::builder::VALID_FOREVER;
-use rs_matter::commissioner::fabric_credentials::FabricCredentials;
-use rs_matter::crypto::{test_only_crypto, CanonPkcSecretKey, Crypto, SecretKey, SigningSecretKey};
+use rs_matter::commissioner::NocGenerator;
+use rs_matter::crypto::{
+    test_only_crypto, CanonAeadKey, CanonAeadKeyRef, CanonPkcSecretKey, Crypto, RngCore, SecretKey,
+    SigningSecretKey, AEAD_CANON_KEY_LEN,
+};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::error::Error;
 use rs_matter::respond::Responder;
@@ -53,8 +56,15 @@ const DEVICE_NODE_ID: u64 = 200;
 /// runs a `SecureChannel` responder that handles the handshake. On success the
 /// unsecured session is upgraded to a secure CASE session.
 ///
-/// Uses `FabricCredentials` to generate all certs at runtime via the NOC generation
-/// infrastructure — no raw cert builders or hardcoded test vectors.
+/// Uses [`NocGenerator`] directly to mint controller + device NOCs
+/// against the *same* RCAC + IPK, then plants the resulting (key,
+/// RCAC, NOC, IPK) tuple in **both** Matter instances' fabric tables
+/// via `Fabrics::add`. Same fabric, two member nodes.
+///
+/// (Bootstrapping via [`rs_matter::commissioner::FabricSigningCredentials`]
+/// doesn't fit here — that helper installs only on a single Matter.
+/// For real commissioning the device gets its fabric via `AddNOC`;
+/// this in-process test fakes that by direct install.)
 #[test]
 fn test_case_handshake() {
     init_env_logger();
@@ -62,37 +72,39 @@ fn test_case_handshake() {
     futures_lite::future::block_on(async {
         let crypto = test_only_crypto();
 
-        // ---- 1. Generate credentials using FabricCredentials ----
+        // ---- 1. Generate shared fabric material: RCAC + IPK + NOCs ----
 
-        let mut fabric_creds =
-            FabricCredentials::new(&crypto, TEST_FABRIC_ID, VALID_FOREVER).unwrap();
+        // Single NOC generator → same RCAC signs both NOCs, ensuring
+        // controller and device land on the same fabric.
+        let (mut noc_generator, rcac) =
+            NocGenerator::new(&crypto, TEST_FABRIC_ID, VALID_FOREVER).unwrap();
 
-        // Generate controller credentials (keypair + CSR + NOC)
+        // Shared fabric IPK (16 random bytes).
+        let mut ipk = CanonAeadKey::new();
+        let mut ipk_bytes = [0u8; AEAD_CANON_KEY_LEN];
+        crypto.rand().unwrap().fill_bytes(&mut ipk_bytes);
+        ipk.load_from_array(&ipk_bytes);
+        let ipk_ref: CanonAeadKeyRef<'_> = ipk.reference();
+
+        // Controller signing keypair + CSR + NOC.
         let controller_secret_key = crypto.generate_secret_key().unwrap();
         let mut controller_csr_buf = [0u8; 256];
         let controller_csr = controller_secret_key.csr(&mut controller_csr_buf).unwrap();
-        let controller_creds = fabric_creds
-            .generate_device_credentials_with_node_id(
-                &crypto,
-                controller_csr,
-                CONTROLLER_NODE_ID,
-                &[],
-            )
+        let controller_noc = noc_generator
+            .generate_noc(&crypto, controller_csr, CONTROLLER_NODE_ID, &[])
             .unwrap();
-
         let mut controller_secret_key_canon = CanonPkcSecretKey::new();
         controller_secret_key
             .write_canon(&mut controller_secret_key_canon)
             .unwrap();
 
-        // Generate device credentials (keypair + CSR + NOC)
+        // Device signing keypair + CSR + NOC.
         let device_secret_key = crypto.generate_secret_key().unwrap();
         let mut device_csr_buf = [0u8; 256];
         let device_csr = device_secret_key.csr(&mut device_csr_buf).unwrap();
-        let device_creds = fabric_creds
-            .generate_device_credentials_with_node_id(&crypto, device_csr, DEVICE_NODE_ID, &[])
+        let device_noc = noc_generator
+            .generate_noc(&crypto, device_csr, DEVICE_NODE_ID, &[])
             .unwrap();
-
         let mut device_secret_key_canon = CanonPkcSecretKey::new();
         device_secret_key
             .write_canon(&mut device_secret_key_canon)
@@ -101,10 +113,9 @@ fn test_case_handshake() {
         // ---- 2. Set up two Matter instances ----
 
         let device_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
-
         let controller_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
 
-        // ---- 3. Populate both FabricMgrs with matching fabric ----
+        // ---- 3. Install the same fabric in both fabric tables ----
 
         let controller_fab_idx = controller_matter.with_state(|state| {
             state
@@ -112,14 +123,10 @@ fn test_case_handshake() {
                 .add(
                     &crypto,
                     controller_secret_key_canon.reference(),
-                    &controller_creds.root_cert,
-                    &controller_creds.noc,
-                    controller_creds
-                        .icac
-                        .as_ref()
-                        .map(|v| v.as_slice())
-                        .unwrap_or(&[]),
-                    Some(controller_creds.ipk.reference()),
+                    &rcac,
+                    &controller_noc,
+                    &[], // no ICAC
+                    Some(ipk_ref),
                     0xFFF1,
                     CONTROLLER_NODE_ID,
                 )
@@ -133,14 +140,10 @@ fn test_case_handshake() {
                 .add(
                     &crypto,
                     device_secret_key_canon.reference(),
-                    &device_creds.root_cert,
-                    &device_creds.noc,
-                    device_creds
-                        .icac
-                        .as_ref()
-                        .map(|v| v.as_slice())
-                        .unwrap_or(&[]),
-                    Some(device_creds.ipk.reference()),
+                    &rcac,
+                    &device_noc,
+                    &[], // no ICAC
+                    Some(ipk_ref),
                     0xFFF1,
                     CONTROLLER_NODE_ID,
                 )

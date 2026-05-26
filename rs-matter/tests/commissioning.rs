@@ -50,7 +50,7 @@ use log::{debug, info, warn};
 use rand_core::RngCore;
 
 use rs_matter::cert::builder::VALID_FOREVER;
-use rs_matter::commissioner::{CommissionOptions, Commissioner, FabricCredentials};
+use rs_matter::commissioner::{CommissionOptions, Commissioner, FabricSigningCredentials};
 use rs_matter::crypto::{test_only_crypto, Crypto};
 use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
@@ -321,8 +321,25 @@ async fn test_commission<C: Crypto>(
     peer_addr: Address,
 ) -> Result<(core::num::NonZeroU8, u64), Error> {
     const FABRIC_ID: u64 = 1;
-    let mut fabric_creds = FabricCredentials::new(crypto, FABRIC_ID, VALID_FOREVER)?;
-    let mut commissioner = Commissioner::new(matter, crypto, &mut fabric_creds);
+    // chip-tool's conventional admin NodeID; matches the
+    // CaseAdminSubject the device-side ACL is seeded with.
+    const CONTROLLER_NODE_ID: u64 = 112233;
+    const ADMIN_VENDOR_ID: u16 = 0xFFF1;
+
+    // Bootstrap the controller's fabric ONCE — generates RCAC, IPK,
+    // the controller's signing keypair + NOC, and installs the fabric
+    // in `matter.state.fabrics`. Multi-device commissioning would
+    // reuse the same `creds` (and `Commissioner`) for each peer.
+    let mut creds = FabricSigningCredentials::bootstrap(
+        matter,
+        crypto,
+        FABRIC_ID,
+        CONTROLLER_NODE_ID,
+        ADMIN_VENDOR_ID,
+        VALID_FOREVER,
+    )?;
+    let controller_fab_idx = creds.fab_idx();
+    let mut commissioner = Commissioner::new(matter, crypto, &mut creds);
 
     let opts = CommissionOptions {
         // Test DAC — chip_tool_tests / TEST_DEV_ATT.
@@ -342,9 +359,6 @@ async fn test_commission<C: Crypto>(
     // announces on the same UDP/TCP port post-AddNOC), then drive
     // CommissioningComplete on the new CASE session.
     commissioner.complete_via_case(peer_addr, &result).await?;
-    let controller_fab_idx = commissioner
-        .self_fab_idx()
-        .expect("self_fab_idx should be Some after complete_via_case");
     info!(
         "complete_via_case() ok: controller_fab_idx={}, CASE+CommissioningComplete done",
         controller_fab_idx,

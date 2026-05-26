@@ -61,9 +61,8 @@
 
 use core::num::NonZeroU8;
 
-use crate::crypto::{
-    CanonAeadKeyRef, CanonPkcSecretKey, Crypto, RngCore, SecretKey, SigningSecretKey,
-};
+use crate::cert::MAX_CERT_TLV_LEN;
+use crate::crypto::{Crypto, RngCore};
 use crate::dm::clusters::gen_comm::{CommissioningErrorEnum, GeneralCommissioningClient};
 use crate::dm::clusters::noc::{NodeOperationalCertStatusEnum, OperationalCredentialsClient};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
@@ -75,8 +74,8 @@ use crate::transport::exchange::Exchange;
 use crate::transport::network::Address;
 use crate::Matter;
 
-pub use fabric_credentials::{DeviceCredentials, FabricCredentials};
-pub use noc_generator::{NocCredentials, NocGenerator};
+pub use fabric_credentials::{DeviceCredentials, FabricSigningCredentials};
+pub use noc_generator::NocGenerator;
 
 pub mod fabric_credentials;
 pub mod noc_generator;
@@ -121,17 +120,14 @@ const NOCSR_TAG_CSR: u8 = 1;
 const NOCSR_TAG_NONCE: u8 = 2;
 
 /// Knobs for [`Commissioner::commission`].
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+///
+/// Fields that are per-fabric (NodeID, VendorID) live in
+/// [`FabricSigningCredentials`] / [`crate::fabric::Fabric`] instead —
+/// they're set once at fabric bootstrap and apply to every device
+/// commissioned onto the fabric afterwards.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CommissionOptions {
-    /// `CaseAdminSubject` field in `AddNOC` — the NodeID the device
-    /// records as the administering controller. Used by the device
-    /// to bootstrap its ACL.
-    pub admin_case_subject: u64,
-    /// `AdminVendorId` field in `AddNOC` — the controller's vendor ID
-    /// recorded in the device's Fabrics list. Use `0xFFF1`..=`0xFFF4`
-    /// for development / test controllers.
-    pub admin_vendor_id: u16,
     /// `ExpiryLengthSeconds` for `ArmFailSafe`. The whole commissioning
     /// flow must complete before this expires, otherwise the device
     /// rolls back any partial state.
@@ -147,11 +143,8 @@ pub struct CommissionOptions {
 }
 
 impl CommissionOptions {
-    /// Canonical chip-tool defaults.
     pub const fn new() -> Self {
         Self {
-            admin_case_subject: 112233,
-            admin_vendor_id: 0xFFF1,
             fail_safe_secs: 60,
             allow_test_attestation: false,
         }
@@ -167,15 +160,15 @@ impl Default for CommissionOptions {
 /// What [`Commissioner::commission`] returns on success.
 ///
 /// Also the handoff between phase 1 (`commission`) and phase 2
-/// ([`Commissioner::complete_via_case`]). All fields are required by
-/// the CASE establishment that follows, so they're packaged here.
+/// ([`Commissioner::complete_via_case`]).
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CommissionResult {
     /// Fabric slot the **device** assigned to us. Needed for subsequent
     /// `UpdateNOC` / `RemoveFabric` / `UpdateFabricLabel` invocations.
     /// (Independent of whatever local fabric index the **controller**
-    /// assigned to the same fabric.)
+    /// recorded for the same fabric — see
+    /// [`FabricSigningCredentials::fab_idx`].)
     ///
     /// `NonZeroU8` because the Matter Core spec reserves `fabric_index=0`
     /// for "no fabric" / PASE — a successful `NOCResponse` carrying a
@@ -184,64 +177,39 @@ pub struct CommissionResult {
     /// NodeID the controller assigned to the device. Persist this
     /// alongside the fabric — it's the operational address for CASE.
     pub device_node_id: NodeId,
-    /// NodeID the controller claimed for itself when issuing the
-    /// device's NOC (echo of [`CommissionOptions::admin_case_subject`]).
-    /// The same NodeID is used when the controller installs its own
-    /// fabric and signs its own operational NOC for CASE — and the
-    /// device's admin ACL grants this NodeID administer privilege.
-    pub controller_node_id: NodeId,
-    /// Vendor ID the controller declared in `AddNOC.AdminVendorId`
-    /// (echo of [`CommissionOptions::admin_vendor_id`]). Carried into
-    /// the controller's own fabric record for consistency.
-    pub admin_vendor_id: u16,
 }
 
 /// Stateful commissioner.
 ///
 /// Holds the references needed for the whole flow so individual steps
-/// don't have to take them. `&mut FabricCredentials` because each
-/// commissioning bumps the fabric's `next_node_id` counter.
+/// don't have to take them. `&mut FabricSigningCredentials` because
+/// each commissioning bumps the fabric's `next_node_id` counter.
+///
+/// **The controller's fabric is expected to already be in
+/// `matter.state.fabrics`** — built either via
+/// [`FabricSigningCredentials::bootstrap`] (fresh) or via the standard
+/// fabric persistence + [`FabricSigningCredentials::from_persisted`]
+/// (restart). A single `Commissioner` instance can be reused to
+/// commission any number of devices onto that fabric.
 pub struct Commissioner<'a, C: Crypto> {
     matter: &'a Matter<'a>,
     crypto: C,
-    fabric_creds: &'a mut FabricCredentials,
-    /// Local `fab_idx` of the controller's *own* fabric in
-    /// `matter.state.fabrics`, installed lazily on the first
-    /// [`Self::complete_via_case`] call. `None` until then.
-    ///
-    /// The controller needs an entry in its own fabric table to drive
-    /// CASE as initiator ([`CaseInitiator::initiate`] looks the fabric
-    /// up by this index). The entry holds the controller's signing
-    /// key, NOC, the fabric's RCAC + IPK — minted from
-    /// [`Self::fabric_creds`] the first time we need them.
-    self_fab_idx: Option<NonZeroU8>,
+    creds: &'a mut FabricSigningCredentials,
 }
 
 impl<'a, C: Crypto> Commissioner<'a, C> {
-    /// Create a commissioner bound to the given Matter stack, crypto
-    /// backend, and fabric credentials.
+    /// Create a commissioner bound to a Matter stack, crypto backend,
+    /// and an already-installed fabric (described by `creds`).
     pub const fn new(
         matter: &'a Matter<'a>,
         crypto: C,
-        fabric_creds: &'a mut FabricCredentials,
+        creds: &'a mut FabricSigningCredentials,
     ) -> Self {
         Self {
             matter,
             crypto,
-            fabric_creds,
-            self_fab_idx: None,
+            creds,
         }
-    }
-
-    /// Local `fab_idx` of the controller's own fabric in
-    /// `matter.state.fabrics`, once installed by
-    /// [`Self::complete_via_case`]. `None` before phase 2 has run.
-    ///
-    /// Callers use this with `Exchange::initiate(matter, fab_idx.get(),
-    /// device_node_id, true)` to open exchanges on the post-commissioning
-    /// CASE session.
-    pub fn self_fab_idx(&self) -> Option<NonZeroU8> {
-        self.self_fab_idx
     }
 
     /// Phase 1 — drive `ArmFailSafe` through `AddNOC` over PASE.
@@ -276,36 +244,45 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
 
         let matter = self.matter;
         let device_creds = Self::csr_request(matter, &csr_nonce, |csr_der| {
-            self.fabric_creds
+            self.creds
                 .generate_device_credentials(&self.crypto, csr_der, &[])
         })
         .await?;
 
-        let device_node_id = device_creds.node_id;
+        // Snapshot RCAC bytes + admin scalars from the controller's
+        // installed fabric in `matter.state.fabrics` — the single
+        // source of truth. `Fabrics::add` reads everything via the
+        // `Fabric` entry; nothing lives in `FabricSigningCredentials`
+        // beyond the signing key + IPK + node-id counter.
+        let mut rcac_buf: heapless::Vec<u8, MAX_CERT_TLV_LEN> = heapless::Vec::new();
+        let (admin_node_id, admin_vendor_id) = self.matter.with_state(|state| {
+            let fabric = state.fabrics.fabric(self.creds.fab_idx())?;
+            rcac_buf
+                .extend_from_slice(fabric.root_ca())
+                .map_err(|_| ErrorCode::BufferTooSmall)?;
+            Ok::<_, Error>((fabric.node_id(), fabric.vendor_id()))
+        })?;
 
         // AddTrustedRootCertificate first — once the device has our
         // RCAC the subsequent NOC chain validates.
-        self.add_trusted_root_certificate(&device_creds.root_cert)
-            .await?;
+        self.add_trusted_root_certificate(&rcac_buf).await?;
 
-        // AddNOC.
-        let icac: &[u8] = device_creds.icac.as_deref().unwrap_or(&[]);
-        let ipk_ref = device_creds.ipk.reference();
+        // AddNOC. IPK comes straight from the signing credentials
+        // (it's the raw epoch key shared across every fabric member —
+        // not the per-fabric derived `op_key`).
         let fabric_index = self
             .add_noc(
                 &device_creds.noc,
-                icac,
-                ipk_ref.access(),
-                opts.admin_case_subject,
-                opts.admin_vendor_id,
+                /*icac=*/ &[],
+                self.creds.ipk().access(),
+                admin_node_id,
+                admin_vendor_id,
             )
             .await?;
 
         Ok(CommissionResult {
             fabric_index,
-            device_node_id,
-            controller_node_id: opts.admin_case_subject,
-            admin_vendor_id: opts.admin_vendor_id,
+            device_node_id: device_creds.node_id,
         })
     }
 
@@ -318,15 +295,12 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     /// the same UDP port post-AddNOC.
     ///
     /// Steps:
-    ///   1. Install the **controller's** own fabric in
-    ///      `matter.state.fabrics` if not already installed (lazily —
-    ///      see [`Self::install_self_fabric`]).
-    ///   2. Open a fresh **unsecured** exchange to `peer_addr` and run
+    ///   1. Open a fresh **unsecured** exchange to `peer_addr` and run
     ///      [`CaseInitiator::initiate`] (Sigma1 → Sigma2 → Sigma3 →
     ///      StatusReport). On success the new CASE session is keyed in
-    ///      `matter.state.sessions` at `(self_fab_idx, device_node_id,
+    ///      `matter.state.sessions` at `(creds.fab_idx(), device_node_id,
     ///      secure=true)`.
-    ///   3. Open a CASE-secured exchange on that session and invoke
+    ///   2. Open a CASE-secured exchange on that session and invoke
     ///      `GeneralCommissioning::CommissioningComplete`. The device
     ///      disarms its fail-safe and persists the new fabric.
     pub async fn complete_via_case(
@@ -334,11 +308,9 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         peer_addr: Address,
         phase1: &CommissionResult,
     ) -> Result<(), Error> {
-        // 1. Ensure the controller's fabric is in the local fabric table.
-        let fab_idx =
-            self.install_self_fabric(phase1.controller_node_id, phase1.admin_vendor_id)?;
+        let fab_idx = self.creds.fab_idx();
 
-        // 2. CASE handshake over a fresh unsecured exchange.
+        // CASE handshake over a fresh unsecured exchange.
         {
             let mut exchange =
                 Exchange::initiate_unsecured(self.matter, &self.crypto, peer_addr).await?;
@@ -350,75 +322,9 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
             // here so we open a fresh one on the new CASE session.
         }
 
-        // 3. CommissioningComplete on the CASE session.
+        // CommissioningComplete on the CASE session.
         self.commissioning_complete(fab_idx, phase1.device_node_id)
             .await
-    }
-
-    /// Install the controller's own fabric in `matter.state.fabrics`,
-    /// or return the cached local `fab_idx` if it's already installed.
-    ///
-    /// Idempotent: the first call generates a controller signing
-    /// keypair, mints a self-signed NOC against [`Self::fabric_creds`],
-    /// hands the (key, NOC, RCAC, IPK) tuple to `Fabrics::add`, and
-    /// caches the resulting `fab_idx`. Subsequent calls return the
-    /// cached value.
-    fn install_self_fabric(
-        &mut self,
-        controller_node_id: NodeId,
-        admin_vendor_id: u16,
-    ) -> Result<NonZeroU8, Error> {
-        if let Some(fab_idx) = self.self_fab_idx {
-            return Ok(fab_idx);
-        }
-
-        // Generate the controller's operational signing keypair. The
-        // CSR side wants a `SecretKey` (to sign the PKCS#10), and the
-        // fabric-table install wants the same key in canonical-bytes
-        // form (for storage via `Fabric::secret_key`).
-        let signing_key = self.crypto.generate_secret_key()?;
-
-        let mut csr_buf = [0u8; 256]; // P-256 PKCS#10 CSRs are ~150B. TODO: LARGE BUFFER
-        let csr_der = signing_key.csr(&mut csr_buf)?;
-
-        let mut canon_secret_key = CanonPkcSecretKey::new();
-        signing_key.write_canon(&mut canon_secret_key)?;
-
-        // Mint the controller's own NOC against the fabric's RCAC
-        // (or ICAC if `fabric_creds.enable_icac()` was called).
-        let creds = self.fabric_creds.generate_device_credentials_with_node_id(
-            &self.crypto,
-            csr_der,
-            controller_node_id,
-            &[],
-        )?;
-
-        let icac_slice: &[u8] = creds.icac.as_deref().unwrap_or(&[]);
-
-        let ipk_ref: CanonAeadKeyRef<'_> = creds.ipk.reference();
-        let canon_ref = canon_secret_key.reference();
-
-        let crypto = &self.crypto;
-
-        let fab_idx = self.matter.with_state(|state| {
-            // `case_admin_subject = controller_node_id`: the
-            // controller administers its own fabric.
-            let fabric = state.fabrics.add(
-                crypto,
-                canon_ref,
-                &creds.root_cert,
-                &creds.noc,
-                icac_slice,
-                Some(ipk_ref),
-                admin_vendor_id,
-                controller_node_id,
-            )?;
-            Ok::<_, Error>(fabric.fab_idx())
-        })?;
-
-        self.self_fab_idx = Some(fab_idx);
-
-        Ok(fab_idx)
     }
 
     /// `GeneralCommissioning::ArmFailSafe(expiry, breadcrumb=0)`.

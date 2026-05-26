@@ -58,7 +58,7 @@ use embassy_time::{Duration, Timer};
 use log::{error, info};
 
 use rs_matter::cert::builder::VALID_FOREVER;
-use rs_matter::commissioner::{CommissionOptions, Commissioner, FabricCredentials};
+use rs_matter::commissioner::{CommissionOptions, Commissioner, FabricSigningCredentials};
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::error::{Error, ErrorCode};
@@ -192,8 +192,17 @@ async fn run_commission<C: Crypto>(
     info!("PASE established");
 
     info!("=== Commissioner::commission (phase 1 — over PASE) ===");
-    let mut fabric_creds = FabricCredentials::new(crypto, /*fabric_id=*/ 1, VALID_FOREVER)?;
-    let mut commissioner = Commissioner::new(matter, crypto, &mut fabric_creds);
+    // chip-tool's conventional admin NodeID + test vendor — matches
+    // what `chip-all-clusters-app` expects on the device-side ACL.
+    let mut creds = FabricSigningCredentials::bootstrap(
+        matter,
+        crypto,
+        /*fabric_id=*/ 1,
+        /*controller_node_id=*/ 112233,
+        /*admin_vendor_id=*/ 0xFFF1,
+        VALID_FOREVER,
+    )?;
+    let mut commissioner = Commissioner::new(matter, crypto, &mut creds);
 
     let opts = CommissionOptions {
         // chip-all-clusters-app ships with the canonical test DAC;
