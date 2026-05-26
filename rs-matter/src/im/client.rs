@@ -941,6 +941,17 @@ impl<'a> InvokeRespChunk<'a> {
     /// `more_chunks=true`, fetch + parse the next chunk and return
     /// it as `Some(next)`. Otherwise (final chunk, or status-only)
     /// drop the exchange and return `None`.
+    ///
+    /// Chunking flow control (Matter Core §10.7.10.3): on receipt of
+    /// any `InvokeResponseMessage` with `MoreChunkedResponses=true`,
+    /// the receiver SHALL reply with `StatusResponse(Success)` and
+    /// the sender SHALL await that ACK before transmitting the next
+    /// chunk. On the **final** chunk (`MoreChunks=false`) no trailer
+    /// is sent — per §8.8.3.1 the `SuppressResponse` field on an
+    /// `InvokeResponseMessage` is *ignored by the client*, and Matter
+    /// "does not support responses to InvokeResponse actions" at the
+    /// action layer. So the terminal-chunk branch is MRP-ack only,
+    /// regardless of the `SuppressResponse` value the server echoed.
     pub async fn complete(mut self) -> Result<Option<Self>, Error> {
         if self.status_only {
             // Status-only chunks are terminal — no chunking, no
@@ -961,13 +972,15 @@ impl<'a> InvokeRespChunk<'a> {
         };
 
         if more_chunks {
-            // Spec forbids suppress_response=true with more_chunks=true
+            // §10.7.10.1: if MoreChunkedMessages is true,
+            // SuppressResponse SHALL be false. A peer that
+            // violates this is malformed — abort the chain.
             if suppress_response {
                 send_abort(&mut self.exchange).await?;
                 return Err(ErrorCode::InvalidData.into());
             }
 
-            // Request next chunk.
+            // Per §10.7.10.3 — flow-control ACK between chunks.
             self.exchange
                 .send_with(|_, wb| {
                     StatusResp::write(wb, IMStatusCode::Success)?;
@@ -983,16 +996,11 @@ impl<'a> InvokeRespChunk<'a> {
 
             Ok(Some(self))
         } else {
-            if !suppress_response {
-                self.exchange
-                    .send_with(|_, wb| {
-                        StatusResp::write(wb, IMStatusCode::Success)?;
-                        Ok(Some(OpCode::StatusResponse.into()))
-                    })
-                    .await?;
-            } else {
-                self.exchange.acknowledge().await?;
-            }
+            // Final (or only) chunk. Per §8.8.3.1, Matter does not
+            // support responses to InvokeResponse actions — the
+            // SuppressResponse field is ignored by the client. MRP
+            // -ack only.
+            self.exchange.acknowledge().await?;
             Ok(None)
         }
     }
