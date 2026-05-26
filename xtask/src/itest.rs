@@ -502,6 +502,14 @@ pub(crate) enum TestSuite {
     Camera,
     /// OnOff + LevelControl, exercising the dimmable_light example.
     Light,
+    /// **Inverted** suite — rs-matter as the **commissioner** driving
+    /// upstream `chip-all-clusters-app` (the device under test). Builds
+    /// both binaries, spawns the CHIP app on `[::1]:<port>` with known
+    /// passcode/discriminator, then runs the `commissioner_test`
+    /// example binary against it and asserts exit 0. Phase-1 only —
+    /// stops at `AddNOC` until the library's phase-2 (CASE +
+    /// CommissioningComplete) lands.
+    Commissioner,
 }
 
 impl TestSuite {
@@ -525,6 +533,10 @@ impl TestSuite {
                 .collect(),
             Self::Camera => CAMERA_TESTS.to_vec(),
             Self::Light => LIGHT_TESTS.to_vec(),
+            // One synthetic case — the dispatch in `ITests::run` picks
+            // this up and routes to `run_commissioner_suite`, which
+            // ignores the test list (there's nothing to parameterise yet).
+            Self::Commissioner => vec![COMMISSIONER_PHASE1_TEST],
         }
     }
 
@@ -534,6 +546,7 @@ impl TestSuite {
             Self::System | Self::SystemPython | Self::SystemYaml => "chip_tool_tests",
             Self::Camera => "camera_tests",
             Self::Light => "dimmable_light",
+            Self::Commissioner => "commissioner_test",
         }
     }
 
@@ -542,6 +555,7 @@ impl TestSuite {
         match self {
             Self::System | Self::SystemPython | Self::SystemYaml | Self::Camera => &[],
             Self::Light => &["chip-test"],
+            Self::Commissioner => &[],
         }
     }
 
@@ -551,12 +565,31 @@ impl TestSuite {
             Self::System | Self::SystemPython | Self::SystemYaml => 120,
             Self::Camera => 180,
             Self::Light => 500,
+            Self::Commissioner => 120,
         }
     }
 }
 
 /// The directory where the Chip repository will be cloned
 const CHIP_DIR: &str = ".build/itest/connectedhomeip";
+
+/// Synthetic test name surfaced for [`TestSuite::Commissioner`] — picked
+/// up by [`ITests::run_tests`] and routed to [`ITests::run_commissioner_suite`].
+pub(crate) const COMMISSIONER_PHASE1_TEST: &str = "commissioner_phase_1";
+
+/// Passcode the commissioner suite hands to `chip-all-clusters-app`. Any
+/// value that satisfies the Matter spec (1..2^27-1, not in the reserved
+/// list) works — pick the rs-matter test fixture so the example's
+/// default also works without arguments.
+const COMMISSIONER_PASSCODE: u32 = 20202021;
+/// Discriminator handed to `chip-all-clusters-app`. Currently only used
+/// for the CLI flag — the controller skips mDNS discovery and talks to
+/// `[::1]:<port>` directly.
+const COMMISSIONER_DISCRIMINATOR: u16 = 3840;
+/// Port the spawned `chip-all-clusters-app` binds. Picked off the
+/// canonical 5540 so a local rs-matter device can co-exist on 5540
+/// during ad-hoc work.
+const COMMISSIONER_DEVICE_PORT: u16 = 5550;
 
 /// A utility for running Chip integration tests for `rs-matter`.
 ///
@@ -642,6 +675,19 @@ impl ITests {
         // Verify Chip is set up
         if !chip_dir.exists() {
             anyhow::bail!("Chip environment not found. Run `cargo xtask itest-setup` first.");
+        }
+
+        // Commissioner suite — rs-matter is the controller, the upstream
+        // `chip-all-clusters-app` is the DUT. The test list will be the
+        // single synthetic `COMMISSIONER_PHASE1_TEST` name. Route to the
+        // dedicated path *before* the chip-tool check — that suite uses
+        // neither chip-tool nor the python wheel.
+        if tests
+            .clone()
+            .into_iter()
+            .any(|t| t == COMMISSIONER_PHASE1_TEST)
+        {
+            return self.run_commissioner_suite(test_timeout_secs, profile, target);
         }
 
         let chip_tool_path = chip_dir.join("out/host/chip-tool");
@@ -746,6 +792,211 @@ impl ITests {
     /// `src/python_testing/`. Anything else is a YAML test suite.
     fn is_python_test(test_name: &str) -> bool {
         test_name.starts_with("TC_")
+    }
+
+    /// Drive the [`TestSuite::Commissioner`] flow end-to-end.
+    ///
+    /// Builds `chip-all-clusters-app` (cached), spawns it on
+    /// `[::1]:<COMMISSIONER_DEVICE_PORT>` with a known passcode +
+    /// discriminator + an ephemeral KVS file (so commissioning state
+    /// doesn't carry across runs), then runs the rs-matter
+    /// `commissioner_test` example against it. Asserts the example
+    /// exits 0 and prints the expected `commissioner_test: ok …` line.
+    /// Kills the spawned app on success or failure.
+    fn run_commissioner_suite(
+        &self,
+        test_timeout_secs: u32,
+        profile: &str,
+        target: &str,
+    ) -> anyhow::Result<()> {
+        use std::io::{BufRead, BufReader};
+        use std::process::Stdio;
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        warn!("=> Running commissioner suite (rs-matter as controller, chip-all-clusters-app as DUT)");
+
+        // 1. Build the upstream device binary lazily (cached).
+        self.chip_builder.build_chip_all_clusters_app(None, false)?;
+
+        let chip_dir = self.chip_builder.chip_dir();
+        let app_path = chip_dir.join("out/host/chip-all-clusters-app");
+        if !app_path.exists() {
+            anyhow::bail!(
+                "`chip-all-clusters-app` not found at {}",
+                app_path.display()
+            );
+        }
+
+        let test_exe_path = self.test_exe_path(profile, target);
+        if !test_exe_path.exists() {
+            anyhow::bail!(
+                "`{target}` not found at {} — run `cargo xtask itest-exe --target {target}` first",
+                test_exe_path.display(),
+            );
+        }
+
+        // 2. Fresh KVS per run — chip-all-clusters-app persists fabric
+        //    state, and we want each run to start from factory-reset.
+        let kvs_path = std::env::temp_dir().join(format!(
+            "rs-matter-commissioner-kvs-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&kvs_path);
+
+        // 3. Spawn the DUT. Bind to IPv6 loopback only (matches what
+        //    `commissioner_test` peers against by default). Drain its
+        //    stdout/stderr to a background thread so the pipe buffer
+        //    doesn't fill up and stall the subprocess.
+        info!(
+            "Spawning chip-all-clusters-app on [::1]:{} (passcode={}, discriminator={})",
+            COMMISSIONER_DEVICE_PORT, COMMISSIONER_PASSCODE, COMMISSIONER_DISCRIMINATOR,
+        );
+        let mut app = Command::new(&app_path)
+            .arg("--passcode")
+            .arg(COMMISSIONER_PASSCODE.to_string())
+            .arg("--discriminator")
+            .arg(COMMISSIONER_DISCRIMINATOR.to_string())
+            .arg("--secured-device-port")
+            .arg(COMMISSIONER_DEVICE_PORT.to_string())
+            .arg("--KVS")
+            .arg(&kvs_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("failed to spawn chip-all-clusters-app: {e}"))?;
+
+        // Drain stdout in a thread + signal when the app reports it's
+        // ready. CHIP prints a line containing "Listening" or
+        // "CHIP minimal mDNS started" once it's accepting commissioning.
+        // Use a tolerant marker — any log line is fine for readiness;
+        // the controller's PASE attempt will retry briefly on its own.
+        let app_stdout = app.stdout.take().expect("piped");
+        let app_stderr = app.stderr.take().expect("piped");
+        let (ready_tx, ready_rx) = mpsc::channel::<()>();
+        let ready_tx_clone = ready_tx.clone();
+        let print_app_output = self.print_cmd_output;
+        let stdout_thread = thread::spawn(move || {
+            let mut signalled = false;
+            let reader = BufReader::new(app_stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                if print_app_output {
+                    println!("[chip-all-clusters-app stdout] {line}");
+                }
+                if !signalled && line.contains("CHIP minimal mDNS started") {
+                    let _ = ready_tx_clone.send(());
+                    signalled = true;
+                }
+            }
+        });
+        let stderr_thread = thread::spawn(move || {
+            let reader = BufReader::new(app_stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                if print_app_output {
+                    eprintln!("[chip-all-clusters-app stderr] {line}");
+                }
+            }
+        });
+
+        // 4. Wait up to 10 s for the DUT to advertise. Fall through
+        //    after the timeout — the rs-matter PASE initiator retries
+        //    internally, so a small startup race is fine.
+        let _ = ready_rx.recv_timeout(Duration::from_secs(10));
+        info!("chip-all-clusters-app appears ready");
+
+        // 5. Run the rs-matter controller binary against it. Time-bound
+        //    so a hung commissioning doesn't deadlock the suite.
+        let mut controller = Command::new(&test_exe_path)
+            .arg(COMMISSIONER_PASSCODE.to_string())
+            .arg(format!("[::1]:{COMMISSIONER_DEVICE_PORT}"))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("failed to spawn commissioner_test: {e}"))?;
+
+        let controller_stdout = controller.stdout.take().expect("piped");
+        let controller_stderr = controller.stderr.take().expect("piped");
+
+        // Capture controller stdout to extract the `commissioner_test:
+        // ok ...` line; also stream stderr to the operator.
+        let (success_tx, success_rx) = mpsc::channel::<String>();
+        let success_tx_clone = success_tx.clone();
+        let print_ctrl_output = self.print_cmd_output;
+        let ctrl_stdout_thread = thread::spawn(move || {
+            let reader = BufReader::new(controller_stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                if print_ctrl_output {
+                    println!("[commissioner_test stdout] {line}");
+                }
+                if line.starts_with("commissioner_test: ok ") {
+                    let _ = success_tx_clone.send(line);
+                }
+            }
+        });
+        let ctrl_stderr_thread = thread::spawn(move || {
+            let reader = BufReader::new(controller_stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                if print_ctrl_output {
+                    eprintln!("[commissioner_test stderr] {line}");
+                } else {
+                    // The example logs operationally on stderr; in normal
+                    // verbosity we still want it visible on failure.
+                    eprintln!("[commissioner_test] {line}");
+                }
+            }
+        });
+
+        // Poll for completion or timeout.
+        let deadline = Instant::now() + Duration::from_secs(test_timeout_secs as u64);
+        let controller_status = loop {
+            match controller.try_wait() {
+                Ok(Some(s)) => break s,
+                Ok(None) if Instant::now() >= deadline => {
+                    warn!("commissioner_test timed out after {test_timeout_secs}s; killing");
+                    let _ = controller.kill();
+                    let _ = controller.wait();
+                    let _ = app.kill();
+                    let _ = app.wait();
+                    let _ = stdout_thread.join();
+                    let _ = stderr_thread.join();
+                    let _ = ctrl_stdout_thread.join();
+                    let _ = ctrl_stderr_thread.join();
+                    anyhow::bail!("commissioner_test timed out");
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(200)),
+                Err(e) => {
+                    let _ = app.kill();
+                    let _ = app.wait();
+                    anyhow::bail!("waiting on commissioner_test failed: {e}");
+                }
+            }
+        };
+        let _ = ctrl_stdout_thread.join();
+        let _ = ctrl_stderr_thread.join();
+
+        // 6. Tear down the DUT regardless of the controller's outcome.
+        let _ = app.kill();
+        let _ = app.wait();
+        let _ = stdout_thread.join();
+        let _ = stderr_thread.join();
+        let _ = std::fs::remove_file(&kvs_path);
+
+        // 7. Assertions: clean exit *and* the success line was emitted.
+        if !controller_status.success() {
+            anyhow::bail!(
+                "commissioner_test exited with {:?} (expected success)",
+                controller_status.code(),
+            );
+        }
+        let success_line = success_rx
+            .try_recv()
+            .map_err(|_| anyhow::anyhow!("commissioner_test did not emit a `commissioner_test: ok ...` line"))?;
+        info!("commissioner suite passed: {success_line}");
+        // Suppress unused-channel warning on the unused sender.
+        drop(success_tx);
+
+        Ok(())
     }
 
     fn yaml_test_command(

@@ -38,13 +38,16 @@ pub type KeyId = [u8; 20];
 ///
 /// Per RFC 5280 section 4.2.1.2 and the Matter spec 6.5.11.(4-5),
 /// the key identifier is the 160-bit SHA-1 hash of the public key.
-pub fn compute_key_id<C: Crypto>(crypto: &C, pubkey: &[u8]) -> Result<KeyId, Error> {
+pub fn compute_key_id<C: Crypto>(crypto: C, pubkey: &[u8]) -> Result<KeyId, Error> {
     let mut hasher = crypto.hash1()?;
     hasher.update(pubkey)?;
+
     let mut hash = CryptoSensitive::<SHA1_HASH_LEN>::new();
     hasher.finish(&mut hash)?;
+
     let mut key_id = [0u8; 20];
     key_id.copy_from_slice(hash.access());
+
     Ok(key_id)
 }
 

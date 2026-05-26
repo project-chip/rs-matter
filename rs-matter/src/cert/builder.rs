@@ -105,7 +105,7 @@ impl<'a> CertBuilderCore<'a> {
     #[allow(clippy::too_many_arguments)]
     fn build_cert<C: Crypto>(
         &mut self,
-        crypto: &C,
+        crypto: C,
         cert_type: CertType,
         serial_number: &[u8],
         validity: Validity,
@@ -121,7 +121,7 @@ impl<'a> CertBuilderCore<'a> {
         // Convert public keys to canonical byte representation
         let mut subject_pubkey_bytes = CryptoSensitive::<PKC_CANON_PUBLIC_KEY_LEN>::new();
         subject_pubkey.write_canon(&mut subject_pubkey_bytes)?;
-        let subject_key_id = compute_key_id(crypto, subject_pubkey_bytes.access())?;
+        let subject_key_id = compute_key_id(&crypto, subject_pubkey_bytes.access())?;
 
         let authority_key_id = if let Some(issuer_pk) = issuer_pubkey {
             let mut bytes = CryptoSensitive::<PKC_CANON_PUBLIC_KEY_LEN>::new();
@@ -416,7 +416,7 @@ impl<'a> NocBuilder<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn build<C: Crypto>(
         &mut self,
-        crypto: &C,
+        crypto: C,
         subject: SubjectDN,
         validity: Validity,
         subject_pubkey: &C::PublicKey<'_>,
@@ -495,7 +495,7 @@ impl<'a> IcacBuilder<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn build<C: Crypto>(
         &mut self,
-        crypto: &C,
+        crypto: C,
         subject: SubjectDN,
         validity: Validity,
         subject_pubkey: &C::PublicKey<'_>,
@@ -563,7 +563,7 @@ impl<'a> RcacBuilder<'a> {
     /// The length of the encoded certificate in the buffer.
     pub fn build<C: Crypto>(
         &mut self,
-        crypto: &C,
+        crypto: C,
         subject: SubjectDN,
         validity: Validity,
         pubkey: &C::PublicKey<'_>,

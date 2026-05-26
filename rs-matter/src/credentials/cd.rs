@@ -611,7 +611,7 @@ impl CertificationElements {
     /// # Returns
     /// The decoded [`CertificationElements`] on success.
     pub fn verify<C: Crypto>(
-        crypto: &C,
+        crypto: C,
         cms_message: &[u8],
         allow_test_cd_signing_key: bool,
     ) -> Result<Self, Error> {

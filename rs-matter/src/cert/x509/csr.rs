@@ -273,7 +273,7 @@ impl<'a> CsrRef<'a> {
     ///
     /// The CSR is signed by the private key corresponding to the public key
     /// contained within the CSR itself.
-    pub fn verify<C: Crypto>(&self, crypto: &C) -> Result<(), Error> {
+    pub fn verify<C: Crypto>(&self, crypto: C) -> Result<(), Error> {
         let pubkey_bytes = self.pubkey()?;
         let pubkey = crypto.pub_key(CanonPkcPublicKeyRef::try_new(&pubkey_bytes)?)?;
 

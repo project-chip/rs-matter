@@ -94,7 +94,7 @@ impl NocGenerator {
     ///
     /// # Returns
     /// A new `NocGenerator` ready to issue NOCs.
-    pub fn new<C: Crypto>(crypto: &C, fabric_id: u64, validity: Validity) -> Result<Self, Error> {
+    pub fn new<C: Crypto>(crypto: C, fabric_id: u64, validity: Validity) -> Result<Self, Error> {
         // Generate a random RCAC ID
         let mut rcac_id_bytes = [0u8; 8];
         crypto.rand()?.fill_bytes(&mut rcac_id_bytes);
@@ -127,7 +127,7 @@ impl NocGenerator {
         };
 
         let cert_len = RcacBuilder::new(&mut cert_buf).build(
-            crypto,
+            &crypto,
             subject,
             validity,
             &root_key.pub_key()?,
@@ -165,7 +165,7 @@ impl NocGenerator {
     /// * `rcac_id` - The RCAC identifier
     /// * `validity` - Validity period for generated certificates
     pub fn from_root_ca<C: Crypto>(
-        crypto: &C,
+        crypto: C,
         root_privkey: CanonPkcSecretKey,
         root_cert: &[u8],
         fabric_id: u64,
@@ -204,7 +204,7 @@ impl NocGenerator {
     ///
     /// # Returns
     /// A reference to the generated ICAC certificate.
-    pub fn generate_icac<C: Crypto>(&mut self, crypto: &C) -> Result<&[u8], Error> {
+    pub fn generate_icac<C: Crypto>(&mut self, crypto: C) -> Result<&[u8], Error> {
         // Generate a random ICAC ID
         let mut icac_id_bytes = [0u8; 8];
         crypto.rand()?.fill_bytes(&mut icac_id_bytes);
@@ -243,7 +243,7 @@ impl NocGenerator {
         };
 
         let cert_len = IcacBuilder::new(&mut cert_buf).build(
-            crypto,
+            &crypto,
             subject,
             self.validity,
             &icac_key.pub_key()?,
@@ -278,7 +278,7 @@ impl NocGenerator {
     /// The generated NOC credentials.
     pub fn generate_noc<C: Crypto>(
         &mut self,
-        crypto: &C,
+        crypto: C,
         csr: &[u8],
         node_id: u64,
         cat_ids: &[u32],
@@ -288,7 +288,7 @@ impl NocGenerator {
         let device_pubkey = csr_ref.pubkey()?;
 
         // Verify the CSR signature
-        csr_ref.verify(crypto)?;
+        csr_ref.verify(&crypto)?;
 
         // Generate and encode serial number as ASN.1 INTEGER
         let serial = self.next_serial();
@@ -328,7 +328,7 @@ impl NocGenerator {
         };
 
         let cert_len = NocBuilder::new(&mut cert_buf).build(
-            crypto,
+            &crypto,
             subject,
             self.validity,
             &crypto.pub_key(CanonPkcPublicKeyRef::try_new(&device_pubkey)?)?,

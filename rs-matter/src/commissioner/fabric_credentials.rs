@@ -92,10 +92,12 @@ impl FabricCredentials {
     /// * `crypto` - Cryptographic backend
     /// * `fabric_id` - The fabric identifier
     /// * `validity` - Validity period for generated certificates
-    pub fn new<C: Crypto>(crypto: &C, fabric_id: u64, validity: Validity) -> Result<Self, Error> {
-        let noc_generator = NocGenerator::new(crypto, fabric_id, validity)?;
+    pub fn new<C: Crypto>(crypto: C, fabric_id: u64, validity: Validity) -> Result<Self, Error> {
+        let noc_generator = NocGenerator::new(&crypto, fabric_id, validity)?;
+
         let mut ipk = CanonAeadKey::new();
         let mut ipk_bytes = [0u8; AEAD_CANON_KEY_LEN];
+
         crypto.rand()?.fill_bytes(&mut ipk_bytes);
         ipk.load_from_array(&ipk_bytes);
 
@@ -114,7 +116,7 @@ impl FabricCredentials {
     /// * `starting_node_id` - The first node ID to assign
     /// * `validity` - Validity period for generated certificates
     pub fn with_starting_node_id<C: Crypto>(
-        crypto: &C,
+        crypto: C,
         fabric_id: u64,
         starting_node_id: u64,
         validity: Validity,
@@ -122,8 +124,11 @@ impl FabricCredentials {
         if starting_node_id < 1 {
             return Err(crate::error::ErrorCode::InvalidData.into());
         }
+
         let mut creds = Self::new(crypto, fabric_id, validity)?;
+
         creds.next_node_id = starting_node_id;
+
         Ok(creds)
     }
 
@@ -150,7 +155,7 @@ impl FabricCredentials {
     /// * `cat_ids` - CASE Authentication Tags (up to 3)
     pub fn generate_device_credentials<C: Crypto>(
         &mut self,
-        crypto: &C,
+        crypto: C,
         csr: &[u8],
         cat_ids: &[u32],
     ) -> Result<DeviceCredentials, Error> {
@@ -158,7 +163,7 @@ impl FabricCredentials {
 
         let noc_creds = self
             .noc_generator
-            .generate_noc(crypto, csr, node_id, cat_ids)?;
+            .generate_noc(&crypto, csr, node_id, cat_ids)?;
 
         // Copy root cert
         let mut root_cert = heapless::Vec::new();
@@ -192,7 +197,7 @@ impl FabricCredentials {
     /// using auto-assignment.
     pub fn generate_device_credentials_with_node_id<C: Crypto>(
         &mut self,
-        crypto: &C,
+        crypto: C,
         csr: &[u8],
         node_id: u64,
         cat_ids: &[u32],

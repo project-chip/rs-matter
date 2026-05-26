@@ -49,6 +49,8 @@ use log::{debug, info, warn};
 
 use rand_core::RngCore;
 
+use rs_matter::cert::builder::VALID_FOREVER;
+use rs_matter::commissioner::{CommissionOptions, Commissioner, FabricCredentials};
 use rs_matter::crypto::{test_only_crypto, Crypto};
 use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
@@ -293,13 +295,51 @@ async fn run_controller_flow<C: Crypto>(
     info!("=== Phase 2: PASE Session Establishment ===");
     establish_pase_session(matter, crypto, peer_addr, TEST_PASSCODE).await?;
 
-    info!("=== Phase 3: ArmFailSafe (response-bearing command) ===");
-    test_arm_failsafe(matter).await?;
+    info!("=== Phase 3: Commissioner::commission() ===");
+    test_commission(matter, crypto).await?;
 
-    info!("=== Phase 4: Interaction Model Operations ===");
+    // Cherry on top: after `AddNOC` the device-side responder upgrades
+    // the PASE session's `fab_idx` to the newly-installed fabric and
+    // seeds the admin ACL entry for our controller. The (formerly-PASE)
+    // session is now fabric-scoped, so a fabric-only cluster like OnOff
+    // becomes reachable — exercising both that the session upgrade
+    // happened on the device, and that the operational ACL grants we
+    // bootstrapped via `AddNOC.CaseAdminSubject` actually authorise the
+    // controller's NodeId. (Phase 2 / CASE will eventually replace this
+    // session with a real CASE session before `CommissioningComplete`.)
+    info!("=== Phase 4: IM Operations against the commissioned device ===");
     test_onoff_cluster(matter).await?;
 
     info!("=== All commissioning test phases completed successfully! ===");
+    Ok(())
+}
+
+/// Build a controller-side `FabricCredentials` and drive the post-PASE
+/// commissioning sequence via [`Commissioner::commission`] (phase 1 —
+/// up to `AddNOC`). Phase 2 (CASE + `CommissioningComplete`) lands as
+/// a follow-up; this test asserts the phase-1 contract.
+///
+/// Exercises the same code path that [`crate::examples::commissioner_test`]
+/// (the runnable example) uses, but in-process against rs-matter's own
+/// responder — so the test passes on every `cargo test` run without
+/// needing the upstream `chip-all-clusters-app` binary.
+async fn test_commission<C: Crypto>(matter: &Matter<'_>, crypto: &C) -> Result<(), Error> {
+    const FABRIC_ID: u64 = 1;
+    let mut fabric_creds = FabricCredentials::new(crypto, FABRIC_ID, VALID_FOREVER)?;
+    let mut commissioner = Commissioner::new(matter, crypto, &mut fabric_creds);
+
+    let opts = CommissionOptions {
+        // Test DAC — chip_tool_tests / TEST_DEV_ATT.
+        allow_test_attestation: true,
+        ..CommissionOptions::default()
+    };
+
+    let result = commissioner.commission(&opts).await?;
+    info!(
+        "commission() phase 1 returned: fabric_index={}, device_node_id=0x{:016x}",
+        result.fabric_index, result.device_node_id,
+    );
+    assert!(result.fabric_index >= 1, "expected a non-zero fabric index");
     Ok(())
 }
 
@@ -582,59 +622,6 @@ async fn invoke_toggle(exchange: Exchange<'_>) -> Result<IMStatusCode, Error> {
     // is always `Success`.
     exchange.on_off().toggle(1).await?;
     Ok(IMStatusCode::Success)
-}
-
-// ============================================================================
-// Phase 3: ArmFailSafe — exercises the response-bearing client-trait method
-// ============================================================================
-
-async fn test_arm_failsafe(matter: &Matter<'_>) -> Result<(), Error> {
-    let exchange = Exchange::initiate(matter, 0, 0, true).await?;
-    debug!("ArmFailSafe exchange initiated: {}", exchange.id());
-
-    let mut fut = pin!(invoke_arm_failsafe(exchange));
-    let mut timeout = pin!(Timer::after(Duration::from_secs(IM_TIMEOUT_SECS)));
-
-    match select(&mut fut, &mut timeout).await {
-        Either::First(result) => result,
-        Either::Second(_) => {
-            warn!("ArmFailSafe timed out");
-            Err(rs_matter::error::ErrorCode::RxTimeout.into())
-        }
-    }
-}
-
-async fn invoke_arm_failsafe(exchange: Exchange<'_>) -> Result<(), Error> {
-    use rs_matter::dm::clusters::gen_comm::{
-        ArmFailSafeResponseHandle, CommissioningErrorEnum, GeneralCommissioningClient,
-    };
-
-    // `ArmFailSafe(expiry=60s, breadcrumb=0)` on the root endpoint —
-    // the response-bearing single-shot. The codegen-emitted
-    // `general_commissioning_arm_fail_safe` returns the typed
-    // `ArmFailSafeResponseHandle<'_>`, which keeps the exchange's RX
-    // buffer alive so the caller can read the borrowed response;
-    // then `.complete().await?` sends the trailing
-    // `StatusResponse(Success)` and closes the exchange.
-    let handle: ArmFailSafeResponseHandle<'_> = exchange
-        .general_commissioning()
-        .arm_fail_safe(0, |req| req.expiry_length_seconds(60)?.breadcrumb(0)?.end())
-        .await?;
-
-    let (error_code, debug_text_len) = {
-        let resp = handle.response()?;
-        let error_code = resp.error_code()?;
-        let debug_text_len = resp.debug_text()?.len();
-        (error_code, debug_text_len)
-    };
-    info!("ArmFailSafe response: error_code={error_code:?}, debug_text_len={debug_text_len}");
-    assert_eq!(
-        error_code,
-        CommissioningErrorEnum::OK,
-        "ArmFailSafe should succeed"
-    );
-
-    handle.complete().await
 }
 
 // ============================================================================
