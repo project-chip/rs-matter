@@ -21,12 +21,6 @@
 //! It extracts the public key needed for NOC generation and can verify the CSR's
 //! self-signature.
 
-use crate::cert::x509::AlgorithmIdentifier;
-use crate::cert::x509::SubjectPublicKeyInfo;
-use crate::cert::x509::OID_ECDSA_WITH_SHA256;
-use crate::cert::x509::OID_EC_PUBLIC_KEY;
-use crate::cert::x509::OID_PRIME256V1;
-use crate::cert::x509::P256_PUBLIC_KEY_LEN;
 use der::asn1::{BitStringRef, UintRef};
 use der::oid::ObjectIdentifier;
 use der::{
@@ -35,13 +29,14 @@ use der::{
 };
 
 use crate::cert::der_utils;
-use crate::crypto::{
-    CanonPkcPublicKey, CanonPkcPublicKeyRef, Crypto, PublicKey, PKC_SIGNATURE_LEN,
-};
+use crate::cert::x509::AlgorithmIdentifier;
+use crate::cert::x509::SubjectPublicKeyInfo;
+use crate::cert::x509::OID_ECDSA_WITH_SHA256;
+use crate::cert::x509::OID_EC_PUBLIC_KEY;
+use crate::cert::x509::OID_PRIME256V1;
+use crate::cert::x509::P256_PUBLIC_KEY_LEN;
+use crate::crypto::{CanonPkcPublicKeyRef, CanonPkcSignature, Crypto, PublicKey};
 use crate::error::{Error, ErrorCode};
-
-/// ECDSA signature length (r || s = 64 bytes)
-const ECDSA_SIGNATURE_LEN: usize = PKC_SIGNATURE_LEN;
 
 #[allow(unused)]
 struct CertificationRequest<'a> {
@@ -232,7 +227,7 @@ impl<'a> CsrRef<'a> {
     ///
     /// Returns a 65-byte array containing the uncompressed public key
     /// (0x04 || X || Y).
-    pub fn pubkey(&self) -> Result<[u8; P256_PUBLIC_KEY_LEN], Error> {
+    pub fn pubkey(&self) -> Result<CanonPkcPublicKeyRef<'_>, Error> {
         // Access the subject_public_key from the parsed structure
         let subject_pk = &self
             .csr
@@ -243,30 +238,15 @@ impl<'a> CsrRef<'a> {
         // as_bytes() returns the actual key bytes (already excludes unused bits count)
         let key_bytes = subject_pk.as_bytes().ok_or(ErrorCode::InvalidData)?;
 
-        // Verify it's the correct length (65 bytes for uncompressed P-256)
-        if key_bytes.len() != P256_PUBLIC_KEY_LEN {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
         // Convert to fixed-size array
-        let mut result = [0u8; P256_PUBLIC_KEY_LEN];
-        result.copy_from_slice(key_bytes);
-        Ok(result)
-    }
-
-    /// Extract the public key as a canonical type.
-    pub fn pubkey_canon(&self) -> Result<CanonPkcPublicKey, Error> {
-        let key_bytes = self.pubkey()?;
-        let mut canon = CanonPkcPublicKey::new();
-        canon.load(CanonPkcPublicKeyRef::try_new(&key_bytes)?);
-        Ok(canon)
+        Ok(CanonPkcPublicKeyRef::try_new(key_bytes)?)
     }
 
     /// Extract the signature from the CSR.
     ///
     /// Returns the raw ECDSA signature bytes (r || s, 64 bytes).
-    fn signature(&self) -> Result<[u8; ECDSA_SIGNATURE_LEN], Error> {
-        der_utils::ecdsa_der_to_raw(self.csr.signature.raw_bytes())
+    fn signature(&self) -> Result<CanonPkcSignature, Error> {
+        Ok(der_utils::ecdsa_der_to_raw(self.csr.signature.raw_bytes())?.into())
     }
 
     /// Verify the CSR's self-signature.
@@ -274,16 +254,12 @@ impl<'a> CsrRef<'a> {
     /// The CSR is signed by the private key corresponding to the public key
     /// contained within the CSR itself.
     pub fn verify<C: Crypto>(&self, crypto: C) -> Result<(), Error> {
-        let pubkey_bytes = self.pubkey()?;
-        let pubkey = crypto.pub_key(CanonPkcPublicKeyRef::try_new(&pubkey_bytes)?)?;
+        let pubkey = crypto.pub_key(self.pubkey()?)?;
 
         let tbs_data = self.certification_request_info_raw()?;
         let signature = self.signature()?;
 
-        let mut sig_canon = crate::crypto::CanonPkcSignature::new();
-        sig_canon.load(crate::crypto::CanonPkcSignatureRef::try_new(&signature)?);
-
-        if pubkey.verify(tbs_data, sig_canon.reference())? {
+        if pubkey.verify(tbs_data, signature.reference())? {
             Ok(())
         } else {
             Err(ErrorCode::InvalidSignature.into())
@@ -294,7 +270,7 @@ impl<'a> CsrRef<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::{test_only_crypto, PublicKey, SigningSecretKey};
+    use crate::crypto::{test_only_crypto, CanonPkcPublicKey, PublicKey, SigningSecretKey};
 
     // Test vectors are from connectedhomeip/src/crypto/tests/TestChipCryptoPAL.cpp
 
@@ -409,20 +385,6 @@ mod tests {
     ];
 
     #[test]
-    fn test_parse_valid_csr() {
-        let csr = unwrap!(CsrRef::new(GOOD_CSR));
-        let pubkey = unwrap!(csr.pubkey());
-        assert_eq!(&pubkey[..], GOOD_CSR_PUBLIC_KEY);
-    }
-
-    #[test]
-    fn test_parse_valid_csr_pubkey_canon() {
-        let csr = unwrap!(CsrRef::new(GOOD_CSR));
-        let pubkey = unwrap!(csr.pubkey_canon());
-        assert_eq!(pubkey.access(), GOOD_CSR_PUBLIC_KEY);
-    }
-
-    #[test]
     fn test_verify_valid_csr_signature() {
         let crypto = test_only_crypto();
         let csr = unwrap!(CsrRef::new(GOOD_CSR));
@@ -464,24 +426,11 @@ mod tests {
         let csr = unwrap!(CsrRef::new(GOOD_CSR));
         let pubkey = unwrap!(csr.pubkey());
 
-        // Verify it's 65 bytes (uncompressed P-256)
-        assert_eq!(pubkey.len(), P256_PUBLIC_KEY_LEN);
-
         // Verify it starts with 0x04 (uncompressed point marker)
-        assert_eq!(pubkey[0], 0x04);
+        assert_eq!(pubkey.access()[0], 0x04);
 
         // Verify it matches expected value
-        assert_eq!(&pubkey[..], GOOD_CSR_PUBLIC_KEY);
-    }
-
-    #[test]
-    fn test_pubkey_canon_format() {
-        let csr = unwrap!(CsrRef::new(GOOD_CSR));
-        let pubkey_canon = unwrap!(csr.pubkey_canon());
-        let pubkey_raw = unwrap!(csr.pubkey());
-
-        // Canonical and raw should match
-        assert_eq!(pubkey_canon.access(), &pubkey_raw[..]);
+        assert_eq!(pubkey.access(), GOOD_CSR_PUBLIC_KEY);
     }
 
     #[test]
@@ -537,7 +486,7 @@ mod tests {
         unwrap!(csr.verify(&crypto));
 
         // Extract public key and verify it matches
-        let csr_pubkey = unwrap!(csr.pubkey_canon());
+        let csr_pubkey = unwrap!(csr.pubkey());
         let mut expected_pubkey = CanonPkcPublicKey::new();
         unwrap!(secret_key
             .pub_key()
@@ -571,7 +520,7 @@ mod tests {
         // Public keys should be different
         let pubkey1 = unwrap!(csr1.pubkey());
         let pubkey2 = unwrap!(csr2.pubkey());
-        assert_ne!(pubkey1, pubkey2);
+        assert_ne!(pubkey1.access(), pubkey2.access());
     }
 
     #[test]

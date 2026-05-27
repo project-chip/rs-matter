@@ -39,8 +39,7 @@ use crate::cert::x509::csr::CsrRef;
 use crate::cert::CertRef;
 use crate::cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN};
 use crate::crypto::{
-    CanonPkcPublicKey, CanonPkcPublicKeyRef, CanonPkcSecretKey, CanonPkcSecretKeyRef, Crypto,
-    PublicKey, SigningSecretKey,
+    CanonPkcPublicKey, CanonPkcSecretKey, CanonPkcSecretKeyRef, Crypto, PublicKey, SigningSecretKey,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVElement;
@@ -166,7 +165,7 @@ impl NocGenerator {
                 ca_id: None,
             },
             self.validity,
-            &crypto.pub_key(CanonPkcPublicKeyRef::try_new(&device_pubkey)?)?,
+            &crypto.pub_key(device_pubkey)?,
             &crypto.pub_key(self.signing_pubkey.reference())?,
             &signing_key,
             serial_bytes,
