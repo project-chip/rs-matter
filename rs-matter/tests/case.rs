@@ -25,7 +25,8 @@ use embassy_time::{Duration, Timer};
 use log::info;
 
 use rs_matter::cert::builder::VALID_FOREVER;
-use rs_matter::commissioner::ca_chain::generate_rcac;
+use rs_matter::cert::MAX_CERT_TLV_AND_ASN1_LEN;
+use rs_matter::commissioner::ca_chain::RcacGenerator;
 use rs_matter::commissioner::NocGenerator;
 use rs_matter::crypto::{
     test_only_crypto, CanonAeadKey, CanonAeadKeyRef, CanonPkcSecretKey, Crypto, RngCore, SecretKey,
@@ -57,15 +58,15 @@ const DEVICE_NODE_ID: u64 = 200;
 /// runs a `SecureChannel` responder that handles the handshake. On success the
 /// unsecured session is upgraded to a secure CASE session.
 ///
-/// Uses [`NocGenerator`] directly to mint controller + device NOCs
-/// against the *same* RCAC + IPK, then plants the resulting (key,
-/// RCAC, NOC, IPK) tuple in **both** Matter instances' fabric tables
-/// via `Fabrics::add`. Same fabric, two member nodes.
+/// Uses [`RcacGenerator`] + [`NocGenerator`] directly to mint a shared
+/// RCAC and the controller + device NOCs against it, then plants the
+/// resulting (key, RCAC, NOC, IPK) tuple in **both** Matter instances'
+/// fabric tables via `Fabrics::add`. Same fabric, two member nodes.
 ///
-/// (Bootstrapping via [`rs_matter::commissioner::FabricSigningCredentials`]
-/// doesn't fit here — that helper installs only on a single Matter.
-/// For real commissioning the device gets its fabric via `AddNOC`;
-/// this in-process test fakes that by direct install.)
+/// In-process tests like this one need to fake the AddNOC step on the
+/// device side — there is no commissioner here, just two peers that
+/// must agree on the same fabric. Real commissioning is exercised by
+/// `tests/commissioning.rs`.
 #[test]
 fn test_case_handshake() {
     init_env_logger();
@@ -78,9 +79,15 @@ fn test_case_handshake() {
         // Build a shared RCAC (RCAC-direct mode, no ICAC tier) and
         // a single NocGenerator that signs both NOCs against it —
         // controller and device land on the same fabric.
-        let (rcac_privkey, rcac) = generate_rcac(&crypto, TEST_FABRIC_ID, VALID_FOREVER).unwrap();
+        let mut rcac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+        let mut rcac_gen = RcacGenerator::new(&mut rcac_buf);
+        let (rcac_privkey, rcac) = rcac_gen
+            .generate(&crypto, TEST_FABRIC_ID, VALID_FOREVER)
+            .unwrap();
+
+        let mut noc_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
         let mut noc_generator =
-            NocGenerator::new(&crypto, rcac_privkey, &rcac, None, VALID_FOREVER).unwrap();
+            NocGenerator::create(rcac_privkey.reference(), rcac, &[], &mut noc_buf).unwrap();
 
         // Shared fabric IPK (16 random bytes).
         let mut ipk = CanonAeadKey::new();
@@ -89,25 +96,19 @@ fn test_case_handshake() {
         ipk.load_from_array(&ipk_bytes);
         let ipk_ref: CanonAeadKeyRef<'_> = ipk.reference();
 
-        // Controller signing keypair + CSR + NOC.
+        // Controller signing keypair + CSR.
         let controller_secret_key = crypto.generate_secret_key().unwrap();
         let mut controller_csr_buf = [0u8; 256];
         let controller_csr = controller_secret_key.csr(&mut controller_csr_buf).unwrap();
-        let controller_noc = noc_generator
-            .generate_noc(&crypto, controller_csr, CONTROLLER_NODE_ID, &[])
-            .unwrap();
         let mut controller_secret_key_canon = CanonPkcSecretKey::new();
         controller_secret_key
             .write_canon(&mut controller_secret_key_canon)
             .unwrap();
 
-        // Device signing keypair + CSR + NOC.
+        // Device signing keypair + CSR.
         let device_secret_key = crypto.generate_secret_key().unwrap();
         let mut device_csr_buf = [0u8; 256];
         let device_csr = device_secret_key.csr(&mut device_csr_buf).unwrap();
-        let device_noc = noc_generator
-            .generate_noc(&crypto, device_csr, DEVICE_NODE_ID, &[])
-            .unwrap();
         let mut device_secret_key_canon = CanonPkcSecretKey::new();
         device_secret_key
             .write_canon(&mut device_secret_key_canon)
@@ -119,6 +120,23 @@ fn test_case_handshake() {
         let controller_matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, 0);
 
         // ---- 3. Install the same fabric in both fabric tables ----
+        //
+        // Sign-and-install one side at a time: the NOC slice returned
+        // by `noc_generator.generate` borrows `noc_buf`, so it must be
+        // consumed by `Fabrics::add` before the next `generate` call
+        // overwrites the buffer. `serial == node_id` is a convenient
+        // per-issuer-unique choice for the test (no separate counter).
+
+        let controller_noc = noc_generator
+            .generate(
+                &crypto,
+                controller_csr,
+                CONTROLLER_NODE_ID,
+                &[],
+                CONTROLLER_NODE_ID,
+                VALID_FOREVER,
+            )
+            .unwrap();
 
         let controller_fab_idx = controller_matter.with_state(|state| {
             state
@@ -126,8 +144,8 @@ fn test_case_handshake() {
                 .add(
                     &crypto,
                     controller_secret_key_canon.reference(),
-                    &rcac,
-                    &controller_noc,
+                    rcac,
+                    controller_noc,
                     &[], // no ICAC
                     Some(ipk_ref),
                     0xFFF1,
@@ -137,14 +155,25 @@ fn test_case_handshake() {
                 .fab_idx()
         });
 
+        let device_noc = noc_generator
+            .generate(
+                &crypto,
+                device_csr,
+                DEVICE_NODE_ID,
+                &[],
+                DEVICE_NODE_ID,
+                VALID_FOREVER,
+            )
+            .unwrap();
+
         device_matter.with_state(|state| {
             state
                 .fabrics
                 .add(
                     &crypto,
                     device_secret_key_canon.reference(),
-                    &rcac,
-                    &device_noc,
+                    rcac,
+                    device_noc,
                     &[], // no ICAC
                     Some(ipk_ref),
                     0xFFF1,

@@ -1177,7 +1177,7 @@ mod tests {
     use crate::cert::MAX_CERT_TLV_AND_ASN1_LEN;
     use crate::crypto::test_only_crypto;
     use crate::crypto::{
-        CanonAeadKeyRef, CanonPkcSecretKey, Crypto, Hash, SecretKey, SigningSecretKey,
+        CanonAeadKeyRef, CanonPkcSecretKey, Crypto, Hash, PublicKey, SecretKey, SigningSecretKey,
         AEAD_CANON_KEY_LEN,
     };
     use crate::utils::init::InitMaybeUninit;
@@ -1200,7 +1200,12 @@ mod tests {
 
         // Generate RCAC keypair and build self-signed RCAC
         let rcac_secret_key = crypto.generate_secret_key().unwrap();
-        let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
+        let mut rcac_pubkey_canon = crate::crypto::CanonPkcPublicKey::new();
+        rcac_secret_key
+            .pub_key()
+            .unwrap()
+            .write_canon(&mut rcac_pubkey_canon)
+            .unwrap();
 
         let validity = Validity {
             not_before: 0,
@@ -1218,7 +1223,7 @@ mod tests {
                     ca_id: Some(rcac_id),
                 },
                 validity,
-                &rcac_pubkey,
+                rcac_pubkey_canon.reference(),
                 &rcac_secret_key,
                 &[0x01],
             )
@@ -1226,7 +1231,12 @@ mod tests {
 
         // Generate NOC keypair and build NOC signed by RCAC
         let noc_secret_key = crypto.generate_secret_key().unwrap();
-        let noc_pubkey = noc_secret_key.pub_key().unwrap();
+        let mut noc_pubkey_canon = crate::crypto::CanonPkcPublicKey::new();
+        noc_secret_key
+            .pub_key()
+            .unwrap()
+            .write_canon(&mut noc_pubkey_canon)
+            .unwrap();
 
         let mut noc_secret_key_canon = CanonPkcSecretKey::new();
         noc_secret_key
@@ -1244,8 +1254,8 @@ mod tests {
                     ca_id: None,
                 },
                 validity,
-                &noc_pubkey,
-                &rcac_pubkey,
+                noc_pubkey_canon.reference(),
+                rcac_pubkey_canon.reference(),
                 &rcac_secret_key,
                 &[0x02],
                 IssuerDN {

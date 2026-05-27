@@ -23,9 +23,7 @@
 
 use crate::cert::CertRef;
 use crate::credentials::trust_store::{compute_key_id, KeyId};
-use crate::crypto::{
-    CanonPkcSignature, Crypto, CryptoSensitive, PublicKey, PKC_CANON_PUBLIC_KEY_LEN,
-};
+use crate::crypto::{CanonPkcPublicKeyRef, CanonPkcSignature, Crypto, PKC_CANON_PUBLIC_KEY_LEN};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVElement, TLVTag, TLVWrite};
 use crate::utils::storage::WriteBuf;
@@ -109,24 +107,19 @@ impl<'a> CertBuilderCore<'a> {
         cert_type: CertType,
         serial_number: &[u8],
         validity: Validity,
-        subject_pubkey: &C::PublicKey<'_>,
+        subject_pubkey: CanonPkcPublicKeyRef<'_>,
         signing_key: &C::SecretKey<'_>,
-        issuer_pubkey: Option<&C::PublicKey<'_>>,
+        issuer_pubkey: Option<CanonPkcPublicKeyRef<'_>>,
         subject: SubjectDN,
         issuer: IssuerDN,
     ) -> Result<usize, Error> {
         // Validate serial number
         Self::validate_serial_number(serial_number)?;
 
-        // Convert public keys to canonical byte representation
-        let mut subject_pubkey_bytes = CryptoSensitive::<PKC_CANON_PUBLIC_KEY_LEN>::new();
-        subject_pubkey.write_canon(&mut subject_pubkey_bytes)?;
-        let subject_key_id = compute_key_id(&crypto, subject_pubkey_bytes.access())?;
+        let subject_key_id = compute_key_id(&crypto, subject_pubkey)?;
 
         let authority_key_id = if let Some(issuer_pk) = issuer_pubkey {
-            let mut bytes = CryptoSensitive::<PKC_CANON_PUBLIC_KEY_LEN>::new();
-            issuer_pk.write_canon(&mut bytes)?;
-            compute_key_id(crypto, bytes.access())?
+            compute_key_id(&crypto, issuer_pk)?
         } else {
             // Self-signed: AKID = SKID
             subject_key_id
@@ -136,7 +129,7 @@ impl<'a> CertBuilderCore<'a> {
         let tbs_len = self.write_tbs_certificate(
             serial_number,
             validity,
-            subject_pubkey_bytes.access(),
+            subject_pubkey.access(),
             &subject_key_id,
             &authority_key_id,
             cert_type,
@@ -419,8 +412,8 @@ impl<'a> NocBuilder<'a> {
         crypto: C,
         subject: SubjectDN,
         validity: Validity,
-        subject_pubkey: &C::PublicKey<'_>,
-        issuer_pubkey: &C::PublicKey<'_>,
+        subject_pubkey: CanonPkcPublicKeyRef<'_>,
+        issuer_pubkey: CanonPkcPublicKeyRef<'_>,
         issuer_privkey: &C::SecretKey<'_>,
         serial_number: &[u8],
         issuer: IssuerDN,
@@ -498,8 +491,8 @@ impl<'a> IcacBuilder<'a> {
         crypto: C,
         subject: SubjectDN,
         validity: Validity,
-        subject_pubkey: &C::PublicKey<'_>,
-        rcac_pubkey: &C::PublicKey<'_>,
+        subject_pubkey: CanonPkcPublicKeyRef<'_>,
+        rcac_pubkey: CanonPkcPublicKeyRef<'_>,
         rcac_privkey: &C::SecretKey<'_>,
         serial_number: &[u8],
         issuer: IssuerDN,
@@ -566,7 +559,7 @@ impl<'a> RcacBuilder<'a> {
         crypto: C,
         subject: SubjectDN,
         validity: Validity,
-        pubkey: &C::PublicKey<'_>,
+        pubkey: CanonPkcPublicKeyRef<'_>,
         privkey: &C::SecretKey<'_>,
         serial_number: &[u8],
     ) -> Result<usize, Error> {
@@ -647,9 +640,11 @@ mod tests {
     fn test_build_rcac() {
         let crypto = test_only_crypto();
 
-        // Generate a keypair for the RCAC
         let rcac_secret_key = unwrap!(crypto.generate_secret_key());
         let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
+
+        let mut rcac_pubkey_canon = CanonPkcPublicKey::new();
+        rcac_pubkey.write_canon(&mut rcac_pubkey_canon).unwrap();
 
         let serial_number = &[0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF];
         let rcac_id = 0x1234567890u64;
@@ -676,7 +671,7 @@ mod tests {
             &crypto,
             subject,
             validity,
-            &rcac_pubkey,
+            rcac_pubkey_canon.reference(),
             &rcac_secret_key,
             serial_number,
         ));
@@ -688,8 +683,12 @@ mod tests {
     #[test]
     fn test_rcac_self_verify() {
         let crypto = test_only_crypto();
+
         let rcac_secret_key = unwrap!(crypto.generate_secret_key());
         let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
+
+        let mut rcac_pubkey_canon = CanonPkcPublicKey::new();
+        rcac_pubkey.write_canon(&mut rcac_pubkey_canon).unwrap();
 
         let subject = SubjectDN {
             node_id: None,
@@ -703,7 +702,7 @@ mod tests {
             &crypto,
             subject,
             VALID_FOREVER,
-            &rcac_pubkey,
+            rcac_pubkey_canon.reference(),
             &rcac_secret_key,
             &[0x01],
         ));
@@ -728,13 +727,17 @@ mod tests {
     fn test_build_icac() {
         let crypto = test_only_crypto();
 
-        // Generate RCAC keypair (issuer)
         let rcac_secret_key = unwrap!(crypto.generate_secret_key());
-        let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
 
-        // Generate ICAC keypair
+        let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
+        let mut rcac_pubkey_canon = CanonPkcPublicKey::new();
+        rcac_pubkey.write_canon(&mut rcac_pubkey_canon).unwrap();
+
         let icac_secret_key = unwrap!(crypto.generate_secret_key());
+
         let icac_pubkey = icac_secret_key.pub_key().unwrap();
+        let mut icac_pubkey_canon = CanonPkcPublicKey::new();
+        icac_pubkey.write_canon(&mut icac_pubkey_canon).unwrap();
 
         let serial_number = &[0x01, 0x02, 0x03, 0x04];
         let icac_id = 0x1234u64;
@@ -761,8 +764,8 @@ mod tests {
             &crypto,
             subject,
             VALID_FOREVER,
-            &icac_pubkey,
-            &rcac_pubkey,
+            icac_pubkey_canon.reference(),
+            rcac_pubkey_canon.reference(),
             &rcac_secret_key,
             serial_number,
             issuer,
@@ -777,13 +780,17 @@ mod tests {
     fn test_build_noc_signed_by_rcac() {
         let crypto = test_only_crypto();
 
-        // Generate RCAC keypair (issuer)
         let rcac_secret_key = unwrap!(crypto.generate_secret_key());
-        let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
 
-        // Generate NOC keypair
+        let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
+        let mut rcac_pubkey_canon = CanonPkcPublicKey::new();
+        rcac_pubkey.write_canon(&mut rcac_pubkey_canon).unwrap();
+
         let noc_secret_key = unwrap!(crypto.generate_secret_key());
+
         let noc_pubkey = noc_secret_key.pub_key().unwrap();
+        let mut noc_pubkey_canon = CanonPkcPublicKey::new();
+        noc_pubkey.write_canon(&mut noc_pubkey_canon).unwrap();
 
         let serial_number = &[0xAA, 0xBB, 0xCC];
         let node_id = 0x1122334455667788u64;
@@ -817,8 +824,8 @@ mod tests {
             &crypto,
             subject,
             validity,
-            &noc_pubkey,
-            &rcac_pubkey,
+            noc_pubkey_canon.reference(),
+            rcac_pubkey_canon.reference(),
             &rcac_secret_key,
             serial_number,
             issuer,
@@ -833,13 +840,17 @@ mod tests {
     fn test_build_noc_with_cat_ids() {
         let crypto = test_only_crypto();
 
-        // Generate RCAC keypair (issuer)
         let rcac_secret_key = unwrap!(crypto.generate_secret_key());
-        let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
 
-        // Generate NOC keypair
+        let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
+        let mut rcac_pubkey_canon = CanonPkcPublicKey::new();
+        rcac_pubkey.write_canon(&mut rcac_pubkey_canon).unwrap();
+
         let noc_secret_key = unwrap!(crypto.generate_secret_key());
+
         let noc_pubkey = noc_secret_key.pub_key().unwrap();
+        let mut noc_pubkey_canon = CanonPkcPublicKey::new();
+        noc_pubkey.write_canon(&mut noc_pubkey_canon).unwrap();
 
         let serial_number = &[0x01];
         let node_id = 0x0000000000000001u64;
@@ -874,8 +885,8 @@ mod tests {
             &crypto,
             subject,
             validity,
-            &noc_pubkey,
-            &rcac_pubkey,
+            noc_pubkey_canon.reference(),
+            rcac_pubkey_canon.reference(),
             &rcac_secret_key,
             serial_number,
             issuer,
@@ -890,13 +901,17 @@ mod tests {
     fn test_build_noc_signed_by_icac() {
         let crypto = test_only_crypto();
 
-        // Generate ICAC keypair (issuer)
         let icac_secret_key = unwrap!(crypto.generate_secret_key());
-        let icac_pubkey = icac_secret_key.pub_key().unwrap();
 
-        // Generate NOC keypair
+        let icac_pubkey = icac_secret_key.pub_key().unwrap();
+        let mut icac_pubkey_canon = CanonPkcPublicKey::new();
+        icac_pubkey.write_canon(&mut icac_pubkey_canon).unwrap();
+
         let noc_secret_key = unwrap!(crypto.generate_secret_key());
+
         let noc_pubkey = noc_secret_key.pub_key().unwrap();
+        let mut noc_pubkey_canon = CanonPkcPublicKey::new();
+        noc_pubkey.write_canon(&mut noc_pubkey_canon).unwrap();
 
         let serial_number = &[0xFF];
         let node_id = 0xDEADBEEFu64;
@@ -930,8 +945,8 @@ mod tests {
             &crypto,
             subject,
             validity,
-            &noc_pubkey,
-            &icac_pubkey,
+            noc_pubkey_canon.reference(),
+            icac_pubkey_canon.reference(),
             &icac_secret_key,
             serial_number,
             issuer,
@@ -953,9 +968,11 @@ mod tests {
         let not_before = 0u32;
         let not_after = 0u32;
 
-        // 1. Build RCAC
         let rcac_secret_key = unwrap!(crypto.generate_secret_key());
+
         let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
+        let mut rcac_pubkey_canon = CanonPkcPublicKey::new();
+        rcac_pubkey.write_canon(&mut rcac_pubkey_canon).unwrap();
 
         let rcac_subject = SubjectDN {
             node_id: None,
@@ -975,15 +992,17 @@ mod tests {
             &crypto,
             rcac_subject,
             validity,
-            &rcac_pubkey,
+            rcac_pubkey_canon.reference(),
             &rcac_secret_key,
             &[0x01],
         ));
         assert!(rcac_len > 0);
 
-        // 2. Build ICAC signed by RCAC
         let icac_secret_key = unwrap!(crypto.generate_secret_key());
+
         let icac_pubkey = icac_secret_key.pub_key().unwrap();
+        let mut icac_pubkey_canon = CanonPkcPublicKey::new();
+        icac_pubkey.write_canon(&mut icac_pubkey_canon).unwrap();
 
         let icac_subject = SubjectDN {
             node_id: None,
@@ -1004,17 +1023,19 @@ mod tests {
             &crypto,
             icac_subject,
             validity,
-            &icac_pubkey,
-            &rcac_pubkey,
+            icac_pubkey_canon.reference(),
+            rcac_pubkey_canon.reference(),
             &rcac_secret_key,
             &[0x02],
             icac_issuer,
         ));
         assert!(icac_len > 0);
 
-        // 3. Build NOC signed by ICAC
         let noc_secret_key = unwrap!(crypto.generate_secret_key());
+
         let noc_pubkey = noc_secret_key.pub_key().unwrap();
+        let mut noc_pubkey_canon = CanonPkcPublicKey::new();
+        noc_pubkey.write_canon(&mut noc_pubkey_canon).unwrap();
 
         let noc_subject = SubjectDN {
             node_id: Some(node_id),
@@ -1036,8 +1057,8 @@ mod tests {
             &crypto,
             noc_subject,
             validity,
-            &noc_pubkey,
-            &icac_pubkey,
+            noc_pubkey_canon.reference(),
+            icac_pubkey_canon.reference(),
             &icac_secret_key,
             &[0x03],
             noc_issuer,
@@ -1056,10 +1077,16 @@ mod tests {
         let crypto = test_only_crypto();
 
         let rcac_secret_key = unwrap!(crypto.generate_secret_key());
+
         let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
+        let mut rcac_pubkey_canon = CanonPkcPublicKey::new();
+        rcac_pubkey.write_canon(&mut rcac_pubkey_canon).unwrap();
 
         let noc_secret_key = unwrap!(crypto.generate_secret_key());
+
         let noc_pubkey = noc_secret_key.pub_key().unwrap();
+        let mut noc_pubkey_canon = CanonPkcPublicKey::new();
+        noc_pubkey.write_canon(&mut noc_pubkey_canon).unwrap();
 
         // Too many CAT IDs (max is 3)
         let cat_ids = &[0x00011111u32, 0x00022222u32, 0x00033333u32, 0x00044444u32];
@@ -1089,8 +1116,8 @@ mod tests {
             &crypto,
             subject,
             validity,
-            &noc_pubkey,
-            &rcac_pubkey,
+            noc_pubkey_canon.reference(),
+            rcac_pubkey_canon.reference(),
             &rcac_secret_key,
             &[0x01],
             issuer,
@@ -1105,10 +1132,16 @@ mod tests {
         let crypto = test_only_crypto();
 
         let rcac_secret_key = unwrap!(crypto.generate_secret_key());
+
         let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
+        let mut rcac_pubkey_canon = CanonPkcPublicKey::new();
+        rcac_pubkey.write_canon(&mut rcac_pubkey_canon).unwrap();
 
         let noc_secret_key = unwrap!(crypto.generate_secret_key());
+
         let noc_pubkey = noc_secret_key.pub_key().unwrap();
+        let mut noc_pubkey_canon = CanonPkcPublicKey::new();
+        noc_pubkey.write_canon(&mut noc_pubkey_canon).unwrap();
 
         // Invalid CAT ID (version = 0)
         let cat_ids = &[0x00001234u32];
@@ -1138,8 +1171,8 @@ mod tests {
             &crypto,
             subject,
             validity,
-            &noc_pubkey,
-            &rcac_pubkey,
+            noc_pubkey_canon.reference(),
+            rcac_pubkey_canon.reference(),
             &rcac_secret_key,
             &[0x01],
             issuer,
@@ -1154,7 +1187,10 @@ mod tests {
         let crypto = test_only_crypto();
 
         let rcac_secret_key = unwrap!(crypto.generate_secret_key());
+
         let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
+        let mut rcac_pubkey_canon = CanonPkcPublicKey::new();
+        rcac_pubkey.write_canon(&mut rcac_pubkey_canon).unwrap();
 
         // Matter epoch: seconds since 2000-01-01 00:00:00 UTC
         // Year 2021: approximately 662688000 seconds
@@ -1181,7 +1217,7 @@ mod tests {
             &crypto,
             subject,
             validity,
-            &rcac_pubkey,
+            rcac_pubkey_canon.reference(),
             &rcac_secret_key,
             &[0x01],
         ));
@@ -1196,13 +1232,14 @@ mod tests {
         let crypto = test_only_crypto();
 
         let secret_key = unwrap!(crypto.generate_secret_key());
+
         let mut pubkey = CanonPkcPublicKey::new();
         unwrap!(secret_key.pub_key().unwrap().write_canon(&mut pubkey));
 
-        let key_id = unwrap!(compute_key_id(&crypto, pubkey.access()));
+        let key_id = unwrap!(compute_key_id(&crypto, pubkey.reference()));
 
         // Key ID should be deterministic for the same public key
-        let key_id2 = unwrap!(compute_key_id(&crypto, pubkey.access()));
+        let key_id2 = unwrap!(compute_key_id(&crypto, pubkey.reference()));
         assert_eq!(key_id, key_id2);
     }
 
@@ -1219,8 +1256,8 @@ mod tests {
         let mut pubkey2 = CanonPkcPublicKey::new();
         unwrap!(secret_key2.pub_key().unwrap().write_canon(&mut pubkey2));
 
-        let key_id1 = unwrap!(compute_key_id(&crypto, pubkey1.access()));
-        let key_id2 = unwrap!(compute_key_id(&crypto, pubkey2.access()));
+        let key_id1 = unwrap!(compute_key_id(&crypto, pubkey1.reference()));
+        let key_id2 = unwrap!(compute_key_id(&crypto, pubkey2.reference()));
 
         // Different keys should produce different IDs
         assert_ne!(key_id1, key_id2);

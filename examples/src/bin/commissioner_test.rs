@@ -58,8 +58,13 @@ use embassy_time::{Duration, Timer};
 use log::{error, info};
 
 use rs_matter::cert::builder::VALID_FOREVER;
-use rs_matter::commissioner::{CommissionOptions, Commissioner, FabricSigningCredentials};
-use rs_matter::crypto::{default_crypto, Crypto};
+use rs_matter::cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN};
+use rs_matter::commissioner::ca_chain::{IcacGenerator, RcacGenerator};
+use rs_matter::commissioner::{CommissionOptions, Commissioner, NocGenerator};
+use rs_matter::crypto::{
+    default_crypto, CanonAeadKey, CanonPkcSecretKey, Crypto, RngCore as _, SecretKey,
+    SigningSecretKey,
+};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::sc::pase::PaseInitiator;
@@ -192,17 +197,81 @@ async fn run_commission<C: Crypto>(
     info!("PASE established");
 
     info!("=== Commissioner::commission (phase 1 — over PASE) ===");
+
     // chip-tool's conventional admin NodeID + test vendor — matches
     // what `chip-all-clusters-app` expects on the device-side ACL.
-    let mut creds = FabricSigningCredentials::bootstrap(
-        matter,
+    const FABRIC_ID: u64 = 1;
+    const CONTROLLER_NODE_ID: u64 = 112233;
+    const DEVICE_NODE_ID: u64 = 112234;
+    const ADMIN_VENDOR_ID: u16 = 0xFFF1;
+
+    // Offline CA chain: RCAC then ICAC; RCAC priv key discarded
+    // immediately afterwards (in a real deployment it would never
+    // have been on the controller in the first place).
+    let mut rcac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+    let mut rcac_gen = RcacGenerator::new(&mut rcac_buf);
+    let (rcac_priv, rcac) = rcac_gen.generate(crypto, FABRIC_ID, VALID_FOREVER)?;
+
+    let mut icac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+    let mut icac_gen = IcacGenerator::new(&mut icac_buf);
+    let (icac_priv, icac) =
+        icac_gen.generate(crypto, rcac_priv.reference(), rcac, VALID_FOREVER)?;
+    drop(rcac_priv);
+
+    // Controller operational keypair + CSR.
+    let controller_secret_key = crypto.generate_secret_key()?;
+    let mut controller_csr_buf = [0u8; 256];
+    let controller_csr = controller_secret_key.csr(&mut controller_csr_buf)?;
+    let mut controller_secret_key_canon = CanonPkcSecretKey::new();
+    controller_secret_key.write_canon(&mut controller_secret_key_canon)?;
+
+    // NocGenerator: signs the controller NOC now, then the device
+    // NOC during commissioning. `serial == node_id` is a convenient
+    // per-issuer-unique choice for the smoke test.
+    let mut noc_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+    let mut noc_generator = NocGenerator::create(icac_priv.reference(), rcac, icac, &mut noc_buf)?;
+
+    let controller_noc = noc_generator.generate(
         crypto,
-        /*fabric_id=*/ 1,
-        /*controller_node_id=*/ 112233,
-        /*admin_vendor_id=*/ 0xFFF1,
+        controller_csr,
+        CONTROLLER_NODE_ID,
+        &[],
+        CONTROLLER_NODE_ID,
         VALID_FOREVER,
     )?;
-    let mut commissioner = Commissioner::new(matter, crypto, &mut creds);
+
+    // Fabric IPK: 16 random bytes, shared across the fabric.
+    let mut ipk = CanonAeadKey::new();
+    crypto.rand()?.fill_bytes(ipk.access_mut());
+
+    // Install the fabric in `matter.state.fabrics`.
+    let controller_fab_idx = matter.with_state(|state| {
+        state
+            .fabrics
+            .add(
+                crypto,
+                controller_secret_key_canon.reference(),
+                rcac,
+                controller_noc,
+                icac,
+                Some(ipk.reference()),
+                ADMIN_VENDOR_ID,
+                CONTROLLER_NODE_ID,
+            )
+            .map(|f| f.fab_idx())
+    })?;
+
+    // Scratch buffer for Commissioner — used to stage the fabric's
+    // RCAC / ICAC bytes across the async on-wire calls. See
+    // `Commissioner::new` for the size requirement.
+    let mut commissioner_buf = [0u8; MAX_CERT_TLV_LEN];
+    let mut commissioner = Commissioner::new(
+        matter,
+        crypto,
+        controller_fab_idx,
+        &mut noc_generator,
+        &mut commissioner_buf,
+    );
 
     let opts = CommissionOptions {
         // chip-all-clusters-app ships with the canonical test DAC;
@@ -212,7 +281,8 @@ async fn run_commission<C: Crypto>(
     };
 
     let phase1 = {
-        let mut commission_fut = pin!(commissioner.commission(&opts));
+        let mut commission_fut =
+            pin!(commissioner.commission(&opts, DEVICE_NODE_ID, DEVICE_NODE_ID, VALID_FOREVER,));
         let mut timeout = pin!(Timer::after(Duration::from_secs(COMMISSION_TIMEOUT_SECS)));
         match select(&mut commission_fut, &mut timeout).await {
             Either::First(r) => r?,

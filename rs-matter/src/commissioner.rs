@@ -21,48 +21,47 @@
 //! a freshly-paired accessory through the standard commissioning
 //! sequence and onto a fabric.
 //!
-//! # Overview
+//! # Scope and non-scope
 //!
-//! A commissioner needs to:
-//! 1. Discover commissionable devices (via mDNS).
-//! 2. Establish a PASE session using the device's setup code.
-//! 3. Configure the device (regulatory config, time, etc.).
-//! 4. Generate and provision operational credentials (NOC, ICAC, RCAC).
-//! 5. Establish a CASE session using the provisioned credentials.
+//! The types here orchestrate the *on-wire* commissioning flow only:
+//! post-PASE invokes ([`Commissioner::commission`]) and post-AddNOC
+//! CASE + `CommissioningComplete` ([`Commissioner::complete_via_case`]).
 //!
-//! Submodules provide the credential-generation building blocks
-//! ([`fabric_credentials`], [`noc_generator`]). The top-level
-//! [`Commissioner`] type chains the post-PASE invokes
-//! (`ArmFailSafe → CSRRequest → AddTrustedRootCertificate → AddNOC`,
-//! and — once phase 2 lands — `CASE + CommissioningComplete`) into a
-//! single async call.
+//! Everything *off* the wire is the caller's responsibility:
 //!
-//! # Example
+//!   - CA chain (RCAC, optional ICAC) generation — use [`ca_chain::RcacGenerator`]
+//!     / [`ca_chain::IcacGenerator`]. In a real deployment the RCAC is
+//!     minted once offline (typically on an HSM) and the ICAC at
+//!     factory provisioning time. The commissioner only needs the ICAC
+//!     private key + the RCAC and ICAC TLV certs at runtime.
+//!   - Fabric install — i.e. [`crate::fabric::Fabrics::add`] with the
+//!     controller's NOC, the RCAC/ICAC chain and an IPK. The caller
+//!     does this once before running any commissioning, then reuses
+//!     the resulting `fab_idx` for every device.
+//!   - NodeID allocation — devices get NodeIDs the caller picks (whatever
+//!     scheme they prefer: counter, hash, configuration). Same for the
+//!     NOC's ASN.1 serial number; the caller can simply pass
+//!     `serial == node_id` if they have no other constraint.
+//!   - Persistence — everything the caller wants to survive a restart
+//!     (ICAC private key, `fab_idx`, NOC-serial / next-NodeID counters,
+//!     the fabric itself) is theirs to write and read back.
 //!
-//! ```ignore
-//! use rs_matter::commissioner::{CommissionOptions, Commissioner, FabricCredentials};
+//! See `tests/commissioning.rs` and `examples/src/bin/commissioner_test.rs`
+//! for a fully-worked example wiring of all of the above against a
+//! single in-process fabric.
 //!
-//! // Pre-condition: caller has already driven `PaseInitiator::initiate`
-//! // against the device on `matter`'s transport.
+//! # Phase split
 //!
-//! let mut fabric_creds = FabricCredentials::new(&crypto, fabric_id, validity)?;
-//! let mut commissioner = Commissioner::new(matter, &crypto, &mut fabric_creds);
-//!
-//! let result = commissioner
-//!     .commission(&CommissionOptions {
-//!         allow_test_attestation: true,
-//!         ..Default::default()
-//!     })
-//!     .await?;
-//!
-//! // result.fabric_index / result.device_node_id are now valid on the device,
-//! // pending phase 2 (CASE + CommissioningComplete — follow-up PR).
-//! ```
+//! [`Commissioner::commission`] (over PASE) and
+//! [`Commissioner::complete_via_case`] (over CASE) are split because
+//! the rs-matter device responder requires `CommissioningComplete` to
+//! arrive over a CASE session (Matter Core spec §11.10.6.6 — and
+//! enforced by `Failsafe::disarm` which calls `get_case_fab_idx`).
 
 use core::num::NonZeroU8;
 
-use crate::cert::MAX_CERT_TLV_LEN;
-use crate::crypto::{Crypto, RngCore};
+use crate::cert::builder::Validity;
+use crate::crypto::{Crypto, RngCore, AEAD_CANON_KEY_LEN};
 use crate::dm::clusters::gen_comm::{CommissioningErrorEnum, GeneralCommissioningClient};
 use crate::dm::clusters::noc::{NodeOperationalCertStatusEnum, OperationalCredentialsClient};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
@@ -74,44 +73,10 @@ use crate::transport::exchange::Exchange;
 use crate::transport::network::Address;
 use crate::Matter;
 
-pub use fabric_credentials::{DeviceCredentials, FabricSigningCredentials};
 pub use noc_generator::NocGenerator;
 
 pub mod ca_chain;
-pub mod fabric_credentials;
 pub mod noc_generator;
-
-// =====================================================================
-// Post-PASE commissioning orchestration.
-//
-// Builds on the `FabricCredentials` / `NocGenerator` building blocks
-// above and the cluster-codegen client traits (see
-// `crate::dm::clusters::gen_comm` / `crate::dm::clusters::noc`) to
-// drive a freshly-PASE-paired accessory through the spec-mandated
-// commissioning sequence.
-//
-// The flow is split in two phases because the rs-matter device
-// responder requires `CommissioningComplete` to arrive over a CASE
-// session, not PASE (Matter Core spec §11.10.6.6 — and enforced by
-// `Failsafe::disarm` which calls `get_case_fab_idx`).
-//
-// Phase 1 — `Commissioner::commission` (over PASE):
-//   1. `GeneralCommissioning::ArmFailSafe`
-//   2. (future) Device Attestation request + chain validation
-//   3. `OperationalCredentials::CSRRequest` with a fresh 32-byte nonce
-//   4. Mint a NOC for the device via
-//      `FabricCredentials::generate_device_credentials`
-//   5. `OperationalCredentials::AddTrustedRootCertificate`
-//   6. `OperationalCredentials::AddNOC`
-//
-// Phase 2 — `Commissioner::complete_via_case` (over CASE):
-//   7. Operational discovery (mDNS `_matter._tcp`) + CASE establishment
-//   8. `GeneralCommissioning::CommissioningComplete`
-//
-// Phase 2 is the planned follow-up; the current implementation returns
-// `ErrorCode::InvalidState` so callers can't accidentally treat
-// "phase 1 only" as a completed commissioning.
-// =====================================================================
 
 /// NOCSRElements ([Matter Core spec §11.18.6.5.2]) is a struct with:
 ///   ctx(0) = `csr` (PKCS#10 CertificationRequest, DER-encoded)
@@ -122,10 +87,9 @@ const NOCSR_TAG_NONCE: u8 = 2;
 
 /// Knobs for [`Commissioner::commission`].
 ///
-/// Fields that are per-fabric (NodeID, VendorID) live in
-/// [`FabricSigningCredentials`] / [`crate::fabric::Fabric`] instead —
-/// they're set once at fabric bootstrap and apply to every device
-/// commissioned onto the fabric afterwards.
+/// Per-device material (NodeID, serial, validity) is passed as separate
+/// arguments to [`Commissioner::commission`] — it's expected to vary
+/// every call. This struct carries only the per-flow tunables.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CommissionOptions {
@@ -168,49 +132,78 @@ pub struct CommissionResult {
     /// Fabric slot the **device** assigned to us. Needed for subsequent
     /// `UpdateNOC` / `RemoveFabric` / `UpdateFabricLabel` invocations.
     /// (Independent of whatever local fabric index the **controller**
-    /// recorded for the same fabric — see
-    /// [`FabricSigningCredentials::fab_idx`].)
+    /// recorded for the same fabric — see [`Commissioner::fab_idx`].)
     ///
     /// `NonZeroU8` because the Matter Core spec reserves `fabric_index=0`
     /// for "no fabric" / PASE — a successful `NOCResponse` carrying a
     /// device-side fabric slot is, by definition, non-zero.
     pub fabric_index: NonZeroU8,
-    /// NodeID the controller assigned to the device. Persist this
-    /// alongside the fabric — it's the operational address for CASE.
+    /// Echo of the NodeID the caller supplied to
+    /// [`Commissioner::commission`] — kept here so the same struct can
+    /// be threaded into [`Commissioner::complete_via_case`] without the
+    /// caller having to plumb it separately.
     pub device_node_id: NodeId,
 }
 
 /// Stateful commissioner.
 ///
 /// Holds the references needed for the whole flow so individual steps
-/// don't have to take them. `&mut FabricSigningCredentials` because
-/// each commissioning bumps the fabric's `next_node_id` counter.
+/// don't have to take them. `&mut NocGenerator` because each
+/// `commission()` call mutably borrows the generator's scratch buffer
+/// to write the device NOC into; `&mut [u8] buf` is a caller-owned
+/// scratch slice used to stage the fabric's RCAC and ICAC bytes
+/// across the on-wire async calls (the fabric record itself can only
+/// be borrowed inside [`Matter::with_state`], which doesn't compose
+/// with `await`).
 ///
 /// **The controller's fabric is expected to already be in
-/// `matter.state.fabrics`** — built either via
-/// [`FabricSigningCredentials::bootstrap`] (fresh) or via the standard
-/// fabric persistence + [`FabricSigningCredentials::from_persisted`]
-/// (restart). A single `Commissioner` instance can be reused to
+/// `matter.state.fabrics`** at the given `fab_idx` — the caller installs
+/// it once via [`crate::fabric::Fabrics::add`] before constructing any
+/// commissioner. A single `Commissioner` instance can then be reused to
 /// commission any number of devices onto that fabric.
 pub struct Commissioner<'a, C: Crypto> {
     matter: &'a Matter<'a>,
     crypto: C,
-    creds: &'a mut FabricSigningCredentials,
+    fab_idx: NonZeroU8,
+    noc_generator: &'a mut NocGenerator<'a>,
+    buf: &'a mut [u8],
 }
 
 impl<'a, C: Crypto> Commissioner<'a, C> {
     /// Create a commissioner bound to a Matter stack, crypto backend,
-    /// and an already-installed fabric (described by `creds`).
+    /// an already-installed fabric (`fab_idx`), an already-constructed
+    /// NOC generator that signs against the chain stored on that
+    /// fabric, and a scratch buffer.
+    ///
+    /// `buf` is used to copy the fabric's RCAC and (optionally) ICAC
+    /// bytes out of the locked fabric table so they can be passed to
+    /// the asynchronous `AddTrustedRootCertificate` / `AddNOC` invokes.
+    /// It must be at least [`crate::cert::MAX_CERT_TLV_LEN`] bytes; the
+    /// commissioner sequences the two transfers (RCAC first, then ICAC
+    /// re-uses the same slot) so a single-cert worth of memory is
+    /// enough.
     pub const fn new(
         matter: &'a Matter<'a>,
         crypto: C,
-        creds: &'a mut FabricSigningCredentials,
+        fab_idx: NonZeroU8,
+        noc_generator: &'a mut NocGenerator<'a>,
+        buf: &'a mut [u8],
     ) -> Self {
         Self {
             matter,
             crypto,
-            creds,
+            fab_idx,
+            noc_generator,
+            buf,
         }
+    }
+
+    /// Index of the controller's fabric in `matter.state.fabrics`. The
+    /// caller picked this when installing the fabric; the commissioner
+    /// simply propagates it (e.g. into [`CommissionResult`] callers
+    /// build on top).
+    pub const fn fab_idx(&self) -> NonZeroU8 {
+        self.fab_idx
     }
 
     /// Phase 1 — drive `ArmFailSafe` through `AddNOC` over PASE.
@@ -222,14 +215,27 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     /// session, which is the case in practice for a controller driving
     /// one device at a time.
     ///
+    /// `device_node_id` is the NodeID the caller wishes to assign to
+    /// the device on the controller's fabric. `serial` is the ASN.1
+    /// serial number stamped on the NOC; uniqueness is per-issuer, so a
+    /// caller with no separate serial scheme can simply pass
+    /// `serial == device_node_id`. `validity` is the NOC's validity
+    /// window — typically [`crate::cert::builder::VALID_FOREVER`] for
+    /// long-lived deployments, or a bounded window for short-lived
+    /// re-issuance.
+    ///
     /// On success the device has accepted our RCAC + NOC and assigned
     /// us a [`CommissionResult::fabric_index`], but its fail-safe is
-    /// still armed and PASE is still live. Phase 2 ([`Self::complete_via_case`])
-    /// finalises commissioning over CASE; if the caller doesn't run it
-    /// before the fail-safe expires the device rolls back.
+    /// still armed and PASE is still live. Phase 2
+    /// ([`Self::complete_via_case`]) finalises commissioning over
+    /// CASE; if the caller doesn't run it before the fail-safe expires
+    /// the device rolls back.
     pub async fn commission(
         &mut self,
         opts: &CommissionOptions,
+        device_node_id: NodeId,
+        serial: u64,
+        validity: Validity,
     ) -> Result<CommissionResult, Error> {
         self.arm_fail_safe(opts.fail_safe_secs).await?;
 
@@ -243,58 +249,72 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         let mut csr_nonce = [0u8; 32];
         self.crypto.rand()?.fill_bytes(&mut csr_nonce);
 
+        // Field-projection borrows so the closure passed to
+        // `csr_request` (and the buf-staged AddTrustedRoot / AddNOC
+        // calls below) don't conflict with a `&self` borrow.
         let matter = self.matter;
-        let device_creds = Self::csr_request(matter, &csr_nonce, |csr_der| {
-            self.creds
-                .generate_device_credentials(&self.crypto, csr_der, &[])
+        let crypto = &self.crypto;
+        let fab_idx = self.fab_idx;
+        let noc_generator = &mut *self.noc_generator;
+        let buf = &mut *self.buf;
+
+        // Sign the device NOC. The returned slice lives in
+        // `noc_generator.buf` — independent of `buf`, so we can use
+        // both side-by-side below.
+        let noc = Self::csr_request(matter, &csr_nonce, |csr_der| {
+            noc_generator.generate(crypto, csr_der, device_node_id, &[], serial, validity)
         })
         .await?;
 
-        // Snapshot RCAC bytes, ICAC bytes (empty in RCAC-direct mode),
-        // IPK epoch key bytes, and the admin scalars — all from the
-        // controller's installed fabric in `matter.state.fabrics`,
-        // the single source of truth. `FabricSigningCredentials` only
-        // carries the NOC-signing key + node-id counter; everything
-        // else lives on the `Fabric` record.
-        let mut rcac_buf: heapless::Vec<u8, MAX_CERT_TLV_LEN> = heapless::Vec::new();
-        let mut icac_buf: heapless::Vec<u8, MAX_CERT_TLV_LEN> = heapless::Vec::new();
-        let mut ipk_bytes = [0u8; crate::crypto::AEAD_CANON_KEY_LEN];
-        let (admin_node_id, admin_vendor_id) = self.matter.with_state(|state| {
-            let fabric = state.fabrics.fabric(self.creds.fab_idx())?;
-            rcac_buf
-                .extend_from_slice(fabric.root_ca())
-                .map_err(|_| ErrorCode::BufferTooSmall)?;
-            icac_buf
-                .extend_from_slice(fabric.icac())
-                .map_err(|_| ErrorCode::BufferTooSmall)?;
-            // IPK as sent on the wire is the **epoch key** (the raw
-            // 16-byte input to the group-key derivation), not the
-            // per-fabric derived `op_key`. `KeySet` stores both;
-            // `.epoch_key()` is the right one.
+        // Stage the RCAC in `buf`, send `AddTrustedRootCertificate`,
+        // then re-use the same slot for the ICAC + grab IPK and admin
+        // scalars on the way. Two `with_state` passes (cheap — mutex
+        // + table lookup) keep the staging buffer to a single
+        // `MAX_CERT_TLV_LEN` slot. IPK is a 16-byte fixed-size stack
+        // array — trivial.
+        let rcac_len = matter.with_state(|state| {
+            let fabric = state.fabrics.fabric(fab_idx)?;
+            let rcac = fabric.root_ca();
+            if rcac.len() > buf.len() {
+                return Err(Error::from(ErrorCode::BufferTooSmall));
+            }
+            buf[..rcac.len()].copy_from_slice(rcac);
+            Ok::<_, Error>(rcac.len())
+        })?;
+        Self::add_trusted_root_certificate(matter, &buf[..rcac_len]).await?;
+
+        // IPK as sent on the wire is the **epoch key** (the raw
+        // 16-byte input to the group-key derivation), not the
+        // per-fabric derived `op_key`. `KeySet` stores both;
+        // `.epoch_key()` is the right one.
+        let mut ipk_bytes = [0u8; AEAD_CANON_KEY_LEN];
+        let (icac_len, admin_node_id, admin_vendor_id) = matter.with_state(|state| {
+            let fabric = state.fabrics.fabric(fab_idx)?;
+            let icac = fabric.icac();
+            if icac.len() > buf.len() {
+                return Err(Error::from(ErrorCode::BufferTooSmall));
+            }
+            buf[..icac.len()].copy_from_slice(icac);
             ipk_bytes.copy_from_slice(fabric.ipk().epoch_key().access());
-            Ok::<_, Error>((fabric.node_id(), fabric.vendor_id()))
+            Ok::<_, Error>((icac.len(), fabric.node_id(), fabric.vendor_id()))
         })?;
 
-        // AddTrustedRootCertificate first — once the device has our
-        // RCAC the subsequent NOC chain validates.
-        self.add_trusted_root_certificate(&rcac_buf).await?;
-
-        // AddNOC. `icac_buf` is empty for RCAC-direct fabrics and the
-        // codegen builder skips the field entirely; non-empty ⇒ the
-        // full `[RCAC, ICAC, NOC]` chain is shipped.
-        let fabric_index = self
-            .add_noc(
-                &device_creds.noc,
-                &icac_buf,
-                &ipk_bytes,
-                admin_node_id,
-                admin_vendor_id,
-            )
-            .await?;
+        // AddNOC. `&buf[..icac_len]` is empty for RCAC-direct fabrics
+        // (the codegen builder skips the field entirely); non-empty ⇒
+        // the full `[RCAC, ICAC, NOC]` chain is shipped.
+        let fabric_index = Self::add_noc(
+            matter,
+            noc,
+            &buf[..icac_len],
+            &ipk_bytes,
+            admin_node_id,
+            admin_vendor_id,
+        )
+        .await?;
 
         Ok(CommissionResult {
             fabric_index,
-            device_node_id: device_creds.node_id,
+            device_node_id,
         })
     }
 
@@ -310,7 +330,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     ///   1. Open a fresh **unsecured** exchange to `peer_addr` and run
     ///      [`CaseInitiator::initiate`] (Sigma1 → Sigma2 → Sigma3 →
     ///      StatusReport). On success the new CASE session is keyed in
-    ///      `matter.state.sessions` at `(creds.fab_idx(), device_node_id,
+    ///      `matter.state.sessions` at `(fab_idx, device_node_id,
     ///      secure=true)`.
     ///   2. Open a CASE-secured exchange on that session and invoke
     ///      `GeneralCommissioning::CommissioningComplete`. The device
@@ -320,7 +340,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         peer_addr: Address,
         phase1: &CommissionResult,
     ) -> Result<(), Error> {
-        let fab_idx = self.creds.fab_idx();
+        let fab_idx = self.fab_idx;
 
         // CASE handshake over a fresh unsecured exchange.
         {
@@ -374,7 +394,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     ///
     /// Static-style (no `&self` receiver) so the caller can pass a
     /// closure that re-borrows other `Commissioner` fields (e.g.
-    /// `fabric_creds`, `crypto`) without conflicting with a `&self`
+    /// `noc_generator`, `crypto`) without conflicting with a `&self`
     /// borrow on this method.
     pub(crate) async fn csr_request<F, R>(
         matter: &Matter<'_>,
@@ -419,8 +439,15 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     }
 
     /// `OperationalCredentials::AddTrustedRootCertificate(rcac_tlv)`.
-    pub(crate) async fn add_trusted_root_certificate(&self, rcac_tlv: &[u8]) -> Result<(), Error> {
-        let exchange = self.open_pase_exchange().await?;
+    ///
+    /// Static-style for the same reason as [`Self::csr_request`] — the
+    /// caller in [`Self::commission`] is holding a `&mut self.noc_generator`
+    /// projection borrow when it invokes this.
+    pub(crate) async fn add_trusted_root_certificate(
+        matter: &Matter<'_>,
+        rcac_tlv: &[u8],
+    ) -> Result<(), Error> {
+        let exchange = Exchange::initiate(matter, 0, 0, true).await?;
 
         exchange
             .operational_credentials()
@@ -435,15 +462,17 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     ///
     /// Pass an empty `icac` slice when the controller signs NOCs
     /// directly off the RCAC (no ICAC tier).
+    ///
+    /// Static-style: see [`Self::add_trusted_root_certificate`].
     pub(crate) async fn add_noc(
-        &self,
+        matter: &Matter<'_>,
         noc: &[u8],
         icac: &[u8],
         ipk: &[u8],
         admin_case_subject: u64,
         admin_vendor_id: u16,
     ) -> Result<NonZeroU8, Error> {
-        let exchange = self.open_pase_exchange().await?;
+        let exchange = Exchange::initiate(matter, 0, 0, true).await?;
 
         let handle = exchange
             .operational_credentials()

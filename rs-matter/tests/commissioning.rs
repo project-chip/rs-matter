@@ -50,8 +50,12 @@ use log::{debug, info, warn};
 use rand_core::RngCore;
 
 use rs_matter::cert::builder::VALID_FOREVER;
-use rs_matter::commissioner::{CommissionOptions, Commissioner, FabricSigningCredentials};
-use rs_matter::crypto::{test_only_crypto, Crypto};
+use rs_matter::cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN};
+use rs_matter::commissioner::ca_chain::{IcacGenerator, RcacGenerator};
+use rs_matter::commissioner::{CommissionOptions, Commissioner, NocGenerator};
+use rs_matter::crypto::{
+    test_only_crypto, CanonAeadKey, CanonPkcSecretKey, Crypto, SecretKey, SigningSecretKey,
+};
 use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
@@ -315,6 +319,14 @@ async fn run_controller_flow<C: Crypto>(
 /// PASE was just negotiated with. Returns the
 /// `(controller_local_fab_idx, device_node_id)` needed to open
 /// post-commissioning CASE exchanges.
+///
+/// All of the "build a fabric for the controller" plumbing lives in
+/// this test, not the `commissioner` crate: generate RCAC + ICAC,
+/// drop the RCAC priv key (in production it'd be HSM-resident), mint
+/// the controller's own operational keypair + NOC, generate an IPK,
+/// install the fabric in `matter.state.fabrics`. Then build a
+/// [`NocGenerator`] and hand it (plus the fab_idx) to the
+/// [`Commissioner`].
 async fn test_commission<C: Crypto>(
     matter: &Matter<'_>,
     crypto: &C,
@@ -324,22 +336,84 @@ async fn test_commission<C: Crypto>(
     // chip-tool's conventional admin NodeID; matches the
     // CaseAdminSubject the device-side ACL is seeded with.
     const CONTROLLER_NODE_ID: u64 = 112233;
+    // The single device this test commissions. Real callers pick
+    // these from whatever NodeID allocation scheme they prefer.
+    const DEVICE_NODE_ID: u64 = 112234;
     const ADMIN_VENDOR_ID: u16 = 0xFFF1;
 
-    // Bootstrap the controller's fabric ONCE — generates RCAC, IPK,
-    // the controller's signing keypair + NOC, and installs the fabric
-    // in `matter.state.fabrics`. Multi-device commissioning would
-    // reuse the same `creds` (and `Commissioner`) for each peer.
-    let mut creds = FabricSigningCredentials::bootstrap(
-        matter,
+    // ---- Offline CA chain: RCAC then ICAC; RCAC priv discarded ----
+
+    let mut rcac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+    let mut rcac_gen = RcacGenerator::new(&mut rcac_buf);
+    let (rcac_priv, rcac) = rcac_gen.generate(crypto, FABRIC_ID, VALID_FOREVER)?;
+
+    let mut icac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+    let mut icac_gen = IcacGenerator::new(&mut icac_buf);
+    let (icac_priv, icac) =
+        icac_gen.generate(crypto, rcac_priv.reference(), rcac, VALID_FOREVER)?;
+    drop(rcac_priv);
+
+    // ---- Controller operational keypair + CSR ----
+
+    let controller_secret_key = crypto.generate_secret_key()?;
+    let mut controller_csr_buf = [0u8; 256];
+    let controller_csr = controller_secret_key.csr(&mut controller_csr_buf)?;
+    let mut controller_secret_key_canon = CanonPkcSecretKey::new();
+    controller_secret_key.write_canon(&mut controller_secret_key_canon)?;
+
+    // ---- NocGenerator: signs the controller NOC now, then the
+    //      device NOC during commissioning. `serial == node_id` is a
+    //      convenient per-issuer-unique choice; real callers may
+    //      maintain a separate counter. ----
+
+    let mut noc_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+    let mut noc_generator = NocGenerator::create(icac_priv.reference(), rcac, icac, &mut noc_buf)?;
+
+    let controller_noc = noc_generator.generate(
         crypto,
-        FABRIC_ID,
+        controller_csr,
         CONTROLLER_NODE_ID,
-        ADMIN_VENDOR_ID,
+        &[],
+        CONTROLLER_NODE_ID,
         VALID_FOREVER,
     )?;
-    let controller_fab_idx = creds.fab_idx();
-    let mut commissioner = Commissioner::new(matter, crypto, &mut creds);
+
+    // ---- Fabric IPK: 16 random bytes, shared across the fabric ----
+    let mut ipk = CanonAeadKey::new();
+    crypto.rand()?.fill_bytes(ipk.access_mut());
+
+    // ---- Install the controller's fabric in matter.state.fabrics ----
+    let controller_fab_idx = matter.with_state(|state| {
+        state
+            .fabrics
+            .add(
+                crypto,
+                controller_secret_key_canon.reference(),
+                rcac,
+                controller_noc,
+                icac,
+                Some(ipk.reference()),
+                ADMIN_VENDOR_ID,
+                CONTROLLER_NODE_ID,
+            )
+            .map(|f| f.fab_idx())
+    })?;
+
+    // controller_noc slice was just copied into the fabric record;
+    // it's fine for the next noc_generator.generate() call to
+    // overwrite `noc_buf`.
+
+    // Scratch buffer for Commissioner — used to stage the fabric's
+    // RCAC / ICAC bytes across the async on-wire calls. One
+    // `MAX_CERT_TLV_LEN` slot is enough; see `Commissioner::new`.
+    let mut commissioner_buf = [0u8; MAX_CERT_TLV_LEN];
+    let mut commissioner = Commissioner::new(
+        matter,
+        crypto,
+        controller_fab_idx,
+        &mut noc_generator,
+        &mut commissioner_buf,
+    );
 
     let opts = CommissionOptions {
         // Test DAC — chip_tool_tests / TEST_DEV_ATT.
@@ -348,7 +422,9 @@ async fn test_commission<C: Crypto>(
     };
 
     // Phase 1 — over PASE: ArmFailSafe → ... → AddNOC.
-    let result = commissioner.commission(&opts).await?;
+    let result = commissioner
+        .commission(&opts, DEVICE_NODE_ID, DEVICE_NODE_ID, VALID_FOREVER)
+        .await?;
     info!(
         "commission() phase 1 ok: device_fabric_index={}, device_node_id=0x{:016x}",
         result.fabric_index, result.device_node_id,

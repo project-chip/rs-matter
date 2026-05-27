@@ -239,7 +239,7 @@ impl<'a> CsrRef<'a> {
         let key_bytes = subject_pk.as_bytes().ok_or(ErrorCode::InvalidData)?;
 
         // Convert to fixed-size array
-        Ok(CanonPkcPublicKeyRef::try_new(key_bytes)?)
+        CanonPkcPublicKeyRef::try_new(key_bytes)
     }
 
     /// Extract the signature from the CSR.
