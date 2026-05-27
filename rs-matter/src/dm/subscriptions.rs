@@ -371,15 +371,15 @@ impl<const N: usize> Subscriptions<N> {
     }
 
     /// Earliest [`Instant`] at which any subscription will next need
-    /// servicing, or `None` if there are no (primed) subscriptions and the
-    /// reporter should simply wait to be notified.
+    /// servicing, or [`Instant::MAX`] if there are no (primed) subscriptions
+    /// and the reporter should simply wait to be notified.
     ///
     /// See [`Subscription::next_report_at`] for the per-subscription rule.
     pub(crate) fn next_report_at<'a, B>(
         &self,
         event_numbers_watermark: EventNumber,
         buffers: &SubscriptionsBuffers<'a, B, N>,
-    ) -> Option<Instant>
+    ) -> Instant
     where
         B: BufferAccess<IMBuffer> + 'a,
     {
@@ -665,19 +665,21 @@ impl<const N: usize> SubscriptionsInner<N> {
         }
     }
 
-    /// Earliest [`Instant`] at which any subscription will next need servicing.
+    /// Earliest [`Instant`] at which any subscription will next need servicing,
+    /// or [`Instant::MAX`] if none has a wake point (empty table or all
+    /// not-yet-primed).
     fn next_report_at<'a, B>(
         &self,
         event_numbers_watermark: EventNumber,
         buffers: &SubscriptionsBuffersInner<'a, B, N>,
-    ) -> Option<Instant>
+    ) -> Instant
     where
         B: BufferAccess<IMBuffer> + 'a,
     {
         self.subscriptions
             .iter()
             .enumerate()
-            .filter_map(|(index, sub)| {
+            .map(|(index, sub)| {
                 sub.next_report_at(
                     &buffers[index],
                     &self.changed_attrs,
@@ -685,6 +687,7 @@ impl<const N: usize> SubscriptionsInner<N> {
                 )
             })
             .min()
+            .unwrap_or(Instant::MAX)
     }
 }
 
@@ -764,35 +767,44 @@ impl Subscription {
     }
 
     /// Instant at which the min-interval quiet period ends — the earliest time
-    /// a report is allowed ([`Self::is_report_allowed`] returns `true`). `None`
-    /// if not yet primed (`reported_at == Instant::MAX`).
-    fn report_allowed_at(&self) -> Option<Instant> {
+    /// a report is allowed ([`Self::is_report_allowed`] returns `true`).
+    ///
+    /// [`Instant::MIN`] when not yet primed (`reported_at == Instant::MAX`): a
+    /// fresh subscription is allowed to report immediately (its priming report),
+    /// and a point infinitely in the past reads correctly as "always allowed"
+    /// for every consumer (the boolean gate below and `next_report_at`).
+    fn report_allowed_at(&self) -> Instant {
         self.reported_at
             .checked_add(embassy_time::Duration::from_secs(self.min_int_secs as _))
+            .unwrap_or(Instant::MIN)
     }
 
     /// Return `true` if the subscription is allowed to report based on the min interval, or `false` if it is still in the quiet period since the last report.
     fn is_report_allowed(&self, now: Instant) -> bool {
-        self.report_allowed_at().map(|t| t <= now).unwrap_or(true)
+        self.report_allowed_at() <= now
     }
 
     /// Instant at which the max-interval liveness window opens — the earliest
-    /// time [`Self::is_report_due`] returns `true`. `None` if not yet primed
-    /// (`reported_at == Instant::MAX`).
+    /// time [`Self::is_report_due`] returns `true`.
     ///
     /// `reported_at + max_int - max_int / 2`, i.e. the half-interval mark.
     /// Waking before the negotiated maximum interval is this implementation's
     /// margin for completing the report in time.
-    fn report_due_at(&self) -> Option<Instant> {
+    ///
+    /// [`Instant::MIN`] when not yet primed (`reported_at == Instant::MAX`): a
+    /// fresh subscription is immediately due for its priming report (see
+    /// [`Self::report_allowed_at`] for why `MIN` is the right sentinel).
+    fn report_due_at(&self) -> Instant {
         self.reported_at
             .checked_add(embassy_time::Duration::from_secs(
                 (self.max_int_secs - self.max_int_secs / 2) as _,
             ))
+            .unwrap_or(Instant::MIN)
     }
 
     /// Return `true` if the subscription is due for a report based on the max interval, or `false` if it is not yet due.
     fn is_report_due(&self, now: Instant) -> bool {
-        self.report_due_at().map(|due| due <= now).unwrap_or(true)
+        self.report_due_at() <= now
     }
 
     /// Return `true` if the subscription is affected by changes to the attribute triple `(endpoint, cluster, attr)` based on the subscription's RX and the given table of changed attributes, or `false` if it is not affected.
@@ -815,9 +827,11 @@ impl Subscription {
         self.max_seen_event_number < event_numbers_watermark
     }
 
-    /// Earliest [`Instant`] at which this subscription could next report, or
-    /// `None` if it has not been primed yet (`reported_at == Instant::MAX`), in
-    /// which case the priming path services it.
+    /// Earliest [`Instant`] at which this subscription could next report.
+    ///
+    /// A not-yet-primed subscription (`reported_at == Instant::MAX`) yields
+    /// [`Instant::MIN`] via both deadline helpers — "report now", so the reporter
+    /// wakes immediately to deliver the priming report.
     ///
     /// Never earlier than the min-interval gate `reported_at + min_int`, before
     /// which a report SHALL NOT be sent (Matter 1.5.1 §8.5). Subject to that
@@ -835,10 +849,8 @@ impl Subscription {
         rx: &[u8],
         changed_attrs: &ChangedAttrs,
         event_numbers_watermark: EventNumber,
-    ) -> Option<Instant> {
-        // `?`: a not-yet-primed subscription (`reported_at == Instant::MAX`)
-        // overflows here and is skipped.
-        let allowed_at = self.report_allowed_at()?;
+    ) -> Instant {
+        let allowed_at = self.report_allowed_at();
 
         // Use the same `rx` the report path feeds `is_reportable`, so this
         // prediction stays faithful if these checks ever start consulting it.
@@ -846,9 +858,9 @@ impl Subscription {
             || self.is_affected_by_new_events(rx, event_numbers_watermark);
 
         if pending {
-            Some(allowed_at)
+            allowed_at
         } else {
-            Some(allowed_at.max(self.report_due_at()?))
+            allowed_at.max(self.report_due_at())
         }
     }
 }
@@ -1285,8 +1297,8 @@ where
     /// (i.e. no attributes or events to report), or `false` if it can be skipped in that case.
     pub fn should_send_if_empty(&self) -> bool {
         // A fresh subscription has `reported_at == Instant::MAX`, which makes
-        // `is_report_due` return `true` via its overflow-to-`unwrap_or(true)`
-        // branch, so priming reports are delivered unconditionally without a
+        // `report_due_at` saturate to `Instant::MIN` and `is_report_due` return
+        // `true`, so priming reports are delivered unconditionally without a
         // separate `priming` flag.
         unwrap!(self.subscription.as_ref()).is_report_due(self.next_reported_at)
     }
@@ -2231,11 +2243,12 @@ mod tests {
     }
 
     #[test]
-    fn next_report_at_none_when_empty() {
-        // No subscriptions → no deadline; the reporter waits to be notified.
+    fn next_report_at_max_when_empty() {
+        // No subscriptions → no deadline (`Instant::MAX`); the timer never fires
+        // and the reporter waits to be notified.
         let subs: Subscriptions<1> = Subscriptions::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
-        assert_eq!(subs.next_report_at(0, &subs_bufs), None);
+        assert_eq!(subs.next_report_at(0, &subs_bufs), Instant::MAX);
     }
 
     #[test]
@@ -2255,7 +2268,7 @@ mod tests {
 
         assert_eq!(
             subs.next_report_at(0, &subs_bufs),
-            Some(now + Duration::from_secs(30))
+            now + Duration::from_secs(30)
         );
     }
 
@@ -2282,7 +2295,7 @@ mod tests {
         // ...but the wake is scheduled at min_int, not liveness.
         assert_eq!(
             subs.next_report_at(0, &subs_bufs),
-            Some(now + Duration::from_secs(5))
+            now + Duration::from_secs(5)
         );
     }
 
@@ -2302,7 +2315,7 @@ mod tests {
 
         assert_eq!(
             subs.next_report_at(7, &subs_bufs),
-            Some(now + Duration::from_secs(5))
+            now + Duration::from_secs(5)
         );
     }
 
@@ -2327,7 +2340,7 @@ mod tests {
         // Clamped to the gate (now+25), not the earlier liveness point (now+20).
         assert_eq!(
             subs.next_report_at(0, &subs_bufs),
-            Some(now + Duration::from_secs(25))
+            now + Duration::from_secs(25)
         );
         // The scheduled instant matches actual reportability: gated before it,
         // reportable at it.
@@ -2360,7 +2373,7 @@ mod tests {
 
         assert_eq!(
             subs.next_report_at(0, &subs_bufs),
-            Some(now + Duration::from_secs(20))
+            now + Duration::from_secs(20)
         );
     }
 
@@ -2381,7 +2394,7 @@ mod tests {
 
         assert_eq!(
             subs.next_report_at(0, &subs_bufs),
-            Some(now + Duration::from_secs(30))
+            now + Duration::from_secs(30)
         );
 
         let waiter = pin!(subs.notification.wait());
@@ -2402,7 +2415,7 @@ mod tests {
         assert!(notified);
         assert_eq!(
             subs.next_report_at(0, &subs_bufs),
-            Some(now + Duration::from_secs(5))
+            now + Duration::from_secs(5)
         );
     }
 

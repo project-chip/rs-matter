@@ -19,7 +19,7 @@ use core::future::Future;
 use core::num::NonZeroU8;
 use core::pin::pin;
 
-use embassy_futures::select::{select, select3};
+use embassy_futures::select::select3;
 use embassy_time::{Instant, Timer};
 
 use crate::acl::Accessor;
@@ -630,18 +630,15 @@ where
             let mut notification = pin!(self.subscriptions.notification.wait());
             let mut session_removed = pin!(matter.session_removed.wait());
 
-            match self
+            // With no subscription (or none primed) the deadline is `Instant::MAX`,
+            // so the timer effectively never fires and the loop just waits to be
+            // notified.
+            let deadline = self
                 .subscriptions
-                .next_report_at(self.events.watermark(), &self.subscriptions_buffers)
-            {
-                Some(deadline) => {
-                    let mut timeout = pin!(Timer::at(deadline));
-                    select3(&mut notification, &mut timeout, &mut session_removed).await;
-                }
-                None => {
-                    select(&mut notification, &mut session_removed).await;
-                }
-            }
+                .next_report_at(self.events.watermark(), &self.subscriptions_buffers);
+            let mut timeout = pin!(Timer::at(deadline));
+
+            select3(&mut notification, &mut timeout, &mut session_removed).await;
 
             let now = Instant::now();
 
