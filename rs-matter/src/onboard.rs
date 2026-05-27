@@ -46,7 +46,7 @@
 //!     (ICAC private key, `fab_idx`, NOC-serial / next-NodeID counters,
 //!     the fabric itself) is theirs to write and read back.
 //!
-//! See `tests/commissioning.rs` and `examples/src/bin/commissioner_test.rs`
+//! See `tests/commissioning.rs` and `examples/src/bin/commissioner_tests.rs`
 //! for a fully-worked example wiring of all of the above against a
 //! single in-process fabric.
 //!
