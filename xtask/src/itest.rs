@@ -815,7 +815,9 @@ impl ITests {
         use std::thread;
         use std::time::{Duration, Instant};
 
-        warn!("=> Running commissioner suite (rs-matter as controller, chip-all-clusters-app as DUT)");
+        warn!(
+            "=> Running commissioner suite (rs-matter as controller, chip-all-clusters-app as DUT)"
+        );
 
         // 1. Build the upstream device binary lazily (cached).
         self.chip_builder.build_chip_all_clusters_app(None, false)?;
@@ -839,10 +841,8 @@ impl ITests {
 
         // 2. Fresh KVS per run — chip-all-clusters-app persists fabric
         //    state, and we want each run to start from factory-reset.
-        let kvs_path = std::env::temp_dir().join(format!(
-            "rs-matter-commissioner-kvs-{}",
-            std::process::id()
-        ));
+        let kvs_path =
+            std::env::temp_dir().join(format!("rs-matter-commissioner-kvs-{}", std::process::id()));
         let _ = std::fs::remove_file(&kvs_path);
 
         // 3. Spawn the DUT. Bind to IPv6 loopback only (matches what
@@ -989,9 +989,9 @@ impl ITests {
                 controller_status.code(),
             );
         }
-        let success_line = success_rx
-            .try_recv()
-            .map_err(|_| anyhow::anyhow!("commissioner_test did not emit a `commissioner_test: ok ...` line"))?;
+        let success_line = success_rx.try_recv().map_err(|_| {
+            anyhow::anyhow!("commissioner_test did not emit a `commissioner_test: ok ...` line")
+        })?;
         info!("commissioner suite passed: {success_line}");
         // Suppress unused-channel warning on the unused sender.
         drop(success_tx);
