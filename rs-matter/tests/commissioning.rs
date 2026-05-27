@@ -51,8 +51,6 @@ use rand_core::RngCore;
 
 use rs_matter::cert::builder::VALID_FOREVER;
 use rs_matter::cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN};
-use rs_matter::commissioner::ca_chain::{IcacGenerator, RcacGenerator};
-use rs_matter::commissioner::{CommissionOptions, Commissioner, NocGenerator};
 use rs_matter::crypto::{
     test_only_crypto, CanonAeadKey, CanonPkcSecretKey, Crypto, SecretKey, SigningSecretKey,
 };
@@ -70,6 +68,9 @@ use rs_matter::dm::{
 };
 use rs_matter::error::Error;
 use rs_matter::im::IMStatusCode;
+use rs_matter::onboard::cac::{IcacGenerator, RcacGenerator};
+use rs_matter::onboard::noc::NocGenerator;
+use rs_matter::onboard::{CommissionOptions, Commissioner};
 use rs_matter::persist::DummyKvBlobStoreAccess;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::{PaseInitiator, MAX_COMM_WINDOW_TIMEOUT_SECS};

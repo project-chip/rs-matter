@@ -17,7 +17,7 @@
 
 //! Runnable controller-side smoke test.
 //!
-//! Drives [`rs_matter::commissioner::Commissioner::commission`] (phase 1
+//! Drives [`rs_matter::onboard::Commissioner::commission`] (phase 1
 //! — `ArmFailSafe` through `AddNOC`) against an externally-running
 //! Matter accessory. Designed to exercise the rs-matter controller path
 //! end-to-end against the canonical upstream
@@ -59,14 +59,15 @@ use log::{error, info};
 
 use rs_matter::cert::builder::VALID_FOREVER;
 use rs_matter::cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN};
-use rs_matter::commissioner::ca_chain::{IcacGenerator, RcacGenerator};
-use rs_matter::commissioner::{CommissionOptions, Commissioner, NocGenerator};
 use rs_matter::crypto::{
     default_crypto, CanonAeadKey, CanonPkcSecretKey, Crypto, RngCore as _, SecretKey,
     SigningSecretKey,
 };
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::error::{Error, ErrorCode};
+use rs_matter::onboard::cac::{IcacGenerator, RcacGenerator};
+use rs_matter::onboard::noc::NocGenerator;
+use rs_matter::onboard::{CommissionOptions, Commissioner};
 use rs_matter::sc::pase::PaseInitiator;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{Address, NoNetwork};
@@ -174,7 +175,7 @@ async fn run(args: Args) -> Result<CommissionResult, Error> {
     }
 }
 
-/// Mirror of [`rs_matter::commissioner::CommissionResult`] — re-declared
+/// Mirror of [`rs_matter::onboard::CommissionResult`] — re-declared
 /// here so the `main` print doesn't have to import the lifetime-bound
 /// type through the public API just to format two scalars.
 ///

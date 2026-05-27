@@ -19,7 +19,7 @@
 //! CA (ICAC) cert minting.
 //!
 //! These primitives are deliberately **separate** from
-//! [`NocGenerator`](super::noc_generator::NocGenerator). In real
+//! [`NocGenerator`](super::noc::NocGenerator). In real
 //! Matter PKI:
 //!
 //! - The **RCAC** is generated once per organisation, typically on an

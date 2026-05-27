@@ -18,7 +18,7 @@
 //! Controller-side **NOC** (Node Operational Certificate) issuer.
 //!
 //! Issues NOCs against an already-existing CA chain. The chain itself
-//! (RCAC + optional ICAC) is built by [`super::ca_chain`] — that
+//! (RCAC + optional ICAC) is built by [`super::cac`] — that
 //! separation reflects the real-world flow: chain generation happens
 //! once (often offline, with HSM-controlled RCAC keys), NOC signing
 //! happens many times at runtime as new devices are commissioned.
@@ -234,8 +234,8 @@ impl<'a> NocGenerator<'a> {
 mod tests {
     use crate::cert::builder::VALID_FOREVER;
     use crate::cert::{CertRef, MAX_CERT_TLV_AND_ASN1_LEN};
-    use crate::commissioner::ca_chain::{IcacGenerator, RcacGenerator};
     use crate::crypto::test_only_crypto;
+    use crate::onboard::cac::{IcacGenerator, RcacGenerator};
     use crate::tlv::TLVElement;
 
     use super::*;

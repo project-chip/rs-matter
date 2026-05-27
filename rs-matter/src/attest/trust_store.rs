@@ -134,7 +134,7 @@ pub mod fileio {
     /// # Example
     ///
     /// ```ignore
-    /// use rs_matter::credentials::trust_store::FileAttestationTrustStore;
+    /// use rs_matter::attest::trust_store::FileAttestationTrustStore;
     ///
     /// let store = FileAttestationTrustStore::from_directory(
     ///     std::path::Path::new("/etc/matter/paa-certs")
@@ -259,10 +259,9 @@ pub mod fileio {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use crate::credentials::test_paa::*;
+        use crate::attest::test_paa::*;
 
-        const TEST_DATA_DIR: &str =
-            concat!(env!("CARGO_MANIFEST_DIR"), "/src/credentials/test_paa");
+        const TEST_DATA_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/attest/test_paa");
 
         /// Unique temp path for a test, avoiding collisions via PID.
         fn test_path(test_name: &str) -> std::path::PathBuf {
@@ -370,7 +369,7 @@ pub mod fileio {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::credentials::test_paa::*;
+    use crate::attest::test_paa::*;
     use crate::error::ErrorCode;
 
     #[test]

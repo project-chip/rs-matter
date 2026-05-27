@@ -29,8 +29,8 @@
 //!
 //! Everything *off* the wire is the caller's responsibility:
 //!
-//!   - CA chain (RCAC, optional ICAC) generation — use [`ca_chain::RcacGenerator`]
-//!     / [`ca_chain::IcacGenerator`]. In a real deployment the RCAC is
+//!   - CA chain (RCAC, optional ICAC) generation — use [`cac::RcacGenerator`]
+//!     / [`cac::IcacGenerator`]. In a real deployment the RCAC is
 //!     minted once offline (typically on an HSM) and the ICAC at
 //!     factory provisioning time. The commissioner only needs the ICAC
 //!     private key + the RCAC and ICAC TLV certs at runtime.
@@ -67,16 +67,15 @@ use crate::dm::clusters::noc::{NodeOperationalCertStatusEnum, OperationalCredent
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
+use crate::onboard::noc::NocGenerator;
 use crate::sc::case::CaseInitiator;
 use crate::tlv::{FromTLV, OctetStr, TLVElement};
 use crate::transport::exchange::Exchange;
 use crate::transport::network::Address;
 use crate::Matter;
 
-pub use noc_generator::NocGenerator;
-
-pub mod ca_chain;
-pub mod noc_generator;
+pub mod cac;
+pub mod noc;
 
 /// NOCSRElements ([Matter Core spec §11.18.6.5.2]) is a struct with:
 ///   ctx(0) = `csr` (PKCS#10 CertificationRequest, DER-encoded)

@@ -21,8 +21,8 @@
 //! Intermediate CA Certificates (ICAC), and Root CA Certificates (RCAC) in Matter
 //! TLV format. (Matter Specification 6.5 "Operational Certificate Encoding")
 
+use crate::attest::trust_store::{compute_key_id, KeyId};
 use crate::cert::CertRef;
-use crate::credentials::trust_store::{compute_key_id, KeyId};
 use crate::crypto::{CanonPkcPublicKeyRef, CanonPkcSignature, Crypto, PKC_CANON_PUBLIC_KEY_LEN};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVElement, TLVTag, TLVWrite};

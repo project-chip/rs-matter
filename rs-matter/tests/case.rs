@@ -26,14 +26,14 @@ use log::info;
 
 use rs_matter::cert::builder::VALID_FOREVER;
 use rs_matter::cert::MAX_CERT_TLV_AND_ASN1_LEN;
-use rs_matter::commissioner::ca_chain::RcacGenerator;
-use rs_matter::commissioner::NocGenerator;
 use rs_matter::crypto::{
     test_only_crypto, CanonAeadKey, CanonAeadKeyRef, CanonPkcSecretKey, Crypto, RngCore, SecretKey,
     SigningSecretKey, AEAD_CANON_KEY_LEN,
 };
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::error::Error;
+use rs_matter::onboard::cac::RcacGenerator;
+use rs_matter::onboard::noc::NocGenerator;
 use rs_matter::respond::Responder;
 use rs_matter::sc::case::CaseInitiator;
 use rs_matter::sc::SecureChannel;
