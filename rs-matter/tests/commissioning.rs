@@ -49,7 +49,11 @@ use log::{debug, info, warn};
 
 use rand_core::RngCore;
 
-use rs_matter::crypto::{test_only_crypto, Crypto};
+use rs_matter::cert::gen::VALID_FOREVER;
+use rs_matter::cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN};
+use rs_matter::crypto::{
+    test_only_crypto, CanonAeadKey, CanonPkcSecretKey, Crypto, SecretKey, SigningSecretKey,
+};
 use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
@@ -64,6 +68,9 @@ use rs_matter::dm::{
 };
 use rs_matter::error::Error;
 use rs_matter::im::IMStatusCode;
+use rs_matter::onboard::cac::{IcacGenerator, RcacGenerator};
+use rs_matter::onboard::noc::NocGenerator;
+use rs_matter::onboard::{CommissionOptions, Commissioner};
 use rs_matter::persist::DummyKvBlobStoreAccess;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::{PaseInitiator, MAX_COMM_WINDOW_TIMEOUT_SECS};
@@ -293,14 +300,146 @@ async fn run_controller_flow<C: Crypto>(
     info!("=== Phase 2: PASE Session Establishment ===");
     establish_pase_session(matter, crypto, peer_addr, TEST_PASSCODE).await?;
 
-    info!("=== Phase 3: ArmFailSafe (response-bearing command) ===");
-    test_arm_failsafe(matter).await?;
+    info!("=== Phase 3: Commissioner — commission() + complete_via_case() ===");
+    let (controller_fab_idx, device_node_id) = test_commission(matter, crypto, peer_addr).await?;
 
-    info!("=== Phase 4: Interaction Model Operations ===");
-    test_onoff_cluster(matter).await?;
+    // Cherry on top: after `CommissioningComplete` the device has
+    // committed our fabric, torn down PASE, and the only authenticated
+    // channel to it is the CASE session we just established. Open a
+    // fresh CASE-secured exchange (via `Exchange::initiate(matter,
+    // controller_fab_idx, device_node_id, secure=true)`) and exercise
+    // OnOff over it — proving the whole pipe end-to-end.
+    info!("=== Phase 4: IM Operations over the CASE session ===");
+    test_onoff_cluster(matter, controller_fab_idx, device_node_id).await?;
 
     info!("=== All commissioning test phases completed successfully! ===");
     Ok(())
+}
+
+/// Drive both phases of the commissioner flow against the peer that
+/// PASE was just negotiated with. Returns the
+/// `(controller_local_fab_idx, device_node_id)` needed to open
+/// post-commissioning CASE exchanges.
+///
+/// All of the "build a fabric for the controller" plumbing lives in
+/// this test, not the `commissioner` crate: generate RCAC + ICAC,
+/// drop the RCAC priv key (in production it'd be HSM-resident), mint
+/// the controller's own operational keypair + NOC, generate an IPK,
+/// install the fabric in `matter.state.fabrics`. Then build a
+/// [`NocGenerator`] and hand it (plus the fab_idx) to the
+/// [`Commissioner`].
+async fn test_commission<C: Crypto>(
+    matter: &Matter<'_>,
+    crypto: &C,
+    peer_addr: Address,
+) -> Result<(core::num::NonZeroU8, u64), Error> {
+    const FABRIC_ID: u64 = 1;
+    // chip-tool's conventional admin NodeID; matches the
+    // CaseAdminSubject the device-side ACL is seeded with.
+    const CONTROLLER_NODE_ID: u64 = 112233;
+    // The single device this test commissions. Real callers pick
+    // these from whatever NodeID allocation scheme they prefer.
+    const DEVICE_NODE_ID: u64 = 112234;
+    const ADMIN_VENDOR_ID: u16 = 0xFFF1;
+
+    // ---- Offline CA chain: RCAC then ICAC; RCAC priv discarded ----
+
+    let mut rcac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+    let mut rcac_gen = RcacGenerator::new(&mut rcac_buf);
+    let (rcac_priv, rcac) = rcac_gen.generate(crypto, FABRIC_ID, VALID_FOREVER)?;
+
+    let mut icac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+    let mut icac_gen = IcacGenerator::new(&mut icac_buf);
+    let (icac_priv, icac) =
+        icac_gen.generate(crypto, rcac_priv.reference(), rcac, VALID_FOREVER)?;
+    drop(rcac_priv);
+
+    // ---- Controller operational keypair + CSR ----
+
+    let controller_secret_key = crypto.generate_secret_key()?;
+    let mut controller_csr_buf = [0u8; 256];
+    let controller_csr = controller_secret_key.csr(&mut controller_csr_buf)?;
+    let mut controller_secret_key_canon = CanonPkcSecretKey::new();
+    controller_secret_key.write_canon(&mut controller_secret_key_canon)?;
+
+    // ---- NocGenerator: signs the controller NOC now, then the
+    //      device NOC during commissioning. The NOC serial is derived
+    //      from the NodeID internally. ----
+
+    let mut noc_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
+    let mut noc_generator = NocGenerator::create(icac_priv.reference(), rcac, icac, &mut noc_buf)?;
+
+    let controller_noc = noc_generator.generate(
+        crypto,
+        controller_csr,
+        CONTROLLER_NODE_ID,
+        &[],
+        VALID_FOREVER,
+    )?;
+
+    // ---- Fabric IPK: 16 random bytes, shared across the fabric ----
+    let mut ipk = CanonAeadKey::new();
+    crypto.rand()?.fill_bytes(ipk.access_mut());
+
+    // ---- Install the controller's fabric in matter.state.fabrics ----
+    let controller_fab_idx = matter.with_state(|state| {
+        state
+            .fabrics
+            .add(
+                crypto,
+                controller_secret_key_canon.reference(),
+                rcac,
+                controller_noc,
+                icac,
+                Some(ipk.reference()),
+                ADMIN_VENDOR_ID,
+                CONTROLLER_NODE_ID,
+            )
+            .map(|f| f.fab_idx())
+    })?;
+
+    // controller_noc slice was just copied into the fabric record;
+    // it's fine for the next noc_generator.generate() call to
+    // overwrite `noc_buf`.
+
+    // Scratch buffer for Commissioner — used to stage the fabric's
+    // RCAC / ICAC bytes across the async on-wire calls. One
+    // `MAX_CERT_TLV_LEN` slot is enough; see `Commissioner::new`.
+    let mut commissioner_buf = [0u8; MAX_CERT_TLV_LEN];
+    let mut commissioner = Commissioner::new(
+        matter,
+        crypto,
+        controller_fab_idx,
+        &mut noc_generator,
+        &mut commissioner_buf,
+    );
+
+    let opts = CommissionOptions {
+        // Test DAC — chip_tool_tests / TEST_DEV_ATT.
+        allow_test_attestation: true,
+        ..CommissionOptions::default()
+    };
+
+    // Phase 1 — over PASE: ArmFailSafe → ... → AddNOC.
+    let result = commissioner
+        .commission(&opts, DEVICE_NODE_ID, VALID_FOREVER)
+        .await?;
+    info!(
+        "commission() phase 1 ok: device_fabric_index={}, device_node_id=0x{:016x}",
+        result.fabric_index, result.device_node_id,
+    );
+
+    // Phase 2 — establish CASE against the device's operational
+    // identity at the same address we used for PASE (the device
+    // announces on the same UDP/TCP port post-AddNOC), then drive
+    // CommissioningComplete on the new CASE session.
+    commissioner.complete_via_case(peer_addr, &result).await?;
+    info!(
+        "complete_via_case() ok: controller_fab_idx={}, CASE+CommissioningComplete done",
+        controller_fab_idx,
+    );
+
+    Ok((controller_fab_idx, result.device_node_id))
 }
 
 // ============================================================================
@@ -507,18 +646,22 @@ async fn establish_pase_session<C: Crypto>(
 // Phase 3: Interaction Model Operations
 // ============================================================================
 
-async fn test_onoff_cluster(matter: &Matter<'_>) -> Result<(), Error> {
+async fn test_onoff_cluster(
+    matter: &Matter<'_>,
+    fab_idx: core::num::NonZeroU8,
+    peer_node_id: u64,
+) -> Result<(), Error> {
     info!("Step 3a: Reading initial OnOff attribute...");
-    let initial_value = read_onoff_with_timeout(matter).await?;
+    let initial_value = read_onoff_with_timeout(matter, fab_idx, peer_node_id).await?;
     info!("Initial OnOff value: {initial_value}");
     assert!(!initial_value, "Expected initial OnOff value to be false");
 
     info!("Step 3b: Invoking Toggle command...");
-    let status = invoke_toggle_with_timeout(matter).await?;
+    let status = invoke_toggle_with_timeout(matter, fab_idx, peer_node_id).await?;
     info!("Toggle completed with status: {status:?}");
 
     info!("Step 3c: Verifying toggle effect...");
-    let final_value = read_onoff_with_timeout(matter).await?;
+    let final_value = read_onoff_with_timeout(matter, fab_idx, peer_node_id).await?;
     info!("Final OnOff value: {final_value}");
 
     assert!(
@@ -530,8 +673,12 @@ async fn test_onoff_cluster(matter: &Matter<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-async fn read_onoff_with_timeout(matter: &Matter<'_>) -> Result<bool, Error> {
-    let exchange = Exchange::initiate(matter, 0, 0, true).await?;
+async fn read_onoff_with_timeout(
+    matter: &Matter<'_>,
+    fab_idx: core::num::NonZeroU8,
+    peer_node_id: u64,
+) -> Result<bool, Error> {
+    let exchange = Exchange::initiate(matter, fab_idx.get(), peer_node_id, true).await?;
     debug!("IM read exchange initiated: {}", exchange.id());
 
     let mut read_fut = pin!(read_onoff(exchange));
@@ -556,8 +703,12 @@ async fn read_onoff(exchange: Exchange<'_>) -> Result<bool, Error> {
     exchange.on_off().on_off_read(1).await
 }
 
-async fn invoke_toggle_with_timeout(matter: &Matter<'_>) -> Result<IMStatusCode, Error> {
-    let exchange = Exchange::initiate(matter, 0, 0, true).await?;
+async fn invoke_toggle_with_timeout(
+    matter: &Matter<'_>,
+    fab_idx: core::num::NonZeroU8,
+    peer_node_id: u64,
+) -> Result<IMStatusCode, Error> {
+    let exchange = Exchange::initiate(matter, fab_idx.get(), peer_node_id, true).await?;
     debug!("Invoke exchange initiated: {}", exchange.id());
 
     let mut invoke_fut = pin!(invoke_toggle(exchange));
@@ -582,59 +733,6 @@ async fn invoke_toggle(exchange: Exchange<'_>) -> Result<IMStatusCode, Error> {
     // is always `Success`.
     exchange.on_off().toggle(1).await?;
     Ok(IMStatusCode::Success)
-}
-
-// ============================================================================
-// Phase 3: ArmFailSafe — exercises the response-bearing client-trait method
-// ============================================================================
-
-async fn test_arm_failsafe(matter: &Matter<'_>) -> Result<(), Error> {
-    let exchange = Exchange::initiate(matter, 0, 0, true).await?;
-    debug!("ArmFailSafe exchange initiated: {}", exchange.id());
-
-    let mut fut = pin!(invoke_arm_failsafe(exchange));
-    let mut timeout = pin!(Timer::after(Duration::from_secs(IM_TIMEOUT_SECS)));
-
-    match select(&mut fut, &mut timeout).await {
-        Either::First(result) => result,
-        Either::Second(_) => {
-            warn!("ArmFailSafe timed out");
-            Err(rs_matter::error::ErrorCode::RxTimeout.into())
-        }
-    }
-}
-
-async fn invoke_arm_failsafe(exchange: Exchange<'_>) -> Result<(), Error> {
-    use rs_matter::dm::clusters::gen_comm::{
-        ArmFailSafeResponseHandle, CommissioningErrorEnum, GeneralCommissioningClient,
-    };
-
-    // `ArmFailSafe(expiry=60s, breadcrumb=0)` on the root endpoint —
-    // the response-bearing single-shot. The codegen-emitted
-    // `general_commissioning_arm_fail_safe` returns the typed
-    // `ArmFailSafeResponseHandle<'_>`, which keeps the exchange's RX
-    // buffer alive so the caller can read the borrowed response;
-    // then `.complete().await?` sends the trailing
-    // `StatusResponse(Success)` and closes the exchange.
-    let handle: ArmFailSafeResponseHandle<'_> = exchange
-        .general_commissioning()
-        .arm_fail_safe(0, |req| req.expiry_length_seconds(60)?.breadcrumb(0)?.end())
-        .await?;
-
-    let (error_code, debug_text_len) = {
-        let resp = handle.response()?;
-        let error_code = resp.error_code()?;
-        let debug_text_len = resp.debug_text()?.len();
-        (error_code, debug_text_len)
-    };
-    info!("ArmFailSafe response: error_code={error_code:?}, debug_text_len={debug_text_len}");
-    assert_eq!(
-        error_code,
-        CommissioningErrorEnum::OK,
-        "ArmFailSafe should succeed"
-    );
-
-    handle.complete().await
 }
 
 // ============================================================================

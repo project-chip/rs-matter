@@ -27,24 +27,32 @@
 //!   from a directory of `.der` files at runtime (`std` only).
 
 use crate::cert::x509::cert::PaaCert;
-use crate::crypto::{Crypto, CryptoSensitive, Digest, SHA1_HASH_LEN};
+use crate::crypto::{CanonPkcPublicKeyRef, Crypto, CryptoSensitive, Digest, SHA1_HASH_LEN};
 use crate::error::{Error, ErrorCode};
 
 /// Matter certificate key identifier (SKID/AKID): 20-byte SHA-1 hash of the public key.
 /// Matter spec Section 6.1.2 mandates 20 octets, per RFC 5280 method (1).
+// TODO: This does not belong here
 pub type KeyId = [u8; 20];
 
 /// Compute the Subject Key Identifier (SHA-1 hash of public key, 20 bytes).
 ///
 /// Per RFC 5280 section 4.2.1.2 and the Matter spec 6.5.11.(4-5),
 /// the key identifier is the 160-bit SHA-1 hash of the public key.
-pub fn compute_key_id<C: Crypto>(crypto: &C, pubkey: &[u8]) -> Result<KeyId, Error> {
+// TODO: This does not belong here
+pub fn compute_key_id<C: Crypto>(
+    crypto: C,
+    pubkey: CanonPkcPublicKeyRef<'_>,
+) -> Result<KeyId, Error> {
     let mut hasher = crypto.hash1()?;
-    hasher.update(pubkey)?;
+    hasher.update(pubkey.access())?;
+
     let mut hash = CryptoSensitive::<SHA1_HASH_LEN>::new();
     hasher.finish(&mut hash)?;
+
     let mut key_id = [0u8; 20];
     key_id.copy_from_slice(hash.access());
+
     Ok(key_id)
 }
 
@@ -126,7 +134,7 @@ pub mod fileio {
     /// # Example
     ///
     /// ```ignore
-    /// use rs_matter::credentials::trust_store::FileAttestationTrustStore;
+    /// use rs_matter::attest::trust_store::FileAttestationTrustStore;
     ///
     /// let store = FileAttestationTrustStore::from_directory(
     ///     std::path::Path::new("/etc/matter/paa-certs")
@@ -251,10 +259,9 @@ pub mod fileio {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use crate::credentials::test_paa::*;
+        use crate::attest::test_paa::*;
 
-        const TEST_DATA_DIR: &str =
-            concat!(env!("CARGO_MANIFEST_DIR"), "/src/credentials/test_paa");
+        const TEST_DATA_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/attest/test_paa");
 
         /// Unique temp path for a test, avoiding collisions via PID.
         fn test_path(test_name: &str) -> std::path::PathBuf {
@@ -362,7 +369,7 @@ pub mod fileio {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::credentials::test_paa::*;
+    use crate::attest::test_paa::*;
     use crate::error::ErrorCode;
 
     #[test]

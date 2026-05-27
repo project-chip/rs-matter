@@ -31,6 +31,9 @@ name = "camera_tests"
 name = "chip_tool_tests"
 
 [[bin]]
+name = "commissioner_tests"
+
+[[bin]]
 name = "dimmable_light"
 
 [[bin]]

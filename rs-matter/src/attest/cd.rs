@@ -31,9 +31,9 @@
 //!
 //! Reference: connectedhomeip `src/credentials/CertificationDeclaration.cpp`
 
+use crate::attest::cd_keys::{self, KEY_IDENTIFIER_LEN};
 use crate::cert::der_utils::ecdsa_der_to_raw;
 use crate::cert::x509::AlgorithmIdentifier;
-use crate::credentials::cd_keys::{self, KEY_IDENTIFIER_LEN};
 use crate::crypto::{CanonPkcPublicKeyRef, CanonPkcSignatureRef, Crypto, PublicKey};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVElement, TLVSequence};
@@ -611,7 +611,7 @@ impl CertificationElements {
     /// # Returns
     /// The decoded [`CertificationElements`] on success.
     pub fn verify<C: Crypto>(
-        crypto: &C,
+        crypto: C,
         cms_message: &[u8],
         allow_test_cd_signing_key: bool,
     ) -> Result<Self, Error> {

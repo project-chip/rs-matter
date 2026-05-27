@@ -778,7 +778,7 @@ impl Sessions {
     /// uses `get_for_rx()` + `decode_remaining()`.
     pub(crate) fn get_or_create_for_group_rx<const N: usize, C: Crypto>(
         &mut self,
-        crypto: &C,
+        crypto: C,
         fabrics: &Fabrics,
         packet: &mut Packet<N>,
     ) -> Result<(&mut Session, (usize, usize)), Error> {
@@ -834,7 +834,7 @@ impl Sessions {
                     let mut temp_key_set = KeySet::new();
                     if temp_key_set
                         .update(
-                            crypto,
+                            &crypto,
                             epoch_key_entry.epoch_key.reference(),
                             &compressed_fabric_id,
                         )
@@ -844,7 +844,7 @@ impl Sessions {
                     }
 
                     let op_key_ref = temp_key_set.op_key();
-                    let Ok(session_id) = derive_group_session_id(crypto, op_key_ref) else {
+                    let Ok(session_id) = derive_group_session_id(&crypto, op_key_ref) else {
                         continue;
                     };
 
@@ -853,7 +853,7 @@ impl Sessions {
                     }
 
                     if let Some(payload_range) = Self::try_group_decrypt(
-                        crypto,
+                        &crypto,
                         packet,
                         &saved_encrypted[..encrypted_len],
                         encrypted_offset,
@@ -923,7 +923,7 @@ impl Sessions {
     /// Restores the ciphertext before attempting.
     /// On success, returns the payload range; the packet buffer contains decrypted data.
     fn try_group_decrypt<const N: usize, C: Crypto>(
-        crypto: &C,
+        crypto: C,
         packet: &mut Packet<N>,
         saved_encrypted: &[u8],
         encrypted_offset: usize,

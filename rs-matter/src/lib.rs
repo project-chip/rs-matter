@@ -70,9 +70,8 @@ extern crate alloc;
 pub(crate) mod fmt;
 
 pub mod acl;
+pub mod attest;
 pub mod cert;
-pub mod commissioner;
-pub mod credentials;
 pub mod crypto;
 pub mod dm;
 pub mod error;
@@ -80,6 +79,7 @@ pub mod fabric;
 pub mod failsafe;
 pub mod group_keys;
 pub mod im;
+pub mod onboard;
 pub mod pairing;
 pub mod persist;
 pub mod respond;
