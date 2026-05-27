@@ -15,56 +15,58 @@
  *    limitations under the License.
  */
 
-//! Controller-side signing material for issuing operational
-//! certificates (NOCs).
+//! Controller-side **NOC** (Node Operational Certificate) issuer.
+//!
+//! Issues NOCs against an already-existing CA chain. The chain itself
+//! (RCAC + optional ICAC) is built by [`super::ca_chain`] — that
+//! separation reflects the real-world flow: chain generation happens
+//! once (often offline, with HSM-controlled RCAC keys), NOC signing
+//! happens many times at runtime as new devices are commissioned.
 //!
 //! Supports both Matter PKI shapes per spec §6.5:
 //!
-//! 1. **ICAC tier** (recommended for any real deployment) — NOCs are
-//!    signed by an ICAC, the ICAC is signed by an RCAC, and the RCAC
-//!    private key is **not** held by the running controller. Only the
-//!    ICAC private key sits in [`NocGenerator`]. This matches the
-//!    real-world model where the RCAC key lives in an HSM and is
-//!    used only at chain-bootstrap time. See [`Self::new_icac_signed`].
+//! 1. **ICAC tier** (recommended for any real deployment) — `icac_id`
+//!    is `Some(_)`; the `signing_privkey` is the ICAC private key.
+//!    NOCs ship as `[RCAC, ICAC, NOC]`. The RCAC private key is
+//!    **not** held by the running controller.
 //!
-//! 2. **RCAC-direct** (simpler, fine for small / test setups) — NOCs
-//!    are signed directly by the RCAC; the controller holds the RCAC
-//!    private key. See [`Self::new_rcac_signed`].
-//!
-//! Either way, the cert *bytes* (RCAC, optional ICAC) are NOT stored
-//! here — the caller owns them, typically by installing them in
-//! [`crate::fabric::Fabric`] via [`crate::fabric::Fabrics::add`].
+//! 2. **RCAC-direct** (simpler, fine for tests / small private
+//!    deployments) — `icac_id` is `None`; the `signing_privkey` is
+//!    the RCAC private key. NOCs ship as `[RCAC, NOC]`.
 
-use crate::cert::builder::{IcacBuilder, IssuerDN, NocBuilder, RcacBuilder, SubjectDN, Validity};
+use crate::cert::builder::{IssuerDN, NocBuilder, SubjectDN, Validity};
 use crate::cert::x509::csr::CsrRef;
+use crate::cert::CertRef;
 use crate::cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN};
 use crate::crypto::{
     CanonPkcPublicKey, CanonPkcPublicKeyRef, CanonPkcSecretKey, CanonPkcSecretKeyRef, Crypto,
-    PublicKey, RngCore, SecretKey, SigningSecretKey,
+    PublicKey, SigningSecretKey,
 };
 use crate::error::{Error, ErrorCode};
+use crate::tlv::TLVElement;
 
 /// NOC issuer for a single Matter fabric.
 ///
-/// Holds the NOC-signing private key — either the RCAC private key
-/// (RCAC-direct mode) or the ICAC private key (ICAC-tier mode),
-/// depending on the constructor that produced it. The [`Self::icac_id`]
-/// accessor is the discriminator: `None` ⇒ RCAC-direct, `Some(_)` ⇒
-/// ICAC-tier.
+/// Stateless besides the monotonic serial counter — the signing key
+/// and cached cert IDs are immutable after construction. Build via
+/// [`Self::new`] from already-existing chain material (see the module
+/// docs for how that chain is produced).
 pub struct NocGenerator {
     /// Private key that signs each NOC's `signature` field.
     signing_privkey: CanonPkcSecretKey,
     /// Public key paired with `signing_privkey`. Stamped into every
     /// NOC's issuer-pubkey TBS slot.
     signing_pubkey: CanonPkcPublicKey,
-    /// Fabric ID — embedded in every NOC's subject + issuer DN.
+    /// Cached fabric ID — read once from the supplied RCAC cert.
     fabric_id: u64,
-    /// RCAC subject ID. Always tracked (it's part of the persisted
-    /// fabric identity), but only used as an *issuer* DN if there's
-    /// no ICAC tier (`icac_id == None`).
+    /// Cached RCAC subject ID. Used as issuer DN when this generator
+    /// signs NOCs in RCAC-direct mode (`icac_id == None`); tracked
+    /// in both modes for diagnostics.
     rcac_id: u64,
-    /// ICAC subject ID. `None` ⇒ RCAC-direct mode; `Some(_)` ⇒
-    /// ICAC-tier mode.
+    /// Cached ICAC subject ID. `None` ⇒ RCAC-direct mode (signing
+    /// key is the RCAC priv key); `Some(_)` ⇒ ICAC-tier mode (signing
+    /// key is the ICAC priv key, this is the ICAC's subject ID, and
+    /// becomes the issuer DN on each NOC).
     icac_id: Option<u64>,
     /// Monotonic NOC serial counter (scoped to this issuer).
     next_serial: u64,
@@ -73,211 +75,57 @@ pub struct NocGenerator {
 }
 
 impl NocGenerator {
-    /// **ICAC tier** (recommended). Build a fresh RCAC + ICAC chain.
-    /// The RCAC private key is used **once** to sign the ICAC, then
-    /// dropped — only the ICAC private key is retained. Subsequent
-    /// [`Self::generate_noc`] calls produce NOCs signed by the ICAC,
-    /// yielding the spec-standard `[RCAC, ICAC, NOC]` chain.
+    /// Build a NOC generator from already-existing chain material.
     ///
-    /// Returns the configured generator alongside the RCAC and ICAC
-    /// TLV byte blobs. The caller installs **both** in the fabric
-    /// table via `Fabrics::add(..., rcac, ..., icac, ...)`.
-    pub fn new_icac_signed<C: Crypto>(
-        crypto: C,
-        fabric_id: u64,
-        validity: Validity,
-    ) -> Result<
-        (
-            Self,
-            heapless::Vec<u8, MAX_CERT_TLV_LEN>,
-            heapless::Vec<u8, MAX_CERT_TLV_LEN>,
-        ),
-        Error,
-    > {
-        // Random 64-bit subject IDs for RCAC and ICAC. They live in
-        // different DN-tag slots so collision doesn't matter, but
-        // we keep them independent for clarity.
-        let rcac_id = Self::random_id(&crypto)?;
-        let icac_id = Self::random_id(&crypto)?;
-
-        // Ephemeral RCAC keypair — discarded at the end of this fn.
-        let rcac_key = crypto.generate_secret_key()?;
-
-        // Build the self-signed RCAC.
-        let mut serial_bytes = [0u8; 8];
-        crypto.rand()?.fill_bytes(&mut serial_bytes);
-        let mut rcac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let rcac_len = RcacBuilder::new(&mut rcac_buf).build(
-            &crypto,
-            SubjectDN {
-                node_id: None,
-                fabric_id: Some(fabric_id),
-                cat_ids: &[],
-                ca_id: Some(rcac_id),
-            },
-            validity,
-            &rcac_key.pub_key()?,
-            &rcac_key,
-            &serial_bytes,
-        )?;
-        let mut rcac = heapless::Vec::new();
-        rcac.extend_from_slice(&rcac_buf[..rcac_len])
-            .map_err(|_| Error::from(ErrorCode::BufferTooSmall))?;
-
-        // Generate the ICAC keypair (retained).
-        let icac_key = crypto.generate_secret_key()?;
-        let mut signing_pubkey = CanonPkcPublicKey::new();
-        icac_key.pub_key()?.write_canon(&mut signing_pubkey)?;
-        let mut signing_privkey = CanonPkcSecretKey::new();
-        icac_key.write_canon(&mut signing_privkey)?;
-
-        // Build the ICAC, signed by the RCAC. Use serial=1 (under
-        // RCAC's scope, separate from the NOC serial counter under
-        // ICAC's scope below).
-        let icac_serial = Self::encode_serial_asn1(1);
-        let mut icac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let icac_len = IcacBuilder::new(&mut icac_buf).build(
-            &crypto,
-            SubjectDN {
-                node_id: None,
-                fabric_id: Some(fabric_id),
-                cat_ids: &[],
-                ca_id: Some(icac_id),
-            },
-            validity,
-            &icac_key.pub_key()?,
-            &rcac_key.pub_key()?,
-            &rcac_key,
-            icac_serial.as_slice(),
-            IssuerDN {
-                ca_id: Some(rcac_id),
-                fabric_id: Some(fabric_id),
-                is_rcac: true,
-            },
-        )?;
-        let mut icac = heapless::Vec::new();
-        icac.extend_from_slice(&icac_buf[..icac_len])
-            .map_err(|_| Error::from(ErrorCode::BufferTooSmall))?;
-
-        // `rcac_key` (the RCAC private key) is dropped here — we do
-        // not retain it. Only `signing_privkey` (the ICAC private
-        // key) is held by `Self` from this point on.
-        drop(rcac_key);
-
-        Ok((
-            Self {
-                signing_privkey,
-                signing_pubkey,
-                fabric_id,
-                rcac_id,
-                icac_id: Some(icac_id),
-                next_serial: 1,
-                validity,
-            },
-            rcac,
-            icac,
-        ))
-    }
-
-    /// **RCAC-direct** (simpler, less production-realistic). Build a
-    /// fresh self-signed RCAC and **retain** its private key.
-    /// Subsequent [`Self::generate_noc`] calls produce NOCs signed
-    /// directly by the RCAC, yielding the shorter `[RCAC, NOC]` chain.
+    /// Inputs:
+    ///   - `signing_privkey` — the private key that will sign NOCs.
+    ///     In ICAC-tier mode this is the **ICAC** private key; in
+    ///     RCAC-direct mode it's the **RCAC** private key. Must match
+    ///     the choice expressed by `icac_bytes` (Some ⇒ ICAC, None ⇒
+    ///     RCAC).
+    ///   - `rcac_bytes` — the RCAC's TLV cert. Always required (it's
+    ///     where the fabric ID + RCAC subject ID come from).
+    ///   - `icac_bytes` — `Some(_)` for an ICAC-tier fabric (NOCs
+    ///     ship `[RCAC, ICAC, NOC]`); `None` for RCAC-direct (NOCs
+    ///     ship `[RCAC, NOC]`).
     ///
-    /// Returns the configured generator alongside the RCAC TLV bytes.
-    /// Fine for tests and small deployments; not appropriate where the
-    /// RCAC private key shouldn't live on the running controller
-    /// (most real fabrics) — use [`Self::new_icac_signed`] for that.
-    pub fn new_rcac_signed<C: Crypto>(
+    /// Used identically at first-time bootstrap (with freshly-built
+    /// chain bytes) and at restart (with chain bytes loaded from
+    /// [`crate::fabric::Fabric`]).
+    pub fn new<C: Crypto>(
         crypto: C,
-        fabric_id: u64,
-        validity: Validity,
-    ) -> Result<(Self, heapless::Vec<u8, MAX_CERT_TLV_LEN>), Error> {
-        let rcac_id = Self::random_id(&crypto)?;
-
-        let root_key = crypto.generate_secret_key()?;
-        let mut signing_pubkey = CanonPkcPublicKey::new();
-        root_key.pub_key()?.write_canon(&mut signing_pubkey)?;
-        let mut signing_privkey = CanonPkcSecretKey::new();
-        root_key.write_canon(&mut signing_privkey)?;
-
-        let mut serial_bytes = [0u8; 8];
-        crypto.rand()?.fill_bytes(&mut serial_bytes);
-        let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let cert_len = RcacBuilder::new(&mut cert_buf).build(
-            &crypto,
-            SubjectDN {
-                node_id: None,
-                fabric_id: Some(fabric_id),
-                cat_ids: &[],
-                ca_id: Some(rcac_id),
-            },
-            validity,
-            &root_key.pub_key()?,
-            &root_key,
-            &serial_bytes,
-        )?;
-
-        let mut rcac = heapless::Vec::new();
-        rcac.extend_from_slice(&cert_buf[..cert_len])
-            .map_err(|_| Error::from(ErrorCode::BufferTooSmall))?;
-
-        Ok((
-            Self {
-                signing_privkey,
-                signing_pubkey,
-                fabric_id,
-                rcac_id,
-                icac_id: None,
-                next_serial: 1,
-                validity,
-            },
-            rcac,
-        ))
-    }
-
-    /// Restore an **ICAC-tier** generator from previously-persisted
-    /// material. Counterpart of [`Self::new_icac_signed`].
-    pub fn from_persisted_icac_signed<C: Crypto>(
-        crypto: C,
-        icac_privkey: CanonPkcSecretKey,
-        fabric_id: u64,
-        rcac_id: u64,
-        icac_id: u64,
+        signing_privkey: CanonPkcSecretKey,
+        rcac_bytes: &[u8],
+        icac_bytes: Option<&[u8]>,
         validity: Validity,
     ) -> Result<Self, Error> {
-        let icac_key = crypto.secret_key(icac_privkey.reference())?;
+        let rcac = CertRef::new(TLVElement::new(rcac_bytes));
+        let fabric_id = rcac.get_fabric_id()?;
+        let rcac_id = rcac.get_ca_id()?;
+
+        let icac_id = match icac_bytes {
+            Some(bytes) => {
+                let icac = CertRef::new(TLVElement::new(bytes));
+                if icac.get_fabric_id()? != fabric_id {
+                    return Err(Error::from(ErrorCode::InvalidData));
+                }
+                Some(icac.get_ca_id()?)
+            }
+            None => None,
+        };
+
+        // Derive the public key paired with `signing_privkey` — used
+        // as the NOC's `issuer_pubkey` in every TBS we sign.
+        let signing_key = crypto.secret_key(signing_privkey.reference())?;
         let mut signing_pubkey = CanonPkcPublicKey::new();
-        icac_key.pub_key()?.write_canon(&mut signing_pubkey)?;
+        signing_key.pub_key()?.write_canon(&mut signing_pubkey)?;
+
         Ok(Self {
-            signing_privkey: icac_privkey,
+            signing_privkey,
             signing_pubkey,
             fabric_id,
             rcac_id,
-            icac_id: Some(icac_id),
-            next_serial: 1,
-            validity,
-        })
-    }
-
-    /// Restore an **RCAC-direct** generator from previously-persisted
-    /// material. Counterpart of [`Self::new_rcac_signed`].
-    pub fn from_persisted_rcac_signed<C: Crypto>(
-        crypto: C,
-        rcac_privkey: CanonPkcSecretKey,
-        fabric_id: u64,
-        rcac_id: u64,
-        validity: Validity,
-    ) -> Result<Self, Error> {
-        let root_key = crypto.secret_key(rcac_privkey.reference())?;
-        let mut signing_pubkey = CanonPkcPublicKey::new();
-        root_key.pub_key()?.write_canon(&mut signing_pubkey)?;
-        Ok(Self {
-            signing_privkey: rcac_privkey,
-            signing_pubkey,
-            fabric_id,
-            rcac_id,
-            icac_id: None,
+            icac_id,
             next_serial: 1,
             validity,
         })
@@ -335,12 +183,10 @@ impl NocGenerator {
         Ok(noc)
     }
 
+    /// Fabric ID this generator signs NOCs for. Cached from the RCAC
+    /// cert at construction.
     pub fn fabric_id(&self) -> u64 {
         self.fabric_id
-    }
-
-    pub fn rcac_id(&self) -> u64 {
-        self.rcac_id
     }
 
     /// `Some(_)` ⇒ ICAC tier (signing key is the ICAC priv key);
@@ -350,16 +196,16 @@ impl NocGenerator {
     }
 
     /// Reference to the NOC-signing private key — either RCAC or
-    /// ICAC depending on construction mode. For persistence only;
-    /// treat as highly sensitive (it can sign new fabric members).
+    /// ICAC depending on construction mode. This is the **only**
+    /// piece of [`NocGenerator`] state that needs to be persisted by
+    /// the caller across a controller restart; everything else
+    /// (fabric ID, CA IDs) is re-derived from the cert bytes the
+    /// caller supplies to a subsequent [`Self::new`].
+    ///
+    /// Treat the returned bytes as highly sensitive — they can sign
+    /// new fabric members.
     pub fn signing_secret_key(&self) -> CanonPkcSecretKeyRef<'_> {
         self.signing_privkey.reference()
-    }
-
-    fn random_id<C: Crypto>(crypto: &C) -> Result<u64, Error> {
-        let mut bytes = [0u8; 8];
-        crypto.rand()?.fill_bytes(&mut bytes);
-        Ok(u64::from_be_bytes(bytes))
     }
 
     /// ASN.1 DER `INTEGER` encoding of a 64-bit serial per X.690
@@ -392,6 +238,7 @@ impl NocGenerator {
 mod tests {
     use crate::cert::builder::VALID_FOREVER;
     use crate::cert::CertRef;
+    use crate::commissioner::ca_chain::{generate_icac, generate_rcac};
     use crate::crypto::test_only_crypto;
     use crate::tlv::TLVElement;
 
@@ -424,71 +271,45 @@ mod tests {
     }
 
     #[test]
-    fn rcac_signed_returns_only_rcac() {
+    fn rcac_direct_mode_noc_carries_correct_ids() {
         let crypto = test_only_crypto();
-        let (gen, rcac) = unwrap!(NocGenerator::new_rcac_signed(
-            &crypto,
-            0x1u64,
-            VALID_FOREVER
-        ));
-        assert!(!rcac.is_empty());
-        assert_eq!(gen.fabric_id(), 0x1);
+        let fabric_id = 0xABCDEF123456u64;
+        let (rcac_priv, rcac) = generate_rcac(&crypto, fabric_id, VALID_FOREVER).unwrap();
+        let mut gen = NocGenerator::new(&crypto, rcac_priv, &rcac, None, VALID_FOREVER).unwrap();
         assert!(gen.icac_id().is_none());
+        assert_eq!(gen.fabric_id(), fabric_id);
+
+        let noc = gen.generate_noc(&crypto, GOOD_CSR, 0x42, &[]).unwrap();
+        assert_eq!(node_id_from(&noc).unwrap(), 0x42);
+        assert_eq!(fabric_id_from(&noc).unwrap(), fabric_id);
     }
 
     #[test]
-    fn icac_signed_returns_rcac_and_icac() {
+    fn icac_tier_mode_noc_carries_correct_ids() {
         let crypto = test_only_crypto();
-        let (gen, rcac, icac) = unwrap!(NocGenerator::new_icac_signed(
-            &crypto,
-            0x1u64,
-            VALID_FOREVER
-        ));
-        assert!(!rcac.is_empty());
-        assert!(!icac.is_empty());
+        let fabric_id = 0xABCDEF123456u64;
+        let (rcac_priv, rcac) = generate_rcac(&crypto, fabric_id, VALID_FOREVER).unwrap();
+        let (icac_priv, icac) =
+            generate_icac(&crypto, rcac_priv.reference(), &rcac, VALID_FOREVER).unwrap();
+        // Production-shape: drop the RCAC private key once the ICAC
+        // has been signed.
+        drop(rcac_priv);
+
+        let mut gen =
+            NocGenerator::new(&crypto, icac_priv, &rcac, Some(&icac), VALID_FOREVER).unwrap();
         assert!(gen.icac_id().is_some());
-    }
+        assert_eq!(gen.fabric_id(), fabric_id);
 
-    #[test]
-    fn rcac_signed_noc_carries_correct_ids() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0xABCDEF123456u64;
-        let (mut gen, _rcac) = unwrap!(NocGenerator::new_rcac_signed(
-            &crypto,
-            fabric_id,
-            VALID_FOREVER
-        ));
-
-        let noc = unwrap!(gen.generate_noc(&crypto, GOOD_CSR, 0x42, &[]));
-
-        assert_eq!(unwrap!(node_id_from(&noc)), 0x42);
-        assert_eq!(unwrap!(fabric_id_from(&noc)), fabric_id);
-    }
-
-    #[test]
-    fn icac_signed_noc_carries_correct_ids() {
-        let crypto = test_only_crypto();
-        let fabric_id = 0xABCDEF123456u64;
-        let (mut gen, _rcac, _icac) = unwrap!(NocGenerator::new_icac_signed(
-            &crypto,
-            fabric_id,
-            VALID_FOREVER
-        ));
-
-        let noc = unwrap!(gen.generate_noc(&crypto, GOOD_CSR, 0x42, &[]));
-
-        assert_eq!(unwrap!(node_id_from(&noc)), 0x42);
-        assert_eq!(unwrap!(fabric_id_from(&noc)), fabric_id);
+        let noc = gen.generate_noc(&crypto, GOOD_CSR, 0x42, &[]).unwrap();
+        assert_eq!(node_id_from(&noc).unwrap(), 0x42);
+        assert_eq!(fabric_id_from(&noc).unwrap(), fabric_id);
     }
 
     #[test]
     fn invalid_csr_rejected() {
         let crypto = test_only_crypto();
-        let (mut gen, _rcac) = unwrap!(NocGenerator::new_rcac_signed(
-            &crypto,
-            0x1u64,
-            VALID_FOREVER
-        ));
+        let (rcac_priv, rcac) = generate_rcac(&crypto, 0x1u64, VALID_FOREVER).unwrap();
+        let mut gen = NocGenerator::new(&crypto, rcac_priv, &rcac, None, VALID_FOREVER).unwrap();
         assert!(gen
             .generate_noc(&crypto, &[0x01, 0x02, 0x03], 1, &[])
             .is_err());
@@ -497,12 +318,24 @@ mod tests {
     #[test]
     fn too_many_cat_ids_rejected() {
         let crypto = test_only_crypto();
-        let (mut gen, _rcac) = unwrap!(NocGenerator::new_rcac_signed(
-            &crypto,
-            0x1u64,
-            VALID_FOREVER
-        ));
+        let (rcac_priv, rcac) = generate_rcac(&crypto, 0x1u64, VALID_FOREVER).unwrap();
+        let mut gen = NocGenerator::new(&crypto, rcac_priv, &rcac, None, VALID_FOREVER).unwrap();
         let too_many = &[1u32, 2, 3, 4];
         assert!(gen.generate_noc(&crypto, GOOD_CSR, 1, too_many).is_err());
+    }
+
+    #[test]
+    fn icac_with_mismatched_fabric_id_rejected() {
+        let crypto = test_only_crypto();
+        let (rcac_priv_a, rcac_a) = generate_rcac(&crypto, 0xAA, VALID_FOREVER).unwrap();
+        let (icac_priv_b, icac_b) = {
+            let (rcac_priv_b, rcac_b) = generate_rcac(&crypto, 0xBB, VALID_FOREVER).unwrap();
+            generate_icac(&crypto, rcac_priv_b.reference(), &rcac_b, VALID_FOREVER).unwrap()
+        };
+        // RCAC says fabric=0xAA, ICAC says fabric=0xBB → reject.
+        let _ = rcac_priv_a;
+        assert!(
+            NocGenerator::new(&crypto, icac_priv_b, &rcac_a, Some(&icac_b), VALID_FOREVER).is_err()
+        );
     }
 }

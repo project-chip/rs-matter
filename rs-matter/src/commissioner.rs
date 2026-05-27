@@ -77,6 +77,7 @@ use crate::Matter;
 pub use fabric_credentials::{DeviceCredentials, FabricSigningCredentials};
 pub use noc_generator::NocGenerator;
 
+pub mod ca_chain;
 pub mod fabric_credentials;
 pub mod noc_generator;
 
@@ -250,13 +251,14 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         .await?;
 
         // Snapshot RCAC bytes, ICAC bytes (empty in RCAC-direct mode),
-        // and admin scalars from the controller's installed fabric
-        // in `matter.state.fabrics` — the single source of truth.
-        // `Fabrics::add` reads everything via the `Fabric` entry;
-        // nothing lives in `FabricSigningCredentials` beyond the
-        // signing key + IPK + node-id counter.
+        // IPK epoch key bytes, and the admin scalars — all from the
+        // controller's installed fabric in `matter.state.fabrics`,
+        // the single source of truth. `FabricSigningCredentials` only
+        // carries the NOC-signing key + node-id counter; everything
+        // else lives on the `Fabric` record.
         let mut rcac_buf: heapless::Vec<u8, MAX_CERT_TLV_LEN> = heapless::Vec::new();
         let mut icac_buf: heapless::Vec<u8, MAX_CERT_TLV_LEN> = heapless::Vec::new();
+        let mut ipk_bytes = [0u8; crate::crypto::AEAD_CANON_KEY_LEN];
         let (admin_node_id, admin_vendor_id) = self.matter.with_state(|state| {
             let fabric = state.fabrics.fabric(self.creds.fab_idx())?;
             rcac_buf
@@ -265,6 +267,11 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
             icac_buf
                 .extend_from_slice(fabric.icac())
                 .map_err(|_| ErrorCode::BufferTooSmall)?;
+            // IPK as sent on the wire is the **epoch key** (the raw
+            // 16-byte input to the group-key derivation), not the
+            // per-fabric derived `op_key`. `KeySet` stores both;
+            // `.epoch_key()` is the right one.
+            ipk_bytes.copy_from_slice(fabric.ipk().epoch_key().access());
             Ok::<_, Error>((fabric.node_id(), fabric.vendor_id()))
         })?;
 
@@ -272,17 +279,14 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         // RCAC the subsequent NOC chain validates.
         self.add_trusted_root_certificate(&rcac_buf).await?;
 
-        // AddNOC. IPK comes straight from the signing credentials
-        // (it's the raw epoch key shared across every fabric member —
-        // not the per-fabric derived `op_key`). `icac_buf` is empty
-        // for RCAC-direct fabrics and the codegen builder skips the
-        // field entirely; non-empty ⇒ the full `[RCAC, ICAC, NOC]`
-        // chain is shipped.
+        // AddNOC. `icac_buf` is empty for RCAC-direct fabrics and the
+        // codegen builder skips the field entirely; non-empty ⇒ the
+        // full `[RCAC, ICAC, NOC]` chain is shipped.
         let fabric_index = self
             .add_noc(
                 &device_creds.noc,
                 &icac_buf,
-                self.creds.ipk().access(),
+                &ipk_bytes,
                 admin_node_id,
                 admin_vendor_id,
             )

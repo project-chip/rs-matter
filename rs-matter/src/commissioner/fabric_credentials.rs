@@ -50,7 +50,7 @@ use core::num::NonZeroU8;
 use crate::cert::builder::Validity;
 use crate::cert::MAX_CERT_TLV_LEN;
 use crate::crypto::{
-    CanonAeadKey, CanonAeadKeyRef, CanonPkcSecretKey, Crypto, RngCore, SecretKey, SigningSecretKey,
+    CanonAeadKey, CanonPkcSecretKey, Crypto, RngCore, SecretKey, SigningSecretKey,
 };
 use crate::dm::NodeId;
 use crate::error::Error;
@@ -79,38 +79,40 @@ pub struct FabricSigningCredentials {
     /// Index of the controller's fabric in `matter.state.fabrics`.
     /// Set by [`Self::bootstrap`] (or [`Self::from_persisted`]); never
     /// changes for the lifetime of this struct.
+    ///
+    /// The fabric record at this index is the single source of truth
+    /// for RCAC bytes, optional ICAC bytes, controller NOC, controller
+    /// operational secret key, and **the IPK** (epoch key + derived
+    /// op key — see [`crate::group_keys::KeySet`]). Nothing here
+    /// duplicates that.
     fab_idx: NonZeroU8,
-    /// RCAC private signing key + per-fabric metadata for issuing
-    /// NOCs to other devices joining the same fabric.
+    /// NOC-signing material — RCAC or ICAC private key depending on
+    /// the bootstrap mode. The only fabric-related state that
+    /// genuinely doesn't live in [`crate::fabric::Fabric`], because
+    /// devices don't have it.
     noc_generator: NocGenerator,
-    /// Fabric IPK (epoch key, 16 raw bytes). Sent verbatim in every
-    /// `AddNOC` so devices joining the fabric derive the same group
-    /// operational key.
-    ipk: CanonAeadKey,
     /// Counter for the next NodeID assigned to a commissioned device.
     next_node_id: NodeId,
 }
 
 impl FabricSigningCredentials {
     /// Bootstrap a brand-new controller fabric with the recommended
-    /// ICAC tier.
+    /// **ICAC tier**.
     ///
-    /// In one shot: generates the RCAC + ICAC chain (the RCAC private
-    /// key is used once to sign the ICAC and then discarded — see
-    /// [`NocGenerator::new_icac_signed`]), the fabric IPK, the
-    /// controller's operational signing keypair + ICAC-signed NOC,
-    /// and installs the fabric into `matter.state.fabrics`. Returns
-    /// a [`FabricSigningCredentials`] that remembers the resulting
-    /// `fab_idx` plus the ICAC private key (the only signing material
-    /// retained on the running controller — matches real-world Matter
-    /// PKI where the RCAC private key sits in an HSM).
+    /// In one shot: generates the RCAC via [`super::ca_chain::generate_rcac`],
+    /// generates the ICAC under it via [`super::ca_chain::generate_icac`],
+    /// then **drops** the RCAC private key (it's never needed again
+    /// on the running controller). Mints the controller's own
+    /// operational signing keypair and ICAC-signed NOC. Generates the
+    /// fabric IPK. Installs the resulting `[RCAC, ICAC]` chain, NOC
+    /// and IPK as a fabric in `matter.state.fabrics`. Returns a
+    /// [`FabricSigningCredentials`] holding the ICAC private key (the
+    /// only signing material retained), the fab_idx and the next-NodeID
+    /// counter.
     ///
     /// Use this for any real deployment. For tests / simpler setups
     /// where the RCAC private key can live on the controller, see
     /// [`Self::bootstrap_rcac_only`].
-    ///
-    /// One-shot per controller fabric. Subsequent commissionings (any
-    /// number of devices) reuse the same `FabricSigningCredentials`.
     pub fn bootstrap<C: Crypto>(
         matter: &Matter<'_>,
         crypto: C,
@@ -119,10 +121,20 @@ impl FabricSigningCredentials {
         admin_vendor_id: u16,
         validity: Validity,
     ) -> Result<Self, Error> {
-        let (mut noc_generator, rcac, icac) =
-            NocGenerator::new_icac_signed(&crypto, fabric_id, validity)?;
+        // Build the CA chain. `generate_rcac` returns the RCAC priv
+        // key which we hand straight to `generate_icac` and then drop.
+        let (rcac_privkey, rcac) = super::ca_chain::generate_rcac(&crypto, fabric_id, validity)?;
+        let (icac_privkey, icac) =
+            super::ca_chain::generate_icac(&crypto, rcac_privkey.reference(), &rcac, validity)?;
+        drop(rcac_privkey);
+
+        // `signing_privkey` for the NocGenerator is the ICAC priv key.
+        let mut noc_generator =
+            NocGenerator::new(&crypto, icac_privkey, &rcac, Some(&icac), validity)?;
+
         let (canon_signing_key, controller_noc) =
             Self::mint_controller_noc(&crypto, &mut noc_generator, controller_node_id)?;
+
         Self::install(
             matter,
             &crypto,
@@ -136,14 +148,14 @@ impl FabricSigningCredentials {
         )
     }
 
-    /// Bootstrap a brand-new controller fabric with RCAC-direct
+    /// Bootstrap a brand-new controller fabric with **RCAC-direct**
     /// signing (no ICAC tier).
     ///
-    /// Simpler than [`Self::bootstrap`] — the chain is just
-    /// `[RCAC, NOC]` — but the controller retains the RCAC private
-    /// key. Fine for tests and small private deployments; not
-    /// appropriate where the RCAC key shouldn't live on the running
-    /// commissioner (most real fabrics).
+    /// Generates only an RCAC (no ICAC) via
+    /// [`super::ca_chain::generate_rcac`] and **retains** its private
+    /// key. NOCs ship as `[RCAC, NOC]`. Fine for tests and small
+    /// private deployments; not appropriate where the RCAC key
+    /// shouldn't live on the running commissioner (most real fabrics).
     pub fn bootstrap_rcac_only<C: Crypto>(
         matter: &Matter<'_>,
         crypto: C,
@@ -152,8 +164,8 @@ impl FabricSigningCredentials {
         admin_vendor_id: u16,
         validity: Validity,
     ) -> Result<Self, Error> {
-        let (mut noc_generator, rcac) =
-            NocGenerator::new_rcac_signed(&crypto, fabric_id, validity)?;
+        let (rcac_privkey, rcac) = super::ca_chain::generate_rcac(&crypto, fabric_id, validity)?;
+        let mut noc_generator = NocGenerator::new(&crypto, rcac_privkey, &rcac, None, validity)?;
         let (canon_signing_key, controller_noc) =
             Self::mint_controller_noc(&crypto, &mut noc_generator, controller_node_id)?;
         Self::install(
@@ -208,7 +220,6 @@ impl FabricSigningCredentials {
         Ok(Self {
             fab_idx,
             noc_generator,
-            ipk,
             // Controller is `controller_node_id`; devices start at
             // `controller_node_id + 1`, with `2` as a floor so the
             // counter never lands on the conventional `1` reserved
@@ -217,73 +228,63 @@ impl FabricSigningCredentials {
         })
     }
 
-    /// Restore from a previously-persisted **ICAC-tier** snapshot,
-    /// matching a fabric that's already in `matter.state.fabrics`
-    /// (e.g. loaded from the fabric KV store).
+    /// Restore from a previously-persisted snapshot, matching a
+    /// fabric that's already in `matter.state.fabrics` (e.g. loaded
+    /// from the fabric KV store).
     ///
-    /// `icac_privkey` is the only signing material on the controller
-    /// — the RCAC private key isn't needed for ongoing operation
-    /// (it would only come back into play if rotating the ICAC).
+    /// The tier (ICAC-signed vs RCAC-direct) is auto-detected from
+    /// the installed fabric — `fabric.icac()` non-empty ⇒ ICAC-tier,
+    /// empty ⇒ RCAC-direct — and the appropriate `NocGenerator`
+    /// constructor is picked. The caller persists only:
+    ///   - the NOC-signing private key (`signing_privkey`: ICAC priv
+    ///     in tier mode, RCAC priv in direct mode),
+    ///   - the `next_node_id` counter.
+    ///
+    /// Everything else (fabric ID, RCAC / ICAC subject IDs, IPK, the
+    /// RCAC + optional ICAC cert bytes) is sourced from the fabric
+    /// record — no separate u64 fields need to be persisted.
     ///
     /// The caller is responsible for ensuring `fab_idx` actually
     /// refers to the controller's fabric (the one whose `secret_key`
     /// the controller knows the private side of).
-    #[allow(clippy::too_many_arguments)]
     pub fn from_persisted<C: Crypto>(
-        crypto: C,
+        matter: &Matter<'_>,
+        crypto: &C,
         fab_idx: NonZeroU8,
-        icac_privkey: CanonPkcSecretKey,
-        fabric_id: u64,
-        rcac_id: u64,
-        icac_id: u64,
-        ipk: CanonAeadKeyRef<'_>,
+        signing_privkey: CanonPkcSecretKey,
         next_node_id: NodeId,
         validity: Validity,
     ) -> Result<Self, Error> {
-        let noc_generator = NocGenerator::from_persisted_icac_signed(
-            &crypto,
-            icac_privkey,
-            fabric_id,
-            rcac_id,
-            icac_id,
-            validity,
-        )?;
-        let mut ipk_owned = CanonAeadKey::new();
-        ipk_owned.load(ipk);
-        Ok(Self {
-            fab_idx,
-            noc_generator,
-            ipk: ipk_owned,
-            next_node_id,
-        })
-    }
+        // Snapshot the cert bytes out of the fabric so we can hand
+        // them to `NocGenerator::new` without holding the
+        // `with_state` borrow across construction.
+        let mut rcac_buf: heapless::Vec<u8, MAX_CERT_TLV_LEN> = heapless::Vec::new();
+        let mut icac_buf: heapless::Vec<u8, MAX_CERT_TLV_LEN> = heapless::Vec::new();
+        matter.with_state(|state| {
+            let fabric = state.fabrics.fabric(fab_idx)?;
+            rcac_buf
+                .extend_from_slice(fabric.root_ca())
+                .map_err(|_| crate::error::ErrorCode::BufferTooSmall)?;
+            icac_buf
+                .extend_from_slice(fabric.icac())
+                .map_err(|_| crate::error::ErrorCode::BufferTooSmall)?;
+            Ok::<_, Error>(())
+        })?;
 
-    /// Restore from a previously-persisted **RCAC-direct** snapshot.
-    /// Counterpart of [`Self::bootstrap_rcac_only`].
-    #[allow(clippy::too_many_arguments)]
-    pub fn from_persisted_rcac_only<C: Crypto>(
-        crypto: C,
-        fab_idx: NonZeroU8,
-        rcac_privkey: CanonPkcSecretKey,
-        fabric_id: u64,
-        rcac_id: u64,
-        ipk: CanonAeadKeyRef<'_>,
-        next_node_id: NodeId,
-        validity: Validity,
-    ) -> Result<Self, Error> {
-        let noc_generator = NocGenerator::from_persisted_rcac_signed(
-            &crypto,
-            rcac_privkey,
-            fabric_id,
-            rcac_id,
-            validity,
-        )?;
-        let mut ipk_owned = CanonAeadKey::new();
-        ipk_owned.load(ipk);
+        // `fabric.icac()` returns `&[]` for an RCAC-direct fabric;
+        // `NocGenerator::new` accepts `Option<&[u8]>` for the ICAC
+        // and picks the appropriate signing mode accordingly.
+        let icac_opt: Option<&[u8]> = if icac_buf.is_empty() {
+            None
+        } else {
+            Some(&icac_buf)
+        };
+        let noc_generator =
+            NocGenerator::new(crypto, signing_privkey, &rcac_buf, icac_opt, validity)?;
+
         Ok(Self {
             fab_idx,
             noc_generator,
-            ipk: ipk_owned,
             next_node_id,
         })
     }
@@ -296,11 +297,6 @@ impl FabricSigningCredentials {
     /// Fabric ID this controller signs NOCs for.
     pub fn fabric_id(&self) -> u64 {
         self.noc_generator.fabric_id()
-    }
-
-    /// Fabric IPK (epoch key, 16 bytes). Hand straight to `AddNOC`.
-    pub fn ipk(&self) -> CanonAeadKeyRef<'_> {
-        self.ipk.reference()
     }
 
     /// Next NodeID that [`Self::generate_device_credentials`] will

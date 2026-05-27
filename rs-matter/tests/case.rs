@@ -25,6 +25,7 @@ use embassy_time::{Duration, Timer};
 use log::info;
 
 use rs_matter::cert::builder::VALID_FOREVER;
+use rs_matter::commissioner::ca_chain::generate_rcac;
 use rs_matter::commissioner::NocGenerator;
 use rs_matter::crypto::{
     test_only_crypto, CanonAeadKey, CanonAeadKeyRef, CanonPkcSecretKey, Crypto, RngCore, SecretKey,
@@ -74,12 +75,12 @@ fn test_case_handshake() {
 
         // ---- 1. Generate shared fabric material: RCAC + IPK + NOCs ----
 
-        // Single NOC generator → same RCAC signs both NOCs, ensuring
-        // controller and device land on the same fabric. Use the
-        // RCAC-direct mode to keep the test setup minimal (no ICAC
-        // bytes to install on each side).
-        let (mut noc_generator, rcac) =
-            NocGenerator::new_rcac_signed(&crypto, TEST_FABRIC_ID, VALID_FOREVER).unwrap();
+        // Build a shared RCAC (RCAC-direct mode, no ICAC tier) and
+        // a single NocGenerator that signs both NOCs against it —
+        // controller and device land on the same fabric.
+        let (rcac_privkey, rcac) = generate_rcac(&crypto, TEST_FABRIC_ID, VALID_FOREVER).unwrap();
+        let mut noc_generator =
+            NocGenerator::new(&crypto, rcac_privkey, &rcac, None, VALID_FOREVER).unwrap();
 
         // Shared fabric IPK (16 random bytes).
         let mut ipk = CanonAeadKey::new();

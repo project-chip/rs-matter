@@ -661,6 +661,24 @@ impl<'a> CertRef<'a> {
         dn.uint()
     }
 
+    /// Subject CA-ID — the `RootCaId` of an RCAC or the `IcaId` of an
+    /// ICAC. Matter-issued RCACs always carry exactly one `RootCaId`
+    /// in their subject DN; ICACs always carry exactly one `IcaId`
+    /// (spec §6.5). Returns the first matching value; errors out if
+    /// neither tag is present.
+    pub fn get_ca_id(&self) -> Result<u64, Error> {
+        let dn = self
+            .subject()?
+            .iter()
+            .do_try_find(|dn| {
+                let tag = dn.tag()?;
+                Ok(tag == DNTag::RootCaId || tag == DNTag::IcaId)
+            })?
+            .ok_or(ErrorCode::InvalidData)?;
+
+        dn.uint()
+    }
+
     fn get_subject_key_id(&self) -> Result<&[u8], Error> {
         let extension = self
             .extensions()?
