@@ -551,6 +551,12 @@ where
             rctx.set_keep();
 
             info!("Subscription {:?} primed", rctx.subscription().ids());
+
+            // Commit the subscription into the table now (its `report_complete`
+            // runs on `Drop`) and then wake the reporter so it can account for
+            // the new subscription's deadline.
+            drop(rctx);
+            self.subscriptions.notification.notify();
         }
 
         Ok(())
@@ -615,10 +621,22 @@ where
     /// and reporting them to the peers.
     async fn process_subscriptions(&self, matter: &Matter<'_>) -> Result<(), Error> {
         loop {
-            // TODO: Un-hardcode these 4 seconds of waiting when the more precise change detection logic is implemented
-            let mut timeout = pin!(Timer::after(embassy_time::Duration::from_secs(4)));
+            // Sleep until the soonest subscription deadline: the end of a
+            // `min_int` quiet period for a subscription holding back a change,
+            // or the chosen liveness wake point. A change, event, removal, a torn
+            // down session, or a newly accepted subscription (the accept path
+            // notifies) all wake the loop early. With no subscription there is
+            // no deadline, so just wait to be notified.
             let mut notification = pin!(self.subscriptions.notification.wait());
             let mut session_removed = pin!(matter.session_removed.wait());
+
+            // With no subscription (or none primed) the deadline is `Instant::MAX`,
+            // so the timer effectively never fires and the loop just waits to be
+            // notified.
+            let deadline = self
+                .subscriptions
+                .next_report_at(self.events.watermark(), &self.subscriptions_buffers);
+            let mut timeout = pin!(Timer::at(deadline));
 
             select3(&mut notification, &mut timeout, &mut session_removed).await;
 

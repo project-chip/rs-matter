@@ -370,6 +370,24 @@ impl<const N: usize> Subscriptions<N> {
         })
     }
 
+    /// Earliest [`Instant`] at which any subscription will next need
+    /// servicing, or [`Instant::MAX`] if there are no (primed) subscriptions
+    /// and the reporter should simply wait to be notified.
+    ///
+    /// See [`Subscription::next_report_at`] for the per-subscription rule.
+    pub(crate) fn next_report_at<'a, B>(
+        &self,
+        event_numbers_watermark: EventNumber,
+        buffers: &SubscriptionsBuffers<'a, B, N>,
+    ) -> Instant
+    where
+        B: BufferAccess<IMBuffer> + 'a,
+    {
+        self.with(buffers, |state, buffers| {
+            state.next_report_at::<B>(event_numbers_watermark, buffers)
+        })
+    }
+
     /// Remove entries that every subscription has already reported on.
     pub(crate) fn purge_reported_changes(&self) {
         self.state
@@ -646,6 +664,31 @@ impl<const N: usize> SubscriptionsInner<N> {
             self.changed_attrs.clear();
         }
     }
+
+    /// Earliest [`Instant`] at which any subscription will next need servicing,
+    /// or [`Instant::MAX`] if none has a wake point (empty table or all
+    /// not-yet-primed).
+    fn next_report_at<'a, B>(
+        &self,
+        event_numbers_watermark: EventNumber,
+        buffers: &SubscriptionsBuffersInner<'a, B, N>,
+    ) -> Instant
+    where
+        B: BufferAccess<IMBuffer> + 'a,
+    {
+        self.subscriptions
+            .iter()
+            .enumerate()
+            .map(|(index, sub)| {
+                sub.next_report_at(
+                    &buffers[index],
+                    &self.changed_attrs,
+                    event_numbers_watermark,
+                )
+            })
+            .min()
+            .unwrap_or(Instant::MAX)
+    }
 }
 
 /// The IDs of a subscription, used to identify it across the system and to route reports to it.
@@ -723,24 +766,45 @@ impl Subscription {
             || self.is_affected_by_new_events(rx, event_numbers_watermark)
     }
 
-    /// Return `true` if the subscription is allowed to report based on the min interval, or `false` if it is still in the quiet period since the last report.
-    fn is_report_allowed(&self, now: Instant) -> bool {
+    /// Instant at which the min-interval quiet period ends — the earliest time
+    /// a report is allowed ([`Self::is_report_allowed`] returns `true`).
+    ///
+    /// [`Instant::MIN`] when not yet primed (`reported_at == Instant::MAX`): a
+    /// fresh subscription is allowed to report immediately (its priming report),
+    /// and a point infinitely in the past reads correctly as "always allowed"
+    /// for every consumer (the boolean gate below and `next_report_at`).
+    fn report_allowed_at(&self) -> Instant {
         self.reported_at
             .checked_add(embassy_time::Duration::from_secs(self.min_int_secs as _))
-            .map(|next_report| next_report <= now)
-            .unwrap_or(true)
+            .unwrap_or(Instant::MIN)
+    }
+
+    /// Return `true` if the subscription is allowed to report based on the min interval, or `false` if it is still in the quiet period since the last report.
+    fn is_report_allowed(&self, now: Instant) -> bool {
+        self.report_allowed_at() <= now
+    }
+
+    /// Instant at which the max-interval liveness window opens — the earliest
+    /// time [`Self::is_report_due`] returns `true`.
+    ///
+    /// `reported_at + max_int - max_int / 2`, i.e. the half-interval mark.
+    /// Waking before the negotiated maximum interval is this implementation's
+    /// margin for completing the report in time.
+    ///
+    /// [`Instant::MIN`] when not yet primed (`reported_at == Instant::MAX`): a
+    /// fresh subscription is immediately due for its priming report (see
+    /// [`Self::report_allowed_at`] for why `MIN` is the right sentinel).
+    fn report_due_at(&self) -> Instant {
+        self.reported_at
+            .checked_add(embassy_time::Duration::from_secs(
+                (self.max_int_secs - self.max_int_secs / 2) as _,
+            ))
+            .unwrap_or(Instant::MIN)
     }
 
     /// Return `true` if the subscription is due for a report based on the max interval, or `false` if it is not yet due.
     fn is_report_due(&self, now: Instant) -> bool {
-        self.reported_at
-            .checked_add(embassy_time::Duration::from_secs(self.max_int_secs as _))
-            .map(|next_report| {
-                next_report <= now
-                    || next_report - now
-                        <= embassy_time::Duration::from_secs((self.max_int_secs / 2) as _)
-            })
-            .unwrap_or(true)
+        self.report_due_at() <= now
     }
 
     /// Return `true` if the subscription is affected by changes to the attribute triple `(endpoint, cluster, attr)` based on the subscription's RX and the given table of changed attributes, or `false` if it is not affected.
@@ -761,6 +825,43 @@ impl Subscription {
         //
         // Therefore and for now do not to this here
         self.max_seen_event_number < event_numbers_watermark
+    }
+
+    /// Earliest [`Instant`] at which this subscription could next report.
+    ///
+    /// A not-yet-primed subscription (`reported_at == Instant::MAX`) yields
+    /// [`Instant::MIN`] via both deadline helpers — "report now", so the reporter
+    /// wakes immediately to deliver the priming report.
+    ///
+    /// Never earlier than the min-interval gate `reported_at + min_int`, before
+    /// which a report SHALL NOT be sent (Matter 1.5.1 §8.5). Subject to that
+    /// gate, it is:
+    /// - `reported_at + min_int` when a change or event is already pending, so
+    ///   the wake lands at the end of the quiet period; otherwise
+    /// - the liveness point ([`Self::report_due_at`]), when
+    ///   [`Self::is_report_due`] flips — early enough for the report to be
+    ///   received before `max_int` (the subscriber terminates otherwise).
+    ///
+    /// Clamping the liveness point up to the gate avoids a busy-spin when
+    /// `min_int > max_int / 2`.
+    fn next_report_at(
+        &self,
+        rx: &[u8],
+        changed_attrs: &ChangedAttrs,
+        event_numbers_watermark: EventNumber,
+    ) -> Instant {
+        let allowed_at = self.report_allowed_at();
+
+        // Use the same `rx` the report path feeds `is_reportable`, so this
+        // prediction stays faithful if these checks ever start consulting it.
+        let pending = self.is_affected_by_attr_changes(rx, changed_attrs)
+            || self.is_affected_by_new_events(rx, event_numbers_watermark);
+
+        if pending {
+            allowed_at
+        } else {
+            allowed_at.max(self.report_due_at())
+        }
     }
 }
 
@@ -1196,8 +1297,8 @@ where
     /// (i.e. no attributes or events to report), or `false` if it can be skipped in that case.
     pub fn should_send_if_empty(&self) -> bool {
         // A fresh subscription has `reported_at == Instant::MAX`, which makes
-        // `is_report_due` return `true` via its overflow-to-`unwrap_or(true)`
-        // branch, so priming reports are delivered unconditionally without a
+        // `report_due_at` saturate to `Instant::MIN` and `is_report_due` return
+        // `true`, so priming reports are delivered unconditionally without a
         // separate `priming` flag.
         unwrap!(self.subscription.as_ref()).is_report_due(self.next_reported_at)
     }
@@ -2139,6 +2240,183 @@ mod tests {
             assert!(rctx.should_send_if_empty());
             rctx.set_keep();
         }
+    }
+
+    #[test]
+    fn next_report_at_max_when_empty() {
+        // No subscriptions → no deadline (`Instant::MAX`); the timer never fires
+        // and the reporter waits to be notified.
+        let subs: Subscriptions<1> = Subscriptions::new();
+        let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
+        assert_eq!(subs.next_report_at(0, &subs_bufs), Instant::MAX);
+    }
+
+    #[test]
+    fn next_report_at_liveness_when_idle() {
+        // No pending data → wake at the liveness point
+        // `reported_at + max_int - max_int/2` (when `is_report_due` flips).
+        let subs: Subscriptions<1> = Subscriptions::new();
+        let pool = TestPool::<2>::new(0);
+        let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+        // min_int = 1s, max_int = 60s → 60 - 30 = 30s.
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 1, 60);
+            rctx.set_keep();
+        }
+
+        assert_eq!(
+            subs.next_report_at(0, &subs_bufs),
+            now + Duration::from_secs(30)
+        );
+    }
+
+    #[test]
+    fn next_report_at_quiet_period_for_pending_attr_change() {
+        // A change recorded inside the quiet period must schedule the wake at
+        // the end of that period (`reported_at + min_int`), not the far-off
+        // liveness point.
+        let subs: Subscriptions<1> = Subscriptions::new();
+        let pool = TestPool::<2>::new(0);
+        let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+        // min_int = 5s, max_int = 60s (liveness would otherwise be at now+30s).
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 5, 60);
+            rctx.set_keep();
+        }
+
+        subs.notify_attr_changed(1, 2, 3);
+
+        // Held back by the quiet period, so still not reportable now...
+        assert!(subs.report(now, 0, &subs_bufs).is_none());
+        // ...but the wake is scheduled at min_int, not liveness.
+        assert_eq!(
+            subs.next_report_at(0, &subs_bufs),
+            now + Duration::from_secs(5)
+        );
+    }
+
+    #[test]
+    fn next_report_at_quiet_period_for_pending_event() {
+        // Same as above, driven by a new event (watermark past the sub's
+        // max_seen = 0) rather than an attribute change.
+        let subs: Subscriptions<1> = Subscriptions::new();
+        let pool = TestPool::<2>::new(0);
+        let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 5, 60);
+            rctx.set_keep();
+        }
+
+        assert_eq!(
+            subs.next_report_at(7, &subs_bufs),
+            now + Duration::from_secs(5)
+        );
+    }
+
+    #[test]
+    fn next_report_at_clamps_liveness_to_min_interval() {
+        // Regression guard for the busy-spin: when `min_int > max_int/2`, the
+        // liveness point (`reported_at + max_int - max_int/2`) precedes the
+        // min-interval gate at which a report is first allowed. The wake MUST
+        // be clamped to the gate; otherwise the reporter wakes early, finds the
+        // sub still gated, re-arms the same past deadline, and spins.
+        let subs: Subscriptions<1> = Subscriptions::new();
+        let pool = TestPool::<2>::new(0);
+        let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+        // min_int = 25s, max_int = 40s → liveness at now+20s, gate at now+25s.
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 25, 40);
+            rctx.set_keep();
+        }
+
+        // Clamped to the gate (now+25), not the earlier liveness point (now+20).
+        assert_eq!(
+            subs.next_report_at(0, &subs_bufs),
+            now + Duration::from_secs(25)
+        );
+        // The scheduled instant matches actual reportability: gated before it,
+        // reportable at it.
+        assert!(subs
+            .report(now + Duration::from_secs(24), 0, &subs_bufs)
+            .is_none());
+        assert!(subs
+            .report(now + Duration::from_secs(25), 0, &subs_bufs)
+            .is_some());
+    }
+
+    #[test]
+    fn next_report_at_returns_earliest_across_subs() {
+        // The reporter must wake for whichever subscription is due first.
+        let subs: Subscriptions<2> = Subscriptions::new();
+        let pool = TestPool::<3>::new(0);
+        let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+        // Sub A: max_int = 60s → liveness now+30s.
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 1, 60);
+            rctx.set_keep();
+        }
+        // Sub B: max_int = 40s → liveness now+20s (the earliest).
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 2, 11, 1, 40);
+            rctx.set_keep();
+        }
+
+        assert_eq!(
+            subs.next_report_at(0, &subs_bufs),
+            now + Duration::from_secs(20)
+        );
+    }
+
+    #[test]
+    fn subscription_added_notification_wakes_reporter_to_recompute_deadline() {
+        use core::pin::pin;
+        use embassy_futures::select::{select, Either};
+
+        let subs: Subscriptions<2> = Subscriptions::new();
+        let pool = TestPool::<3>::new(0);
+        let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 1, 60);
+            rctx.set_keep();
+        }
+
+        assert_eq!(
+            subs.next_report_at(0, &subs_bufs),
+            now + Duration::from_secs(30)
+        );
+
+        let waiter = pin!(subs.notification.wait());
+
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 11, 1, 10);
+            rctx.set_keep();
+        }
+        subs.notification.notify();
+
+        let notified = embassy_futures::block_on(async {
+            match select(waiter, pin!(core::future::ready(()))).await {
+                Either::First(_) => true,
+                Either::Second(_) => false,
+            }
+        });
+
+        assert!(notified);
+        assert_eq!(
+            subs.next_report_at(0, &subs_bufs),
+            now + Duration::from_secs(5)
+        );
     }
 
     #[test]
