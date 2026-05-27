@@ -15,35 +15,28 @@
  *    limitations under the License.
  */
 
-//! Runnable controller-side smoke test.
+//! Runnable controller-side tests.
 //!
-//! Drives [`rs_matter::onboard::Commissioner::commission`] (phase 1
-//! — `ArmFailSafe` through `AddNOC`) against an externally-running
-//! Matter accessory. Designed to exercise the rs-matter controller path
+//! For now, drives [`rs_matter::onboard::Commissioner::commission`] against
+//! an externally-running Matter accessory. Designed to exercise the rs-matter controller path
 //! end-to-end against the canonical upstream
 //! [`chip-all-clusters-app`](https://github.com/project-chip/connectedhomeip/tree/master/examples/all-clusters-app)
 //! — see the `commissioner` suite in `xtask/src/itest.rs` for the
 //! runner wiring.
 //!
-//! Phase 2 (CASE + `CommissioningComplete`) is not yet implemented in
-//! the library, so the device's fail-safe will eventually expire and
-//! the fabric rolls back. Until phase 2 lands, the goal of this binary
-//! is to prove the post-PASE invoke chain works on the wire against an
-//! upstream-compliant responder.
-//!
 //! Usage:
 //! ```text
-//! commissioner_test [PASSCODE] [PEER_ADDR]
+//! commissioner_tests [PASSCODE] [PEER_ADDR]
 //! ```
 //! Defaults match the rs-matter test fixture
 //! ([`TEST_DEV_COMM`](rs_matter::dm::devices::test::TEST_DEV_COMM)):
 //! passcode `20202021`, peer `[::1]:5540`.
 //!
-//! Exits `0` on a successful phase-1 commissioning, non-zero (with a
+//! Exits `0` on a successful commissioning, non-zero (with a
 //! diagnostic on stderr) otherwise. On success a single
 //! machine-readable line is printed to stdout:
 //! ```text
-//! commissioner_test: ok fabric_index=<u8> device_node_id=0x<hex>
+//! commissioner_tests: ok fabric_index=<u8> device_node_id=0x<hex>
 //! ```
 
 use core::num::NonZeroU8;
@@ -92,26 +85,26 @@ fn main() -> ExitCode {
     let args = match parse_args() {
         Ok(a) => a,
         Err(msg) => {
-            eprintln!("commissioner_test: {msg}");
-            eprintln!("usage: commissioner_test [PASSCODE] [PEER_ADDR]");
+            eprintln!("commissioner_tests: {msg}");
+            eprintln!("usage: commissioner_tests [PASSCODE] [PEER_ADDR]");
             return ExitCode::FAILURE;
         }
     };
     info!(
-        "commissioner_test: passcode={} peer={}",
+        "commissioner_tests: passcode={} peer={}",
         args.passcode, args.peer_addr
     );
 
     match futures_lite::future::block_on(run(args)) {
         Ok(result) => {
             println!(
-                "commissioner_test: ok fabric_index={} device_node_id=0x{:016x}",
+                "commissioner_tests: ok fabric_index={} device_node_id=0x{:016x}",
                 result.fabric_index, result.device_node_id
             );
             ExitCode::SUCCESS
         }
         Err(e) => {
-            error!("commissioner_test: FAILED — {e:?}");
+            error!("commissioner_tests: FAILED — {e:?}");
             ExitCode::FAILURE
         }
     }
@@ -227,8 +220,8 @@ async fn run_commission<C: Crypto>(
     controller_secret_key.write_canon(&mut controller_secret_key_canon)?;
 
     // NocGenerator: signs the controller NOC now, then the device
-    // NOC during commissioning. `serial == node_id` is a convenient
-    // per-issuer-unique choice for the smoke test.
+    // NOC during commissioning. The NOC serial is derived from the
+    // NodeID internally.
     let mut noc_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
     let mut noc_generator = NocGenerator::create(icac_priv.reference(), rcac, icac, &mut noc_buf)?;
 
@@ -237,7 +230,6 @@ async fn run_commission<C: Crypto>(
         controller_csr,
         CONTROLLER_NODE_ID,
         &[],
-        CONTROLLER_NODE_ID,
         VALID_FOREVER,
     )?;
 
@@ -283,7 +275,7 @@ async fn run_commission<C: Crypto>(
 
     let phase1 = {
         let mut commission_fut =
-            pin!(commissioner.commission(&opts, DEVICE_NODE_ID, DEVICE_NODE_ID, VALID_FOREVER,));
+            pin!(commissioner.commission(&opts, DEVICE_NODE_ID, VALID_FOREVER));
         let mut timeout = pin!(Timer::after(Duration::from_secs(COMMISSION_TIMEOUT_SECS)));
         match select(&mut commission_fut, &mut timeout).await {
             Either::First(r) => r?,

@@ -134,13 +134,22 @@ impl<'a> NocGenerator<'a> {
     /// Issue an NOC for a device whose pubkey the supplied CSR
     /// carries. Signed by the ICAC (ICAC-tier mode) or the RCAC
     /// (RCAC-direct mode); the issuer DN is set accordingly.
+    ///
+    /// The ASN.1 serial number stamped on the NOC is derived from
+    /// `node_id`: each commissioned device gets a unique NodeID on the
+    /// fabric, so each NOC signed by the same issuer (ICAC or RCAC)
+    /// gets a unique serial — satisfying X.509 §4.1.2.2 without
+    /// requiring a separately-persisted serial counter on the caller.
+    /// `UpdateNOC` for a NodeID that's already commissioned will
+    /// produce a NOC with the same serial as the previous one; this is
+    /// harmless because Matter trusts CASE chains by public key (no
+    /// CRL / serial-based revocation is defined by the spec).
     pub fn generate<C: Crypto>(
         &mut self,
         crypto: C,
         csr: &[u8],
         node_id: u64,
         cat_ids: &[u32],
-        serial: u64,
         validity: Validity,
     ) -> Result<&[u8], Error> {
         let csr_ref = CsrRef::new(csr)?;
@@ -148,7 +157,7 @@ impl<'a> NocGenerator<'a> {
 
         let device_pubkey = csr_ref.pubkey()?;
 
-        let serial_bytes_vec = Self::encode_serial_asn1(serial);
+        let serial_bytes_vec = Self::encode_serial_asn1(node_id);
         let serial_bytes = serial_bytes_vec.as_slice();
 
         // Issuer DN switches on whether we're signing as ICAC or RCAC.
@@ -285,7 +294,7 @@ mod tests {
         assert_eq!(gen.fabric_id(), fabric_id);
 
         let noc = gen
-            .generate(&crypto, GOOD_CSR, 0x42, &[], 1, VALID_FOREVER)
+            .generate(&crypto, GOOD_CSR, 0x42, &[], VALID_FOREVER)
             .unwrap();
         assert_eq!(node_id_from(noc).unwrap(), 0x42);
         assert_eq!(fabric_id_from(noc).unwrap(), fabric_id);
@@ -320,7 +329,7 @@ mod tests {
         assert_eq!(gen.fabric_id(), fabric_id);
 
         let noc = gen
-            .generate(&crypto, GOOD_CSR, 0x42, &[], 1, VALID_FOREVER)
+            .generate(&crypto, GOOD_CSR, 0x42, &[], VALID_FOREVER)
             .unwrap();
         assert_eq!(node_id_from(noc).unwrap(), 0x42);
         assert_eq!(fabric_id_from(noc).unwrap(), fabric_id);
@@ -339,7 +348,7 @@ mod tests {
             NocGenerator::create(rcac_priv.reference(), rcac, &[], &mut cert_buf2).unwrap();
 
         assert!(gen
-            .generate(&crypto, &[0x01, 0x02, 0x03], 1, &[], 1, VALID_FOREVER)
+            .generate(&crypto, &[0x01, 0x02, 0x03], 1, &[], VALID_FOREVER)
             .is_err());
     }
 
@@ -357,7 +366,7 @@ mod tests {
 
         let too_many = &[1u32, 2, 3, 4];
         assert!(gen
-            .generate(&crypto, GOOD_CSR, 1, too_many, 1, VALID_FOREVER)
+            .generate(&crypto, GOOD_CSR, 1, too_many, VALID_FOREVER)
             .is_err());
     }
 

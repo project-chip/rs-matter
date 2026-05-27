@@ -363,9 +363,8 @@ async fn test_commission<C: Crypto>(
     controller_secret_key.write_canon(&mut controller_secret_key_canon)?;
 
     // ---- NocGenerator: signs the controller NOC now, then the
-    //      device NOC during commissioning. `serial == node_id` is a
-    //      convenient per-issuer-unique choice; real callers may
-    //      maintain a separate counter. ----
+    //      device NOC during commissioning. The NOC serial is derived
+    //      from the NodeID internally. ----
 
     let mut noc_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
     let mut noc_generator = NocGenerator::create(icac_priv.reference(), rcac, icac, &mut noc_buf)?;
@@ -375,7 +374,6 @@ async fn test_commission<C: Crypto>(
         controller_csr,
         CONTROLLER_NODE_ID,
         &[],
-        CONTROLLER_NODE_ID,
         VALID_FOREVER,
     )?;
 
@@ -424,7 +422,7 @@ async fn test_commission<C: Crypto>(
 
     // Phase 1 — over PASE: ArmFailSafe → ... → AddNOC.
     let result = commissioner
-        .commission(&opts, DEVICE_NODE_ID, DEVICE_NODE_ID, VALID_FOREVER)
+        .commission(&opts, DEVICE_NODE_ID, VALID_FOREVER)
         .await?;
     info!(
         "commission() phase 1 ok: device_fabric_index={}, device_node_id=0x{:016x}",

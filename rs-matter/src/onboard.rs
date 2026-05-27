@@ -86,7 +86,7 @@ const NOCSR_TAG_NONCE: u8 = 2;
 
 /// Knobs for [`Commissioner::commission`].
 ///
-/// Per-device material (NodeID, serial, validity) is passed as separate
+/// Per-device material (NodeID, validity) is passed as separate
 /// arguments to [`Commissioner::commission`] — it's expected to vary
 /// every call. This struct carries only the per-flow tunables.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -215,13 +215,11 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     /// one device at a time.
     ///
     /// `device_node_id` is the NodeID the caller wishes to assign to
-    /// the device on the controller's fabric. `serial` is the ASN.1
-    /// serial number stamped on the NOC; uniqueness is per-issuer, so a
-    /// caller with no separate serial scheme can simply pass
-    /// `serial == device_node_id`. `validity` is the NOC's validity
-    /// window — typically [`crate::cert::builder::VALID_FOREVER`] for
-    /// long-lived deployments, or a bounded window for short-lived
-    /// re-issuance.
+    /// the device on the controller's fabric. `validity` is the NOC's
+    /// validity window — typically [`crate::cert::builder::VALID_FOREVER`]
+    /// for long-lived deployments, or a bounded window for short-lived
+    /// re-issuance. The NOC's ASN.1 serial number is derived from the
+    /// NodeID (see [`NocGenerator::generate`]).
     ///
     /// On success the device has accepted our RCAC + NOC and assigned
     /// us a [`CommissionResult::fabric_index`], but its fail-safe is
@@ -233,7 +231,6 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         &mut self,
         opts: &CommissionOptions,
         device_node_id: NodeId,
-        serial: u64,
         validity: Validity,
     ) -> Result<CommissionResult, Error> {
         self.arm_fail_safe(opts.fail_safe_secs).await?;
@@ -261,7 +258,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         // `noc_generator.buf` — independent of `buf`, so we can use
         // both side-by-side below.
         let noc = Self::csr_request(matter, &csr_nonce, |csr_der| {
-            noc_generator.generate(crypto, csr_der, device_node_id, &[], serial, validity)
+            noc_generator.generate(crypto, csr_der, device_node_id, &[], validity)
         })
         .await?;
 

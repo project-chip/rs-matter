@@ -124,8 +124,7 @@ fn test_case_handshake() {
         // Sign-and-install one side at a time: the NOC slice returned
         // by `noc_generator.generate` borrows `noc_buf`, so it must be
         // consumed by `Fabrics::add` before the next `generate` call
-        // overwrites the buffer. `serial == node_id` is a convenient
-        // per-issuer-unique choice for the test (no separate counter).
+        // overwrites the buffer.
 
         let controller_noc = noc_generator
             .generate(
@@ -133,7 +132,6 @@ fn test_case_handshake() {
                 controller_csr,
                 CONTROLLER_NODE_ID,
                 &[],
-                CONTROLLER_NODE_ID,
                 VALID_FOREVER,
             )
             .unwrap();
@@ -156,14 +154,7 @@ fn test_case_handshake() {
         });
 
         let device_noc = noc_generator
-            .generate(
-                &crypto,
-                device_csr,
-                DEVICE_NODE_ID,
-                &[],
-                DEVICE_NODE_ID,
-                VALID_FOREVER,
-            )
+            .generate(&crypto, device_csr, DEVICE_NODE_ID, &[], VALID_FOREVER)
             .unwrap();
 
         device_matter.with_state(|state| {
