@@ -505,10 +505,8 @@ pub(crate) enum TestSuite {
     /// **Inverted** suite — rs-matter as the **commissioner** driving
     /// upstream `chip-all-clusters-app` (the device under test). Builds
     /// both binaries, spawns the CHIP app on `[::1]:<port>` with known
-    /// passcode/discriminator, then runs the `commissioner_test`
-    /// example binary against it and asserts exit 0. Phase-1 only —
-    /// stops at `AddNOC` until the library's phase-2 (CASE +
-    /// CommissioningComplete) lands.
+    /// passcode/discriminator, then runs the `commissioner_tests`
+    /// example binary against it and asserts exit 0.
     Commissioner,
 }
 

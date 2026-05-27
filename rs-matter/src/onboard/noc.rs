@@ -36,7 +36,7 @@
 
 use core::num::NonZeroU8;
 
-use crate::cert::builder::{IssuerDN, NocBuilder, SubjectDN, Validity};
+use crate::cert::gen::{CertGenerator, CertType, IssuerDN, SubjectDN, Validity};
 use crate::cert::x509::csr::CsrRef;
 use crate::cert::CertRef;
 use crate::crypto::{CanonPkcPublicKey, CanonPkcSecretKeyRef, Crypto, PublicKey, SigningSecretKey};
@@ -152,6 +152,18 @@ impl<'a> NocGenerator<'a> {
         cat_ids: &[u32],
         validity: Validity,
     ) -> Result<&[u8], Error> {
+        // Matter spec §6.5.6 caps subject CAT IDs at three. Each CAT
+        // ID must have a non-zero version (upper 16 bits), per
+        // §6.6.2.1.1.
+        if cat_ids.len() > 3 {
+            return Err(ErrorCode::InvalidData.into());
+        }
+        for &cat_id in cat_ids {
+            if (cat_id >> 16) as u16 == 0 {
+                return Err(ErrorCode::InvalidData.into());
+            }
+        }
+
         let csr_ref = CsrRef::new(csr)?;
         csr_ref.verify(&crypto)?;
 
@@ -171,24 +183,25 @@ impl<'a> NocGenerator<'a> {
         let mut pubkey_canon = CanonPkcPublicKey::new();
         signing_privkey.pub_key()?.write_canon(&mut pubkey_canon)?;
 
-        let cert_len = NocBuilder::new(self.buf).build(
+        let cert_len = CertGenerator::new(self.buf).generate(
             &crypto,
+            CertType::Noc,
+            serial_bytes,
+            validity,
             SubjectDN {
                 node_id: Some(node_id),
                 fabric_id: Some(self.fabric_id),
                 cat_ids,
                 ca_id: None,
             },
-            validity,
-            device_pubkey,
-            pubkey_canon.reference(),
-            &signing_privkey,
-            serial_bytes,
             IssuerDN {
                 ca_id: Some(issuer_ca_id),
                 fabric_id: Some(self.fabric_id),
                 is_rcac,
             },
+            device_pubkey,
+            Some(pubkey_canon.reference()),
+            &signing_privkey,
         )?;
 
         Ok(&self.buf[..cert_len])
@@ -241,7 +254,7 @@ impl<'a> NocGenerator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::cert::builder::VALID_FOREVER;
+    use crate::cert::gen::VALID_FOREVER;
     use crate::cert::{CertRef, MAX_CERT_TLV_AND_ASN1_LEN};
     use crate::crypto::test_only_crypto;
     use crate::onboard::cac::{IcacGenerator, RcacGenerator};

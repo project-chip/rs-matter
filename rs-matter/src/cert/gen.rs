@@ -15,11 +15,14 @@
  *    limitations under the License.
  */
 
-//! Certificate builder for creating Matter TLV-encoded certificates.
+//! Matter TLV-encoded certificate generator (RCAC / ICAC / NOC).
 //!
-//! This module provides builders for creating Node Operational Certificates (NOC),
-//! Intermediate CA Certificates (ICAC), and Root CA Certificates (RCAC) in Matter
-//! TLV format. (Matter Specification 6.5 "Operational Certificate Encoding")
+//! [`CertGenerator`] is the one-shot, caller-buffer cert generator
+//! underlying [`crate::onboard::cac::RcacGenerator`],
+//! [`crate::onboard::cac::IcacGenerator`] and
+//! [`crate::onboard::noc::NocGenerator`]. It's parametric over
+//! [`CertType`], with subject/issuer/validity/keys plumbed in by the
+//! caller. (Matter Specification 6.5 "Operational Certificate Encoding")
 
 use crate::attest::trust_store::{compute_key_id, KeyId};
 use crate::cert::CertRef;
@@ -30,14 +33,14 @@ use crate::utils::storage::WriteBuf;
 
 use super::{x509::key_usage_tlv, CertTag, DNTag};
 
-/// Certificate type
+/// Certificate kind passed to [`CertGenerator::generate`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CertType {
-    /// Root CA Certificate (self-signed, is_ca=true, path_len=1)
+pub enum CertType {
+    /// Root CA Certificate (self-signed, is_ca=true, no path_len).
     Rcac,
-    /// Intermediate CA Certificate (signed by RCAC, is_ca=true, path_len=0)
+    /// Intermediate CA Certificate (signed by RCAC, is_ca=true, path_len=0).
     Icac,
-    /// Node Operational Certificate (end entity, is_ca=false)
+    /// Node Operational Certificate (end entity, is_ca=false).
     Noc,
 }
 
@@ -84,36 +87,46 @@ pub const VALID_FOREVER: Validity = Validity {
     not_after: 0,  // no expiry (NotAfter sentinel is legitimate)
 };
 
-/// Internal shared certificate builder implementation.
+/// One-shot Matter-TLV certificate generator writing into a
+/// caller-supplied buffer.
 ///
-/// Contains all the common logic for building Noc, Icac, and Rcac certificates.
-struct CertBuilderCore<'a> {
+/// Typical callers are the three issuers in [`crate::onboard::cac`]
+/// (RCAC, ICAC) and [`crate::onboard::noc`] (NOC); each one
+/// constructs a `CertGenerator` over its scratch buffer, calls
+/// [`Self::generate`] once and discards the generator. Subject /
+/// issuer / pubkey / signing-key consistency is the caller's
+/// responsibility — `generate` only checks invariants generic across
+/// cert types (serial number well-formedness).
+pub struct CertGenerator<'a> {
     buf: &'a mut [u8],
 }
 
-impl<'a> CertBuilderCore<'a> {
-    /// Create a new certificate builder core with the given buffer.
-    const fn new(buf: &'a mut [u8]) -> Self {
+impl<'a> CertGenerator<'a> {
+    /// Create a new generator over the given output buffer.
+    pub const fn new(buf: &'a mut [u8]) -> Self {
         Self { buf }
     }
 
-    /// Build a certificate with the given parameters.
+    /// Generate a Matter-TLV certificate of the given kind, sign it,
+    /// and return the length written to the buffer.
     ///
-    /// Internal for specific certificate builders.
+    /// `issuer_pubkey` must be `None` for [`CertType::Rcac`]
+    /// (self-signed: AKID = SKID) and `Some(_)` for `Icac` / `Noc`.
+    /// `signing_key` is the issuer's private key — the RCAC's own key
+    /// for RCAC and ICAC; the ICAC's (or RCAC's) for NOC.
     #[allow(clippy::too_many_arguments)]
-    fn build_cert<C: Crypto>(
+    pub fn generate<C: Crypto>(
         &mut self,
         crypto: C,
         cert_type: CertType,
         serial_number: &[u8],
         validity: Validity,
-        subject_pubkey: CanonPkcPublicKeyRef<'_>,
-        signing_key: &C::SecretKey<'_>,
-        issuer_pubkey: Option<CanonPkcPublicKeyRef<'_>>,
         subject: SubjectDN,
         issuer: IssuerDN,
+        subject_pubkey: CanonPkcPublicKeyRef<'_>,
+        issuer_pubkey: Option<CanonPkcPublicKeyRef<'_>>,
+        signing_key: &C::SecretKey<'_>,
     ) -> Result<usize, Error> {
-        // Validate serial number
         Self::validate_serial_number(serial_number)?;
 
         let subject_key_id = compute_key_id(&crypto, subject_pubkey)?;
@@ -376,226 +389,6 @@ impl<'a> CertBuilderCore<'a> {
     }
 }
 
-/// Builder for creating Node Operational Certificates (NOC).
-///
-/// NOCs are end-entity certificates used to identify devices on a Matter fabric.
-/// They contain a node ID, fabric ID, and optional CASE Authenticated Tags (CATs).
-pub struct NocBuilder<'a> {
-    core: CertBuilderCore<'a>,
-}
-
-impl<'a> NocBuilder<'a> {
-    /// Create a new NOC builder with the given buffer.
-    pub const fn new(buf: &'a mut [u8]) -> Self {
-        Self {
-            core: CertBuilderCore::new(buf),
-        }
-    }
-
-    /// Build a Node Operational Certificate (NOC).
-    ///
-    /// # Arguments
-    /// * `crypto` - Cryptographic backend
-    /// * `subject` - Subject DN fields (node_id, fabric_id, cat_ids)
-    /// * `validity` - Certificate validity period
-    /// * `subject_pubkey` - The device's public key (from CSR)
-    /// * `issuer_pubkey` - The issuer's public key (ICAC or RCAC)
-    /// * `issuer_privkey` - The issuer's signing key
-    /// * `serial_number` - Certificate serial number
-    /// * `issuer` - Issuer RDN fields
-    ///
-    /// # Returns
-    /// The length of the encoded certificate in the buffer.
-    #[allow(clippy::too_many_arguments)]
-    pub fn build<C: Crypto>(
-        &mut self,
-        crypto: C,
-        subject: SubjectDN,
-        validity: Validity,
-        subject_pubkey: CanonPkcPublicKeyRef<'_>,
-        issuer_pubkey: CanonPkcPublicKeyRef<'_>,
-        issuer_privkey: &C::SecretKey<'_>,
-        serial_number: &[u8],
-        issuer: IssuerDN,
-    ) -> Result<usize, Error> {
-        // Validate NOC-specific requirements
-        if subject.ca_id.is_some() {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        if subject.cat_ids.len() > 3 {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        for &cat_id in subject.cat_ids {
-            Self::validate_cat_id(cat_id)?;
-        }
-
-        self.core.build_cert(
-            crypto,
-            CertType::Noc,
-            serial_number,
-            validity,
-            subject_pubkey,
-            issuer_privkey,
-            Some(issuer_pubkey),
-            subject,
-            issuer,
-        )
-    }
-
-    /// Validate CAT ID format per Matter spec.
-    /// CAT ID format: upper 16 bits = version (must be non-zero), lower 16 bits = identifier
-    fn validate_cat_id(cat_id: u32) -> Result<(), Error> {
-        let version = (cat_id >> 16) as u16;
-        if version == 0 {
-            return Err(ErrorCode::InvalidData.into());
-        }
-        Ok(())
-    }
-}
-
-/// Builder for creating Intermediate CA Certificates (ICAC).
-///
-/// ICACs are intermediate CA certificates used to sign Node Operational Certificates.
-/// They are always signed by a Root CA (RCAC).
-pub struct IcacBuilder<'a> {
-    core: CertBuilderCore<'a>,
-}
-
-impl<'a> IcacBuilder<'a> {
-    /// Create a new ICAC builder with the given buffer.
-    pub const fn new(buf: &'a mut [u8]) -> Self {
-        Self {
-            core: CertBuilderCore::new(buf),
-        }
-    }
-
-    /// Build an Intermediate CA Certificate (ICAC).
-    ///
-    /// # Arguments
-    /// * `crypto` - Cryptographic backend
-    /// * `subject` - Subject DN fields (ca_id as ICAC ID, fabric_id)
-    /// * `validity` - Certificate validity period
-    /// * `subject_pubkey` - The ICAC's public key
-    /// * `rcac_pubkey` - The RCAC's public key
-    /// * `rcac_privkey` - The RCAC's signing key
-    /// * `serial_number` - Certificate serial number
-    /// * `issuer` - Issuer RDN fields (RCAC)
-    ///
-    /// # Returns
-    /// The length of the encoded certificate in the buffer.
-    #[allow(clippy::too_many_arguments)]
-    pub fn build<C: Crypto>(
-        &mut self,
-        crypto: C,
-        subject: SubjectDN,
-        validity: Validity,
-        subject_pubkey: CanonPkcPublicKeyRef<'_>,
-        rcac_pubkey: CanonPkcPublicKeyRef<'_>,
-        rcac_privkey: &C::SecretKey<'_>,
-        serial_number: &[u8],
-        issuer: IssuerDN,
-    ) -> Result<usize, Error> {
-        // Validate ICAC-specific requirements
-        if subject.node_id.is_some() {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        if !subject.cat_ids.is_empty() {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        if subject.ca_id.is_none() {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        self.core.build_cert(
-            crypto,
-            CertType::Icac,
-            serial_number,
-            validity,
-            subject_pubkey,
-            rcac_privkey,
-            Some(rcac_pubkey),
-            subject,
-            issuer,
-        )
-    }
-}
-
-/// Builder for creating Root CA Certificates (RCAC).
-///
-/// RCACs are self-signed root certificates used to sign Intermediate CA Certificates
-/// or Node Operational Certificates directly.
-pub struct RcacBuilder<'a> {
-    core: CertBuilderCore<'a>,
-}
-
-impl<'a> RcacBuilder<'a> {
-    /// Create a new RCAC builder with the given buffer.
-    pub const fn new(buf: &'a mut [u8]) -> Self {
-        Self {
-            core: CertBuilderCore::new(buf),
-        }
-    }
-
-    /// Build a Root CA Certificate (RCAC).
-    ///
-    /// The RCAC is self-signed.
-    ///
-    /// # Arguments
-    /// * `crypto` - Cryptographic backend
-    /// * `subject` - Subject DN fields (ca_id as RCAC ID, fabric_id)
-    /// * `validity` - Certificate validity period
-    /// * `pubkey` - The RCAC's public key
-    /// * `privkey` - The RCAC's signing key (for self-signing)
-    /// * `serial_number` - Certificate serial number
-    ///
-    /// # Returns
-    /// The length of the encoded certificate in the buffer.
-    pub fn build<C: Crypto>(
-        &mut self,
-        crypto: C,
-        subject: SubjectDN,
-        validity: Validity,
-        pubkey: CanonPkcPublicKeyRef<'_>,
-        privkey: &C::SecretKey<'_>,
-        serial_number: &[u8],
-    ) -> Result<usize, Error> {
-        // Validate RCAC-specific requirements
-        if subject.node_id.is_some() {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        if !subject.cat_ids.is_empty() {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        if subject.ca_id.is_none() {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
-        let issuer = IssuerDN {
-            ca_id: None,     // Self-signed: no issuer CA ID
-            fabric_id: None, // Self-signed: no issuer fabric ID
-            is_rcac: false,  // Not used for RCAC,
-        };
-
-        self.core.build_cert(
-            crypto,
-            CertType::Rcac,
-            serial_number,
-            validity,
-            pubkey,
-            privkey,
-            None, // Self-signed: no separate issuer key
-            subject,
-            issuer,
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -606,32 +399,26 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_validate_cat_id_valid() {
-        // Version = 1, identifier = 0x1234
-        assert!(NocBuilder::validate_cat_id(0x00011234).is_ok());
-        // Version = 0xFFFF, identifier = 0xFFFF
-        assert!(NocBuilder::validate_cat_id(0xFFFFFFFF).is_ok());
-    }
-
-    #[test]
-    fn test_validate_cat_id_invalid() {
-        // Version = 0 is invalid
-        assert!(NocBuilder::validate_cat_id(0x00001234).is_err());
-        assert!(NocBuilder::validate_cat_id(0x00000000).is_err());
-    }
+    /// IssuerDN slot for self-signed certs (RCAC). `generate` ignores
+    /// `issuer` entirely when `cert_type == Rcac`, but the call site
+    /// still has to pass *some* value.
+    const RCAC_ISSUER_DN_UNUSED: IssuerDN = IssuerDN {
+        ca_id: None,
+        fabric_id: None,
+        is_rcac: false,
+    };
 
     #[test]
     fn test_validate_serial_number_valid() {
-        assert!(CertBuilderCore::validate_serial_number(&[0x01]).is_ok());
-        assert!(CertBuilderCore::validate_serial_number(&[0x00, 0x80]).is_ok()); // Leading zero needed for positive
-        assert!(CertBuilderCore::validate_serial_number(&[0x7F]).is_ok());
+        assert!(CertGenerator::validate_serial_number(&[0x01]).is_ok());
+        assert!(CertGenerator::validate_serial_number(&[0x00, 0x80]).is_ok()); // Leading zero needed for positive
+        assert!(CertGenerator::validate_serial_number(&[0x7F]).is_ok());
     }
 
     #[test]
     fn test_validate_serial_number_invalid() {
-        assert!(CertBuilderCore::validate_serial_number(&[]).is_err()); // Empty
-        assert!(CertBuilderCore::validate_serial_number(&[0x00, 0x01]).is_err());
+        assert!(CertGenerator::validate_serial_number(&[]).is_err()); // Empty
+        assert!(CertGenerator::validate_serial_number(&[0x00, 0x01]).is_err());
         // Unnecessary leading zero
     }
 
@@ -665,15 +452,16 @@ mod tests {
         };
 
         let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let mut builder = RcacBuilder::new(&mut cert_buf);
-
-        let len = unwrap!(builder.build(
+        let len = unwrap!(CertGenerator::new(&mut cert_buf).generate(
             &crypto,
-            subject,
-            validity,
-            rcac_pubkey_canon.reference(),
-            &rcac_secret_key,
+            CertType::Rcac,
             serial_number,
+            validity,
+            subject,
+            RCAC_ISSUER_DN_UNUSED,
+            rcac_pubkey_canon.reference(),
+            None,
+            &rcac_secret_key,
         ));
 
         assert!(len > 100);
@@ -696,15 +484,18 @@ mod tests {
             cat_ids: &[],
             ca_id: Some(0x1122_3344_5566_7788),
         };
+
         let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let mut builder = RcacBuilder::new(&mut cert_buf);
-        let len = unwrap!(builder.build(
+        let len = unwrap!(CertGenerator::new(&mut cert_buf).generate(
             &crypto,
-            subject,
-            VALID_FOREVER,
-            rcac_pubkey_canon.reference(),
-            &rcac_secret_key,
+            CertType::Rcac,
             &[0x01],
+            VALID_FOREVER,
+            subject,
+            RCAC_ISSUER_DN_UNUSED,
+            rcac_pubkey_canon.reference(),
+            None,
+            &rcac_secret_key,
         ));
 
         // Re-parse the just-built RCAC and self-verify.
@@ -718,7 +509,7 @@ mod tests {
             .finalise(&mut scratch);
         assert!(
             res.is_ok(),
-            "RCAC built by RcacBuilder failed self-verification: {res:?}"
+            "RCAC built by CertGenerator failed self-verification: {res:?}"
         );
     }
 
@@ -758,17 +549,16 @@ mod tests {
         };
 
         let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let mut builder = IcacBuilder::new(&mut cert_buf);
-
-        let len = unwrap!(builder.build(
+        let len = unwrap!(CertGenerator::new(&mut cert_buf).generate(
             &crypto,
-            subject,
-            VALID_FOREVER,
-            icac_pubkey_canon.reference(),
-            rcac_pubkey_canon.reference(),
-            &rcac_secret_key,
+            CertType::Icac,
             serial_number,
+            VALID_FOREVER,
+            subject,
             issuer,
+            icac_pubkey_canon.reference(),
+            Some(rcac_pubkey_canon.reference()),
+            &rcac_secret_key,
         ));
 
         assert!(len > 100);
@@ -818,17 +608,16 @@ mod tests {
         };
 
         let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let mut builder = NocBuilder::new(&mut cert_buf);
-
-        let len = unwrap!(builder.build(
+        let len = unwrap!(CertGenerator::new(&mut cert_buf).generate(
             &crypto,
-            subject,
-            validity,
-            noc_pubkey_canon.reference(),
-            rcac_pubkey_canon.reference(),
-            &rcac_secret_key,
+            CertType::Noc,
             serial_number,
+            validity,
+            subject,
             issuer,
+            noc_pubkey_canon.reference(),
+            Some(rcac_pubkey_canon.reference()),
+            &rcac_secret_key,
         ));
 
         assert!(len > 100);
@@ -879,17 +668,16 @@ mod tests {
         };
 
         let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let mut builder = NocBuilder::new(&mut cert_buf);
-
-        let len = unwrap!(builder.build(
+        let len = unwrap!(CertGenerator::new(&mut cert_buf).generate(
             &crypto,
-            subject,
-            validity,
-            noc_pubkey_canon.reference(),
-            rcac_pubkey_canon.reference(),
-            &rcac_secret_key,
+            CertType::Noc,
             serial_number,
+            validity,
+            subject,
             issuer,
+            noc_pubkey_canon.reference(),
+            Some(rcac_pubkey_canon.reference()),
+            &rcac_secret_key,
         ));
 
         assert!(len > 100);
@@ -939,17 +727,16 @@ mod tests {
         };
 
         let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let mut builder = NocBuilder::new(&mut cert_buf);
-
-        let len = unwrap!(builder.build(
+        let len = unwrap!(CertGenerator::new(&mut cert_buf).generate(
             &crypto,
-            subject,
-            validity,
-            noc_pubkey_canon.reference(),
-            icac_pubkey_canon.reference(),
-            &icac_secret_key,
+            CertType::Noc,
             serial_number,
+            validity,
+            subject,
             issuer,
+            noc_pubkey_canon.reference(),
+            Some(icac_pubkey_canon.reference()),
+            &icac_secret_key,
         ));
 
         assert!(len > 100);
@@ -987,14 +774,16 @@ mod tests {
         };
 
         let mut rcac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let mut rcac_builder = RcacBuilder::new(&mut rcac_buf);
-        let rcac_len = unwrap!(rcac_builder.build(
+        let rcac_len = unwrap!(CertGenerator::new(&mut rcac_buf).generate(
             &crypto,
-            rcac_subject,
-            validity,
-            rcac_pubkey_canon.reference(),
-            &rcac_secret_key,
+            CertType::Rcac,
             &[0x01],
+            validity,
+            rcac_subject,
+            RCAC_ISSUER_DN_UNUSED,
+            rcac_pubkey_canon.reference(),
+            None,
+            &rcac_secret_key,
         ));
         assert!(rcac_len > 0);
 
@@ -1018,16 +807,16 @@ mod tests {
         };
 
         let mut icac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let mut icac_builder = IcacBuilder::new(&mut icac_buf);
-        let icac_len = unwrap!(icac_builder.build(
+        let icac_len = unwrap!(CertGenerator::new(&mut icac_buf).generate(
             &crypto,
-            icac_subject,
-            validity,
-            icac_pubkey_canon.reference(),
-            rcac_pubkey_canon.reference(),
-            &rcac_secret_key,
+            CertType::Icac,
             &[0x02],
+            validity,
+            icac_subject,
             icac_issuer,
+            icac_pubkey_canon.reference(),
+            Some(rcac_pubkey_canon.reference()),
+            &rcac_secret_key,
         ));
         assert!(icac_len > 0);
 
@@ -1051,17 +840,16 @@ mod tests {
         };
 
         let mut noc_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let mut noc_builder = NocBuilder::new(&mut noc_buf);
-
-        let noc_len = unwrap!(noc_builder.build(
+        let noc_len = unwrap!(CertGenerator::new(&mut noc_buf).generate(
             &crypto,
-            noc_subject,
-            validity,
-            noc_pubkey_canon.reference(),
-            icac_pubkey_canon.reference(),
-            &icac_secret_key,
+            CertType::Noc,
             &[0x03],
+            validity,
+            noc_subject,
             noc_issuer,
+            noc_pubkey_canon.reference(),
+            Some(icac_pubkey_canon.reference()),
+            &icac_secret_key,
         ));
         assert!(noc_len > 0);
 
@@ -1069,116 +857,6 @@ mod tests {
         assert!(rcac_len > 100 && rcac_len < MAX_CERT_TLV_LEN);
         assert!(icac_len > 100 && icac_len < MAX_CERT_TLV_LEN);
         assert!(noc_len > 100 && noc_len < MAX_CERT_TLV_LEN);
-    }
-
-    /// Test NOC with too many CAT IDs
-    #[test]
-    fn test_build_noc_too_many_cat_ids() {
-        let crypto = test_only_crypto();
-
-        let rcac_secret_key = unwrap!(crypto.generate_secret_key());
-
-        let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
-        let mut rcac_pubkey_canon = CanonPkcPublicKey::new();
-        rcac_pubkey.write_canon(&mut rcac_pubkey_canon).unwrap();
-
-        let noc_secret_key = unwrap!(crypto.generate_secret_key());
-
-        let noc_pubkey = noc_secret_key.pub_key().unwrap();
-        let mut noc_pubkey_canon = CanonPkcPublicKey::new();
-        noc_pubkey.write_canon(&mut noc_pubkey_canon).unwrap();
-
-        // Too many CAT IDs (max is 3)
-        let cat_ids = &[0x00011111u32, 0x00022222u32, 0x00033333u32, 0x00044444u32];
-
-        let subject = SubjectDN {
-            node_id: Some(0x1234u64),
-            fabric_id: Some(0x0001u64),
-            cat_ids,
-            ca_id: None,
-        };
-
-        let validity = Validity {
-            not_before: 0u32,
-            not_after: 0u32,
-        };
-
-        let issuer = IssuerDN {
-            ca_id: Some(0x5678u64),
-            fabric_id: Some(0x0001u64),
-            is_rcac: true,
-        };
-
-        let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let mut builder = NocBuilder::new(&mut cert_buf);
-
-        let result = builder.build(
-            &crypto,
-            subject,
-            validity,
-            noc_pubkey_canon.reference(),
-            rcac_pubkey_canon.reference(),
-            &rcac_secret_key,
-            &[0x01],
-            issuer,
-        );
-
-        assert!(result.is_err());
-    }
-
-    /// Test NOC with invalid CAT ID (version = 0, should fail)
-    #[test]
-    fn test_build_noc_invalid_cat_id() {
-        let crypto = test_only_crypto();
-
-        let rcac_secret_key = unwrap!(crypto.generate_secret_key());
-
-        let rcac_pubkey = rcac_secret_key.pub_key().unwrap();
-        let mut rcac_pubkey_canon = CanonPkcPublicKey::new();
-        rcac_pubkey.write_canon(&mut rcac_pubkey_canon).unwrap();
-
-        let noc_secret_key = unwrap!(crypto.generate_secret_key());
-
-        let noc_pubkey = noc_secret_key.pub_key().unwrap();
-        let mut noc_pubkey_canon = CanonPkcPublicKey::new();
-        noc_pubkey.write_canon(&mut noc_pubkey_canon).unwrap();
-
-        // Invalid CAT ID (version = 0)
-        let cat_ids = &[0x00001234u32];
-
-        let subject = SubjectDN {
-            node_id: Some(0x1234u64),
-            fabric_id: Some(0x0001u64),
-            cat_ids,
-            ca_id: None,
-        };
-
-        let validity = Validity {
-            not_before: 0u32,
-            not_after: 0u32,
-        };
-
-        let issuer = IssuerDN {
-            ca_id: Some(0x5678u64),
-            fabric_id: Some(0x0001u64),
-            is_rcac: true,
-        };
-
-        let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let mut builder = NocBuilder::new(&mut cert_buf);
-
-        let result = builder.build(
-            &crypto,
-            subject,
-            validity,
-            noc_pubkey_canon.reference(),
-            rcac_pubkey_canon.reference(),
-            &rcac_secret_key,
-            &[0x01],
-            issuer,
-        );
-
-        assert!(result.is_err());
     }
 
     /// Test certificate with validity period
@@ -1211,15 +889,16 @@ mod tests {
         };
 
         let mut cert_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let mut builder = RcacBuilder::new(&mut cert_buf);
-
-        let len = unwrap!(builder.build(
+        let len = unwrap!(CertGenerator::new(&mut cert_buf).generate(
             &crypto,
-            subject,
-            validity,
-            rcac_pubkey_canon.reference(),
-            &rcac_secret_key,
+            CertType::Rcac,
             &[0x01],
+            validity,
+            subject,
+            RCAC_ISSUER_DN_UNUSED,
+            rcac_pubkey_canon.reference(),
+            None,
+            &rcac_secret_key,
         ));
 
         assert!(len > 100);

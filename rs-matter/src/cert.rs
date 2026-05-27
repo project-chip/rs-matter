@@ -32,8 +32,8 @@ use self::printer::CertPrinter;
 pub use self::asn1_writer::ASN1Writer;
 
 mod asn1_writer;
-pub mod builder;
 pub mod der_utils;
+pub mod gen;
 mod printer;
 pub mod x509;
 

@@ -1173,7 +1173,7 @@ where
 mod tests {
     use core::mem::MaybeUninit;
 
-    use crate::cert::builder::{IssuerDN, NocBuilder, RcacBuilder, SubjectDN, Validity};
+    use crate::cert::gen::{CertGenerator, CertType, IssuerDN, SubjectDN, Validity};
     use crate::cert::MAX_CERT_TLV_AND_ASN1_LEN;
     use crate::crypto::test_only_crypto;
     use crate::crypto::{
@@ -1188,7 +1188,7 @@ mod tests {
     /// `compute_dest_id` must be accepted by `is_dest_id` on the same fabric with
     /// the same random nonce.
     ///
-    /// Uses runtime-generated certs (RcacBuilder + NocBuilder) with a real keypair
+    /// Uses runtime-generated certs (via `CertGenerator`) with a real keypair
     /// so the fabric is in a valid state — the secret key matches the NOC's public key.
     #[test]
     fn test_compute_dest_id_matches_is_dest_id() {
@@ -1213,19 +1213,26 @@ mod tests {
         };
 
         let mut rcac_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let rcac_len = RcacBuilder::new(&mut rcac_buf)
-            .build(
+        let rcac_len = CertGenerator::new(&mut rcac_buf)
+            .generate(
                 &crypto,
+                CertType::Rcac,
+                &[0x01],
+                validity,
                 SubjectDN {
                     node_id: None,
                     fabric_id: Some(fabric_id),
                     cat_ids: &[],
                     ca_id: Some(rcac_id),
                 },
-                validity,
+                IssuerDN {
+                    ca_id: None,
+                    fabric_id: None,
+                    is_rcac: false,
+                },
                 rcac_pubkey_canon.reference(),
+                None,
                 &rcac_secret_key,
-                &[0x01],
             )
             .unwrap();
 
@@ -1244,25 +1251,26 @@ mod tests {
             .unwrap();
 
         let mut noc_buf = [0u8; MAX_CERT_TLV_AND_ASN1_LEN];
-        let noc_len = NocBuilder::new(&mut noc_buf)
-            .build(
+        let noc_len = CertGenerator::new(&mut noc_buf)
+            .generate(
                 &crypto,
+                CertType::Noc,
+                &[0x02],
+                validity,
                 SubjectDN {
                     node_id: Some(node_id),
                     fabric_id: Some(fabric_id),
                     cat_ids: &[],
                     ca_id: None,
                 },
-                validity,
-                noc_pubkey_canon.reference(),
-                rcac_pubkey_canon.reference(),
-                &rcac_secret_key,
-                &[0x02],
                 IssuerDN {
                     ca_id: Some(rcac_id),
                     fabric_id: Some(fabric_id),
                     is_rcac: true,
                 },
+                noc_pubkey_canon.reference(),
+                Some(rcac_pubkey_canon.reference()),
+                &rcac_secret_key,
             )
             .unwrap();
 

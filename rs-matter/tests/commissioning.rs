@@ -49,7 +49,7 @@ use log::{debug, info, warn};
 
 use rand_core::RngCore;
 
-use rs_matter::cert::builder::VALID_FOREVER;
+use rs_matter::cert::gen::VALID_FOREVER;
 use rs_matter::cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN};
 use rs_matter::crypto::{
     test_only_crypto, CanonAeadKey, CanonPkcSecretKey, Crypto, SecretKey, SigningSecretKey,

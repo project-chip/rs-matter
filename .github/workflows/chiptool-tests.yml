@@ -128,6 +128,12 @@ jobs:
           cargo xtask itest --skip-setup --suite camera \
             2>&1 | tee /tmp/itest-camera.log
 
+      - name: Run Commissioner integration tests
+        run: |
+          set -o pipefail
+          cargo xtask itest --skip-setup --suite commissioner \
+            2>&1 | tee /tmp/itest-commissioner.log
+
       - name: Upload test results on failure
         if: failure()
         uses: actions/upload-artifact@v4

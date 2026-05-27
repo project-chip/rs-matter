@@ -50,7 +50,7 @@ use embassy_time::{Duration, Timer};
 
 use log::{error, info};
 
-use rs_matter::cert::builder::VALID_FOREVER;
+use rs_matter::cert::gen::VALID_FOREVER;
 use rs_matter::cert::{MAX_CERT_TLV_AND_ASN1_LEN, MAX_CERT_TLV_LEN};
 use rs_matter::crypto::{
     default_crypto, CanonAeadKey, CanonPkcSecretKey, Crypto, RngCore as _, SecretKey,

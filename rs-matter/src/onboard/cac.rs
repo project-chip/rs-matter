@@ -45,7 +45,7 @@
 //! (`RootCaId` / `IcaId`); issuer DN carries the parent's subject ID
 //! (with `is_rcac` set when the parent is the RCAC itself).
 
-use crate::cert::builder::{IcacBuilder, IssuerDN, RcacBuilder, SubjectDN, Validity};
+use crate::cert::gen::{CertGenerator, CertType, IssuerDN, SubjectDN, Validity};
 use crate::cert::CertRef;
 use crate::crypto::{
     CanonPkcPublicKey, CanonPkcSecretKey, CanonPkcSecretKeyRef, Crypto, PublicKey, RngCore,
@@ -100,18 +100,27 @@ impl<'a> RcacGenerator<'a> {
         let mut serial_bytes = [0u8; 8];
         crypto.rand()?.fill_bytes(&mut serial_bytes);
 
-        let cert_len = RcacBuilder::new(self.buf).build(
+        let cert_len = CertGenerator::new(self.buf).generate(
             &crypto,
+            CertType::Rcac,
+            &serial_bytes,
+            validity,
             SubjectDN {
                 node_id: None,
                 fabric_id: Some(fabric_id),
                 cat_ids: &[],
                 ca_id: Some(rcac_id),
             },
-            validity,
+            // RCAC is self-signed; issuer DN is ignored by `generate`
+            // when `cert_type == Rcac` but a value is still required.
+            IssuerDN {
+                ca_id: None,
+                fabric_id: None,
+                is_rcac: false,
+            },
             rcac_pubkey_canon.reference(),
+            None, // self-signed: no separate issuer pubkey
             &rcac_key,
-            &serial_bytes,
         )?;
 
         let mut rcac_privkey = CanonPkcSecretKey::new();
@@ -174,24 +183,25 @@ impl<'a> IcacGenerator<'a> {
         let mut serial_bytes = [0u8; 8];
         crypto.rand()?.fill_bytes(&mut serial_bytes);
 
-        let cert_len = IcacBuilder::new(self.buf).build(
+        let cert_len = CertGenerator::new(self.buf).generate(
             &crypto,
+            CertType::Icac,
+            &serial_bytes,
+            validity,
             SubjectDN {
                 node_id: None,
                 fabric_id: Some(fabric_id),
                 cat_ids: &[],
                 ca_id: Some(icac_id),
             },
-            validity,
-            icac_pubkey_canon.reference(),
-            rcac_pubkey,
-            &rcac_signing_key,
-            &serial_bytes,
             IssuerDN {
                 ca_id: Some(rcac_id),
                 fabric_id: Some(fabric_id),
                 is_rcac: true,
             },
+            icac_pubkey_canon.reference(),
+            Some(rcac_pubkey),
+            &rcac_signing_key,
         )?;
 
         let mut icac_privkey = CanonPkcSecretKey::new();
@@ -203,7 +213,7 @@ impl<'a> IcacGenerator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::cert::builder::VALID_FOREVER;
+    use crate::cert::gen::VALID_FOREVER;
     use crate::cert::{CertRef, MAX_CERT_TLV_AND_ASN1_LEN};
     use crate::crypto::test_only_crypto;
     use crate::tlv::TLVElement;

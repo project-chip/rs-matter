@@ -60,7 +60,7 @@
 
 use core::num::NonZeroU8;
 
-use crate::cert::builder::Validity;
+use crate::cert::gen::Validity;
 use crate::crypto::{Crypto, RngCore, AEAD_CANON_KEY_LEN};
 use crate::dm::clusters::gen_comm::{CommissioningErrorEnum, GeneralCommissioningClient};
 use crate::dm::clusters::noc::{NodeOperationalCertStatusEnum, OperationalCredentialsClient};
@@ -216,7 +216,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     ///
     /// `device_node_id` is the NodeID the caller wishes to assign to
     /// the device on the controller's fabric. `validity` is the NOC's
-    /// validity window — typically [`crate::cert::builder::VALID_FOREVER`]
+    /// validity window — typically [`crate::cert::gen::VALID_FOREVER`]
     /// for long-lived deployments, or a bounded window for short-lived
     /// re-issuance. The NOC's ASN.1 serial number is derived from the
     /// NodeID (see [`NocGenerator::generate`]).
