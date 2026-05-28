@@ -99,8 +99,7 @@ pub enum IdentifyAction {
 /// state via attribute subscriptions instead.
 pub trait IdentifyHooks {
     /// Return the kind of identification mechanism this endpoint provides.
-    /// Reported as the `IdentifyType` attribute (per App Cluster spec
-    /// ).
+    /// Reported as the `IdentifyType` attribute (per App Cluster spec).
     fn identify_type(&self) -> IdentifyTypeEnum;
 
     /// Drive the application's identify hardware in response to a state

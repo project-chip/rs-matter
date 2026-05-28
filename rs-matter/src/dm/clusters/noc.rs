@@ -316,8 +316,8 @@ impl ClusterHandler for NocHandler {
 
             // Attestation timestamp (`AttestationElements.timestamp`,
             // Matter Core spec) — Matter-epoch seconds.
-            // Sourced from the device's Last-Known-Good UTC Time
-            // ; on a freshly-flashed device with no
+            // Sourced from the device's Last-Known-Good UTC Time;
+            // on a freshly-flashed device with no
             // `SetUTCTime` yet, this is the firmware build timestamp.
             // Read directly from the already-held `state` — re-entering
             // `Matter::with_state` here would deadlock the inner mutex.
@@ -917,8 +917,7 @@ impl ClusterHandler for NocHandler {
                 .get(fab_idx)
                 .ok_or(ErrorCode::ConstraintError)?;
 
-            // Build VendorFabricBindingMessage (Matter Core spec
-            // the spec):
+            // Build VendorFabricBindingMessage (Matter Core spec):
             //   1B fabric_binding_version || 65B root_pub_key
             //   || 8B fabric_id BE || 2B vendor_id BE
             let root_ref = CertRef::new(TLVElement::new(fabric.root_ca()));

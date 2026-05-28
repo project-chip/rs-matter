@@ -716,7 +716,7 @@ impl FailSafe {
 
         if let Some(icac) = icac {
             // If ICAC is present handle it. Reject the case where the
-            // commissioner re-uses the RCAC as the ICAC: Matter Core spec
+            // commissioner re-uses the RCAC as the ICAC:
             // the spec requires the ICAC to be a separate CA cert
             // (i.e. not self-signed).
             if icac.is_self_signed()? {

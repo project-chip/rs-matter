@@ -972,7 +972,7 @@ impl<'a> InvokeRespChunk<'a> {
         };
 
         if more_chunks {
-            // : if MoreChunkedMessages is true,
+            // If MoreChunkedMessages is true,
             // SuppressResponse SHALL be false. A peer that
             // violates this is malformed — abort the chain.
             if suppress_response {
@@ -980,7 +980,7 @@ impl<'a> InvokeRespChunk<'a> {
                 return Err(ErrorCode::InvalidData.into());
             }
 
-            // Per  — flow-control ACK between chunks.
+            // Per the spec — flow-control ACK between chunks.
             self.exchange
                 .send_with(|_, wb| {
                     StatusResp::write(wb, IMStatusCode::Success)?;
@@ -996,7 +996,7 @@ impl<'a> InvokeRespChunk<'a> {
 
             Ok(Some(self))
         } else {
-            // Final (or only) chunk. Per , Matter does not
+            // Final (or only) chunk. Per the spec, Matter does not
             // support responses to InvokeResponse actions — the
             // SuppressResponse field is ignored by the client. MRP
             // -ack only.
@@ -1303,8 +1303,8 @@ pub enum SubscribeOutcome<'a> {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SubscribeEstablished {
-    /// Subscription identifier chosen by the peer (Matter Core spec
-    /// ). Combined with the accessing fabric and the peer
+    /// Subscription identifier chosen by the peer (Matter Core spec).
+    /// Combined with the accessing fabric and the peer
     /// node id, this is the lookup key for the active subscription.
     pub subscription_id: u32,
     /// Maximum reporting interval (seconds) the peer committed to.

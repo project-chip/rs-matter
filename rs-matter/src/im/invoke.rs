@@ -343,7 +343,7 @@ impl<'a> InvokeResp<'a> {
     /// `FromTLV` over `'a` and plug in directly.
     ///
     /// Multi-response: single-command invokes per Matter Core spec
-    ///  carry concrete paths only, but batched invokes
+    /// carry concrete paths only, but batched invokes
     /// (multiple `CommandDataIB`s in one `InvokeRequestMessage`) can
     /// produce multiple matching entries — the iterator yields one
     /// per match, in wire order.

@@ -602,8 +602,8 @@ struct PathExpander<'a, T, I, F> {
     /// expanded leaf matches this triple, the access check is bypassed.
     ///
     /// This is the mechanism that resolves the "DeleteAll + Add×N on the
-    /// ACL cluster within one WriteRequest" tension (Matter Core spec
-    /// ): chip-tool serializes a list-replace as `DeleteAll`
+    /// ACL cluster within one WriteRequest" tension (Matter Core spec):
+    /// chip-tool serializes a list-replace as `DeleteAll`
     /// followed by N per-element `Add`s, all targeting the **same**
     /// concrete attribute path. The first op authorizes against the
     /// fabric's current ACL; subsequent same-path ops cache-hit and

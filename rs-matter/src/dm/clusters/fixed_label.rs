@@ -23,8 +23,8 @@
 //! `"hwrev"` → `"B"`. Compare with [`super::user_label`], the
 //! writable counterpart used by commissioners.
 //!
-//! The list is **fixed** in the F-quality sense (Matter Core spec
-//! ): it never changes for the lifetime of the device firmware,
+//! The list is **fixed** in the F-quality sense (Matter Core spec):
+//! it never changes for the lifetime of the device firmware,
 //! so we don't need a persistence layer, a mutex, or any per-entry
 //! storage. [`FixedLabelHandler`] just borrows a static slice of
 //! [`FixedLabelEntry`] from the application and iterates it on read.

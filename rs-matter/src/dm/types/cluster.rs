@@ -602,7 +602,7 @@ impl defmt::Format for Cluster<'_> {
 ///
 /// The Groups cluster is intentionally *not* included in any of these presets:
 /// Root Node (Matter Device Library) does not list Groups, and Groups
-/// (Matter Application Cluster Specification ) is scoped to per-endpoint
+/// (Matter Application Cluster Specification) is scoped to per-endpoint
 /// group membership which has no defined behavior on the Root Node. Wire
 /// `GroupsHandler::CLUSTER` onto the application endpoint(s) where it actually
 /// has meaning instead.

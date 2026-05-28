@@ -92,8 +92,8 @@ use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite, ToTLV};
 /// so the compiler enforces in-order field writes.
 ///
 /// All three top-level fields (`SuppressResponse`, `TimedRequest`,
-/// `InvokeRequests`) are mandatory on the wire per Matter Core spec
-/// , and the builder always emits all three. The two booleans
+/// `InvokeRequests`) are mandatory on the wire per Matter Core spec,
+/// and the builder always emits all three. The two booleans
 /// are *optional at the API level* though — skipping either setter
 /// causes the builder to write the field with its default value
 /// (`false`) before opening the next state. This matches the
@@ -538,8 +538,8 @@ where
     P: TLVBuilderParent,
 {
     /// Write the optional `CommandRef` field. **Mandatory** when the
-    /// `InvokeRequests` array carries more than one entry (per spec
-    ///  — the server echoes this back so the client can
+    /// `InvokeRequests` array carries more than one entry (per spec -
+    /// the server echoes this back so the client can
     /// correlate responses to requests). For single-command invokes,
     /// omit (go straight to `.end()`).
     pub fn command_ref(mut self, value: u16) -> Result<CmdDataBuilder<P, 3>, Error> {

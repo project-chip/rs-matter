@@ -1106,8 +1106,8 @@ const WILDCARD_ENDPOINT: EndptId = EndptId::MAX;
 
 /// Sentinel value for "any cluster" inside a [`ChangedAttr`] entry.
 ///
-/// Matter cluster ids are Manufacturer Extensible Identifiers (MEIs, Core Spec
-/// ): `(vendor_prefix << 16) | suffix` with `0xFFFF` reserved as an
+/// Matter cluster ids are Manufacturer Extensible Identifiers (MEIs, Core Spec):
+/// `(vendor_prefix << 16) | suffix` with `0xFFFF` reserved as an
 /// invalid vendor prefix. `0xFFFF_FFFF` therefore cannot be a legitimate
 /// cluster id and is safe to use as an internal "wildcard" marker. The CHIP
 /// reference SDK uses the same value as `kInvalidClusterId`.

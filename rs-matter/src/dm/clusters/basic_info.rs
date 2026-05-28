@@ -316,8 +316,8 @@ pub struct BasicInfoSettings {
     pub location: Option<heapless::String<2>>, // Max location as per the spec
     pub location_type: RegulatoryLocationTypeEnum,
     pub local_config_disabled: bool,
-    /// `BasicInformation::ConfigurationVersion` (Matter Core Spec
-    /// ). Non-volatile, monotonically increasing, minimum 1.
+    /// `BasicInformation::ConfigurationVersion` (Matter Core Spec).
+    /// Non-volatile, monotonically increasing, minimum 1.
     /// Bumped by application code via
     /// `DataModel::bump_configuration_version` whenever the node's
     /// fixed-quality surface (Server/Parts list, device types, software
