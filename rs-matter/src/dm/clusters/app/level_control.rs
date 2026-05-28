@@ -1802,6 +1802,133 @@ impl OnOffHooks for NoOnOff {
     }
 }
 
+/// Scenes Management integration for the LevelControl cluster.
+///
+/// Per Matter Application Cluster Spec §1.5, LevelControl exposes a
+/// single scene-able attribute (`CurrentLevel`, nullable u8) that is
+/// **read-only** at the attribute level. Scene apply therefore goes
+/// through the `MoveToLevel` command with the captured level + the
+/// scene's transition time (ms → deciseconds, saturating). See
+/// [`crate::dm::clusters::scenes::SceneClusterHandler`].
+pub mod scenes {
+    use crate::dm::clusters::decl::level_control::{
+        AttributeId, CommandId, MoveToLevelRequestBuilder, OptionsBitmap, FULL_CLUSTER,
+    };
+    use crate::dm::clusters::decl::scenes_management::{
+        AttributeValuePairStruct, AttributeValuePairStructArrayBuilder,
+    };
+    use crate::dm::clusters::scenes::{SceneClusterHandler, SceneContext};
+    use crate::dm::{ClusterId, EndptId, InvokeContext};
+    use crate::error::Error;
+    use crate::tlv::{Nullable, TLVArray, TLVBuilderParent, TLVTag, TLVWriteParent};
+    use crate::utils::storage::WriteBuf;
+
+    /// Worst-case TLV-encoded size of any command this scene impl
+    /// sends. The only command is `MoveToLevel`:
+    ///
+    /// ```text
+    /// 0x15                              (struct start, anon)        1 B
+    ///   level         u8 @ Ctx 0        (ctrl + tag + 1 B value)    3 B
+    ///   transitionTime nullable u16 @ Ctx 1 (worst case: 4 B)       4 B
+    ///   optionsMask   bitmap8 @ Ctx 2   (ctrl + tag + 1 B value)    3 B
+    ///   optionsOverride bitmap8 @ Ctx 3 (ctrl + tag + 1 B value)    3 B
+    /// 0x18                              (end_container)             1 B
+    /// ----------------------------------------------------------- 15 B
+    /// ```
+    ///
+    /// Rounded up to 16 to keep one byte of slack.
+    const MAX_REQUEST_BUF: usize = 16;
+
+    /// Zero-sized [`SceneClusterHandler`] impl for the LevelControl
+    /// cluster.
+    ///
+    /// Register with [`crate::dm::clusters::scenes::ScenesHandler::new`]:
+    ///
+    /// ```ignore
+    /// ScenesHandler::new(
+    ///     dataver, &state,
+    ///     (OnOffSceneClusterHandler,
+    ///      (LevelControlSceneClusterHandler, ())),
+    /// )
+    /// ```
+    #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct LevelControlSceneClusterHandler;
+
+    impl SceneClusterHandler for LevelControlSceneClusterHandler {
+        const CLUSTER_ID: ClusterId = FULL_CLUSTER.id;
+
+        async fn capture<C, P>(
+            &self,
+            sctx: &SceneContext<C>,
+            endpoint_id: EndptId,
+            avp_array: AttributeValuePairStructArrayBuilder<P>,
+        ) -> Result<AttributeValuePairStructArrayBuilder<P>, Error>
+        where
+            C: InvokeContext,
+            P: TLVBuilderParent,
+        {
+            // `CurrentLevel` is `nullable int8u`. Null → skip the AVP
+            // entry; downstream apply has nothing to act on.
+            let v: Nullable<u8> = sctx
+                .read(endpoint_id, FULL_CLUSTER.id, AttributeId::CurrentLevel as _)
+                .await?;
+            if let Some(level) = v.into_option() {
+                avp_array.push_u8(AttributeId::CurrentLevel as _, level)
+            } else {
+                Ok(avp_array)
+            }
+        }
+
+        async fn apply<C>(
+            &self,
+            sctx: &SceneContext<C>,
+            endpoint_id: EndptId,
+            transition_time_ms: u32,
+            avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
+        ) -> Result<(), Error>
+        where
+            C: InvokeContext,
+        {
+            for avp in avp_list.iter() {
+                let avp = avp?;
+                if avp.attribute_id()? != AttributeId::CurrentLevel as _ {
+                    continue;
+                }
+                let Some(level) = avp.value_unsigned_8()? else {
+                    continue;
+                };
+                // `MoveToLevelRequest.transitionTime` is `int16u`
+                // deciseconds; `RecallScene.transitionTime` is `int32u`
+                // milliseconds. Convert with saturation.
+                let transition_ds = (transition_time_ms / 100).min(u16::MAX as u32) as u16;
+
+                let mut data_buf = [0u8; MAX_REQUEST_BUF];
+                let data_len = {
+                    let mut wb = WriteBuf::new(&mut data_buf);
+                    let parent = TLVWriteParent::new("Scene/MoveToLevel", &mut wb);
+                    MoveToLevelRequestBuilder::new(parent, &TLVTag::Anonymous)?
+                        .level(level)?
+                        .transition_time(Nullable::some(transition_ds))?
+                        .options_mask(OptionsBitmap::empty())?
+                        .options_override(OptionsBitmap::empty())?
+                        .end()?;
+                    wb.get_tail()
+                };
+                return sctx
+                    .invoke(
+                        endpoint_id,
+                        FULL_CLUSTER.id,
+                        CommandId::MoveToLevel as _,
+                        &data_buf[..data_len],
+                    )
+                    .await;
+            }
+            Ok(())
+        }
+    }
+}
+
 pub mod test {
     use crate::dm::clusters::app::level_control::{
         AttributeId, CommandId, Feature, LevelControlHooks, FULL_CLUSTER,

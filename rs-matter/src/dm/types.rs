@@ -24,6 +24,7 @@ pub use dataver::*;
 pub use endpoint::*;
 pub use event::*;
 pub use handler::*;
+pub(crate) use handler::{InvokeContextInstance, ReadContextInstance};
 pub use metadata::*;
 pub use node::*;
 pub use privilege::*;

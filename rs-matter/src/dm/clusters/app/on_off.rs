@@ -1098,6 +1098,90 @@ impl LevelControlHooks for NoLevelControl {
     }
 }
 
+/// Scenes Management integration for the OnOff cluster.
+///
+/// Per Matter Application Cluster Spec §1.4 / §1.5, OnOff exposes a
+/// single scene-able attribute (`OnOff`, bool) that is **read-only**
+/// at the attribute level. Scene apply therefore goes through the
+/// `On` / `Off` commands rather than an attribute write. See
+/// [`crate::dm::clusters::scenes::SceneClusterHandler`].
+pub mod scenes {
+    use crate::dm::clusters::decl::on_off::{AttributeId, CommandId, FULL_CLUSTER};
+    use crate::dm::clusters::decl::scenes_management::{
+        AttributeValuePairStruct, AttributeValuePairStructArrayBuilder,
+    };
+    use crate::dm::clusters::scenes::{SceneClusterHandler, SceneContext};
+    use crate::dm::{ClusterId, EndptId, InvokeContext};
+    use crate::error::Error;
+    use crate::tlv::{TLVArray, TLVBuilderParent};
+
+    /// Zero-sized [`SceneClusterHandler`] impl for the OnOff cluster.
+    ///
+    /// Register with [`crate::dm::clusters::scenes::ScenesHandler::new`]:
+    ///
+    /// ```ignore
+    /// ScenesHandler::new(dataver, &state, (OnOffSceneClusterHandler, ()))
+    /// ```
+    #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct OnOffSceneClusterHandler;
+
+    impl SceneClusterHandler for OnOffSceneClusterHandler {
+        const CLUSTER_ID: ClusterId = FULL_CLUSTER.id;
+
+        async fn capture<C, P>(
+            &self,
+            sctx: &SceneContext<C>,
+            endpoint_id: EndptId,
+            avp_array: AttributeValuePairStructArrayBuilder<P>,
+        ) -> Result<AttributeValuePairStructArrayBuilder<P>, Error>
+        where
+            C: InvokeContext,
+            P: TLVBuilderParent,
+        {
+            // `OnOff.OnOff` is bool; serialize as `valueUnsigned8`
+            // (0 / 1) per the Scenes spec's AttributeValuePairStruct.
+            let v: bool = sctx
+                .read(endpoint_id, FULL_CLUSTER.id, AttributeId::OnOff as _)
+                .await?;
+            avp_array.push_u8(AttributeId::OnOff as _, v as u8)
+        }
+
+        async fn apply<C>(
+            &self,
+            sctx: &SceneContext<C>,
+            endpoint_id: EndptId,
+            _transition_time_ms: u32,
+            avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
+        ) -> Result<(), Error>
+        where
+            C: InvokeContext,
+        {
+            for avp in avp_list.iter() {
+                let avp = avp?;
+                if avp.attribute_id()? != AttributeId::OnOff as _ {
+                    continue;
+                }
+                let Some(value) = avp.value_unsigned_8()? else {
+                    continue;
+                };
+                // Per spec, OnOff doesn't honour a per-scene transition
+                // time (it's a discrete on/off transition). Invoke the
+                // matching command with an empty payload.
+                let cmd_id = if value != 0 {
+                    CommandId::On
+                } else {
+                    CommandId::Off
+                };
+                return sctx
+                    .invoke(endpoint_id, FULL_CLUSTER.id, cmd_id as _, &[])
+                    .await;
+            }
+            Ok(())
+        }
+    }
+}
+
 pub mod test {
     use embassy_time::{Duration, Timer};
 
