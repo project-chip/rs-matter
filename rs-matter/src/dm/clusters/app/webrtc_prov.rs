@@ -281,8 +281,8 @@ pub trait WebRtcHooks {
     /// `WebRTCTransportRequestor::Offer`) or `deferred = true` (Offer
     /// pushed when the media source becomes ready).
     ///
-    /// `SolicitOfferResponse` itself does NOT carry an SDP — see Matter 1.5
-    ///  — so this hook never returns Offer bytes inline.
+    /// `SolicitOfferResponse` itself does NOT carry an SDP — see Matter Spec -
+    /// so this hook never returns Offer bytes inline.
     async fn on_solicit_offer(
         &self,
         session_id: u16,

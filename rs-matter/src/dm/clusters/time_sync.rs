@@ -144,7 +144,7 @@ pub struct Rtc {
     utc_us_persisted: u64,
     /// Granularity at the time of the last `set_utc_time` call, with
     /// the "one level lower than supplied" step-down already
-    /// applied and floored at `MinutesGranularity` .
+    /// applied and floored at `MinutesGranularity`.
     /// **Not persisted** — resets to `NoTimeGranularity` at boot,
     /// matching the `anchor = None` post-reboot state.
     granularity: GranularityEnum,
@@ -215,8 +215,8 @@ impl Rtc {
         self.reset();
 
         // Load the persisted Last-Known-Good UTC Time, if any.
-        // Floor at `FIRMWARE_BUILD_MATTER_US` per Matter Core spec
-        //  — the on-disk value must never regress us
+        // Floor at `FIRMWARE_BUILD_MATTER_US` per Matter Core spec -
+        // the on-disk value must never regress us
         // below the build timestamp (the documented lower bound
         // we never adjust backwards past).
         if let Some(data) = kv.load(LKG_UTC_KEY, buf)? {
