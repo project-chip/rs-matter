@@ -544,7 +544,7 @@ impl TestSuite {
             Self::System | Self::SystemPython | Self::SystemYaml => "chip_tool_tests",
             Self::Camera => "camera_tests",
             Self::Light => "dimmable_light",
-            Self::Commissioner => "commissioner_test",
+            Self::Commissioner => "commissioner_tests",
         }
     }
 
@@ -798,8 +798,8 @@ impl ITests {
     /// `[::1]:<COMMISSIONER_DEVICE_PORT>` with a known passcode +
     /// discriminator + an ephemeral KVS file (so commissioning state
     /// doesn't carry across runs), then runs the rs-matter
-    /// `commissioner_test` example against it. Asserts the example
-    /// exits 0 and prints the expected `commissioner_test: ok …` line.
+    /// `commissioner_tests` example against it. Asserts the example
+    /// exits 0 and prints the expected `commissioner_tests: ok …` line.
     /// Kills the spawned app on success or failure.
     fn run_commissioner_suite(
         &self,
@@ -844,7 +844,7 @@ impl ITests {
         let _ = std::fs::remove_file(&kvs_path);
 
         // 3. Spawn the DUT. Bind to IPv6 loopback only (matches what
-        //    `commissioner_test` peers against by default). Drain its
+        //    `commissioner_tests` peers against by default). Drain its
         //    stdout/stderr to a background thread so the pipe buffer
         //    doesn't fill up and stall the subprocess.
         info!(
@@ -911,12 +911,12 @@ impl ITests {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| anyhow::anyhow!("failed to spawn commissioner_test: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("failed to spawn commissioner_tests: {e}"))?;
 
         let controller_stdout = controller.stdout.take().expect("piped");
         let controller_stderr = controller.stderr.take().expect("piped");
 
-        // Capture controller stdout to extract the `commissioner_test:
+        // Capture controller stdout to extract the `commissioner_tests:
         // ok ...` line; also stream stderr to the operator.
         let (success_tx, success_rx) = mpsc::channel::<String>();
         let success_tx_clone = success_tx.clone();
@@ -925,9 +925,9 @@ impl ITests {
             let reader = BufReader::new(controller_stdout);
             for line in reader.lines().map_while(Result::ok) {
                 if print_ctrl_output {
-                    println!("[commissioner_test stdout] {line}");
+                    println!("[commissioner_tests stdout] {line}");
                 }
-                if line.starts_with("commissioner_test: ok ") {
+                if line.starts_with("commissioner_tests: ok ") {
                     let _ = success_tx_clone.send(line);
                 }
             }
@@ -936,11 +936,11 @@ impl ITests {
             let reader = BufReader::new(controller_stderr);
             for line in reader.lines().map_while(Result::ok) {
                 if print_ctrl_output {
-                    eprintln!("[commissioner_test stderr] {line}");
+                    eprintln!("[commissioner_tests stderr] {line}");
                 } else {
                     // The example logs operationally on stderr; in normal
                     // verbosity we still want it visible on failure.
-                    eprintln!("[commissioner_test] {line}");
+                    eprintln!("[commissioner_tests] {line}");
                 }
             }
         });
@@ -951,7 +951,7 @@ impl ITests {
             match controller.try_wait() {
                 Ok(Some(s)) => break s,
                 Ok(None) if Instant::now() >= deadline => {
-                    warn!("commissioner_test timed out after {test_timeout_secs}s; killing");
+                    warn!("commissioner_tests timed out after {test_timeout_secs}s; killing");
                     let _ = controller.kill();
                     let _ = controller.wait();
                     let _ = app.kill();
@@ -960,13 +960,13 @@ impl ITests {
                     let _ = stderr_thread.join();
                     let _ = ctrl_stdout_thread.join();
                     let _ = ctrl_stderr_thread.join();
-                    anyhow::bail!("commissioner_test timed out");
+                    anyhow::bail!("commissioner_tests timed out");
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(200)),
                 Err(e) => {
                     let _ = app.kill();
                     let _ = app.wait();
-                    anyhow::bail!("waiting on commissioner_test failed: {e}");
+                    anyhow::bail!("waiting on commissioner_tests failed: {e}");
                 }
             }
         };
@@ -983,12 +983,12 @@ impl ITests {
         // 7. Assertions: clean exit *and* the success line was emitted.
         if !controller_status.success() {
             anyhow::bail!(
-                "commissioner_test exited with {:?} (expected success)",
+                "commissioner_tests exited with {:?} (expected success)",
                 controller_status.code(),
             );
         }
         let success_line = success_rx.try_recv().map_err(|_| {
-            anyhow::anyhow!("commissioner_test did not emit a `commissioner_test: ok ...` line")
+            anyhow::anyhow!("commissioner_tests did not emit a `commissioner_tests: ok ...` line")
         })?;
         info!("commissioner suite passed: {success_line}");
         // Suppress unused-channel warning on the unused sender.
