@@ -21,7 +21,7 @@
 //! during commissioning. It includes:
 //!
 //! - [`cd`]: Certification Declaration (CD) parsing, signature verification, and
-//!   content validation per Matter Spec Section 6.3.1.
+//!   content validation per Matter Spec.
 //! - [`cd_keys`]: Well-known CSA CD signing key trust store.
 
 pub mod cd;

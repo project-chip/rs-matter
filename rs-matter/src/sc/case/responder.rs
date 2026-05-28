@@ -117,7 +117,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
 
         let req = Sigma1Req::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
 
-        // Matter Core spec section 4.13.2.1.1: `resumptionID` and
+        // Matter Core spec: `resumptionID` and
         // `initiatorResumeMIC` SHALL either both be present or both be
         // absent. A mismatched pair is a malformed Sigma1 and the
         // responder MUST reject it with `INVALID_PARAMETER` and stop

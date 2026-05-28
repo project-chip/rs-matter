@@ -31,7 +31,7 @@
 //!
 //! # Layout
 //!
-//! Per Matter Core spec §10.7.8 `SubscribeRequestMessage` is an
+//! Per Matter Core spec `SubscribeRequestMessage` is an
 //! anonymous-tagged struct with seven fields plus a reserved gap at
 //! tag 6:
 //!
@@ -173,7 +173,7 @@ where
     /// Write the mandatory `MaxIntervalCeiling` field (seconds). The
     /// peer MUST report no less frequently than this even if nothing
     /// has changed (heartbeat). The server may pick any interval at
-    /// or below this ceiling — see Matter Core spec §8.5.3.
+    /// or below this ceiling — see Matter Core spec.
     pub fn max_int_ceil(mut self, value: u16) -> Result<SubscribeReqBuilder<P, 3>, Error> {
         self.p
             .writer()
@@ -405,7 +405,7 @@ where
     P: TLVBuilderParent,
 {
     /// Write the mandatory-on-the-wire `InteractionModelRevision`
-    /// field (Matter Core §8.1.1, p. 545: value is `13` since Matter
+    /// field (Matter Core: value is `13` since Matter
     /// 1.3, unchanged in 1.4 and 1.5). Optional at the API level —
     /// omit and `end()` injects [`IM_REVISION`] automatically.
     pub fn interaction_model_revision(

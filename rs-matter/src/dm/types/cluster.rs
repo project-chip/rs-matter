@@ -213,7 +213,7 @@ impl<'a> Cluster<'a> {
             Err(IMStatusCode::NeedsTimedInteraction)?;
         }
 
-        // Per Matter Core spec section 8.9.4 (Invoke Interaction): "Else if
+        // Per Matter Core spec (Invoke Interaction): "Else if
         // the command in the path is fabric-scoped and there is no accessing
         // fabric, a CommandStatusIB SHALL be generated with the
         // UNSUPPORTED_ACCESS Status Code." This is the catch for fabric-scoped
@@ -601,8 +601,8 @@ impl defmt::Format for Cluster<'_> {
 /// merged into the slice — e.g. `clusters!(eth, sw_diag(heap); my_cluster)`.
 ///
 /// The Groups cluster is intentionally *not* included in any of these presets:
-/// Root Node (Matter Device Library §2.1.5) does not list Groups, and Groups
-/// (Matter Application Cluster Specification §1.3) is scoped to per-endpoint
+/// Root Node (Matter Device Library) does not list Groups, and Groups
+/// (Matter Application Cluster Specification) is scoped to per-endpoint
 /// group membership which has no defined behavior on the Root Node. Wire
 /// `GroupsHandler::CLUSTER` onto the application endpoint(s) where it actually
 /// has meaning instead.

@@ -23,7 +23,7 @@
 //! once (often offline, with HSM-controlled RCAC keys), NOC signing
 //! happens many times at runtime as new devices are commissioned.
 //!
-//! Supports both Matter PKI shapes per spec §6.5:
+//! Supports both Matter PKI shapes per spec:
 //!
 //! 1. **ICAC tier** (recommended for any real deployment) — `icac_id`
 //!    is `Some(_)`; the `signing_privkey` is the ICAC private key.
@@ -152,9 +152,8 @@ impl<'a> NocGenerator<'a> {
         cat_ids: &[u32],
         validity: Validity,
     ) -> Result<&[u8], Error> {
-        // Matter spec §6.5.6 caps subject CAT IDs at three. Each CAT
-        // ID must have a non-zero version (upper 16 bits), per
-        // §6.6.2.1.1.
+        // Matter spec caps subject CAT IDs at three. Each CAT
+        // ID must have a non-zero version (upper 16 bits), per the spec.
         if cat_ids.len() > 3 {
             return Err(ErrorCode::InvalidData.into());
         }
@@ -232,8 +231,8 @@ impl<'a> NocGenerator<'a> {
         self.signing_privkey
     }
 
-    /// ASN.1 DER `INTEGER` encoding of a 64-bit serial per X.690
-    /// §8.3 — strip leading zero bytes, then prepend a single `0x00`
+    /// ASN.1 DER `INTEGER` encoding of a 64-bit serial per X.690 -
+    /// strip leading zero bytes, then prepend a single `0x00`
     /// if the top bit of the result is set (to keep the value positive).
     fn encode_serial_asn1(serial: u64) -> heapless::Vec<u8, 9> {
         let serial_bytes_full = serial.to_be_bytes();

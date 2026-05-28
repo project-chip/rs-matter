@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-//! Binding cluster handler (Matter Core spec §9.6).
+//! Binding cluster handler (Matter Core spec).
 //!
 //! Per-endpoint, fabric-scoped, **persistent** list of `TargetStruct`
 //! entries each describing a unicast `(node, endpoint, cluster?)` or
@@ -31,8 +31,8 @@
 //!
 //! # Persistence
 //!
-//! Spec §9.6.6.1 marks the `Binding` attribute with the `N` quality
-//! bit (Non-Volatile, Matter Core §7.13.2) — values **SHALL** survive
+//! Spec marks the `Binding` attribute with the `N` quality
+//! bit (Non-Volatile, Matter Core) — values **SHALL** survive
 //! reboots. We re-serialise the whole registry under [`BINDINGS_KEY`]
 //! after every successful write, and re-hydrate on startup via
 //! [`Bindings::load_persist`].
@@ -47,7 +47,7 @@
 //!
 //! # Validation
 //!
-//! Per spec §9.6.5.1:
+//! Per spec:
 //! - `Group` and `Endpoint` are mutually exclusive (one of the two
 //!   identifies the target).
 //! - `Node` is required when `Endpoint` is present.
@@ -102,7 +102,7 @@ struct StoredBinding {
 /// fabric. Persisted as a single TLV blob under [`BINDINGS_KEY`].
 ///
 /// `N` bounds the total number of entries the device can hold. Per
-/// Matter Core spec §9.6.1, device-type definitions may prescribe a
+/// Matter Core spec, device-type definitions may prescribe a
 /// minimum-per-fabric; the spec also says the total must be
 /// `min_per_fabric × supported_fabrics` — pick `N` accordingly.
 pub struct Bindings<const N: usize> {
@@ -156,7 +156,7 @@ impl<const N: usize> Bindings<N> {
         persist.run()
     }
 
-    /// Validate a `TargetStruct` against spec §9.6.5.1 and return a
+    /// Validate a `TargetStruct` against spec and return a
     /// fully-built `StoredBinding`. `endpoint_id` and `fab_idx` come
     /// from the dispatch context (they are not on the wire entry for
     /// this attribute write — the framework auto-injects fab_idx).
@@ -170,7 +170,7 @@ impl<const N: usize> Bindings<N> {
         let endpoint = t.endpoint()?;
         let cluster = t.cluster()?;
 
-        // Spec §9.6.5.1 — the conformance columns say Group is
+        // Spec — the conformance columns say Group is
         // `!Endpoint` and Endpoint is `!Group`, so **exactly one** of
         // them must identify the target. Node's conformance is
         // `Endpoint`, i.e. Node is mandatory whenever Endpoint is

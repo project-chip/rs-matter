@@ -343,7 +343,7 @@ mod tests {
 
         #[test]
         fn rollover_accepts_counter_past_u32_max() {
-            // Spec §4.6.5.2.2: forward iff (msg - max) mod 2^32 in [1, 2^31 - 1].
+            // Spec: forward iff (msg - max) mod 2^32 in [1, 2^31 - 1].
             // max near u32::MAX, msg just past zero is still forward.
             let mut store = GroupCtrStore::new();
             assert!(store.post_recv(1, 0x1111, u32::MAX - 1));

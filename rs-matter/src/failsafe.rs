@@ -420,7 +420,7 @@ impl FailSafe {
         // Validate the candidate RCAC by checking its self-signature (a Matter
         // RCAC is self-issued, so the certificate's own public key must verify
         // the certificate's signature). Any decode or signature failure must
-        // surface as `INVALID_COMMAND` per Matter Core spec section 11.18.6.13
+        // surface as `INVALID_COMMAND` per Matter Core spec
         // (`AddTrustedRootCertificate`), not as the generic `Failure` we'd
         // otherwise get from `ErrorCode::InvalidSignature`.
         {
@@ -501,7 +501,7 @@ impl FailSafe {
 
         // `UpdateNOC` only requires the corresponding `CSRRequest` (with
         // `isForUpdateNOC=true`) to have been processed in this fail-safe
-        // context. Per Matter Core spec section 11.18.6.7 it must NOT
+        // context. Per Matter Core spec it must NOT
         // have been preceded by `AddTrustedRootCertificate`, `AddNOC`,
         // `UpdateNOC`, or a CSRRequest of the wrong kind — those go in
         // `absent`. `validate_certs` further down uses the *committed*
@@ -529,13 +529,13 @@ impl FailSafe {
             // Validate the certs first. A chain that doesn't pass
             // signature verification (or that doesn't chain back to the
             // staged root) is reported as `kInvalidNOC` cluster status per
-            // Matter Core spec section 11.18.6.7 (`UpdateNOC`).
+            // Matter Core spec (`UpdateNOC`).
             Self::validate_certs(&crypto, time, &noc_ref, icac_ref.as_ref(), &root_ref, buf)
                 .map_err(|_| ErrorCode::NocInvalidNoc)?;
 
             // The NOC's public key must match the public key derived from
             // the most recent `CSRRequest(isForUpdateNOC=true)` (Matter
-            // Core spec section 11.18.6.7).
+            // Core spec).
             let mut csr_pubkey = crate::crypto::CanonPkcPublicKey::new();
             crypto
                 .secret_key(self.secret_key.reference())?
@@ -605,7 +605,7 @@ impl FailSafe {
         )?;
 
         // CaseAdminSubject must be either a valid Operational Node ID or a
-        // CASE Authenticated Tag (CAT) — Matter Core spec section 11.18.6.6
+        // CASE Authenticated Tag (CAT) — Matter Core spec
         // (`AddNOC`). Anything else (most commonly 0) is reported as
         // `kInvalidAdminSubject` cluster status.
         if !crate::acl::is_node(case_admin_subject) && !crate::acl::is_noc_cat(case_admin_subject) {
@@ -620,13 +620,13 @@ impl FailSafe {
             // Validate the certs first. A chain that doesn't pass
             // signature verification (or that doesn't chain back to the
             // staged root) is reported as `kInvalidNOC` cluster status per
-            // Matter Core spec section 11.18.6.6 (`AddNOC`).
+            // Matter Core spec (`AddNOC`).
             Self::validate_certs(&crypto, time, &noc_ref, icac_ref.as_ref(), &root_ref, buf)
                 .map_err(|_| ErrorCode::NocInvalidNoc)?;
 
             // The NOC's public key must match the public key derived from
-            // the most recent `CSRRequest` (Matter Core spec section
-            // 11.18.6.6). The CSR's secret key is stashed in
+            // the most recent `CSRRequest` (Matter Core spec). The CSR's
+            // secret key is stashed in
             // `self.secret_key` by `add_csr_req` / `update_csr_req`.
             let mut csr_pubkey = crate::crypto::CanonPkcPublicKey::new();
             crypto
@@ -716,8 +716,8 @@ impl FailSafe {
 
         if let Some(icac) = icac {
             // If ICAC is present handle it. Reject the case where the
-            // commissioner re-uses the RCAC as the ICAC: Matter Core spec
-            // section 6.5 requires the ICAC to be a separate CA cert
+            // commissioner re-uses the RCAC as the ICAC:
+            // the spec requires the ICAC to be a separate CA cert
             // (i.e. not self-signed).
             if icac.is_self_signed()? {
                 return Err(ErrorCode::InvalidData.into());
@@ -765,8 +765,7 @@ impl FailSafe {
                 // State is not what is expected for that concrete command.
                 //
                 // Disambiguate "no CSR at all" from "wrong CSR type" per
-                // Matter Core spec sections 11.18.6.6 (`AddNOC`) and
-                // 11.18.6.7 (`UpdateNOC`):
+                // Matter Core spec, `AddNOC` / `UpdateNOC`:
                 //   * No `CSRRequest` of either kind seen yet for this
                 //     fail-safe context → `kMissingCsr` cluster status.
                 //   * A CSR was issued but with the opposite
@@ -787,8 +786,7 @@ impl FailSafe {
                 // State is not what is expected for that concrete command.
                 //
                 // Two flavours both surface as IM `CONSTRAINT_ERROR` per
-                // Matter Core spec sections 11.18.6.6 (`AddNOC`) and
-                // 11.18.6.7 (`UpdateNOC`):
+                // Matter Core spec, `AddNOC` / `UpdateNOC`:
                 //   * the same `Add`/`UpdateNOC` was already received in
                 //     this fail-safe context
                 //   * the most recent `CSRRequest` had the wrong

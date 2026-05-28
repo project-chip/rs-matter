@@ -38,12 +38,12 @@ pub const CASE_RESUMPTION_ID_LEN: usize = 16;
 
 pub const CASE_SESSION_KEYS_LEN: usize = AEAD_CANON_KEY_LEN * 3;
 
-// TBEData2_Nonce per spec 4.14.2.3: "NCASE_Sigma2N"
+// TBEData2_Nonce per spec: "NCASE_Sigma2N"
 const SIGMA2_NONCE: AeadNonceRef = AeadNonceRef::new(&[
     0x4e, 0x43, 0x41, 0x53, 0x45, 0x5f, 0x53, 0x69, 0x67, 0x6d, 0x61, 0x32, 0x4e,
 ]);
 
-// TBEData3_Nonce per spec 4.14.2.3: "NCASE_Sigma3N"
+// TBEData3_Nonce per spec: "NCASE_Sigma3N"
 const SIGMA3_NONCE: AeadNonceRef = AeadNonceRef::new(&[
     0x4e, 0x43, 0x41, 0x53, 0x45, 0x5f, 0x53, 0x69, 0x67, 0x6d, 0x61, 0x33, 0x4e,
 ]);

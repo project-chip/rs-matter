@@ -424,7 +424,7 @@ impl<'a> Matter<'a> {
     /// the new value via `kv`, and route an attribute-change
     /// notification to subscribers via `notify`.
     ///
-    /// Per Matter Core Spec §7.7.2 / §9.2.11, the device MUST bump
+    /// Per Matter Core Spec, the device MUST bump
     /// this attribute on any change to its exposed fixed-quality
     /// surface (a firmware update that adds or removes functionality,
     /// internal reconfiguration that changes any `F`-quality attribute,
@@ -646,7 +646,7 @@ pub struct MatterState {
     failsafe: FailSafe,
     /// The mutable basic information settings
     basic_info_settings: BasicInfoSettings,
-    /// Real Time Clock state and Last-Known-Good UTC Time tracking (Matter Core spec §3.5.6.1).
+    /// Real Time Clock state and Last-Known-Good UTC Time tracking (Matter Core spec).
     rtc: Rtc,
 }
 

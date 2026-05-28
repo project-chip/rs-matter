@@ -31,16 +31,16 @@ pub use crate::dm::clusters::decl::administrator_commissioning::*;
 use crate::transport::exchange::ExchangeId;
 use crate::transport::session::SessionMode;
 
-/// PAKE iteration count bounds (Matter Core spec section 11.18.6.1.4).
+/// PAKE iteration count bounds (Matter Core spec).
 const MIN_PBKDF_ITERATIONS: u32 = 1000;
 const MAX_PBKDF_ITERATIONS: u32 = 100_000;
 
-/// PAKE salt length bounds (Matter Core spec section 11.18.6.1.4 / 5.1.6.1).
+/// PAKE salt length bounds (Matter Core spec).
 const MIN_PAKE_SALT_LEN: usize = 16;
 const MAX_PAKE_SALT_LEN: usize = 32;
 
 /// SPAKE2+ verifier length: W0 (32) || L (65) = 97 octets
-/// (Matter Core spec section 3.10).
+/// (Matter Core spec).
 const PAKE_VERIFIER_LEN: usize = 97;
 
 /// Stash an `AdministratorCommissioning` cluster-specific status on the
@@ -170,7 +170,7 @@ impl ClusterHandler for AdminCommHandler {
 
         // Validate the PAKE parameters up front so we can surface
         // `PAKEParameterError` as the cluster-specific status (Matter Core
-        // spec section 11.18.6.1.4).
+        // spec).
         let iterations = request.iterations()?;
         if !(MIN_PBKDF_ITERATIONS..=MAX_PBKDF_ITERATIONS).contains(&iterations) {
             return Err(cluster_status_err(&ctx, StatusCode::PAKEParameterError));
@@ -256,7 +256,7 @@ impl ClusterHandler for AdminCommHandler {
         let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
         let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
-        // Per Matter Core spec section 11.18.6.2 (and CHIP's
+        // Per Matter Core spec (and CHIP's
         // `AdministratorCommissioningLogic::RevokeCommissioning`), revoking
         // the commissioning window also:
         //
@@ -315,7 +315,7 @@ impl ClusterHandler for AdminCommHandler {
 
 /// Map errors returned by `Pase::open_*_comm_window` to
 /// `AdministratorCommissioning` cluster-specific status codes (Matter Core
-/// spec section 11.18.6). `Busy` is the only cluster status the open paths
+/// spec). `Busy` is the only cluster status the open paths
 /// surface today; other transport-level errors (e.g. invalid timeout) bubble
 /// up unchanged so the IM layer turns them into the generic `InvalidCommand`.
 fn map_open_window_err(ctx: &impl InvokeContext, err: Error) -> Error {

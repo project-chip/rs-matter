@@ -96,7 +96,7 @@ pub struct CommWindow {
     /// The window expiry instant
     window_expiry: Instant,
     /// Number of failed PAKE handshake attempts within this window.
-    /// Per Matter Core spec section 11.18.6.1.5, the window SHALL be
+    /// Per Matter Core spec, the window SHALL be
     /// revoked after 20 unsuccessful handshakes.
     pake_failures: u8,
 }
@@ -353,7 +353,7 @@ impl Pase {
     /// Record a failed PAKE handshake against the currently-open
     /// commissioning window, and revoke the window if the limit is reached.
     ///
-    /// Per Matter Core spec section 11.18.6.1.5, after 20 unsuccessful PAKE
+    /// Per Matter Core spec, after 20 unsuccessful PAKE
     /// attempts the device SHALL revoke the open commissioning window.
     ///
     /// Also clears the in-progress PASE establishment timeout so that the

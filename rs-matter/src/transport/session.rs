@@ -269,7 +269,7 @@ impl Session {
 
         // For unsecured sessions, also match by destination node ID (the echoed
         // ephemeral initiator node ID) to disambiguate multiple unsecured sessions
-        // for the same peer (spec 4.13.2.1).
+        // for the same peer (spec).
         let dest_nodeid_matches = self.is_encrypted()
             || self.local_nodeid == 0
             || rx_plain.get_dst_unicast_nodeid().is_none()
@@ -338,7 +338,7 @@ impl Session {
             }
 
             if self.expired {
-                // Per Matter Core spec section 4.7.1.3, an expired session must not
+                // Per Matter Core spec, an expired session must not
                 // accept new inbound messages. Skipping expired sessions here lets the
                 // caller surface a `SessionNotFound` to the peer rather than running
                 // the request through ACL checks against a removed fabric.
@@ -379,7 +379,7 @@ impl Session {
         tx_header.plain.sess_id = self.get_peer_sess_id();
         tx_header.plain.ctr = ctr.unwrap_or_else(|| self.get_msg_ctr());
         // For unsecured initiator sessions, set Source Node ID to our ephemeral
-        // initiator node ID (spec 4.13.2.1: "enclosed by initiator as Source Node ID").
+        // initiator node ID (spec: "enclosed by initiator as Source Node ID").
         // Encrypted sessions and responder unsecured sessions (local_nodeid=0) send no Source.
         tx_header.plain.set_src_nodeid(
             (!self.is_encrypted() && self.local_nodeid != 0).then_some(self.local_nodeid),
@@ -1200,13 +1200,13 @@ impl Sessions {
     /// fabric. Used by:
     ///
     /// * `RevokeCommissioning` and a fail-safe expiry over a PASE
-    ///   session (Matter Core spec section 11.18.6.2): when the
+    ///   session (Matter Core spec): when the
     ///   commissioning window is torn down, any in-flight PASE sessions
     ///   associated with it must be terminated. A PASE that was
     ///   promoted via `AddNOC` is rolled back by the same fail-safe
     ///   expiry, so its session must go too.
-    /// * `CommissioningComplete` (spec V1.3 section 5.5 / V1.4 section
-    ///   11.10.7.4): once the device transitions to operational state,
+    /// * `CommissioningComplete` (Matter Core spec): once the device
+    ///   transitions to operational state,
     ///   all PASE sessions SHALL be terminated. Without this each
     ///   commissioning round leaks the promoted PASE it ran on, and
     ///   the session table eventually exhausts — visible as `BUSY` on
@@ -1258,7 +1258,7 @@ impl fmt::Display for Sessions {
 
 /// Derive the Group Session ID from an operational group key.
 ///
-/// Per Matter Spec Section 4.17.3.6:
+/// Per Matter Spec:
 /// ```text
 /// GroupKeyHash = Crypto_KDF(
 ///     InputKey = OperationalGroupKey,

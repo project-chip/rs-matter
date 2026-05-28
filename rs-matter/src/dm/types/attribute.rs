@@ -222,7 +222,7 @@ impl<T, E> ArrayAttributeWrite<T, E> {
         match index.map(Nullable::into_option) {
             Some(Some(_index)) => {
                 // Index is present and non-null => this is an item update or removal
-                // Note that this is not supported by the Matter Core spec yet (section 10.6.4.3.1 "Lists" in V1.4.2), so we return an error instead
+                // Note that this is not supported by the Matter Core spec yet ("Lists" in V1.4.2), so we return an error instead
 
                 // if data.null().is_ok() {
                 //     // Data is null - item removal

@@ -28,7 +28,7 @@
 //!
 //! # Layout
 //!
-//! Per Matter Core spec §10.7.2 `ReadRequestMessage` is an
+//! Per Matter Core spec `ReadRequestMessage` is an
 //! anonymous-tagged struct with five fields:
 //!
 //! | Tag | Field             | Type             | Required |
@@ -336,7 +336,7 @@ where
     P: TLVBuilderParent,
 {
     /// Write the mandatory-on-the-wire `InteractionModelRevision`
-    /// field (Matter Core §8.1.1, p. 545: value is `13` since Matter
+    /// field (Matter Core: value is `13` since Matter
     /// 1.3, unchanged in 1.4 and 1.5). Optional at the API level —
     /// omit and `end()` injects [`IM_REVISION`] automatically. Set
     /// explicitly only when speaking a non-default revision is

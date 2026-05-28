@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-//! Identify cluster handler (Matter Application Cluster spec §1.2).
+//! Identify cluster handler (Matter Application Cluster spec).
 //!
 //! The Identify cluster lets a controller put an endpoint into an
 //! identification state — typically blinking an LED, beeping, or playing a
@@ -23,7 +23,7 @@
 //! just commissioned among several visually-identical ones. It is a
 //! mandatory cluster on most application device types (e.g. On/Off Light,
 //! Dimmable Light, Color Temperature Light), see Matter Device Library
-//! §4.1.4 for the On/Off Light requirements.
+//!  for the On/Off Light requirements.
 //!
 //! [`IdentifyHandler`] is generic over an [`IdentifyHooks`] hardware-hook
 //! trait. The library handler owns all the boring bookkeeping —
@@ -99,8 +99,7 @@ pub enum IdentifyAction {
 /// state via attribute subscriptions instead.
 pub trait IdentifyHooks {
     /// Return the kind of identification mechanism this endpoint provides.
-    /// Reported as the `IdentifyType` attribute (per App Cluster spec
-    /// §1.2.5.2).
+    /// Reported as the `IdentifyType` attribute (per App Cluster spec).
     fn identify_type(&self) -> IdentifyTypeEnum;
 
     /// Drive the application's identify hardware in response to a state
@@ -164,7 +163,7 @@ struct Session {
 /// `IdentifyTime` write) arrives, and computes the *remaining* seconds
 /// on-demand whenever the framework reads the attribute. This is
 /// observably equivalent to a physical countdown per Matter App Cluster
-/// spec §1.2.5.1 (which constrains the attribute's observable value, not
+/// spec (which constrains the attribute's observable value, not
 /// the implementation's internal storage), but it avoids 60 wakeups for
 /// a 60-second identify — the [run task](Handler::run) only schedules a
 /// single `Timer::at(deadline)` per identify cycle, fires the final-zero
@@ -321,7 +320,7 @@ where
         let time = request.identify_time()?;
         self.set_identify_time_internal(ctx.cmd().endpoint_id, time);
         // The Identify command mutates an attribute that lives on the
-        // *same* cluster as the command (App Cluster §1.2.6.1), so use the
+        // *same* cluster as the command (App Cluster), so use the
         // `OwnAttrChangeNotifier` shortcut to notify against
         // `(ctx.cmd().endpoint_id, ctx.cmd().cluster_id, IdentifyTime)`.
         ctx.notify_own_attr_changed(AttributeId::IdentifyTime as _);
@@ -389,7 +388,7 @@ where
                     // reads of `IdentifyTime` return 0, dispatch the
                     // application-visible `Cancel` action, and notify
                     // subscribers of the final-zero transition (Q-quality
-                    // reportable per App Cluster spec §1.2.5.1). The
+                    // reportable per App Cluster spec). The
                     // framework auto-bumps the cluster dataver through
                     // the `bump_dataver` chain as a side effect.
                     self.session.lock(|cell| cell.set(None));

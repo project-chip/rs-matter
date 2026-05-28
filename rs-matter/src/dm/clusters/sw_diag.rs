@@ -85,7 +85,7 @@ bitflags! {
     pub struct Options: u8 {
         /// Advertise the heap counters `CurrentHeapFree` and
         /// `CurrentHeapUsed`. Independently optional per Matter Core
-        /// spec §11.13.
+        /// spec.
         const HEAP = 0x1;
         /// Claim the Matter `WATERMARKS` feature — adds
         /// `CurrentHeapHighWatermark` + the `ResetWatermarks`

@@ -403,8 +403,8 @@ where
     ///
     /// Panics if `features` advertises `AUDIO` but
     /// `config.mic_capabilities` is `None`. The `MicrophoneCapabilities`
-    /// attribute is mandatory whenever `AUDIO` is enabled (Matter 1.5
-    /// §1.16) and must be supplied at construction.
+    /// attribute is mandatory whenever `AUDIO` is enabled (per Matter Spec)
+    /// and must be supplied at construction.
     pub const fn new(
         dataver: Dataver,
         endpoint_id: EndptId,

@@ -55,7 +55,7 @@
 //! [`Commissioner::commission`] (over PASE) and
 //! [`Commissioner::complete_via_case`] (over CASE) are split because
 //! the rs-matter device responder requires `CommissioningComplete` to
-//! arrive over a CASE session (Matter Core spec §11.10.6.6 — and
+//! arrive over a CASE session (Matter Core spec — and
 //! enforced by `Failsafe::disarm` which calls `get_case_fab_idx`).
 
 use core::num::NonZeroU8;
@@ -77,7 +77,7 @@ use crate::Matter;
 pub mod cac;
 pub mod noc;
 
-/// NOCSRElements ([Matter Core spec §11.18.6.5.2]) is a struct with:
+/// NOCSRElements ([Matter Core spec]) is a struct with:
 ///   ctx(0) = `csr` (PKCS#10 CertificationRequest, DER-encoded)
 ///   ctx(1) = `CSRNonce` (32 bytes — must echo what we sent)
 ///   ctx(2..4) = vendor-reserved (ignored here)

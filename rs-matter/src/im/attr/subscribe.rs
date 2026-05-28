@@ -110,7 +110,7 @@ impl defmt::Format for SubscribeReq<'_> {
 }
 
 /// Tags corresponding to the fields in the `SubscribeRequestMessage`
-/// TLV structure (Matter Core spec §10.7.8). Used by the streaming
+/// TLV structure (Matter Core spec). Used by the streaming
 /// subscribe-request builder and any low-level TLV serde callers.
 ///
 /// Note the gap at tag 6 — the spec leaves it reserved and the

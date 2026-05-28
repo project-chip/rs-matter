@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-//! FixedLabel cluster handler (Matter Application Cluster spec §9.8).
+//! FixedLabel cluster handler (Matter Application Cluster spec).
 //!
 //! Per-endpoint **read-only** list of `(label, value)` string pairs
 //! that the manufacturer bakes into the device firmware — typical use
@@ -23,8 +23,8 @@
 //! `"hwrev"` → `"B"`. Compare with [`super::user_label`], the
 //! writable counterpart used by commissioners.
 //!
-//! The list is **fixed** in the F-quality sense (Matter Core spec
-//! §7.13.2): it never changes for the lifetime of the device firmware,
+//! The list is **fixed** in the F-quality sense (Matter Core spec):
+//! it never changes for the lifetime of the device firmware,
 //! so we don't need a persistence layer, a mutex, or any per-entry
 //! storage. [`FixedLabelHandler`] just borrows a static slice of
 //! [`FixedLabelEntry`] from the application and iterates it on read.
@@ -63,7 +63,7 @@ pub const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
 
 /// One entry in a `LabelList`.
 ///
-/// Per Matter Application Cluster spec §9.6.4 (`LabelStruct`), each
+/// Per Matter Application Cluster spec (`LabelStruct`), each
 /// field is at most 16 characters. We don't enforce this here — the
 /// application is responsible for supplying spec-compliant data, and
 /// `TC_FLABEL_2_1` step 2 sanity-checks the lengths on the read path.
@@ -77,7 +77,7 @@ pub struct FixedLabelEntry<'a> {
 ///
 /// Per-endpoint instance: each endpoint that advertises FixedLabel
 /// must own its own handler so the per-cluster-instance `Dataver`
-/// stays granular (Matter Core spec §7.13.2.1). The entries slice is
+/// stays granular (Matter Core spec). The entries slice is
 /// borrowed — typically a `&'static [FixedLabelEntry<'static>]` —
 /// because the list is part of the device's firmware identity and
 /// doesn't change at runtime.

@@ -278,10 +278,10 @@ impl Transport {
                 .sessions
                 .add(rand.next_u32(), false, peer_addr, None)?;
 
-            // Generate ephemeral initiator node ID per spec 4.13.2.1:
+            // Generate ephemeral initiator node ID per spec:
             // "Randomly selected for each session by the initiator from the Operational Node ID range"
             // Operational Node ID range is 0x0000_0000_0000_0001 to 0xFFFF_FFEF_FFFF_FFFF
-            // (spec Table 4, Section 2.5.5).
+            // (Matter Core spec).
             const MAX_OPERATIONAL_NODE_ID: u64 = 0xFFFF_FFEF_FFFF_FFFF;
             let mut ephemeral_id = rand.next_u64();
             while ephemeral_id == 0 || ephemeral_id > MAX_OPERATIONAL_NODE_ID {
@@ -735,7 +735,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 );
             }
             Err(e) if matches!(e.code(), ErrorCode::NoSession) => {
-                // Per Matter Core spec section 4.7.1.3, when a session-bearing
+                // Per Matter Core spec, when a session-bearing
                 // message arrives for which we have no matching secure session
                 // (e.g. after a reboot has wiped the session table while the
                 // peer still believes the old session is alive), we reply with

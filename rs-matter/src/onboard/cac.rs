@@ -40,7 +40,7 @@
 //! factory / HSM path where each function might run on a different
 //! machine.
 //!
-//! All certs follow Matter Core spec §6.5 cert layout: subject DN
+//! All certs follow Matter Core spec cert layout: subject DN
 //! carries the fabric ID and the CA's own subject ID
 //! (`RootCaId` / `IcaId`); issuer DN carries the parent's subject ID
 //! (with `is_rcac` set when the parent is the RCAC itself).

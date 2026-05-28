@@ -26,7 +26,7 @@ use crate::utils::storage::WriteBuf;
 
 use super::*;
 
-// See section 5.1.2. QR Code in the Matter specification
+// See the spec. QR Code in the Matter specification
 const LONG_BITS: usize = 12;
 const VERSION_FIELD_LENGTH_IN_BITS: usize = 3;
 const VENDOR_IDFIELD_LENGTH_IN_BITS: usize = 16;
@@ -47,7 +47,7 @@ const TOTAL_PAYLOAD_DATA_SIZE_IN_BITS: usize = VERSION_FIELD_LENGTH_IN_BITS
 
 pub const TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES: usize = TOTAL_PAYLOAD_DATA_SIZE_IN_BITS / 8;
 
-// Spec 5.1.4.2 CHIP-Common Reserved Tags
+// Spec CHIP-Common Reserved Tags
 pub const SERIAL_NUMBER_TAG: u8 = 0x00;
 pub const PBKDFITERATIONS_TAG: u8 = 0x01;
 pub const BPKFSALT_TAG: u8 = 0x02;
