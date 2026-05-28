@@ -43,6 +43,28 @@ mod write_builder;
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(datatype = "list")]
 pub struct AttrPath {
+    /// `EnableTagCompression` per Matter Core spec §10.6.2. When set
+    /// to `true`, the spec defines a "tag compression scheme" whereby
+    /// omitted fields in this `AttrPath` should be inherited from the
+    /// previous `AttrPath` in the same list (rather than treated as
+    /// wildcards).
+    ///
+    /// **rs-matter parses this bit but does not act on it.**
+    /// Omitted fields are always treated as wildcards regardless of value.
+    ///
+    /// This matches the de-facto behaviour of every other Matter
+    /// implementation in the wild:
+    ///   - chip's `AttributePathIB::Parser::ParsePath` reads the bit
+    ///     and ignores its semantics, treating omitted = wildcard.
+    ///   - matter.js explicitly leaves it unimplemented with a TODO
+    ///     comment "or likely remove it".
+    ///   - per <https://github.com/project-chip/connectedhomeip/issues/29359>,
+    ///     neither chip-tool nor Google's controllers handle
+    ///     tag-compressed reports either, and the spec feature is
+    ///     widely expected to be removed rather than implemented.
+    ///
+    /// If/when that landscape changes, real inheritance semantics
+    /// would slot into `PathExpanderIterator` in `dm/types/node.rs`.
     pub tag_compression: Option<bool>,
     pub node: Option<NodeId>,
     pub endpoint: Option<EndptId>,
