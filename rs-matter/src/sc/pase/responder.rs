@@ -73,7 +73,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
     pub async fn handle(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
         let result = self.handle_inner(exchange).await;
 
-        // Per Matter Core spec section 11.18.6.1.5, every unsuccessful PAKE
+        // Per Matter Core spec, every unsuccessful PAKE
         // handshake within the open commissioning window must be counted; the
         // window SHALL be revoked after 20. We charge a failure for any path
         // that errored mid-handshake or returned `Ok(false)` from
@@ -247,7 +247,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         } else {
             // No commissioning window open: silently ignore so the
             // initiator times out (RFC 6762 §6.7-style "no response").
-            // Per Matter Core Spec §11.18 a PASE attempt outside the
+            // Per Matter Core Spec a PASE attempt outside the
             // commissioning window is not a wrong-passcode failure and
             // therefore must not count toward the 20-failure limit, so
             // we report `Ok(false)` (drop) rather than an error.

@@ -309,7 +309,7 @@ pub struct EventReader {
     /// Whether the originating Read/Subscribe request had `fabricFiltered=true`.
     /// When set, fabric-sensitive events (those whose payload carries a
     /// `FabricIndex` context-tag 254) are dropped if their fabric index does
-    /// not match the accessor's. See Matter Core spec section 8.5.2.
+    /// not match the accessor's. See Matter Core spec.
     fabric_filtered: bool,
 }
 
@@ -388,7 +388,7 @@ impl EventReader {
         }
     }
 
-    /// Per Matter Core spec section 8.5.2 (Fabric-Sensitive Reporting):
+    /// Per Matter Core spec (Fabric-Sensitive Reporting):
     /// When `fabricFiltered=true`, fabric-sensitive events (those whose payload
     /// carries a `FabricIndex` field at context tag 254) SHALL only be reported
     /// to the requesting fabric.

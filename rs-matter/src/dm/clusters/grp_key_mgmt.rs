@@ -426,7 +426,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
             let fabric = state.fabrics.fabric(fab_idx)?;
 
             // KeySet ID 0 is the IPK (Identity Protection Key); per Matter
-            // Core spec section 11.2.7.5 it is always present once the
+            // Core spec it is always present once the
             // fabric has been added (`AddNOC`) and is reported here with
             // its epoch keys redacted to null. The IPK isn't kept in the
             // generic `key_sets` list — it lives on the fabric directly.

@@ -326,8 +326,8 @@ pub struct Fabric {
     root_ca: Vec<u8, { MAX_CERT_TLV_LEN }>,
     /// Either the Intermediate CA certificate (`vvsc_set == false`) or the
     /// Vendor Verification Signing Cert (`vvsc_set == true`). The two are
-    /// mutually exclusive in the cert chain (Matter Core spec section
-    /// 6.5.7) — a fabric with an ICAC cannot also carry a VVSC and vice
+    /// mutually exclusive in the cert chain (Matter Core spec) —
+    /// a fabric with an ICAC cannot also carry a VVSC and vice
     /// versa — so we share one buffer instead of paying for both. Empty
     /// means neither is set; in that case `vvsc_set` is meaningless.
     icac_or_vvsc: Vec<u8, { MAX_CERT_TLV_LEN }>,
@@ -344,7 +344,7 @@ pub struct Fabric {
     acl: Vec<AclEntry, { acl::MAX_ACL_ENTRIES_PER_FABRIC }>,
     /// Fabric group information
     groups: Groups,
-    /// VID Verification Statement (Matter Core spec section 6.2.4 / 11.18.6.15).
+    /// VID Verification Statement (Matter Core spec).
     /// Either empty (not set) or exactly `VID_VERIFICATION_STATEMENT_LEN`
     /// bytes long; the cluster XML enforces both bounds at the schema
     /// level (`length="85" minLength="85"`).
@@ -391,7 +391,7 @@ impl Fabric {
     /// when the NOC of the fabric needs to be updated.
     ///
     /// `root_ca` is `None` when called from the `UpdateNOC` flow — Matter
-    /// Core spec section 11.18.6.7 keeps the fabric's root cert unchanged
+    /// Core spec keeps the fabric's root cert unchanged
     /// across `UpdateNOC`, and re-passing the existing bytes here would
     /// require a (large) caller-side copy of `self.root_ca`. `Some(...)`
     /// is used by the initial `AddNOC` flow, where the cert was just
@@ -503,7 +503,7 @@ impl Fabric {
 
     /// Compute the destination identifier for a target node on this fabric.
     ///
-    /// Used by the CASE initiator to build Sigma1 (spec 4.14.2.4).
+    /// Used by the CASE initiator to build Sigma1 (spec).
     /// destinationMessage = initiatorRandom || rootPublicKey || fabricId(LE) || nodeId(LE)
     /// destinationIdentifier = Crypto_HMAC(key=IPK, message=destinationMessage)
     ///
@@ -605,11 +605,11 @@ impl Fabric {
         &mut self.groups
     }
 
-    /// Return the fabric's VVSC bytes (Matter Core spec section 6.5.7).
+    /// Return the fabric's VVSC bytes (Matter Core spec).
     /// Empty when `SetVIDVerificationStatement` has never been called with
     /// a non-empty VVSC for this fabric, or when the fabric instead carries
     /// an ICAC (see `icac()`) — VVSC and ICAC share storage and are
-    /// mutually exclusive per spec section 6.5.7.
+    /// mutually exclusive per spec.
     pub fn vvsc(&self) -> &[u8] {
         if self.vvsc_set {
             &self.icac_or_vvsc
@@ -619,7 +619,7 @@ impl Fabric {
     }
 
     /// Return the fabric's VID Verification Statement bytes (Matter Core
-    /// spec section 6.2.4 / 11.18.6.15). Either empty (not set) or
+    /// spec). Either empty (not set) or
     /// exactly `VID_VERIFICATION_STATEMENT_LEN` bytes.
     pub fn vid_verification_statement(&self) -> &[u8] {
         &self.vid_verification_statement
@@ -651,7 +651,7 @@ impl Fabric {
 
         if let Some(v) = vvsc {
             // VVSC and ICAC share `icac_or_vvsc`. Clearing the VVSC must
-            // not stomp on an existing ICAC: per spec section 6.5.7 the
+            // not stomp on an existing ICAC: per spec the
             // two never coexist on the same fabric, so an empty-VVSC
             // request against a fabric that holds an ICAC is a no-op
             // here. The cluster handler still rejects a *non-empty* VVSC
@@ -1003,7 +1003,7 @@ impl Fabrics {
     /// Update an existing fabric with the provided data (usually, as a result of an `UpdateNOC` IM command).
     ///
     /// The fabric's existing root cert is preserved across this call —
-    /// `UpdateNOC` per Matter Core spec section 11.18.6.7 is not allowed
+    /// `UpdateNOC` per Matter Core spec is not allowed
     /// to change the root, and re-passing the bytes would force the
     /// caller to take a (large) heap-less copy of `Fabric::root_ca`.
     ///

@@ -27,7 +27,7 @@
 //! - DER-encoded ECDSA signature to raw (r || s) conversion
 //! - CD TLV payload decoding into [`CertificationElements`]
 //! - Signature verification using the [`Crypto`] trait
-//! - CD content validation against device identity (Matter Spec 6.3.1)
+//! - CD content validation against device identity (Matter Spec)
 //!
 //! Reference: connectedhomeip `src/credentials/CertificationDeclaration.cpp`
 
@@ -310,7 +310,7 @@ impl<'a> CmsSignedData<'a> {
     /// Parse a CMS SignedData message, extracting the signer key ID,
     /// encapsulated CD content, and ECDSA signature (converted from DER to raw).
     ///
-    /// Expects the profiled CMS structure used by Matter CDs (Matter Spec 6.3.1):
+    /// Expects the profiled CMS structure used by Matter CDs (Matter Spec):
     /// https://www.rfc-editor.org/rfc/rfc5652#section-5.2
     /// ```text
     /// ContentInfo ::= SEQUENCE {
@@ -365,7 +365,7 @@ impl<'a> CmsSignedData<'a> {
     }
 }
 
-/// Matter TLV context tags for CD elements (Matter Spec 6.3.1)
+/// Matter TLV context tags for CD elements (Matter Spec)
 const CD_TAG_FORMAT_VERSION: u8 = 0;
 const CD_TAG_VENDOR_ID: u8 = 1;
 const CD_TAG_PRODUCT_ID_ARRAY: u8 = 2;
@@ -388,7 +388,7 @@ pub const CERTIFICATE_ID_LEN: usize = 19;
 /// Maximum number of authorized PAA entries in a CD
 pub const MAX_AUTHORIZED_PAA_LIST: usize = 10;
 
-/// Certification type (Matter Spec 6.3.1.)
+/// Certification type (Matter Spec.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
@@ -413,7 +413,7 @@ impl CertificationType {
     }
 }
 
-/// Decoded Certification Declaration payload (Matter Spec 6.3.1.)
+/// Decoded Certification Declaration payload (Matter Spec.)
 #[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CertificationElements {
@@ -653,7 +653,7 @@ impl CertificationElements {
 
     /// Validate CD content against device identity.
     ///
-    /// Implements the CD validation rules (Matter Spec Section 6.3.1).
+    /// Implements the CD validation rules (Matter Spec).
     ///
     /// # Validation rules
     ///

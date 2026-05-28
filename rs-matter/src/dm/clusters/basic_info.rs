@@ -79,7 +79,7 @@ bitflags! {
         /// for use by a Device that does not have knowledge of the user's language preference.
         const CUSTOM_INSTRUCTION = 0x0000_0010;
         /// The Device Manual provides special instructions to put the Device
-        /// into Commissioning Mode (see Section 11.23.5.8, "UserManualUrl" in the Core Spec).
+        /// into Commissioning Mode (see "UserManualUrl" in the Core Spec).
         /// This is a catchall option to capture user interactions that are not codified by
         /// other options in this flags type.
         const DEVICE_MANUAL = 0x0000_0020;
@@ -209,7 +209,7 @@ pub struct BasicInfoConfig<'a> {
     /// Whether the device supports TCP transport.
     ///
     /// Not a real attribute; advertised via the `T` TXT record key in mDNS.
-    /// Per the Matter Core Spec Section 4.3.1.14, `T` is a bitmap: bit 2 (value 4)
+    /// Per the Matter Core Spec, `T` is a bitmap: bit 2 (value 4)
     /// indicates TCP server support. Required for large payloads such as WebRTC SDP
     /// exchanges and camera snapshots.
     pub tcp_supported: bool,
@@ -317,11 +317,11 @@ pub struct BasicInfoSettings {
     pub location_type: RegulatoryLocationTypeEnum,
     pub local_config_disabled: bool,
     /// `BasicInformation::ConfigurationVersion` (Matter Core Spec
-    /// §11.1.5.24). Non-volatile, monotonically increasing, minimum 1.
+    /// ). Non-volatile, monotonically increasing, minimum 1.
     /// Bumped by application code via
     /// `DataModel::bump_configuration_version` whenever the node's
     /// fixed-quality surface (Server/Parts list, device types, software
-    /// version, …) changes — see Matter Core Spec §7.7.2 and §9.2.11.
+    /// version, …) changes — see Matter Core Spec.
     pub configuration_version: u32,
 }
 
@@ -334,7 +334,7 @@ impl BasicInfoSettings {
             location_type: RegulatoryLocationTypeEnum::IndoorOutdoor,
             local_config_disabled: false,
             // Spec fallback for `ConfigurationVersion` is 1 (`min 1`,
-            // Core Spec §11.1.5).
+            // Core Spec).
             configuration_version: 1,
         }
     }

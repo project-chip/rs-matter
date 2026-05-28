@@ -43,7 +43,7 @@ mod write_builder;
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(datatype = "list")]
 pub struct AttrPath {
-    /// `EnableTagCompression` per Matter Core spec §10.6.2. When set
+    /// `EnableTagCompression` per Matter Core spec. When set
     /// to `true`, the spec defines a "tag compression scheme" whereby
     /// omitted fields in this `AttrPath` should be inherited from the
     /// previous `AttrPath` in the same list (rather than treated as
@@ -74,7 +74,7 @@ pub struct AttrPath {
 }
 
 /// Tags corresponding to the fields in the `AttributePathIB` TLV
-/// structure (Matter Core spec §10.6.2). `AttrPath` is encoded as a
+/// structure (Matter Core spec). `AttrPath` is encoded as a
 /// TLV *list* with positional context tags 0..5. Used by callers that
 /// need to perform low-level TLV serde on `AttrPath` data.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]

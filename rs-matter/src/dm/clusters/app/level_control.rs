@@ -57,7 +57,7 @@ pub enum OutOfBandMessage {
     Update(u8),
     /// Initiates a MoveToLevel command.
     /// This will change the state of the device if and when appropriate according to Matter logic.
-    /// See Matter Application Clusters specification section 1.6.7.1.
+    /// See Matter Application Clusters specification.
     MoveToLevel {
         with_on_off: bool,
         level: u8,
@@ -67,7 +67,7 @@ pub enum OutOfBandMessage {
     },
     /// Initiates a Move command.
     /// This will change the state of the device if and when appropriate according to Matter logic.
-    /// See Matter Application Clusters specification section 1.6.7.2.
+    /// See Matter Application Clusters specification.
     Move {
         with_on_off: bool,
         move_mode: MoveModeEnum,
@@ -77,7 +77,7 @@ pub enum OutOfBandMessage {
     },
     /// Initiates a Step command.
     /// This will change the state of the device if and when appropriate according to Matter logic.
-    /// See Matter Application Clusters specification section 1.6.7.3.
+    /// See Matter Application Clusters specification.
     Step {
         with_on_off: bool,
         step_mode: StepModeEnum,
@@ -335,7 +335,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         }
 
         if H::CLUSTER.feature_map & level_control::Feature::LIGHTING.bits() != 0 {
-            // From section 1.6.4.2
+            // From the spec
             // A value of 0x00 SHALL NOT be used.
             // A value of 0x01 SHALL indicate the minimum level that can be attained on a device.
             // A value of 0xFE SHALL indicate the maximum level that can be attained on a device.
@@ -481,7 +481,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     /// Checks if a command should proceed beyond the Options processing.
     /// Returns true if execution of the command should continue, false otherwise.
     //
-    // From section 1.6.6.9
+    // From the spec
     // Command execution SHALL NOT continue beyond the Options processing if all of these criteria are true:
     // - The command is one of the ‘without On/Off’ commands: Move, Move to Level, Step, or Stop.
     // - The On/Off cluster exists on the same endpoint as this cluster.
@@ -567,7 +567,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         self.task_signal.signal(Task::OnOffStateChange { on });
     }
 
-    // From section 1.6.4.1.1
+    // From the spec
     // ## On
     // Temporarily store CurrentLevel.
     // Set CurrentLevel to the minimum level allowed for the device.
@@ -672,11 +672,11 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
 
     /// Updates the OnOff attribute of the coupled OnOff cluster based on the current level and command type.
     //
-    // From section 1.6.4.1.2
+    // From the spec
     // When the level is reduced to its minimum the OnOff attribute is automatically turned to FALSE,
     // and when the level is increased above its minimum the OnOff attribute is automatically turned to TRUE.
     fn update_coupled_on_off(&self, current_level: u8, with_on_off: bool) -> Result<(), Error> {
-        // From section 1.6.4.1.2.
+        // From the spec.
         // There are two sets of commands provided in the Level Control cluster. These are identical, except
         // that the first set (MoveToLevel, Move and Step commands) SHALL NOT affect the OnOff attribute,
         // whereas the second set ('with On/Off' variants) SHALL.
@@ -943,7 +943,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         options_mask: OptionsBitmap,
         options_override: OptionsBitmap,
     ) -> Result<(), Error> {
-        // From Section 1.6.7.2.2
+        // From the spec
         //
         // If the Rate field is null, then the value of the
         // DefaultMoveRate attribute SHALL be used if that attribute is supported and its value is not null. If
@@ -1063,7 +1063,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         options_mask: OptionsBitmap,
         options_override: OptionsBitmap,
     ) -> Result<(), Error> {
-        // From section 1.6.7.3.4
+        // From the spec
         //
         // if the StepSize field has a value of zero, the command has no effect and
         // a response SHALL be returned with the status code set to INVALID_COMMAND.
@@ -1085,7 +1085,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             StepModeEnum::Down => current_level.saturating_sub(step_size).max(H::MIN_LEVEL),
         };
 
-        // From section 1.6.7.3.4. Effect on Receipt
+        // From the spec. Effect on Receipt
         // Increase/Decrease CurrentLevel by StepSize units, or until
         // it reaches the maximum/minimum level allowed for the
         // device if this reached in the process. In the latter

@@ -15,13 +15,13 @@
  *    limitations under the License.
  */
 
-//! Time Synchronization initiator-side client (Matter Core spec §11.17.13).
+//! Time Synchronization initiator-side client (Matter Core spec).
 //!
 //! Refreshes the device's
 //! [Last-Known-Good UTC Time](crate::Matter::last_known_utc_time) by
 //! opening a CASE-secured exchange to the configured
 //! [Trusted Time Source](crate::Matter::trusted_time_source) (set via
-//! the `SetTrustedTimeSource` command, Matter Core spec §11.17.9.7),
+//! the `SetTrustedTimeSource` command, Matter Core spec),
 //! reading its `UTCTime` attribute, and calling
 //! [`Matter::set_utc_time`] with the result.
 //!
@@ -49,7 +49,7 @@ use crate::Matter;
 
 /// Initiator-side TimeSync client. Periodically reads `UTCTime` from
 /// the configured trusted source and stores it as the device's new
-/// Last-Known-Good UTC Time (Matter Core spec §3.5.6.1 / §11.17.13).
+/// Last-Known-Good UTC Time (Matter Core spec).
 ///
 /// Holds a borrow of the [`Matter`] instance for its lifetime; the
 /// `run` / `refresh_once` methods take the KV-store handle and the
@@ -99,7 +99,7 @@ impl<'a> TimeSyncClient<'a> {
     ///   on the configured `endpoint`, and on a non-null result calls
     ///   [`Matter::set_utc_time`] with
     ///   `Granularity = SecondsGranularity` and
-    ///   `TimeSource = NodeTimeCluster` (per §11.17.13.2 — the source
+    ///   `TimeSource = NodeTimeCluster` (per spec — the source
     ///   that this device used to sync its time was another node's
     ///   TimeSync cluster).
     pub async fn refresh_once<S, N>(&self, kv: S, notify: &N) -> Result<(), Error>

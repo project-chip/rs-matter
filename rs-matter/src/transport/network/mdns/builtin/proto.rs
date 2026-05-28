@@ -107,7 +107,7 @@ impl Host<'_> {
     /// data itself, or in the data of one of its services.
     ///
     /// Per RFC 6762 §18.1 the message ID for unsolicited multicast responses
-    /// is set to zero; per §10.2 records that we are authoritative for carry
+    /// is set to zero; per spec records that we are authoritative for carry
     /// the cache-flush bit.
     pub fn broadcast<'a, S, T>(
         &self,

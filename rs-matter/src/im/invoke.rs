@@ -41,7 +41,7 @@ pub struct CmdPath {
 }
 
 /// Tags corresponding to the fields in the `CommandPathIB` TLV
-/// structure (Matter Core spec §10.6.7). `CmdPath` is encoded as a
+/// structure (Matter Core spec). `CmdPath` is encoded as a
 /// TLV *list* with positional context tags 0..2. Used by callers that
 /// need to perform low-level TLV serde on `CmdPath` data.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -343,7 +343,7 @@ impl<'a> InvokeResp<'a> {
     /// `FromTLV` over `'a` and plug in directly.
     ///
     /// Multi-response: single-command invokes per Matter Core spec
-    /// §8.2.5 carry concrete paths only, but batched invokes
+    ///  carry concrete paths only, but batched invokes
     /// (multiple `CommandDataIB`s in one `InvokeRequestMessage`) can
     /// produce multiple matching entries — the iterator yields one
     /// per match, in wire order.

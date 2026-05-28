@@ -151,7 +151,7 @@ impl<'a> CertGenerator<'a> {
         )?;
 
         // Convert TBS to ASN1 format for signing
-        // According to the Matter Spec 6.5.2. "Matter certificate", the signature is over the
+        // According to the Matter Spec. "Matter certificate", the signature is over the
         // "corresponding X.509 certificate, not a signature of the preceding Matter TLV data."
         let (tlv_buf, asn1_buf) = self.buf.split_at_mut(tbs_len);
         let tbs_cert_ref = CertRef::new(TLVElement::new(tlv_buf));

@@ -23,7 +23,7 @@
 //! traits, hiding the connection-oriented nature of TCP behind the connectionless `NetworkSend`/`NetworkReceive`
 //! abstractions used by the Matter transport layer.
 //!
-//! Per the Matter Core Specification (Section 4.7), TCP messages are framed with a 4-byte little-endian
+//! Per the Matter Core Specification, TCP messages are framed with a 4-byte little-endian
 //! message length prefix. This module handles the framing/de-framing transparently.
 //!
 //! # Connection Management
@@ -104,7 +104,7 @@ pub const DEFAULT_MAX_TCP_CONNECTIONS: usize = 8;
 
 /// Size of the TCP framing header (4-byte little-endian message length prefix).
 ///
-/// Per the Matter Core Specification (Section 4.7.2).
+/// Per the Matter Core Specification.
 const FRAME_HDR_LEN: usize = 4;
 
 /// Maximum size of the per-connection receive buffer.
@@ -126,7 +126,7 @@ const MAX_RX_BUF_SIZE: usize = MAX_RX_LARGE_PACKET_SIZE + FRAME_HDR_LEN;
 /// enabling full-duplex operation where sending and receiving happen concurrently on the same
 /// `TcpNetwork` instance.
 ///
-/// Per the Matter Core Specification (Section 4.7), TCP messages are framed with a 4-byte
+/// Per the Matter Core Specification, TCP messages are framed with a 4-byte
 /// little-endian message length prefix. This is handled transparently by this implementation.
 pub struct TcpNetwork<const N: usize = DEFAULT_MAX_TCP_CONNECTIONS> {
     /// The TCP listener for accepting incoming connections.

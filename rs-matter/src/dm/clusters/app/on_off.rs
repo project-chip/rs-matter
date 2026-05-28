@@ -336,7 +336,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
             );
         }
 
-        // LevelControl coupling logic defined in section 1.6.4.1.1
+        // LevelControl coupling logic defined in the spec
         if !level_control_initiated {
             if let Some(level_control_handler) = self.level_control_handler.lock(|h| h.get()) {
                 level_control_handler.coupled_on_off_cluster_on_off_state_change(true);
@@ -387,7 +387,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
 
         let on_time_updated = Self::update_attr_off(state);
 
-        // LevelControl coupling logic defined in section 1.6.4.1.1
+        // LevelControl coupling logic defined in the spec
         let level_control_handler = self.level_control_handler.lock(|h| h.get());
         if let Some(level_control_handler) = level_control_handler {
             if !level_control_initiated {
@@ -1146,7 +1146,7 @@ pub mod test {
     }
 
     impl OnOffHooks for TestOnOffDeviceLogic {
-        // The On/Off Light device type (Matter Device Library §4.1.5) requires
+        // The On/Off Light device type (Matter Device Library) requires
         // the `LT` (Lighting) feature on the OnOff cluster, which gates the
         // `GlobalSceneControl`/`OnTime`/`OffWaitTime`/`StartUpOnOff` attributes
         // and the `OffWithEffect`/`OnWithRecallGlobalScene`/`OnWithTimedOff`

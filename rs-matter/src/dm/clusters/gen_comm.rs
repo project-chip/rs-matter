@@ -171,7 +171,7 @@ impl<'a> GenCommHandler<'a> {
 
     /// Return whether the supplied `NewRegulatoryConfig` value is allowed
     /// given the device's `LocationCapability`. Mirrors the matrix in Matter
-    /// Core spec section 11.10.7.2.1.
+    /// Core spec.
     fn is_regulatory_config_supported(
         policy: &dyn CommPolicy,
         new_config: RegulatoryLocationTypeEnum,
@@ -286,7 +286,7 @@ impl ClusterHandler for GenCommHandler<'_> {
         );
 
         // `ArmFailSafe(0)` means "force-expire the fail-safe context" per
-        // Matter Core spec section 11.10.7.1: if the fail-safe is armed,
+        // Matter Core spec: if the fail-safe is armed,
         // the device SHALL roll back any uncommitted fabric / network state
         // and reset the breadcrumb. Route through `force_expiry` so that
         // in-flight `AddNOC` / `SetRegulatoryConfig` changes are reverted —
@@ -345,7 +345,7 @@ impl ClusterHandler for GenCommHandler<'_> {
             return Err(ErrorCode::ConstraintError.into());
         }
 
-        // Per Matter Core spec section 11.10.7.2.1, `NewRegulatoryConfig`
+        // Per Matter Core spec, `NewRegulatoryConfig`
         // SHALL be one of the values supported by the device's
         // `LocationCapability`:
         //
@@ -407,7 +407,7 @@ impl ClusterHandler for GenCommHandler<'_> {
         let status =
             CommissioningErrorEnum::map(Self::with_armed_failsafe(&ctx, |state, notify_mdns| {
                 let sess = ctx.exchange().id().session(&mut state.sessions);
-                // Spec V1.3 §5.5 / V1.4 §11.10.7.4: on
+                // Spec: on
                 // `CommissioningComplete` the PASE session SHALL be
                 // terminated. The current command is being delivered over
                 // that PASE, so mark it `expired` (response can still go

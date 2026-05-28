@@ -40,7 +40,7 @@ pub struct Endpoint<'a> {
     /// client clusters (e.g. `OnOffLightSwitch = 0x0103` lists
     /// `OnOff` as a mandatory client). No `Cluster<'a>` value is
     /// needed because a client cluster has no attribute/command
-    /// surface of its own — see Matter Core spec §9.5.4 for the
+    /// surface of its own — see Matter Core spec for the
     /// `Descriptor::ClientList` semantics.
     pub client_clusters: &'a [ClusterId],
 }

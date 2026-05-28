@@ -156,7 +156,7 @@ impl<const N: usize> Events<N> {
             // TODO: Support `EpochTimestamp` / `PosixTimestamp` variants too
             // for devices that have a real-time clock available, gated on a
             // future wall-clock hook. `SystemTimestamp` (ms since boot) is
-            // spec-compliant per Matter Core §10.7.3.5 and always available
+            // spec-compliant per Matter Core and always available
             // via the monotonic clock.
             let timestamp = EventDataTimestamp::SystemTimestamp(Instant::now().as_millis());
 

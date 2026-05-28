@@ -31,13 +31,13 @@ use crate::crypto::{CanonPkcPublicKeyRef, Crypto, CryptoSensitive, Digest, SHA1_
 use crate::error::{Error, ErrorCode};
 
 /// Matter certificate key identifier (SKID/AKID): 20-byte SHA-1 hash of the public key.
-/// Matter spec Section 6.1.2 mandates 20 octets, per RFC 5280 method (1).
+/// Matter spec mandates 20 octets, per RFC 5280 method (1).
 // TODO: This does not belong here
 pub type KeyId = [u8; 20];
 
 /// Compute the Subject Key Identifier (SHA-1 hash of public key, 20 bytes).
 ///
-/// Per RFC 5280 section 4.2.1.2 and the Matter spec 6.5.11.(4-5),
+/// Per RFC 5280 section 4.2.1.2 and the Matter spec,
 /// the key identifier is the 160-bit SHA-1 hash of the public key.
 // TODO: This does not belong here
 pub fn compute_key_id<C: Crypto>(

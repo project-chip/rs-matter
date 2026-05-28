@@ -282,7 +282,7 @@ pub trait WebRtcHooks {
     /// pushed when the media source becomes ready).
     ///
     /// `SolicitOfferResponse` itself does NOT carry an SDP — see Matter 1.5
-    /// §1.16 — so this hook never returns Offer bytes inline.
+    ///  — so this hook never returns Offer bytes inline.
     async fn on_solicit_offer(
         &self,
         session_id: u16,

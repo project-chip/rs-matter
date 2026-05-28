@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-//! UserLabel cluster handler (Matter Application Cluster spec §9.7).
+//! UserLabel cluster handler (Matter Application Cluster spec).
 //!
 //! The UserLabel cluster lets a commissioner persist a free-form list of
 //! `(label, value)` string pairs on an endpoint — typical use is the
@@ -25,13 +25,13 @@
 //! sees the same list (subject to the usual ACL rules — `LabelList` reads
 //! at view-privilege, writes at manage-privilege).
 //!
-//! Spec §9.7.5 requires the `LabelList` to persist across reboots.
+//! Spec requires the `LabelList` to persist across reboots.
 //! Persistence is implemented by [`UserLabels`], a registry that holds
 //! every endpoint's `LabelList` and serialises the lot under a single
 //! KV key ([`USER_LABELS_KEY`]) on every mutation. Each endpoint that
 //! advertises the UserLabel cluster gets its own [`UserLabelHandler`]
 //! facade (so the per-cluster-instance `Dataver` stays granular per
-//! Matter Core spec §7.13.2.1), and all facades share one `UserLabels`
+//! Matter Core spec), and all facades share one `UserLabels`
 //! by reference.
 //!
 //! Application wiring:
@@ -72,11 +72,11 @@ pub use crate::persist::USER_LABELS_KEY;
 pub const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
 
 /// Maximum length of a single `label` string, in characters.
-/// Per Matter Application Cluster spec §9.6.4 (`LabelStruct`): 16 chars.
+/// Per Matter Application Cluster spec (`LabelStruct`): 16 chars.
 pub const MAX_LABEL_LEN: usize = 16;
 
 /// Maximum length of a single `value` string, in characters.
-/// Per Matter Application Cluster spec §9.6.4 (`LabelStruct`): 16 chars.
+/// Per Matter Application Cluster spec (`LabelStruct`): 16 chars.
 pub const MAX_VALUE_LEN: usize = 16;
 
 /// One entry in a `LabelList`.
@@ -429,7 +429,7 @@ impl<const E: usize, const N: usize> ClusterHandler for UserLabelHandler<'_, E, 
             ArrayAttributeWrite::Add(entry) => {
                 self.labels.add_entry(&ctx, self.endpoint_id, &entry)
             }
-            // The Matter Core spec (V1.4.2 §10.6.4.3.1) does not yet
+            // The Matter Core spec does not yet
             // support per-element list update / remove writes — the
             // framework already converts these to `InvalidAction` before
             // the value reaches us, but match exhaustively to be safe.

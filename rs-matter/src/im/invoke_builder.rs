@@ -26,7 +26,7 @@
 //!
 //! # Layout
 //!
-//! Per Matter Core spec §10.7.9 `InvokeRequestMessage` is an
+//! Per Matter Core spec `InvokeRequestMessage` is an
 //! anonymous-tagged struct with three fields:
 //!
 //! | Tag | Field            | Type           | Required |
@@ -93,7 +93,7 @@ use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite, ToTLV};
 ///
 /// All three top-level fields (`SuppressResponse`, `TimedRequest`,
 /// `InvokeRequests`) are mandatory on the wire per Matter Core spec
-/// §8.8.5, and the builder always emits all three. The two booleans
+/// , and the builder always emits all three. The two booleans
 /// are *optional at the API level* though — skipping either setter
 /// causes the builder to write the field with its default value
 /// (`false`) before opening the next state. This matches the
@@ -245,7 +245,7 @@ where
     P: TLVBuilderParent,
 {
     /// Write the mandatory-on-the-wire `InteractionModelRevision`
-    /// field (Matter Core §8.1.1, p. 545: value is `13` since Matter
+    /// field (Matter Core: value is `13` since Matter
     /// 1.3, unchanged in 1.4 and 1.5). Optional at the API level —
     /// omit and `end()` injects [`IM_REVISION`] automatically.
     pub fn interaction_model_revision(mut self, value: u8) -> Result<InvReqBuilder<P, 4>, Error> {
@@ -433,7 +433,7 @@ where
     /// Write the concrete `(endpoint, cluster, command)` path.
     /// Wildcards aren't meaningful for invokes — every send targets a
     /// concrete `(endpoint, cluster, command)` triple. The path is
-    /// encoded as a *list* per spec §10.6.7 `CommandPathIB`.
+    /// encoded as a *list* per spec `CommandPathIB`.
     pub fn path(
         mut self,
         endpoint: EndptId,
@@ -470,7 +470,7 @@ where
 {
     /// Write the command request body into the `Data` slot.
     ///
-    /// Per Matter Core spec §10.6.8 `CommandDataIB.Data` is the
+    /// Per Matter Core spec `CommandDataIB.Data` is the
     /// command's request payload — any TLV element tagged
     /// `TLVTag::Context(1)` (= `CmdDataTag::Data`). For commands
     /// with no request fields (e.g. `OnOff::On`, `OnOff::Toggle`)
@@ -539,7 +539,7 @@ where
 {
     /// Write the optional `CommandRef` field. **Mandatory** when the
     /// `InvokeRequests` array carries more than one entry (per spec
-    /// §8.8.5 — the server echoes this back so the client can
+    ///  — the server echoes this back so the client can
     /// correlate responses to requests). For single-command invokes,
     /// omit (go straight to `.end()`).
     pub fn command_ref(mut self, value: u16) -> Result<CmdDataBuilder<P, 3>, Error> {

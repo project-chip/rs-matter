@@ -31,7 +31,7 @@
 //!
 //! # Layout
 //!
-//! Per Matter Core spec §10.7.5 `WriteRequestMessage` is an
+//! Per Matter Core spec `WriteRequestMessage` is an
 //! anonymous-tagged struct with four fields:
 //!
 //! | Tag | Field             | Type                |
@@ -291,7 +291,7 @@ where
     P: TLVBuilderParent,
 {
     /// Write the mandatory-on-the-wire `InteractionModelRevision`
-    /// field (Matter Core §8.1.1, p. 545: value is `13` since Matter
+    /// field (Matter Core: value is `13` since Matter
     /// 1.3, unchanged in 1.4 and 1.5). Optional at the API level —
     /// omit and `end()` injects [`IM_REVISION`] automatically.
     pub fn interaction_model_revision(mut self, value: u8) -> Result<WriteReqBuilder<P, 5>, Error> {
@@ -534,7 +534,7 @@ where
     /// Write the concrete `(endpoint, cluster, attribute)` path. This
     /// is the typical shape for attribute writes; wildcards aren't
     /// generally meaningful for writes and aren't exposed here. The
-    /// path is encoded as a *list* (per spec §10.6.2 `AttributePathIB`).
+    /// path is encoded as a *list* (per spec `AttributePathIB`).
     pub fn path(
         mut self,
         endpoint: EndptId,
@@ -574,7 +574,7 @@ where
 {
     /// Write the attribute value into the `Data` slot.
     ///
-    /// Per Matter Core spec §10.6.2 `AttributeDataIB.Data` is "any
+    /// Per Matter Core spec `AttributeDataIB.Data` is "any
     /// TLV value." The closure receives the parent's `TLVWrite` and
     /// **must** emit exactly one TLV element tagged
     /// `TLVTag::Context(2)` (i.e. `AttrDataTag::Data`). The IM-level

@@ -375,7 +375,7 @@ fn get_iv(
 ) -> Result<(), Error> {
     // The IV is the source address (64-bit) followed by the message counter (32-bit)
     let mut write_buf = WriteBuf::new(iv.access_mut());
-    // First byte is the Security Flags from the plain header (Matter spec Section 4.7.2)
+    // First byte is the Security Flags from the plain header (Matter spec)
     write_buf.le_u8(sec_flags)?;
     write_buf.le_u32(recvd_ctr)?;
     write_buf.le_u64(peer_nodeid)?;

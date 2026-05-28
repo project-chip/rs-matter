@@ -834,7 +834,7 @@ impl Subscription {
     /// wakes immediately to deliver the priming report.
     ///
     /// Never earlier than the min-interval gate `reported_at + min_int`, before
-    /// which a report SHALL NOT be sent (Matter 1.5.1 §8.5). Subject to that
+    /// which a report SHALL NOT be sent (Matter spec). Subject to that
     /// gate, it is:
     /// - `reported_at + min_int` when a change or event is already pending, so
     ///   the wake lands at the end of the quiet period; otherwise
@@ -1107,7 +1107,7 @@ const WILDCARD_ENDPOINT: EndptId = EndptId::MAX;
 /// Sentinel value for "any cluster" inside a [`ChangedAttr`] entry.
 ///
 /// Matter cluster ids are Manufacturer Extensible Identifiers (MEIs, Core Spec
-/// §7.18.2): `(vendor_prefix << 16) | suffix` with `0xFFFF` reserved as an
+/// ): `(vendor_prefix << 16) | suffix` with `0xFFFF` reserved as an
 /// invalid vendor prefix. `0xFFFF_FFFF` therefore cannot be a legitimate
 /// cluster id and is safe to use as an internal "wildcard" marker. The CHIP
 /// reference SDK uses the same value as `kInvalidClusterId`.

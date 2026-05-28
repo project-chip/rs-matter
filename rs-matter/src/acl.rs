@@ -462,7 +462,7 @@ pub struct AccessDesc<'a> {
     // TODO: Currently this is Access, but we need a way to represent the 'invoke' somehow too
     operation: Access,
     /// The device types of the endpoint hosting `path`. Used by ACL `Target`
-    /// entries that filter by `DeviceType` (Matter Core spec section 9.10.5.4).
+    /// entries that filter by `DeviceType` (Matter Core spec).
     /// Empty when the access target's endpoint is unknown / not yet expanded.
     device_types: &'a [DeviceType],
 }
@@ -669,7 +669,7 @@ impl AclEntry {
                         }
 
                         if matches!(auth_mode, AccessControlEntryAuthModeEnum::Group) {
-                            // Per Matter Core spec section 9.10.5.1: for Group auth mode, the
+                            // Per Matter Core spec: for Group auth mode, the
                             // subject SHALL be a valid 16-bit Group ID. Group ID 0 is reserved
                             // and MUST NOT be used; values larger than `u16::MAX` are also invalid.
                             if subject == 0 || subject > u16::MAX as u64 {
@@ -698,7 +698,7 @@ impl AclEntry {
 
                         let target = target?;
 
-                        // Matter Core spec section 9.10.5.4 (AccessControlTargetStruct):
+                        // Matter Core spec (AccessControlTargetStruct):
                         // - At least one of cluster, endpoint or deviceType SHALL be present.
                         // - If endpoint is present, deviceType SHALL NOT be present (and vice
                         //   versa). cluster may be combined with either endpoint or deviceType.
@@ -873,7 +873,7 @@ impl AclEntry {
                     let cluster_match = t.cluster.is_none() || t.cluster == object.path.cluster;
                     // When `Target.device_type` is set, the access target's endpoint
                     // must declare a matching device type in its `DeviceTypeList`
-                    // (Matter Core spec section 9.10.5.4).
+                    // (Matter Core spec).
                     let device_type_match = match t.device_type {
                         Some(dt) => object
                             .device_types

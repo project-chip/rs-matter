@@ -60,8 +60,7 @@ pub const PROTO_ID_INTERACTION_MODEL: u16 = 0x01;
 /// (= `0xFF`).
 ///
 /// `13` has been the spec-mandated value since Matter 1.3; see the
-/// Matter 1.5 Core Specification, §8.1.1 ("Revision History"), p. 545
-/// (doc 23-27349-009_Matter-1.5-Core-Specification.pdf).
+/// "Revision History" of the Matter Core Specification.
 pub const IM_REVISION: u8 = 13;
 
 /// An enumeration of all possible error codes that can be returned by the Interaction Model.

@@ -25,7 +25,7 @@
 //! timestamp, …) reads / writes the Last-Known-Good UTC Time on the
 //! [`crate::Matter`] object via [`crate::Matter::last_known_utc_time`]
 //! / [`crate::Matter::utc_time`] / [`crate::Matter::set_utc_time`].
-//! That value is persisted (per Matter Core spec §3.5.6.1), seeded
+//! That value is persisted (per Matter Core spec), seeded
 //! from [`FIRMWARE_BUILD_MATTER_US`] on a freshly-flashed device, and
 //! is the single source of truth — application code that has access
 //! to a real-time clock or NTP samples should feed those into

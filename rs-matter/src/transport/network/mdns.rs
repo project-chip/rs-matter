@@ -550,7 +550,7 @@ impl MatterService {
                 let (name, mut wb) =
                     write_split!(wb, "{:016X}-{:016X}", compressed_fabric_id, node_id)?;
 
-                // Operational fabric subtype per Matter Core Spec §4.3.2:
+                // Operational fabric subtype per Matter Core Spec:
                 // `_I<compressed_fabric_id>._sub._matter._tcp.local.` lets a
                 // controller browse for nodes of a given fabric without
                 // already knowing each node's id.
@@ -566,7 +566,7 @@ impl MatterService {
                     ("", wb)
                 };
 
-                // Per Matter Core Spec Section 4.3.1.14, T is a bitmap:
+                // Per Matter Core Spec, T is a bitmap:
                 // bit 1 (value 2) = TCP client, bit 2 (value 4) = TCP server
                 let txt_kvs = [
                     ("SAI", txt_sai),

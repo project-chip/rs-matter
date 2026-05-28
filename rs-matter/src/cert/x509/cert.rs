@@ -208,7 +208,7 @@ impl<'a> ParsedExtensionFields<'a> {
                 // the certificate if it encounters a critical extension it does not recognize
                 // or a critical extension that contains information that it cannot process.
                 //
-                // Matter spec section 6.2.2 allows other non-critical extensions from RFC 5280 that don't
+                // Matter spec allows other non-critical extensions from RFC 5280 that don't
                 // violate size limitations, but all unrecognized critical extensions must be rejected.
                 if critical {
                     return Err(der::ErrorKind::Failed.into());
@@ -228,7 +228,7 @@ impl<'a> ParsedExtensionFields<'a> {
 
 /// Trait for certificate types (DAC, PAI, PAA).
 ///
-/// Each certificate type has different requirements (Matter Spec 6.2).
+/// Each certificate type has different requirements (Matter Spec).
 /// Implementations must:
 /// - Parse extensions from DER-encoded data
 /// - Validate requirements during parsing (fail if invalid)
@@ -257,7 +257,7 @@ pub trait CertType<'a>: DecodeValue<'a> + der::FixedTag + der::EncodeValue {
 
 /// DAC (Device Attestation Certificate) Extensions
 ///
-/// A DAC SHALL have (Matter Spec 6.2.2.3):
+/// A DAC SHALL have (Matter Spec):
 /// - Basic Constraints: critical=TRUE, cA=FALSE
 /// - Key Usage: critical=TRUE, only digitalSignature bit set
 /// - Authority Key Identifier: present
@@ -350,7 +350,7 @@ impl<'a> CertType<'a> for DacExtensions<'a> {
         _issuer_raw: &[u8],
         _subject_raw: &[u8],
     ) -> der::Result<()> {
-        // DAC requirements (Matter Spec 6.2.2.3):
+        // DAC requirements (Matter Spec):
         // Issuer:
         // - SHALL have exactly one VendorID value present
         // - SHALL have exactly zero or one ProductID value present
@@ -383,7 +383,7 @@ impl<'a> CertType<'a> for DacExtensions<'a> {
 
 /// PAI (Product Attestation Intermediate) Certificate Extensions
 ///
-/// A PAI SHALL have (Matter Spec 6.2.2.4):
+/// A PAI SHALL have (Matter Spec):
 /// - Basic Constraints: critical=TRUE, cA=TRUE, pathLen=0
 /// - Key Usage: critical=TRUE, keyCertSign and cRLSign bits set, digitalSignature MAY be set
 /// - Authority Key Identifier: present
@@ -477,7 +477,7 @@ impl<'a> CertType<'a> for PaiExtensions<'a> {
         _issuer_raw: &[u8],
         _subject_raw: &[u8],
     ) -> der::Result<()> {
-        // PAI requirements (Matter Spec 6.2.2.4):
+        // PAI requirements (Matter Spec):
         // Issuer:
         // - SHALL have exactly zero or one VendorID value present
         // (VendorID is optional in issuer)
@@ -501,7 +501,7 @@ impl<'a> CertType<'a> for PaiExtensions<'a> {
 
 /// PAA (Product Attestation Authority) Certificate Extensions
 ///
-/// A PAA SHALL have (Matter Spec 6.2.2.4):
+/// A PAA SHALL have (Matter Spec):
 /// - Basic Constraints: critical=TRUE, cA=TRUE, pathLen MAY be present and if so must be 1
 /// - Key Usage: critical=TRUE, keyCertSign and cRLSign bits set, digitalSignature MAY be set
 /// - Subject Key Identifier: present
@@ -600,7 +600,7 @@ impl<'a> CertType<'a> for PaaExtensions<'a> {
         issuer_raw: &[u8],
         subject_raw: &[u8],
     ) -> der::Result<()> {
-        // PAA requirements (Matter Spec 6.2.2.5):
+        // PAA requirements (Matter Spec):
         // Issuer:
         // - SHALL have exactly zero or one VendorID value present
         // Subject:

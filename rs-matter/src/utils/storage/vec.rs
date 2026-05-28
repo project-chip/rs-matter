@@ -43,7 +43,6 @@ use crate::utils::init::{init_from_closure, Init, InitDefault};
 /// ```
 /// use heapless::Vec;
 ///
-///
 /// // A vector with a fixed capacity of 8 elements allocated on the stack
 /// let mut vec = Vec::<_, 8>::new();
 /// vec.push(1);

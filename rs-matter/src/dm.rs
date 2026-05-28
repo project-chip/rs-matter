@@ -171,7 +171,7 @@ where
     /// `BasicInformation` cluster's dataver via this `DataModel`'s
     /// [`AttrChangeNotifier`]).
     ///
-    /// Per Matter Core Spec §7.7.2 / §9.2.11, callers MUST invoke this
+    /// Per Matter Core Spec, callers MUST invoke this
     /// whenever the node's exposed fixed-quality surface changes —
     /// typically after a firmware update that adds or removes
     /// functionality, after an internal reconfiguration that changes
@@ -330,7 +330,7 @@ where
 
         // Honor the `fabricFiltered` flag on the originating Read request.
         // When set, fabric-sensitive events emitted on other fabrics are
-        // dropped before they reach the wire (Matter Core spec section 8.5.2).
+        // dropped before they reach the wire (Matter Core spec).
         let fabric_filtered = req.fabric_filtered().unwrap_or(true);
 
         let mut resp = ReportDataResponder::new(
@@ -360,7 +360,7 @@ where
 
     /// Per-spec validation of an `AttrPath` that may contain wildcards.
     ///
-    /// Per Matter spec section 8.9.2.3, when a path uses a wildcard cluster
+    /// Per Matter spec, when a path uses a wildcard cluster
     /// but specifies a concrete attribute id, that attribute id must be a
     /// global (system) attribute. Any other combination must be rejected with
     /// `INVALID_ACTION`.
@@ -456,7 +456,7 @@ where
                 return Self::send_status(exchange, IMStatusCode::InvalidAction).await;
             }
 
-            // Per Matter Core spec section 8.9.4: when an `InvokeRequestMessage`
+            // Per Matter Core spec: when an `InvokeRequestMessage`
             // carries multiple `CommandDataIB` entries, each MUST include a unique
             // `CommandRef` and the request paths SHALL be unique. `count` is bounded
             // by `max_paths_per_invoke` (typically a single-digit number), so the
@@ -659,7 +659,7 @@ where
 
                             // The session the subscription was accepted on was
                             // torn down (eviction, explicit close, peer-side
-                            // CASE re-handshake, ...). Per Matter spec §8.5.1
+                            // CASE re-handshake, ...). Per Matter spec
                             // subscriptions are scoped to the session they
                             // were established on, and the publisher can no
                             // longer route reports to the subscriber. Drop
@@ -825,7 +825,7 @@ where
 
         // Honor the `fabricFiltered` flag on the originating Subscribe request.
         // When set, fabric-sensitive events emitted on other fabrics are
-        // dropped before they reach the wire (Matter Core spec section 8.5.2).
+        // dropped before they reach the wire (Matter Core spec).
         let fabric_filtered = req.fabric_filtered().unwrap_or(true);
 
         let mut resp = ReportDataResponder::new(

@@ -42,7 +42,7 @@ use super::{AttrDetails, ClusterId, CmdDetails, EndptId};
 ///    lists must not change. Whole endpoints may still be added or
 ///    removed at runtime. Mutating a cluster's attribute or server
 ///    list is a change to F-quality metadata (Matter Core spec
-///    §7.13.2.2 `AttributeList`, §7.13.2.4 `ServerList`) and must be
+///    `AttributeList` / `ServerList`) and must be
 ///    accompanied by a `ConfigurationVersion` bump, which in practice
 ///    means a restart of the `rs-matter` service and likely - of the
 ///    whole process anyway.
@@ -603,7 +603,7 @@ struct PathExpander<'a, T, I, F> {
     ///
     /// This is the mechanism that resolves the "DeleteAll + Add×N on the
     /// ACL cluster within one WriteRequest" tension (Matter Core spec
-    /// §10.6.4): chip-tool serializes a list-replace as `DeleteAll`
+    /// ): chip-tool serializes a list-replace as `DeleteAll`
     /// followed by N per-element `Add`s, all targeting the **same**
     /// concrete attribute path. The first op authorizes against the
     /// fabric's current ACL; subsequent same-path ops cache-hit and

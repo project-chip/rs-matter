@@ -293,7 +293,7 @@ impl ClusterHandler for GenDiagHandler<'_> {
         // to `GenDiag::uptime_ms`.
         let system_time_ms = self.diag.uptime_ms()?;
 
-        // `PosixTimeMs` (Matter Core spec §11.12.7.3): SHALL be null only
+        // `PosixTimeMs` (Matter Core spec): SHALL be null only
         // when the device doesn't support the TimeSynchronization cluster
         // (we do) or when its `UTCTime` attribute is null. We read the
         // Matter-wide current UTC time directly from `Matter::utc_time`

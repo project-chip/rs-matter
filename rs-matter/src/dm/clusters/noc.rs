@@ -57,7 +57,7 @@ impl NodeOperationalCertStatusEnum {
                 ErrorCode::NocMissingCsr => Ok(Self::MissingCsr),
                 // Bare `ConstraintError` from `FailSafe::check_state`
                 // (e.g. "AddNOC received twice in the same fail-safe
-                // context", spec section 11.18.6.6) is reported as an
+                // context", spec) is reported as an
                 // IM-level status code per the spec, not as a
                 // `NodeOperationalCertStatusEnum` cluster status — let it
                 // propagate.
@@ -145,7 +145,7 @@ impl ClusterHandler for NocHandler {
             // the inner-loop checks that used to gate every entry on
             // `attr.fab_idx == fabric.fab_idx().get()` were therefore
             // hiding non-accessing fabrics from a deliberately
-            // non-fabric-filtered read. Per Matter Core spec §11.18.5.1
+            // non-fabric-filtered read. Per Matter Core spec
             // (NOCStruct, post-1.4.2) `noc` / `icac` are no longer
             // fabric-sensitive, so a non-fabric-filtered read MUST return
             // every fabric's NOC.
@@ -293,7 +293,7 @@ impl ClusterHandler for NocHandler {
     ) -> Result<P, Error> {
         info!("Got Attestation Request");
 
-        // Per Matter Core spec §11.18.6.3, the `AttestationNonce` field MUST
+        // Per Matter Core spec, the `AttestationNonce` field MUST
         // be exactly 32 octets. Anything else is rejected with
         // `INVALID_COMMAND`. TC_DA_1_2 steps 13/14 cover the >32 / <32 cases.
         const ATTESTATION_NONCE_LEN: usize = 32;
@@ -315,9 +315,9 @@ impl ClusterHandler for NocHandler {
             // writer.start_struct(&CmdDataWriter::TAG)?;
 
             // Attestation timestamp (`AttestationElements.timestamp`,
-            // Matter Core spec §11.18.5.5) — Matter-epoch seconds.
+            // Matter Core spec) — Matter-epoch seconds.
             // Sourced from the device's Last-Known-Good UTC Time
-            // (§3.5.6.1); on a freshly-flashed device with no
+            // ; on a freshly-flashed device with no
             // `SetUTCTime` yet, this is the firmware build timestamp.
             // Read directly from the already-held `state` — re-entering
             // `Matter::with_state` here would deadlock the inner mutex.
@@ -397,7 +397,7 @@ impl ClusterHandler for NocHandler {
     ) -> Result<P, Error> {
         info!("Got CSR Request");
 
-        // Per Matter Core spec §11.18.6.5, the `CSRNonce` field MUST be
+        // Per Matter Core spec, the `CSRNonce` field MUST be
         // exactly 32 octets — anything else is rejected with
         // `INVALID_COMMAND`. TC_DA_1_5 steps 11/12 cover the <32 / >32 cases.
         const CSR_NONCE_LEN: usize = 32;
@@ -411,7 +411,7 @@ impl ClusterHandler for NocHandler {
         GenCommHandler::with_armed_failsafe(&ctx, |state, _| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
 
-            // Per Matter Core spec section 11.18.6.5 (`CSRRequest`),
+            // Per Matter Core spec (`CSRRequest`),
             // `isForUpdateNOC=true` is only valid over CASE — UpdateNOC
             // can never run over PASE. A CSRRequest of that flavour over
             // PASE is rejected with IM `INVALID_COMMAND` rather than
@@ -493,7 +493,7 @@ impl ClusterHandler for NocHandler {
         let mut added_fab_idx = None;
         // Captured inside the closure so we can emit `AccessControlEntryChanged`
         // for the auto-created admin ACL entry *after* the failsafe-armed
-        // closure unwinds successfully (Matter Core spec section 9.10.7).
+        // closure unwinds successfully (Matter Core spec).
         let mut admin_acl_entry: Option<AclEntry> = None;
 
         let buf = response.writer().available_space();
@@ -552,7 +552,7 @@ impl ClusterHandler for NocHandler {
 
         // Emit the `AccessControlEntryChanged` event for the auto-created admin
         // entry. AddNOC happens over PASE during commissioning, so per Matter
-        // Core spec 9.10.7 the event has `adminNodeID = null` and
+        // Core spec the event has `adminNodeID = null` and
         // `adminPasscodeID = 0`.
         if let (Some(fab_idx), Some(entry)) = (added_fab_idx, &admin_acl_entry) {
             emit_acl_entry_changed(
@@ -708,7 +708,7 @@ impl ClusterHandler for NocHandler {
 
                 persist.remove(fab_idx)?;
 
-                // Matter Core spec §11.17.8.7: if the removed fabric is the
+                // Matter Core spec: if the removed fabric is the
                 // one that installed the TrustedTimeSource, the device SHALL
                 // clear the attribute (and emit `MissingTrustedTimeSource`).
                 if state.rtc.trusted_time_source().map(|tts| tts.fab_idx) == Some(fab_idx) {
@@ -725,7 +725,7 @@ impl ClusterHandler for NocHandler {
                 // If the removed fabric was the one that opened the current
                 // commissioning window, `AdminFabricIndex` (and `AdminVendorId`)
                 // transition to null and subscribers must be notified — see
-                // Matter Core spec section 11.18.7.
+                // Matter Core spec.
                 let opener_fabric_removed = state
                     .pase
                     .comm_window()
@@ -796,14 +796,14 @@ impl ClusterHandler for NocHandler {
         let vvs = request.vid_verification_statement()?;
         let vvsc = request.vvsc()?;
 
-        // Spec section 11.18.6.15 (`SetVIDVerificationStatement`): at
+        // Spec (`SetVIDVerificationStatement`): at
         // least one field must be present, otherwise the command SHALL
         // be rejected with `INVALID_COMMAND`.
         if vendor_id.is_none() && vvs.is_none() && vvsc.is_none() {
             return Err(ErrorCode::InvalidCommand.into());
         }
 
-        // Per Matter Core spec section 6.2.1, valid VendorIDs are
+        // Per Matter Core spec, valid VendorIDs are
         // 0x0001..=0xFFF4. 0xFFF5..=0xFFFF are reserved or test/CSA
         // values not allowed for SetVIDVerificationStatement.
         if let Some(vid) = vendor_id {
@@ -839,7 +839,7 @@ impl ClusterHandler for NocHandler {
             let fabric = state.fabrics.fabric_mut(fab_idx)?;
 
             // A VVSC may only be present on a fabric whose chain has no
-            // ICAC (Matter Core spec section 6.5.7): the VVSC takes the
+            // ICAC (Matter Core spec): the VVSC takes the
             // ICAC's slot in the cert chain, the two are mutually
             // exclusive. Reject any non-empty VVSC against a fabric
             // that already carries an ICAC.
@@ -855,7 +855,7 @@ impl ClusterHandler for NocHandler {
                 vvsc.as_ref().map(|v| v.0),
             )?;
 
-            // Persist semantics (Matter Core spec section 11.18.6.15):
+            // Persist semantics (Matter Core spec):
             //   * If `AddNOC` / `UpdateNOC` was already received in this
             //     fail-safe context, the VID-verification state is part
             //     of the pending fabric mutation. Don't persist yet —
@@ -891,7 +891,7 @@ impl ClusterHandler for NocHandler {
     ) -> Result<P, Error> {
         info!("Got Sign VID Verification Request");
 
-        // Spec section 11.18.6.16: `FabricIndex` must be in [1..254];
+        // Spec: `FabricIndex` must be in [1..254];
         // 0 / 255 are constraint errors.
         let fab_idx_raw = request.fabric_index()?;
         let fab_idx = NonZeroU8::new(fab_idx_raw)
@@ -918,7 +918,7 @@ impl ClusterHandler for NocHandler {
                 .ok_or(ErrorCode::ConstraintError)?;
 
             // Build VendorFabricBindingMessage (Matter Core spec
-            // section 6.5.6.2):
+            // the spec):
             //   1B fabric_binding_version || 65B root_pub_key
             //   || 8B fabric_id BE || 2B vendor_id BE
             let root_ref = CertRef::new(TLVElement::new(fabric.root_ca()));
@@ -985,7 +985,7 @@ impl ClusterHandler for NocHandler {
     }
 }
 
-/// Matter Core spec section 6.5.6.2: `FabricBindingVersion` constant
+/// Matter Core spec: `FabricBindingVersion` constant
 /// for V1 of the `VendorFabricBindingMessage` and `VIDVerificationTBS`.
 const FABRIC_BINDING_VERSION_1: u8 = 1;
 

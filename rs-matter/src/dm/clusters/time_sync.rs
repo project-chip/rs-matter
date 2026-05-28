@@ -123,7 +123,7 @@ impl UtcTime {
 }
 
 /// Last-Known-Good UTC Time tracking for the device (Matter Core spec
-/// §3.5.6.1).
+/// ).
 ///
 /// The persisted `utc_us` field is the spec-mandated stored
 /// fallback used by cert path validation when no live time
@@ -136,7 +136,7 @@ impl UtcTime {
 /// recent [`Matter::set_utc_time`] call. After reboot, `anchor` is
 /// `None` (no live current-time tracking is active), so the TimeSync
 /// cluster reports `UTCTime = Null`, `Granularity = NoTimeGranularity`
-/// and `TimeSource = None` (per §11.17.8.2 / §11.17.8.3) — while
+/// and `TimeSource = None` (per spec / ) — while
 /// `utc_us` still carries the persisted LKG value for cert validity.
 pub struct Rtc {
     /// Last-Known-Good UTC time, Matter-epoch microseconds.
@@ -144,8 +144,8 @@ pub struct Rtc {
     /// Same as `utc_us` except always equal to the last persisted value.
     utc_us_persisted: u64,
     /// Granularity at the time of the last `set_utc_time` call, with
-    /// §11.17.9.1's "one level lower than supplied" step-down already
-    /// applied and floored at `MinutesGranularity` (§11.17.8.2).
+    /// 's "one level lower than supplied" step-down already
+    /// applied and floored at `MinutesGranularity` .
     /// **Not persisted** — resets to `NoTimeGranularity` at boot,
     /// matching the `anchor = None` post-reboot state.
     granularity: GranularityEnum,
@@ -156,7 +156,7 @@ pub struct Rtc {
     /// Volatile — `None` after reboot until next set.
     anchor: Option<embassy_time::Instant>,
     /// Configured Trusted Time Source for the device (Matter Core spec
-    /// §11.17.8.7 / §11.17.9.7). At most one entry; the fabric that
+    /// ). At most one entry; the fabric that
     /// installed it owns it and is cleared on fabric removal.
     /// Persisted under [`crate::persist::TRUSTED_TIME_SOURCE_KEY`].
     trusted_time_source: Option<TrustedTimeSource>,
@@ -217,7 +217,7 @@ impl Rtc {
 
         // Load the persisted Last-Known-Good UTC Time, if any.
         // Floor at `FIRMWARE_BUILD_MATTER_US` per Matter Core spec
-        // §3.5.6.1 — the on-disk value must never regress us
+        //  — the on-disk value must never regress us
         // below the build timestamp (the documented lower bound
         // we never adjust backwards past).
         if let Some(data) = kv.load(LKG_UTC_KEY, buf)? {
@@ -237,13 +237,13 @@ impl Rtc {
     }
 
     /// Return the configured Trusted Time Source, or `None` if unset
-    /// (Matter Core spec §11.17.8.7).
+    /// (Matter Core spec).
     pub fn trusted_time_source(&self) -> Option<TrustedTimeSource> {
         self.trusted_time_source
     }
 
     /// Install or clear the Trusted Time Source (Matter Core spec
-    /// §11.17.9.7). `fab_idx` is the fabric performing the change —
+    /// ). `fab_idx` is the fabric performing the change —
     /// recorded so that fabric removal can clear an entry it owns.
     pub fn set_trusted_time_source<E: EventEmitter>(
         &mut self,
@@ -262,7 +262,7 @@ impl Rtc {
                 AttributeId::TrustedTimeSource as _,
             );
 
-            // Matter Core spec §11.17.10.1: emit `MissingTrustedTimeSource`
+            // Matter Core spec: emit `MissingTrustedTimeSource`
             // when SetTrustedTimeSource clears a previously-set entry (null
             // request payload, transitioning from `Some(..)` → `None`).
             if self.trusted_time_source.is_none() && previous.is_some() {
@@ -274,7 +274,7 @@ impl Rtc {
     }
 
     /// Install or clear the Trusted Time Source (Matter Core spec
-    /// §11.17.9.7). `fab_idx` is the fabric performing the change —
+    /// ). `fab_idx` is the fabric performing the change —
     /// recorded so that fabric removal can clear an entry it owns.
     /// `source = None` clears any existing entry.
     ///
@@ -323,7 +323,7 @@ impl Rtc {
     /// recent [`Self::set_utc_time`] (with the spec-required
     /// step-down and floor already applied) — or `NoTimeGranularity`
     /// if no `set_utc_time` has been called since boot (per
-    /// §11.17.8.2, which forbids `NoTimeGranularity` only while
+    /// , which forbids `NoTimeGranularity` only while
     /// `UTCTime ≠ Null`).
     pub fn utc_time_granularity(&self) -> GranularityEnum {
         if self.anchor.is_some() {
@@ -335,7 +335,7 @@ impl Rtc {
 
     /// Return the TimeSource reported on the wire for the TimeSync
     /// cluster's `TimeSource` attribute — `None` until the first
-    /// [`Self::set_utc_time`] (per §11.17.8.3).
+    /// [`Self::set_utc_time`] (per spec).
     pub fn utc_time_source(&self) -> TimeSourceEnum {
         if self.anchor.is_some() {
             self.source
@@ -345,12 +345,12 @@ impl Rtc {
     }
 
     /// Update the Last-Known-Good UTC Time (Matter Core spec
-    /// §3.5.6.1), capturing a fresh monotonic anchor so subsequent
+    /// ), capturing a fresh monotonic anchor so subsequent
     /// [`Self::utc_time`] reads advance from the supplied value.
     ///
-    /// Per §11.17.9.1: the supplied `granularity` is recorded
+    /// Per : the supplied `granularity` is recorded
     /// stepped-down by one level (with a floor of
-    /// `MinutesGranularity` per §11.17.8.2); the supplied `source`
+    /// `MinutesGranularity` per spec); the supplied `source`
     /// is recorded verbatim.
     ///
     /// The new value is written to the in-memory state immediately.
@@ -370,7 +370,7 @@ impl Rtc {
             GranularityEnum::MicrosecondsGranularity => GranularityEnum::MillisecondsGranularity,
             GranularityEnum::MillisecondsGranularity => GranularityEnum::SecondsGranularity,
             GranularityEnum::SecondsGranularity => GranularityEnum::MinutesGranularity,
-            // Minutes / NoTime → floor at Minutes (§11.17.8.2 forbids
+            // Minutes / NoTime → floor at Minutes ( forbids
             // NoTime while UTCTime is non-null).
             _ => GranularityEnum::MinutesGranularity,
         };
@@ -433,7 +433,7 @@ impl Rtc {
     }
 }
 
-/// Persisted Trusted Time Source descriptor (Matter Core spec §11.17.8.7).
+/// Persisted Trusted Time Source descriptor (Matter Core spec).
 /// Records which fabric configured the source so that fabric removal can
 /// clear it and emit `MissingTrustedTimeSource`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, FromTLV, ToTLV)]
@@ -783,9 +783,9 @@ const fn time_sync_cmds<const OPTS: u8>(cmd: &Command, _: u16, _: u32) -> bool {
     use CommandId as C;
 
     // `SetUTCTime` is mandatory whenever the cluster is present
-    // (Matter Core spec §11.17.9, conformance `M`), independent of
+    // (Matter Core spec, conformance `M`), independent of
     // features. Devices reporting `Granularity = NoTimeGranularity`
-    // are additionally required by §11.17.9.1 to accept it.
+    // are additionally required by  to accept it.
     if cmd.id == C::SetUTCTime as u32 {
         return true;
     }
@@ -915,7 +915,7 @@ impl ClusterHandler for TimeSyncHandler<'_> {
     // ---- Feature-gated reads
 
     // Served directly from the Matter-wide TrustedTimeSource state
-    // (Matter Core spec §11.17.8.7) — fabric-scoped storage lives on
+    // (Matter Core spec) — fabric-scoped storage lives on
     // `MatterState::rtc`, not on the user-supplied `TimeSync` provider.
     fn trusted_time_source<P: TLVBuilderParent>(
         &self,
@@ -1066,7 +1066,7 @@ impl ClusterHandler for TimeSyncHandler<'_> {
         ctx: impl InvokeContext,
         request: SetUTCTimeRequest<'_>,
     ) -> Result<(), Error> {
-        // Matter Core spec §11.17.9.1: regardless of the optional
+        // Matter Core spec: regardless of the optional
         // `TimeSource` field in the request, the device SHALL set
         // `TimeSource` to `Admin` when `SetUTCTime` populates UTCTime.
         let utc_us = request.utc_time()?;
@@ -1080,10 +1080,10 @@ impl ClusterHandler for TimeSyncHandler<'_> {
         Ok(())
     }
 
-    // Matter Core spec §11.17.9.7 — installs or clears the per-device
+    // Matter Core spec — installs or clears the per-device
     // Trusted Time Source. The fabric performing the change is
     // recorded so that fabric removal can clear an entry it owns
-    // (§11.17.8.7) and emit `MissingTrustedTimeSource` (§11.17.10.1).
+    // and emit `MissingTrustedTimeSource` .
     fn handle_set_trusted_time_source(
         &self,
         ctx: impl InvokeContext,

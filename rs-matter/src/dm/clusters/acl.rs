@@ -204,7 +204,7 @@ impl ClusterHandler for AclHandler {
             match value {
                 ArrayAttributeWrite::Replace(list) => {
                     // Snapshot old entries so we can diff against the new list per index
-                    // (Matter Core spec section 9.10.7 mandates one event per entry change,
+                    // (Matter Core spec mandates one event per entry change,
                     // with `LatestValue` populated). `MAX_ACL_ENTRIES_PER_FABRIC` is small
                     // (default 4), so a stack-allocated snapshot is cheap.
                     let mut old_entries: heapless::Vec<AclEntry, MAX_ACL_ENTRIES_PER_FABRIC> =

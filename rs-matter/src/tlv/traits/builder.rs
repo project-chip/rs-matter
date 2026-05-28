@@ -35,13 +35,13 @@
 //! {
 //!     pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
 //!         p.writer().start_struct(tag)?;
-//!        
+//!
 //!         Ok(Self { p })
 //!     }
 //!
 //!     pub fn field1(mut self, value: i32) -> Result<FooBuilder<P, 1>, Error> {
 //!         self.p.writer().i32(&TLVTag::Context(0), value)?;
-//!        
+//!
 //!         Ok(FooBuilder {
 //!             p: self.p,
 //!         })
@@ -164,7 +164,7 @@
 //! {
 //!     pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
 //!         p.writer().start_struct(tag)?;
-//!        
+//!
 //!         Ok(Self { p })
 //!     }
 //!

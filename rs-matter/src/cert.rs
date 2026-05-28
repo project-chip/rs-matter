@@ -37,9 +37,9 @@ pub mod gen;
 mod printer;
 pub mod x509;
 
-/// As per section 6.1.3 "Certificate Sizes" of the Matter 1.1 spec
+/// As per "Certificate Sizes" of the Matter spec
 pub const MAX_CERT_TLV_LEN: usize = 400;
-/// As per section 6.1.3 "Certificate Sizes" of the Matter 1.1 spec, DER formatted DAC and NOC
+/// As per "Certificate Sizes" of the Matter spec, DER formatted DAC and NOC
 /// chains must not be longer than this size
 pub const MAX_CERT_ASN1_LEN: usize = 600;
 /// Must be large enough to hold both TLV encoding and intermediate ASN.1 encoding during building
@@ -209,7 +209,7 @@ impl<'a> Extension<'a> {
                 Self::encode_extension_end(w)?;
             }
             Extension::FutureExtensions(t) => {
-                // Per Matter Spec 6.5.11.5, the `future-extensions` TLV field
+                // Per Matter Spec, the `future-extensions` TLV field
                 // carries one or more ASN.1 DER-encoded X.509 `Extension`
                 // structures verbatim. They MUST be reproduced byte-for-byte
                 // inside the TBS extensions SEQUENCE so that the
@@ -664,7 +664,7 @@ impl<'a> CertRef<'a> {
     /// Subject CA-ID — the `RootCaId` of an RCAC or the `IcaId` of an
     /// ICAC. Matter-issued RCACs always carry exactly one `RootCaId`
     /// in their subject DN; ICACs always carry exactly one `IcaId`
-    /// (spec §6.5). Returns the first matching value; errors out if
+    /// (spec). Returns the first matching value; errors out if
     /// neither tag is present.
     pub fn get_ca_id(&self) -> Result<u64, Error> {
         let dn = self
@@ -709,7 +709,7 @@ impl<'a> CertRef<'a> {
 
     /// Whether this certificate is self-signed (its `AuthorityKeyId` matches
     /// its `SubjectKeyId`). Matter-issued RCACs are always self-signed; an
-    /// ICAC or NOC must not be (Matter Core spec section 6.5).
+    /// ICAC or NOC must not be (Matter Core spec).
     pub fn is_self_signed(&self) -> Result<bool, Error> {
         self.is_authority(self)
     }
@@ -726,7 +726,7 @@ impl<'a> CertRef<'a> {
     /// [`CertVerifier::add_cert`], and the self-signed root via
     /// [`CertVerifier::finalise`]) is checked against `lkg_utc_secs`
     /// for its `NotBefore` / `NotAfter` validity window, per Matter
-    /// Core spec §3.5.6 which mandates use of the Last-Known-Good UTC
+    /// Core spec which mandates use of the Last-Known-Good UTC
     /// Time when no live trusted real-time-clock value is available.
     /// Callers snapshot the value from
     /// [`crate::Matter::last_known_utc_time`] (Matter-epoch seconds).
@@ -850,9 +850,8 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
         }
 
         // Validity-period check against the Last-Known-Good UTC Time
-        // (Matter Core spec §3.5.6). `NotBefore` / `NotAfter` are u32
-        // Matter-epoch seconds; `NotAfter = 0` means unconstrained per
-        // §6.5.5.
+        // (Matter Core spec). `NotBefore` / `NotAfter` are u32
+        // Matter-epoch seconds; `NotAfter = 0` means unconstrained.
         let not_before = self.cert.not_before()? as u64;
         let not_after = self.cert.not_after()?;
 

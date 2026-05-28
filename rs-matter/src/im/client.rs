@@ -635,7 +635,7 @@ impl<'a> defmt::Format for WriteSenderSlot<'a> {
 /// ACK-ed the request and the response is parsed.
 ///
 /// Unlike [`InvokeRespChunk`] / [`ReadRespChunk`], `WriteResponse`
-/// is a single message per Matter Core spec §10.7.6 — no chunk
+/// is a single message per Matter Core spec — no chunk
 /// iteration is needed; just call [`response`](Self::response) to
 /// inspect the parsed [`WriteResp`].
 pub struct WriteRespHandle<'a> {
@@ -871,7 +871,7 @@ impl<'a> defmt::Format for InvokeSenderSlot<'a> {
 /// caller can iterate; otherwise it returns `None` and drops the
 /// exchange.
 ///
-/// Per Matter Core spec §10.7.10, a server MAY reply to a command
+/// Per Matter Core spec, a server MAY reply to a command
 /// declared with `DefaultSuccess` (no explicit response struct) by
 /// sending a plain `StatusResponse(Success)` instead of a full
 /// `InvokeResponse`. In that case the chunk is *status-only*:
@@ -942,12 +942,12 @@ impl<'a> InvokeRespChunk<'a> {
     /// it as `Some(next)`. Otherwise (final chunk, or status-only)
     /// drop the exchange and return `None`.
     ///
-    /// Chunking flow control (Matter Core §10.7.10.3): on receipt of
+    /// Chunking flow control (Matter Core): on receipt of
     /// any `InvokeResponseMessage` with `MoreChunkedResponses=true`,
     /// the receiver SHALL reply with `StatusResponse(Success)` and
     /// the sender SHALL await that ACK before transmitting the next
     /// chunk. On the **final** chunk (`MoreChunks=false`) no trailer
-    /// is sent — per §8.8.3.1 the `SuppressResponse` field on an
+    /// is sent — per spec the `SuppressResponse` field on an
     /// `InvokeResponseMessage` is *ignored by the client*, and Matter
     /// "does not support responses to InvokeResponse actions" at the
     /// action layer. So the terminal-chunk branch is MRP-ack only,
@@ -972,7 +972,7 @@ impl<'a> InvokeRespChunk<'a> {
         };
 
         if more_chunks {
-            // §10.7.10.1: if MoreChunkedMessages is true,
+            // : if MoreChunkedMessages is true,
             // SuppressResponse SHALL be false. A peer that
             // violates this is malformed — abort the chain.
             if suppress_response {
@@ -980,7 +980,7 @@ impl<'a> InvokeRespChunk<'a> {
                 return Err(ErrorCode::InvalidData.into());
             }
 
-            // Per §10.7.10.3 — flow-control ACK between chunks.
+            // Per  — flow-control ACK between chunks.
             self.exchange
                 .send_with(|_, wb| {
                     StatusResp::write(wb, IMStatusCode::Success)?;
@@ -996,7 +996,7 @@ impl<'a> InvokeRespChunk<'a> {
 
             Ok(Some(self))
         } else {
-            // Final (or only) chunk. Per §8.8.3.1, Matter does not
+            // Final (or only) chunk. Per , Matter does not
             // support responses to InvokeResponse actions — the
             // SuppressResponse field is ignored by the client. MRP
             // -ack only.
@@ -1304,12 +1304,12 @@ pub enum SubscribeOutcome<'a> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SubscribeEstablished {
     /// Subscription identifier chosen by the peer (Matter Core spec
-    /// §8.5.2). Combined with the accessing fabric and the peer
+    /// ). Combined with the accessing fabric and the peer
     /// node id, this is the lookup key for the active subscription.
     pub subscription_id: u32,
     /// Maximum reporting interval (seconds) the peer committed to.
     /// The peer MUST report no less frequently than this — see
-    /// Matter Core spec §8.5.3. Use this to drive a watchdog if the
+    /// Matter Core spec. Use this to drive a watchdog if the
     /// caller wants to detect a silently-broken subscription.
     pub max_int: u16,
 }

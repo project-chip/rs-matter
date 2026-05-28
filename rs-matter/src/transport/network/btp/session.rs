@@ -294,7 +294,7 @@ impl RecvWindow {
             .unwrap_or(true)
         {
             warn!(
-                "RX data integrity failure: Data packets must have a sequence number which is equal to the last one received + 1; expected={}, actual={:?}", 
+                "RX data integrity failure: Data packets must have a sequence number which is equal to the last one received + 1; expected={}, actual={:?}",
                 self.ack_seq.wrapping_add(1),
                 hdr.get_seq());
             return Err(ErrorCode::InvalidData.into());
