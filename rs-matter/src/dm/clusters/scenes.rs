@@ -1658,12 +1658,17 @@ mod tests {
         }
     }
 
-    fn push(inner: &mut ScenesStateInner<8>, e: SceneEntry) {
+    fn push<const N: usize>(inner: &mut ScenesStateInner<N>, e: SceneEntry) {
         inner.table.push(e).expect("test table overflow");
     }
 
     /// Count entries in `inner.table` matching the given filter.
-    fn count(inner: &ScenesStateInner<8>, fab_idx: NonZeroU8, ep: EndptId, group: u16) -> usize {
+    fn count<const N: usize>(
+        inner: &ScenesStateInner<N>,
+        fab_idx: NonZeroU8,
+        ep: EndptId,
+        group: u16,
+    ) -> usize {
         inner
             .table
             .iter()
@@ -1671,8 +1676,8 @@ mod tests {
             .count()
     }
 
-    fn find_tt(
-        inner: &ScenesStateInner<8>,
+    fn find_tt<const N: usize>(
+        inner: &ScenesStateInner<N>,
         fab_idx: NonZeroU8,
         ep: EndptId,
         group: u16,
@@ -1686,8 +1691,8 @@ mod tests {
     }
 
     /// Helper: look up the extension-fields blob for one entry.
-    fn find_blob(
-        inner: &ScenesStateInner<8>,
+    fn find_blob<const N: usize>(
+        inner: &ScenesStateInner<N>,
         fab_idx: NonZeroU8,
         ep: EndptId,
         group: u16,
@@ -2038,5 +2043,204 @@ mod tests {
         // fab(2)'s entry survives.
         assert_eq!(inner.current_per_fabric.len(), 1);
         assert_eq!(inner.current_per_fabric[0].fab_idx, fab(2));
+    }
+
+    // ---- Phase D: AddScene / StoreScene shared `upsert_scene` path ----
+    //
+    // `AddScene` and `StoreScene` differ only in *where* the EFS blob
+    // comes from (request payload vs cross-cluster capture) — both
+    // commit through `upsert_scene` with a fill closure that
+    // `extend_from_slice`s into the slot's `Vec`. These tests
+    // exercise the upsert state-machine directly (no async handler
+    // harness needed).
+
+    /// Fill closure that copies a fixed slice into the slot Vec.
+    /// Used by `upsert_scene` tests where the contents don't matter.
+    fn fill_with<'a>(blob: &'a [u8]) -> impl FnOnce(&mut Vec<u8, 128>) -> Result<(), Error> + 'a {
+        move |ext| {
+            ext.extend_from_slice(blob)
+                .map_err(|_| ErrorCode::NoSpace.into())
+        }
+    }
+
+    #[test]
+    fn upsert_inserts_new_record_with_status_zero() {
+        let mut inner = ScenesStateInner::<8>::new();
+        let status = ScenesHandler::<8>::upsert_scene(
+            &mut inner,
+            fab(1),
+            1,
+            10,
+            5,
+            100,
+            fill_with(&[0xAA, 0x18]),
+        )
+        .unwrap();
+
+        assert_eq!(status, 0);
+        assert_eq!(inner.table.len(), 1);
+        assert_eq!(find_tt(&inner, fab(1), 1, 10, 5), Some(100));
+        assert_eq!(find_blob(&inner, fab(1), 1, 10, 5), Some(&[0xAA, 0x18][..]));
+    }
+
+    #[test]
+    fn upsert_replaces_existing_record_in_place_no_growth() {
+        let mut inner = ScenesStateInner::<8>::new();
+        push(
+            &mut inner,
+            entry_with_blob(fab(1), 1, 10, 5, 100, &[0xAA, 0x18]),
+        );
+
+        let status = ScenesHandler::<8>::upsert_scene(
+            &mut inner,
+            fab(1),
+            1,
+            10,
+            5,
+            999,
+            fill_with(&[0xBB, 0xCC, 0x18]),
+        )
+        .unwrap();
+
+        assert_eq!(status, 0);
+        assert_eq!(inner.table.len(), 1, "replace must not grow the table");
+        assert_eq!(find_tt(&inner, fab(1), 1, 10, 5), Some(999));
+        assert_eq!(
+            find_blob(&inner, fab(1), 1, 10, 5),
+            Some(&[0xBB, 0xCC, 0x18][..])
+        );
+    }
+
+    #[test]
+    fn upsert_returns_insufficient_space_when_table_is_full() {
+        // Fill the table to capacity, then try to insert a NEW key.
+        let mut inner = ScenesStateInner::<3>::new();
+        inner.table.push(entry(fab(1), 1, 10, 1, 100)).unwrap();
+        inner.table.push(entry(fab(1), 1, 10, 2, 100)).unwrap();
+        inner.table.push(entry(fab(1), 1, 10, 3, 100)).unwrap();
+
+        let status = ScenesHandler::<3>::upsert_scene(
+            &mut inner,
+            fab(1),
+            1,
+            10,
+            99, // new scene_id
+            200,
+            fill_with(&[0x18]),
+        )
+        .unwrap();
+
+        assert_eq!(status, SC_INSUFFICIENT_SPACE);
+        assert_eq!(inner.table.len(), 3, "table size unchanged on rejection");
+    }
+
+    #[test]
+    fn upsert_replace_at_full_capacity_still_succeeds() {
+        // Replacing an EXISTING entry doesn't need a new slot, so it
+        // should succeed even when the table is at capacity.
+        let mut inner = ScenesStateInner::<3>::new();
+        inner.table.push(entry(fab(1), 1, 10, 1, 100)).unwrap();
+        inner.table.push(entry(fab(1), 1, 10, 2, 100)).unwrap();
+        inner.table.push(entry(fab(1), 1, 10, 3, 100)).unwrap();
+
+        let status = ScenesHandler::<3>::upsert_scene(
+            &mut inner,
+            fab(1),
+            1,
+            10,
+            2, // existing scene_id
+            999,
+            fill_with(&[0x18]),
+        )
+        .unwrap();
+
+        assert_eq!(status, 0);
+        assert_eq!(inner.table.len(), 3);
+        assert_eq!(find_tt(&inner, fab(1), 1, 10, 2), Some(999));
+    }
+
+    #[test]
+    fn upsert_invalidates_current_scene_for_target_fabric() {
+        // Per `SceneValid` rules: any AddScene/StoreScene mutates
+        // table state in a way that may no longer match the recalled
+        // attributes, so CurrentScene gets cleared for the originating
+        // fabric.
+        let mut inner = ScenesStateInner::<8>::new();
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 99, 99);
+
+        let _ =
+            ScenesHandler::<8>::upsert_scene(&mut inner, fab(1), 1, 10, 5, 100, fill_with(&[0x18]))
+                .unwrap();
+
+        assert!(!inner.current_per_fabric.iter().any(|c| c.fab_idx == fab(1)));
+    }
+
+    #[test]
+    fn upsert_keeps_other_fabrics_current_scene_intact() {
+        let mut inner = ScenesStateInner::<8>::new();
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 99, 99);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(2), 88, 88);
+
+        let _ =
+            ScenesHandler::<8>::upsert_scene(&mut inner, fab(1), 1, 10, 5, 100, fill_with(&[0x18]))
+                .unwrap();
+
+        assert!(!inner.current_per_fabric.iter().any(|c| c.fab_idx == fab(1)));
+        assert!(
+            inner.current_per_fabric.iter().any(|c| c.fab_idx == fab(2)),
+            "fab(2)'s CurrentScene must not be touched"
+        );
+    }
+
+    #[test]
+    fn upsert_at_full_capacity_does_not_invalidate_current() {
+        // When the new-entry path errors with SC_INSUFFICIENT_SPACE,
+        // the table state is unchanged — CurrentScene must stay too.
+        let mut inner = ScenesStateInner::<3>::new();
+        inner.table.push(entry(fab(1), 1, 10, 1, 100)).unwrap();
+        inner.table.push(entry(fab(1), 1, 10, 2, 100)).unwrap();
+        inner.table.push(entry(fab(1), 1, 10, 3, 100)).unwrap();
+        ScenesHandler::<3>::remember_current(&mut inner, fab(1), 99, 99);
+
+        let status = ScenesHandler::<3>::upsert_scene(
+            &mut inner,
+            fab(1),
+            1,
+            10,
+            99,
+            200,
+            fill_with(&[0x18]),
+        )
+        .unwrap();
+
+        assert_eq!(status, SC_INSUFFICIENT_SPACE);
+        assert!(inner.current_per_fabric.iter().any(|c| c.fab_idx == fab(1)));
+    }
+
+    #[test]
+    fn upsert_fill_failure_on_new_entry_rolls_back_the_push() {
+        // If the fill closure errors *after* `push_init` has stamped
+        // an empty SceneEntry into the slot, that slot must be popped
+        // so the table returns to its pre-call state.
+        let mut inner = ScenesStateInner::<8>::new();
+        push(&mut inner, entry(fab(1), 1, 10, 1, 100));
+
+        let result = ScenesHandler::<8>::upsert_scene(
+            &mut inner,
+            fab(1),
+            1,
+            10,
+            42, // brand new
+            200,
+            |_| Err(ErrorCode::NoSpace.into()),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(
+            inner.table.len(),
+            1,
+            "rolled-back push leaves count untouched"
+        );
+        assert!(find_tt(&inner, fab(1), 1, 10, 42).is_none());
     }
 }
