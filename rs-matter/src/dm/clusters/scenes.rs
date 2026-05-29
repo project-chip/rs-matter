@@ -77,13 +77,13 @@ use core::num::NonZeroU8;
 
 use crate::dm::{
     ArrayAttributeRead, AsyncHandler, AttrDetails, AttrId, Cluster, ClusterId, CmdDetails, CmdId,
-    Dataver, EndptId, InvokeContext, InvokeContextInstance, InvokeReplyInstance, Metadata,
-    ReadContext, ReadContextInstance, ReadReply, Reply, SceneId,
+    Dataver, EmptyHandler, EndptId, InvokeContext, InvokeContextInstance, InvokeReplyInstance,
+    Metadata, ReadContext, ReadContextInstance, ReadReply, Reply, SceneId,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{
-    FromTLV, TLVArray, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, TLVWriteParent, TagType,
-    ToTLV,
+    FromTLV, Nullable, OptionalBuilder, TLVArray, TLVBuilder, TLVBuilderParent, TLVElement,
+    TLVSequence, TLVTag, TLVWrite, TLVWriteParent, TagType, ToTLV,
 };
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -96,6 +96,17 @@ pub use crate::dm::clusters::decl::scenes_management::*;
 /// "Generic Usage Notes" in the Matter Application Cluster spec).
 const SC_NOT_FOUND: u8 = 0x8B;
 const SC_INSUFFICIENT_SPACE: u8 = 0x89;
+/// IM-level `INVALID_COMMAND` (0x85). Returned by every group-aware
+/// Scenes command when `GroupID != 0` is not present in the Groups
+/// cluster's Group Table for `(fab_idx, endpoint_id)` — per Matter
+/// Application Cluster spec §1.4.9 "Common per-command behavior".
+const SC_INVALID_COMMAND: u8 = 0x85;
+/// IM-level `CONSTRAINT_ERROR` (0x87). Returned by every Scenes
+/// command that takes a `SceneID` when the value is `0xFF`, which the
+/// spec reserves as invalid (valid range is `0x00 – 0xFE`).
+const SC_CONSTRAINT_ERROR: u8 = 0x87;
+/// Reserved (invalid) `SceneID` value per Matter App Cluster spec.
+const RESERVED_SCENE_ID: SceneId = 0xFF;
 
 /// Max length of the serialized `ExtensionFieldSetStructs` payload
 /// carried on a single scene record. Per chip's notes a Color Control
@@ -131,14 +142,15 @@ pub trait SceneClusterHandler {
     /// one-line per-attribute API).
     ///
     /// Returns the (advanced) builder so the caller can close the array.
-    fn capture<C, P>(
+    fn capture<C, T, P>(
         &self,
-        sctx: &SceneContext<C>,
+        sctx: &SceneContext<C, T>,
         endpoint_id: EndptId,
         avp_array: AttributeValuePairStructArrayBuilder<P>,
     ) -> impl Future<Output = Result<AttributeValuePairStructArrayBuilder<P>, Error>>
     where
         C: InvokeContext,
+        T: AsyncHandler,
         P: TLVBuilderParent;
 
     /// Apply the captured attribute values by invoking the right
@@ -147,15 +159,16 @@ pub trait SceneClusterHandler {
     /// `transition_time_ms` is the effective transition for this
     /// recall (either the `RecallScene` request override or the stored
     /// value).
-    fn apply<C>(
+    fn apply<C, T>(
         &self,
-        sctx: &SceneContext<C>,
+        sctx: &SceneContext<C, T>,
         endpoint_id: EndptId,
         transition_time_ms: u32,
         avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
     ) -> impl Future<Output = Result<(), Error>>
     where
-        C: InvokeContext;
+        C: InvokeContext,
+        T: AsyncHandler;
 }
 
 /// A tuple-recursive composition of [`SceneClusterHandler`]s, mirroring
@@ -180,49 +193,52 @@ pub trait SceneClusters {
     /// [`SceneEntry::extension_fields`]'s "contents + 0x18" storage
     /// shape without needing an extra `+ 1` byte to absorb a leading
     /// control byte.
-    fn capture<C, P>(
+    fn capture<C, T, P>(
         &self,
-        sctx: &SceneContext<C>,
+        sctx: &SceneContext<C, T>,
         endpoint_id: EndptId,
         parent: P,
     ) -> impl Future<Output = Result<P, Error>>
     where
         C: InvokeContext,
+        T: AsyncHandler,
         P: TLVBuilderParent;
 
     /// Find the registered cluster matching `cluster_id` and let it
     /// apply `avp_list`. Returns `Ok(true)` if a cluster handled it,
     /// `Ok(false)` if no registered cluster matches (the entry is
     /// silently skipped, matching chip's behavior).
-    fn apply<C>(
+    fn apply<C, T>(
         &self,
-        sctx: &SceneContext<C>,
+        sctx: &SceneContext<C, T>,
         endpoint_id: EndptId,
         cluster_id: ClusterId,
         transition_time_ms: u32,
         avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
     ) -> impl Future<Output = Result<bool, Error>>
     where
-        C: InvokeContext;
+        C: InvokeContext,
+        T: AsyncHandler;
 }
 
 impl SceneClusters for () {
-    fn capture<C, P>(
+    fn capture<C, T, P>(
         &self,
-        _sctx: &SceneContext<C>,
+        _sctx: &SceneContext<C, T>,
         _endpoint_id: EndptId,
         parent: P,
     ) -> impl Future<Output = Result<P, Error>>
     where
         C: InvokeContext,
+        T: AsyncHandler,
         P: TLVBuilderParent,
     {
         ready(Ok(parent))
     }
 
-    fn apply<C>(
+    fn apply<C, T>(
         &self,
-        _sctx: &SceneContext<C>,
+        _sctx: &SceneContext<C, T>,
         _endpoint_id: EndptId,
         _cluster_id: ClusterId,
         _transition_time_ms: u32,
@@ -230,6 +246,7 @@ impl SceneClusters for () {
     ) -> impl Future<Output = Result<bool, Error>>
     where
         C: InvokeContext,
+        T: AsyncHandler,
     {
         ready(Ok(false))
     }
@@ -240,14 +257,15 @@ where
     H: SceneClusterHandler,
     T: SceneClusters,
 {
-    async fn capture<C, P>(
+    async fn capture<C, U, P>(
         &self,
-        sctx: &SceneContext<C>,
+        sctx: &SceneContext<C, U>,
         endpoint_id: EndptId,
         parent: P,
     ) -> Result<P, Error>
     where
         C: InvokeContext,
+        U: AsyncHandler,
         P: TLVBuilderParent,
     {
         let parent = if sctx.cluster_present(endpoint_id, H::CLUSTER_ID) {
@@ -267,9 +285,9 @@ where
         self.1.capture(sctx, endpoint_id, parent).await
     }
 
-    async fn apply<C>(
+    async fn apply<C, U>(
         &self,
-        sctx: &SceneContext<C>,
+        sctx: &SceneContext<C, U>,
         endpoint_id: EndptId,
         cluster_id: ClusterId,
         transition_time_ms: u32,
@@ -277,6 +295,7 @@ where
     ) -> Result<bool, Error>
     where
         C: InvokeContext,
+        U: AsyncHandler,
     {
         if H::CLUSTER_ID == cluster_id {
             self.0
@@ -315,11 +334,11 @@ where
 ///
 /// All three go through the global handler (`ctx.handler()`), matching
 /// the invariant noted on [`SceneClusterHandler`].
-pub struct SceneContext<C: InvokeContext>(C);
+pub struct SceneContext<C: InvokeContext, T: AsyncHandler>(C, T);
 
-impl<C: InvokeContext> SceneContext<C> {
-    pub const fn new(ctx: C) -> Self {
-        Self(ctx)
+impl<C: InvokeContext, T: AsyncHandler> SceneContext<C, T> {
+    pub const fn new(ctx: C, handler: T) -> Self {
+        Self(ctx, handler)
     }
 
     /// The wrapped [`InvokeContext`]. Useful when a cluster impl needs
@@ -334,24 +353,23 @@ impl<C: InvokeContext> SceneContext<C> {
         &self.0
     }
 
-    /// Read one attribute via the global handler and decode it as
-    /// `T`.
+    /// Read one attribute via the global handler and decode it as `Q`.
     ///
     /// Drives [`AsyncHandler::read`] with a custom reply that
     /// captures the value bytes (TLV-encoded with anonymous tag) into
-    /// a stack buffer, then decodes them as `T` via `FromTLV`. The
-    /// `T: for<'b> FromTLV<'b>` bound restricts use to types that
+    /// a stack buffer, then decodes them as `Q` via `FromTLV`. The
+    /// `Q: for<'b> FromTLV<'b>` bound restricts use to types that
     /// don't borrow from the TLV bytes (primitives, `Nullable<u8>`,
     /// enums, …) — which covers all scalar-valued attributes scene
     /// capture cares about.
-    pub async fn read<T>(
+    pub async fn read<Q>(
         &self,
         endpoint_id: EndptId,
         cluster_id: ClusterId,
         attr_id: AttrId,
-    ) -> Result<T, Error>
+    ) -> Result<Q, Error>
     where
-        T: for<'b> FromTLV<'b>,
+        Q: for<'b> FromTLV<'b>,
     {
         let mut buf = [0u8; 16];
         let mut wb = WriteBuf::new(&mut buf);
@@ -373,12 +391,13 @@ impl<C: InvokeContext> SceneContext<C> {
             cluster_status: Cell::new(0),
         };
 
-        let handler = self.0.handler();
+        //let handler = self.0.handler();
         let read_ctx = ReadContextInstance::new(self.0.exchange(), &self.0, &attr);
         let reply = CaptureReply { wb: &mut wb };
-        handler.read(read_ctx, reply).await?;
+        //handler.read(read_ctx, reply).await?;
+        self.1.read(read_ctx, reply).await?;
 
-        T::from_tlv(&TLVElement::new(wb.as_slice()))
+        Q::from_tlv(&TLVElement::new(wb.as_slice()))
     }
 
     /// Dispatch a cross-cluster command through `ctx.handler().invoke()`.
@@ -406,9 +425,10 @@ impl<C: InvokeContext> SceneContext<C> {
         let mut response_wb = WriteBuf::new(&mut response_buf);
         let reply = InvokeReplyInstance::new(&cmd, &mut response_wb);
 
-        let handler = self.0.handler();
+        //let handler = self.0.handler();
         let inv_ctx = InvokeContextInstance::new(self.0.exchange(), &self.0, &cmd, &data_elem);
-        handler.invoke(inv_ctx, reply).await
+        //handler.invoke(inv_ctx, reply).await
+        self.1.invoke(inv_ctx, reply).await
     }
 
     /// Check whether `cluster_id` is exposed on `endpoint_id` per the
@@ -668,23 +688,37 @@ impl<const N: usize, const M: usize> Default for ScenesState<N, M> {
 /// CopyScene) in isolation. `M` mirrors the same parameter on
 /// [`ScenesState`] (per-scene blob capacity, defaults to
 /// [`MAX_EXT_FIELDS_LEN`]).
-pub struct ScenesHandler<'a, const N: usize, R = (), const M: usize = MAX_EXT_FIELDS_LEN>
-where
+pub struct ScenesHandler<
+    'a,
+    const N: usize,
+    T = EmptyHandler,
+    R = (),
+    const M: usize = MAX_EXT_FIELDS_LEN,
+> where
+    T: AsyncHandler,
     R: SceneClusters,
 {
     dataver: Dataver,
     state: &'a ScenesState<N, M>,
+    handler: T,
     clusters: R,
 }
 
-impl<'a, const N: usize, R, const M: usize> ScenesHandler<'a, N, R, M>
+impl<'a, const N: usize, T, R, const M: usize> ScenesHandler<'a, N, T, R, M>
 where
+    T: AsyncHandler,
     R: SceneClusters,
 {
-    pub const fn new(dataver: Dataver, state: &'a ScenesState<N, M>, clusters: R) -> Self {
+    pub const fn new(
+        dataver: Dataver,
+        state: &'a ScenesState<N, M>,
+        handler: T,
+        clusters: R,
+    ) -> Self {
         Self {
             dataver,
             state,
+            handler,
             clusters,
         }
     }
@@ -695,6 +729,46 @@ where
 
     fn fab_idx<C: InvokeContext>(ctx: &C) -> Result<NonZeroU8, Error> {
         ctx.exchange().accessor()?.fab_idx()
+    }
+
+    /// Per-fabric remaining-capacity estimate used by both
+    /// `GetSceneMembership::Capacity` and
+    /// `FabricSceneInfo::RemainingCapacity`. Per chip's reference
+    /// implementation (and the `Test_TC_S_*` certification suites),
+    /// the formula is **`(N - 1) / 2 − scenes_in_this_fabric`**:
+    /// `N - 1` slack reserves one row for inter-fabric arbitration,
+    /// `/ 2` splits the remaining budget evenly across the
+    /// (typically two) fabrics the spec expects to share the table.
+    /// The result is saturated at 0 and clamped to `0xFF` for u8.
+    fn remaining_capacity_for_fab(inner: &ScenesStateInner<N, M>, fab_idx: NonZeroU8) -> u8 {
+        let per_fab_budget = N.saturating_sub(1) / 2;
+        let used = inner.table.iter().filter(|e| e.fab_idx == fab_idx).count();
+        per_fab_budget.saturating_sub(used).min(0xFF) as u8
+    }
+
+    /// Check whether `group_id` is present in the Groups cluster's
+    /// Group Table for `(fab_idx, endpoint_id)`. Every group-aware
+    /// Scenes command must reject with `SC_INVALID_COMMAND` when this
+    /// returns `false`. `group_id == 0` is treated as "always valid"
+    /// matching the spec's special handling of the reserved no-group
+    /// ID.
+    fn group_in_table<C: InvokeContext>(
+        ctx: &C,
+        fab_idx: NonZeroU8,
+        endpoint_id: EndptId,
+        group_id: u16,
+    ) -> Result<bool, Error> {
+        if group_id == 0 {
+            return Ok(true);
+        }
+        ctx.exchange().with_state(|state| {
+            let fabric = state.fabrics.fabric(fab_idx)?;
+            Ok(fabric
+                .groups()
+                .get(group_id)
+                .map(|g| g.endpoints.contains(&endpoint_id))
+                .unwrap_or(false))
+        })
     }
 
     /// Stamp `(group, scene)` as the current recalled scene for this
@@ -861,7 +935,7 @@ where
                 Some(c) => (Some(c.group_id), Some(c.scene_id), true),
                 None => (None, None, false),
             };
-            let rem = (N.saturating_sub(inner.table.len())).min(0xFF) as u8;
+            let rem = Self::remaining_capacity_for_fab(inner, accessor_fab_idx);
             (count.min(0xFF) as u8, g, s, v, rem)
         });
 
@@ -899,6 +973,26 @@ where
         let group_id = request.group_id()?;
         let scene_id = request.scene_id()?;
         let transition_time = request.transition_time()?;
+
+        // Spec: `CONSTRAINT_ERROR` for the reserved `SceneID = 0xFF`.
+        // Checked before the group-table existence check.
+        if scene_id == RESERVED_SCENE_ID {
+            return response
+                .status(SC_CONSTRAINT_ERROR)?
+                .group_id(group_id)?
+                .scene_id(scene_id)?
+                .end();
+        }
+
+        // Spec: `INVALID_COMMAND` when `group_id != 0` is absent from
+        // the Groups cluster's Group Table for this endpoint.
+        if !Self::group_in_table(ctx, fab_idx, endpoint_id, group_id)? {
+            return response
+                .status(SC_INVALID_COMMAND)?
+                .group_id(group_id)?
+                .scene_id(scene_id)?
+                .end();
+        }
 
         // Capture the `ExtensionFieldSetStructs` array payload from the
         // request — store the *value* bytes (contents-plus-terminator
@@ -1038,6 +1132,33 @@ where
         let group_id = request.group_id()?;
         let scene_id = request.scene_id()?;
 
+        // Spec: `CONSTRAINT_ERROR` for the reserved `SceneID = 0xFF`.
+        if scene_id == RESERVED_SCENE_ID {
+            return response
+                .status(SC_CONSTRAINT_ERROR)?
+                .group_id(group_id)?
+                .scene_id(scene_id)?
+                .transition_time(None)?
+                .scene_name(None)?
+                .extension_field_set_structs()?
+                .none()
+                .end();
+        }
+
+        // Spec: `INVALID_COMMAND` when `group_id != 0` is absent from
+        // the Groups cluster's Group Table for this endpoint.
+        if !Self::group_in_table(ctx, fab_idx, endpoint_id, group_id)? {
+            return response
+                .status(SC_INVALID_COMMAND)?
+                .group_id(group_id)?
+                .scene_id(scene_id)?
+                .transition_time(None)?
+                .scene_name(None)?
+                .extension_field_set_structs()?
+                .none()
+                .end();
+        }
+
         // Build the response *inside* the lock so we can splice the
         // stored `extension_fields` blob (a `&[u8]` borrow into the
         // table) without cloning it onto the stack. The TLV builder
@@ -1089,15 +1210,11 @@ where
     /// the destination tag and then write the stored bytes via
     /// `TLVWrite::write_raw_data`. Empty blob ⇒ skip the field
     /// entirely via `OptionalBuilder::none`.
-    fn write_blob_or_none<P, T>(
-        mut opt: crate::tlv::OptionalBuilder<P, T>,
-        blob: &[u8],
-    ) -> Result<P, Error>
+    fn write_blob_or_none<P, Q>(mut opt: OptionalBuilder<P, Q>, blob: &[u8]) -> Result<P, Error>
     where
         P: TLVBuilderParent,
-        T: crate::tlv::TLVBuilder<P>,
+        Q: TLVBuilder<P>,
     {
-        use crate::tlv::{TLVTag, TLVWrite};
         if !blob.is_empty() {
             // Tag is hard-coded as the spec field number for both
             // `ViewSceneResponse.ExtensionFieldSetStructs` and other
@@ -1124,6 +1241,25 @@ where
         let endpoint_id = ctx.cmd().endpoint_id;
         let group_id = request.group_id()?;
         let scene_id = request.scene_id()?;
+
+        // Spec: `CONSTRAINT_ERROR` for the reserved `SceneID = 0xFF`.
+        if scene_id == RESERVED_SCENE_ID {
+            return response
+                .status(SC_CONSTRAINT_ERROR)?
+                .group_id(group_id)?
+                .scene_id(scene_id)?
+                .end();
+        }
+
+        // Spec: `INVALID_COMMAND` when `group_id != 0` is absent from
+        // the Groups cluster's Group Table for this endpoint.
+        if !Self::group_in_table(ctx, fab_idx, endpoint_id, group_id)? {
+            return response
+                .status(SC_INVALID_COMMAND)?
+                .group_id(group_id)?
+                .scene_id(scene_id)?
+                .end();
+        }
 
         let status: u8 = self.state.with(|inner| {
             if let Some(pos) = inner
@@ -1159,6 +1295,15 @@ where
         let fab_idx = Self::fab_idx(ctx)?;
         let endpoint_id = ctx.cmd().endpoint_id;
         let group_id = request.group_id()?;
+
+        // Spec: `INVALID_COMMAND` if `group_id != 0` is absent from
+        // the Groups cluster's Group Table for this endpoint.
+        if !Self::group_in_table(ctx, fab_idx, endpoint_id, group_id)? {
+            return response
+                .status(SC_INVALID_COMMAND)?
+                .group_id(group_id)?
+                .end();
+        }
 
         let removed = self.state.with(|inner| {
             let before = inner.table.len();
@@ -1200,6 +1345,25 @@ where
         let group_id = request.group_id()?;
         let scene_id = request.scene_id()?;
 
+        // Spec: `CONSTRAINT_ERROR` for the reserved `SceneID = 0xFF`.
+        if scene_id == RESERVED_SCENE_ID {
+            return response
+                .status(SC_CONSTRAINT_ERROR)?
+                .group_id(group_id)?
+                .scene_id(scene_id)?
+                .end();
+        }
+
+        // Spec: `INVALID_COMMAND` when `group_id != 0` is absent from
+        // the Groups cluster's Group Table for this endpoint.
+        if !Self::group_in_table(ctx, fab_idx, endpoint_id, group_id)? {
+            return response
+                .status(SC_INVALID_COMMAND)?
+                .group_id(group_id)?
+                .scene_id(scene_id)?
+                .end();
+        }
+
         // Capture the EFS blob on the stack via the cluster registry.
         // Doing this *before* the mutex acquire keeps async IO
         // (`ctx.handler().read()`) out of the critical section.
@@ -1210,7 +1374,8 @@ where
         // the "contents + 0x18 terminator" shape that
         // [`SceneEntry::extension_fields`] stores — no leading byte
         // to strip, no `MAX_EXT_FIELDS_LEN + 1` slack needed.
-        let sctx = SceneContext::new(ctx);
+        //let sctx = SceneContext::new(ctx, &self.handler);
+        let sctx = SceneContext::new(ctx, &self.handler);
         let mut scratch = [0u8; M];
         let total_len = {
             let mut wb = WriteBuf::new(&mut scratch);
@@ -1286,6 +1451,23 @@ where
         let group_id = request.group_id()?;
         let scene_id = request.scene_id()?;
 
+        // `RecallScene` has no response struct (returns `()`), so we
+        // surface the status via `set_cluster_status` and bubble out
+        // an error.
+
+        // Spec: `CONSTRAINT_ERROR` for the reserved `SceneID = 0xFF`.
+        if scene_id == RESERVED_SCENE_ID {
+            ctx.cmd().set_cluster_status(SC_CONSTRAINT_ERROR);
+            return Err(ErrorCode::Failure.into());
+        }
+
+        // Spec: `INVALID_COMMAND` when `group_id != 0` is absent from
+        // the Groups cluster's Group Table for this endpoint.
+        if !Self::group_in_table(ctx, fab_idx, endpoint_id, group_id)? {
+            ctx.cmd().set_cluster_status(SC_INVALID_COMMAND);
+            return Err(ErrorCode::Failure.into());
+        }
+
         // RecallScene's request carries an optional+nullable
         // transition-time override (ms). Present-and-non-null wins
         // over the stored record's transition time; otherwise fall
@@ -1325,8 +1507,8 @@ where
 
         let effective_tt_ms = override_tt_ms.unwrap_or(stored_tt_ms);
 
-        let sctx = SceneContext::new(ctx);
-        for efs_element in crate::tlv::TLVSequence(&blob[..blob_len]).iter() {
+        let sctx = SceneContext::new(ctx, &self.handler);
+        for efs_element in TLVSequence(&blob[..blob_len]).iter() {
             let efs = ExtensionFieldSetStruct::new(efs_element?);
             let cluster_id = efs.cluster_id()?;
             let avp_list = efs.attribute_value_list()?;
@@ -1357,29 +1539,39 @@ where
         let endpoint_id = ctx.cmd().endpoint_id;
         let group_id = request.group_id()?;
 
+        // Spec: `INVALID_COMMAND` when `group_id != 0` isn't in the
+        // Groups cluster's Group Table on this endpoint. Capacity is
+        // reported as `null` in that case (per the
+        // `Test_TC_S_2_2` spec table — `anyOf [fabricCapacity, 0xfe,
+        // null]`, we pick `null`).
+        if !Self::group_in_table(ctx, fab_idx, endpoint_id, group_id)? {
+            return response
+                .status(SC_INVALID_COMMAND)?
+                .capacity(Nullable::none())?
+                .group_id(group_id)?
+                .scene_list()?
+                .none()
+                .end();
+        }
+
         // Build the response directly inside the lock — the TLV
         // builder is purely synchronous (no `.await`), so holding the
         // lock for the write is cheap. This avoids snapshotting scene
         // IDs into a stack `Vec<SceneId, N>` (could be ~N bytes;
         // matters on small-stack MCUs).
         self.state.with(|inner| -> Result<P, Error> {
-            let remaining = (N.saturating_sub(inner.table.len())).min(0xFF) as u8;
-            let group_has_scenes = inner.table.iter().any(|e| {
-                e.fab_idx == fab_idx && e.endpoint_id == endpoint_id && e.group_id == group_id
-            });
+            let remaining = Self::remaining_capacity_for_fab(inner, fab_idx);
 
             let resp = response
                 .status(0)?
-                .capacity(crate::tlv::Nullable::some(remaining))?
+                .capacity(Nullable::some(remaining))?
                 .group_id(group_id)?;
 
-            // Per the `GetSceneMembership` command spec: when GroupID
-            // has no scenes on this device, SceneList SHALL be
-            // omitted (None).
-            if !group_has_scenes {
-                return resp.scene_list()?.none().end();
-            }
-
+            // The `SceneList` optional field is *always present* on
+            // the success path — empty when the group has no scenes
+            // on this device, populated otherwise. The chip-tool
+            // certification suites (`Test_TC_S_2_3` step 1f) assert
+            // the field exists rather than being omitted.
             let list = resp.scene_list()?.some()?;
             let list = inner
                 .table
@@ -1410,6 +1602,30 @@ where
         // (copy all scenes from the source group; the From/To SceneIDs
         // are ignored when set).
         let copy_all = (mode.bits() & 0x01) != 0;
+
+        // Spec: `CONSTRAINT_ERROR` for the reserved `SceneID = 0xFF`
+        // on either `scene_from` or `scene_to` — but only when the
+        // single-scene mode actually uses them.
+        if !copy_all && (scene_from == RESERVED_SCENE_ID || scene_to == RESERVED_SCENE_ID) {
+            return response
+                .status(SC_CONSTRAINT_ERROR)?
+                .group_identifier_from(group_from)?
+                .scene_identifier_from(scene_from)?
+                .end();
+        }
+
+        // Spec: `INVALID_COMMAND` when EITHER `group_from` or
+        // `group_to` (when non-zero) is absent from the Groups
+        // cluster's Group Table for this endpoint.
+        if !Self::group_in_table(ctx, fab_idx, endpoint_id, group_from)?
+            || !Self::group_in_table(ctx, fab_idx, endpoint_id, group_to)?
+        {
+            return response
+                .status(SC_INVALID_COMMAND)?
+                .group_identifier_from(group_from)?
+                .scene_identifier_from(scene_from)?
+                .end();
+        }
 
         // The whole "look up source + copy entries" operation runs
         // under one lock so the table can't change mid-copy.
@@ -1492,8 +1708,9 @@ impl Reply for CaptureReplyWriter<'_, '_> {
     }
 }
 
-impl<const N: usize, R, const M: usize> ClusterAsyncHandler for ScenesHandler<'_, N, R, M>
+impl<const N: usize, T, R, const M: usize> ClusterAsyncHandler for ScenesHandler<'_, N, T, R, M>
 where
+    T: AsyncHandler,
     R: SceneClusters,
 {
     /// FULL_CLUSTER minus the SceneNames feature (we accept the field

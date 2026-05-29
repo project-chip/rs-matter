@@ -1818,7 +1818,7 @@ pub mod scenes {
         AttributeValuePairStruct, AttributeValuePairStructArrayBuilder,
     };
     use crate::dm::clusters::scenes::{SceneClusterHandler, SceneContext};
-    use crate::dm::{ClusterId, EndptId, InvokeContext};
+    use crate::dm::{AsyncHandler, ClusterId, EndptId, InvokeContext};
     use crate::error::Error;
     use crate::tlv::{Nullable, TLVArray, TLVBuilderParent, TLVTag, TLVWriteParent};
     use crate::utils::storage::WriteBuf;
@@ -1858,14 +1858,15 @@ pub mod scenes {
     impl SceneClusterHandler for LevelControlSceneClusterHandler {
         const CLUSTER_ID: ClusterId = FULL_CLUSTER.id;
 
-        async fn capture<C, P>(
+        async fn capture<C, T, P>(
             &self,
-            sctx: &SceneContext<C>,
+            sctx: &SceneContext<C, T>,
             endpoint_id: EndptId,
             avp_array: AttributeValuePairStructArrayBuilder<P>,
         ) -> Result<AttributeValuePairStructArrayBuilder<P>, Error>
         where
             C: InvokeContext,
+            T: AsyncHandler,
             P: TLVBuilderParent,
         {
             // `CurrentLevel` is `nullable int8u`. Null → skip the AVP
@@ -1880,15 +1881,16 @@ pub mod scenes {
             }
         }
 
-        async fn apply<C>(
+        async fn apply<C, T>(
             &self,
-            sctx: &SceneContext<C>,
+            sctx: &SceneContext<C, T>,
             endpoint_id: EndptId,
             transition_time_ms: u32,
             avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
         ) -> Result<(), Error>
         where
             C: InvokeContext,
+            T: AsyncHandler,
         {
             for avp in avp_list.iter() {
                 let avp = avp?;

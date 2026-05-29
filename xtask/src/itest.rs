@@ -480,6 +480,38 @@ pub(crate) const LIGHT_TESTS: &[&str] = &[
     // "Test_TC_OO_2_7", // TODO: not yet passing
 ];
 
+/// Scenes Management YAML tests — run against the `scenes_tests` example.
+///
+/// Targets the Scenes Management cluster (`0x0062`) on EP1 of a
+/// dimmable-light-style endpoint with OnOff + LevelControl + Scenes wired
+/// together. The non-`Test_TC_S_*` entries are the chip-tool composite
+/// YAML suites (multi-fabric, fabric removal, max capacity, fabric scene
+/// info) which exercise less obvious end-to-end behaviour.
+///
+/// Listed tests are expected to pass; commented entries with a `TODO`
+/// are known-failing or not-yet-verified and tracked separately.
+pub(crate) const SCENES_TESTS: &[&str] = &[
+    // Attribute-read coverage (SceneTableSize, FabricSceneInfo).
+    "Test_TC_S_2_1",
+    // `Test_TC_S_2_2` — TODO: passes through step 3 but step 4
+    // reboots the DUT and expects the stored scene to survive,
+    // which requires scene-table persistence to KV storage. Tracked
+    // separately; re-enable once persistence lands.
+    // "Test_TC_S_2_2",
+    "Test_TC_S_2_3",
+    "Test_TC_S_2_4",
+    "Test_TC_S_2_5",
+    "Test_TC_S_2_6",
+    // Effect-on-receipt cross-cluster checks (RecallScene actually
+    // applies OnOff / LevelControl state via cross-cluster commands).
+    "Test_TC_S_3_1",
+    // Composite suites — uncomment once the per-test cases above pass.
+    // "TestScenesMultiFabric",     // TODO: not yet verified
+    // "TestScenesFabricRemoval",   // TODO: not yet verified
+    // "TestScenesFabricSceneInfo", // TODO: not yet verified
+    // "TestScenesMaxCapacity",     // TODO: not yet verified
+];
+
 /// A pre-canned test suite. Selects a default test list, the example
 /// binary they run against, the cargo features it must be built with,
 /// and a per-test timeout suitable for that suite.
@@ -502,6 +534,13 @@ pub(crate) enum TestSuite {
     Camera,
     /// OnOff + LevelControl, exercising the dimmable_light example.
     Light,
+    /// Scenes Management (`0x0062`) — exercises Add/View/Remove/Store/
+    /// Recall/GetSceneMembership/CopyScene plus cross-cluster apply
+    /// (RecallScene actually invokes OnOff/LevelControl commands). Runs
+    /// against the `scenes_tests` example which wires Scenes onto EP1
+    /// of an OnOff+LevelControl device, with the per-cluster
+    /// `SceneClusterHandler` impls registered.
+    Scenes,
     /// **Inverted** suite — rs-matter as the **commissioner** driving
     /// upstream `chip-all-clusters-app` (the device under test). Builds
     /// both binaries, spawns the CHIP app on `[::1]:<port>` with known
@@ -531,6 +570,7 @@ impl TestSuite {
                 .collect(),
             Self::Camera => CAMERA_TESTS.to_vec(),
             Self::Light => LIGHT_TESTS.to_vec(),
+            Self::Scenes => SCENES_TESTS.to_vec(),
             // One synthetic case — the dispatch in `ITests::run` picks
             // this up and routes to `run_commissioner_suite`, which
             // ignores the test list (there's nothing to parameterise yet).
@@ -544,6 +584,7 @@ impl TestSuite {
             Self::System | Self::SystemPython | Self::SystemYaml => "chip_tool_tests",
             Self::Camera => "camera_tests",
             Self::Light => "dimmable_light",
+            Self::Scenes => "scenes_tests",
             Self::Commissioner => "commissioner_tests",
         }
     }
@@ -551,7 +592,12 @@ impl TestSuite {
     /// Cargo features the example binary must be built with for this suite.
     pub(crate) fn default_features(&self) -> &'static [&'static str] {
         match self {
-            Self::System | Self::SystemPython | Self::SystemYaml | Self::Camera => &[],
+            // `scenes_tests` is a pure test binary (like
+            // `chip_tool_tests` / `camera_tests`) — no `chip-test`
+            // feature gate.
+            Self::System | Self::SystemPython | Self::SystemYaml | Self::Camera | Self::Scenes => {
+                &[]
+            }
             Self::Light => &["chip-test"],
             Self::Commissioner => &[],
         }
@@ -563,6 +609,9 @@ impl TestSuite {
             Self::System | Self::SystemPython | Self::SystemYaml => 120,
             Self::Camera => 180,
             Self::Light => 500,
+            // Scenes tests include some long composite YAML suites
+            // (multi-fabric/max-capacity); match `Light`'s budget.
+            Self::Scenes => 500,
             Self::Commissioner => 120,
         }
     }

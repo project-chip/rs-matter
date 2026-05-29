@@ -37,6 +37,9 @@ name = "commissioner_tests"
 name = "dimmable_light"
 
 [[bin]]
+name = "scenes_tests"
+
+[[bin]]
 name = "webrtc_camera"
 required-features = ["webrtc"]
 

@@ -60,7 +60,7 @@ pub mod scenes {
         AttributeValuePairStruct, AttributeValuePairStructArrayBuilder,
     };
     use crate::dm::clusters::scenes::{SceneClusterHandler, SceneContext};
-    use crate::dm::{ClusterId, EndptId, InvokeContext};
+    use crate::dm::{AsyncHandler, ClusterId, EndptId, InvokeContext};
     use crate::error::Error;
     use crate::tlv::{TLVArray, TLVBuilderParent, TLVTag, TLVWriteParent};
     use crate::utils::storage::WriteBuf;
@@ -139,14 +139,15 @@ pub mod scenes {
     impl SceneClusterHandler for ColorControlSceneClusterHandler<'_> {
         const CLUSTER_ID: ClusterId = FULL_CLUSTER.id;
 
-        async fn capture<C, P>(
+        async fn capture<C, T, P>(
             &self,
-            sctx: &SceneContext<C>,
+            sctx: &SceneContext<C, T>,
             endpoint_id: EndptId,
             avp_array: AttributeValuePairStructArrayBuilder<P>,
         ) -> Result<AttributeValuePairStructArrayBuilder<P>, Error>
         where
             C: InvokeContext,
+            T: AsyncHandler,
             P: TLVBuilderParent,
         {
             let features = self.features.features(endpoint_id);
@@ -249,15 +250,16 @@ pub mod scenes {
             avp_array.push_u8(AttributeId::EnhancedColorMode as _, mode_u8)
         }
 
-        async fn apply<C>(
+        async fn apply<C, T>(
             &self,
-            sctx: &SceneContext<C>,
+            sctx: &SceneContext<C, T>,
             endpoint_id: EndptId,
             transition_time_ms: u32,
             avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
         ) -> Result<(), Error>
         where
             C: InvokeContext,
+            T: AsyncHandler,
         {
             // Sweep the AVP list once and stash each known value. We
             // need EnhancedColorMode *and* the mode-specific values

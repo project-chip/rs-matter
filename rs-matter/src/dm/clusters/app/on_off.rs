@@ -1111,7 +1111,7 @@ pub mod scenes {
         AttributeValuePairStruct, AttributeValuePairStructArrayBuilder,
     };
     use crate::dm::clusters::scenes::{SceneClusterHandler, SceneContext};
-    use crate::dm::{ClusterId, EndptId, InvokeContext};
+    use crate::dm::{AsyncHandler, ClusterId, EndptId, InvokeContext};
     use crate::error::Error;
     use crate::tlv::{TLVArray, TLVBuilderParent};
 
@@ -1129,14 +1129,15 @@ pub mod scenes {
     impl SceneClusterHandler for OnOffSceneClusterHandler {
         const CLUSTER_ID: ClusterId = FULL_CLUSTER.id;
 
-        async fn capture<C, P>(
+        async fn capture<C, T, P>(
             &self,
-            sctx: &SceneContext<C>,
+            sctx: &SceneContext<C, T>,
             endpoint_id: EndptId,
             avp_array: AttributeValuePairStructArrayBuilder<P>,
         ) -> Result<AttributeValuePairStructArrayBuilder<P>, Error>
         where
             C: InvokeContext,
+            T: AsyncHandler,
             P: TLVBuilderParent,
         {
             // `OnOff.OnOff` is bool; serialize as `valueUnsigned8`
@@ -1147,15 +1148,16 @@ pub mod scenes {
             avp_array.push_u8(AttributeId::OnOff as _, v as u8)
         }
 
-        async fn apply<C>(
+        async fn apply<C, T>(
             &self,
-            sctx: &SceneContext<C>,
+            sctx: &SceneContext<C, T>,
             endpoint_id: EndptId,
             _transition_time_ms: u32,
             avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
         ) -> Result<(), Error>
         where
             C: InvokeContext,
+            T: AsyncHandler,
         {
             for avp in avp_list.iter() {
                 let avp = avp?;
