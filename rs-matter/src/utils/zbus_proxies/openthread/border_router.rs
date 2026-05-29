@@ -28,6 +28,7 @@ use zbus::proxy;
 
 #[proxy(
     interface = "io.openthread.BorderRouter",
+    default_service = "io.openthread.BorderRouter.wpan0",
     default_path = "/io/openthread/BorderRouter/wpan0"
 )]
 pub trait BorderRouter {
