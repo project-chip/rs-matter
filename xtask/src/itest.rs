@@ -519,19 +519,9 @@ pub(crate) const SCENES_TESTS: &[&str] = &[
     // wiring pass (`SceneClusterHandler` callers notify `ScenesState`
     // on state changes); deferred so persistence ships independently.
     // "TestScenesFabricSceneInfo",
-    //
-    // `TestScenesMultiFabric` / `TestScenesFabricRemoval` /
-    // `TestScenesMaxCapacity` all begin with a multi-fabric setup
-    // step that calls `AdministratorCommissioning.OpenCommissioningWindow`
-    // with a 16-byte PAKE salt. `rs-matter`'s `Spake2pVerifierSalt`
-    // is currently a fixed `[u8; 32]` (see
-    // `sc::pase::spake2p::SPAKE2P_VERIFIER_SALT_LEN`), so the salt
-    // copy fails with `InvalidData` and the commissioning window
-    // never opens. Re-enable once variable-length salts
-    // (16–32 B per Matter Core spec) are supported end-to-end.
-    // "TestScenesMultiFabric",
-    // "TestScenesFabricRemoval",
-    // "TestScenesMaxCapacity",
+    "TestScenesMultiFabric",
+    "TestScenesFabricRemoval",
+    "TestScenesMaxCapacity",
 ];
 
 /// A pre-canned test suite. Selects a default test list, the example

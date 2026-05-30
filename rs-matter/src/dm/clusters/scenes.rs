@@ -617,15 +617,24 @@ impl<const M: usize> SceneEntry<M> {
 /// Per-fabric "last recalled scene" pointer feeding
 /// `FabricSceneInfo.CurrentScene` / `CurrentGroup` / `SceneValid`.
 ///
+/// The entry persists once a fabric has interacted with scenes (so
+/// `FabricSceneInfo` keeps emitting a row for it even after its only
+/// scene is removed) — `valid` carries `SceneValid` directly.
+/// `TestScenesMultiFabric` step 36 asserts this lifecycle: TH2 removes
+/// its only scene and then reads `FabricSceneInfo`, expecting
+/// `SceneCount=0` with `CurrentScene`/`CurrentGroup` preserved and
+/// `SceneValid=false`.
+///
 /// `FromTLV` / `ToTLV` are derived (the type has no const generics,
 /// unlike [`SceneEntry`]) — the persisted shape is a struct with
-/// context-tagged fields auto-numbered 0..2 in source order.
+/// context-tagged fields auto-numbered 0..3 in source order.
 #[derive(Debug, Clone, Copy, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct CurrentScene {
     fab_idx: NonZeroU8,
     group_id: u16,
     scene_id: SceneId,
+    valid: bool,
 }
 
 /// All mutable Scenes state, held behind a single mutex via
@@ -927,11 +936,20 @@ where
     /// `N - 1` slack reserves one row for inter-fabric arbitration,
     /// `/ 2` splits the remaining budget evenly across the
     /// (typically two) fabrics the spec expects to share the table.
-    /// The result is saturated at 0 and clamped to `0xFF` for u8.
+    ///
+    /// Result is then clamped by the *total free slots* across all
+    /// fabrics — once fab A and B have consumed their shares, fab C's
+    /// remaining must drop below its `(N-1)/2` allotment as the global
+    /// budget shrinks. `TestScenesMaxCapacity` step that asserts
+    /// `RemainingCapacity == 1` after fabs 1+2 fill 14 of 16 slots
+    /// catches the unclamped version. Final value is clamped to
+    /// `0xFF` to fit the u8 wire field.
     fn remaining_capacity_for_fab(inner: &ScenesStateInner<N, M>, fab_idx: NonZeroU8) -> u8 {
         let per_fab_budget = N.saturating_sub(1) / 2;
         let used = inner.table.iter().filter(|e| e.fab_idx == fab_idx).count();
-        per_fab_budget.saturating_sub(used).min(0xFF) as u8
+        let per_fab_remaining = per_fab_budget.saturating_sub(used);
+        let global_remaining = N.saturating_sub(inner.table.len());
+        per_fab_remaining.min(global_remaining).min(0xFF) as u8
     }
 
     /// Check whether `group_id` is present in the Groups cluster's
@@ -960,8 +978,8 @@ where
     }
 
     /// Stamp `(group, scene)` as the current recalled scene for this
-    /// fabric. Bumps `FabricSceneInfo` dataver. Operates on already-
-    /// locked inner state.
+    /// fabric with `SceneValid = true`. Bumps `FabricSceneInfo`
+    /// dataver. Operates on already-locked inner state.
     fn remember_current(
         inner: &mut ScenesStateInner<N, M>,
         fab_idx: NonZeroU8,
@@ -975,6 +993,7 @@ where
         {
             slot.group_id = group_id;
             slot.scene_id = scene_id;
+            slot.valid = true;
         } else {
             // Best-effort push; if the slab is full we silently stop
             // tracking CurrentScene for this fabric (the spec permits
@@ -983,6 +1002,7 @@ where
                 fab_idx,
                 group_id,
                 scene_id,
+                valid: true,
             });
         }
         inner.bump_info_dataver();
@@ -1006,29 +1026,37 @@ where
         group_id: u16,
         scene_id: SceneId,
     ) {
-        let before = inner.current_per_fabric.len();
-        inner.current_per_fabric.retain(|c| {
-            !(c.fab_idx == fab_idx && c.group_id == group_id && c.scene_id == scene_id)
-        });
-        if before != inner.current_per_fabric.len() {
+        let mut bumped = false;
+        for c in inner.current_per_fabric.iter_mut() {
+            if c.valid && c.fab_idx == fab_idx && c.group_id == group_id && c.scene_id == scene_id {
+                c.valid = false;
+                bumped = true;
+            }
+        }
+        if bumped {
             inner.bump_info_dataver();
         }
     }
 
-    /// Drop the recalled-scene tracker for `fab_idx` when its stored
-    /// `group_id` matches the one passed in — used by
-    /// `RemoveAllScenes(group_id)` and the `COPY_ALL` mode of
-    /// `CopyScene` (both of which can affect any scene in the group).
+    /// Flip `SceneValid → false` for `fab_idx` when its remembered
+    /// `group_id` matches — used by `RemoveAllScenes(group_id)` and
+    /// the `COPY_ALL` mode of `CopyScene` (both of which can affect
+    /// any scene in the group). The slot keeps `CurrentScene` /
+    /// `CurrentGroup` populated for the next read so the fabric stays
+    /// "known" in `FabricSceneInfo`.
     fn invalidate_current_if_match_group(
         inner: &mut ScenesStateInner<N, M>,
         fab_idx: NonZeroU8,
         group_id: u16,
     ) {
-        let before = inner.current_per_fabric.len();
-        inner
-            .current_per_fabric
-            .retain(|c| !(c.fab_idx == fab_idx && c.group_id == group_id));
-        if before != inner.current_per_fabric.len() {
+        let mut bumped = false;
+        for c in inner.current_per_fabric.iter_mut() {
+            if c.valid && c.fab_idx == fab_idx && c.group_id == group_id {
+                c.valid = false;
+                bumped = true;
+            }
+        }
+        if bumped {
             inner.bump_info_dataver();
         }
     }
@@ -1055,6 +1083,18 @@ where
         scene_to: SceneId,
         copy_all: bool,
     ) -> u8 {
+        // Per-fab capacity gate up front: when the originating fabric
+        // is already at its `(N-1)/2` allotment (or the global table
+        // is full), the copy MUST be rejected with `INSUFFICIENT_SPACE`
+        // even when the destination scene already exists and would
+        // otherwise be a no-growth overwrite. Mirrors chip's reference
+        // handler (`TestScenesMaxCapacity` step 56 asserts this: TH2
+        // is at-cap and copies onto an already-existing destination,
+        // but the test expects `0x89` regardless).
+        if Self::remaining_capacity_for_fab(inner, fab_idx) == 0 {
+            return SC_INSUFFICIENT_SPACE;
+        }
+
         let mut found_source = false;
         let mut idx = 0;
         while idx < inner.table.len() {
@@ -1082,19 +1122,27 @@ where
                 {
                     inner.table[pos].transition_time = src_transition_time;
                     inner.table[pos].extension_fields = src_extension_fields;
-                } else if inner
-                    .table
-                    .push(SceneEntry {
-                        fab_idx,
-                        endpoint_id,
-                        group_id: group_to,
-                        scene_id: target_scene_id,
-                        transition_time: src_transition_time,
-                        extension_fields: src_extension_fields,
-                    })
-                    .is_err()
-                {
-                    return SC_INSUFFICIENT_SPACE;
+                } else {
+                    if Self::remaining_capacity_for_fab(inner, fab_idx) == 0 {
+                        // Reject when the originating fabric
+                        // has reached its per-fab budget ((N-1)/2 entries.
+                        return SC_INSUFFICIENT_SPACE;
+                    }
+
+                    if inner
+                        .table
+                        .push(SceneEntry {
+                            fab_idx,
+                            endpoint_id,
+                            group_id: group_to,
+                            scene_id: target_scene_id,
+                            transition_time: src_transition_time,
+                            extension_fields: src_extension_fields,
+                        })
+                        .is_err()
+                    {
+                        return SC_INSUFFICIENT_SPACE;
+                    }
                 }
 
                 // Single-scene mode copies exactly one entry — bail
@@ -1151,33 +1199,44 @@ where
 
         // Snapshot the relevant scalars under a single lock, then build
         // the response outside the lock.
-        let (scene_count, cur_group, cur_scene, valid, remaining) = self.state.with(|inner| {
-            let count = inner
-                .table
-                .iter()
-                .filter(|e| e.fab_idx == accessor_fab_idx && e.endpoint_id == endpoint_id)
-                .count();
-            let current = inner
-                .current_per_fabric
-                .iter()
-                .find(|c| c.fab_idx == accessor_fab_idx)
-                .copied();
-            // Per chip's reference behaviour, `CurrentScene` and
-            // `CurrentGroup` are always emitted on the wire (even when
-            // `SceneValid=false`); we just set them to 0 in that case.
-            // `TestScenesFabricSceneInfo` asserts equality against a
-            // fully-populated struct rather than against an
-            // omitted-fields shape.
-            let (g, s, v) = match current {
-                Some(c) => (Some(c.group_id), Some(c.scene_id), true),
-                None => (Some(0u16), Some(0u8), false),
-            };
-            let rem = Self::remaining_capacity_for_fab(inner, accessor_fab_idx);
-            (count.min(0xFF) as u8, g, s, v, rem)
-        });
+        let (has_state, scene_count, cur_group, cur_scene, valid, remaining) =
+            self.state.with(|inner| {
+                let count = inner
+                    .table
+                    .iter()
+                    .filter(|e| e.fab_idx == accessor_fab_idx && e.endpoint_id == endpoint_id)
+                    .count();
+                let current = inner
+                    .current_per_fabric
+                    .iter()
+                    .find(|c| c.fab_idx == accessor_fab_idx)
+                    .copied();
+                // A fabric is "known" to the cluster — i.e. gets a
+                // `FabricSceneInfo` row — once it owns at least one
+                // scene OR has ever recalled one. `current_per_fabric`
+                // entries persist past invalidation (carrying
+                // `valid=false`) so the row stays present after the
+                // last scene is removed (`TestScenesMultiFabric`
+                // step 36).
+                let has_state = count > 0 || current.is_some();
+                // When a row IS emitted, `CurrentScene` /
+                // `CurrentGroup` are always populated — set to 0 when
+                // the fabric has never recalled a scene (i.e. no
+                // `current` slot at all).
+                let (g, s, v) = match current {
+                    Some(c) => (Some(c.group_id), Some(c.scene_id), c.valid),
+                    None => (Some(0u16), Some(0u8), false),
+                };
+                let rem = Self::remaining_capacity_for_fab(inner, accessor_fab_idx);
+                (has_state, count.min(0xFF) as u8, g, s, v, rem)
+            });
 
         match builder {
             ArrayAttributeRead::ReadAll(arr) => {
+                if !has_state {
+                    return arr.end();
+                }
+
                 let arr = arr
                     .push()?
                     .scene_count(scene_count)?
@@ -1675,7 +1734,7 @@ where
         let transition_time = prior_tt.unwrap_or(0);
 
         let status_code = self.state.with(|inner| {
-            Self::upsert_scene(
+            let status = Self::upsert_scene(
                 inner,
                 fab_idx,
                 endpoint_id,
@@ -1690,7 +1749,22 @@ where
                     }
                     Ok(())
                 },
-            )
+            )?;
+            // StoreScene captures the device's *current* attribute
+            // state into the table, so the stored scene by definition
+            // matches the current state. Per Matter App Cluster spec
+            // §1.4.6.5 / chip's reference, that promotes
+            // `(group, scene)` to the recalled scene with
+            // `SceneValid=true` — `TestScenesMultiFabric` /
+            // `TestScenesMaxCapacity` / `TestScenesFabricSceneInfo`
+            // all assert this behaviour. `upsert_scene` may have just
+            // flipped the slot invalid (when overwriting the previously
+            // recalled entry); the `remember_current` below stamps it
+            // back to valid with the freshly-stored ID.
+            if status == 0 {
+                Self::remember_current(inner, fab_idx, group_id, scene_id);
+            }
+            Ok::<_, Error>(status)
         })?;
 
         if status_code == 0 {
@@ -2224,14 +2298,16 @@ mod tests {
 
     #[test]
     fn copy_all_preserves_each_source_blob() {
+        // `N=16` so per-fab cap `(N-1)/2 = 7` comfortably absorbs the
+        // 2-source + 2-copy = 4 rows for fab(1).
         let blob_a = &[0xAA, 0xBB, 0x18];
         let blob_b = &[0xCC, 0x18];
-        let mut inner = ScenesStateInner::<8>::new();
+        let mut inner = ScenesStateInner::<16>::new();
         push(&mut inner, entry_with_blob(fab(1), 1, 10, 1, 100, blob_a));
         push(&mut inner, entry_with_blob(fab(1), 1, 10, 2, 200, blob_b));
 
         let status =
-            ScenesHandler::<8>::copy_scenes_inner(&mut inner, fab(1), 1, 10, 0, 20, 0, true);
+            ScenesHandler::<16>::copy_scenes_inner(&mut inner, fab(1), 1, 10, 0, 20, 0, true);
         assert_eq!(status, 0);
 
         assert_eq!(find_blob(&inner, fab(1), 1, 20, 1), Some(&blob_a[..]));
@@ -2323,12 +2399,14 @@ mod tests {
 
     #[test]
     fn copy_all_copies_every_source_scene() {
-        let mut inner = ScenesStateInner::<8>::new();
+        // `N=16` so per-fab cap `(N-1)/2 = 7` comfortably absorbs the
+        // 3-source + 3-copy = 6 rows for fab(1).
+        let mut inner = ScenesStateInner::<16>::new();
         push(&mut inner, entry(fab(1), 1, 10, 1, 100));
         push(&mut inner, entry(fab(1), 1, 10, 2, 200));
         push(&mut inner, entry(fab(1), 1, 10, 3, 300));
 
-        let status = ScenesHandler::<8>::copy_scenes_inner(
+        let status = ScenesHandler::<16>::copy_scenes_inner(
             &mut inner,
             fab(1),
             1,
@@ -2478,7 +2556,14 @@ mod tests {
             ScenesHandler::<8>::copy_scenes_inner(&mut inner, fab(1), 1, 10, 5, 20, 7, false);
 
         assert_eq!(status, 0);
-        assert!(inner.current_per_fabric.iter().all(|c| c.fab_idx != fab(1)));
+        // The slot persists (so `FabricSceneInfo` keeps emitting a row
+        // for this fabric) but `valid` flips to false.
+        let slot = inner
+            .current_per_fabric
+            .iter()
+            .find(|c| c.fab_idx == fab(1))
+            .expect("slot kept");
+        assert!(!slot.valid);
     }
 
     #[test]
@@ -2498,6 +2583,7 @@ mod tests {
         assert_eq!(inner.current_per_fabric.len(), 1);
         assert_eq!(inner.current_per_fabric[0].group_id, 99);
         assert_eq!(inner.current_per_fabric[0].scene_id, 99);
+        assert!(inner.current_per_fabric[0].valid);
     }
 
     #[test]
@@ -2562,11 +2648,25 @@ mod tests {
         // scene.
         ScenesHandler::<8>::invalidate_current_if_match_scene(&mut inner, fab(1), 99, 99);
         assert_eq!(inner.current_per_fabric.len(), 2);
+        assert!(inner.current_per_fabric.iter().all(|c| c.valid));
 
-        // Matching (group, scene) on fab(1) drops only fab(1)'s entry.
+        // Matching (group, scene) on fab(1) flips just fab(1)'s valid
+        // bit — entries always persist so `FabricSceneInfo` still
+        // emits a row for the fabric.
         ScenesHandler::<8>::invalidate_current_if_match_scene(&mut inner, fab(1), 10, 1);
-        assert_eq!(inner.current_per_fabric.len(), 1);
-        assert_eq!(inner.current_per_fabric[0].fab_idx, fab(2));
+        assert_eq!(inner.current_per_fabric.len(), 2);
+        let f1 = inner
+            .current_per_fabric
+            .iter()
+            .find(|c| c.fab_idx == fab(1))
+            .unwrap();
+        assert!(!f1.valid);
+        let f2 = inner
+            .current_per_fabric
+            .iter()
+            .find(|c| c.fab_idx == fab(2))
+            .unwrap();
+        assert!(f2.valid);
     }
 
     #[test]
@@ -2577,14 +2677,24 @@ mod tests {
 
         // Wrong group: no-op.
         ScenesHandler::<8>::invalidate_current_if_match_group(&mut inner, fab(1), 99);
-        assert_eq!(inner.current_per_fabric.len(), 2);
+        assert!(inner.current_per_fabric.iter().all(|c| c.valid));
 
-        // Right group on fab(1), regardless of scene id, drops fab(1)
-        // — exercising the `RemoveAllScenes(group)` / `CopyScene COPY_ALL`
-        // path.
+        // Right group on fab(1), regardless of scene id, flips fab(1)'s
+        // valid bit — exercising the `RemoveAllScenes(group)` /
+        // `CopyScene COPY_ALL` path.
         ScenesHandler::<8>::invalidate_current_if_match_group(&mut inner, fab(1), 10);
-        assert_eq!(inner.current_per_fabric.len(), 1);
-        assert_eq!(inner.current_per_fabric[0].fab_idx, fab(2));
+        let f1 = inner
+            .current_per_fabric
+            .iter()
+            .find(|c| c.fab_idx == fab(1))
+            .unwrap();
+        assert!(!f1.valid);
+        let f2 = inner
+            .current_per_fabric
+            .iter()
+            .find(|c| c.fab_idx == fab(2))
+            .unwrap();
+        assert!(f2.valid);
     }
 
     // ---- Phase D: AddScene / StoreScene shared `upsert_scene` path ----
@@ -2715,7 +2825,14 @@ mod tests {
             ScenesHandler::<8>::upsert_scene(&mut inner, fab(1), 1, 10, 5, 100, fill_with(&[0x18]))
                 .unwrap();
 
-        assert!(!inner.current_per_fabric.iter().any(|c| c.fab_idx == fab(1)));
+        // The slot stays — the fabric is still "known" to the cluster
+        // — but `valid` flips false.
+        let f1 = inner
+            .current_per_fabric
+            .iter()
+            .find(|c| c.fab_idx == fab(1))
+            .expect("slot kept");
+        assert!(!f1.valid);
     }
 
     #[test]
@@ -2734,6 +2851,7 @@ mod tests {
         assert_eq!(inner.current_per_fabric.len(), 1);
         assert_eq!(inner.current_per_fabric[0].group_id, 1);
         assert_eq!(inner.current_per_fabric[0].scene_id, 1);
+        assert!(inner.current_per_fabric[0].valid);
     }
 
     #[test]
@@ -2748,11 +2866,20 @@ mod tests {
             ScenesHandler::<8>::upsert_scene(&mut inner, fab(1), 1, 10, 5, 100, fill_with(&[0x18]))
                 .unwrap();
 
-        assert!(!inner.current_per_fabric.iter().any(|c| c.fab_idx == fab(1)));
-        assert!(
-            inner.current_per_fabric.iter().any(|c| c.fab_idx == fab(2)),
-            "fab(2)'s CurrentScene must not be touched"
-        );
+        // fab(1) is invalidated (valid=false) but the slot stays.
+        // fab(2) is untouched.
+        let f1 = inner
+            .current_per_fabric
+            .iter()
+            .find(|c| c.fab_idx == fab(1))
+            .expect("fab(1) slot kept");
+        assert!(!f1.valid);
+        let f2 = inner
+            .current_per_fabric
+            .iter()
+            .find(|c| c.fab_idx == fab(2))
+            .expect("fab(2) slot kept");
+        assert!(f2.valid, "fab(2)'s CurrentScene must not be touched");
     }
 
     #[test]
