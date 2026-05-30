@@ -77,13 +77,14 @@ use core::num::NonZeroU8;
 
 use crate::dm::{
     ArrayAttributeRead, AsyncHandler, AttrDetails, AttrId, Cluster, ClusterId, CmdDetails, CmdId,
-    Dataver, EmptyHandler, EndptId, InvokeContext, InvokeContextInstance, InvokeReplyInstance,
-    Metadata, ReadContext, ReadContextInstance, ReadReply, Reply, SceneId,
+    Dataver, EmptyHandler, EndptId, HandlerContext, InvokeContext, InvokeContextInstance,
+    InvokeReplyInstance, Metadata, ReadContext, ReadContextInstance, ReadReply, Reply, SceneId,
 };
 use crate::error::{Error, ErrorCode};
+use crate::persist::{KvBlobStore, Persist};
 use crate::tlv::{
     FromTLV, Nullable, OptionalBuilder, TLVArray, TLVBuilder, TLVBuilderParent, TLVElement,
-    TLVSequence, TLVTag, TLVWrite, TLVWriteParent, TagType, ToTLV,
+    TLVSequence, TLVTag, TLVWrite, TLVWriteParent, TagType, ToTLV, TLV,
 };
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -91,6 +92,7 @@ use crate::utils::storage::{Vec, WriteBuf};
 use crate::utils::sync::blocking::Mutex;
 
 pub use crate::dm::clusters::decl::scenes_management::*;
+pub use crate::persist::SCENES_KEY;
 
 /// IM status codes specific to the Scenes Management cluster (see
 /// "Generic Usage Notes" in the Matter Application Cluster spec).
@@ -107,6 +109,11 @@ const SC_INVALID_COMMAND: u8 = 0x85;
 const SC_CONSTRAINT_ERROR: u8 = 0x87;
 /// Reserved (invalid) `SceneID` value per Matter App Cluster spec.
 const RESERVED_SCENE_ID: SceneId = 0xFF;
+/// Maximum legal `TransitionTime` value on `AddScene`, per Matter App
+/// Cluster spec §1.4.7.1 "AddScene Command":
+/// > The maximum value SHALL be 60 000 000 (1000 minutes).
+/// Anything larger MUST be rejected with `CONSTRAINT_ERROR`.
+const MAX_TRANSITION_TIME_MS: u32 = 60_000_000;
 
 /// Max length of the serialized `ExtensionFieldSetStructs` payload
 /// carried on a single scene record. Per chip's notes a Color Control
@@ -133,6 +140,19 @@ pub trait SceneClusterHandler {
     /// The Matter cluster ID this impl handles. Used by [`SceneClusters`]
     /// to route apply dispatch.
     const CLUSTER_ID: ClusterId;
+
+    /// Return `true` if `attribute_id` is a scenable attribute of this
+    /// cluster per the Matter Application Cluster spec. Walked by
+    /// [`SceneClusters::check_scenable`] during `AddScene` to reject
+    /// `ExtensionFieldSetStructs` referencing non-scenable attributes
+    /// (the spec requires `INVALID_COMMAND` in that case;
+    /// `Test_TC_S_2_2` step 8g exercises it).
+    ///
+    /// Default impl rejects every attribute — concrete cluster
+    /// handlers MUST override.
+    fn is_scenable_attribute(_attribute_id: AttrId) -> bool {
+        false
+    }
 
     /// Read this cluster's scene-able attributes via
     /// `sctx.read(...)` and emit zero-or-more
@@ -204,6 +224,21 @@ pub trait SceneClusters {
         T: AsyncHandler,
         P: TLVBuilderParent;
 
+    /// Walk the registry looking for `cluster_id`. Returns:
+    ///
+    /// - `Some(true)`  — `cluster_id` is registered and
+    ///   `attribute_id` is scenable on that cluster (per
+    ///   [`SceneClusterHandler::is_scenable_attribute`]).
+    /// - `Some(false)` — `cluster_id` is registered but
+    ///   `attribute_id` is **not** scenable (`AddScene` MUST
+    ///   reject with `INVALID_COMMAND`).
+    /// - `None`        — `cluster_id` is not registered with the
+    ///   Scenes handler. `AddScene` treats this as lenient (store
+    ///   the bytes; `RecallScene` will silently skip them on
+    ///   replay), matching chip's behaviour on a firmware
+    ///   downgrade that drops a previously-scenable cluster.
+    fn check_scenable(&self, cluster_id: ClusterId, attribute_id: AttrId) -> Option<bool>;
+
     /// Find the registered cluster matching `cluster_id` and let it
     /// apply `avp_list`. Returns `Ok(true)` if a cluster handled it,
     /// `Ok(false)` if no registered cluster matches (the entry is
@@ -236,6 +271,10 @@ impl SceneClusters for () {
         ready(Ok(parent))
     }
 
+    fn check_scenable(&self, _cluster_id: ClusterId, _attribute_id: AttrId) -> Option<bool> {
+        None
+    }
+
     fn apply<C, T>(
         &self,
         _sctx: &SceneContext<C, T>,
@@ -257,6 +296,14 @@ where
     H: SceneClusterHandler,
     T: SceneClusters,
 {
+    fn check_scenable(&self, cluster_id: ClusterId, attribute_id: AttrId) -> Option<bool> {
+        if cluster_id == H::CLUSTER_ID {
+            Some(H::is_scenable_attribute(attribute_id))
+        } else {
+            self.1.check_scenable(cluster_id, attribute_id)
+        }
+    }
+
     async fn capture<C, U, P>(
         &self,
         sctx: &SceneContext<C, U>,
@@ -569,7 +616,11 @@ impl<const M: usize> SceneEntry<M> {
 
 /// Per-fabric "last recalled scene" pointer feeding
 /// `FabricSceneInfo.CurrentScene` / `CurrentGroup` / `SceneValid`.
-#[derive(Debug, Clone, Copy)]
+///
+/// `FromTLV` / `ToTLV` are derived (the type has no const generics,
+/// unlike [`SceneEntry`]) — the persisted shape is a struct with
+/// context-tagged fields auto-numbered 0..2 in source order.
+#[derive(Debug, Clone, Copy, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct CurrentScene {
     fab_idx: NonZeroU8,
@@ -662,6 +713,143 @@ impl<const N: usize, const M: usize> ScenesState<N, M> {
 impl<const N: usize, const M: usize> Default for ScenesState<N, M> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------
+// TLV round-trip used by the persistence layer.
+//
+// The whole [`ScenesStateInner`] is persisted as a single TLV struct
+// under [`SCENES_KEY`] — the cross-fabric scene table plus the
+// per-fabric `CurrentScene` bookkeeping. `info_dataver` is *not*
+// persisted: the public `Dataver` on the handler is re-randomized at
+// boot anyway, so any client cache will already see a new dataver and
+// re-fetch.
+//
+// Hand-rolled rather than `#[derive(FromTLV, ToTLV)]` because the inner
+// types are const-generic and the macro doesn't yet support that
+// (same reason `EndpointLabels<N>` in `user_label.rs` is hand-rolled).
+// The persisted wire shape is private to this module; it only needs to
+// round-trip between successive runs of the same firmware.
+
+impl<const M: usize> ToTLV for SceneEntry<M> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        tw.start_struct(tag)?;
+        self.fab_idx.to_tlv(&TLVTag::Context(0), &mut tw)?;
+        self.endpoint_id.to_tlv(&TLVTag::Context(1), &mut tw)?;
+        self.group_id.to_tlv(&TLVTag::Context(2), &mut tw)?;
+        self.scene_id.to_tlv(&TLVTag::Context(3), &mut tw)?;
+        self.transition_time.to_tlv(&TLVTag::Context(4), &mut tw)?;
+        // The captured EFS bytes go on the wire as a single octet
+        // string, rather than as an array-of-u8 (which is what the
+        // blanket `Vec<u8, M>: ToTLV` would emit).
+        tw.str(&TLVTag::Context(5), &self.extension_fields)?;
+        tw.end_container()
+    }
+
+    fn tlv_iter(&self, _tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+        // Only `Persist::store_tlv` exercises persistence and it goes
+        // through `to_tlv` above. Leave `tlv_iter` empty to satisfy the
+        // trait bound without dragging extra machinery in.
+        core::iter::empty()
+    }
+}
+
+impl<'a, const M: usize> FromTLV<'a> for SceneEntry<M> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+        let s = element.structure()?;
+        let mut extension_fields = Vec::<u8, M>::new();
+        extension_fields
+            .extend_from_slice(s.ctx(5)?.str()?)
+            .map_err(|_| ErrorCode::NoSpace)?;
+        Ok(Self {
+            fab_idx: NonZeroU8::from_tlv(&s.ctx(0)?)?,
+            endpoint_id: EndptId::from_tlv(&s.ctx(1)?)?,
+            group_id: u16::from_tlv(&s.ctx(2)?)?,
+            scene_id: SceneId::from_tlv(&s.ctx(3)?)?,
+            transition_time: u32::from_tlv(&s.ctx(4)?)?,
+            extension_fields,
+        })
+    }
+}
+
+impl<const N: usize, const M: usize> ToTLV for ScenesStateInner<N, M> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        tw.start_struct(tag)?;
+        self.table.to_tlv(&TLVTag::Context(0), &mut tw)?;
+        self.current_per_fabric
+            .to_tlv(&TLVTag::Context(1), &mut tw)?;
+        tw.end_container()
+    }
+
+    fn tlv_iter(&self, _tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+        core::iter::empty()
+    }
+}
+
+impl<'a, const N: usize, const M: usize> FromTLV<'a> for ScenesStateInner<N, M> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+        let s = element.structure()?;
+        Ok(Self {
+            table: Vec::<SceneEntry<M>, N>::from_tlv(&s.ctx(0)?)?,
+            current_per_fabric: Vec::<CurrentScene, N>::from_tlv(&s.ctx(1)?)?,
+            // Always boot at 0 — see the persistence note above.
+            info_dataver: 0,
+        })
+    }
+}
+
+impl<const N: usize, const M: usize> ScenesState<N, M> {
+    /// Re-hydrate the scene table and per-fabric `CurrentScene`
+    /// bookkeeping from `store` under [`SCENES_KEY`]. Call once at
+    /// application startup, before exposing the data model to
+    /// commissioners, so subsequent `RecallScene` / `GetSceneMembership`
+    /// commands see scenes that were stored before the last reboot.
+    ///
+    /// Missing key (first boot, or persistence cleared) is not an
+    /// error — the registry stays empty.
+    pub async fn load_persist<S: KvBlobStore>(
+        &self,
+        mut store: S,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        let Some(data) = store.load(SCENES_KEY, buf)? else {
+            // No prior persistence — reset to empty so re-calling
+            // `load_persist` after a `remove` of the key behaves
+            // deterministically.
+            self.with(|inner| {
+                inner.table.clear();
+                inner.current_per_fabric.clear();
+            });
+            return Ok(());
+        };
+
+        let loaded = ScenesStateInner::<N, M>::from_tlv(&TLVElement::new(data))?;
+        let entries = loaded.table.len();
+
+        self.with(|inner| {
+            inner.table = loaded.table;
+            inner.current_per_fabric = loaded.current_per_fabric;
+            inner.bump_info_dataver();
+        });
+
+        info!("Loaded Scenes state from storage ({} entries)", entries);
+
+        Ok(())
+    }
+
+    /// Serialise the current state to `ctx.kv()` under [`SCENES_KEY`].
+    /// Called from every mutating handler path after the in-memory
+    /// change is committed.
+    fn store_persist<C: HandlerContext>(&self, ctx: &C) -> Result<(), Error> {
+        let mut persist = Persist::new(ctx.kv());
+
+        self.inner.lock(|cell| {
+            let inner = cell.borrow();
+            persist.store_tlv(SCENES_KEY, &*inner)
+        })?;
+
+        persist.run()
     }
 }
 
@@ -974,9 +1162,12 @@ where
         let scene_id = request.scene_id()?;
         let transition_time = request.transition_time()?;
 
-        // Spec: `CONSTRAINT_ERROR` for the reserved `SceneID = 0xFF`.
-        // Checked before the group-table existence check.
-        if scene_id == RESERVED_SCENE_ID {
+        // Spec: `CONSTRAINT_ERROR` for the reserved `SceneID = 0xFF`,
+        // and also for `TransitionTime` exceeding the spec maximum
+        // (`Test_TC_S_2_2` steps 8d/8e). Both are checked before the
+        // group-table existence check so a bad request shape is
+        // rejected even if the target group is absent.
+        if scene_id == RESERVED_SCENE_ID || transition_time > MAX_TRANSITION_TIME_MS {
             return response
                 .status(SC_CONSTRAINT_ERROR)?
                 .group_id(group_id)?
@@ -1007,10 +1198,40 @@ where
         // `upsert_scene`'s fill closure copies the request's raw EFS
         // bytes directly into the table slot's `extension_fields`
         // Vec, skipping an intermediate stack-allocated Vec.
-        let raw = match request.extension_field_set_structs() {
-            Ok(array) => array.element().raw_value()?,
-            Err(_) => &[],
+        let efs_array_opt = request.extension_field_set_structs().ok();
+        let raw = match efs_array_opt {
+            Some(ref array) => array.element().raw_value()?,
+            None => &[],
         };
+
+        // Spec-conformance check: every AVP in the EFS payload whose
+        // `cluster_id` is registered with this Scenes handler must
+        // reference a scenable attribute on that cluster. Mixing in an
+        // unscenable attribute MUST be rejected with `INVALID_COMMAND`
+        // (Matter App Cluster spec §1.4.7.1; exercised by
+        // `Test_TC_S_2_2` step 8g).
+        //
+        // For unregistered clusters we stay lenient (silently store the
+        // bytes) — matches chip's behaviour on firmware downgrades
+        // where a previously-scenable cluster is dropped from the
+        // registry.
+        if let Some(ref efs_array) = efs_array_opt {
+            for efs in efs_array.iter() {
+                let efs = efs?;
+                let cid = efs.cluster_id()?;
+                for avp in efs.attribute_value_list()?.iter() {
+                    let avp = avp?;
+                    let aid = avp.attribute_id()?;
+                    if let Some(false) = self.clusters.check_scenable(cid, aid) {
+                        return response
+                            .status(SC_INVALID_COMMAND)?
+                            .group_id(group_id)?
+                            .scene_id(scene_id)?
+                            .end();
+                    }
+                }
+            }
+        }
 
         // Insert / replace + invalidate SceneValid for this fabric — all
         // under a single lock. Per the `SceneValid` field rules,
@@ -1036,6 +1257,7 @@ where
         })?;
 
         if status_code == 0 {
+            self.state.store_persist(ctx)?;
             ctx.notify_own_attr_changed(AttributeId::FabricSceneInfo as _);
         }
 
@@ -1276,6 +1498,7 @@ where
         });
 
         if status == 0 {
+            self.state.store_persist(ctx)?;
             ctx.notify_own_attr_changed(AttributeId::FabricSceneInfo as _);
         }
 
@@ -1318,6 +1541,7 @@ where
         });
 
         if removed {
+            self.state.store_persist(ctx)?;
             ctx.notify_own_attr_changed(AttributeId::FabricSceneInfo as _);
         }
 
@@ -1421,6 +1645,7 @@ where
         })?;
 
         if status_code == 0 {
+            self.state.store_persist(ctx)?;
             ctx.notify_own_attr_changed(AttributeId::FabricSceneInfo as _);
         }
 
@@ -1451,21 +1676,26 @@ where
         let group_id = request.group_id()?;
         let scene_id = request.scene_id()?;
 
-        // `RecallScene` has no response struct (returns `()`), so we
-        // surface the status via `set_cluster_status` and bubble out
-        // an error.
+        // `RecallScene` has no response struct (returns `()`), so the
+        // status must be surfaced as an IM-level `CommandStatusIB.status`
+        // — i.e. returned via `Err(ErrorCode::*)`. The
+        // [`ErrorCode`] → [`IMStatusCode`] mapping in `im.rs` turns
+        // these into the spec-mandated wire codes
+        // (`ConstraintError = 0x87`, `InvalidCommand = 0x85`,
+        // `NotFound = 0x8b`). Surfacing them via `set_cluster_status`
+        // would produce `FAILURE` with a cluster-status side-channel,
+        // which chip-tool's certification suites correctly reject
+        // (see `Test_TC_S_2_2` step 4e).
 
         // Spec: `CONSTRAINT_ERROR` for the reserved `SceneID = 0xFF`.
         if scene_id == RESERVED_SCENE_ID {
-            ctx.cmd().set_cluster_status(SC_CONSTRAINT_ERROR);
-            return Err(ErrorCode::Failure.into());
+            return Err(ErrorCode::ConstraintError.into());
         }
 
         // Spec: `INVALID_COMMAND` when `group_id != 0` is absent from
         // the Groups cluster's Group Table for this endpoint.
         if !Self::group_in_table(ctx, fab_idx, endpoint_id, group_id)? {
-            ctx.cmd().set_cluster_status(SC_INVALID_COMMAND);
-            return Err(ErrorCode::Failure.into());
+            return Err(ErrorCode::InvalidCommand.into());
         }
 
         // RecallScene's request carries an optional+nullable
@@ -1499,10 +1729,10 @@ where
             Ok((Some(len), Some(e.transition_time)))
         })?;
         let (Some(blob_len), Some(stored_tt_ms)) = (blob_len, stored_tt_ms) else {
-            // Spec: NotFound when no matching scene exists. The codegen
-            // turns the IM error into a NotFound status response.
-            ctx.cmd().set_cluster_status(SC_NOT_FOUND);
-            return Err(ErrorCode::Failure.into());
+            // Spec: `NOT_FOUND` when no matching scene exists. Surfaced
+            // at IM level (see the comment above on `ConstraintError`
+            // / `InvalidCommand`).
+            return Err(ErrorCode::NotFound.into());
         };
 
         let effective_tt_ms = override_tt_ms.unwrap_or(stored_tt_ms);
@@ -1525,6 +1755,7 @@ where
         self.state
             .with(|inner| Self::remember_current(inner, fab_idx, group_id, scene_id));
 
+        self.state.store_persist(ctx)?;
         ctx.notify_own_attr_changed(AttributeId::FabricSceneInfo as _);
         Ok(())
     }
@@ -1643,6 +1874,7 @@ where
         });
 
         if status == 0 {
+            self.state.store_persist(ctx)?;
             ctx.notify_own_attr_changed(AttributeId::FabricSceneInfo as _);
         }
 

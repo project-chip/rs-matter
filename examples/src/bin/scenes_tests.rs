@@ -200,6 +200,13 @@ fn run() -> Result<(), Error> {
     // LevelControl ship a ZST impl in their respective modules
     // (`app::on_off::scenes` / `app::level_control::scenes`).
     let scenes_state = SCENES_STATE.uninit().init_with(ScenesState::init());
+    // Restore the scene table + per-fabric `CurrentScene` bookkeeping
+    // from KV — re-applies any scenes a previous run of this binary
+    // stored under `SCENES_KEY`. Must run before the data model goes
+    // live so `RecallScene` on the very first commission step (after
+    // a reboot in the middle of `Test_TC_S_2_2`) sees the persisted
+    // entries.
+    futures_lite::future::block_on(scenes_state.load_persist(&mut kv, kv_buf))?;
     let scenes_handler = ScenesHandler::new(
         Dataver::new_rand(&mut rand),
         scenes_state,

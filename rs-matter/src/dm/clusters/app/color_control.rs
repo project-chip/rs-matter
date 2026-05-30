@@ -60,7 +60,7 @@ pub mod scenes {
         AttributeValuePairStruct, AttributeValuePairStructArrayBuilder,
     };
     use crate::dm::clusters::scenes::{SceneClusterHandler, SceneContext};
-    use crate::dm::{AsyncHandler, ClusterId, EndptId, InvokeContext};
+    use crate::dm::{AsyncHandler, AttrId, ClusterId, EndptId, InvokeContext};
     use crate::error::Error;
     use crate::tlv::{TLVArray, TLVBuilderParent, TLVTag, TLVWriteParent};
     use crate::utils::storage::WriteBuf;
@@ -138,6 +138,29 @@ pub mod scenes {
 
     impl SceneClusterHandler for ColorControlSceneClusterHandler<'_> {
         const CLUSTER_ID: ClusterId = FULL_CLUSTER.id;
+
+        fn is_scenable_attribute(attribute_id: AttrId) -> bool {
+            // Per Matter App Cluster spec §3.2.10 the scenable
+            // attributes for ColorControl are: `CurrentX`, `CurrentY`,
+            // `EnhancedCurrentHue`, `CurrentSaturation`,
+            // `ColorLoopActive`, `ColorLoopDirection`, `ColorLoopTime`,
+            // `ColorTemperatureMireds`, `EnhancedColorMode`. Feature
+            // availability is checked at recall time (see `apply`),
+            // not here — `is_scenable_attribute` only validates the
+            // shape of an `AddScene` payload.
+            matches!(
+                attribute_id,
+                a if a == AttributeId::CurrentX as AttrId
+                    || a == AttributeId::CurrentY as AttrId
+                    || a == AttributeId::EnhancedCurrentHue as AttrId
+                    || a == AttributeId::CurrentSaturation as AttrId
+                    || a == AttributeId::ColorLoopActive as AttrId
+                    || a == AttributeId::ColorLoopDirection as AttrId
+                    || a == AttributeId::ColorLoopTime as AttrId
+                    || a == AttributeId::ColorTemperatureMireds as AttrId
+                    || a == AttributeId::EnhancedColorMode as AttrId
+            )
+        }
 
         async fn capture<C, T, P>(
             &self,

@@ -1818,7 +1818,7 @@ pub mod scenes {
         AttributeValuePairStruct, AttributeValuePairStructArrayBuilder,
     };
     use crate::dm::clusters::scenes::{SceneClusterHandler, SceneContext};
-    use crate::dm::{AsyncHandler, ClusterId, EndptId, InvokeContext};
+    use crate::dm::{AsyncHandler, AttrId, ClusterId, EndptId, InvokeContext};
     use crate::error::Error;
     use crate::tlv::{Nullable, TLVArray, TLVBuilderParent, TLVTag, TLVWriteParent};
     use crate::utils::storage::WriteBuf;
@@ -1857,6 +1857,12 @@ pub mod scenes {
 
     impl SceneClusterHandler for LevelControlSceneClusterHandler {
         const CLUSTER_ID: ClusterId = FULL_CLUSTER.id;
+
+        fn is_scenable_attribute(attribute_id: AttrId) -> bool {
+            // Per Matter App Cluster spec, only `CurrentLevel` is the
+            // scenable attribute on LevelControl.
+            attribute_id == AttributeId::CurrentLevel as AttrId
+        }
 
         async fn capture<C, T, P>(
             &self,

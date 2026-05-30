@@ -64,6 +64,18 @@ pub const LKG_UTC_KEY: u16 = BINDINGS_KEY + 1;
 /// The key is absent on disk when no trusted source is configured.
 pub const TRUSTED_TIME_SOURCE_KEY: u16 = LKG_UTC_KEY + 1;
 
+/// The key used for storing the entire Scenes Management cluster
+/// state — the cross-fabric scene table plus the per-fabric
+/// "last recalled scene" bookkeeping — as a single TLV blob.
+/// Re-persisted on every successful mutation (AddScene / StoreScene /
+/// RemoveScene / RemoveAllScenes / CopyScene / RecallScene).
+///
+/// The blob's size is bounded by `N * (M + ~14)` bytes plus per-fabric
+/// overhead — for the in-tree defaults (`N=16, M=128`) that is well
+/// under the 4 KiB KvBlobStore working-buffer assumed by most MCU
+/// targets.
+pub const SCENES_KEY: u16 = TRUSTED_TIME_SOURCE_KEY + 1;
+
 /// A trait representing a key-value BLOB storage.
 ///
 /// NOTE: For now, the trait is deliberately modeled as non-async, so that it can be used from

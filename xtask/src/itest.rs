@@ -493,11 +493,10 @@ pub(crate) const LIGHT_TESTS: &[&str] = &[
 pub(crate) const SCENES_TESTS: &[&str] = &[
     // Attribute-read coverage (SceneTableSize, FabricSceneInfo).
     "Test_TC_S_2_1",
-    // `Test_TC_S_2_2` — TODO: passes through step 3 but step 4
-    // reboots the DUT and expects the stored scene to survive,
-    // which requires scene-table persistence to KV storage. Tracked
-    // separately; re-enable once persistence lands.
-    // "Test_TC_S_2_2",
+    // `Test_TC_S_2_2` reboots the DUT in step 4 and expects scenes
+    // stored before the reboot to be re-applied by a `RecallScene`
+    // afterwards — covered by [`ScenesState::load_persist`].
+    "Test_TC_S_2_2",
     "Test_TC_S_2_3",
     "Test_TC_S_2_4",
     "Test_TC_S_2_5",
