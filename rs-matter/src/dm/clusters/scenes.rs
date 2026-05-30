@@ -988,14 +988,49 @@ where
         inner.bump_info_dataver();
     }
 
-    /// Drop the recalled-scene tracker for this fabric — called after
-    /// operations that change the scene table in ways that may make
-    /// the previously-recalled scene no longer represent the current
-    /// attribute state (per the `SceneValid` field rules in the spec).
+    /// Drop the recalled-scene tracker for `fab_idx` **only** when its
+    /// stored `(group_id, scene_id)` matches the one passed in — i.e.
+    /// when the operation that just happened (`AddScene` /
+    /// `StoreScene` / `RemoveScene` / `CopyScene` single-target case)
+    /// actually targeted the currently-recalled scene. Other scenes
+    /// changing leaves `SceneValid` alone, per Matter App Cluster
+    /// spec §1.4.6.5:
+    /// > Successful `CopyScene` or `AddScene` operations SHALL
+    /// > preserve the `SceneValid` attribute when the affected scene
+    /// > is not the currently recalled scene.
+    ///
     /// Operates on already-locked inner state.
-    fn invalidate_current(inner: &mut ScenesStateInner<N, M>, fab_idx: NonZeroU8) {
-        inner.current_per_fabric.retain(|c| c.fab_idx != fab_idx);
-        inner.bump_info_dataver();
+    fn invalidate_current_if_match_scene(
+        inner: &mut ScenesStateInner<N, M>,
+        fab_idx: NonZeroU8,
+        group_id: u16,
+        scene_id: SceneId,
+    ) {
+        let before = inner.current_per_fabric.len();
+        inner.current_per_fabric.retain(|c| {
+            !(c.fab_idx == fab_idx && c.group_id == group_id && c.scene_id == scene_id)
+        });
+        if before != inner.current_per_fabric.len() {
+            inner.bump_info_dataver();
+        }
+    }
+
+    /// Drop the recalled-scene tracker for `fab_idx` when its stored
+    /// `group_id` matches the one passed in — used by
+    /// `RemoveAllScenes(group_id)` and the `COPY_ALL` mode of
+    /// `CopyScene` (both of which can affect any scene in the group).
+    fn invalidate_current_if_match_group(
+        inner: &mut ScenesStateInner<N, M>,
+        fab_idx: NonZeroU8,
+        group_id: u16,
+    ) {
+        let before = inner.current_per_fabric.len();
+        inner
+            .current_per_fabric
+            .retain(|c| !(c.fab_idx == fab_idx && c.group_id == group_id));
+        if before != inner.current_per_fabric.len() {
+            inner.bump_info_dataver();
+        }
     }
 
     /// Internal copy helper — runs against an already-locked
@@ -1077,7 +1112,15 @@ where
             return SC_NOT_FOUND;
         }
 
-        Self::invalidate_current(inner, fab_idx);
+        // Only invalidate `CurrentScene` if this copy actually touched
+        // the currently-recalled scene. Single-target mode targets
+        // exactly `(group_to, scene_to)`; `COPY_ALL` mode targets the
+        // whole destination group.
+        if copy_all {
+            Self::invalidate_current_if_match_group(inner, fab_idx, group_to);
+        } else {
+            Self::invalidate_current_if_match_scene(inner, fab_idx, group_to, scene_to);
+        }
         0
     }
 
@@ -1119,9 +1162,15 @@ where
                 .iter()
                 .find(|c| c.fab_idx == accessor_fab_idx)
                 .copied();
+            // Per chip's reference behaviour, `CurrentScene` and
+            // `CurrentGroup` are always emitted on the wire (even when
+            // `SceneValid=false`); we just set them to 0 in that case.
+            // `TestScenesFabricSceneInfo` asserts equality against a
+            // fully-populated struct rather than against an
+            // omitted-fields shape.
             let (g, s, v) = match current {
                 Some(c) => (Some(c.group_id), Some(c.scene_id), true),
-                None => (None, None, false),
+                None => (Some(0u16), Some(0u8), false),
             };
             let rem = Self::remaining_capacity_for_fab(inner, accessor_fab_idx);
             (count.min(0xFF) as u8, g, s, v, rem)
@@ -1311,7 +1360,7 @@ where
             inner.table[pos].transition_time = transition_time;
             inner.table[pos].extension_fields.clear();
             fill(&mut inner.table[pos].extension_fields)?;
-            Self::invalidate_current(inner, fab_idx);
+            Self::invalidate_current_if_match_scene(inner, fab_idx, group_id, scene_id);
             Ok(0)
         } else if inner.table.len() >= N {
             Ok(SC_INSUFFICIENT_SPACE)
@@ -1338,7 +1387,7 @@ where
                 let _ = inner.table.pop();
                 return Err(e);
             }
-            Self::invalidate_current(inner, fab_idx);
+            Self::invalidate_current_if_match_scene(inner, fab_idx, group_id, scene_id);
             Ok(0)
         }
     }
@@ -1490,7 +1539,7 @@ where
                 .position(|e| e.matches(fab_idx, endpoint_id, group_id, scene_id))
             {
                 inner.table.swap_remove(pos);
-                Self::invalidate_current(inner, fab_idx);
+                Self::invalidate_current_if_match_scene(inner, fab_idx, group_id, scene_id);
                 0
             } else {
                 SC_NOT_FOUND
@@ -1535,7 +1584,7 @@ where
             });
             let changed = before != inner.table.len();
             if changed {
-                Self::invalidate_current(inner, fab_idx);
+                Self::invalidate_current_if_match_group(inner, fab_idx, group_id);
             }
             changed
         });
@@ -2415,20 +2464,40 @@ mod tests {
     // ---- side effect: SceneValid invalidation ----
 
     #[test]
-    fn successful_copy_invalidates_current_scene() {
+    fn successful_copy_invalidates_current_scene_on_match() {
         let mut inner = ScenesStateInner::<8>::new();
         push(&mut inner, entry(fab(1), 1, 10, 5, 100));
-        // Stamp a "current scene" for fab 1, then assert it gets
-        // cleared after the copy.
-        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 99, 99);
+        // Stamp "current scene" at the copy's TARGET (20, 7). After
+        // the copy overwrites that slot, `SceneValid` MUST become
+        // false because the recalled-scene data just changed
+        // underneath the recall.
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 20, 7);
         assert_eq!(inner.current_per_fabric.len(), 1);
 
         let status =
             ScenesHandler::<8>::copy_scenes_inner(&mut inner, fab(1), 1, 10, 5, 20, 7, false);
 
         assert_eq!(status, 0);
-        // current_per_fabric for fab(1) was cleared.
         assert!(inner.current_per_fabric.iter().all(|c| c.fab_idx != fab(1)));
+    }
+
+    #[test]
+    fn successful_copy_preserves_current_scene_when_target_doesnt_match() {
+        let mut inner = ScenesStateInner::<8>::new();
+        push(&mut inner, entry(fab(1), 1, 10, 5, 100));
+        // Stamp "current scene" at (99, 99) — disjoint from the
+        // copy's target (20, 7). Per Matter spec §1.4.6.5,
+        // `SceneValid` must be preserved when the copy doesn't touch
+        // the currently-recalled scene.
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 99, 99);
+
+        let status =
+            ScenesHandler::<8>::copy_scenes_inner(&mut inner, fab(1), 1, 10, 5, 20, 7, false);
+
+        assert_eq!(status, 0);
+        assert_eq!(inner.current_per_fabric.len(), 1);
+        assert_eq!(inner.current_per_fabric[0].group_id, 99);
+        assert_eq!(inner.current_per_fabric[0].scene_id, 99);
     }
 
     #[test]
@@ -2482,14 +2551,38 @@ mod tests {
     }
 
     #[test]
-    fn invalidate_current_only_clears_target_fabric() {
+    fn invalidate_match_scene_only_clears_exact_match() {
         let mut inner = ScenesStateInner::<8>::new();
         ScenesHandler::<8>::remember_current(&mut inner, fab(1), 10, 1);
         ScenesHandler::<8>::remember_current(&mut inner, fab(2), 20, 2);
 
-        ScenesHandler::<8>::invalidate_current(&mut inner, fab(1));
+        // Non-matching (group, scene) leaves the entry alone — this is
+        // the spec-preserve-SceneValid path used by `AddScene` /
+        // `RemoveScene` / `CopyScene` when they target a non-current
+        // scene.
+        ScenesHandler::<8>::invalidate_current_if_match_scene(&mut inner, fab(1), 99, 99);
+        assert_eq!(inner.current_per_fabric.len(), 2);
 
-        // fab(2)'s entry survives.
+        // Matching (group, scene) on fab(1) drops only fab(1)'s entry.
+        ScenesHandler::<8>::invalidate_current_if_match_scene(&mut inner, fab(1), 10, 1);
+        assert_eq!(inner.current_per_fabric.len(), 1);
+        assert_eq!(inner.current_per_fabric[0].fab_idx, fab(2));
+    }
+
+    #[test]
+    fn invalidate_match_group_clears_any_scene_in_group() {
+        let mut inner = ScenesStateInner::<8>::new();
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 10, 7);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(2), 20, 2);
+
+        // Wrong group: no-op.
+        ScenesHandler::<8>::invalidate_current_if_match_group(&mut inner, fab(1), 99);
+        assert_eq!(inner.current_per_fabric.len(), 2);
+
+        // Right group on fab(1), regardless of scene id, drops fab(1)
+        // — exercising the `RemoveAllScenes(group)` / `CopyScene COPY_ALL`
+        // path.
+        ScenesHandler::<8>::invalidate_current_if_match_group(&mut inner, fab(1), 10);
         assert_eq!(inner.current_per_fabric.len(), 1);
         assert_eq!(inner.current_per_fabric[0].fab_idx, fab(2));
     }
@@ -2609,13 +2702,14 @@ mod tests {
     }
 
     #[test]
-    fn upsert_invalidates_current_scene_for_target_fabric() {
-        // Per `SceneValid` rules: any AddScene/StoreScene mutates
-        // table state in a way that may no longer match the recalled
-        // attributes, so CurrentScene gets cleared for the originating
-        // fabric.
+    fn upsert_invalidates_current_scene_when_upsert_targets_it() {
+        // Per Matter App Cluster spec §1.4.6.5, `SceneValid` is only
+        // invalidated when the upsert (`AddScene` / `StoreScene`)
+        // overwrites the currently-recalled scene. Stamp the current
+        // scene at the same `(group, scene)` the upsert targets and
+        // verify it gets dropped.
         let mut inner = ScenesStateInner::<8>::new();
-        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 99, 99);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 10, 5);
 
         let _ =
             ScenesHandler::<8>::upsert_scene(&mut inner, fab(1), 1, 10, 5, 100, fill_with(&[0x18]))
@@ -2625,10 +2719,30 @@ mod tests {
     }
 
     #[test]
+    fn upsert_preserves_current_scene_when_upsert_targets_a_different_scene() {
+        // Non-matching upsert MUST leave `SceneValid` intact (the
+        // spec-conformance regression that `TestScenesFabricSceneInfo`
+        // step 21 catches when violated).
+        let mut inner = ScenesStateInner::<8>::new();
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 1, 1);
+
+        let _ =
+            // Upsert in a *different* group/scene than the current one.
+            ScenesHandler::<8>::upsert_scene(&mut inner, fab(1), 1, 2, 1, 100, fill_with(&[0x18]))
+                .unwrap();
+
+        assert_eq!(inner.current_per_fabric.len(), 1);
+        assert_eq!(inner.current_per_fabric[0].group_id, 1);
+        assert_eq!(inner.current_per_fabric[0].scene_id, 1);
+    }
+
+    #[test]
     fn upsert_keeps_other_fabrics_current_scene_intact() {
         let mut inner = ScenesStateInner::<8>::new();
-        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 99, 99);
-        ScenesHandler::<8>::remember_current(&mut inner, fab(2), 88, 88);
+        // Both fabrics have a current scene matching what we're about
+        // to upsert in fab(1) — only fab(1)'s entry should drop.
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 10, 5);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(2), 10, 5);
 
         let _ =
             ScenesHandler::<8>::upsert_scene(&mut inner, fab(1), 1, 10, 5, 100, fill_with(&[0x18]))

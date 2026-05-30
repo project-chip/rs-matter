@@ -1,4 +1,10 @@
 PICS_SDK_CI_ONLY=1
+# Top-level gates required by the `TestScenesFabricSceneInfo` /
+# `TestScenesMultiFabric` / `TestScenesMaxCapacity` / `TestScenesFabricRemoval`
+# composite suites — the test framework skips them entirely if absent.
+MCORE.ROLE.COMMISSIONEE=1
+APPDEVICE.S=1
+
 # PICS values to be used when running the `scenes_tests` executable.
 # This is a superset of `dimmable_light.pics` (OnOff + LevelControl)
 # plus the Scenes Management cluster on EP1 and the
@@ -55,6 +61,7 @@ GRPKEY.C.C01.Tx=1
 S.S=1
 S.S.A0001=1
 S.S.A0002=1
+S.S.A0007=1     # FabricSceneInfo — read in TestScenesFabricSceneInfo
 S.S.C00.Rsp=1   # AddScene
 S.S.C01.Rsp=1   # ViewScene
 S.S.C02.Rsp=1   # RemoveScene
@@ -66,6 +73,7 @@ S.S.C40.Rsp=1   # CopyScene (Optional but exposed for TestScenesMultiFabric / Te
 S.S.AM=0
 S.S.AO=0
 S.S.F00=0       # SceneNames feature — accepted on wire but not stored; see scenes.rs module docs
+S.S.F03=1       # SceneTable feature — gated by TestScenesFabricSceneInfo
 S.C=0
 S.C.C00.Tx=0
 S.C.C01.Tx=0

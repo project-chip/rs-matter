@@ -504,11 +504,34 @@ pub(crate) const SCENES_TESTS: &[&str] = &[
     // Effect-on-receipt cross-cluster checks (RecallScene actually
     // applies OnOff / LevelControl state via cross-cluster commands).
     "Test_TC_S_3_1",
-    // Composite suites — uncomment once the per-test cases above pass.
-    // "TestScenesMultiFabric",     // TODO: not yet verified
-    // "TestScenesFabricRemoval",   // TODO: not yet verified
-    // "TestScenesFabricSceneInfo", // TODO: not yet verified
-    // "TestScenesMaxCapacity",     // TODO: not yet verified
+    // Composite suites — each requires implementation pieces beyond
+    // what's wired today. Re-enable as those land.
+    //
+    // `TestScenesFabricSceneInfo` — 24 of 33 steps pass; step 25
+    // expects `SceneValid → false` after a `LevelControl.MoveToLevelWithOnOff`
+    // changes the scenable attribute state out from under a previously
+    // recalled scene. Requires "scene drift detection": every scenable
+    // attribute mutation (writes + apply-via-command) must call back
+    // into `ScenesState` to invalidate `SceneValid` for that endpoint
+    // / fabric. Step 27 additionally expects `StoreScene` to set
+    // `CurrentScene = (group, scene)` with `SceneValid=true`. Both are
+    // spec-conformant behaviours that warrant a small cross-cluster
+    // wiring pass (`SceneClusterHandler` callers notify `ScenesState`
+    // on state changes); deferred so persistence ships independently.
+    // "TestScenesFabricSceneInfo",
+    //
+    // `TestScenesMultiFabric` / `TestScenesFabricRemoval` /
+    // `TestScenesMaxCapacity` all begin with a multi-fabric setup
+    // step that calls `AdministratorCommissioning.OpenCommissioningWindow`
+    // with a 16-byte PAKE salt. `rs-matter`'s `Spake2pVerifierSalt`
+    // is currently a fixed `[u8; 32]` (see
+    // `sc::pase::spake2p::SPAKE2P_VERIFIER_SALT_LEN`), so the salt
+    // copy fails with `InvalidData` and the commissioning window
+    // never opens. Re-enable once variable-length salts
+    // (16–32 B per Matter Core spec) are supported end-to-end.
+    // "TestScenesMultiFabric",
+    // "TestScenesFabricRemoval",
+    // "TestScenesMaxCapacity",
 ];
 
 /// A pre-canned test suite. Selects a default test list, the example

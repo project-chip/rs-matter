@@ -58,6 +58,9 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::clusters::scenes::{ScenesHandler, ScenesState};
+use rs_matter::dm::clusters::unit_testing::{
+    ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
+};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::events::Events;
@@ -77,6 +80,7 @@ use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
+use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
@@ -101,6 +105,12 @@ static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 /// `TestScenesMaxCapacity` ever joins the suite.
 const SCENES_CAPACITY: usize = 16;
 static SCENES_STATE: StaticCell<ScenesState<SCENES_CAPACITY>> = StaticCell::new();
+
+// `UnitTesting` is wired on EP1 for the chip-tool `TestScenes*`
+// composite YAML suites — they use the cluster's `TestAddArguments`
+// command to do in-test arithmetic on attribute reads. Adds ~no
+// runtime cost when the suites aren't running.
+static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
@@ -199,6 +209,10 @@ fn run() -> Result<(), Error> {
     // per-cluster `SceneClusterHandler` impls. Both OnOff and
     // LevelControl ship a ZST impl in their respective modules
     // (`app::on_off::scenes` / `app::level_control::scenes`).
+    let unit_testing_data = UNIT_TESTING_DATA
+        .uninit()
+        .init_with(RefCell::init(UnitTestingHandlerData::init()));
+
     let scenes_state = SCENES_STATE.uninit().init_with(ScenesState::init());
     // Restore the scene table + per-fabric `CurrentScene` bookkeeping
     // from KV — re-applies any scenes a previous run of this binary
@@ -229,6 +243,7 @@ fn run() -> Result<(), Error> {
             &on_off_handler,
             &level_control_handler,
             scenes_handler,
+            unit_testing_data,
         ),
         SharedKvBlobStore::new(kv, kv_buf),
         SharedNetworks::new(EthNetwork::new_default()),
@@ -314,6 +329,7 @@ const NODE: Node<'static> = Node {
                 OnOffDeviceLogic::CLUSTER,
                 LevelControlDeviceLogic::CLUSTER,
                 SCENES_FULL_CLUSTER,
+                UnitTestingHandler::CLUSTER,
             ),
         ),
     ],
@@ -327,6 +343,7 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks, R>(
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
     scenes: ScenesHandler<'a, SCENES_CAPACITY, impl AsyncHandler + 'a, R>,
+    unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
 ) -> impl DataModelHandler + 'a
 where
     R: rs_matter::dm::clusters::scenes::SceneClusters + 'a,
@@ -355,6 +372,13 @@ where
             .chain(
                 EpClMatcher::new(Some(1), Some(SCENES_FULL_CLUSTER.id)),
                 scenes.adapt(),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(UnitTestingHandler::CLUSTER.id)),
+                Async(
+                    UnitTestingHandler::new(Dataver::new_rand(&mut rand), unit_testing_data)
+                        .adapt(),
+                ),
             ),
     )
 }
