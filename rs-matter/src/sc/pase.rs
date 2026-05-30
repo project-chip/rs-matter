@@ -29,7 +29,8 @@ use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::error::{Error, ErrorCode};
 use crate::im::{ClusterId, EndptId};
 use crate::sc::pase::spake2p::{
-    Spake2pVerifierData, Spake2pVerifierSaltRef, Spake2pVerifierStrRef,
+    Spake2pVerifierData, Spake2pVerifierStrRef, SPAKE2P_VERIFIER_SALT_LEN,
+    SPAKE2P_VERIFIER_SALT_MIN_LEN,
 };
 use crate::sc::SessionParameters;
 use crate::tlv::{FromTLV, OctetStr, ToTLV};
@@ -107,6 +108,7 @@ impl CommWindow {
     /// # Arguments
     /// - `mdns_id` - The mDNS identifier
     /// - `password` - The passcode
+    /// - `salt` - The salt bytes (16..=32 bytes, validated upstream)
     /// - `discriminator` - The discriminator
     /// - `opener` - The opener info
     /// - `window_expiry` - The window expiry instant
@@ -114,7 +116,7 @@ impl CommWindow {
     fn init_with_pw<'a>(
         mdns_id: u64,
         password: Spake2pVerifierPasswordRef<'a>,
-        salt: Spake2pVerifierSaltRef<'a>,
+        salt: &'a [u8],
         discriminator: u16,
         opener: Option<CommWindowOpener>,
         window_expiry: Instant,
@@ -133,7 +135,7 @@ impl CommWindow {
     ///
     /// # Arguments
     /// - `verifier` - The verifier bytes
-    /// - `salt` - The salt bytes
+    /// - `salt` - The salt bytes (16..=32 bytes, validated upstream)
     /// - `count` - The iteration count
     /// - `discriminator` - The discriminator
     /// - `opener` - The opener info
@@ -141,7 +143,7 @@ impl CommWindow {
     fn init<'a>(
         mdns_id: u64,
         verifier: Spake2pVerifierStrRef<'a>,
-        salt: Spake2pVerifierSaltRef<'a>,
+        salt: &'a [u8],
         count: u32,
         discriminator: u16,
         opener: Option<CommWindowOpener>,
@@ -239,9 +241,21 @@ impl Pase {
         self.comm_window.as_opt_ref()
     }
 
+    /// Reject a salt that's outside the spec's 16..=32 B range
+    /// (Matter Core spec, Cryptographic Building Blocks).
+    fn validate_salt_len(salt: &[u8]) -> Result<(), Error> {
+        if !(SPAKE2P_VERIFIER_SALT_MIN_LEN..=SPAKE2P_VERIFIER_SALT_LEN).contains(&salt.len()) {
+            Err(ErrorCode::ConstraintError)?;
+        }
+
+        Ok(())
+    }
+
     /// Open a basic commissioning window using a passcode
     ///
     /// # Arguments
+    /// - `mdns_id` - The mDNS identifier
+    /// - `salt` - The salt bytes (16..=32 bytes, validated upstream)
     /// - `password` - The passcode
     /// - `discriminator` - The discriminator
     /// - `timeout_secs` - The timeout in seconds of the validity of the window
@@ -257,7 +271,7 @@ impl Pase {
     pub fn open_basic_comm_window(
         &mut self,
         mdns_id: u64,
-        salt: Spake2pVerifierSaltRef<'_>,
+        salt: &[u8],
         password: Spake2pVerifierPasswordRef<'_>,
         discriminator: u16,
         timeout_secs: u16,
@@ -272,6 +286,8 @@ impl Pase {
         if !(MIN_COMM_WINDOW_TIMEOUT_SECS..=MAX_COMM_WINDOW_TIMEOUT_SECS).contains(&timeout_secs) {
             Err(ErrorCode::InvalidCommand)?;
         }
+
+        Self::validate_salt_len(salt)?;
 
         let window_expiry = Instant::now().saturating_add(Duration::from_secs(timeout_secs as _));
 
@@ -296,8 +312,9 @@ impl Pase {
     /// Open an enhanced commissioning window using a verifier
     ///
     /// # Arguments
+    /// - `mdns_id` - The mDNS identifier
     /// - `verifier` - The verifier bytes
-    /// - `salt` - The salt bytes
+    /// - `salt` - The salt bytes (16..=32 bytes, validated upstream)
     /// - `count` - The iteration count
     /// - `discriminator` - The discriminator
     /// - `timeout_secs` - The timeout in seconds of the validity of the window
@@ -314,7 +331,7 @@ impl Pase {
         &mut self,
         mdns_id: u64,
         verifier: Spake2pVerifierStrRef<'_>,
-        salt: Spake2pVerifierSaltRef<'_>,
+        salt: &[u8],
         count: u32,
         discriminator: u16,
         timeout_secs: u16,
@@ -329,6 +346,8 @@ impl Pase {
         if !(MIN_COMM_WINDOW_TIMEOUT_SECS..=MAX_COMM_WINDOW_TIMEOUT_SECS).contains(&timeout_secs) {
             Err(ErrorCode::InvalidCommand)?;
         }
+
+        Self::validate_salt_len(salt)?;
 
         let window_expiry = Instant::now().saturating_add(Duration::from_secs(timeout_secs as _));
 

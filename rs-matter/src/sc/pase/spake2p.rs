@@ -45,7 +45,14 @@ pub const SPAKE2P_VERIFIER_PASSWORD_LEN: usize = 4;
 
 pub const SPAKE2P_VERIFIER_STR_LEN: usize = EC_CANON_SCALAR_LEN + EC_CANON_POINT_LEN;
 
+/// Maximum size of the PASE salt buffer, in bytes.
+///
+/// The Matter Core spec (Cryptographic Building Blocks) defines the
+/// PASE salt as a variable-length octet string in **the range 16..=32**.
 pub const SPAKE2P_VERIFIER_SALT_LEN: usize = 32;
+
+/// Minimum PASE salt length per Matter Core spec.
+pub const SPAKE2P_VERIFIER_SALT_MIN_LEN: usize = 16;
 
 pub const SPAKE2P_RANDOM_LEN: usize = 32;
 
@@ -93,24 +100,25 @@ pub struct Spake2pVerifierData {
     // For the VerifierOption::Verifier, the following fields only serve
     // information purposes
     pub salt: Spake2pVerifierSalt,
+    /// Number of valid bytes in the salt.
+    pub salt_len: u8,
     pub count: u32,
 }
 
 impl Spake2pVerifierData {
     pub fn init_with_pw<'a>(
         password: Spake2pVerifierPasswordRef<'a>,
-        salt: Spake2pVerifierSaltRef<'a>,
+        salt: &'a [u8],
     ) -> impl Init<Self> + 'a {
         Self::init_empty().chain(move |this| {
             this.configure_pw(password, salt);
-
             Ok(())
         })
     }
 
     pub fn init<'a>(
         verifier: Spake2pVerifierStrRef<'a>,
-        salt: Spake2pVerifierSaltRef<'a>,
+        salt: &'a [u8],
         count: u32,
     ) -> impl Init<Self> + 'a {
         Self::init_empty().chain(move |this| {
@@ -125,31 +133,49 @@ impl Spake2pVerifierData {
             password: None,
             verifier <- Spake2pVerifierStr::init(),
             salt <- Spake2pVerifierSalt::init(),
+            salt_len: SPAKE2P_VERIFIER_SALT_LEN as u8,
             count: SPAKE2P_ITERATION_COUNT,
         })
     }
 
-    fn configure_pw(
-        &mut self,
-        password: Spake2pVerifierPasswordRef<'_>,
-        salt: Spake2pVerifierSaltRef<'_>,
-    ) {
+    fn configure_pw(&mut self, password: Spake2pVerifierPasswordRef<'_>, salt: &[u8]) {
         self.password = Some(password.into());
-        self.salt.load(salt);
+        self.set_salt(salt);
         self.verifier.zeroize();
         self.count = SPAKE2P_ITERATION_COUNT;
     }
 
-    fn configure_verifier(
-        &mut self,
-        verifier: Spake2pVerifierStrRef<'_>,
-        salt: Spake2pVerifierSaltRef<'_>,
-        count: u32,
-    ) {
+    fn configure_verifier(&mut self, verifier: Spake2pVerifierStrRef<'_>, salt: &[u8], count: u32) {
         self.password = None;
-        self.salt.load(salt);
+        self.set_salt(salt);
         self.verifier.load(verifier);
         self.count = count;
+    }
+
+    /// Stamp the variable-length PASE salt into the fixed-size storage.
+    /// Truncates anything past [`SPAKE2P_VERIFIER_SALT_LEN`] (32 B) so a
+    /// caller bug can't out-of-bounds the buffer.
+    fn set_salt(&mut self, salt: &[u8]) {
+        debug_assert!(
+            (SPAKE2P_VERIFIER_SALT_MIN_LEN..=SPAKE2P_VERIFIER_SALT_LEN).contains(&salt.len()),
+            "PASE salt out of range: {} not in {}..={}",
+            salt.len(),
+            SPAKE2P_VERIFIER_SALT_MIN_LEN,
+            SPAKE2P_VERIFIER_SALT_LEN
+        );
+
+        let n = salt.len().min(SPAKE2P_VERIFIER_SALT_LEN);
+
+        let storage = self.salt.access_mut();
+        storage.fill(0);
+        storage[..n].copy_from_slice(&salt[..n]);
+
+        self.salt_len = n as u8;
+    }
+
+    /// Return the in-use slice of the PASE salt (`salt_len` bytes).
+    pub fn salt_bytes(&self) -> &[u8] {
+        &self.salt.access()[..self.salt_len as usize]
     }
 }
 
@@ -257,7 +283,7 @@ impl Spake2P {
                 &crypto,
                 pw,
                 verifier.count,
-                verifier.salt.access(),
+                verifier.salt_bytes(),
                 &mut w0s_w1s,
             )?;
 
@@ -938,6 +964,7 @@ mod tests {
             password: Some(password_ref.into()),
             verifier: Spake2pVerifierStr::new(),
             salt: Spake2pVerifierSalt::new(),
+            salt_len: SPAKE2P_VERIFIER_SALT_LEN as u8,
             count: iterations,
         };
         verifier_data.salt.load(Spake2pVerifierSaltRef::new(&salt));
@@ -1026,6 +1053,7 @@ mod tests {
             password: Some(wrong_password_ref.into()),
             verifier: Spake2pVerifierStr::new(),
             salt: Spake2pVerifierSalt::new(),
+            salt_len: SPAKE2P_VERIFIER_SALT_LEN as u8,
             count: iterations,
         };
         verifier_data.salt.load(Spake2pVerifierSaltRef::new(&salt));

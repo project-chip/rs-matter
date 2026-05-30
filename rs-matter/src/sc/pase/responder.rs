@@ -162,7 +162,8 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
 
         let rx = exchange.rx()?;
 
-        let mut salt = super::spake2p::SPAKE2P_VERIFIER_SALT_ZEROED;
+        let mut salt = [0u8; super::spake2p::SPAKE2P_VERIFIER_SALT_LEN];
+        let mut salt_len = 0usize;
         let mut count = 0;
 
         let notify_mdns = || exchange.matter().notify_mdns_changed();
@@ -176,7 +177,9 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                     .check_comm_window_timeout(notify_mdns, notify_change)?;
 
                 if let Some(comm_window) = state.pase.comm_window() {
-                    salt.load(comm_window.verifier.salt.reference());
+                    let src = comm_window.verifier.salt_bytes();
+                    salt[..src.len()].copy_from_slice(src);
+                    salt_len = src.len();
                     count = comm_window.verifier.count;
 
                     Ok(true)
@@ -213,7 +216,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                     responder_ssid: local_sessid,
                     params: (!req.has_params).then(|| PBKDFParamRespParams {
                         iterations: count,
-                        salt: OctetStr::new(salt.access()),
+                        salt: OctetStr::new(&salt[..salt_len]),
                     }),
                     session_parameters: Some(crate::sc::SessionParameters {
                         max_paths_per_invoke: Some(max_paths),
