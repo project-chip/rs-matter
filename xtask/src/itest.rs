@@ -504,21 +504,11 @@ pub(crate) const SCENES_TESTS: &[&str] = &[
     // Effect-on-receipt cross-cluster checks (RecallScene actually
     // applies OnOff / LevelControl state via cross-cluster commands).
     "Test_TC_S_3_1",
-    // Composite suites — each requires implementation pieces beyond
-    // what's wired today. Re-enable as those land.
-    //
-    // `TestScenesFabricSceneInfo` — 24 of 33 steps pass; step 25
-    // expects `SceneValid → false` after a `LevelControl.MoveToLevelWithOnOff`
-    // changes the scenable attribute state out from under a previously
-    // recalled scene. Requires "scene drift detection": every scenable
-    // attribute mutation (writes + apply-via-command) must call back
-    // into `ScenesState` to invalidate `SceneValid` for that endpoint
-    // / fabric. Step 27 additionally expects `StoreScene` to set
-    // `CurrentScene = (group, scene)` with `SceneValid=true`. Both are
-    // spec-conformant behaviours that warrant a small cross-cluster
-    // wiring pass (`SceneClusterHandler` callers notify `ScenesState`
-    // on state changes); deferred so persistence ships independently.
-    // "TestScenesFabricSceneInfo",
+    // `TestScenesFabricSceneInfo` — drives the
+    // `SceneInvalidator` drift-detection path: scenable attribute
+    // mutations on OnOff / LevelControl flip `SceneValid → false` for
+    // any recalled scene on the affected endpoint.
+    "TestScenesFabricSceneInfo",
     "TestScenesMultiFabric",
     "TestScenesFabricRemoval",
     "TestScenesMaxCapacity",

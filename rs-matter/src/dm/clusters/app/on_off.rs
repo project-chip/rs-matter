@@ -35,10 +35,17 @@ use core::pin::pin;
 use embassy_futures::select::{select, select3, Either, Either3};
 
 use crate::dm::clusters::app::level_control::{LevelControlHandler, LevelControlHooks};
+use crate::dm::clusters::decl::scenes_management::{
+    AttributeValuePairStruct, AttributeValuePairStructArrayBuilder,
+};
 use crate::dm::clusters::decl::{level_control, on_off};
+use crate::dm::clusters::scenes::{SceneClusterHandler, SceneInvalidator};
 use crate::dm::types::EndptId;
-use crate::dm::{Cluster, Dataver, HandlerContext, InvokeContext, ReadContext, WriteContext};
+use crate::dm::{
+    AttrId, Cluster, ClusterId, Dataver, HandlerContext, InvokeContext, ReadContext, WriteContext,
+};
 use crate::error::{Error, ErrorCode};
+use crate::tlv::{TLVArray, TLVBuilderParent};
 
 pub use crate::dm::clusters::decl::on_off::*;
 
@@ -136,6 +143,16 @@ pub struct OnOffHandler<'a, H: OnOffHooks, LH: LevelControlHooks> {
     endpoint_id: EndptId,
     hooks: H,
     level_control_handler: Mutex<Cell<Option<&'a LevelControlHandler<'a, LH, H>>>>,
+    /// Optional notifier for the Scenes Management cluster's
+    /// `SceneValid` bookkeeping (see
+    /// [`crate::dm::clusters::scenes::SceneInvalidator`]). Set via
+    /// [`OnOffHandler::with_scene_invalidator`] when this device hosts
+    /// Scenes Management on the same endpoint. Every successful
+    /// command-driven mutation of `OnOff` (the cluster's only scenable
+    /// attribute) calls back into the invalidator so any
+    /// currently-recalled scene on this endpoint flips to
+    /// `SceneValid=false`.
+    scene_invalidator: Mutex<Cell<Option<&'a dyn SceneInvalidator>>>,
     state: Mutex<RefCell<OnOffState>>,
     state_change_signal: Signal<Option<OnOffCommand>>,
 }
@@ -175,6 +192,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
             endpoint_id,
             hooks,
             level_control_handler: Mutex::new(Cell::new(None)),
+            scene_invalidator: Mutex::new(Cell::new(None)),
             state: Mutex::new(RefCell::new(OnOffState::new(state))),
             state_change_signal: Signal::new(None),
         }
@@ -284,6 +302,28 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         HandlerAsyncAdaptor(self)
     }
 
+    /// Attach a [`SceneInvalidator`] (typically the
+    /// [`crate::dm::clusters::scenes::ScenesState`] that backs the
+    /// Scenes Management cluster on the same endpoint). When set,
+    /// every successful mutation of the `OnOff` attribute calls the
+    /// invalidator so the Scenes cluster can flip `SceneValid` to
+    /// false for any currently-recalled scene on this endpoint. No-op
+    /// when unset, so non-scenes deployments incur zero overhead.
+    pub fn with_scene_invalidator(self, invalidator: &'a dyn SceneInvalidator) -> Self {
+        self.scene_invalidator
+            .lock(|cell| cell.set(Some(invalidator)));
+        self
+    }
+
+    /// Internal: notify the wired [`SceneInvalidator`], if any, that
+    /// `OnOff` just changed on this endpoint. Called from every
+    /// command-driven `OnOff` mutation site.
+    fn notify_scenable_changed(&self) {
+        if let Some(inv) = self.scene_invalidator.lock(|cell| cell.get()) {
+            inv.scenable_attribute_changed(self.endpoint_id);
+        }
+    }
+
     /// Request an out-of-band change to the OnOff state.
     /// This method can be used, for example, when the device state changes due to physical interactions
     /// or when the device autonomously decides to change its state.
@@ -309,6 +349,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         &self,
         state: &mut OnOffState,
         level_control_initiated: bool,
+        scene_apply: bool,
         ctx: impl HandlerContext,
     ) {
         if self.hooks.on_off() {
@@ -322,6 +363,13 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         let lighting_attrs_updated = Self::update_attr_on(state);
 
         ctx.notify_attr_changed(self.endpoint_id, Self::CLUSTER.id, AttributeId::OnOff as _);
+        // Scene-recall-driven mutations transition the device
+        // *into* a known scene state, so they MUST NOT fire
+        // drift-detection — Scenes handles `SceneValid` via
+        // `remember_current` once the recall completes.
+        if !scene_apply {
+            self.notify_scenable_changed();
+        }
         if lighting_attrs_updated {
             // `update_attr_on` may have forced OffWaitTime to 0 and GlobalSceneControl to TRUE
             ctx.notify_attr_changed(
@@ -379,6 +427,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         &self,
         state: &mut OnOffState,
         level_control_initiated: bool,
+        scene_apply: bool,
         ctx: impl HandlerContext,
     ) -> bool {
         if !self.hooks.on_off() {
@@ -418,6 +467,10 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         // On receipt of the Off command, a server SHALL set the OnOff attribute to FALSE.
         self.hooks.set_on_off(false);
         ctx.notify_attr_changed(self.endpoint_id, Self::CLUSTER.id, AttributeId::OnOff as _);
+        // See `set_on` for why this is gated by `scene_apply`.
+        if !scene_apply {
+            self.notify_scenable_changed();
+        }
         if on_time_updated {
             // `update_attr_off` forced OnTime to 0
             ctx.notify_attr_changed(self.endpoint_id, Self::CLUSTER.id, AttributeId::OnTime as _);
@@ -514,13 +567,13 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                 match state.state {
                     OnOffClusterState::On => match command {
                         OnOffCommand::Off | OnOffCommand::Toggle => {
-                            if self.set_off(state, false, &ctx) {
+                            if self.set_off(state, false, false, &ctx) {
                                 state.state = OnOffClusterState::Off;
                             }
                             Outcome::Done
                         }
                         OnOffCommand::CoupledClusterOff => {
-                            self.set_off(state, true, &ctx);
+                            self.set_off(state, true, false, &ctx);
                             state.state = OnOffClusterState::Off;
                             Outcome::Done
                         }
@@ -562,12 +615,12 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                         | OnOffCommand::CoupledClusterOff => Outcome::Done,
                         OnOffCommand::On | OnOffCommand::Toggle => {
                             state.state = OnOffClusterState::On;
-                            self.set_on(state, false, &ctx);
+                            self.set_on(state, false, false, &ctx);
                             Outcome::Done
                         }
                         OnOffCommand::CoupledClusterOn => {
                             state.state = OnOffClusterState::On;
-                            self.set_on(state, true, &ctx);
+                            self.set_on(state, true, false, &ctx);
                             Outcome::Done
                         }
                         OnOffCommand::OnWithTimedOff => {
@@ -583,7 +636,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                         match command {
                             OnOffCommand::Off | OnOffCommand::Toggle => {
                                 trace!("Got Off command from TimedOn state");
-                                if self.set_off(state, false, &ctx) {
+                                if self.set_off(state, false, false, &ctx) {
                                     state.state = OnOffClusterState::DelayedOff;
                                     Outcome::Continue
                                 } else {
@@ -592,7 +645,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                                 }
                             }
                             OnOffCommand::CoupledClusterOff => {
-                                self.set_off(state, true, &ctx);
+                                self.set_off(state, true, false, &ctx);
                                 state.state = OnOffClusterState::DelayedOff;
                                 Outcome::Done
                             }
@@ -629,7 +682,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                                     Outcome::Delay
                                 } else {
                                     state.off_wait_time = 0;
-                                    if self.set_off(state, false, &ctx) {
+                                    if self.set_off(state, false, false, &ctx) {
                                         state.state = OnOffClusterState::Off;
                                     }
                                     Outcome::Done
@@ -652,12 +705,12 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                             // prevent another OnWithTimedOff command turning the server back to its On state.
                             OnOffCommand::On | OnOffCommand::Toggle => {
                                 state.state = OnOffClusterState::On;
-                                self.set_on(state, false, &ctx);
+                                self.set_on(state, false, false, &ctx);
                                 Outcome::Done
                             }
                             OnOffCommand::CoupledClusterOn => {
                                 state.state = OnOffClusterState::On;
-                                self.set_on(state, true, &ctx);
+                                self.set_on(state, true, false, &ctx);
                                 Outcome::Done
                             }
                             OnOffCommand::Off
@@ -697,7 +750,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
 
                     self.with_state(|state| {
                         // This is set to true because in this case we do not want to also run the effects from the LevelControl cluster.
-                        let _ = self.set_off(state, true, &ctx);
+                        let _ = self.set_off(state, true, false, &ctx);
 
                         state.state = final_state;
                     });
@@ -995,7 +1048,7 @@ impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<
                             ctx.notify_own_attr_changed(AttributeId::OffWaitTime as _);
                         }
                     }
-                    self.set_on(state, false, &ctx);
+                    self.set_on(state, false, false, &ctx);
                 }
 
                 // If the values of the OnTime and OffWaitTime attributes are both not equal to 0xFFFF, the server
@@ -1103,90 +1156,96 @@ impl LevelControlHooks for NoLevelControl {
 /// Per Matter Application Cluster Spec §1.4 / §1.5, OnOff exposes a
 /// single scene-able attribute (`OnOff`, bool) that is **read-only**
 /// at the attribute level. Scene apply therefore goes through the
-/// `On` / `Off` commands rather than an attribute write. See
-/// [`crate::dm::clusters::scenes::SceneClusterHandler`].
-pub mod scenes {
-    use crate::dm::clusters::decl::on_off::{AttributeId, CommandId, FULL_CLUSTER};
-    use crate::dm::clusters::decl::scenes_management::{
-        AttributeValuePairStruct, AttributeValuePairStructArrayBuilder,
-    };
-    use crate::dm::clusters::scenes::{SceneClusterHandler, SceneContext};
-    use crate::dm::{AsyncHandler, AttrId, ClusterId, EndptId, InvokeContext};
-    use crate::error::Error;
-    use crate::tlv::{TLVArray, TLVBuilderParent};
+/// `On` / `Off` commands rather than an attribute write.
+///
+/// Implemented directly on [`OnOffHandler`] — the same handler value
+/// the application keeps for the normal data-model chain doubles as
+/// the scenes-registry entry, via the blanket
+/// `impl<T: SceneClusterHandler + ?Sized> SceneClusterHandler for &T`.
+impl<H, LH> SceneClusterHandler for OnOffHandler<'_, H, LH>
+where
+    H: OnOffHooks,
+    LH: LevelControlHooks,
+{
+    const CLUSTER_ID: ClusterId = FULL_CLUSTER.id;
 
-    /// Zero-sized [`SceneClusterHandler`] impl for the OnOff cluster.
-    ///
-    /// Register with [`crate::dm::clusters::scenes::ScenesHandler::new`]:
-    ///
-    /// ```ignore
-    /// ScenesHandler::new(dataver, &state, (OnOffSceneClusterHandler, ()))
-    /// ```
-    #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub struct OnOffSceneClusterHandler;
+    fn endpoint_id(&self) -> EndptId {
+        self.endpoint_id
+    }
 
-    impl SceneClusterHandler for OnOffSceneClusterHandler {
-        const CLUSTER_ID: ClusterId = FULL_CLUSTER.id;
+    fn is_scenable_attribute(attribute_id: AttrId) -> bool {
+        // Per Matter App Cluster spec, only `OnOff` (the cluster's
+        // namesake) is the scenable attribute.
+        attribute_id == AttributeId::OnOff as AttrId
+    }
 
-        fn is_scenable_attribute(attribute_id: AttrId) -> bool {
-            // Per Matter App Cluster spec, only `OnOff` (the cluster's
-            // namesake) is the scenable attribute.
-            attribute_id == AttributeId::OnOff as AttrId
-        }
+    fn capture<P: TLVBuilderParent>(
+        &self,
+        avp_array: AttributeValuePairStructArrayBuilder<P>,
+    ) -> Result<AttributeValuePairStructArrayBuilder<P>, Error> {
+        // Read directly from device-supplied state — no IM round-trip.
+        let v = self.hooks.on_off();
+        avp_array.push_u8(AttributeId::OnOff as _, v as u8)
+    }
 
-        async fn capture<C, T, P>(
-            &self,
-            sctx: &SceneContext<C, T>,
-            endpoint_id: EndptId,
-            avp_array: AttributeValuePairStructArrayBuilder<P>,
-        ) -> Result<AttributeValuePairStructArrayBuilder<P>, Error>
-        where
-            C: InvokeContext,
-            T: AsyncHandler,
-            P: TLVBuilderParent,
-        {
-            // `OnOff.OnOff` is bool; serialize as `valueUnsigned8`
-            // (0 / 1) per the Scenes spec's AttributeValuePairStruct.
-            let v: bool = sctx
-                .read(endpoint_id, FULL_CLUSTER.id, AttributeId::OnOff as _)
-                .await?;
-            avp_array.push_u8(AttributeId::OnOff as _, v as u8)
-        }
-
-        async fn apply<C, T>(
-            &self,
-            sctx: &SceneContext<C, T>,
-            endpoint_id: EndptId,
-            _transition_time_ms: u32,
-            avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
-        ) -> Result<(), Error>
-        where
-            C: InvokeContext,
-            T: AsyncHandler,
-        {
-            for avp in avp_list.iter() {
-                let avp = avp?;
-                if avp.attribute_id()? != AttributeId::OnOff as _ {
-                    continue;
-                }
-                let Some(value) = avp.value_unsigned_8()? else {
-                    continue;
-                };
-                // Per spec, OnOff doesn't honour a per-scene transition
-                // time (it's a discrete on/off transition). Invoke the
-                // matching command with an empty payload.
-                let cmd_id = if value != 0 {
-                    CommandId::On
-                } else {
-                    CommandId::Off
-                };
-                return sctx
-                    .invoke(endpoint_id, FULL_CLUSTER.id, cmd_id as _, &[])
-                    .await;
+    async fn apply<C: HandlerContext>(
+        &self,
+        ctx: &C,
+        avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
+        _transition_time_ms: u32,
+    ) -> Result<(), Error> {
+        for avp in avp_list.iter() {
+            let avp = avp?;
+            if avp.attribute_id()? != AttributeId::OnOff as _ {
+                continue;
             }
-            Ok(())
+            let Some(value) = avp.value_unsigned_8()? else {
+                continue;
+            };
+            // Per spec, OnOff doesn't honour a per-scene transition
+            // time (it's a discrete on/off transition). Mutate
+            // state *inline* via the same `set_on` / `set_off`
+            // helpers the command state-machine uses — not via the
+            // `state_change_signal` deferred path. The reason is
+            // sequencing with `SceneInvalidator`: `set_on` /
+            // `set_off` fire `notify_scenable_changed` synchronously,
+            // which flips `SceneValid → false` for the recalled
+            // scene. The Scenes handler then calls `remember_current`
+            // after `apply` returns and resets `SceneValid → true`.
+            // If we deferred via the signal, the invalidation would
+            // race AFTER `remember_current` and incorrectly clobber
+            // it (caught by `Test_TC_S_2_2`).
+            // `level_control_initiated=true` suppresses the
+            // OnOff → LC coupling (`coupled_on_off_cluster_on_off_state_change`).
+            // We don't want that coupling during scene recall because:
+            //   (a) the scene blob carries its own `CurrentLevel` AVP
+            //       which LevelControl's `apply` lands directly, so
+            //       any indirect LC mutation OnOff would queue is at
+            //       best redundant and at worst conflicts;
+            //   (b) the coupling is signal-based — the LC task
+            //       consumes `Task::OnOffStateChange` ASYNCHRONOUSLY
+            //       and ends up calling `set_level` long after
+            //       `recall_scene` returns. That `set_level` fires
+            //       `notify_scenable_changed`, flipping
+            //       `SceneValid → false` after `remember_current`
+            //       had restored it to `true` — observable as the
+            //       `Test_TC_S_2_2` post-RecallScene FabricSceneInfo
+            //       read returning the wrong `SceneValid`.
+            //
+            // The bool's name is "level_control_initiated" because
+            // its original intent is "called by LC, don't loop back
+            // to LC". Reusing it for the structurally-identical
+            // "called by Scenes" case is the cleanest available hook.
+            self.with_state(|state| {
+                if value != 0 {
+                    self.set_on(state, true, true, ctx);
+                } else {
+                    self.set_off(state, true, true, ctx);
+                }
+            });
+            return Ok(());
         }
+        Ok(())
     }
 }
 

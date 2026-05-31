@@ -71,20 +71,18 @@
 //! (cross-cluster reads + invokes), so their wrappers are real
 //! `async fn`s that call [`Self::store_scene`] / [`Self::recall_scene`].
 
-use core::cell::Cell;
 use core::future::{ready, Future};
 use core::num::NonZeroU8;
 
 use crate::dm::{
-    ArrayAttributeRead, AsyncHandler, AttrDetails, AttrId, Cluster, ClusterId, CmdDetails, CmdId,
-    Dataver, EmptyHandler, EndptId, HandlerContext, InvokeContext, InvokeContextInstance,
-    InvokeReplyInstance, Metadata, ReadContext, ReadContextInstance, ReadReply, Reply, SceneId,
+    ArrayAttributeRead, AttrId, Cluster, ClusterId, Dataver, EndptId, HandlerContext,
+    InvokeContext, ReadContext, SceneId,
 };
 use crate::error::{Error, ErrorCode};
 use crate::persist::{KvBlobStore, Persist};
 use crate::tlv::{
     FromTLV, Nullable, OptionalBuilder, TLVArray, TLVBuilder, TLVBuilderParent, TLVElement,
-    TLVSequence, TLVTag, TLVWrite, TLVWriteParent, TagType, ToTLV, TLV,
+    TLVSequence, TLVTag, TLVWrite, TLVWriteParent, ToTLV, TLV,
 };
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -111,7 +109,7 @@ const SC_CONSTRAINT_ERROR: u8 = 0x87;
 const RESERVED_SCENE_ID: SceneId = 0xFF;
 /// Maximum legal `TransitionTime` value on `AddScene`, per Matter App
 /// Cluster spec §1.4.7.1 "AddScene Command":
-/// > The maximum value SHALL be 60 000 000 (1000 minutes).
+/// The maximum value SHALL be 60 000 000 (1000 minutes).
 /// Anything larger MUST be rejected with `CONSTRAINT_ERROR`.
 const MAX_TRANSITION_TIME_MS: u32 = 60_000_000;
 
@@ -125,21 +123,32 @@ pub const MAX_EXT_FIELDS_LEN: usize = 128;
 
 /// Per-cluster scene capture + apply trait.
 ///
-/// Implemented (typically as a zero-sized type) alongside each
-/// scene-able cluster's handler — see
-/// [`crate::dm::clusters::app::on_off::OnOffSceneClusterHandler`] etc.
-/// The user composes a tuple of these and registers it with
-/// [`ScenesHandler::new`]; the Scenes handler delegates the per-cluster
-/// work via the [`SceneClusters`] tuple-recursive dispatch.
+/// Implemented **directly on the cluster's normal handler type** —
+/// e.g. `impl SceneClusterHandler for OnOffHandler<'_, H, LH>`. The
+/// same `&handler` value the application registers in the data-model
+/// chain doubles as a scenes registry entry, so cross-cluster reads
+/// and writes during `StoreScene` / `RecallScene` are direct typed
+/// method calls on the handler — no IM-layer round-trip, no TLV
+/// serde, no recursion-limit games.
 ///
-/// **Invariant**: all cross-cluster I/O goes through
-/// `ctx.handler().{read, write, invoke}` — the Scenes handler has no
-/// direct reference to other cluster handlers, only the routing layer
-/// does.
+/// The application composes a tuple-recursive registry
+/// (`(&on_off, (&level_control, ()))`, etc.) and passes it to
+/// [`ScenesHandler::new`]; the blanket impl
+/// `impl<T: SceneClusterHandler + ?Sized> SceneClusterHandler for &T`
+/// makes the references flow through transparently.
+///
+/// Back-direction notifications (a scenable attribute mutated, so
+/// `SceneValid` may need to flip) flow through
+/// [`SceneInvalidator`], implemented by [`ScenesState`].
 pub trait SceneClusterHandler {
     /// The Matter cluster ID this impl handles. Used by [`SceneClusters`]
     /// to route apply dispatch.
     const CLUSTER_ID: ClusterId;
+
+    /// Endpoint this handler instance is installed on. The Scenes
+    /// handler uses this to skip clusters that don't live on the
+    /// `StoreScene` / `RecallScene` target endpoint.
+    fn endpoint_id(&self) -> EndptId;
 
     /// Return `true` if `attribute_id` is a scenable attribute of this
     /// cluster per the Matter Application Cluster spec. Walked by
@@ -154,41 +163,81 @@ pub trait SceneClusterHandler {
         false
     }
 
-    /// Read this cluster's scene-able attributes via
-    /// `sctx.read(...)` and emit zero-or-more
-    /// `AttributeValuePairStruct` elements into `avp_array` (use
-    /// [`AttributeValuePairStructArrayBuilder::push_u8`] /
-    /// [`AttributeValuePairStructArrayBuilder::push_u16`] / etc. for a
-    /// one-line per-attribute API).
+    /// Emit zero-or-more `AttributeValuePairStruct` elements for this
+    /// cluster's scenable state into `avp_array`, reading directly
+    /// from the handler's internal state (no IM round-trip). Returns
+    /// the (advanced) builder so the caller can close the array.
     ///
-    /// Returns the (advanced) builder so the caller can close the array.
-    fn capture<C, T, P>(
+    /// Synchronous — internal state reads don't block. Use
+    /// [`AttributeValuePairStructArrayBuilder::push_u8`] /
+    /// [`AttributeValuePairStructArrayBuilder::push_u16`] / etc. for
+    /// a one-line per-attribute API.
+    fn capture<P: TLVBuilderParent>(
         &self,
-        sctx: &SceneContext<C, T>,
-        endpoint_id: EndptId,
         avp_array: AttributeValuePairStructArrayBuilder<P>,
-    ) -> impl Future<Output = Result<AttributeValuePairStructArrayBuilder<P>, Error>>
-    where
-        C: InvokeContext,
-        T: AsyncHandler,
-        P: TLVBuilderParent;
+    ) -> Result<AttributeValuePairStructArrayBuilder<P>, Error>;
 
-    /// Apply the captured attribute values by invoking the right
-    /// cluster commands (via `sctx.invoke(...)`) — or, for clusters
-    /// with writable scene-able attrs, by attribute writes.
-    /// `transition_time_ms` is the effective transition for this
-    /// recall (either the `RecallScene` request override or the stored
-    /// value).
-    fn apply<C, T>(
+    /// Apply captured `avp_list` entries to the handler's internal
+    /// state directly (e.g. by calling the same private helpers that
+    /// the cluster's own command bodies use). `transition_time_ms` is
+    /// the effective transition for this recall (either the
+    /// `RecallScene` request override or the stored value).
+    ///
+    /// `ctx` is a [`HandlerContext`] — the same shape the cluster's
+    /// own long-running `run()` task receives. It gives the impl
+    /// access to `notify_attr_changed` (for subscribers) and
+    /// `kv()` (for persisting state mutated by the recall), without
+    /// exposing the IM-routed `ctx.handler()` recursion path that
+    /// led to the trait's earlier `T: AsyncHandler` design problem
+    /// — calling `ctx.handler()` from inside `apply` re-creates that
+    /// recursion-limit pathology, so impls MUST NOT do that. Clusters
+    /// whose state mutation runs on a long-running task
+    /// (signal-driven OnOff / LevelControl) can ignore `ctx` entirely:
+    /// the task carries its own context and fires its own
+    /// `notify_attr_changed` when the mutation lands. Clusters that
+    /// mutate state synchronously inside `apply` use `ctx` to notify
+    /// subscribers and persist as needed.
+    ///
+    /// Async because some clusters (LevelControl) kick off transition
+    /// tasks; sync-only impls can return [`core::future::ready`].
+    fn apply<C: HandlerContext>(
         &self,
-        sctx: &SceneContext<C, T>,
-        endpoint_id: EndptId,
-        transition_time_ms: u32,
+        ctx: &C,
         avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
-    ) -> impl Future<Output = Result<(), Error>>
-    where
-        C: InvokeContext,
-        T: AsyncHandler;
+        transition_time_ms: u32,
+    ) -> impl Future<Output = Result<(), Error>>;
+}
+
+/// Lets the application pass `&on_off_handler` (which it also keeps
+/// for the normal data-model handler chain) into the scenes registry
+/// without moving it. The trait's associated const + static
+/// `is_scenable_attribute` delegate cleanly through the reference.
+impl<T: SceneClusterHandler + ?Sized> SceneClusterHandler for &T {
+    const CLUSTER_ID: ClusterId = T::CLUSTER_ID;
+
+    fn endpoint_id(&self) -> EndptId {
+        T::endpoint_id(*self)
+    }
+
+    fn is_scenable_attribute(attribute_id: AttrId) -> bool {
+        T::is_scenable_attribute(attribute_id)
+    }
+
+    fn capture<P: TLVBuilderParent>(
+        &self,
+        avp_array: AttributeValuePairStructArrayBuilder<P>,
+    ) -> Result<AttributeValuePairStructArrayBuilder<P>, Error> {
+        T::capture(*self, avp_array)
+    }
+
+    async fn apply<C: HandlerContext>(
+        &self,
+        ctx: &C,
+        avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
+        transition_time_ms: u32,
+    ) -> Result<(), Error> {
+        T::apply(*self, ctx, avp_list, transition_time_ms).await
+    }
 }
 
 /// A tuple-recursive composition of [`SceneClusterHandler`]s, mirroring
@@ -200,7 +249,7 @@ pub trait SceneClusterHandler {
 /// layered on later.
 pub trait SceneClusters {
     /// Walk the registry, emitting one `ExtensionFieldSetStruct` per
-    /// cluster that is actually present on `endpoint_id`.
+    /// cluster whose handler reports `endpoint_id() == endpoint_id`.
     ///
     /// `parent` is a raw [`TLVBuilderParent`] (e.g. wrapping a
     /// [`crate::utils::storage::WriteBuf`] over the destination
@@ -213,16 +262,7 @@ pub trait SceneClusters {
     /// [`SceneEntry::extension_fields`]'s "contents + 0x18" storage
     /// shape without needing an extra `+ 1` byte to absorb a leading
     /// control byte.
-    fn capture<C, T, P>(
-        &self,
-        sctx: &SceneContext<C, T>,
-        endpoint_id: EndptId,
-        parent: P,
-    ) -> impl Future<Output = Result<P, Error>>
-    where
-        C: InvokeContext,
-        T: AsyncHandler,
-        P: TLVBuilderParent;
+    fn capture<P: TLVBuilderParent>(&self, endpoint_id: EndptId, parent: P) -> Result<P, Error>;
 
     /// Walk the registry looking for `cluster_id`. Returns:
     ///
@@ -239,54 +279,37 @@ pub trait SceneClusters {
     ///   downgrade that drops a previously-scenable cluster.
     fn check_scenable(&self, cluster_id: ClusterId, attribute_id: AttrId) -> Option<bool>;
 
-    /// Find the registered cluster matching `cluster_id` and let it
-    /// apply `avp_list`. Returns `Ok(true)` if a cluster handled it,
-    /// `Ok(false)` if no registered cluster matches (the entry is
-    /// silently skipped, matching chip's behavior).
-    fn apply<C, T>(
+    /// Find the registered cluster matching `(cluster_id, endpoint_id)`
+    /// and let it apply `avp_list`. Returns `Ok(true)` if a cluster
+    /// handled it, `Ok(false)` if no registered cluster matches (the
+    /// entry is silently skipped, matching chip's behavior).
+    fn apply<C: HandlerContext>(
         &self,
-        sctx: &SceneContext<C, T>,
+        ctx: &C,
         endpoint_id: EndptId,
         cluster_id: ClusterId,
-        transition_time_ms: u32,
         avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
-    ) -> impl Future<Output = Result<bool, Error>>
-    where
-        C: InvokeContext,
-        T: AsyncHandler;
+        transition_time_ms: u32,
+    ) -> impl Future<Output = Result<bool, Error>>;
 }
 
 impl SceneClusters for () {
-    fn capture<C, T, P>(
-        &self,
-        _sctx: &SceneContext<C, T>,
-        _endpoint_id: EndptId,
-        parent: P,
-    ) -> impl Future<Output = Result<P, Error>>
-    where
-        C: InvokeContext,
-        T: AsyncHandler,
-        P: TLVBuilderParent,
-    {
-        ready(Ok(parent))
+    fn capture<P: TLVBuilderParent>(&self, _endpoint_id: EndptId, parent: P) -> Result<P, Error> {
+        Ok(parent)
     }
 
     fn check_scenable(&self, _cluster_id: ClusterId, _attribute_id: AttrId) -> Option<bool> {
         None
     }
 
-    fn apply<C, T>(
+    fn apply<C: HandlerContext>(
         &self,
-        _sctx: &SceneContext<C, T>,
+        _ctx: &C,
         _endpoint_id: EndptId,
         _cluster_id: ClusterId,
-        _transition_time_ms: u32,
         _avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
-    ) -> impl Future<Output = Result<bool, Error>>
-    where
-        C: InvokeContext,
-        T: AsyncHandler,
-    {
+        _transition_time_ms: u32,
+    ) -> impl Future<Output = Result<bool, Error>> {
         ready(Ok(false))
     }
 }
@@ -304,18 +327,8 @@ where
         }
     }
 
-    async fn capture<C, U, P>(
-        &self,
-        sctx: &SceneContext<C, U>,
-        endpoint_id: EndptId,
-        parent: P,
-    ) -> Result<P, Error>
-    where
-        C: InvokeContext,
-        U: AsyncHandler,
-        P: TLVBuilderParent,
-    {
-        let parent = if sctx.cluster_present(endpoint_id, H::CLUSTER_ID) {
+    fn capture<P: TLVBuilderParent>(&self, endpoint_id: EndptId, parent: P) -> Result<P, Error> {
+        let parent = if self.0.endpoint_id() == endpoint_id {
             // Open this cluster's ExtensionFieldSetStruct directly on
             // the parent (no outer array wrapper), hand the inner
             // AVP-array builder to the cluster impl, then close both
@@ -323,175 +336,37 @@ where
             let efs = ExtensionFieldSetStructBuilder::new(parent, &TLVTag::Anonymous)?;
             let efs = efs.cluster_id(H::CLUSTER_ID)?;
             let avp_array = efs.attribute_value_list()?;
-            let avp_array = self.0.capture(sctx, endpoint_id, avp_array).await?;
+            let avp_array = self.0.capture(avp_array)?;
             let efs = avp_array.end()?;
             efs.end()?
         } else {
             parent
         };
-        self.1.capture(sctx, endpoint_id, parent).await
+        self.1.capture(endpoint_id, parent)
     }
 
-    async fn apply<C, U>(
+    async fn apply<C: HandlerContext>(
         &self,
-        sctx: &SceneContext<C, U>,
+        ctx: &C,
         endpoint_id: EndptId,
         cluster_id: ClusterId,
-        transition_time_ms: u32,
         avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
-    ) -> Result<bool, Error>
-    where
-        C: InvokeContext,
-        U: AsyncHandler,
-    {
-        if H::CLUSTER_ID == cluster_id {
-            self.0
-                .apply(sctx, endpoint_id, transition_time_ms, avp_list)
-                .await?;
+        transition_time_ms: u32,
+    ) -> Result<bool, Error> {
+        if H::CLUSTER_ID == cluster_id && self.0.endpoint_id() == endpoint_id {
+            self.0.apply(ctx, avp_list, transition_time_ms).await?;
             Ok(true)
         } else {
             self.1
-                .apply(sctx, endpoint_id, cluster_id, transition_time_ms, avp_list)
+                .apply(ctx, endpoint_id, cluster_id, avp_list, transition_time_ms)
                 .await
         }
     }
 }
 
-// ---------------------------------------------------------------------
-// SceneContext — wraps the active InvokeContext and gives per-cluster
-// scene impls a small, focused API (`read`, `invoke`, `cluster_present`)
-// instead of bare `ctx.handler().{read,invoke}` + raw
-// `ReadContextInstance` / `InvokeContextInstance` plumbing.
-// ---------------------------------------------------------------------
-
-/// Per-call context handed to [`SceneClusterHandler::capture`] and
-/// [`SceneClusterHandler::apply`].
-///
-/// Wraps the live [`InvokeContext`] for the in-flight `StoreScene` /
-/// `RecallScene` command and surfaces the operations a scene-able
-/// cluster impl actually needs:
-///
-/// - [`SceneContext::read`] — cross-cluster attribute read, decoded
-///   as a `FromTLV` type.
-/// - [`SceneContext::invoke`] — cross-cluster command dispatch with
-///   the response discarded.
-/// - [`SceneContext::cluster_present`] — metadata-driven check used
-///   by the tuple recursion to skip clusters not installed on the
-///   host endpoint.
-///
-/// All three go through the global handler (`ctx.handler()`), matching
-/// the invariant noted on [`SceneClusterHandler`].
-pub struct SceneContext<C: InvokeContext, T: AsyncHandler>(C, T);
-
-impl<C: InvokeContext, T: AsyncHandler> SceneContext<C, T> {
-    pub const fn new(ctx: C, handler: T) -> Self {
-        Self(ctx, handler)
-    }
-
-    /// The wrapped [`InvokeContext`]. Useful when a cluster impl needs
-    /// something outside the small scene-focused surface (e.g.
-    /// `notify_attr_changed`, `set_cluster_status`).
-    ///
-    /// Construction takes `C` by value; callers typically pass a
-    /// reference (e.g. `SceneContext::new(ctx)` where `ctx: &impl
-    /// InvokeContext`) — `&InvokeContext: InvokeContext` via the
-    /// blanket impl, so the `'a` lifetime is folded into `C` itself.
-    pub const fn ctx(&self) -> &C {
-        &self.0
-    }
-
-    /// Read one attribute via the global handler and decode it as `Q`.
-    ///
-    /// Drives [`AsyncHandler::read`] with a custom reply that
-    /// captures the value bytes (TLV-encoded with anonymous tag) into
-    /// a stack buffer, then decodes them as `Q` via `FromTLV`. The
-    /// `Q: for<'b> FromTLV<'b>` bound restricts use to types that
-    /// don't borrow from the TLV bytes (primitives, `Nullable<u8>`,
-    /// enums, …) — which covers all scalar-valued attributes scene
-    /// capture cares about.
-    pub async fn read<Q>(
-        &self,
-        endpoint_id: EndptId,
-        cluster_id: ClusterId,
-        attr_id: AttrId,
-    ) -> Result<Q, Error>
-    where
-        Q: for<'b> FromTLV<'b>,
-    {
-        let mut buf = [0u8; 16];
-        let mut wb = WriteBuf::new(&mut buf);
-
-        let attr = AttrDetails {
-            endpoint_id,
-            cluster_id,
-            attr_id,
-            list_index: None,
-            list_chunked: false,
-            // Fabric-scoped attrs are not in the spec'd scene-able set,
-            // but pass the accessor's fabric in case a future scene-able
-            // attribute is fabric-scoped.
-            fab_idx: self.0.exchange().accessor()?.fab_idx()?.get(),
-            fab_filter: false,
-            dataver: None,
-            wildcard: false,
-            array: false,
-            cluster_status: Cell::new(0),
-        };
-
-        //let handler = self.0.handler();
-        let read_ctx = ReadContextInstance::new(self.0.exchange(), &self.0, &attr);
-        let reply = CaptureReply { wb: &mut wb };
-        //handler.read(read_ctx, reply).await?;
-        self.1.read(read_ctx, reply).await?;
-
-        Q::from_tlv(&TLVElement::new(wb.as_slice()))
-    }
-
-    /// Dispatch a cross-cluster command through `ctx.handler().invoke()`.
-    /// The command reply is captured into a small stack buffer and
-    /// discarded — most cluster-apply paths only care about
-    /// success/failure, not the echoed `DefaultSuccess` payload.
-    ///
-    /// `data` must be a complete TLV-encoded command request struct
-    /// (anonymous-tagged), or empty for commands with no payload
-    /// (`On`, `Off`, `Toggle`).
-    pub async fn invoke(
-        &self,
-        endpoint_id: EndptId,
-        cluster_id: ClusterId,
-        cmd_id: CmdId,
-        data: &[u8],
-    ) -> Result<(), Error> {
-        let fab_idx = self.0.exchange().accessor()?.fab_idx()?.get();
-        let cmd = CmdDetails::new(endpoint_id, cluster_id, cmd_id, fab_idx, false, None);
-        let data_elem = TLVElement::new(data);
-
-        // 64 B is plenty for a `DefaultSuccess` reply (anonymous outer
-        // struct + cmd-resp struct + path).
-        let mut response_buf = [0u8; 64];
-        let mut response_wb = WriteBuf::new(&mut response_buf);
-        let reply = InvokeReplyInstance::new(&cmd, &mut response_wb);
-
-        //let handler = self.0.handler();
-        let inv_ctx = InvokeContextInstance::new(self.0.exchange(), &self.0, &cmd, &data_elem);
-        //handler.invoke(inv_ctx, reply).await
-        self.1.invoke(inv_ctx, reply).await
-    }
-
-    /// Check whether `cluster_id` is exposed on `endpoint_id` per the
-    /// node metadata. Used by the [`SceneClusters`] tuple recursion
-    /// to skip scene-able cluster impls that the host endpoint
-    /// doesn't actually install — and available to cluster impls that
-    /// want to do the same check (e.g. for sibling-cluster
-    /// dependencies).
-    pub fn cluster_present(&self, endpoint_id: EndptId, cluster_id: ClusterId) -> bool {
-        self.0.metadata().access(|node| {
-            node.endpoint(endpoint_id)
-                .and_then(|ep| ep.cluster(cluster_id))
-                .is_some()
-        })
-    }
-}
+// `SceneContext` and `CaptureReply` (the IM-routed cross-cluster
+// read/invoke shim) were removed in favour of direct method calls on
+// the typed cluster handler — see the module-level doc comment.
 
 // ---------------------------------------------------------------------
 // Builder ergonomics — push_u8 / push_u16 etc. on the codegen'd AVP
@@ -625,13 +500,19 @@ impl<const M: usize> SceneEntry<M> {
 /// `SceneCount=0` with `CurrentScene`/`CurrentGroup` preserved and
 /// `SceneValid=false`.
 ///
+/// `endpoint_id` records the endpoint the scene was recalled on so the
+/// [`SceneInvalidator`] callback (fired by scenable cluster handlers
+/// when their state changes) can flip `valid → false` per-endpoint
+/// without touching other endpoints' recalled scenes.
+///
 /// `FromTLV` / `ToTLV` are derived (the type has no const generics,
 /// unlike [`SceneEntry`]) — the persisted shape is a struct with
-/// context-tagged fields auto-numbered 0..3 in source order.
+/// context-tagged fields auto-numbered 0..4 in source order.
 #[derive(Debug, Clone, Copy, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct CurrentScene {
     fab_idx: NonZeroU8,
+    endpoint_id: EndptId,
     group_id: u16,
     scene_id: SceneId,
     valid: bool,
@@ -722,6 +603,51 @@ impl<const N: usize, const M: usize> ScenesState<N, M> {
 impl<const N: usize, const M: usize> Default for ScenesState<N, M> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Notified by scenable cluster handlers (OnOff, LevelControl,
+/// ColorControl, …) when a scenable attribute on an endpoint changes
+/// out from under a previously-recalled scene. Per Matter App Cluster
+/// spec §1.4.6.5, that mutation invalidates `SceneValid` for every
+/// fabric whose recalled scene lives on that endpoint.
+///
+/// `ScenesState` implements this trait directly. Wire the
+/// implementation into a scene-able cluster handler at construction
+/// (e.g. `OnOffHandler::with_scene_invalidator(&scenes_state)`); the
+/// handler then calls
+/// [`Self::scenable_attribute_changed`] at every internal mutation
+/// site for the cluster's scenable attribute set.
+///
+/// Implementations MUST be cheap and re-entrant — they run inline on
+/// the command-handler path.
+pub trait SceneInvalidator {
+    /// Flip `SceneValid → false` for every recalled scene that lives
+    /// on `endpoint_id`, across all fabrics. No-op when no fabric has
+    /// a scene recalled on that endpoint.
+    fn scenable_attribute_changed(&self, endpoint_id: EndptId);
+}
+
+impl<T: SceneInvalidator + ?Sized> SceneInvalidator for &T {
+    fn scenable_attribute_changed(&self, endpoint_id: EndptId) {
+        (**self).scenable_attribute_changed(endpoint_id);
+    }
+}
+
+impl<const N: usize, const M: usize> SceneInvalidator for ScenesState<N, M> {
+    fn scenable_attribute_changed(&self, endpoint_id: EndptId) {
+        self.with(|inner| {
+            let mut bumped = false;
+            for c in inner.current_per_fabric.iter_mut() {
+                if c.valid && c.endpoint_id == endpoint_id {
+                    c.valid = false;
+                    bumped = true;
+                }
+            }
+            if bumped {
+                inner.bump_info_dataver();
+            }
+        });
     }
 }
 
@@ -885,37 +811,23 @@ impl<const N: usize, const M: usize> ScenesState<N, M> {
 /// CopyScene) in isolation. `M` mirrors the same parameter on
 /// [`ScenesState`] (per-scene blob capacity, defaults to
 /// [`MAX_EXT_FIELDS_LEN`]).
-pub struct ScenesHandler<
-    'a,
-    const N: usize,
-    T = EmptyHandler,
-    R = (),
-    const M: usize = MAX_EXT_FIELDS_LEN,
-> where
-    T: AsyncHandler,
+pub struct ScenesHandler<'a, const N: usize, R = (), const M: usize = MAX_EXT_FIELDS_LEN>
+where
     R: SceneClusters,
 {
     dataver: Dataver,
     state: &'a ScenesState<N, M>,
-    handler: T,
     clusters: R,
 }
 
-impl<'a, const N: usize, T, R, const M: usize> ScenesHandler<'a, N, T, R, M>
+impl<'a, const N: usize, R, const M: usize> ScenesHandler<'a, N, R, M>
 where
-    T: AsyncHandler,
     R: SceneClusters,
 {
-    pub const fn new(
-        dataver: Dataver,
-        state: &'a ScenesState<N, M>,
-        handler: T,
-        clusters: R,
-    ) -> Self {
+    pub const fn new(dataver: Dataver, state: &'a ScenesState<N, M>, clusters: R) -> Self {
         Self {
             dataver,
             state,
-            handler,
             clusters,
         }
     }
@@ -977,12 +889,16 @@ where
         })
     }
 
-    /// Stamp `(group, scene)` as the current recalled scene for this
-    /// fabric with `SceneValid = true`. Bumps `FabricSceneInfo`
-    /// dataver. Operates on already-locked inner state.
+    /// Stamp `(endpoint, group, scene)` as the current recalled scene
+    /// for this fabric with `SceneValid = true`. Bumps
+    /// `FabricSceneInfo` dataver. Operates on already-locked inner
+    /// state. The `endpoint_id` lets the [`SceneInvalidator`] flip
+    /// `valid → false` per-endpoint when scenable attributes change
+    /// on that endpoint (see `TestScenesFabricSceneInfo` step 25).
     fn remember_current(
         inner: &mut ScenesStateInner<N, M>,
         fab_idx: NonZeroU8,
+        endpoint_id: EndptId,
         group_id: u16,
         scene_id: SceneId,
     ) {
@@ -991,6 +907,7 @@ where
             .iter_mut()
             .find(|c| c.fab_idx == fab_idx)
         {
+            slot.endpoint_id = endpoint_id;
             slot.group_id = group_id;
             slot.scene_id = scene_id;
             slot.valid = true;
@@ -1000,6 +917,7 @@ where
             // SceneValid=false in such cases).
             let _ = inner.current_per_fabric.push(CurrentScene {
                 fab_idx,
+                endpoint_id,
                 group_id,
                 scene_id,
                 valid: true,
@@ -1706,13 +1624,14 @@ where
         // the "contents + 0x18 terminator" shape that
         // [`SceneEntry::extension_fields`] stores — no leading byte
         // to strip, no `MAX_EXT_FIELDS_LEN + 1` slack needed.
-        //let sctx = SceneContext::new(ctx, &self.handler);
-        let sctx = SceneContext::new(ctx, &self.handler);
+        // Capture is now synchronous: each scene-aware cluster reads
+        // its own internal state via its `SceneClusterHandler::capture`
+        // impl. No IM-layer round-trip.
         let mut scratch = [0u8; M];
         let total_len = {
             let mut wb = WriteBuf::new(&mut scratch);
             let parent = TLVWriteParent::new("StoreScene EFS", &mut wb);
-            let _ = self.clusters.capture(&sctx, endpoint_id, parent).await?;
+            let _ = self.clusters.capture(endpoint_id, parent)?;
             wb.end_container()?;
             wb.get_tail()
         };
@@ -1762,7 +1681,7 @@ where
             // recalled entry); the `remember_current` below stamps it
             // back to valid with the freshly-stored ID.
             if status == 0 {
-                Self::remember_current(inner, fab_idx, group_id, scene_id);
+                Self::remember_current(inner, fab_idx, endpoint_id, group_id, scene_id);
             }
             Ok::<_, Error>(status)
         })?;
@@ -1860,7 +1779,6 @@ where
 
         let effective_tt_ms = override_tt_ms.unwrap_or(stored_tt_ms);
 
-        let sctx = SceneContext::new(ctx, &self.handler);
         for efs_element in TLVSequence(&blob[..blob_len]).iter() {
             let efs = ExtensionFieldSetStruct::new(efs_element?);
             let cluster_id = efs.cluster_id()?;
@@ -1871,12 +1789,12 @@ where
             // different scene-able cluster set).
             let _ = self
                 .clusters
-                .apply(&sctx, endpoint_id, cluster_id, effective_tt_ms, &avp_list)
+                .apply(ctx, endpoint_id, cluster_id, &avp_list, effective_tt_ms)
                 .await?;
         }
 
         self.state
-            .with(|inner| Self::remember_current(inner, fab_idx, group_id, scene_id));
+            .with(|inner| Self::remember_current(inner, fab_idx, endpoint_id, group_id, scene_id));
 
         self.state.store_persist(ctx)?;
         ctx.notify_own_attr_changed(AttributeId::FabricSceneInfo as _);
@@ -2009,63 +1927,8 @@ where
     }
 }
 
-// ---------------------------------------------------------------------
-// Cross-cluster read plumbing for StoreScene.
-//
-// `CaptureReply` is a minimal [`ReadReply`] that *only* records the
-// attribute value bytes (TLV-encoded with [`TagType::Anonymous`]) into
-// a caller-provided [`WriteBuf`]. We deliberately bypass the standard
-// `AttrResp::Data` framing (dataver + path + data) used by
-// `ReadReplyInstance`, because StoreScene's capture path doesn't need
-// any of it — it would just have to be re-parsed back out.
-//
-// The codegen for an attribute read produces:
-//     reply.with_dataver(self.dataver())?
-//          .and_then(|writer| Reply::set(writer, value))
-// `with_dataver` here ignores the dataver entirely (we always want the
-// current value) and `Reply::set` writes the value at TAG = Anonymous.
-// ---------------------------------------------------------------------
-
-/// See module-level comment block above.
-struct CaptureReply<'b, 'wb> {
-    wb: &'b mut WriteBuf<'wb>,
-}
-
-impl<'b, 'wb> ReadReply for CaptureReply<'b, 'wb> {
-    fn with_dataver(self, _dataver: u32) -> Result<Option<impl Reply>, Error> {
-        Ok(Some(CaptureReplyWriter { wb: self.wb }))
-    }
-}
-
-struct CaptureReplyWriter<'b, 'wb> {
-    wb: &'b mut WriteBuf<'wb>,
-}
-
-impl Reply for CaptureReplyWriter<'_, '_> {
-    const TAG: TagType = TagType::Anonymous;
-
-    fn set<T: ToTLV>(self, value: T) -> Result<(), Error> {
-        value.to_tlv(&Self::TAG, self.wb)
-    }
-
-    fn reset(&mut self) {
-        // No-op: the codegen-driven attribute read path calls
-        // `Reply::set` exactly once per attribute, so a partial-write
-        // rewind is never needed here.
-    }
-
-    fn writer(&mut self) -> impl TLVWrite + Send + '_ {
-        &mut *self.wb
-    }
-
-    fn complete(self) -> Result<(), Error> {
-        Ok(())
-    }
-}
-
-impl<const N: usize, T, R, const M: usize> ClusterAsyncHandler for ScenesHandler<'_, N, T, R, M>
+impl<const N: usize, R, const M: usize> ClusterAsyncHandler for ScenesHandler<'_, N, R, M>
 where
-    T: AsyncHandler,
     R: SceneClusters,
 {
     /// FULL_CLUSTER minus the SceneNames feature (we accept the field
@@ -2549,7 +2412,7 @@ mod tests {
         // the copy overwrites that slot, `SceneValid` MUST become
         // false because the recalled-scene data just changed
         // underneath the recall.
-        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 20, 7);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 1, 20, 7);
         assert_eq!(inner.current_per_fabric.len(), 1);
 
         let status =
@@ -2574,7 +2437,7 @@ mod tests {
         // copy's target (20, 7). Per Matter spec §1.4.6.5,
         // `SceneValid` must be preserved when the copy doesn't touch
         // the currently-recalled scene.
-        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 99, 99);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 1, 99, 99);
 
         let status =
             ScenesHandler::<8>::copy_scenes_inner(&mut inner, fab(1), 1, 10, 5, 20, 7, false);
@@ -2589,7 +2452,7 @@ mod tests {
     #[test]
     fn failed_copy_does_not_invalidate_current_scene() {
         let mut inner = ScenesStateInner::<8>::new();
-        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 99, 99);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 1, 99, 99);
         let dv_before = inner.info_dataver;
 
         let status = ScenesHandler::<8>::copy_scenes_inner(
@@ -2618,8 +2481,8 @@ mod tests {
     #[test]
     fn remember_current_replaces_existing_slot_in_place() {
         let mut inner = ScenesStateInner::<8>::new();
-        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 10, 1);
-        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 20, 2);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 1, 10, 1);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 1, 20, 2);
 
         // Same fabric ⇒ slot is updated, not duplicated.
         assert_eq!(inner.current_per_fabric.len(), 1);
@@ -2630,8 +2493,8 @@ mod tests {
     #[test]
     fn remember_current_keeps_fabrics_independent() {
         let mut inner = ScenesStateInner::<8>::new();
-        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 10, 1);
-        ScenesHandler::<8>::remember_current(&mut inner, fab(2), 20, 2);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 1, 10, 1);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(2), 1, 20, 2);
 
         assert_eq!(inner.current_per_fabric.len(), 2);
     }
@@ -2639,8 +2502,8 @@ mod tests {
     #[test]
     fn invalidate_match_scene_only_clears_exact_match() {
         let mut inner = ScenesStateInner::<8>::new();
-        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 10, 1);
-        ScenesHandler::<8>::remember_current(&mut inner, fab(2), 20, 2);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 1, 10, 1);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(2), 1, 20, 2);
 
         // Non-matching (group, scene) leaves the entry alone — this is
         // the spec-preserve-SceneValid path used by `AddScene` /
@@ -2672,8 +2535,8 @@ mod tests {
     #[test]
     fn invalidate_match_group_clears_any_scene_in_group() {
         let mut inner = ScenesStateInner::<8>::new();
-        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 10, 7);
-        ScenesHandler::<8>::remember_current(&mut inner, fab(2), 20, 2);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 1, 10, 7);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(2), 1, 20, 2);
 
         // Wrong group: no-op.
         ScenesHandler::<8>::invalidate_current_if_match_group(&mut inner, fab(1), 99);
@@ -2819,7 +2682,7 @@ mod tests {
         // scene at the same `(group, scene)` the upsert targets and
         // verify it gets dropped.
         let mut inner = ScenesStateInner::<8>::new();
-        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 10, 5);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 1, 10, 5);
 
         let _ =
             ScenesHandler::<8>::upsert_scene(&mut inner, fab(1), 1, 10, 5, 100, fill_with(&[0x18]))
@@ -2841,7 +2704,7 @@ mod tests {
         // spec-conformance regression that `TestScenesFabricSceneInfo`
         // step 21 catches when violated).
         let mut inner = ScenesStateInner::<8>::new();
-        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 1, 1);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 1, 1, 1);
 
         let _ =
             // Upsert in a *different* group/scene than the current one.
@@ -2859,8 +2722,8 @@ mod tests {
         let mut inner = ScenesStateInner::<8>::new();
         // Both fabrics have a current scene matching what we're about
         // to upsert in fab(1) — only fab(1)'s entry should drop.
-        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 10, 5);
-        ScenesHandler::<8>::remember_current(&mut inner, fab(2), 10, 5);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(1), 1, 10, 5);
+        ScenesHandler::<8>::remember_current(&mut inner, fab(2), 1, 10, 5);
 
         let _ =
             ScenesHandler::<8>::upsert_scene(&mut inner, fab(1), 1, 10, 5, 100, fill_with(&[0x18]))
@@ -2890,7 +2753,7 @@ mod tests {
         inner.table.push(entry(fab(1), 1, 10, 1, 100)).unwrap();
         inner.table.push(entry(fab(1), 1, 10, 2, 100)).unwrap();
         inner.table.push(entry(fab(1), 1, 10, 3, 100)).unwrap();
-        ScenesHandler::<3>::remember_current(&mut inner, fab(1), 99, 99);
+        ScenesHandler::<3>::remember_current(&mut inner, fab(1), 1, 99, 99);
 
         let status = ScenesHandler::<3>::upsert_scene(
             &mut inner,

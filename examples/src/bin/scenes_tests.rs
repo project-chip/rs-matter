@@ -45,9 +45,7 @@ use futures_lite::StreamExt;
 
 use rand::RngCore;
 use rs_matter::crypto::{default_crypto, Crypto};
-use rs_matter::dm::clusters::app::level_control::scenes::LevelControlSceneClusterHandler;
 use rs_matter::dm::clusters::app::level_control::{self, LevelControlHooks};
-use rs_matter::dm::clusters::app::on_off::scenes::OnOffSceneClusterHandler;
 use rs_matter::dm::clusters::app::on_off::{self, OnOffHooks, StartUpOnOffEnum};
 use rs_matter::dm::clusters::decl::level_control::{
     AttributeId, CommandId, OptionsBitmap, FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER,
@@ -63,12 +61,12 @@ use rs_matter::dm::clusters::unit_testing::{
 };
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
+use rs_matter::dm::endpoints;
 use rs_matter::dm::events::Events;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::IMBuffer;
-use rs_matter::dm::{endpoints, AsyncHandler, EmptyHandler};
 use rs_matter::dm::{
     Async, Cluster, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, Node,
 };
@@ -172,43 +170,13 @@ fn run() -> Result<(), Error> {
 
     let mut rand = crypto.rand()?;
 
-    // OnOff cluster setup
-    let on_off_handler =
-        on_off::OnOffHandler::new(Dataver::new_rand(&mut rand), 1, OnOffDeviceLogic::new());
-
-    // LevelControl cluster setup
-    let level_control_handler = level_control::LevelControlHandler::new(
-        Dataver::new_rand(&mut rand),
-        1,
-        LevelControlDeviceLogic::new(),
-        level_control::AttributeDefaults {
-            on_level: Nullable::some(42),
-            options: OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
-            ..Default::default()
-        },
-    );
-
-    // Cluster wiring, validation and initialisation
-    on_off_handler.init(Some(&level_control_handler));
-    level_control_handler.init(Some(&on_off_handler));
-
-    let scenes_handler0 = EmptyHandler
-        .chain(
-            EpClMatcher::new(Some(1), Some(OnOffDeviceLogic::CLUSTER.id)),
-            on_off::HandlerAsyncAdaptor(&on_off_handler),
-        )
-        .chain(
-            EpClMatcher::new(Some(1), Some(LevelControlDeviceLogic::CLUSTER.id)),
-            level_control::HandlerAsyncAdaptor(&level_control_handler),
-        );
-
-    // Scenes Management cluster setup.
-    //
-    // `ScenesState` holds the scene table; `ScenesHandler` is generic
-    // over a tuple-recursive `SceneClusters` registry that names the
-    // per-cluster `SceneClusterHandler` impls. Both OnOff and
-    // LevelControl ship a ZST impl in their respective modules
-    // (`app::on_off::scenes` / `app::level_control::scenes`).
+    // `ScenesState` must be live BEFORE the scenable cluster handlers
+    // are constructed: each handler's `with_scene_invalidator` builder
+    // wires a `&ScenesState` reference into the handler so any
+    // command-driven mutation of its scenable attributes (`OnOff`,
+    // `CurrentLevel`) flips `SceneValid` to false for the recalled
+    // scene on this endpoint (see `TestScenesFabricSceneInfo`
+    // step 25).
     let unit_testing_data = UNIT_TESTING_DATA
         .uninit()
         .init_with(RefCell::init(UnitTestingHandlerData::init()));
@@ -221,14 +189,39 @@ fn run() -> Result<(), Error> {
     // a reboot in the middle of `Test_TC_S_2_2`) sees the persisted
     // entries.
     futures_lite::future::block_on(scenes_state.load_persist(&mut kv, kv_buf))?;
+
+    // OnOff cluster setup
+    let on_off_handler =
+        on_off::OnOffHandler::new(Dataver::new_rand(&mut rand), 1, OnOffDeviceLogic::new())
+            .with_scene_invalidator(scenes_state);
+
+    // LevelControl cluster setup
+    let level_control_handler = level_control::LevelControlHandler::new(
+        Dataver::new_rand(&mut rand),
+        1,
+        LevelControlDeviceLogic::new(),
+        level_control::AttributeDefaults {
+            on_level: Nullable::some(42),
+            options: OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
+            ..Default::default()
+        },
+    )
+    .with_scene_invalidator(scenes_state);
+
+    // Cluster wiring, validation and initialisation
+    on_off_handler.init(Some(&level_control_handler));
+    level_control_handler.init(Some(&on_off_handler));
+
+    // Scenes Management cluster setup.
+    //
+    // `OnOffHandler` and `LevelControlHandler` implement
+    // `SceneClusterHandler` directly — the same `&handler` value the
+    // data-model chain uses doubles as the scenes-registry entry via
+    // the blanket `impl<T: SceneClusterHandler + ?Sized> SceneClusterHandler for &T`.
     let scenes_handler = ScenesHandler::new(
         Dataver::new_rand(&mut rand),
         scenes_state,
-        scenes_handler0,
-        (
-            OnOffSceneClusterHandler,
-            (LevelControlSceneClusterHandler, ()),
-        ),
+        (&on_off_handler, (&level_control_handler, ())),
     );
 
     // Create the Data Model instance
@@ -342,7 +335,7 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks, R>(
     mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
-    scenes: ScenesHandler<'a, SCENES_CAPACITY, impl AsyncHandler + 'a, R>,
+    scenes: ScenesHandler<'a, SCENES_CAPACITY, R>,
     unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
 ) -> impl DataModelHandler + 'a
 where
