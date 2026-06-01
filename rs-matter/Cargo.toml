@@ -116,7 +116,7 @@ max-btp-sessions-1 = [] # default
 # General
 astro-dnssd = ["os", "dep:astro-dnssd"]
 zeroconf = ["os", "dep:zeroconf"]
-zbus = ["dep:zbus", "os", "futures-lite", "libc", "uuid", "async-channel"]
+zbus = ["dep:zbus", "dep:serde", "os", "futures-lite", "libc", "uuid", "async-channel"]
 bluer = ["dep:bluer", "os"]
 os = ["std", "backtrace", "async-io", "critical-section/std", "embassy-sync/std", "embassy-time/std", "dep:if-addrs"]
 std = ["alloc", "rand"]
@@ -191,6 +191,7 @@ async-compat = { version = "0.2", optional = true, default-features = false }
 
 # OS
 zbus = { version = "5.8", optional = true }
+serde = { version = "1", optional = true, default-features = false, features = ["derive"] }
 async-channel = { version = "2", optional = true }
 uuid = { version = "1", optional = true, features = ["v4"] }
 libc = { version = "0.2", optional = true }
