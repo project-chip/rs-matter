@@ -1,0 +1,689 @@
+/*
+ *
+ *    Copyright (c) 2026 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+//! Example Matter device exercising OnOff + LevelControl + ColorControl
+//! over Ethernet. Used to drive the chip-tool `light` itest suite
+//! (`Test_TC_OO_*`, `Test_TC_LVL_*`, `Test_TC_CC_*`).
+#![allow(clippy::uninlined_format_args)]
+
+use core::cell::Cell;
+use core::pin::pin;
+
+use std::fs;
+use std::io::{Read, Write};
+use std::net::UdpSocket;
+use std::path::PathBuf;
+
+use embassy_futures::select::select3;
+
+use async_signal::{Signal, Signals};
+use log::{error, info, trace};
+
+use futures_lite::StreamExt;
+
+use rand::RngCore;
+use rs_matter::crypto::{default_crypto, Crypto};
+use rs_matter::dm::clusters::app::color_control::{self, ColorControlHooks};
+use rs_matter::dm::clusters::app::level_control::{self, LevelControlHooks};
+use rs_matter::dm::clusters::app::on_off::{self, OnOffHooks, StartUpOnOffEnum};
+use rs_matter::dm::clusters::decl::color_control::{
+    ColorCapabilitiesBitmap, ColorLoopDirectionEnum, ColorModeEnum, EnhancedColorModeEnum,
+    FULL_CLUSTER as COLOR_CONTROL_FULL_CLUSTER,
+};
+use rs_matter::dm::clusters::decl::level_control::{
+    AttributeId, CommandId, OptionsBitmap, FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER,
+};
+use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
+use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::net_comm::SharedNetworks;
+use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::devices::DEV_TYPE_EXTENDED_COLOR_LIGHT;
+use rs_matter::dm::endpoints;
+use rs_matter::dm::events::Events;
+use rs_matter::dm::networks::eth::EthNetwork;
+use rs_matter::dm::networks::SysNetifs;
+use rs_matter::dm::subscriptions::Subscriptions;
+use rs_matter::dm::IMBuffer;
+use rs_matter::dm::{
+    Async, Cluster, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, Node,
+};
+use rs_matter::error::{Error, ErrorCode};
+use rs_matter::pairing::qr::QrTextType;
+use rs_matter::pairing::DiscoveryCapabilities;
+use rs_matter::persist::SharedKvBlobStore;
+use rs_matter::respond::DefaultResponder;
+use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::tlv::Nullable;
+use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
+use rs_matter::utils::init::InitMaybeUninit;
+use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::storage::pooled::PooledBuffers;
+use rs_matter::{clusters, devices, root_endpoint, with, Matter, MATTER_PORT};
+
+use static_cell::StaticCell;
+
+#[path = "../common/mdns.rs"]
+mod mdns;
+
+static MATTER: StaticCell<Matter> = StaticCell::new();
+static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
+static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
+static EVENTS: StaticCell<Events> = StaticCell::new();
+static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
+
+fn main() -> Result<(), Error> {
+    let thread = std::thread::Builder::new()
+        .stack_size(550 * 1024)
+        .spawn(run)
+        .unwrap();
+    thread.join().unwrap()
+}
+
+fn run() -> Result<(), Error> {
+    env_logger::builder()
+        .format(|buf, record| {
+            use std::io::Write;
+            writeln!(buf, "{}: {}", record.level(), record.args())
+        })
+        .target(env_logger::Target::Stdout)
+        .filter_level(::log::LevelFilter::Debug)
+        .init();
+
+    info!(
+        "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
+        core::mem::size_of::<Matter>(),
+        core::mem::size_of::<PooledBuffers<10, IMBuffer>>(),
+        core::mem::size_of::<Subscriptions>()
+    );
+
+    let matter = MATTER.uninit().init_with(Matter::init(
+        &TEST_DEV_DET,
+        TEST_DEV_COMM,
+        &TEST_DEV_ATT,
+        MATTER_PORT,
+    ));
+
+    let events = EVENTS.uninit().init_with(Events::init());
+
+    let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
+    let mut kv = rs_matter::persist::FileKvBlobStore::new_default();
+    futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
+    futures_lite::future::block_on(events.load_persist(&mut kv, kv_buf))?;
+
+    let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
+    let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
+
+    let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
+    let mut rand = crypto.rand()?;
+
+    // OnOff cluster setup
+    let on_off_handler =
+        on_off::OnOffHandler::new(Dataver::new_rand(&mut rand), 1, OnOffDeviceLogic::new());
+
+    // LevelControl cluster setup
+    let level_control_handler = level_control::LevelControlHandler::new(
+        Dataver::new_rand(&mut rand),
+        1,
+        LevelControlDeviceLogic::new(),
+        level_control::AttributeDefaults {
+            on_level: Nullable::some(42),
+            options: OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
+            ..Default::default()
+        },
+    );
+
+    // OnOff↔LC wiring
+    on_off_handler.init(Some(&level_control_handler));
+    level_control_handler.init(Some(&on_off_handler));
+
+    // ColorControl cluster setup — coupled to the same OnOff so
+    // EXECUTE_IF_OFF gating works.
+    let color_control_handler = color_control::ColorControlHandler::new(
+        Dataver::new_rand(&mut rand),
+        1,
+        ColorControlDeviceLogic::new(),
+        color_control::AttributeDefaults::default(),
+    );
+    color_control_handler.init(Some(&on_off_handler));
+
+    let dm = DataModel::new(
+        matter,
+        &crypto,
+        buffers,
+        subscriptions,
+        events,
+        dm_handler(
+            rand,
+            &on_off_handler,
+            &level_control_handler,
+            &color_control_handler,
+        ),
+        SharedKvBlobStore::new(kv, kv_buf),
+        SharedNetworks::new(EthNetwork::new_default()),
+    );
+
+    let responder = DefaultResponder::new(&dm);
+    info!(
+        "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
+        core::mem::size_of_val(&responder),
+        core::mem::size_of_val(&responder.run::<4, 4>())
+    );
+
+    let mut respond = pin!(responder.run::<4, 4>());
+    let mut dm_job = pin!(dm.run());
+
+    let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
+
+    info!(
+        "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
+        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket, &socket)),
+        core::mem::size_of_val(&mdns::run_mdns(matter, &crypto))
+    );
+
+    let mut mdns = pin!(mdns::run_mdns(matter, &crypto));
+    let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
+
+    matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
+
+    if !matter.is_commissioned() {
+        matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &())?;
+    }
+
+    #[cfg(not(windows))]
+    let mut term_signal = Signals::new([Signal::Term])?;
+    #[cfg(windows)]
+    let mut term_signal = Signals::new([Signal::Int])?;
+    let mut term = pin!(async {
+        term_signal.next().await;
+        Ok(())
+    });
+
+    let all = select3(
+        &mut transport,
+        &mut mdns,
+        select3(&mut respond, &mut dm_job, &mut term).coalesce(),
+    );
+
+    futures_lite::future::block_on(all.coalesce())
+}
+
+const NODE: Node<'static> = Node {
+    endpoints: &[
+        root_endpoint!(eth),
+        Endpoint::new(
+            1,
+            devices!(DEV_TYPE_EXTENDED_COLOR_LIGHT),
+            clusters!(
+                desc::DescHandler::CLUSTER,
+                groups::GroupsHandler::CLUSTER,
+                OnOffDeviceLogic::CLUSTER,
+                LevelControlDeviceLogic::CLUSTER,
+                ColorControlDeviceLogic::CLUSTER,
+            ),
+        ),
+    ],
+};
+
+fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks, CH: ColorControlHooks>(
+    mut rand: impl RngCore + Copy,
+    on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
+    level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
+    color_control: &'a color_control::ColorControlHandler<'a, CH, OH, LH>,
+) -> impl DataModelHandler + 'a {
+    (
+        NODE,
+        endpoints::EthSysHandlerBuilder::new()
+            .netif_diag(&SysNetifs)
+            .build(rand)
+            .chain(
+                EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
+                Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(OnOffDeviceLogic::CLUSTER.id)),
+                on_off::HandlerAsyncAdaptor(on_off),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(LevelControlDeviceLogic::CLUSTER.id)),
+                level_control::HandlerAsyncAdaptor(level_control),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(ColorControlDeviceLogic::CLUSTER.id)),
+                color_control::HandlerAsyncAdaptor(color_control),
+            ),
+    )
+}
+
+// ---- ColorControl business logic ----
+
+pub struct ColorControlDeviceLogic {
+    enhanced_current_hue: Cell<u16>,
+    current_saturation: Cell<u8>,
+    current_x: Cell<u16>,
+    current_y: Cell<u16>,
+    color_temperature_mireds: Cell<u16>,
+    color_mode: Cell<ColorModeEnum>,
+    enhanced_color_mode: Cell<EnhancedColorModeEnum>,
+    color_loop_active: Cell<bool>,
+    color_loop_direction: Cell<ColorLoopDirectionEnum>,
+    color_loop_time: Cell<u16>,
+    color_loop_start_enhanced_hue: Cell<u16>,
+    color_loop_stored_enhanced_hue: Cell<u16>,
+    start_up_color_temperature_mireds: Cell<Option<u16>>,
+}
+
+impl Default for ColorControlDeviceLogic {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ColorControlDeviceLogic {
+    pub const fn new() -> Self {
+        Self {
+            // Spec default: 0x616B (a warm white in mireds, ~3000K).
+            // Tests don't care about the value, only its presence.
+            enhanced_current_hue: Cell::new(0),
+            current_saturation: Cell::new(0),
+            // Defaults from chip's reference defaults
+            current_x: Cell::new(0x616B),
+            current_y: Cell::new(0x607D),
+            color_temperature_mireds: Cell::new(250),
+            color_mode: Cell::new(ColorModeEnum::ColorTemperatureMireds),
+            enhanced_color_mode: Cell::new(EnhancedColorModeEnum::ColorTemperatureMireds),
+            color_loop_active: Cell::new(false),
+            color_loop_direction: Cell::new(ColorLoopDirectionEnum::Increment),
+            color_loop_time: Cell::new(25),
+            color_loop_start_enhanced_hue: Cell::new(0x2300),
+            color_loop_stored_enhanced_hue: Cell::new(0),
+            start_up_color_temperature_mireds: Cell::new(None),
+        }
+    }
+}
+
+impl ColorControlHooks for ColorControlDeviceLogic {
+    const CLUSTER: Cluster<'static> = COLOR_CONTROL_FULL_CLUSTER
+        .with_features(
+            color_control::Feature::HUE_AND_SATURATION.bits()
+                | color_control::Feature::ENHANCED_HUE.bits()
+                | color_control::Feature::COLOR_LOOP.bits()
+                | color_control::Feature::XY.bits()
+                | color_control::Feature::COLOR_TEMPERATURE.bits(),
+        )
+        .with_attrs(with!(
+            required;
+            color_control::AttributeId::CurrentHue
+                | color_control::AttributeId::CurrentSaturation
+                | color_control::AttributeId::RemainingTime
+                | color_control::AttributeId::CurrentX
+                | color_control::AttributeId::CurrentY
+                | color_control::AttributeId::ColorTemperatureMireds
+                | color_control::AttributeId::ColorMode
+                | color_control::AttributeId::Options
+                | color_control::AttributeId::NumberOfPrimaries
+                | color_control::AttributeId::EnhancedCurrentHue
+                | color_control::AttributeId::EnhancedColorMode
+                | color_control::AttributeId::ColorLoopActive
+                | color_control::AttributeId::ColorLoopDirection
+                | color_control::AttributeId::ColorLoopTime
+                | color_control::AttributeId::ColorLoopStartEnhancedHue
+                | color_control::AttributeId::ColorLoopStoredEnhancedHue
+                | color_control::AttributeId::ColorCapabilities
+                | color_control::AttributeId::ColorTempPhysicalMinMireds
+                | color_control::AttributeId::ColorTempPhysicalMaxMireds
+                | color_control::AttributeId::CoupleColorTempToLevelMinMireds
+                | color_control::AttributeId::StartUpColorTemperatureMireds
+        ))
+        .with_cmds(with!(
+            color_control::CommandId::MoveToHue
+                | color_control::CommandId::MoveHue
+                | color_control::CommandId::StepHue
+                | color_control::CommandId::MoveToSaturation
+                | color_control::CommandId::MoveSaturation
+                | color_control::CommandId::StepSaturation
+                | color_control::CommandId::MoveToHueAndSaturation
+                | color_control::CommandId::MoveToColor
+                | color_control::CommandId::MoveColor
+                | color_control::CommandId::StepColor
+                | color_control::CommandId::MoveToColorTemperature
+                | color_control::CommandId::EnhancedMoveToHue
+                | color_control::CommandId::EnhancedMoveHue
+                | color_control::CommandId::EnhancedStepHue
+                | color_control::CommandId::EnhancedMoveToHueAndSaturation
+                | color_control::CommandId::ColorLoopSet
+                | color_control::CommandId::StopMoveStep
+                | color_control::CommandId::MoveColorTemperature
+                | color_control::CommandId::StepColorTemperature
+        ));
+
+    const COLOR_CAPABILITIES: ColorCapabilitiesBitmap = ColorCapabilitiesBitmap::from_bits_retain(
+        ColorCapabilitiesBitmap::HUE_SATURATION.bits()
+            | ColorCapabilitiesBitmap::ENHANCED_HUE.bits()
+            | ColorCapabilitiesBitmap::COLOR_LOOP.bits()
+            | ColorCapabilitiesBitmap::XY.bits()
+            | ColorCapabilitiesBitmap::COLOR_TEMPERATURE.bits(),
+    );
+
+    const COLOR_TEMP_PHYSICAL_MIN_MIREDS: u16 = 153; // ~6500K
+    const COLOR_TEMP_PHYSICAL_MAX_MIREDS: u16 = 500; // ~2000K
+
+    fn enhanced_current_hue(&self) -> u16 {
+        self.enhanced_current_hue.get()
+    }
+    fn set_enhanced_current_hue(&self, value: u16) {
+        self.enhanced_current_hue.set(value);
+    }
+    fn current_saturation(&self) -> u8 {
+        self.current_saturation.get()
+    }
+    fn set_current_saturation(&self, value: u8) {
+        self.current_saturation.set(value);
+    }
+    fn current_x(&self) -> u16 {
+        self.current_x.get()
+    }
+    fn set_current_x(&self, value: u16) {
+        self.current_x.set(value);
+    }
+    fn current_y(&self) -> u16 {
+        self.current_y.get()
+    }
+    fn set_current_y(&self, value: u16) {
+        self.current_y.set(value);
+    }
+    fn color_temperature_mireds(&self) -> u16 {
+        self.color_temperature_mireds.get()
+    }
+    fn set_color_temperature_mireds(&self, value: u16) {
+        self.color_temperature_mireds.set(value);
+    }
+    fn color_mode(&self) -> ColorModeEnum {
+        self.color_mode.get()
+    }
+    fn set_color_mode(&self, value: ColorModeEnum) {
+        self.color_mode.set(value);
+    }
+    fn enhanced_color_mode(&self) -> EnhancedColorModeEnum {
+        self.enhanced_color_mode.get()
+    }
+    fn set_enhanced_color_mode(&self, value: EnhancedColorModeEnum) {
+        self.enhanced_color_mode.set(value);
+    }
+    fn color_loop_active(&self) -> bool {
+        self.color_loop_active.get()
+    }
+    fn set_color_loop_active(&self, value: bool) {
+        self.color_loop_active.set(value);
+    }
+    fn color_loop_direction(&self) -> ColorLoopDirectionEnum {
+        self.color_loop_direction.get()
+    }
+    fn set_color_loop_direction(&self, value: ColorLoopDirectionEnum) {
+        self.color_loop_direction.set(value);
+    }
+    fn color_loop_time(&self) -> u16 {
+        self.color_loop_time.get()
+    }
+    fn set_color_loop_time(&self, value: u16) {
+        self.color_loop_time.set(value);
+    }
+    fn color_loop_start_enhanced_hue(&self) -> u16 {
+        self.color_loop_start_enhanced_hue.get()
+    }
+    fn set_color_loop_start_enhanced_hue(&self, value: u16) {
+        self.color_loop_start_enhanced_hue.set(value);
+    }
+    fn color_loop_stored_enhanced_hue(&self) -> u16 {
+        self.color_loop_stored_enhanced_hue.get()
+    }
+    fn set_color_loop_stored_enhanced_hue(&self, value: u16) {
+        self.color_loop_stored_enhanced_hue.set(value);
+    }
+    fn start_up_color_temperature_mireds(&self) -> Result<Nullable<u16>, Error> {
+        Ok(match self.start_up_color_temperature_mireds.get() {
+            Some(v) => Nullable::some(v),
+            None => Nullable::none(),
+        })
+    }
+    fn set_start_up_color_temperature_mireds(&self, value: Nullable<u16>) -> Result<(), Error> {
+        self.start_up_color_temperature_mireds
+            .set(value.into_option());
+        Ok(())
+    }
+
+    fn set_device_xy(&self, x: u16, y: u16) -> Result<(u16, u16), ()> {
+        // Stub actuator — real devices would drive the LED here.
+        Ok((x, y))
+    }
+    fn set_device_hue_saturation(
+        &self,
+        enhanced_hue: u16,
+        saturation: u8,
+    ) -> Result<(u16, u8), ()> {
+        Ok((enhanced_hue, saturation))
+    }
+    fn set_device_color_temperature_mireds(&self, mireds: u16) -> Result<u16, ()> {
+        Ok(mireds)
+    }
+}
+
+// ---- LevelControl business logic (identical to dimmable_light) ----
+
+pub struct LevelControlDeviceLogic {
+    current_level: Cell<Option<u8>>,
+    start_up_current_level: Cell<Option<u8>>,
+}
+
+impl Default for LevelControlDeviceLogic {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LevelControlDeviceLogic {
+    pub const fn new() -> Self {
+        Self {
+            current_level: Cell::new(Some(1)),
+            start_up_current_level: Cell::new(None),
+        }
+    }
+}
+
+impl LevelControlHooks for LevelControlDeviceLogic {
+    const MIN_LEVEL: u8 = 1;
+    const MAX_LEVEL: u8 = 254;
+    const FASTEST_RATE: u8 = 50;
+    const CLUSTER: Cluster<'static> = LEVEL_CONTROL_FULL_CLUSTER
+        .with_features(
+            level_control::Feature::LIGHTING.bits() | level_control::Feature::ON_OFF.bits(),
+        )
+        .with_attrs(with!(
+            required;
+            AttributeId::CurrentLevel
+            | AttributeId::RemainingTime
+            | AttributeId::MinLevel
+            | AttributeId::MaxLevel
+            | AttributeId::OnOffTransitionTime
+            | AttributeId::OnLevel
+            | AttributeId::OnTransitionTime
+            | AttributeId::OffTransitionTime
+            | AttributeId::DefaultMoveRate
+            | AttributeId::Options
+            | AttributeId::StartUpCurrentLevel
+        ))
+        .with_cmds(with!(
+            CommandId::MoveToLevel
+                | CommandId::Move
+                | CommandId::Step
+                | CommandId::Stop
+                | CommandId::MoveToLevelWithOnOff
+                | CommandId::MoveWithOnOff
+                | CommandId::StepWithOnOff
+                | CommandId::StopWithOnOff
+        ));
+
+    fn set_device_level(&self, level: u8) -> Result<Option<u8>, ()> {
+        Ok(Some(level))
+    }
+
+    fn current_level(&self) -> Option<u8> {
+        self.current_level.get()
+    }
+
+    fn set_current_level(&self, level: Option<u8>) {
+        info!("set_current_level: {:?}", level);
+        self.current_level.set(level);
+    }
+
+    fn start_up_current_level(&self) -> Result<Option<u8>, Error> {
+        Ok(self.start_up_current_level.get())
+    }
+
+    fn set_start_up_current_level(&self, value: Option<u8>) -> Result<(), Error> {
+        self.start_up_current_level.set(value);
+        Ok(())
+    }
+}
+
+// ---- OnOff business logic (identical to dimmable_light) ----
+
+#[derive(Default)]
+struct OnOffPersistentState {
+    on_off: bool,
+    start_up_on_off: Option<StartUpOnOffEnum>,
+}
+
+impl OnOffPersistentState {
+    fn to_bytes_from_values(on_off: bool, start_up_on_off: Option<StartUpOnOffEnum>) -> u8 {
+        let on_off = on_off as u8;
+        let start_up_on_off: u8 = match start_up_on_off {
+            Some(StartUpOnOffEnum::Off) => 0,
+            Some(StartUpOnOffEnum::On) => 1,
+            Some(StartUpOnOffEnum::Toggle) => 2,
+            None => 3,
+        };
+        on_off + (start_up_on_off << 1)
+    }
+
+    fn from_bytes(data: u8) -> Result<Self, Error> {
+        Ok(Self {
+            on_off: data & 1 != 0,
+            start_up_on_off: match data >> 1 {
+                0 => Some(StartUpOnOffEnum::Off),
+                1 => Some(StartUpOnOffEnum::On),
+                2 => Some(StartUpOnOffEnum::Toggle),
+                3 => None,
+                _ => return Err(ErrorCode::Failure.into()),
+            },
+        })
+    }
+}
+
+#[derive(Default)]
+pub struct OnOffDeviceLogic {
+    on_off: Cell<bool>,
+    start_up_on_off: Cell<Option<StartUpOnOffEnum>>,
+    storage_path: PathBuf,
+}
+
+const STORAGE_FILE_NAME: &str = "rs-matter-light-tests-on-off-state";
+
+impl OnOffDeviceLogic {
+    pub fn new() -> Self {
+        let storage_path = std::env::temp_dir().join(STORAGE_FILE_NAME);
+        let persisted_state = match fs::File::open(storage_path.as_path()) {
+            Ok(mut file) => {
+                let mut buf: [u8; 1] = [0];
+                file.read_exact(&mut buf).unwrap();
+                trace!("OnOffDeviceLogic::new: read {:0x}", buf[0]);
+                OnOffPersistentState::from_bytes(buf[0]).unwrap()
+            }
+            Err(_) => OnOffPersistentState::default(),
+        };
+        Self {
+            on_off: Cell::new(persisted_state.on_off),
+            start_up_on_off: Cell::new(persisted_state.start_up_on_off),
+            storage_path,
+        }
+    }
+
+    fn save_state(&self) -> Result<(), Error> {
+        let mut file = fs::File::create(self.storage_path.as_path())?;
+        let value = OnOffPersistentState::to_bytes_from_values(
+            self.on_off.get(),
+            self.start_up_on_off.get(),
+        );
+        file.write_all(&[value])?;
+        Ok(())
+    }
+}
+
+impl OnOffHooks for OnOffDeviceLogic {
+    const CLUSTER: Cluster<'static> = on_off_cluster::FULL_CLUSTER
+        .with_revision(6)
+        .with_features(on_off_cluster::Feature::LIGHTING.bits())
+        .with_attrs(with!(
+            required;
+            on_off_cluster::AttributeId::OnOff
+            | on_off_cluster::AttributeId::GlobalSceneControl
+            | on_off_cluster::AttributeId::OnTime
+            | on_off_cluster::AttributeId::OffWaitTime
+            | on_off_cluster::AttributeId::StartUpOnOff
+        ))
+        .with_cmds(with!(
+            on_off_cluster::CommandId::Off
+                | on_off_cluster::CommandId::On
+                | on_off_cluster::CommandId::Toggle
+                | on_off_cluster::CommandId::OffWithEffect
+                | on_off_cluster::CommandId::OnWithRecallGlobalScene
+                | on_off_cluster::CommandId::OnWithTimedOff
+        ));
+
+    fn on_off(&self) -> bool {
+        self.on_off.get()
+    }
+
+    fn set_on_off(&self, on: bool) {
+        self.on_off.set(on);
+        info!("OnOff state set to: {}", on);
+        if let Err(err) = self.save_state() {
+            error!("Error saving state: {}", err);
+        }
+    }
+
+    fn start_up_on_off(&self) -> Nullable<on_off::StartUpOnOffEnum> {
+        match self.start_up_on_off.get() {
+            Some(value) => Nullable::some(value),
+            None => Nullable::none(),
+        }
+    }
+
+    fn set_start_up_on_off(&self, value: Nullable<on_off::StartUpOnOffEnum>) -> Result<(), Error> {
+        self.start_up_on_off.set(value.into_option());
+        self.save_state()
+    }
+
+    async fn handle_off_with_effect(&self, _effect: on_off::EffectVariantEnum) {
+        // no effect
+    }
+}
