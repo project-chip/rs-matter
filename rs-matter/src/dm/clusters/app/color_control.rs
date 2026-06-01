@@ -21,7 +21,8 @@ use core::cell::Cell;
 use core::future::{pending, ready, Future};
 use core::pin::pin;
 
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{select, select3, Either, Either3};
+use embassy_time::{Duration, Instant, Timer};
 
 use crate::dm::clusters::app::level_control::{LevelControlHooks, NoOnOff};
 use crate::dm::clusters::app::on_off::{NoLevelControl, OnOffHandler, OnOffHooks};
@@ -273,19 +274,51 @@ where
     }
 }
 
-/// Internal task placeholder. Populated in subsequent steps when the
-/// transition pipeline is implemented.
+/// Internal task variants driving the transition pipeline.
 enum Task {
-    // No transition tasks yet — Step 3 introduces hue/saturation moves,
-    // Step 4 adds XY and colour-temperature moves, Step 5 adds the
-    // colour-loop tick. For now this enum is uninhabited.
+    /// Linear interpolation to a target. Either or both axes may be
+    /// set. `is_enhanced` controls which attributes are notified
+    /// (CurrentHue only vs CurrentHue + EnhancedCurrentHue).
+    HueSaturationMoveTo {
+        target_enhanced_hue: Option<u16>,
+        target_saturation: Option<u8>,
+        transition_ms: u32,
+        is_enhanced: bool,
+    },
+    /// Continuous hue move at a given enhanced-units/sec rate.
+    HueMove {
+        direction: MoveModeEnum,
+        rate_enhanced_per_sec: u32,
+        is_enhanced: bool,
+    },
+    /// Continuous saturation move at a given units/sec rate.
+    SaturationMove {
+        direction: MoveModeEnum,
+        rate_per_sec: u32,
+    },
+    /// Cancel any active transition.
+    Stop,
 }
+
+/// Tick interval for transition loops. Trades smoothness against
+/// subscription churn — 100 ms gives ≤ 10 notifies/sec which the
+/// quiet-report logic further throttles.
+const TRANSITION_TICK: Duration = Duration::from_millis(100);
+
+/// Spec maximum for `CurrentHue` (u8) and the high byte of
+/// `EnhancedCurrentHue`. Values above this saturate at this cap.
+const HUE_U8_MAX: u8 = 254;
+
+/// Spec maximum for `CurrentSaturation`.
+const SATURATION_MAX: u8 = 254;
 
 /// Handler-internal cluster state. Device-persisted attributes live
 /// in the hooks.
 struct ColorControlState {
     options: OptionsBitmap,
     remaining_time: u16,
+    last_hue_notification: Instant,
+    last_saturation_notification: Instant,
 }
 
 impl ColorControlState {
@@ -293,7 +326,26 @@ impl ColorControlState {
         Self {
             options: defaults.options,
             remaining_time: 0,
+            last_hue_notification: Instant::from_millis(0),
+            last_saturation_notification: Instant::from_millis(0),
         }
+    }
+
+    /// Mirrors LevelControl's quiet-reporting rule: notify when
+    /// transitioning to/from zero, or once per second, or on a large
+    /// delta at the start of a transition.
+    fn write_remaining_time_quietly(
+        &mut self,
+        remaining: Duration,
+        is_start_of_transition: bool,
+    ) -> bool {
+        let new_ds = remaining.as_millis().div_ceil(100) as u16;
+        let prev = self.remaining_time;
+        let changed_to_zero = new_ds == 0 && prev != 0;
+        let changed_from_zero_gt_10 = prev == 0 && new_ds > 10;
+        let changed_by_gt_10 = new_ds.abs_diff(prev) > 10 && is_start_of_transition;
+        self.remaining_time = new_ds;
+        changed_to_zero || changed_from_zero_gt_10 || changed_by_gt_10
     }
 }
 
@@ -769,6 +821,679 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
     }
 }
 
+// ---- Command-driven mutation helpers + transition pipeline ----
+
+impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
+    ColorControlHandler<'a, H, OH, LH>
+{
+    fn cluster_id() -> ClusterId {
+        H::CLUSTER.id
+    }
+
+    /// Apply Options/OptionsMask/OptionsOverride to decide whether a
+    /// command should execute when the coupled OnOff cluster is off.
+    fn should_continue(
+        &self,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> bool {
+        let Some(on_off_handler) = self.on_off_handler.lock(|h| h.get()) else {
+            return true;
+        };
+        if on_off_handler.on_off() {
+            return true;
+        }
+        // OptionsMask bit set → consult OptionsOverride; else consult Options attribute.
+        if options_mask.contains(OptionsBitmap::EXECUTE_IF_OFF) {
+            options_override.contains(OptionsBitmap::EXECUTE_IF_OFF)
+        } else {
+            self.with_state(|s| s.options.contains(OptionsBitmap::EXECUTE_IF_OFF))
+        }
+    }
+
+    /// Compute the signed delta required to walk from `current` to
+    /// `target` on the u16 colour wheel honouring `direction`.
+    /// Returns total enhanced-units delta as a signed i32 so the
+    /// transition loop can integer-step.
+    fn hue_path_delta(current: u16, target: u16, direction: DirectionEnum) -> i32 {
+        let cur = current as i32;
+        let tgt = target as i32;
+        let up_distance = ((tgt - cur).rem_euclid(0x10000)) as u32; // 0..65535
+        let down_distance = ((cur - tgt).rem_euclid(0x10000)) as u32;
+        match direction {
+            DirectionEnum::Up => up_distance as i32,
+            DirectionEnum::Down => -(down_distance as i32),
+            DirectionEnum::Shortest => {
+                if up_distance <= down_distance {
+                    up_distance as i32
+                } else {
+                    -(down_distance as i32)
+                }
+            }
+            DirectionEnum::Longest => {
+                if up_distance > down_distance {
+                    up_distance as i32
+                } else {
+                    -(down_distance as i32)
+                }
+            }
+        }
+    }
+
+    /// Update `EnhancedCurrentHue` and notify, with quiet reporting.
+    /// `is_enhanced=true` notifies both `EnhancedCurrentHue` and
+    /// `CurrentHue`; false notifies only `CurrentHue`.
+    fn set_hue<N: AttrChangeNotifier>(
+        &self,
+        ctx: &N,
+        new_eh: u16,
+        is_end_of_transition: bool,
+        is_enhanced: bool,
+    ) {
+        let prev_eh = self.hooks.enhanced_current_hue();
+        if prev_eh == new_eh && !is_end_of_transition {
+            return;
+        }
+        self.hooks.set_enhanced_current_hue(new_eh);
+        self.hooks
+            .set_color_mode(ColorModeEnum::CurrentHueAndCurrentSaturation);
+        let enhanced_mode = if is_enhanced {
+            EnhancedColorModeEnum::EnhancedCurrentHueAndCurrentSaturation
+        } else {
+            EnhancedColorModeEnum::CurrentHueAndCurrentSaturation
+        };
+        self.hooks.set_enhanced_color_mode(enhanced_mode);
+
+        let should_notify = self.with_state(|s| {
+            let now = Instant::now();
+            let elapsed = now - s.last_hue_notification;
+            if is_end_of_transition || elapsed >= Duration::from_secs(1) {
+                s.last_hue_notification = now;
+                true
+            } else {
+                false
+            }
+        });
+        if should_notify {
+            let cluster_id = Self::cluster_id();
+            ctx.notify_attr_changed(self.endpoint_id, cluster_id, AttributeId::CurrentHue as _);
+            if is_enhanced {
+                ctx.notify_attr_changed(
+                    self.endpoint_id,
+                    cluster_id,
+                    AttributeId::EnhancedCurrentHue as _,
+                );
+            }
+            ctx.notify_attr_changed(self.endpoint_id, cluster_id, AttributeId::ColorMode as _);
+            ctx.notify_attr_changed(
+                self.endpoint_id,
+                cluster_id,
+                AttributeId::EnhancedColorMode as _,
+            );
+        }
+        self.notify_scenable_changed();
+    }
+
+    /// Update `CurrentSaturation` and notify, with quiet reporting.
+    fn set_saturation<N: AttrChangeNotifier>(
+        &self,
+        ctx: &N,
+        new_sat: u8,
+        is_end_of_transition: bool,
+    ) {
+        let prev = self.hooks.current_saturation();
+        if prev == new_sat && !is_end_of_transition {
+            return;
+        }
+        self.hooks.set_current_saturation(new_sat);
+        self.hooks
+            .set_color_mode(ColorModeEnum::CurrentHueAndCurrentSaturation);
+        // EnhancedColorMode: keep enhanced variant if already enhanced.
+        let current_emode = self.hooks.enhanced_color_mode();
+        if !matches!(
+            current_emode,
+            EnhancedColorModeEnum::CurrentHueAndCurrentSaturation
+                | EnhancedColorModeEnum::EnhancedCurrentHueAndCurrentSaturation
+        ) {
+            self.hooks
+                .set_enhanced_color_mode(EnhancedColorModeEnum::CurrentHueAndCurrentSaturation);
+        }
+        let should_notify = self.with_state(|s| {
+            let now = Instant::now();
+            let elapsed = now - s.last_saturation_notification;
+            if is_end_of_transition || elapsed >= Duration::from_secs(1) {
+                s.last_saturation_notification = now;
+                true
+            } else {
+                false
+            }
+        });
+        if should_notify {
+            let cluster_id = Self::cluster_id();
+            ctx.notify_attr_changed(
+                self.endpoint_id,
+                cluster_id,
+                AttributeId::CurrentSaturation as _,
+            );
+            ctx.notify_attr_changed(self.endpoint_id, cluster_id, AttributeId::ColorMode as _);
+            ctx.notify_attr_changed(
+                self.endpoint_id,
+                cluster_id,
+                AttributeId::EnhancedColorMode as _,
+            );
+        }
+        self.notify_scenable_changed();
+    }
+
+    /// Push the latest enhanced hue + saturation values through the
+    /// device-actuator hooks. Logs but does not propagate errors.
+    fn drive_device_hue_saturation(&self) {
+        let eh = self.hooks.enhanced_current_hue();
+        let sat = self.hooks.current_saturation();
+        if let Err(()) = self.hooks.set_device_hue_saturation(eh, sat) {
+            warn!("set_device_hue_saturation failed");
+        }
+    }
+
+    /// Linear interpolation between current and target over
+    /// `transition_ms` for hue (enhanced units, signed path delta)
+    /// and/or saturation. Notifies via quiet-reporting at each tick.
+    async fn move_to_hue_saturation_transition(
+        &self,
+        ctx: &impl HandlerContext,
+        target_enhanced_hue: Option<u16>,
+        target_saturation: Option<u8>,
+        transition_ms: u32,
+        is_enhanced: bool,
+    ) -> Result<(), Error> {
+        let start_eh = self.hooks.enhanced_current_hue();
+        let start_sat = self.hooks.current_saturation();
+
+        // Resolve hue path. For MoveTo without Direction (e.g. from
+        // MoveToHueAndSaturation, EnhancedMoveToHueAndSaturation,
+        // and the saturation-only `MoveToSaturation`), default to
+        // Shortest.
+        let hue_delta_total: i32 = target_enhanced_hue
+            .map(|t| Self::hue_path_delta(start_eh, t, DirectionEnum::Shortest))
+            .unwrap_or(0);
+        let sat_delta_total: i32 = target_saturation
+            .map(|t| t as i32 - start_sat as i32)
+            .unwrap_or(0);
+
+        // Initial RemainingTime (deciseconds).
+        let total = Duration::from_millis(transition_ms as u64);
+        let start_time = Instant::now();
+        let _ = self.with_state(|s| s.write_remaining_time_quietly(total, true));
+
+        if transition_ms == 0 || (hue_delta_total == 0 && sat_delta_total == 0) {
+            if let Some(t) = target_enhanced_hue {
+                self.set_hue(ctx, t, true, is_enhanced);
+            }
+            if let Some(t) = target_saturation {
+                self.set_saturation(ctx, t, true);
+            }
+            self.drive_device_hue_saturation();
+            let notify_rt = self
+                .with_state(|s| s.write_remaining_time_quietly(Duration::from_millis(0), false));
+            if notify_rt {
+                ctx.notify_attr_changed(
+                    self.endpoint_id,
+                    Self::cluster_id(),
+                    AttributeId::RemainingTime as _,
+                );
+            }
+            return Ok(());
+        }
+
+        loop {
+            let elapsed_ms = (Instant::now() - start_time).as_millis() as u64;
+            let progress_milli = (elapsed_ms.saturating_mul(1000) / transition_ms as u64).min(1000);
+            let is_end = progress_milli >= 1000;
+
+            if let Some(t) = target_enhanced_hue {
+                let delta_now = ((hue_delta_total as i64) * progress_milli as i64 / 1000) as i32;
+                let new_eh = start_eh.wrapping_add_signed(delta_now as i16);
+                let final_eh = if is_end { t } else { new_eh };
+                self.set_hue(ctx, final_eh, is_end, is_enhanced);
+            }
+            if let Some(t) = target_saturation {
+                let delta_now = ((sat_delta_total as i64) * progress_milli as i64 / 1000) as i32;
+                let new_sat = (start_sat as i32 + delta_now).clamp(0, SATURATION_MAX as i32) as u8;
+                let final_sat = if is_end { t } else { new_sat };
+                self.set_saturation(ctx, final_sat, is_end);
+            }
+            self.drive_device_hue_saturation();
+
+            // Update RemainingTime.
+            let remaining = if is_end {
+                Duration::from_millis(0)
+            } else {
+                Duration::from_millis(transition_ms as u64 - elapsed_ms)
+            };
+            let notify_rt = self.with_state(|s| s.write_remaining_time_quietly(remaining, false));
+            if notify_rt {
+                ctx.notify_attr_changed(
+                    self.endpoint_id,
+                    Self::cluster_id(),
+                    AttributeId::RemainingTime as _,
+                );
+            }
+
+            if is_end {
+                return Ok(());
+            }
+            Timer::after(TRANSITION_TICK).await;
+        }
+    }
+
+    /// Continuous hue move at the given enhanced-units/sec rate.
+    /// Wraps around the u16 colour wheel and stops only on a `Stop`
+    /// task (or natural cancellation by a new signal).
+    async fn hue_move_transition(
+        &self,
+        ctx: &impl HandlerContext,
+        direction: MoveModeEnum,
+        rate_enhanced_per_sec: u32,
+        is_enhanced: bool,
+    ) -> Result<(), Error> {
+        if rate_enhanced_per_sec == 0 {
+            return Ok(());
+        }
+        // Compute the per-tick delta. With TRANSITION_TICK = 100ms:
+        // delta = rate / 10 (rounded up so rate=1 still moves).
+        let tick_ms = TRANSITION_TICK.as_millis().max(1);
+        let delta_per_tick = (rate_enhanced_per_sec as u64 * tick_ms / 1000).max(1) as u32;
+        let signed: i32 = match direction {
+            MoveModeEnum::Up => delta_per_tick as i32,
+            MoveModeEnum::Down => -(delta_per_tick as i32),
+            // Stop is handled by the caller — guard anyway.
+            _ => return Ok(()),
+        };
+        loop {
+            let current = self.hooks.enhanced_current_hue();
+            let new_eh = current.wrapping_add_signed(signed as i16);
+            self.set_hue(ctx, new_eh, false, is_enhanced);
+            self.drive_device_hue_saturation();
+            Timer::after(TRANSITION_TICK).await;
+        }
+    }
+
+    /// Continuous saturation move at the given units/sec rate.
+    /// Saturates at `[0, 254]` and terminates when the bound is hit.
+    async fn saturation_move_transition(
+        &self,
+        ctx: &impl HandlerContext,
+        direction: MoveModeEnum,
+        rate_per_sec: u32,
+    ) -> Result<(), Error> {
+        if rate_per_sec == 0 {
+            return Ok(());
+        }
+        let tick_ms = TRANSITION_TICK.as_millis().max(1);
+        let delta_per_tick = (rate_per_sec as u64 * tick_ms / 1000).max(1) as u32;
+        let signed: i32 = match direction {
+            MoveModeEnum::Up => delta_per_tick as i32,
+            MoveModeEnum::Down => -(delta_per_tick as i32),
+            _ => return Ok(()),
+        };
+        loop {
+            let current = self.hooks.current_saturation();
+            let new_sat = (current as i32 + signed).clamp(0, SATURATION_MAX as i32) as u8;
+            let is_end = new_sat == 0 || new_sat == SATURATION_MAX;
+            self.set_saturation(ctx, new_sat, is_end);
+            self.drive_device_hue_saturation();
+            if is_end {
+                return Ok(());
+            }
+            Timer::after(TRANSITION_TICK).await;
+        }
+    }
+
+    async fn task_manager(&self, ctx: &impl HandlerContext, task: Task) {
+        match task {
+            Task::HueSaturationMoveTo {
+                target_enhanced_hue,
+                target_saturation,
+                transition_ms,
+                is_enhanced,
+            } => {
+                if let Err(e) = self
+                    .move_to_hue_saturation_transition(
+                        ctx,
+                        target_enhanced_hue,
+                        target_saturation,
+                        transition_ms,
+                        is_enhanced,
+                    )
+                    .await
+                {
+                    error!("HueSaturationMoveTo: {:?}", e);
+                }
+            }
+            Task::HueMove {
+                direction,
+                rate_enhanced_per_sec,
+                is_enhanced,
+            } => {
+                if let Err(e) = self
+                    .hue_move_transition(ctx, direction, rate_enhanced_per_sec, is_enhanced)
+                    .await
+                {
+                    error!("HueMove: {:?}", e);
+                }
+            }
+            Task::SaturationMove {
+                direction,
+                rate_per_sec,
+            } => {
+                if let Err(e) = self
+                    .saturation_move_transition(ctx, direction, rate_per_sec)
+                    .await
+                {
+                    error!("SaturationMove: {:?}", e);
+                }
+            }
+            Task::Stop => {
+                let notify_rt = self.with_state(|s| {
+                    s.write_remaining_time_quietly(Duration::from_millis(0), false)
+                });
+                if notify_rt {
+                    ctx.notify_attr_changed(
+                        self.endpoint_id,
+                        Self::cluster_id(),
+                        AttributeId::RemainingTime as _,
+                    );
+                }
+            }
+        }
+    }
+
+    // ---- Command entry points (validation + task signalling) ----
+
+    fn cmd_move_to_hue(
+        &self,
+        hue: u8,
+        direction: DirectionEnum,
+        transition_time_ds: u16,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
+        if hue > HUE_U8_MAX {
+            return Err(ErrorCode::ConstraintError.into());
+        }
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+        let current_eh = self.hooks.enhanced_current_hue();
+        let target_eh = (hue as u16) << 8;
+        let delta = Self::hue_path_delta(current_eh, target_eh, direction);
+        let final_eh = current_eh.wrapping_add_signed(delta as i16);
+        self.task_signal.signal(Task::HueSaturationMoveTo {
+            target_enhanced_hue: Some(final_eh),
+            target_saturation: None,
+            transition_ms: transition_time_ds as u32 * 100,
+            is_enhanced: false,
+        });
+        Ok(())
+    }
+
+    fn cmd_enhanced_move_to_hue(
+        &self,
+        enhanced_hue: u16,
+        direction: DirectionEnum,
+        transition_time_ds: u16,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+        let current_eh = self.hooks.enhanced_current_hue();
+        let delta = Self::hue_path_delta(current_eh, enhanced_hue, direction);
+        let final_eh = current_eh.wrapping_add_signed(delta as i16);
+        self.task_signal.signal(Task::HueSaturationMoveTo {
+            target_enhanced_hue: Some(final_eh),
+            target_saturation: None,
+            transition_ms: transition_time_ds as u32 * 100,
+            is_enhanced: true,
+        });
+        Ok(())
+    }
+
+    fn cmd_move_hue(
+        &self,
+        move_mode: MoveModeEnum,
+        rate: u8,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+        is_enhanced: bool,
+    ) -> Result<(), Error> {
+        if matches!(move_mode, MoveModeEnum::Stop) {
+            self.task_signal.signal(Task::Stop);
+            return Ok(());
+        }
+        if rate == 0 && !is_enhanced {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+        // For the non-enhanced command, `rate` is in u8 hue units/sec
+        // — multiply by 256 to land in enhanced units/sec.
+        let rate_eh_per_sec = if is_enhanced {
+            rate as u32
+        } else {
+            (rate as u32) * 256
+        };
+        self.task_signal.signal(Task::HueMove {
+            direction: move_mode,
+            rate_enhanced_per_sec: rate_eh_per_sec,
+            is_enhanced,
+        });
+        Ok(())
+    }
+
+    fn cmd_enhanced_move_hue(
+        &self,
+        move_mode: MoveModeEnum,
+        rate: u16,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
+        if matches!(move_mode, MoveModeEnum::Stop) {
+            self.task_signal.signal(Task::Stop);
+            return Ok(());
+        }
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+        self.task_signal.signal(Task::HueMove {
+            direction: move_mode,
+            rate_enhanced_per_sec: rate as u32,
+            is_enhanced: true,
+        });
+        Ok(())
+    }
+
+    fn cmd_step_hue(
+        &self,
+        step_mode: StepModeEnum,
+        step_size: u8,
+        transition_time_ds: u16,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
+        if step_size == 0 {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+        let current_eh = self.hooks.enhanced_current_hue();
+        let signed_step: i32 = match step_mode {
+            StepModeEnum::Up => (step_size as i32) << 8,
+            StepModeEnum::Down => -((step_size as i32) << 8),
+        };
+        let final_eh = current_eh.wrapping_add_signed(signed_step as i16);
+        self.task_signal.signal(Task::HueSaturationMoveTo {
+            target_enhanced_hue: Some(final_eh),
+            target_saturation: None,
+            transition_ms: transition_time_ds as u32 * 100,
+            is_enhanced: false,
+        });
+        Ok(())
+    }
+
+    fn cmd_enhanced_step_hue(
+        &self,
+        step_mode: StepModeEnum,
+        step_size: u16,
+        transition_time_ds: u16,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
+        if step_size == 0 {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+        let current_eh = self.hooks.enhanced_current_hue();
+        let signed_step: i32 = match step_mode {
+            StepModeEnum::Up => step_size as i32,
+            _ => return Err(ErrorCode::InvalidCommand.into()),
+        };
+        let final_eh = current_eh.wrapping_add_signed(signed_step as i16);
+        self.task_signal.signal(Task::HueSaturationMoveTo {
+            target_enhanced_hue: Some(final_eh),
+            target_saturation: None,
+            transition_ms: transition_time_ds as u32 * 100,
+            is_enhanced: true,
+        });
+        Ok(())
+    }
+
+    fn cmd_move_to_saturation(
+        &self,
+        saturation: u8,
+        transition_time_ds: u16,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
+        if saturation > SATURATION_MAX {
+            return Err(ErrorCode::ConstraintError.into());
+        }
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+        self.task_signal.signal(Task::HueSaturationMoveTo {
+            target_enhanced_hue: None,
+            target_saturation: Some(saturation),
+            transition_ms: transition_time_ds as u32 * 100,
+            is_enhanced: false,
+        });
+        Ok(())
+    }
+
+    fn cmd_move_saturation(
+        &self,
+        move_mode: MoveModeEnum,
+        rate: u8,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
+        if matches!(move_mode, MoveModeEnum::Stop) {
+            self.task_signal.signal(Task::Stop);
+            return Ok(());
+        }
+        if rate == 0 {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+        self.task_signal.signal(Task::SaturationMove {
+            direction: move_mode,
+            rate_per_sec: rate as u32,
+        });
+        Ok(())
+    }
+
+    fn cmd_step_saturation(
+        &self,
+        step_mode: StepModeEnum,
+        step_size: u8,
+        transition_time_ds: u16,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
+        if step_size == 0 {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+        let current = self.hooks.current_saturation();
+        let new_sat = match step_mode {
+            StepModeEnum::Down => current.saturating_sub(step_size),
+            _ => return Err(ErrorCode::InvalidCommand.into()),
+        };
+        self.task_signal.signal(Task::HueSaturationMoveTo {
+            target_enhanced_hue: None,
+            target_saturation: Some(new_sat),
+            transition_ms: transition_time_ds as u32 * 100,
+            is_enhanced: false,
+        });
+        Ok(())
+    }
+
+    fn cmd_move_to_hue_and_saturation(
+        &self,
+        hue: u8,
+        saturation: u8,
+        transition_time_ds: u16,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+        is_enhanced: bool,
+        enhanced_hue: u16,
+    ) -> Result<(), Error> {
+        if (!is_enhanced && hue > HUE_U8_MAX) || saturation > SATURATION_MAX {
+            return Err(ErrorCode::ConstraintError.into());
+        }
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+        // MoveToHueAndSaturation uses Shortest direction implicitly.
+        let target_eh = if is_enhanced {
+            enhanced_hue
+        } else {
+            (hue as u16) << 8
+        };
+        let current_eh = self.hooks.enhanced_current_hue();
+        let delta = Self::hue_path_delta(current_eh, target_eh, DirectionEnum::Shortest);
+        let final_eh = current_eh.wrapping_add_signed(delta as i16);
+        self.task_signal.signal(Task::HueSaturationMoveTo {
+            target_enhanced_hue: Some(final_eh),
+            target_saturation: Some(saturation),
+            transition_ms: transition_time_ds as u32 * 100,
+            is_enhanced,
+        });
+        Ok(())
+    }
+
+    fn cmd_stop_move_step(
+        &self,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+        self.task_signal.signal(Task::Stop);
+        Ok(())
+    }
+}
+
 // ---- ClusterAsyncHandler implementation ----
 
 impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler
@@ -776,20 +1501,31 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
 {
     const CLUSTER: Cluster<'static> = H::CLUSTER;
 
-    async fn run(&self, _ctx: impl HandlerContext) -> Result<(), Error> {
-        // Step 1: just keep the hooks' background task alive. The
-        // task_manager loop is wired in Step 3+ when transitions land.
+    async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
         let mut hooks_fut = pin!(self.hooks.run(|_message| {
             // No out-of-band handling yet.
         }));
         loop {
-            match select(&mut hooks_fut, self.task_signal.wait_signalled()).await {
-                Either::First(_) => panic!(
-                    "ColorControlHooks::run returned; implementers MUST not return. Use loop {{}} or core::future::pending::<()>().await."
-                ),
-                Either::Second(_task) => {
-                    // No tasks defined yet — drop and resume waiting.
+            let mut task = match select(&mut hooks_fut, self.task_signal.wait_signalled()).await {
+                Either::First(_) => {
+                    panic!("ColorControlHooks::run returned; implementers MUST not return.")
                 }
+                Either::Second(task) => task,
+            };
+            loop {
+                match select3(
+                    &mut hooks_fut,
+                    self.task_manager(&ctx, task),
+                    self.task_signal.wait_signalled(),
+                )
+                .await
+                {
+                    Either3::First(_) => {
+                        panic!("ColorControlHooks::run returned; implementers MUST not return.")
+                    }
+                    Either3::Second(_) => break,
+                    Either3::Third(new_task) => task = new_task,
+                };
             }
         }
     }
@@ -959,62 +1695,104 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         })
     }
 
-    // ---- Command handlers (Step 1: all stubbed as `CommandNotFound`) ----
+    // ---- Command handlers ----
 
     async fn handle_move_to_hue(
         &self,
         _ctx: impl InvokeContext,
-        _request: MoveToHueRequest<'_>,
+        request: MoveToHueRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_move_to_hue(
+            request.hue()?,
+            request.direction()?,
+            request.transition_time()?,
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_move_hue(
         &self,
         _ctx: impl InvokeContext,
-        _request: MoveHueRequest<'_>,
+        request: MoveHueRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_move_hue(
+            request.move_mode()?,
+            request.rate()?,
+            request.options_mask()?,
+            request.options_override()?,
+            false,
+        )
     }
 
     async fn handle_step_hue(
         &self,
         _ctx: impl InvokeContext,
-        _request: StepHueRequest<'_>,
+        request: StepHueRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_step_hue(
+            request.step_mode()?,
+            request.step_size()?,
+            request.transition_time()? as u16,
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_move_to_saturation(
         &self,
         _ctx: impl InvokeContext,
-        _request: MoveToSaturationRequest<'_>,
+        request: MoveToSaturationRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_move_to_saturation(
+            request.saturation()?,
+            request.transition_time()?,
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_move_saturation(
         &self,
         _ctx: impl InvokeContext,
-        _request: MoveSaturationRequest<'_>,
+        request: MoveSaturationRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_move_saturation(
+            request.move_mode()?,
+            request.rate()?,
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_step_saturation(
         &self,
         _ctx: impl InvokeContext,
-        _request: StepSaturationRequest<'_>,
+        request: StepSaturationRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_step_saturation(
+            request.step_mode()?,
+            request.step_size()?,
+            request.transition_time()? as u16,
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_move_to_hue_and_saturation(
         &self,
         _ctx: impl InvokeContext,
-        _request: MoveToHueAndSaturationRequest<'_>,
+        request: MoveToHueAndSaturationRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_move_to_hue_and_saturation(
+            request.hue()?,
+            request.saturation()?,
+            request.transition_time()?,
+            request.options_mask()?,
+            request.options_override()?,
+            false,
+            0,
+        )
     }
 
     async fn handle_move_to_color(
@@ -1052,33 +1830,58 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
     async fn handle_enhanced_move_to_hue(
         &self,
         _ctx: impl InvokeContext,
-        _request: EnhancedMoveToHueRequest<'_>,
+        request: EnhancedMoveToHueRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_enhanced_move_to_hue(
+            request.enhanced_hue()?,
+            request.direction()?,
+            request.transition_time()?,
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_enhanced_move_hue(
         &self,
         _ctx: impl InvokeContext,
-        _request: EnhancedMoveHueRequest<'_>,
+        request: EnhancedMoveHueRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_enhanced_move_hue(
+            request.move_mode()?,
+            request.rate()?,
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_enhanced_step_hue(
         &self,
         _ctx: impl InvokeContext,
-        _request: EnhancedStepHueRequest<'_>,
+        request: EnhancedStepHueRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_enhanced_step_hue(
+            request.step_mode()?,
+            request.step_size()?,
+            request.transition_time()?,
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_enhanced_move_to_hue_and_saturation(
         &self,
         _ctx: impl InvokeContext,
-        _request: EnhancedMoveToHueAndSaturationRequest<'_>,
+        request: EnhancedMoveToHueAndSaturationRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_move_to_hue_and_saturation(
+            0, // unused when is_enhanced=true
+            request.saturation()?,
+            request.transition_time()?,
+            request.options_mask()?,
+            request.options_override()?,
+            true,
+            request.enhanced_hue()?,
+        )
     }
 
     async fn handle_color_loop_set(
@@ -1092,9 +1895,9 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
     async fn handle_stop_move_step(
         &self,
         _ctx: impl InvokeContext,
-        _request: StopMoveStepRequest<'_>,
+        request: StopMoveStepRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_stop_move_step(request.options_mask()?, request.options_override()?)
     }
 
     async fn handle_move_color_temperature(
