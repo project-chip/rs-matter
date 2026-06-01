@@ -105,10 +105,10 @@ jobs:
           set -o pipefail
           cargo xtask itest --skip-setup 2>&1 | tee /tmp/itest-system-rustcrypto.log
 
-      # TODO: Enable once mbedtls-rs-sys built removes the installation step
-      # - name: Run one System integration test with MbedTLS
-      #   run: |
-      #     cargo xtask itest --features mbedtls TestBasicInformation
+      - name: Run one System integration test with MbedTLS
+        run: |
+          cargo xtask itest --skip-setup --features mbedtls TestBasicInformation \
+            2>&1 | tee /tmp/itest-system-mbedtls.log
 
       - name: Run one System integration test with OpenSSL
         run: |
