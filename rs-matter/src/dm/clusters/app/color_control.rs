@@ -928,6 +928,10 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
     // ---- Attribute writes ----
 
     async fn set_options(&self, ctx: impl WriteContext, value: OptionsBitmap) -> Result<(), Error> {
+        // Only `EXECUTE_IF_OFF` (bit 0) is defined; other bits are reserved.
+        if value.bits() & !OptionsBitmap::EXECUTE_IF_OFF.bits() != 0 {
+            return Err(ErrorCode::ConstraintError.into());
+        }
         self.with_state_notify(ctx, |s| {
             s.options = value;
         });
@@ -939,7 +943,14 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         ctx: impl WriteContext,
         value: Nullable<u16>,
     ) -> impl Future<Output = Result<(), Error>> {
-        ready({
+        ready('a: {
+            // Non-null values must lie in 1..=65279 (the spec's
+            // `temperatureMireds` reserves 0 and 65280..=65535).
+            if let Some(v) = value.clone().into_option() {
+                if v == 0 || v > 0xFEFF {
+                    break 'a Err(ErrorCode::ConstraintError.into());
+                }
+            }
             let res = self.hooks.set_start_up_color_temperature_mireds(value);
             if res.is_ok() {
                 ctx.notify_changed();
