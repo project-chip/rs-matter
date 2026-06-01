@@ -152,8 +152,8 @@ impl<'a, H: ColorControlHooks> ColorControlHandler<'a, H> {
         }
     }
 
-    /// Apply the `CurrentHueAndCurrentSaturation` mode. Hue is
-    /// stored in `EnhancedCurrentHue` as the low byte.
+    /// Apply the `CurrentHueAndCurrentSaturation` mode. `CurrentHue`
+    /// is the high byte of `EnhancedCurrentHue`.
     fn apply_hue_saturation<N: AttrChangeNotifier>(
         &self,
         ctx: &N,
@@ -161,7 +161,7 @@ impl<'a, H: ColorControlHooks> ColorControlHandler<'a, H> {
         saturation: u8,
         scene_apply: bool,
     ) {
-        self.hooks.set_enhanced_current_hue(hue_u8 as u16);
+        self.hooks.set_enhanced_current_hue((hue_u8 as u16) << 8);
         self.hooks.set_current_saturation(saturation);
         self.hooks
             .set_enhanced_color_mode(EnhancedColorModeEnum::CurrentHueAndCurrentSaturation);
@@ -417,9 +417,9 @@ impl<H: ColorControlHooks> ColorControlHandler<'_, H> {
                 self.apply_color_temperature(ctx, mireds, true);
             }
             EnhancedColorModeEnum::CurrentHueAndCurrentSaturation => {
-                // Non-enhanced hue is the low byte of EnhancedCurrentHue.
+                // `CurrentHue` is the high byte of `EnhancedCurrentHue`.
                 let (Some(hue), Some(sat)) = (
-                    enhanced_current_hue.map(|h| (h & 0xFF) as u8),
+                    enhanced_current_hue.map(|h| (h >> 8) as u8),
                     current_saturation,
                 ) else {
                     return Ok(());
@@ -851,9 +851,9 @@ mod tests {
 
     #[test]
     fn apply_hue_saturation_mode_truncates_enhanced_hue_to_u8() {
-        // Captured EnhancedCurrentHue is u16; non-enhanced apply
-        // path takes the low byte. Mirrors chip's `ApplyScene`
-        // behaviour and is documented on `apply_hue_saturation`.
+        // `CurrentHue` (u8) is the high byte of `EnhancedCurrentHue`
+        // (u16). Captured EnhancedHue=0x12FF → CurrentHue=0x12 →
+        // round-trip stored as 0x1200.
         let h = handler(Feature::HUE_AND_SATURATION);
         let mut buf = [0u8; 128];
         let len = {
@@ -862,7 +862,6 @@ mod tests {
             let array =
                 AttributeValuePairStructArrayBuilder::new(parent, &crate::tlv::TLVTag::Anonymous)
                     .unwrap();
-            // Hue = 0x12FF → low byte 0xFF after truncation.
             let array = array
                 .push_u16(AttributeId::EnhancedCurrentHue as _, 0x12FF)
                 .unwrap()
@@ -882,10 +881,7 @@ mod tests {
         let avp_list: TLVArray<'_, AttributeValuePairStruct<'_>> = TLVArray::new(elem).unwrap();
         h.apply_inner(NULL_CTX, &avp_list, 0).unwrap();
 
-        // The mutator writes the low byte into the enhanced field
-        // (the cluster's only hue storage); the mode flips to
-        // non-enhanced.
-        assert_eq!(h.hooks.enhanced_current_hue(), 0xFF);
+        assert_eq!(h.hooks.enhanced_current_hue(), 0x1200);
         assert_eq!(h.hooks.current_saturation(), 100);
         assert!(matches!(
             h.hooks.enhanced_color_mode(),

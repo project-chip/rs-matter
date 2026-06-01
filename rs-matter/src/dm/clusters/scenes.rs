@@ -63,6 +63,10 @@ const SC_CONSTRAINT_ERROR: u8 = 0x87;
 /// Reserved (invalid) `SceneID` value per Matter Core Spec.
 const RESERVED_SCENE_ID: SceneId = 0xFF;
 
+/// `SceneID` 0 is reserved for the Global Scene; never valid in
+/// add/view/remove/store/recall/copy.
+const GLOBAL_SCENE_ID: SceneId = 0;
+
 /// Maximum legal `AddScene.TransitionTime` in milliseconds
 /// (60 000 seconds / 1000 minutes per Matter Core Spec).
 const MAX_TRANSITION_TIME_MS: u32 = 60_000_000;
@@ -962,7 +966,10 @@ where
 
         // Bad request shape (reserved scene id or oversized
         // transition) takes precedence over the group-table check.
-        if scene_id == RESERVED_SCENE_ID || transition_time > MAX_TRANSITION_TIME_MS {
+        if scene_id == GLOBAL_SCENE_ID
+            || scene_id == RESERVED_SCENE_ID
+            || transition_time > MAX_TRANSITION_TIME_MS
+        {
             return response
                 .status(SC_CONSTRAINT_ERROR)?
                 .group_id(group_id)?
@@ -1010,6 +1017,16 @@ where
                     }
                 }
             }
+        }
+
+        // An oversized EFS payload is a per-scene capacity failure,
+        // surfaced via `SC_INSUFFICIENT_SPACE` (not a transaction error).
+        if raw.len() > M {
+            return response
+                .status(SC_INSUFFICIENT_SPACE)?
+                .group_id(group_id)?
+                .scene_id(scene_id)?
+                .end();
         }
 
         let status_code = self.state.with(|inner| {
@@ -1112,8 +1129,8 @@ where
         let group_id = request.group_id()?;
         let scene_id = request.scene_id()?;
 
-        // `SceneID = 0xFF` is reserved.
-        if scene_id == RESERVED_SCENE_ID {
+        // `SceneID = 0x00` (Global Scene) and `0xFF` are reserved.
+        if scene_id == GLOBAL_SCENE_ID || scene_id == RESERVED_SCENE_ID {
             return response
                 .status(SC_CONSTRAINT_ERROR)?
                 .group_id(group_id)?
@@ -1198,8 +1215,8 @@ where
         let group_id = request.group_id()?;
         let scene_id = request.scene_id()?;
 
-        // `SceneID = 0xFF` is reserved.
-        if scene_id == RESERVED_SCENE_ID {
+        // `SceneID = 0x00` (Global Scene) and `0xFF` are reserved.
+        if scene_id == GLOBAL_SCENE_ID || scene_id == RESERVED_SCENE_ID {
             return response
                 .status(SC_CONSTRAINT_ERROR)?
                 .group_id(group_id)?
@@ -1292,8 +1309,8 @@ where
         let group_id = request.group_id()?;
         let scene_id = request.scene_id()?;
 
-        // `SceneID = 0xFF` is reserved.
-        if scene_id == RESERVED_SCENE_ID {
+        // `SceneID = 0x00` (Global Scene) and `0xFF` are reserved.
+        if scene_id == GLOBAL_SCENE_ID || scene_id == RESERVED_SCENE_ID {
             return response
                 .status(SC_CONSTRAINT_ERROR)?
                 .group_id(group_id)?
@@ -1397,8 +1414,8 @@ where
         // `FAILURE` and chip-tool's certification suites reject that
         // shape.
 
-        // `SceneID = 0xFF` is reserved.
-        if scene_id == RESERVED_SCENE_ID {
+        // `SceneID = 0x00` (Global Scene) and `0xFF` are reserved.
+        if scene_id == GLOBAL_SCENE_ID || scene_id == RESERVED_SCENE_ID {
             return Err(ErrorCode::ConstraintError.into());
         }
 
@@ -1518,9 +1535,14 @@ where
         // SceneIDs are ignored in this mode).
         let copy_all = (mode.bits() & 0x01) != 0;
 
-        // The reserved `SceneID = 0xFF` is only invalid in
-        // single-scene mode (COPY_ALL ignores those fields).
-        if !copy_all && (scene_from == RESERVED_SCENE_ID || scene_to == RESERVED_SCENE_ID) {
+        // Reserved `SceneID`s (Global Scene `0x00`, `0xFF`) are only
+        // invalid in single-scene mode (COPY_ALL ignores those fields).
+        if !copy_all
+            && (scene_from == GLOBAL_SCENE_ID
+                || scene_from == RESERVED_SCENE_ID
+                || scene_to == GLOBAL_SCENE_ID
+                || scene_to == RESERVED_SCENE_ID)
+        {
             return response
                 .status(SC_CONSTRAINT_ERROR)?
                 .group_identifier_from(group_from)?
