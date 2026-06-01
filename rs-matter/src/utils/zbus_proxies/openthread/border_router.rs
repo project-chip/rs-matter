@@ -530,11 +530,11 @@ pub trait BorderRouter {
     #[allow(clippy::too_many_arguments)]
     fn attach(
         &self,
-        network_key: Vec<u8>,
+        network_key: &[u8],
         panid: u16,
         network_name: &str,
         ext_panid: u64,
-        pskc: Vec<u8>,
+        pskc: &[u8],
         channel_mask: u32,
     ) -> zbus::Result<()>;
 
@@ -544,7 +544,7 @@ pub trait BorderRouter {
     /// Returns the effective delay in milliseconds before the new dataset
     /// takes effect. `0` means the device has already attached to the new
     /// network by the time this call returns.
-    fn attach_all_nodes_to(&self, dataset: Vec<u8>) -> zbus::Result<i64>;
+    fn attach_all_nodes_to(&self, dataset: &[u8]) -> zbus::Result<i64>;
 
     /// Detach from the current Thread network.
     fn detach(&self) -> zbus::Result<()>;
@@ -578,16 +578,16 @@ pub trait BorderRouter {
 
     /// Add an external routing rule, advertising this device as the border
     /// router for `route.prefix`.
-    fn add_external_route(&self, route: ExternalRoute) -> zbus::Result<()>;
+    fn add_external_route(&self, route: &ExternalRoute) -> zbus::Result<()>;
 
     /// Remove a previously-added external routing rule.
-    fn remove_external_route(&self, prefix: Ip6Prefix) -> zbus::Result<()>;
+    fn remove_external_route(&self, prefix: &Ip6Prefix) -> zbus::Result<()>;
 
     /// Add an on-mesh prefix to the Thread network.
-    fn add_on_mesh_prefix(&self, prefix: OnMeshPrefix) -> zbus::Result<()>;
+    fn add_on_mesh_prefix(&self, prefix: &OnMeshPrefix) -> zbus::Result<()>;
 
     /// Remove a previously-added on-mesh prefix.
-    fn remove_on_mesh_prefix(&self, prefix: Ip6Prefix) -> zbus::Result<()>;
+    fn remove_on_mesh_prefix(&self, prefix: &Ip6Prefix) -> zbus::Result<()>;
 
     /// Enable or disable the Border Agent (the MeshCoP responder used by
     /// commissioners).
@@ -595,14 +595,14 @@ pub trait BorderRouter {
 
     /// Replace the vendor-specific MeshCoP TXT entries advertised by the
     /// Border Agent.
-    fn update_vendor_mesh_cop_txt_entries(&self, update: Vec<VendorTxtEntry>) -> zbus::Result<()>;
+    fn update_vendor_mesh_cop_txt_entries(&self, update: &[VendorTxtEntry]) -> zbus::Result<()>;
 
     /// Subscribe to one or more OTBR properties for batched reads.
     ///
     /// The OTBR introspection declares no out-parameter for this method, so
     /// the proxy returns `()`. Results are delivered out-of-band via the
     /// standard properties interface.
-    fn get_properties(&self, properties: Vec<String>) -> zbus::Result<()>;
+    fn get_properties(&self, properties: &[&str]) -> zbus::Result<()>;
 
     /// Detach and forget the network credentials.
     fn leave_network(&self) -> zbus::Result<()>;
@@ -850,7 +850,7 @@ pub trait BorderRouter {
 
     /// Set the /64 mesh-local prefix.
     #[zbus(property)]
-    fn set_mesh_local_prefix(&self, value: Vec<u8>) -> zbus::Result<()>;
+    fn set_mesh_local_prefix(&self, value: &[u8]) -> zbus::Result<()>;
 
     /// Current link mode.
     #[zbus(property)]
@@ -868,7 +868,7 @@ pub trait BorderRouter {
     /// Set the Active Operational Dataset (TLV-encoded); triggers a
     /// re-attach.
     #[zbus(property)]
-    fn set_active_dataset_tlvs(&self, value: Vec<u8>) -> zbus::Result<()>;
+    fn set_active_dataset_tlvs(&self, value: &[u8]) -> zbus::Result<()>;
 
     /// Thread feature flags (`proto/feature_flag.proto`), raw bytes.
     #[zbus(property)]
@@ -876,7 +876,7 @@ pub trait BorderRouter {
 
     /// Set the Thread feature flags (`proto/feature_flag.proto`).
     #[zbus(property)]
-    fn set_feature_flag_list_data(&self, value: Vec<u8>) -> zbus::Result<()>;
+    fn set_feature_flag_list_data(&self, value: &[u8]) -> zbus::Result<()>;
 
     /// Radio region code (ISO 3166-1).
     #[zbus(property)]
