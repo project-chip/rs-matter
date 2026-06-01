@@ -29,7 +29,7 @@ use crate::crypto::{
 use crate::error::{Error, ErrorCode};
 use crate::sc::pase::spake2p::{
     ProverContext, Spake2P, Spake2pRandom, Spake2pSessionKeys, Spake2pVerifierPasswordRef,
-    SPAKE2P_VERIFIER_SALT_LEN,
+    SPAKE2P_VERIFIER_SALT_LEN, SPAKE2P_VERIFIER_SALT_MIN_LEN,
 };
 use crate::sc::{complete_with_status, GeneralCode, OpCode, SCStatusCodes, StatusReport};
 use crate::tlv::{FromTLV, OctetStr, TLVElement, TagType, ToTLV};
@@ -101,7 +101,7 @@ impl<C: Crypto> PaseInitiator<C> {
         let mut initiator = Self::new(crypto);
 
         // Step 1: Send PBKDFParamRequest, receive PBKDFParamResponse
-        let (salt, iterations) = match initiator.exchange_pbkdf_params(exchange).await {
+        let (salt, salt_len, iterations) = match initiator.exchange_pbkdf_params(exchange).await {
             Ok(result) => result,
             Err(e) => {
                 // Send status report to notify responder of failure
@@ -112,7 +112,7 @@ impl<C: Crypto> PaseInitiator<C> {
 
         // Step 2: Send Pake1, receive Pake2
         if let Err(e) = initiator
-            .exchange_pake1_pake2(exchange, password, &salt, iterations)
+            .exchange_pake1_pake2(exchange, password, &salt[..salt_len], iterations)
             .await
         {
             // Send status report to notify responder of failure (e.g., wrong password)
@@ -130,11 +130,11 @@ impl<C: Crypto> PaseInitiator<C> {
 
     /// Exchange PBKDFParamRequest/Response
     ///
-    /// Returns (salt, iterations) on success
+    /// Returns (salt, salt_len, iterations) on success
     async fn exchange_pbkdf_params(
         &mut self,
         exchange: &mut Exchange<'_>,
-    ) -> Result<([u8; SPAKE2P_VERIFIER_SALT_LEN], u32), Error> {
+    ) -> Result<([u8; SPAKE2P_VERIFIER_SALT_LEN], usize, u32), Error> {
         // Generate random and session ID
         let mut rand = self.crypto.rand()?;
         rand.fill_bytes(self.initiator_random.access_mut());
@@ -215,19 +215,17 @@ impl<C: Crypto> PaseInitiator<C> {
         })?;
 
         let mut salt = [0u8; SPAKE2P_VERIFIER_SALT_LEN];
-        if params.salt.0.len() != SPAKE2P_VERIFIER_SALT_LEN {
-            error!(
-                "PBKDFParamResponse: invalid salt length {}",
-                params.salt.0.len()
-            );
+        let salt_len = params.salt.0.len();
+        if !(SPAKE2P_VERIFIER_SALT_MIN_LEN..=SPAKE2P_VERIFIER_SALT_LEN).contains(&salt_len) {
+            error!("PBKDFParamResponse: invalid salt length {}", salt_len);
             return Err(ErrorCode::Invalid.into());
         }
-        salt.copy_from_slice(params.salt.0);
+        salt[..salt_len].copy_from_slice(params.salt.0);
 
         // Finish context hash with response payload
         self.spake2p.finish_context::<&C>(context, rx.payload())?;
 
-        Ok((salt, params.iterations))
+        Ok((salt, salt_len, params.iterations))
     }
 
     /// Exchange Pake1/Pake2

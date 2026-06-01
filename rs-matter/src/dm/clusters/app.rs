@@ -30,6 +30,7 @@
 pub mod cam_av_settings;
 pub mod cam_av_stream;
 pub mod chime;
+pub mod color_control;
 pub mod level_control;
 pub mod on_off;
 pub mod push_av_stream;

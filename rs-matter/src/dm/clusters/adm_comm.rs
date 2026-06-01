@@ -200,7 +200,7 @@ impl ClusterHandler for AdminCommHandler {
                 .open_comm_window(
                     mdns_id,
                     verifier.0.try_into()?,
-                    salt.0.try_into()?,
+                    salt.0,
                     iterations,
                     request.discriminator()?,
                     request.commissioning_timeout()?,
@@ -240,7 +240,7 @@ impl ClusterHandler for AdminCommHandler {
                 .pase
                 .open_basic_comm_window(
                     mdns_id,
-                    salt.reference(),
+                    salt.access(),
                     dev_comm.password.reference(),
                     dev_comm.discriminator,
                     request.commissioning_timeout()?,

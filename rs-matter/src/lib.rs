@@ -393,7 +393,7 @@ impl<'a> Matter<'a> {
 
             state.pase.open_basic_comm_window(
                 mdns_id,
-                salt.reference(),
+                salt.access(),
                 self.dev_comm.password.reference(),
                 self.dev_comm.discriminator,
                 timeout_secs,

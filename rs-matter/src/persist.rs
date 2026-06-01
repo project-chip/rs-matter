@@ -64,6 +64,11 @@ pub const LKG_UTC_KEY: u16 = BINDINGS_KEY + 1;
 /// The key is absent on disk when no trusted source is configured.
 pub const TRUSTED_TIME_SOURCE_KEY: u16 = LKG_UTC_KEY + 1;
 
+/// The key used for storing the entire Scenes Management cluster
+/// state (scene table + per-fabric `CurrentScene`) as a single TLV
+/// blob. Re-persisted on every successful mutation.
+pub const SCENES_KEY: u16 = TRUSTED_TIME_SOURCE_KEY + 1;
+
 /// A trait representing a key-value BLOB storage.
 ///
 /// NOTE: For now, the trait is deliberately modeled as non-async, so that it can be used from

@@ -39,11 +39,16 @@ use embassy_time::{Duration, Instant};
 use crate::dm::clusters::app::on_off::{OnOffHooks, FULL_CLUSTER as ON_OFF_FULL_CLUSTER};
 use crate::dm::clusters::app::{level_control, on_off::OnOffHandler};
 pub use crate::dm::clusters::decl::level_control::*;
+use crate::dm::clusters::decl::scenes_management::{
+    AttributeValuePairStruct, AttributeValuePairStructArrayBuilder,
+};
+use crate::dm::clusters::scenes::{SceneClusterHandler, SceneInvalidator};
 use crate::dm::{
-    Cluster, Dataver, EndptId, HandlerContext, InvokeContext, ReadContext, WriteContext,
+    AttrId, Cluster, ClusterId, Dataver, EndptId, HandlerContext, InvokeContext, ReadContext,
+    WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::tlv::Nullable;
+use crate::tlv::{Nullable, TLVArray, TLVBuilderParent};
 use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Signal;
@@ -95,6 +100,10 @@ enum Task {
         with_on_off: bool,
         target: u8,
         transition_time: u16,
+        /// When `true`, the transition was queued by a scene recall;
+        /// `set_level` skips `notify_scenable_changed` so `SceneValid`
+        /// is preserved.
+        scene_apply: bool,
     },
     Move {
         with_on_off: bool,
@@ -190,6 +199,9 @@ pub struct LevelControlHandler<'a, H: LevelControlHooks, OH: OnOffHooks> {
     endpoint_id: EndptId,
     hooks: H,
     on_off_handler: Mutex<Cell<Option<&'a OnOffHandler<'a, OH, H>>>>,
+    /// See [`OnOffHandler::with_scene_invalidator`] — same role, fired
+    /// when `CurrentLevel` mutates.
+    scene_invalidator: Mutex<Cell<Option<&'a dyn SceneInvalidator>>>,
     state: Mutex<RefCell<LevelControlState>>,
     task_signal: Signal<Option<Task>>,
 }
@@ -276,8 +288,26 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             endpoint_id,
             hooks,
             on_off_handler: Mutex::new(Cell::new(None)),
+            scene_invalidator: Mutex::new(Cell::new(None)),
             state: Mutex::new(RefCell::new(LevelControlState::new(attribute_defaults))),
             task_signal: Signal::new(None),
+        }
+    }
+
+    /// Attach a [`SceneInvalidator`] — typically the
+    /// [`crate::dm::clusters::scenes::ScenesState`] backing Scenes
+    /// Management on the same endpoint — so command-driven
+    /// `CurrentLevel` mutations flip `SceneValid → false` for any
+    /// recalled scene. No-op when unset.
+    pub fn with_scene_invalidator(self, invalidator: &'a dyn SceneInvalidator) -> Self {
+        self.scene_invalidator
+            .lock(|cell| cell.set(Some(invalidator)));
+        self
+    }
+
+    fn notify_scenable_changed(&self) {
+        if let Some(inv) = self.scene_invalidator.lock(|cell| cell.get()) {
+            inv.scenable_attribute_changed(self.endpoint_id);
         }
     }
 
@@ -449,6 +479,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         level: u8,
         is_end_of_transition: bool,
         set_device: bool,
+        scene_apply: bool,
     ) -> Result<(Option<u8>, bool), Error> {
         // Store the previous current level before updating, for quiet reporting logic.
         state.previous_current_level = self.hooks.current_level();
@@ -460,6 +491,12 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             false => Some(level),
         };
         self.hooks.set_current_level(current_level);
+        // Scene-recall transitions move *toward* the recalled state,
+        // so they must not invalidate `SceneValid` on intermediate
+        // steps. Scenes restores the bit after `apply` returns.
+        if !scene_apply {
+            self.notify_scenable_changed();
+        }
         let last_notification = Instant::now() - state.last_current_level_notification;
 
         // CurrentLevel Quiet report conditions:
@@ -532,9 +569,16 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                 with_on_off,
                 target,
                 transition_time,
+                scene_apply,
             } => {
                 if let Err(e) = self
-                    .move_to_level_transition(ctx, with_on_off, target, transition_time)
+                    .move_to_level_transition(
+                        ctx,
+                        with_on_off,
+                        target,
+                        transition_time,
+                        scene_apply,
+                    )
                     .await
                 {
                     error!("Task::MoveToLevel: {:?}", e);
@@ -596,8 +640,10 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                 // This attribute SHALL indicate the time taken to move to or from the target level when On or Off
                 // commands are received by an On/Off cluster on the same endpoint.
                 if on {
+                    // OnOff-coupling driven: user toggled OnOff and
+                    // LC follows. Not a scene apply.
                     let (level, should_notify) =
-                        self.set_level(state, H::MIN_LEVEL, false, true)?;
+                        self.set_level(state, H::MIN_LEVEL, false, true, false)?;
                     if should_notify {
                         ctx.notify_attr_changed(
                             self.endpoint_id,
@@ -748,6 +794,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         transition_time: Option<u16>,
         options_mask: OptionsBitmap,
         options_override: OptionsBitmap,
+        scene_apply: bool,
     ) -> Result<(), Error> {
         if let Ok(false) =
             self.move_to_level_validation(&mut level, with_on_off, options_mask, options_override)
@@ -774,6 +821,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             with_on_off,
             target: level,
             transition_time: t_time,
+            scene_apply,
         });
 
         Ok(())
@@ -818,7 +866,8 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
 
         let t_time = transition_time.unwrap_or(0);
 
-        self.move_to_level_transition(ctx, with_on_off, level, t_time)
+        // Command-driven only — never reached from scene apply.
+        self.move_to_level_transition(ctx, with_on_off, level, t_time, false)
             .await?;
 
         Ok(())
@@ -832,6 +881,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         with_on_off: bool,
         target_level: u8,
         transition_time: u16,
+        scene_apply: bool,
     ) -> Result<(), Error> {
         let event_start_time = Instant::now();
 
@@ -873,7 +923,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                 current_level
             );
             let (current_level, should_notify) = self.with_state(|state| {
-                self.set_level(state, current_level, is_transition_end, true)
+                self.set_level(state, current_level, is_transition_end, true, scene_apply)
             })?;
             let current_level = match current_level {
                 Some(level) => level,
@@ -1026,8 +1076,11 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
 
             let is_end_of_transition = (new_level == H::MAX_LEVEL) || (new_level == H::MIN_LEVEL);
 
-            let (new_level, should_notify) = self
-                .with_state(|state| self.set_level(state, new_level, is_end_of_transition, true))?;
+            // `Move` command path is command-driven only — no scene
+            // recall queues a `Move` task.
+            let (new_level, should_notify) = self.with_state(|state| {
+                self.set_level(state, new_level, is_end_of_transition, true, false)
+            })?;
             if should_notify {
                 ctx.notify_attr_changed(
                     self.endpoint_id,
@@ -1112,6 +1165,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             Some(transition_time),
             options_mask,
             options_override,
+            false,
         )
     }
 
@@ -1146,7 +1200,9 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                 OutOfBandMessage::Update(current_level) => {
                     self.task_signal.signal(Task::Stop);
 
-                    match self.set_level(state, current_level, true, false) {
+                    // OOB "device level changed under us" — genuine
+                    // drift, never a scene apply.
+                    match self.set_level(state, current_level, true, false, false) {
                         Ok((_, should_notify)) => {
                             if should_notify
                                 || state.write_remaining_time_quietly(Duration::from_millis(0), false)
@@ -1176,6 +1232,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                         transition_time,
                         options_mask,
                         options_override,
+                        false,
                     ) {
                         error!(
                             "Device initiated MoveToLevel failed: {} | with_on_off: {}, level: {}, transition_time: {:?}, options_mask: {:?}, options_override: {:?}",
@@ -1504,6 +1561,7 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
                 transition_time,
                 options_mask,
                 options_override,
+                false,
             )
         })
     }
@@ -1602,7 +1660,14 @@ impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlH
                 Ok(v) => v,
                 Err(e) => break 'a Err(e),
             };
-            self.move_to_level(true, level, transition_time, options_mask, options_override)
+            self.move_to_level(
+                true,
+                level,
+                transition_time,
+                options_mask,
+                options_override,
+                false,
+            )
         })
     }
 
@@ -1799,6 +1864,70 @@ impl OnOffHooks for NoOnOff {
 
     async fn handle_off_with_effect(&self, _effect: super::on_off::EffectVariantEnum) {
         panic!("NoOnOff: handle_off_with_effect called unexpectedly - this phantom type should not be used for OnOff functionality")
+    }
+}
+
+/// Scenes Management integration for the LevelControl cluster. The
+/// only scenable attribute is `CurrentLevel`; apply routes through
+/// `MoveToLevel` with the scene's transition time.
+impl<H, OH> SceneClusterHandler for LevelControlHandler<'_, H, OH>
+where
+    H: LevelControlHooks,
+    OH: OnOffHooks,
+{
+    const CLUSTER_ID: ClusterId = FULL_CLUSTER.id;
+
+    fn endpoint_id(&self) -> EndptId {
+        self.endpoint_id
+    }
+
+    fn is_scenable_attribute(attribute_id: AttrId) -> bool {
+        attribute_id == AttributeId::CurrentLevel as AttrId
+    }
+
+    fn capture<P: TLVBuilderParent>(
+        &self,
+        avp_array: AttributeValuePairStructArrayBuilder<P>,
+    ) -> Result<AttributeValuePairStructArrayBuilder<P>, Error> {
+        // `CurrentLevel` is nullable; null → skip the AVP entry.
+        if let Some(level) = self.hooks.current_level() {
+            avp_array.push_u8(AttributeId::CurrentLevel as _, level)
+        } else {
+            Ok(avp_array)
+        }
+    }
+
+    async fn apply<C: HandlerContext>(
+        &self,
+        _ctx: &C,
+        avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
+        transition_time_ms: u32,
+    ) -> Result<(), Error> {
+        for avp in avp_list.iter() {
+            let avp = avp?;
+            if avp.attribute_id()? != AttributeId::CurrentLevel as _ {
+                continue;
+            }
+            let Some(level) = avp.value_unsigned_8()? else {
+                continue;
+            };
+            // Reuse the command-driven `MoveToLevel` pipeline with
+            // `scene_apply=true` (suppresses `SceneValid` drift on
+            // every step) and `with_on_off=false` (OnOff lands its own
+            // AVP via `OnOffHandler::apply`). RecallScene transition
+            // time is ms; MoveToLevel is deciseconds — convert with
+            // saturation.
+            let transition_ds = (transition_time_ms / 100).min(u16::MAX as u32) as u16;
+            return self.move_to_level(
+                false,
+                level,
+                Some(transition_ds),
+                OptionsBitmap::empty(),
+                OptionsBitmap::empty(),
+                true,
+            );
+        }
+        Ok(())
     }
 }
 

@@ -480,6 +480,21 @@ pub(crate) const LIGHT_TESTS: &[&str] = &[
     // "Test_TC_OO_2_7", // TODO: not yet passing
 ];
 
+/// Scenes Management YAML tests — run against the `scenes_tests` example.
+pub(crate) const SCENES_TESTS: &[&str] = &[
+    "Test_TC_S_2_1",
+    "Test_TC_S_2_2",
+    "Test_TC_S_2_3",
+    "Test_TC_S_2_4",
+    "Test_TC_S_2_5",
+    "Test_TC_S_2_6",
+    "Test_TC_S_3_1",
+    "TestScenesFabricSceneInfo",
+    "TestScenesMultiFabric",
+    "TestScenesFabricRemoval",
+    "TestScenesMaxCapacity",
+];
+
 /// A pre-canned test suite. Selects a default test list, the example
 /// binary they run against, the cargo features it must be built with,
 /// and a per-test timeout suitable for that suite.
@@ -502,6 +517,8 @@ pub(crate) enum TestSuite {
     Camera,
     /// OnOff + LevelControl, exercising the dimmable_light example.
     Light,
+    /// Scenes Management cluster — runs against the `scenes_tests` example.
+    Scenes,
     /// **Inverted** suite — rs-matter as the **commissioner** driving
     /// upstream `chip-all-clusters-app` (the device under test). Builds
     /// both binaries, spawns the CHIP app on `[::1]:<port>` with known
@@ -531,6 +548,7 @@ impl TestSuite {
                 .collect(),
             Self::Camera => CAMERA_TESTS.to_vec(),
             Self::Light => LIGHT_TESTS.to_vec(),
+            Self::Scenes => SCENES_TESTS.to_vec(),
             // One synthetic case — the dispatch in `ITests::run` picks
             // this up and routes to `run_commissioner_suite`, which
             // ignores the test list (there's nothing to parameterise yet).
@@ -544,6 +562,7 @@ impl TestSuite {
             Self::System | Self::SystemPython | Self::SystemYaml => "chip_tool_tests",
             Self::Camera => "camera_tests",
             Self::Light => "dimmable_light",
+            Self::Scenes => "scenes_tests",
             Self::Commissioner => "commissioner_tests",
         }
     }
@@ -551,7 +570,9 @@ impl TestSuite {
     /// Cargo features the example binary must be built with for this suite.
     pub(crate) fn default_features(&self) -> &'static [&'static str] {
         match self {
-            Self::System | Self::SystemPython | Self::SystemYaml | Self::Camera => &[],
+            Self::System | Self::SystemPython | Self::SystemYaml | Self::Camera | Self::Scenes => {
+                &[]
+            }
             Self::Light => &["chip-test"],
             Self::Commissioner => &[],
         }
@@ -563,6 +584,9 @@ impl TestSuite {
             Self::System | Self::SystemPython | Self::SystemYaml => 120,
             Self::Camera => 180,
             Self::Light => 500,
+            // Scenes tests include some long composite YAML suites
+            // (multi-fabric/max-capacity); match `Light`'s budget.
+            Self::Scenes => 500,
             Self::Commissioner => 120,
         }
     }
