@@ -319,6 +319,12 @@ enum Task {
         min_mireds: u16,
         max_mireds: u16,
     },
+    /// Run the colour loop: rotate `EnhancedCurrentHue` around the
+    /// full u16 wheel, completing one revolution every `time_secs`.
+    ColorLoop {
+        direction: ColorLoopDirectionEnum,
+        time_secs: u16,
+    },
     /// Cancel any active transition.
     Stop,
 }
@@ -1502,6 +1508,35 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         }
     }
 
+    /// Colour-loop tick: rotate `EnhancedCurrentHue` around the
+    /// full u16 wheel. Runs forever; cancelled by a new task on the
+    /// signal (typically `Stop` from a deactivate `ColorLoopSet`).
+    async fn color_loop_transition(
+        &self,
+        ctx: &impl HandlerContext,
+        direction: ColorLoopDirectionEnum,
+        time_secs: u16,
+    ) -> Result<(), Error> {
+        let time_secs = if time_secs == 0 { 25 } else { time_secs };
+        let tick_ms = TRANSITION_TICK.as_millis().max(1) as u64;
+        // delta per tick = 65536 enhanced units / (time_secs * 1000 / tick_ms)
+        //                = 65536 * tick_ms / (time_secs * 1000).
+        let delta = ((65536u64 * tick_ms) / (time_secs as u64 * 1000)).max(1) as i32;
+        let signed: i32 = match direction {
+            ColorLoopDirectionEnum::Increment => delta,
+            ColorLoopDirectionEnum::Decrement => -delta,
+        };
+        loop {
+            let current = self.hooks.enhanced_current_hue();
+            let new_eh = current.wrapping_add_signed(signed as i16);
+            // The colour loop continuously walks the enhanced hue;
+            // it counts as the enhanced-hue/saturation mode.
+            self.set_hue(ctx, new_eh, false, true);
+            self.drive_device_hue_saturation();
+            Timer::after(TRANSITION_TICK).await;
+        }
+    }
+
     async fn task_manager(&self, ctx: &impl HandlerContext, task: Task) {
         match task {
             Task::HueSaturationMoveTo {
@@ -1595,6 +1630,14 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                     .await
                 {
                     error!("ColorTemperatureMove: {:?}", e);
+                }
+            }
+            Task::ColorLoop {
+                direction,
+                time_secs,
+            } => {
+                if let Err(e) = self.color_loop_transition(ctx, direction, time_secs).await {
+                    error!("ColorLoop: {:?}", e);
                 }
             }
             Task::Stop => {
@@ -2074,6 +2117,112 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         });
         Ok(())
     }
+
+    fn cmd_color_loop_set(
+        &self,
+        ctx: impl InvokeContext,
+        update_flags: UpdateFlagsBitmap,
+        action: ColorLoopActionEnum,
+        direction: ColorLoopDirectionEnum,
+        time: u16,
+        start_hue: u16,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+
+        // 1. Apply config updates (direction, time, start hue) up front.
+        let cluster_id = Self::cluster_id();
+        if update_flags.contains(UpdateFlagsBitmap::UPDATE_DIRECTION) {
+            self.hooks.set_color_loop_direction(direction);
+            ctx.notify_attr_changed(
+                self.endpoint_id,
+                cluster_id,
+                AttributeId::ColorLoopDirection as _,
+            );
+        }
+        if update_flags.contains(UpdateFlagsBitmap::UPDATE_TIME) {
+            self.hooks.set_color_loop_time(time);
+            ctx.notify_attr_changed(
+                self.endpoint_id,
+                cluster_id,
+                AttributeId::ColorLoopTime as _,
+            );
+        }
+        if update_flags.contains(UpdateFlagsBitmap::UPDATE_START_HUE) {
+            self.hooks.set_color_loop_start_enhanced_hue(start_hue);
+            ctx.notify_attr_changed(
+                self.endpoint_id,
+                cluster_id,
+                AttributeId::ColorLoopStartEnhancedHue as _,
+            );
+        }
+
+        // 2. Process the action.
+        if !update_flags.contains(UpdateFlagsBitmap::UPDATE_ACTION) {
+            return Ok(());
+        }
+
+        let was_active = self.hooks.color_loop_active();
+        match action {
+            ColorLoopActionEnum::Deactivate => {
+                if was_active {
+                    // Restore the saved hue before stopping the loop.
+                    let restore = self.hooks.color_loop_stored_enhanced_hue();
+                    self.task_signal.signal(Task::Stop);
+                    self.hooks.set_color_loop_active(false);
+                    ctx.notify_attr_changed(
+                        self.endpoint_id,
+                        cluster_id,
+                        AttributeId::ColorLoopActive as _,
+                    );
+                    // Set hue directly so the restored value shows up
+                    // immediately rather than waiting on the next tick.
+                    self.set_hue(&ctx, restore, true, true);
+                    self.drive_device_hue_saturation();
+                }
+            }
+            ColorLoopActionEnum::ActivateFromColorLoopStartEnhancedHue
+            | ColorLoopActionEnum::ActivateFromEnhancedCurrentHue => {
+                // Save the current EnhancedCurrentHue before activating
+                // (only if not already active — otherwise we'd overwrite
+                // the pre-loop value with a mid-loop value).
+                if !was_active {
+                    let cur = self.hooks.enhanced_current_hue();
+                    self.hooks.set_color_loop_stored_enhanced_hue(cur);
+                    ctx.notify_attr_changed(
+                        self.endpoint_id,
+                        cluster_id,
+                        AttributeId::ColorLoopStoredEnhancedHue as _,
+                    );
+                    self.hooks.set_color_loop_active(true);
+                    ctx.notify_attr_changed(
+                        self.endpoint_id,
+                        cluster_id,
+                        AttributeId::ColorLoopActive as _,
+                    );
+                }
+                // Seed EnhancedCurrentHue per the action.
+                let seed = match action {
+                    ColorLoopActionEnum::ActivateFromColorLoopStartEnhancedHue => {
+                        self.hooks.color_loop_start_enhanced_hue()
+                    }
+                    // ActivateFromEnhancedCurrentHue keeps current value.
+                    _ => self.hooks.enhanced_current_hue(),
+                };
+                self.set_hue(&ctx, seed, true, true);
+                self.drive_device_hue_saturation();
+                // Start (or restart) the loop task with the latest config.
+                self.task_signal.signal(Task::ColorLoop {
+                    direction: self.hooks.color_loop_direction(),
+                    time_secs: self.hooks.color_loop_time(),
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 // ---- ClusterAsyncHandler implementation ----
@@ -2490,10 +2639,19 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
 
     async fn handle_color_loop_set(
         &self,
-        _ctx: impl InvokeContext,
-        _request: ColorLoopSetRequest<'_>,
+        ctx: impl InvokeContext,
+        request: ColorLoopSetRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_color_loop_set(
+            ctx,
+            request.update_flags()?,
+            request.action()?,
+            request.direction()?,
+            request.time()?,
+            request.start_hue()?,
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_stop_move_step(
