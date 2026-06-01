@@ -296,6 +296,29 @@ enum Task {
         direction: MoveModeEnum,
         rate_per_sec: u32,
     },
+    /// Linear interpolation to a target xy point.
+    XyMoveTo {
+        target_x: u16,
+        target_y: u16,
+        transition_ms: u32,
+    },
+    /// Continuous xy move at the given signed per-second rates.
+    XyMove {
+        rate_x_per_sec: i32,
+        rate_y_per_sec: i32,
+    },
+    /// Linear interpolation to a target colour temperature in mireds.
+    ColorTemperatureMoveTo {
+        target_mireds: u16,
+        transition_ms: u32,
+    },
+    /// Continuous colour-temperature move at the given signed
+    /// mireds/sec rate, bounded by `[min_mireds, max_mireds]`.
+    ColorTemperatureMove {
+        rate_mireds_per_sec: i32,
+        min_mireds: u16,
+        max_mireds: u16,
+    },
     /// Cancel any active transition.
     Stop,
 }
@@ -312,6 +335,9 @@ const HUE_U8_MAX: u8 = 254;
 /// Spec maximum for `CurrentSaturation`.
 const SATURATION_MAX: u8 = 254;
 
+/// Spec maximum for `CurrentX` / `CurrentY` (i.e., 0xFEFF).
+const XY_MAX: u16 = 0xFEFF;
+
 /// Handler-internal cluster state. Device-persisted attributes live
 /// in the hooks.
 struct ColorControlState {
@@ -319,6 +345,8 @@ struct ColorControlState {
     remaining_time: u16,
     last_hue_notification: Instant,
     last_saturation_notification: Instant,
+    last_xy_notification: Instant,
+    last_color_temperature_notification: Instant,
 }
 
 impl ColorControlState {
@@ -328,6 +356,8 @@ impl ColorControlState {
             remaining_time: 0,
             last_hue_notification: Instant::from_millis(0),
             last_saturation_notification: Instant::from_millis(0),
+            last_xy_notification: Instant::from_millis(0),
+            last_color_temperature_notification: Instant::from_millis(0),
         }
     }
 
@@ -1149,6 +1179,329 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         }
     }
 
+    /// Update `CurrentX` / `CurrentY` and the colour-mode mirror,
+    /// then notify with quiet reporting.
+    fn set_xy<N: AttrChangeNotifier>(
+        &self,
+        ctx: &N,
+        new_x: u16,
+        new_y: u16,
+        is_end_of_transition: bool,
+    ) {
+        let prev_x = self.hooks.current_x();
+        let prev_y = self.hooks.current_y();
+        if prev_x == new_x && prev_y == new_y && !is_end_of_transition {
+            return;
+        }
+        self.hooks.set_current_x(new_x);
+        self.hooks.set_current_y(new_y);
+        self.hooks
+            .set_color_mode(ColorModeEnum::CurrentXAndCurrentY);
+        self.hooks
+            .set_enhanced_color_mode(EnhancedColorModeEnum::CurrentXAndCurrentY);
+        let should_notify = self.with_state(|s| {
+            let now = Instant::now();
+            let elapsed = now - s.last_xy_notification;
+            if is_end_of_transition || elapsed >= Duration::from_secs(1) {
+                s.last_xy_notification = now;
+                true
+            } else {
+                false
+            }
+        });
+        if should_notify {
+            let cluster_id = Self::cluster_id();
+            ctx.notify_attr_changed(self.endpoint_id, cluster_id, AttributeId::CurrentX as _);
+            ctx.notify_attr_changed(self.endpoint_id, cluster_id, AttributeId::CurrentY as _);
+            ctx.notify_attr_changed(self.endpoint_id, cluster_id, AttributeId::ColorMode as _);
+            ctx.notify_attr_changed(
+                self.endpoint_id,
+                cluster_id,
+                AttributeId::EnhancedColorMode as _,
+            );
+        }
+        self.notify_scenable_changed();
+    }
+
+    /// Drive the device with the latest xy values.
+    fn drive_device_xy(&self) {
+        let x = self.hooks.current_x();
+        let y = self.hooks.current_y();
+        if let Err(()) = self.hooks.set_device_xy(x, y) {
+            warn!("set_device_xy failed");
+        }
+    }
+
+    /// Update `ColorTemperatureMireds` and the colour-mode mirror,
+    /// then notify with quiet reporting.
+    fn set_color_temperature<N: AttrChangeNotifier>(
+        &self,
+        ctx: &N,
+        new_mireds: u16,
+        is_end_of_transition: bool,
+    ) {
+        let prev = self.hooks.color_temperature_mireds();
+        if prev == new_mireds && !is_end_of_transition {
+            return;
+        }
+        self.hooks.set_color_temperature_mireds(new_mireds);
+        self.hooks
+            .set_color_mode(ColorModeEnum::ColorTemperatureMireds);
+        self.hooks
+            .set_enhanced_color_mode(EnhancedColorModeEnum::ColorTemperatureMireds);
+        let should_notify = self.with_state(|s| {
+            let now = Instant::now();
+            let elapsed = now - s.last_color_temperature_notification;
+            if is_end_of_transition || elapsed >= Duration::from_secs(1) {
+                s.last_color_temperature_notification = now;
+                true
+            } else {
+                false
+            }
+        });
+        if should_notify {
+            let cluster_id = Self::cluster_id();
+            ctx.notify_attr_changed(
+                self.endpoint_id,
+                cluster_id,
+                AttributeId::ColorTemperatureMireds as _,
+            );
+            ctx.notify_attr_changed(self.endpoint_id, cluster_id, AttributeId::ColorMode as _);
+            ctx.notify_attr_changed(
+                self.endpoint_id,
+                cluster_id,
+                AttributeId::EnhancedColorMode as _,
+            );
+        }
+        self.notify_scenable_changed();
+    }
+
+    /// Drive the device with the latest colour-temperature value.
+    fn drive_device_color_temperature(&self) {
+        let mireds = self.hooks.color_temperature_mireds();
+        if let Err(()) = self.hooks.set_device_color_temperature_mireds(mireds) {
+            warn!("set_device_color_temperature_mireds failed");
+        }
+    }
+
+    /// Linear interpolation to a target xy point.
+    async fn move_to_xy_transition(
+        &self,
+        ctx: &impl HandlerContext,
+        target_x: u16,
+        target_y: u16,
+        transition_ms: u32,
+    ) -> Result<(), Error> {
+        let start_x = self.hooks.current_x() as i32;
+        let start_y = self.hooks.current_y() as i32;
+        let dx = target_x as i32 - start_x;
+        let dy = target_y as i32 - start_y;
+
+        let total = Duration::from_millis(transition_ms as u64);
+        let start_time = Instant::now();
+        let _ = self.with_state(|s| s.write_remaining_time_quietly(total, true));
+
+        if transition_ms == 0 || (dx == 0 && dy == 0) {
+            self.set_xy(ctx, target_x, target_y, true);
+            self.drive_device_xy();
+            let notify_rt = self
+                .with_state(|s| s.write_remaining_time_quietly(Duration::from_millis(0), false));
+            if notify_rt {
+                ctx.notify_attr_changed(
+                    self.endpoint_id,
+                    Self::cluster_id(),
+                    AttributeId::RemainingTime as _,
+                );
+            }
+            return Ok(());
+        }
+
+        loop {
+            let elapsed_ms = (Instant::now() - start_time).as_millis() as u64;
+            let progress = (elapsed_ms.saturating_mul(1000) / transition_ms as u64).min(1000);
+            let is_end = progress >= 1000;
+            let cur_x = if is_end {
+                target_x
+            } else {
+                (start_x + (dx as i64 * progress as i64 / 1000) as i32).clamp(0, XY_MAX as i32)
+                    as u16
+            };
+            let cur_y = if is_end {
+                target_y
+            } else {
+                (start_y + (dy as i64 * progress as i64 / 1000) as i32).clamp(0, XY_MAX as i32)
+                    as u16
+            };
+            self.set_xy(ctx, cur_x, cur_y, is_end);
+            self.drive_device_xy();
+            let remaining = if is_end {
+                Duration::from_millis(0)
+            } else {
+                Duration::from_millis(transition_ms as u64 - elapsed_ms)
+            };
+            let notify_rt = self.with_state(|s| s.write_remaining_time_quietly(remaining, false));
+            if notify_rt {
+                ctx.notify_attr_changed(
+                    self.endpoint_id,
+                    Self::cluster_id(),
+                    AttributeId::RemainingTime as _,
+                );
+            }
+            if is_end {
+                return Ok(());
+            }
+            Timer::after(TRANSITION_TICK).await;
+        }
+    }
+
+    /// Continuous xy move at signed per-second rates. Stops naturally
+    /// when both axes hit their bounds (or stay clamped against them).
+    async fn xy_move_transition(
+        &self,
+        ctx: &impl HandlerContext,
+        rate_x: i32,
+        rate_y: i32,
+    ) -> Result<(), Error> {
+        if rate_x == 0 && rate_y == 0 {
+            return Ok(());
+        }
+        let tick_ms = TRANSITION_TICK.as_millis().max(1) as i32;
+        let delta_x = rate_x * tick_ms / 1000;
+        let delta_y = rate_y * tick_ms / 1000;
+        let delta_x = if rate_x != 0 && delta_x == 0 {
+            rate_x.signum()
+        } else {
+            delta_x
+        };
+        let delta_y = if rate_y != 0 && delta_y == 0 {
+            rate_y.signum()
+        } else {
+            delta_y
+        };
+        loop {
+            let cur_x = self.hooks.current_x() as i32;
+            let cur_y = self.hooks.current_y() as i32;
+            let new_x = (cur_x + delta_x).clamp(0, XY_MAX as i32) as u16;
+            let new_y = (cur_y + delta_y).clamp(0, XY_MAX as i32) as u16;
+            let x_pinned = (delta_x > 0 && new_x == XY_MAX) || (delta_x < 0 && new_x == 0);
+            let y_pinned = (delta_y > 0 && new_y == XY_MAX) || (delta_y < 0 && new_y == 0);
+            let x_done = delta_x == 0 || x_pinned;
+            let y_done = delta_y == 0 || y_pinned;
+            let is_end = x_done && y_done;
+            self.set_xy(ctx, new_x, new_y, is_end);
+            self.drive_device_xy();
+            if is_end {
+                return Ok(());
+            }
+            Timer::after(TRANSITION_TICK).await;
+        }
+    }
+
+    /// Linear interpolation to a target colour temperature in mireds.
+    async fn move_to_color_temperature_transition(
+        &self,
+        ctx: &impl HandlerContext,
+        target_mireds: u16,
+        transition_ms: u32,
+    ) -> Result<(), Error> {
+        let target = target_mireds.clamp(
+            H::COLOR_TEMP_PHYSICAL_MIN_MIREDS,
+            H::COLOR_TEMP_PHYSICAL_MAX_MIREDS,
+        );
+        let start = self.hooks.color_temperature_mireds() as i32;
+        let delta = target as i32 - start;
+
+        let total = Duration::from_millis(transition_ms as u64);
+        let start_time = Instant::now();
+        let _ = self.with_state(|s| s.write_remaining_time_quietly(total, true));
+
+        if transition_ms == 0 || delta == 0 {
+            self.set_color_temperature(ctx, target, true);
+            self.drive_device_color_temperature();
+            let notify_rt = self
+                .with_state(|s| s.write_remaining_time_quietly(Duration::from_millis(0), false));
+            if notify_rt {
+                ctx.notify_attr_changed(
+                    self.endpoint_id,
+                    Self::cluster_id(),
+                    AttributeId::RemainingTime as _,
+                );
+            }
+            return Ok(());
+        }
+
+        loop {
+            let elapsed_ms = (Instant::now() - start_time).as_millis() as u64;
+            let progress = (elapsed_ms.saturating_mul(1000) / transition_ms as u64).min(1000);
+            let is_end = progress >= 1000;
+            let value = if is_end {
+                target
+            } else {
+                (start + (delta as i64 * progress as i64 / 1000) as i32).clamp(
+                    H::COLOR_TEMP_PHYSICAL_MIN_MIREDS as i32,
+                    H::COLOR_TEMP_PHYSICAL_MAX_MIREDS as i32,
+                ) as u16
+            };
+            self.set_color_temperature(ctx, value, is_end);
+            self.drive_device_color_temperature();
+            let remaining = if is_end {
+                Duration::from_millis(0)
+            } else {
+                Duration::from_millis(transition_ms as u64 - elapsed_ms)
+            };
+            let notify_rt = self.with_state(|s| s.write_remaining_time_quietly(remaining, false));
+            if notify_rt {
+                ctx.notify_attr_changed(
+                    self.endpoint_id,
+                    Self::cluster_id(),
+                    AttributeId::RemainingTime as _,
+                );
+            }
+            if is_end {
+                return Ok(());
+            }
+            Timer::after(TRANSITION_TICK).await;
+        }
+    }
+
+    /// Continuous colour-temperature move, bounded by command-supplied
+    /// `[min_mireds, max_mireds]` (further clamped by the device's
+    /// physical bounds).
+    async fn color_temperature_move_transition(
+        &self,
+        ctx: &impl HandlerContext,
+        rate_per_sec: i32,
+        min_mireds: u16,
+        max_mireds: u16,
+    ) -> Result<(), Error> {
+        if rate_per_sec == 0 {
+            return Ok(());
+        }
+        let lo = min_mireds.max(H::COLOR_TEMP_PHYSICAL_MIN_MIREDS);
+        let hi = max_mireds.min(H::COLOR_TEMP_PHYSICAL_MAX_MIREDS);
+        if lo >= hi {
+            return Ok(());
+        }
+        let tick_ms = TRANSITION_TICK.as_millis().max(1) as i32;
+        let delta = rate_per_sec * tick_ms / 1000;
+        let delta = if delta == 0 {
+            rate_per_sec.signum()
+        } else {
+            delta
+        };
+        loop {
+            let cur = self.hooks.color_temperature_mireds() as i32;
+            let new_mireds = (cur + delta).clamp(lo as i32, hi as i32) as u16;
+            let pinned = (delta > 0 && new_mireds == hi) || (delta < 0 && new_mireds == lo);
+            self.set_color_temperature(ctx, new_mireds, pinned);
+            self.drive_device_color_temperature();
+            if pinned {
+                return Ok(());
+            }
+            Timer::after(TRANSITION_TICK).await;
+        }
+    }
+
     async fn task_manager(&self, ctx: &impl HandlerContext, task: Task) {
         match task {
             Task::HueSaturationMoveTo {
@@ -1191,6 +1544,57 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                     .await
                 {
                     error!("SaturationMove: {:?}", e);
+                }
+            }
+            Task::XyMoveTo {
+                target_x,
+                target_y,
+                transition_ms,
+            } => {
+                if let Err(e) = self
+                    .move_to_xy_transition(ctx, target_x, target_y, transition_ms)
+                    .await
+                {
+                    error!("XyMoveTo: {:?}", e);
+                }
+            }
+            Task::XyMove {
+                rate_x_per_sec,
+                rate_y_per_sec,
+            } => {
+                if let Err(e) = self
+                    .xy_move_transition(ctx, rate_x_per_sec, rate_y_per_sec)
+                    .await
+                {
+                    error!("XyMove: {:?}", e);
+                }
+            }
+            Task::ColorTemperatureMoveTo {
+                target_mireds,
+                transition_ms,
+            } => {
+                if let Err(e) = self
+                    .move_to_color_temperature_transition(ctx, target_mireds, transition_ms)
+                    .await
+                {
+                    error!("ColorTemperatureMoveTo: {:?}", e);
+                }
+            }
+            Task::ColorTemperatureMove {
+                rate_mireds_per_sec,
+                min_mireds,
+                max_mireds,
+            } => {
+                if let Err(e) = self
+                    .color_temperature_move_transition(
+                        ctx,
+                        rate_mireds_per_sec,
+                        min_mireds,
+                        max_mireds,
+                    )
+                    .await
+                {
+                    error!("ColorTemperatureMove: {:?}", e);
                 }
             }
             Task::Stop => {
@@ -1490,6 +1894,184 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             return Ok(());
         }
         self.task_signal.signal(Task::Stop);
+        Ok(())
+    }
+
+    fn cmd_move_to_color(
+        &self,
+        color_x: u16,
+        color_y: u16,
+        transition_time_ds: u16,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
+        if color_x > XY_MAX || color_y > XY_MAX {
+            return Err(ErrorCode::ConstraintError.into());
+        }
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+        self.task_signal.signal(Task::XyMoveTo {
+            target_x: color_x,
+            target_y: color_y,
+            transition_ms: transition_time_ds as u32 * 100,
+        });
+        Ok(())
+    }
+
+    fn cmd_move_color(
+        &self,
+        rate_x: i16,
+        rate_y: i16,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
+        // Both rates zero → Stop per spec.
+        if rate_x == 0 && rate_y == 0 {
+            self.task_signal.signal(Task::Stop);
+            return Ok(());
+        }
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+        self.task_signal.signal(Task::XyMove {
+            rate_x_per_sec: rate_x as i32,
+            rate_y_per_sec: rate_y as i32,
+        });
+        Ok(())
+    }
+
+    fn cmd_step_color(
+        &self,
+        step_x: i16,
+        step_y: i16,
+        transition_time_ds: u16,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+        let cur_x = self.hooks.current_x() as i32;
+        let cur_y = self.hooks.current_y() as i32;
+        let target_x = (cur_x + step_x as i32).clamp(0, XY_MAX as i32) as u16;
+        let target_y = (cur_y + step_y as i32).clamp(0, XY_MAX as i32) as u16;
+        self.task_signal.signal(Task::XyMoveTo {
+            target_x,
+            target_y,
+            transition_ms: transition_time_ds as u32 * 100,
+        });
+        Ok(())
+    }
+
+    fn cmd_move_to_color_temperature(
+        &self,
+        mireds: u16,
+        transition_time_ds: u16,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
+        // 0 is reserved per spec; the physical bound clamp is the
+        // safety net for any out-of-range non-zero values.
+        if mireds == 0 {
+            return Err(ErrorCode::ConstraintError.into());
+        }
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+        let clamped = mireds.clamp(
+            H::COLOR_TEMP_PHYSICAL_MIN_MIREDS,
+            H::COLOR_TEMP_PHYSICAL_MAX_MIREDS,
+        );
+        self.task_signal.signal(Task::ColorTemperatureMoveTo {
+            target_mireds: clamped,
+            transition_ms: transition_time_ds as u32 * 100,
+        });
+        Ok(())
+    }
+
+    fn cmd_move_color_temperature(
+        &self,
+        move_mode: MoveModeEnum,
+        rate: u16,
+        color_temperature_minimum_mireds: u16,
+        color_temperature_maximum_mireds: u16,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
+        if matches!(move_mode, MoveModeEnum::Stop) {
+            self.task_signal.signal(Task::Stop);
+            return Ok(());
+        }
+        if rate == 0 {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+        let signed_rate: i32 = match move_mode {
+            MoveModeEnum::Up => rate as i32,
+            MoveModeEnum::Down => -(rate as i32),
+            MoveModeEnum::Stop => return Ok(()),
+        };
+        // Treat 0 as "no caller-supplied bound" — fall back to the
+        // physical bound so the move runs to that edge.
+        let min_mireds = if color_temperature_minimum_mireds == 0 {
+            H::COLOR_TEMP_PHYSICAL_MIN_MIREDS
+        } else {
+            color_temperature_minimum_mireds
+        };
+        let max_mireds = if color_temperature_maximum_mireds == 0 {
+            H::COLOR_TEMP_PHYSICAL_MAX_MIREDS
+        } else {
+            color_temperature_maximum_mireds
+        };
+        self.task_signal.signal(Task::ColorTemperatureMove {
+            rate_mireds_per_sec: signed_rate,
+            min_mireds,
+            max_mireds,
+        });
+        Ok(())
+    }
+
+    fn cmd_step_color_temperature(
+        &self,
+        step_mode: StepModeEnum,
+        step_size: u16,
+        transition_time_ds: u16,
+        color_temperature_minimum_mireds: u16,
+        color_temperature_maximum_mireds: u16,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
+        if step_size == 0 {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
+        if !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+        let signed_step: i32 = match step_mode {
+            StepModeEnum::Up => step_size as i32,
+            StepModeEnum::Down => -(step_size as i32),
+        };
+        let min_mireds = if color_temperature_minimum_mireds == 0 {
+            H::COLOR_TEMP_PHYSICAL_MIN_MIREDS
+        } else {
+            color_temperature_minimum_mireds
+        };
+        let max_mireds = if color_temperature_maximum_mireds == 0 {
+            H::COLOR_TEMP_PHYSICAL_MAX_MIREDS
+        } else {
+            color_temperature_maximum_mireds
+        };
+        let lo = min_mireds.max(H::COLOR_TEMP_PHYSICAL_MIN_MIREDS);
+        let hi = max_mireds.min(H::COLOR_TEMP_PHYSICAL_MAX_MIREDS);
+        let cur = self.hooks.color_temperature_mireds() as i32;
+        let target = (cur + signed_step).clamp(lo as i32, hi as i32) as u16;
+        self.task_signal.signal(Task::ColorTemperatureMoveTo {
+            target_mireds: target,
+            transition_ms: transition_time_ds as u32 * 100,
+        });
         Ok(())
     }
 }
@@ -1798,33 +2380,55 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
     async fn handle_move_to_color(
         &self,
         _ctx: impl InvokeContext,
-        _request: MoveToColorRequest<'_>,
+        request: MoveToColorRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_move_to_color(
+            request.color_x()?,
+            request.color_y()?,
+            request.transition_time()?,
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_move_color(
         &self,
         _ctx: impl InvokeContext,
-        _request: MoveColorRequest<'_>,
+        request: MoveColorRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_move_color(
+            request.rate_x()?,
+            request.rate_y()?,
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_step_color(
         &self,
         _ctx: impl InvokeContext,
-        _request: StepColorRequest<'_>,
+        request: StepColorRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_step_color(
+            request.step_x()?,
+            request.step_y()?,
+            request.transition_time()?,
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_move_to_color_temperature(
         &self,
         _ctx: impl InvokeContext,
-        _request: MoveToColorTemperatureRequest<'_>,
+        request: MoveToColorTemperatureRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_move_to_color_temperature(
+            request.color_temperature_mireds()?,
+            request.transition_time()?,
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_enhanced_move_to_hue(
@@ -1903,17 +2507,32 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
     async fn handle_move_color_temperature(
         &self,
         _ctx: impl InvokeContext,
-        _request: MoveColorTemperatureRequest<'_>,
+        request: MoveColorTemperatureRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_move_color_temperature(
+            request.move_mode()?,
+            request.rate()?,
+            request.color_temperature_minimum_mireds()?,
+            request.color_temperature_maximum_mireds()?,
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_step_color_temperature(
         &self,
         _ctx: impl InvokeContext,
-        _request: StepColorTemperatureRequest<'_>,
+        request: StepColorTemperatureRequest<'_>,
     ) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        self.cmd_step_color_temperature(
+            request.step_mode()?,
+            request.step_size()?,
+            request.transition_time()?,
+            request.color_temperature_minimum_mireds()?,
+            request.color_temperature_maximum_mireds()?,
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 }
 
