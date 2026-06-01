@@ -386,6 +386,10 @@ impl ColorControlHooks for ColorControlDeviceLogic {
 
     const COLOR_TEMP_PHYSICAL_MIN_MIREDS: u16 = 153; // ~6500K
     const COLOR_TEMP_PHYSICAL_MAX_MIREDS: u16 = 500; // ~2000K
+                                                     // Per spec, must lie in [physical_min, physical_max]. We don't
+                                                     // actually couple level↔temperature, but the attribute must
+                                                     // satisfy the range — anchor at the physical minimum.
+    const COUPLE_COLOR_TEMP_TO_LEVEL_MIN_MIREDS: u16 = Self::COLOR_TEMP_PHYSICAL_MIN_MIREDS;
 
     fn enhanced_current_hue(&self) -> u16 {
         self.enhanced_current_hue.get()

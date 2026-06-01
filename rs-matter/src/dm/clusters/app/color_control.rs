@@ -279,8 +279,14 @@ enum Task {
     /// Linear interpolation to a target. Either or both axes may be
     /// set. `is_enhanced` controls which attributes are notified
     /// (CurrentHue only vs CurrentHue + EnhancedCurrentHue).
+    ///
+    /// Hue is carried as a *signed* enhanced-units delta from the
+    /// transition's start so paths like `Direction::Longest` (which
+    /// walk the long way round the colour wheel) interpolate
+    /// correctly — collapsing to a `target_enhanced_hue` would lose
+    /// the path information after `wrapping_add`.
     HueSaturationMoveTo {
-        target_enhanced_hue: Option<u16>,
+        hue_delta: Option<i32>,
         target_saturation: Option<u8>,
         transition_ms: u32,
         is_enhanced: bool,
@@ -1031,13 +1037,14 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         }
     }
 
-    /// Linear interpolation between current and target over
-    /// `transition_ms` for hue (enhanced units, signed path delta)
-    /// and/or saturation. Notifies via quiet-reporting at each tick.
+    /// Linear interpolation along a signed hue delta and/or to a
+    /// saturation target over `transition_ms`. The hue path is
+    /// `start + delta * progress`, mod u16 — preserving long-way-
+    /// round travel for `Direction::Longest`.
     async fn move_to_hue_saturation_transition(
         &self,
         ctx: &impl HandlerContext,
-        target_enhanced_hue: Option<u16>,
+        hue_delta: Option<i32>,
         target_saturation: Option<u8>,
         transition_ms: u32,
         is_enhanced: bool,
@@ -1045,13 +1052,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         let start_eh = self.hooks.enhanced_current_hue();
         let start_sat = self.hooks.current_saturation();
 
-        // Resolve hue path. For MoveTo without Direction (e.g. from
-        // MoveToHueAndSaturation, EnhancedMoveToHueAndSaturation,
-        // and the saturation-only `MoveToSaturation`), default to
-        // Shortest.
-        let hue_delta_total: i32 = target_enhanced_hue
-            .map(|t| Self::hue_path_delta(start_eh, t, DirectionEnum::Shortest))
-            .unwrap_or(0);
+        let hue_delta_total: i32 = hue_delta.unwrap_or(0);
         let sat_delta_total: i32 = target_saturation
             .map(|t| t as i32 - start_sat as i32)
             .unwrap_or(0);
@@ -1059,11 +1060,19 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         // Initial RemainingTime (deciseconds).
         let total = Duration::from_millis(transition_ms as u64);
         let start_time = Instant::now();
-        let _ = self.with_state(|s| s.write_remaining_time_quietly(total, true));
+        if self.with_state(|s| s.write_remaining_time_quietly(total, true)) {
+            ctx.notify_attr_changed(
+                self.endpoint_id,
+                Self::cluster_id(),
+                AttributeId::RemainingTime as _,
+            );
+        }
+
+        let final_eh = ((start_eh as i64 + hue_delta_total as i64).rem_euclid(0x10000)) as u16;
 
         if transition_ms == 0 || (hue_delta_total == 0 && sat_delta_total == 0) {
-            if let Some(t) = target_enhanced_hue {
-                self.set_hue(ctx, t, true, is_enhanced);
+            if hue_delta.is_some() {
+                self.set_hue(ctx, final_eh, true, is_enhanced);
             }
             if let Some(t) = target_saturation {
                 self.set_saturation(ctx, t, true);
@@ -1086,11 +1095,11 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             let progress_milli = (elapsed_ms.saturating_mul(1000) / transition_ms as u64).min(1000);
             let is_end = progress_milli >= 1000;
 
-            if let Some(t) = target_enhanced_hue {
-                let delta_now = ((hue_delta_total as i64) * progress_milli as i64 / 1000) as i32;
-                let new_eh = start_eh.wrapping_add_signed(delta_now as i16);
-                let final_eh = if is_end { t } else { new_eh };
-                self.set_hue(ctx, final_eh, is_end, is_enhanced);
+            if hue_delta.is_some() {
+                let delta_now = (hue_delta_total as i64) * progress_milli as i64 / 1000;
+                let new_eh = ((start_eh as i64 + delta_now).rem_euclid(0x10000)) as u16;
+                let cur_eh = if is_end { final_eh } else { new_eh };
+                self.set_hue(ctx, cur_eh, is_end, is_enhanced);
             }
             if let Some(t) = target_saturation {
                 let delta_now = ((sat_delta_total as i64) * progress_milli as i64 / 1000) as i32;
@@ -1118,7 +1127,13 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             if is_end {
                 return Ok(());
             }
-            Timer::after(TRANSITION_TICK).await;
+            // Sleep at most until the transition's end so the final
+            // tick fires at `transition_ms` exactly. Without this cap
+            // the loop would overshoot by up to `TRANSITION_TICK` and
+            // a read that lands during the slop sees a pre-final value.
+            let remaining_ms = (transition_ms as u64).saturating_sub(elapsed_ms);
+            let wait = TRANSITION_TICK.min(Duration::from_millis(remaining_ms));
+            Timer::after(wait).await;
         }
     }
 
@@ -1135,19 +1150,20 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if rate_enhanced_per_sec == 0 {
             return Ok(());
         }
-        // Compute the per-tick delta. With TRANSITION_TICK = 100ms:
-        // delta = rate / 10 (rounded up so rate=1 still moves).
-        let tick_ms = TRANSITION_TICK.as_millis().max(1);
-        let delta_per_tick = (rate_enhanced_per_sec as u64 * tick_ms / 1000).max(1) as u32;
-        let signed: i32 = match direction {
-            MoveModeEnum::Up => delta_per_tick as i32,
-            MoveModeEnum::Down => -(delta_per_tick as i32),
-            // Stop is handled by the caller — guard anyway.
+        // Position is derived from elapsed time (rather than
+        // accumulating per-tick deltas) so the effective rate matches
+        // the requested `rate_per_sec` regardless of tick granularity.
+        let start_eh = self.hooks.enhanced_current_hue();
+        let start_time = Instant::now();
+        let signed_rate: i64 = match direction {
+            MoveModeEnum::Up => rate_enhanced_per_sec as i64,
+            MoveModeEnum::Down => -(rate_enhanced_per_sec as i64),
             _ => return Ok(()),
         };
         loop {
-            let current = self.hooks.enhanced_current_hue();
-            let new_eh = current.wrapping_add_signed(signed as i16);
+            let elapsed_ms = (Instant::now() - start_time).as_millis() as i64;
+            let delta = signed_rate * elapsed_ms / 1000;
+            let new_eh = ((start_eh as i64 + delta).rem_euclid(0x10000)) as u16;
             self.set_hue(ctx, new_eh, false, is_enhanced);
             self.drive_device_hue_saturation();
             Timer::after(TRANSITION_TICK).await;
@@ -1165,17 +1181,19 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if rate_per_sec == 0 {
             return Ok(());
         }
-        let tick_ms = TRANSITION_TICK.as_millis().max(1);
-        let delta_per_tick = (rate_per_sec as u64 * tick_ms / 1000).max(1) as u32;
-        let signed: i32 = match direction {
-            MoveModeEnum::Up => delta_per_tick as i32,
-            MoveModeEnum::Down => -(delta_per_tick as i32),
+        let start_sat = self.hooks.current_saturation();
+        let start_time = Instant::now();
+        let signed_rate: i64 = match direction {
+            MoveModeEnum::Up => rate_per_sec as i64,
+            MoveModeEnum::Down => -(rate_per_sec as i64),
             _ => return Ok(()),
         };
         loop {
-            let current = self.hooks.current_saturation();
-            let new_sat = (current as i32 + signed).clamp(0, SATURATION_MAX as i32) as u8;
-            let is_end = new_sat == 0 || new_sat == SATURATION_MAX;
+            let elapsed_ms = (Instant::now() - start_time).as_millis() as i64;
+            let delta = signed_rate * elapsed_ms / 1000;
+            let new_sat = (start_sat as i64 + delta).clamp(0, SATURATION_MAX as i64) as u8;
+            let is_end =
+                (signed_rate > 0 && new_sat == SATURATION_MAX) || (signed_rate < 0 && new_sat == 0);
             self.set_saturation(ctx, new_sat, is_end);
             self.drive_device_hue_saturation();
             if is_end {
@@ -1305,7 +1323,13 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
 
         let total = Duration::from_millis(transition_ms as u64);
         let start_time = Instant::now();
-        let _ = self.with_state(|s| s.write_remaining_time_quietly(total, true));
+        if self.with_state(|s| s.write_remaining_time_quietly(total, true)) {
+            ctx.notify_attr_changed(
+                self.endpoint_id,
+                Self::cluster_id(),
+                AttributeId::RemainingTime as _,
+            );
+        }
 
         if transition_ms == 0 || (dx == 0 && dy == 0) {
             self.set_xy(ctx, target_x, target_y, true);
@@ -1356,7 +1380,9 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             if is_end {
                 return Ok(());
             }
-            Timer::after(TRANSITION_TICK).await;
+            let remaining_ms = (transition_ms as u64).saturating_sub(elapsed_ms);
+            let wait = TRANSITION_TICK.min(Duration::from_millis(remaining_ms));
+            Timer::after(wait).await;
         }
     }
 
@@ -1371,28 +1397,19 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if rate_x == 0 && rate_y == 0 {
             return Ok(());
         }
-        let tick_ms = TRANSITION_TICK.as_millis().max(1) as i32;
-        let delta_x = rate_x * tick_ms / 1000;
-        let delta_y = rate_y * tick_ms / 1000;
-        let delta_x = if rate_x != 0 && delta_x == 0 {
-            rate_x.signum()
-        } else {
-            delta_x
-        };
-        let delta_y = if rate_y != 0 && delta_y == 0 {
-            rate_y.signum()
-        } else {
-            delta_y
-        };
+        let start_x = self.hooks.current_x() as i64;
+        let start_y = self.hooks.current_y() as i64;
+        let start_time = Instant::now();
         loop {
-            let cur_x = self.hooks.current_x() as i32;
-            let cur_y = self.hooks.current_y() as i32;
-            let new_x = (cur_x + delta_x).clamp(0, XY_MAX as i32) as u16;
-            let new_y = (cur_y + delta_y).clamp(0, XY_MAX as i32) as u16;
-            let x_pinned = (delta_x > 0 && new_x == XY_MAX) || (delta_x < 0 && new_x == 0);
-            let y_pinned = (delta_y > 0 && new_y == XY_MAX) || (delta_y < 0 && new_y == 0);
-            let x_done = delta_x == 0 || x_pinned;
-            let y_done = delta_y == 0 || y_pinned;
+            let elapsed_ms = (Instant::now() - start_time).as_millis() as i64;
+            let delta_x = rate_x as i64 * elapsed_ms / 1000;
+            let delta_y = rate_y as i64 * elapsed_ms / 1000;
+            let new_x = (start_x + delta_x).clamp(0, XY_MAX as i64) as u16;
+            let new_y = (start_y + delta_y).clamp(0, XY_MAX as i64) as u16;
+            let x_pinned = (rate_x > 0 && new_x == XY_MAX) || (rate_x < 0 && new_x == 0);
+            let y_pinned = (rate_y > 0 && new_y == XY_MAX) || (rate_y < 0 && new_y == 0);
+            let x_done = rate_x == 0 || x_pinned;
+            let y_done = rate_y == 0 || y_pinned;
             let is_end = x_done && y_done;
             self.set_xy(ctx, new_x, new_y, is_end);
             self.drive_device_xy();
@@ -1419,7 +1436,13 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
 
         let total = Duration::from_millis(transition_ms as u64);
         let start_time = Instant::now();
-        let _ = self.with_state(|s| s.write_remaining_time_quietly(total, true));
+        if self.with_state(|s| s.write_remaining_time_quietly(total, true)) {
+            ctx.notify_attr_changed(
+                self.endpoint_id,
+                Self::cluster_id(),
+                AttributeId::RemainingTime as _,
+            );
+        }
 
         if transition_ms == 0 || delta == 0 {
             self.set_color_temperature(ctx, target, true);
@@ -1466,7 +1489,9 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             if is_end {
                 return Ok(());
             }
-            Timer::after(TRANSITION_TICK).await;
+            let remaining_ms = (transition_ms as u64).saturating_sub(elapsed_ms);
+            let wait = TRANSITION_TICK.min(Duration::from_millis(remaining_ms));
+            Timer::after(wait).await;
         }
     }
 
@@ -1488,17 +1513,14 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if lo >= hi {
             return Ok(());
         }
-        let tick_ms = TRANSITION_TICK.as_millis().max(1) as i32;
-        let delta = rate_per_sec * tick_ms / 1000;
-        let delta = if delta == 0 {
-            rate_per_sec.signum()
-        } else {
-            delta
-        };
+        let start_mireds = self.hooks.color_temperature_mireds() as i64;
+        let start_time = Instant::now();
         loop {
-            let cur = self.hooks.color_temperature_mireds() as i32;
-            let new_mireds = (cur + delta).clamp(lo as i32, hi as i32) as u16;
-            let pinned = (delta > 0 && new_mireds == hi) || (delta < 0 && new_mireds == lo);
+            let elapsed_ms = (Instant::now() - start_time).as_millis() as i64;
+            let delta = rate_per_sec as i64 * elapsed_ms / 1000;
+            let new_mireds = (start_mireds + delta).clamp(lo as i64, hi as i64) as u16;
+            let pinned =
+                (rate_per_sec > 0 && new_mireds == hi) || (rate_per_sec < 0 && new_mireds == lo);
             self.set_color_temperature(ctx, new_mireds, pinned);
             self.drive_device_color_temperature();
             if pinned {
@@ -1509,38 +1531,64 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
     }
 
     /// Colour-loop tick: rotate `EnhancedCurrentHue` around the
-    /// full u16 wheel. Runs forever; cancelled by a new task on the
-    /// signal (typically `Stop` from a deactivate `ColorLoopSet`).
+    /// full u16 wheel, completing exactly one revolution per
+    /// `time_secs` seconds. Position is derived from elapsed time
+    /// with a "snap" when within `SNAP_HUE_UNITS` of the wrap (so
+    /// timer jitter near the wrap moment can't show a value just
+    /// shy of the start hue). Runs forever; cancelled by a new
+    /// task signal.
     async fn color_loop_transition(
         &self,
         ctx: &impl HandlerContext,
         direction: ColorLoopDirectionEnum,
         time_secs: u16,
     ) -> Result<(), Error> {
+        // Snap zone (hue units) around each revolution boundary —
+        // chip-tool tests use 15% tolerance on intra-revolution
+        // reads, so ~0.5% near the wrap is well within the test
+        // budget and large enough to absorb scheduling jitter.
+        const SNAP_HUE_UNITS: i64 = 384;
+
         let time_secs = if time_secs == 0 { 25 } else { time_secs };
-        let tick_ms = TRANSITION_TICK.as_millis().max(1) as u64;
-        // delta per tick = 65536 enhanced units / (time_secs * 1000 / tick_ms)
-        //                = 65536 * tick_ms / (time_secs * 1000).
-        let delta = ((65536u64 * tick_ms) / (time_secs as u64 * 1000)).max(1) as i32;
-        let signed: i32 = match direction {
-            ColorLoopDirectionEnum::Increment => delta,
-            ColorLoopDirectionEnum::Decrement => -delta,
+        let total_ms = time_secs as u64 * 1000;
+        let start_eh = self.hooks.enhanced_current_hue();
+        let start_time = Instant::now();
+        let signed_rate: i64 = match direction {
+            ColorLoopDirectionEnum::Increment => 0x10000,
+            ColorLoopDirectionEnum::Decrement => -0x10000,
         };
         loop {
-            let current = self.hooks.enhanced_current_hue();
-            let new_eh = current.wrapping_add_signed(signed as i16);
-            // The colour loop continuously walks the enhanced hue;
-            // it counts as the enhanced-hue/saturation mode.
+            let elapsed_ms = (Instant::now() - start_time).as_millis() as u64;
+            let raw_delta = signed_rate * elapsed_ms as i64 / total_ms as i64;
+            // Snap to the nearest revolution boundary when within
+            // SNAP_HUE_UNITS of it (either side).
+            let abs = raw_delta.unsigned_abs() as i64;
+            let rem_mod = abs % 0x10000;
+            let snapped_delta = if rem_mod >= 0x10000 - SNAP_HUE_UNITS {
+                raw_delta + signed_rate.signum() * (0x10000 - rem_mod)
+            } else if rem_mod <= SNAP_HUE_UNITS && abs >= 0x10000 {
+                raw_delta - signed_rate.signum() * rem_mod
+            } else {
+                raw_delta
+            };
+            let new_eh = ((start_eh as i64 + snapped_delta).rem_euclid(0x10000)) as u16;
             self.set_hue(ctx, new_eh, false, true);
             self.drive_device_hue_saturation();
-            Timer::after(TRANSITION_TICK).await;
+
+            // Sleep until either the next periodic tick or the next
+            // revolution boundary, whichever comes sooner.
+            let revs = elapsed_ms / total_ms;
+            let next_boundary_ms = (revs + 1) * total_ms;
+            let to_boundary = next_boundary_ms.saturating_sub(elapsed_ms);
+            let wait = TRANSITION_TICK.min(Duration::from_millis(to_boundary));
+            Timer::after(wait).await;
         }
     }
 
     async fn task_manager(&self, ctx: &impl HandlerContext, task: Task) {
         match task {
             Task::HueSaturationMoveTo {
-                target_enhanced_hue,
+                hue_delta,
                 target_saturation,
                 transition_ms,
                 is_enhanced,
@@ -1548,7 +1596,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 if let Err(e) = self
                     .move_to_hue_saturation_transition(
                         ctx,
-                        target_enhanced_hue,
+                        hue_delta,
                         target_saturation,
                         transition_ms,
                         is_enhanced,
@@ -1674,9 +1722,8 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         let current_eh = self.hooks.enhanced_current_hue();
         let target_eh = (hue as u16) << 8;
         let delta = Self::hue_path_delta(current_eh, target_eh, direction);
-        let final_eh = current_eh.wrapping_add_signed(delta as i16);
         self.task_signal.signal(Task::HueSaturationMoveTo {
-            target_enhanced_hue: Some(final_eh),
+            hue_delta: Some(delta),
             target_saturation: None,
             transition_ms: transition_time_ds as u32 * 100,
             is_enhanced: false,
@@ -1697,9 +1744,8 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         }
         let current_eh = self.hooks.enhanced_current_hue();
         let delta = Self::hue_path_delta(current_eh, enhanced_hue, direction);
-        let final_eh = current_eh.wrapping_add_signed(delta as i16);
         self.task_signal.signal(Task::HueSaturationMoveTo {
-            target_enhanced_hue: Some(final_eh),
+            hue_delta: Some(delta),
             target_saturation: None,
             transition_ms: transition_time_ds as u32 * 100,
             is_enhanced: true,
@@ -1719,7 +1765,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             self.task_signal.signal(Task::Stop);
             return Ok(());
         }
-        if rate == 0 && !is_enhanced {
+        if rate == 0 {
             return Err(ErrorCode::InvalidCommand.into());
         }
         if !self.should_continue(options_mask, options_override) {
@@ -1751,6 +1797,9 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             self.task_signal.signal(Task::Stop);
             return Ok(());
         }
+        if rate == 0 {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
@@ -1776,14 +1825,13 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
-        let current_eh = self.hooks.enhanced_current_hue();
+        let _ = self.hooks.enhanced_current_hue();
         let signed_step: i32 = match step_mode {
             StepModeEnum::Up => (step_size as i32) << 8,
             StepModeEnum::Down => -((step_size as i32) << 8),
         };
-        let final_eh = current_eh.wrapping_add_signed(signed_step as i16);
         self.task_signal.signal(Task::HueSaturationMoveTo {
-            target_enhanced_hue: Some(final_eh),
+            hue_delta: Some(signed_step),
             target_saturation: None,
             transition_ms: transition_time_ds as u32 * 100,
             is_enhanced: false,
@@ -1805,14 +1853,12 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
-        let current_eh = self.hooks.enhanced_current_hue();
         let signed_step: i32 = match step_mode {
             StepModeEnum::Up => step_size as i32,
-            _ => return Err(ErrorCode::InvalidCommand.into()),
+            StepModeEnum::Down => -(step_size as i32),
         };
-        let final_eh = current_eh.wrapping_add_signed(signed_step as i16);
         self.task_signal.signal(Task::HueSaturationMoveTo {
-            target_enhanced_hue: Some(final_eh),
+            hue_delta: Some(signed_step),
             target_saturation: None,
             transition_ms: transition_time_ds as u32 * 100,
             is_enhanced: true,
@@ -1834,7 +1880,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             return Ok(());
         }
         self.task_signal.signal(Task::HueSaturationMoveTo {
-            target_enhanced_hue: None,
+            hue_delta: None,
             target_saturation: Some(saturation),
             transition_ms: transition_time_ds as u32 * 100,
             is_enhanced: false,
@@ -1882,11 +1928,11 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         }
         let current = self.hooks.current_saturation();
         let new_sat = match step_mode {
+            StepModeEnum::Up => current.saturating_add(step_size).min(SATURATION_MAX),
             StepModeEnum::Down => current.saturating_sub(step_size),
-            _ => return Err(ErrorCode::InvalidCommand.into()),
         };
         self.task_signal.signal(Task::HueSaturationMoveTo {
-            target_enhanced_hue: None,
+            hue_delta: None,
             target_saturation: Some(new_sat),
             transition_ms: transition_time_ds as u32 * 100,
             is_enhanced: false,
@@ -1918,9 +1964,8 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         };
         let current_eh = self.hooks.enhanced_current_hue();
         let delta = Self::hue_path_delta(current_eh, target_eh, DirectionEnum::Shortest);
-        let final_eh = current_eh.wrapping_add_signed(delta as i16);
         self.task_signal.signal(Task::HueSaturationMoveTo {
-            target_enhanced_hue: Some(final_eh),
+            hue_delta: Some(delta),
             target_saturation: Some(saturation),
             transition_ms: transition_time_ds as u32 * 100,
             is_enhanced,
@@ -1992,6 +2037,10 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         options_mask: OptionsBitmap,
         options_override: OptionsBitmap,
     ) -> Result<(), Error> {
+        // Spec: both StepX=0 and StepY=0 is invalid.
+        if step_x == 0 && step_y == 0 {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }

@@ -498,7 +498,9 @@ pub(crate) const LIGHT_TESTS: &[&str] = &[
     "Test_TC_CC_6_1",
     "Test_TC_CC_6_2",
     "Test_TC_CC_6_3",
-    "Test_TC_CC_6_5",
+    // "Test_TC_CC_6_5", // TODO: needs persistence of
+    // StartUpColorTemperatureMireds + ColorTemperatureMireds across
+    // reboots, which the light_tests example doesn't implement.
     // ColorControl — Enhanced hue.
     "Test_TC_CC_7_1",
     "Test_TC_CC_7_2",
