@@ -116,11 +116,17 @@ jobs:
           cargo xtask itest --skip-setup --features openssl TestBasicInformation \
             2>&1 | tee /tmp/itest-system-openssl.log
 
-      - name: Run LevelControl and OnOff integration tests for dimmable_light
+      - name: Run LevelControl and OnOff integration tests
         run: |
           set -o pipefail
           cargo xtask itest --skip-setup --suite light \
             2>&1 | tee /tmp/itest-light.log
+
+      - name: Run Scenes integration tests
+        run: |
+          set -o pipefail
+          cargo xtask itest --skip-setup --suite scenes \
+            2>&1 | tee /tmp/itest-scenes.log
 
       - name: Run Camera integration tests
         run: |
