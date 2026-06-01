@@ -15,54 +15,9 @@
  *    limitations under the License.
  */
 
-//! ColorControl cluster (skeleton handler — Scenes integration only).
-//!
-//! This module ships a `ColorControlHandler` whose **only complete
-//! surface today is the [`SceneClusterHandler`] impl**. It does not
-//! yet expose the full data-model `ClusterHandler` trait (commands
-//! and attribute reads/writes are stubbed out — the
-//! command-driven path will be added in a follow-up). The skeleton
-//! exists primarily to validate that the
-//! [`crate::dm::clusters::scenes::SceneClusterHandler`] architecture
-//! gracefully handles ColorControl's shape:
-//!
-//! - **Up to 9 scenable attributes** (`CurrentX`, `CurrentY`,
-//!   `EnhancedCurrentHue`, `CurrentSaturation`, `ColorLoopActive`,
-//!   `ColorLoopDirection`, `ColorLoopTime`,
-//!   `ColorTemperatureMireds`, `EnhancedColorMode`) — vs OnOff's 1
-//!   and LevelControl's 1.
-//! - **Feature-conditional capture**: which subset of the attrs is
-//!   captured depends on the cluster's `Feature` bitmap
-//!   (`XY` / `HUE_AND_SATURATION` / `ENHANCED_HUE` / `COLOR_LOOP` /
-//!   `COLOR_TEMPERATURE`).
-//! - **Mode-dependent apply**: `EnhancedColorMode` selects which
-//!   internal applier runs — `MoveToColor`-equivalent for `XY`,
-//!   `MoveToColorTemperature` for `ColorTemperatureMireds`,
-//!   `MoveToHueAndSaturation` / `EnhancedMoveToHueAndSaturation` for
-//!   the hue/saturation modes. `ColorLoopActive=1` short-circuits to
-//!   the `ColorLoopSet` path regardless of `EnhancedColorMode`.
-//! - **Per-instance feature configuration**: instances on different
-//!   endpoints may enable different subsets. The handler reads its
-//!   active feature bitmap from the [`ColorControlHooks`] trait.
-//!
-//! The handler holds a [`crate::dm::clusters::scenes::SceneInvalidator`]
-//! reference (set via [`ColorControlHandler::with_scene_invalidator`])
-//! so command-driven mutations of scenable attributes (when the
-//! command path lands) can flip `SceneValid → false` — exactly the
-//! same pattern as [`crate::dm::clusters::app::on_off::OnOffHandler`]
-//! and [`crate::dm::clusters::app::level_control::LevelControlHandler`].
-//!
-//! ## Hooks model
-//!
-//! [`ColorControlHooks`] exposes per-attribute getters and setters.
-//! The application implements it on whatever per-device state it
-//! keeps — typically a struct cached in static memory with
-//! [`core::cell::Cell`] for each field. Setters MUST be cheap and
-//! synchronous; the SceneClusterHandler's `apply` calls them inline
-//! and immediately follows up with `notify_attr_changed` for
-//! subscribers (unless `scene_apply=true`, in which case the
-//! drift-detection notification is skipped — see the OnOff/LC
-//! `set_on`/`set_level` `scene_apply` parameter for the rationale).
+//! ColorControl cluster — skeleton handler exposing only the
+//! [`SceneClusterHandler`] impl. The full data-model `ClusterHandler`
+//! (commands, attribute reads/writes) will be added in a follow-up.
 
 use core::cell::Cell;
 
@@ -78,25 +33,13 @@ use crate::utils::sync::blocking::Mutex;
 
 pub use crate::dm::clusters::decl::color_control::*;
 
-/// Device-supplied state + I/O for the ColorControl cluster.
-///
-/// All getters MUST be infallible (return cached state from the
-/// device's local store). All setters MUST be synchronous and cheap
-/// — `SceneClusterHandler::apply` calls them inline. Both halves
-/// are required even for feature subsets the device doesn't
-/// implement; unsupported attributes can be backed by stub fields
-/// whose setters are no-ops and whose getters return a fixed sentinel
-/// (typically `0`).
-///
-/// `features` reports the active `Feature` bitmap for THIS endpoint
-/// — different ColorControl instances may enable different subsets,
-/// so the handler reads it from the hooks rather than from a global
-/// constant.
+/// Device-supplied state + I/O for the ColorControl cluster. Getters
+/// return cached device state; setters are synchronous and cheap
+/// (called inline from scene apply). Attributes outside the active
+/// feature subset may be backed by no-op stubs.
 pub trait ColorControlHooks {
-    /// The `Feature` bitmap active on this endpoint. The Scenes
-    /// integration uses it to feature-gate capture (`XY` → emit
-    /// `CurrentX`/`CurrentY`, `COLOR_TEMPERATURE` → emit
-    /// `ColorTemperatureMireds`, etc.).
+    /// Active `Feature` bitmap on this endpoint. Used to feature-gate
+    /// scene capture.
     fn features(&self) -> Feature;
 
     fn current_x(&self) -> u16;
@@ -120,34 +63,24 @@ pub trait ColorControlHooks {
     fn color_loop_direction(&self) -> ColorLoopDirectionEnum;
     fn set_color_loop_direction(&self, value: ColorLoopDirectionEnum);
 
-    /// Duration of one full color-loop cycle, in seconds (per spec).
+    /// Duration of one full color-loop cycle, in seconds.
     fn color_loop_time(&self) -> u16;
     fn set_color_loop_time(&self, value: u16);
 
-    /// The recalled-scene's `ColorLoopSet` path uses this as the
-    /// starting hue when activating the loop. Read-only at this level
-    /// — there's no scenable setter (the spec's `ColorLoopSet`
-    /// command sets it, but scene recall doesn't carry a new value
-    /// for it).
+    /// Starting hue used when scene recall activates the color loop.
     fn color_loop_start_enhanced_hue(&self) -> u16;
 
     fn enhanced_color_mode(&self) -> EnhancedColorModeEnum;
     fn set_enhanced_color_mode(&self, value: EnhancedColorModeEnum);
 }
 
-/// Skeleton ColorControl cluster handler. See module docs for the
-/// scope: this currently only implements the scenes-integration
-/// surface, not the full data-model `ClusterHandler` trait.
+/// Skeleton ColorControl cluster handler — currently exposes only
+/// the scenes-integration surface, not the full `ClusterHandler`.
 pub struct ColorControlHandler<'a, H: ColorControlHooks> {
-    #[allow(dead_code)] // wired in when the command-handler path lands
+    #[allow(dead_code)]
     dataver: Dataver,
     endpoint_id: EndptId,
     hooks: H,
-    /// Optional scene-drift notifier — see
-    /// [`crate::dm::clusters::scenes::SceneInvalidator`]. Set via
-    /// [`Self::with_scene_invalidator`]; defaults to `None`, in which
-    /// case all internal mutators are no-ops with respect to scene
-    /// invalidation.
     scene_invalidator: Mutex<Cell<Option<&'a dyn SceneInvalidator>>>,
 }
 
@@ -174,22 +107,8 @@ impl<'a, H: ColorControlHooks> ColorControlHandler<'a, H> {
         }
     }
 
-    /// Apply the `CurrentXAndCurrentY` mode: write `CurrentX` /
-    /// `CurrentY` / `EnhancedColorMode` and notify subscribers.
-    /// `scene_apply` gates `notify_scenable_changed` — see
-    /// [`crate::dm::clusters::app::level_control::LevelControlHandler::set_level`]
-    /// for the rationale.
-    fn apply_xy<N: AttrChangeNotifier>(
-        &self,
-        ctx: &N,
-        x: u16,
-        y: u16,
-        // _transition_time_ds: u16 — non-instant XY transitions are
-        // not modelled here; the skeleton applies instantly. The
-        // architecture supports threading `scene_apply` through a
-        // task-based transition the same way LevelControl does.
-        scene_apply: bool,
-    ) {
+    /// Apply the `CurrentXAndCurrentY` mode.
+    fn apply_xy<N: AttrChangeNotifier>(&self, ctx: &N, x: u16, y: u16, scene_apply: bool) {
         self.hooks.set_current_x(x);
         self.hooks.set_current_y(y);
         self.hooks
@@ -233,9 +152,8 @@ impl<'a, H: ColorControlHooks> ColorControlHandler<'a, H> {
         }
     }
 
-    /// Apply the `CurrentHueAndCurrentSaturation` mode (non-enhanced
-    /// hue is `u8`; chip's reference truncates `EnhancedCurrentHue`
-    /// to the low byte when the captured mode says non-enhanced).
+    /// Apply the `CurrentHueAndCurrentSaturation` mode. Hue is
+    /// stored in `EnhancedCurrentHue` as the low byte.
     fn apply_hue_saturation<N: AttrChangeNotifier>(
         &self,
         ctx: &N,
@@ -243,9 +161,6 @@ impl<'a, H: ColorControlHooks> ColorControlHandler<'a, H> {
         saturation: u8,
         scene_apply: bool,
     ) {
-        // Truncate hue into the enhanced field — there's no separate
-        // non-enhanced setter on the hooks (would just be a u8 view
-        // of EnhancedCurrentHue per spec).
         self.hooks.set_enhanced_current_hue(hue_u8 as u16);
         self.hooks.set_current_saturation(saturation);
         self.hooks
@@ -304,10 +219,8 @@ impl<'a, H: ColorControlHooks> ColorControlHandler<'a, H> {
         }
     }
 
-    /// Apply a color-loop activation. Mirrors chip's
-    /// `ColorControl::ApplyScene` short-circuit: when a recalled
-    /// scene has `ColorLoopActive=1`, drop the `MoveTo*` dispatch
-    /// entirely and run the loop instead.
+    /// Apply a color-loop activation — short-circuits `MoveTo*`
+    /// dispatch when the recalled scene has `ColorLoopActive=1`.
     fn apply_color_loop<N: AttrChangeNotifier>(
         &self,
         ctx: &N,
@@ -348,11 +261,8 @@ impl<H: ColorControlHooks> SceneClusterHandler for ColorControlHandler<'_, H> {
     }
 
     fn is_scenable_attribute(attribute_id: AttrId) -> bool {
-        // Matter App Cluster spec §3.2.10. Feature-gated availability
-        // is enforced at capture/apply time (a captured attribute
-        // that maps to a disabled feature is silently dropped), not
-        // here — `is_scenable_attribute` only validates `AddScene`
-        // payload shape.
+        // Feature-gated availability is enforced at capture/apply,
+        // not here — this only validates `AddScene` payload shape.
         matches!(
             attribute_id,
             a if a == AttributeId::CurrentX as AttrId
@@ -371,8 +281,6 @@ impl<H: ColorControlHooks> SceneClusterHandler for ColorControlHandler<'_, H> {
         &self,
         avp_array: AttributeValuePairStructArrayBuilder<P>,
     ) -> Result<AttributeValuePairStructArrayBuilder<P>, Error> {
-        // Capture order mirrors chip's
-        // `DefaultColorControlSceneHandler::SerializeSave`.
         // `EnhancedColorMode` is captured unconditionally — apply
         // dispatches on it.
         let features = self.hooks.features();
@@ -419,8 +327,6 @@ impl<H: ColorControlHooks> SceneClusterHandler for ColorControlHandler<'_, H> {
             avp_array
         };
 
-        // `EnhancedColorMode` is `enum8`, serialised as
-        // `valueUnsigned8`. Always captured (drives apply dispatch).
         let mode = self.hooks.enhanced_color_mode();
         avp_array.push_u8(AttributeId::EnhancedColorMode as _, mode as u8)
     }
@@ -431,32 +337,22 @@ impl<H: ColorControlHooks> SceneClusterHandler for ColorControlHandler<'_, H> {
         avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
         transition_time_ms: u32,
     ) -> Result<(), Error> {
-        // Delegate to the narrower-typed inner method so unit tests
-        // can pass `&()` (a no-op `AttrChangeNotifier`) without
-        // needing to mock a full `HandlerContext`. `HandlerContext`
-        // is a supertrait of `AttrChangeNotifier`, so any `&C` passed
-        // in here also satisfies the inner method's bound.
+        // Inner method takes `AttrChangeNotifier` (a `HandlerContext`
+        // supertrait) so unit tests can pass `&()` without mocking.
         self.apply_inner(ctx, avp_list, transition_time_ms)
     }
 }
 
 impl<H: ColorControlHooks> ColorControlHandler<'_, H> {
-    /// Inner apply (sync) — same logic as the trait method but
-    /// scoped to `AttrChangeNotifier` instead of `HandlerContext`.
-    /// Sync because every per-mode applier is sync (no transition
-    /// task yet); when the command-handler path lands, the
-    /// transitioning variants will be queued through a `task_signal`
-    /// the same way LevelControl does it, and that signalling is
-    /// already sync.
+    /// Sync apply, scoped to `AttrChangeNotifier` for testability.
     fn apply_inner<N: AttrChangeNotifier>(
         &self,
         ctx: &N,
         avp_list: &TLVArray<'_, AttributeValuePairStruct<'_>>,
         _transition_time_ms: u32,
     ) -> Result<(), Error> {
-        // Sweep the AVP list once and stash each known value. We
-        // need `EnhancedColorMode` AND the mode-specific values
-        // before we can decide which applier to call.
+        // We need `EnhancedColorMode` plus the mode-specific values
+        // before dispatching, so collect them all in one pass.
         let mut mode: Option<EnhancedColorModeEnum> = None;
         let mut current_x: Option<u16> = None;
         let mut current_y: Option<u16> = None;
@@ -493,9 +389,7 @@ impl<H: ColorControlHooks> ColorControlHandler<'_, H> {
             }
         }
 
-        // If the scene captured an active color loop, hand off to
-        // the loop applier and ignore the Move-To dispatch —
-        // mirrors chip's `ColorControl::ApplyScene`.
+        // An active color loop short-circuits the MoveTo dispatch.
         if color_loop_active == Some(1) {
             let direction = color_loop_direction
                 .and_then(color_loop_direction_from_u8)
@@ -506,8 +400,6 @@ impl<H: ColorControlHooks> ColorControlHandler<'_, H> {
         }
 
         let Some(mode) = mode else {
-            // No mode captured (perhaps an older firmware's blob
-            // that didn't include it) — nothing to do.
             return Ok(());
         };
 
@@ -525,9 +417,7 @@ impl<H: ColorControlHooks> ColorControlHandler<'_, H> {
                 self.apply_color_temperature(ctx, mireds, true);
             }
             EnhancedColorModeEnum::CurrentHueAndCurrentSaturation => {
-                // Non-enhanced hue is u8; chip's reference truncates
-                // EnhancedCurrentHue's low byte. (Behaviour mirrored
-                // from `ColorControl::ApplyScene`.)
+                // Non-enhanced hue is the low byte of EnhancedCurrentHue.
                 let (Some(hue), Some(sat)) = (
                     enhanced_current_hue.map(|h| (h & 0xFF) as u8),
                     current_saturation,
@@ -549,8 +439,7 @@ impl<H: ColorControlHooks> ColorControlHandler<'_, H> {
 }
 
 /// Convert a stored `valueUnsigned8` to an
-/// [`EnhancedColorModeEnum`], returning `None` for unknown values
-/// rather than failing the apply (matches chip's lenient parse).
+/// [`EnhancedColorModeEnum`], `None` for unknown values.
 fn enhanced_color_mode_from_u8(v: u8) -> Option<EnhancedColorModeEnum> {
     match v {
         0 => Some(EnhancedColorModeEnum::CurrentHueAndCurrentSaturation),
@@ -562,7 +451,7 @@ fn enhanced_color_mode_from_u8(v: u8) -> Option<EnhancedColorModeEnum> {
 }
 
 /// Convert a stored `valueUnsigned8` to a [`ColorLoopDirectionEnum`],
-/// returning `None` for unknown values.
+/// `None` for unknown values.
 fn color_loop_direction_from_u8(v: u8) -> Option<ColorLoopDirectionEnum> {
     match v {
         0 => Some(ColorLoopDirectionEnum::Decrement),
@@ -573,47 +462,17 @@ fn color_loop_direction_from_u8(v: u8) -> Option<ColorLoopDirectionEnum> {
 
 #[cfg(test)]
 mod tests {
-    //! Unit tests for the ColorControl scenes integration. Validates
-    //! the [`SceneClusterHandler`] impl against the cluster's
-    //! feature-gated capture matrix, mode-routed apply dispatch,
-    //! `ColorLoopActive=1` short-circuit, and the `scene_apply` /
-    //! drift-detection contract.
-    //!
-    //! End-to-end YAML coverage isn't available — no chip-tool
-    //! `Test_TC_S_*` / `TestScenes*` suite exercises ColorControl
-    //! AVPs. These tests are the validation gate for the integration.
-    //!
-    //! Test infrastructure:
-    //! - [`MockHooks`]: `Cell`-backed implementation of
-    //!   [`ColorControlHooks`]. Sets `features()` from a constructor
-    //!   field; all getters return the cached values; all setters
-    //!   write through.
-    //! - [`CountingInvalidator`]: tracks `scenable_attribute_changed`
-    //!   call count so tests can assert on drift-notification gating.
-    //! - `build_avp_bytes`: round-trips AVPs through the codegen
-    //!   `AttributeValuePairStructArrayBuilder` so `apply` receives
-    //!   the same TLV shape it would on the wire.
-    //! - `dummy_ctx`: minimal `HandlerContext` whose
-    //!   `notify_attr_changed` is a no-op (subscriber notification is
-    //!   tested elsewhere; here we focus on scene-cluster behaviour).
+    //! Unit tests for the ColorControl scenes integration — no
+    //! chip-tool YAML suite covers it.
 
     use super::*;
     use crate::tlv::{TLVElement, TLVWriteParent};
     use crate::utils::storage::WriteBuf;
 
-    /// All in-test calls into `apply_*` go through the
-    /// `&impl AttrChangeNotifier` surface (not the full
-    /// `HandlerContext`). The stdlib `()` is a no-op
-    /// `AttrChangeNotifier` (see `dm::types::handler::impl AttrChangeNotifier for ()`),
-    /// so we use `&()` everywhere we'd otherwise need to mock a
-    /// context. This sidesteps the heavy `HandlerContext`-mock
-    /// boilerplate that doesn't add real test coverage — the apply
-    /// helpers only USE the notifier surface.
+    /// `()` is a no-op `AttrChangeNotifier`, which is all the apply
+    /// helpers use — avoids mocking a full `HandlerContext`.
     const NULL_CTX: &() = &();
 
-    /// `Cell`-backed implementation of [`ColorControlHooks`] for
-    /// tests. The `features` bitmap is constructor-fixed; everything
-    /// else round-trips through `Cell::get`/`set`.
     struct MockHooks {
         features: Feature,
         current_x: Cell<u16>,
@@ -711,9 +570,6 @@ mod tests {
         }
     }
 
-    /// [`SceneInvalidator`] mock that counts calls — tests assert
-    /// on this to verify the `scene_apply` flag suppresses drift
-    /// notification.
     struct CountingInvalidator {
         count: Cell<u32>,
     }
@@ -735,36 +591,7 @@ mod tests {
         }
     }
 
-    /// AVP-array TLV blobs are built inline per-test rather than via
-    /// a helper: the `AttributeValuePairStructArrayBuilder` carries
-    /// the `WriteBuf` lifetime in nested type parameters, so a
-    /// generic helper has unpleasant HRTB-around-nested-lifetime
-    /// signatures. Inlining is shorter than the indirection.
-    ///
-    /// The pattern is:
-    /// ```ignore
-    /// let mut buf = [0u8; 128];
-    /// let len = {
-    ///     let mut wb = WriteBuf::new(&mut buf);
-    ///     let parent = TLVWriteParent::new("test", &mut wb);
-    ///     let array = AttributeValuePairStructArrayBuilder::new(
-    ///         parent, &crate::tlv::TLVTag::Anonymous,
-    ///     ).unwrap();
-    ///     let array = array.push_u16(…).unwrap()…;
-    ///     array.end().unwrap();
-    ///     wb.get_tail()
-    /// }; // wb dropped here → buf's mutable borrow released
-    /// let bytes = &buf[..len];
-    /// ```
-
-    /// Returns a fresh [`ColorControlHandler`] for tests. `EP = 1`
-    /// matches our other scene-aware handlers' test convention.
     fn handler(features: Feature) -> ColorControlHandler<'static, MockHooks> {
-        // SAFETY-equivalent of leaking: tests don't drop, and the
-        // hooks live for the duration of the test. Cleaner than
-        // wrestling with `'static` bounds for `with_scene_invalidator`.
-        // (The invalidator is wired explicitly per test via
-        // `with_scene_invalidator` when needed.)
         let hooks = MockHooks::new(features);
         ColorControlHandler::new(Dataver::new(1), 1, hooks)
     }
@@ -947,8 +774,6 @@ mod tests {
 
     // ---- apply: mode dispatch ----
 
-    /// Build an AVP list inline (see the `build_avp_bytes` doc-block
-    /// for the pattern). Used by every apply-side test.
     fn build_xy_avps(buf: &mut [u8], x: u16, y: u16, mode: EnhancedColorModeEnum) -> usize {
         let mut wb = WriteBuf::new(buf);
         let parent = TLVWriteParent::new("test", &mut wb);
@@ -1164,9 +989,7 @@ mod tests {
 
     #[test]
     fn apply_with_no_mode_is_noop() {
-        // EnhancedColorMode is missing — chip's reference treats this
-        // as a no-op rather than an error (forward-compat with
-        // older firmware that didn't capture the mode).
+        // Missing EnhancedColorMode → no-op rather than error.
         let h = handler(Feature::XY);
         let mut buf = [0u8; 128];
         let len = {

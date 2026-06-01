@@ -100,15 +100,9 @@ enum Task {
         with_on_off: bool,
         target: u8,
         transition_time: u16,
-        /// True when this task was queued by
-        /// [`SceneClusterHandler::apply`] — every
-        /// `set_level` call this transition triggers will skip
-        /// [`notify_scenable_changed`] so the Scenes cluster's
-        /// `SceneValid` bookkeeping stays true throughout the
-        /// recall (the state we're transitioning *toward* IS the
-        /// recalled-scene state). False for regular
-        /// command-initiated moves, where each step is genuine
-        /// drift and must invalidate `SceneValid`.
+        /// When `true`, the transition was queued by a scene recall;
+        /// `set_level` skips `notify_scenable_changed` so `SceneValid`
+        /// is preserved.
         scene_apply: bool,
     },
     Move {
@@ -205,9 +199,8 @@ pub struct LevelControlHandler<'a, H: LevelControlHooks, OH: OnOffHooks> {
     endpoint_id: EndptId,
     hooks: H,
     on_off_handler: Mutex<Cell<Option<&'a OnOffHandler<'a, OH, H>>>>,
-    /// See `OnOffHandler::scene_invalidator` — same role, fired
-    /// whenever `CurrentLevel` (the cluster's only scenable attribute)
-    /// mutates.
+    /// See [`OnOffHandler::with_scene_invalidator`] — same role, fired
+    /// when `CurrentLevel` mutates.
     scene_invalidator: Mutex<Cell<Option<&'a dyn SceneInvalidator>>>,
     state: Mutex<RefCell<LevelControlState>>,
     task_signal: Signal<Option<Task>>,
@@ -301,23 +294,17 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         }
     }
 
-    /// Attach a [`SceneInvalidator`] (typically the
-    /// [`crate::dm::clusters::scenes::ScenesState`] that backs the
-    /// Scenes Management cluster on the same endpoint). When set,
-    /// every successful mutation of `CurrentLevel` calls the
-    /// invalidator so the Scenes cluster can flip `SceneValid` to
-    /// false for any currently-recalled scene on this endpoint. No-op
-    /// when unset, so non-scenes deployments incur zero overhead.
+    /// Attach a [`SceneInvalidator`] — typically the
+    /// [`crate::dm::clusters::scenes::ScenesState`] backing Scenes
+    /// Management on the same endpoint — so command-driven
+    /// `CurrentLevel` mutations flip `SceneValid → false` for any
+    /// recalled scene. No-op when unset.
     pub fn with_scene_invalidator(self, invalidator: &'a dyn SceneInvalidator) -> Self {
         self.scene_invalidator
             .lock(|cell| cell.set(Some(invalidator)));
         self
     }
 
-    /// Internal: notify the wired [`SceneInvalidator`], if any, that
-    /// `CurrentLevel` just changed on this endpoint. Called from
-    /// `set_level` so every Move / Step / MoveTo / Stop command path
-    /// converges through a single notification site.
     fn notify_scenable_changed(&self) {
         if let Some(inv) = self.scene_invalidator.lock(|cell| cell.get()) {
             inv.scenable_attribute_changed(self.endpoint_id);
@@ -504,18 +491,9 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             false => Some(level),
         };
         self.hooks.set_current_level(current_level);
-        // Every Move / Step / MoveTo / Stop command path lands here,
-        // so `set_level` is the single notification point we need to
-        // hook for the Scenes cluster's `SceneValid` drift logic —
-        // EXCEPT when this mutation was queued by
-        // [`SceneClusterHandler::apply`]. In the scene-apply case the
-        // device is transitioning *toward* the recalled-scene state,
-        // so SceneValid must stay true throughout (including
-        // intermediate steps of a non-instant transition). The
-        // caller passes `scene_apply=true` to suppress drift
-        // notification on every step; the final step's
-        // `SceneValid=true` is then set by the Scenes handler's
-        // `remember_current` after `apply` returns.
+        // Scene-recall transitions move *toward* the recalled state,
+        // so they must not invalidate `SceneValid` on intermediate
+        // steps. Scenes restores the bit after `apply` returns.
         if !scene_apply {
             self.notify_scenable_changed();
         }
@@ -888,9 +866,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
 
         let t_time = transition_time.unwrap_or(0);
 
-        // `move_to_level_blocking` is only used by command-driven
-        // paths (MoveToLevel-with-blocking) — never by scene apply
-        // — so `scene_apply=false`.
+        // Command-driven only — never reached from scene apply.
         self.move_to_level_transition(ctx, with_on_off, level, t_time, false)
             .await?;
 
@@ -1891,18 +1867,9 @@ impl OnOffHooks for NoOnOff {
     }
 }
 
-/// Scenes Management integration for the LevelControl cluster.
-///
-/// Per Matter Application Cluster Spec §1.5, LevelControl exposes a
-/// single scene-able attribute (`CurrentLevel`, nullable u8) that is
-/// **read-only** at the attribute level. Scene apply therefore goes
-/// through the `MoveToLevel` path with the captured level + the
-/// scene's transition time (ms → deciseconds, saturating).
-///
-/// Implemented directly on [`LevelControlHandler`] — the same handler
-/// value the application keeps for the normal data-model chain
-/// doubles as the scenes-registry entry, via the blanket
-/// `impl<T: SceneClusterHandler + ?Sized> SceneClusterHandler for &T`.
+/// Scenes Management integration for the LevelControl cluster. The
+/// only scenable attribute is `CurrentLevel`; apply routes through
+/// `MoveToLevel` with the scene's transition time.
 impl<H, OH> SceneClusterHandler for LevelControlHandler<'_, H, OH>
 where
     H: LevelControlHooks,
@@ -1915,8 +1882,6 @@ where
     }
 
     fn is_scenable_attribute(attribute_id: AttrId) -> bool {
-        // Per Matter App Cluster spec, only `CurrentLevel` is the
-        // scenable attribute on LevelControl.
         attribute_id == AttributeId::CurrentLevel as AttrId
     }
 
@@ -1924,9 +1889,7 @@ where
         &self,
         avp_array: AttributeValuePairStructArrayBuilder<P>,
     ) -> Result<AttributeValuePairStructArrayBuilder<P>, Error> {
-        // `CurrentLevel` is `nullable int8u`. Null → skip the AVP
-        // entry; downstream apply has nothing to act on. Read
-        // directly from device-supplied state — no IM round-trip.
+        // `CurrentLevel` is nullable; null → skip the AVP entry.
         if let Some(level) = self.hooks.current_level() {
             avp_array.push_u8(AttributeId::CurrentLevel as _, level)
         } else {
@@ -1948,26 +1911,12 @@ where
             let Some(level) = avp.value_unsigned_8()? else {
                 continue;
             };
-            // Delegate to the same task-based pipeline that
-            // command-driven `MoveToLevel` uses, but with
-            // `scene_apply=true` threaded through. That flag
-            // suppresses `notify_scenable_changed` on every
-            // intermediate (and final) `set_level` call this
-            // transition triggers, so the Scenes cluster's
-            // `SceneValid` bookkeeping stays true throughout the
-            // recall — instant *or* smooth-fade — instead of being
-            // re-clobbered when the (asynchronous) transition task
-            // lands the final level after `recall_scene` had already
-            // called `remember_current`.
-            //
-            // `with_on_off = false` so this LC apply doesn't
-            // trigger OnOff coupling: the scene blob's own OnOff
-            // AVP (if any) lands OnOff independently via
-            // `OnOffHandler::apply`.
-            //
-            // `RecallScene.transitionTime` is `int32u` milliseconds;
-            // `MoveToLevel.transitionTime` is `int16u` deciseconds.
-            // Convert with saturation.
+            // Reuse the command-driven `MoveToLevel` pipeline with
+            // `scene_apply=true` (suppresses `SceneValid` drift on
+            // every step) and `with_on_off=false` (OnOff lands its own
+            // AVP via `OnOffHandler::apply`). RecallScene transition
+            // time is ms; MoveToLevel is deciseconds — convert with
+            // saturation.
             let transition_ds = (transition_time_ms / 100).min(u16::MAX as u32) as u16;
             return self.move_to_level(
                 false,

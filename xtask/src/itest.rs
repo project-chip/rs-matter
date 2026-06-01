@@ -481,33 +481,14 @@ pub(crate) const LIGHT_TESTS: &[&str] = &[
 ];
 
 /// Scenes Management YAML tests — run against the `scenes_tests` example.
-///
-/// Targets the Scenes Management cluster (`0x0062`) on EP1 of a
-/// dimmable-light-style endpoint with OnOff + LevelControl + Scenes wired
-/// together. The non-`Test_TC_S_*` entries are the chip-tool composite
-/// YAML suites (multi-fabric, fabric removal, max capacity, fabric scene
-/// info) which exercise less obvious end-to-end behaviour.
-///
-/// Listed tests are expected to pass; commented entries with a `TODO`
-/// are known-failing or not-yet-verified and tracked separately.
 pub(crate) const SCENES_TESTS: &[&str] = &[
-    // Attribute-read coverage (SceneTableSize, FabricSceneInfo).
     "Test_TC_S_2_1",
-    // `Test_TC_S_2_2` reboots the DUT in step 4 and expects scenes
-    // stored before the reboot to be re-applied by a `RecallScene`
-    // afterwards — covered by [`ScenesState::load_persist`].
     "Test_TC_S_2_2",
     "Test_TC_S_2_3",
     "Test_TC_S_2_4",
     "Test_TC_S_2_5",
     "Test_TC_S_2_6",
-    // Effect-on-receipt cross-cluster checks (RecallScene actually
-    // applies OnOff / LevelControl state via cross-cluster commands).
     "Test_TC_S_3_1",
-    // `TestScenesFabricSceneInfo` — drives the
-    // `SceneInvalidator` drift-detection path: scenable attribute
-    // mutations on OnOff / LevelControl flip `SceneValid → false` for
-    // any recalled scene on the affected endpoint.
     "TestScenesFabricSceneInfo",
     "TestScenesMultiFabric",
     "TestScenesFabricRemoval",
@@ -536,12 +517,7 @@ pub(crate) enum TestSuite {
     Camera,
     /// OnOff + LevelControl, exercising the dimmable_light example.
     Light,
-    /// Scenes Management (`0x0062`) — exercises Add/View/Remove/Store/
-    /// Recall/GetSceneMembership/CopyScene plus cross-cluster apply
-    /// (RecallScene actually invokes OnOff/LevelControl commands). Runs
-    /// against the `scenes_tests` example which wires Scenes onto EP1
-    /// of an OnOff+LevelControl device, with the per-cluster
-    /// `SceneClusterHandler` impls registered.
+    /// Scenes Management cluster — runs against the `scenes_tests` example.
     Scenes,
     /// **Inverted** suite — rs-matter as the **commissioner** driving
     /// upstream `chip-all-clusters-app` (the device under test). Builds
@@ -594,9 +570,6 @@ impl TestSuite {
     /// Cargo features the example binary must be built with for this suite.
     pub(crate) fn default_features(&self) -> &'static [&'static str] {
         match self {
-            // `scenes_tests` is a pure test binary (like
-            // `chip_tool_tests` / `camera_tests`) — no `chip-test`
-            // feature gate.
             Self::System | Self::SystemPython | Self::SystemYaml | Self::Camera | Self::Scenes => {
                 &[]
             }

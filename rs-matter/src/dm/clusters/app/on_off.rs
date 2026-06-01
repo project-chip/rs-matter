@@ -143,15 +143,8 @@ pub struct OnOffHandler<'a, H: OnOffHooks, LH: LevelControlHooks> {
     endpoint_id: EndptId,
     hooks: H,
     level_control_handler: Mutex<Cell<Option<&'a LevelControlHandler<'a, LH, H>>>>,
-    /// Optional notifier for the Scenes Management cluster's
-    /// `SceneValid` bookkeeping (see
-    /// [`crate::dm::clusters::scenes::SceneInvalidator`]). Set via
-    /// [`OnOffHandler::with_scene_invalidator`] when this device hosts
-    /// Scenes Management on the same endpoint. Every successful
-    /// command-driven mutation of `OnOff` (the cluster's only scenable
-    /// attribute) calls back into the invalidator so any
-    /// currently-recalled scene on this endpoint flips to
-    /// `SceneValid=false`.
+    /// Set via [`OnOffHandler::with_scene_invalidator`] when this
+    /// device hosts Scenes Management on the same endpoint.
     scene_invalidator: Mutex<Cell<Option<&'a dyn SceneInvalidator>>>,
     state: Mutex<RefCell<OnOffState>>,
     state_change_signal: Signal<Option<OnOffCommand>>,
@@ -302,22 +295,17 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         HandlerAsyncAdaptor(self)
     }
 
-    /// Attach a [`SceneInvalidator`] (typically the
-    /// [`crate::dm::clusters::scenes::ScenesState`] that backs the
-    /// Scenes Management cluster on the same endpoint). When set,
-    /// every successful mutation of the `OnOff` attribute calls the
-    /// invalidator so the Scenes cluster can flip `SceneValid` to
-    /// false for any currently-recalled scene on this endpoint. No-op
-    /// when unset, so non-scenes deployments incur zero overhead.
+    /// Attach a [`SceneInvalidator`] — typically the
+    /// [`crate::dm::clusters::scenes::ScenesState`] backing Scenes
+    /// Management on the same endpoint — so command-driven `OnOff`
+    /// mutations flip `SceneValid → false` for any recalled scene.
+    /// No-op when unset.
     pub fn with_scene_invalidator(self, invalidator: &'a dyn SceneInvalidator) -> Self {
         self.scene_invalidator
             .lock(|cell| cell.set(Some(invalidator)));
         self
     }
 
-    /// Internal: notify the wired [`SceneInvalidator`], if any, that
-    /// `OnOff` just changed on this endpoint. Called from every
-    /// command-driven `OnOff` mutation site.
     fn notify_scenable_changed(&self) {
         if let Some(inv) = self.scene_invalidator.lock(|cell| cell.get()) {
             inv.scenable_attribute_changed(self.endpoint_id);
@@ -363,10 +351,8 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         let lighting_attrs_updated = Self::update_attr_on(state);
 
         ctx.notify_attr_changed(self.endpoint_id, Self::CLUSTER.id, AttributeId::OnOff as _);
-        // Scene-recall-driven mutations transition the device
-        // *into* a known scene state, so they MUST NOT fire
-        // drift-detection — Scenes handles `SceneValid` via
-        // `remember_current` once the recall completes.
+        // Scene-recall mutations transition *into* the recalled state,
+        // so they must not trigger `SceneValid` drift-detection.
         if !scene_apply {
             self.notify_scenable_changed();
         }
@@ -1151,17 +1137,9 @@ impl LevelControlHooks for NoLevelControl {
     }
 }
 
-/// Scenes Management integration for the OnOff cluster.
-///
-/// Per Matter Application Cluster Spec §1.4 / §1.5, OnOff exposes a
-/// single scene-able attribute (`OnOff`, bool) that is **read-only**
-/// at the attribute level. Scene apply therefore goes through the
-/// `On` / `Off` commands rather than an attribute write.
-///
-/// Implemented directly on [`OnOffHandler`] — the same handler value
-/// the application keeps for the normal data-model chain doubles as
-/// the scenes-registry entry, via the blanket
-/// `impl<T: SceneClusterHandler + ?Sized> SceneClusterHandler for &T`.
+/// Scenes Management integration for the OnOff cluster. The only
+/// scenable attribute is `OnOff`; apply routes through `set_on` /
+/// `set_off` rather than an attribute write.
 impl<H, LH> SceneClusterHandler for OnOffHandler<'_, H, LH>
 where
     H: OnOffHooks,
@@ -1174,8 +1152,6 @@ where
     }
 
     fn is_scenable_attribute(attribute_id: AttrId) -> bool {
-        // Per Matter App Cluster spec, only `OnOff` (the cluster's
-        // namesake) is the scenable attribute.
         attribute_id == AttributeId::OnOff as AttrId
     }
 
@@ -1183,7 +1159,6 @@ where
         &self,
         avp_array: AttributeValuePairStructArrayBuilder<P>,
     ) -> Result<AttributeValuePairStructArrayBuilder<P>, Error> {
-        // Read directly from device-supplied state — no IM round-trip.
         let v = self.hooks.on_off();
         avp_array.push_u8(AttributeId::OnOff as _, v as u8)
     }
@@ -1202,40 +1177,14 @@ where
             let Some(value) = avp.value_unsigned_8()? else {
                 continue;
             };
-            // Per spec, OnOff doesn't honour a per-scene transition
-            // time (it's a discrete on/off transition). Mutate
-            // state *inline* via the same `set_on` / `set_off`
-            // helpers the command state-machine uses — not via the
-            // `state_change_signal` deferred path. The reason is
-            // sequencing with `SceneInvalidator`: `set_on` /
-            // `set_off` fire `notify_scenable_changed` synchronously,
-            // which flips `SceneValid → false` for the recalled
-            // scene. The Scenes handler then calls `remember_current`
-            // after `apply` returns and resets `SceneValid → true`.
-            // If we deferred via the signal, the invalidation would
-            // race AFTER `remember_current` and incorrectly clobber
-            // it (caught by `Test_TC_S_2_2`).
-            // `level_control_initiated=true` suppresses the
-            // OnOff → LC coupling (`coupled_on_off_cluster_on_off_state_change`).
-            // We don't want that coupling during scene recall because:
-            //   (a) the scene blob carries its own `CurrentLevel` AVP
-            //       which LevelControl's `apply` lands directly, so
-            //       any indirect LC mutation OnOff would queue is at
-            //       best redundant and at worst conflicts;
-            //   (b) the coupling is signal-based — the LC task
-            //       consumes `Task::OnOffStateChange` ASYNCHRONOUSLY
-            //       and ends up calling `set_level` long after
-            //       `recall_scene` returns. That `set_level` fires
-            //       `notify_scenable_changed`, flipping
-            //       `SceneValid → false` after `remember_current`
-            //       had restored it to `true` — observable as the
-            //       `Test_TC_S_2_2` post-RecallScene FabricSceneInfo
-            //       read returning the wrong `SceneValid`.
-            //
-            // The bool's name is "level_control_initiated" because
-            // its original intent is "called by LC, don't loop back
-            // to LC". Reusing it for the structurally-identical
-            // "called by Scenes" case is the cleanest available hook.
+            // OnOff scene apply is a discrete transition (no per-scene
+            // fade), so mutate inline via `set_on` / `set_off` rather
+            // than the deferred `state_change_signal` path — Scenes
+            // then calls `remember_current` to restore `SceneValid` in
+            // the same await. `level_control_initiated=true` suppresses
+            // OnOff↔LC coupling, since the scene blob carries its own
+            // `CurrentLevel` AVP that LevelControl applies directly;
+            // `scene_apply=true` suppresses drift-invalidation.
             self.with_state(|state| {
                 if value != 0 {
                     self.set_on(state, true, true, ctx);

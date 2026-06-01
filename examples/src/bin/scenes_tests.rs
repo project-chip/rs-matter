@@ -15,16 +15,9 @@
  *    limitations under the License.
  */
 
-//! An example Matter device that exercises the Scenes Management
-//! cluster (`0x0062`) alongside On/Off + LevelControl over Ethernet.
-//!
-//! Driven by the `xtask Scenes` suite (see `xtask::TestSuite::Scenes`),
-//! which runs the chip-tool `Test_TC_S_*` YAML certification tests
-//! against this binary. Structurally this is a clone of
-//! `dimmable_light` (same OnOff + LevelControl hooks + business
-//! logic), with the Scenes Management cluster added on EP1 and the
-//! per-cluster `SceneClusterHandler` impls registered with
-//! `ScenesHandler::new`.
+//! Example Matter device exercising the Scenes Management cluster
+//! alongside On/Off + LevelControl. Structurally a clone of
+//! `dimmable_light` with Scenes added on EP1.
 #![recursion_limit = "256"]
 #![allow(clippy::uninlined_format_args)]
 
@@ -98,16 +91,11 @@ static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
 static EVENTS: StaticCell<Events> = StaticCell::new();
 static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 
-/// Scene-table capacity for this example. `Test_TC_S_2_x` / `_3_1` and
-/// the spec-mandated minimum (16) both fit comfortably; bump if
-/// `TestScenesMaxCapacity` ever joins the suite.
 const SCENES_CAPACITY: usize = 16;
 static SCENES_STATE: StaticCell<ScenesState<SCENES_CAPACITY>> = StaticCell::new();
 
-// `UnitTesting` is wired on EP1 for the chip-tool `TestScenes*`
-// composite YAML suites — they use the cluster's `TestAddArguments`
-// command to do in-test arithmetic on attribute reads. Adds ~no
-// runtime cost when the suites aren't running.
+// UnitTesting on EP1 is needed by the `TestScenes*` YAML suites,
+// which use `TestAddArguments` for in-test arithmetic.
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
@@ -170,24 +158,13 @@ fn run() -> Result<(), Error> {
 
     let mut rand = crypto.rand()?;
 
-    // `ScenesState` must be live BEFORE the scenable cluster handlers
-    // are constructed: each handler's `with_scene_invalidator` builder
-    // wires a `&ScenesState` reference into the handler so any
-    // command-driven mutation of its scenable attributes (`OnOff`,
-    // `CurrentLevel`) flips `SceneValid` to false for the recalled
-    // scene on this endpoint (see `TestScenesFabricSceneInfo`
-    // step 25).
+    // `ScenesState` must outlive the scenable handlers — they hold a
+    // reference to it via `with_scene_invalidator`.
     let unit_testing_data = UNIT_TESTING_DATA
         .uninit()
         .init_with(RefCell::init(UnitTestingHandlerData::init()));
 
     let scenes_state = SCENES_STATE.uninit().init_with(ScenesState::init());
-    // Restore the scene table + per-fabric `CurrentScene` bookkeeping
-    // from KV — re-applies any scenes a previous run of this binary
-    // stored under `SCENES_KEY`. Must run before the data model goes
-    // live so `RecallScene` on the very first commission step (after
-    // a reboot in the middle of `Test_TC_S_2_2`) sees the persisted
-    // entries.
     futures_lite::future::block_on(scenes_state.load_persist(&mut kv, kv_buf))?;
 
     // OnOff cluster setup
@@ -213,11 +190,6 @@ fn run() -> Result<(), Error> {
     level_control_handler.init(Some(&on_off_handler));
 
     // Scenes Management cluster setup.
-    //
-    // `OnOffHandler` and `LevelControlHandler` implement
-    // `SceneClusterHandler` directly — the same `&handler` value the
-    // data-model chain uses doubles as the scenes-registry entry via
-    // the blanket `impl<T: SceneClusterHandler + ?Sized> SceneClusterHandler for &T`.
     let scenes_handler = ScenesHandler::new(
         Dataver::new_rand(&mut rand),
         scenes_state,
