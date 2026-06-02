@@ -173,92 +173,123 @@ where
     T: ColorControlHooks,
 {
     const CLUSTER: Cluster<'static> = T::CLUSTER;
+
     const COLOR_CAPABILITIES: ColorCapabilitiesBitmap = T::COLOR_CAPABILITIES;
+
     const COLOR_TEMP_PHYSICAL_MIN_MIREDS: u16 = T::COLOR_TEMP_PHYSICAL_MIN_MIREDS;
+
     const COLOR_TEMP_PHYSICAL_MAX_MIREDS: u16 = T::COLOR_TEMP_PHYSICAL_MAX_MIREDS;
+
     const COUPLE_COLOR_TEMP_TO_LEVEL_MIN_MIREDS: u16 = T::COUPLE_COLOR_TEMP_TO_LEVEL_MIN_MIREDS;
 
     fn enhanced_current_hue(&self) -> u16 {
         (*self).enhanced_current_hue()
     }
+
     fn set_enhanced_current_hue(&self, value: u16) {
         (*self).set_enhanced_current_hue(value)
     }
+
     fn current_saturation(&self) -> u8 {
         (*self).current_saturation()
     }
+
     fn set_current_saturation(&self, value: u8) {
         (*self).set_current_saturation(value)
     }
+
     fn current_x(&self) -> u16 {
         (*self).current_x()
     }
+
     fn set_current_x(&self, value: u16) {
         (*self).set_current_x(value)
     }
+
     fn current_y(&self) -> u16 {
         (*self).current_y()
     }
+
     fn set_current_y(&self, value: u16) {
         (*self).set_current_y(value)
     }
+
     fn color_temperature_mireds(&self) -> u16 {
         (*self).color_temperature_mireds()
     }
+
     fn set_color_temperature_mireds(&self, value: u16) {
         (*self).set_color_temperature_mireds(value)
     }
+
     fn color_mode(&self) -> ColorModeEnum {
         (*self).color_mode()
     }
+
     fn set_color_mode(&self, value: ColorModeEnum) {
         (*self).set_color_mode(value)
     }
+
     fn enhanced_color_mode(&self) -> EnhancedColorModeEnum {
         (*self).enhanced_color_mode()
     }
+
     fn set_enhanced_color_mode(&self, value: EnhancedColorModeEnum) {
         (*self).set_enhanced_color_mode(value)
     }
+
     fn color_loop_active(&self) -> bool {
         (*self).color_loop_active()
     }
+
     fn set_color_loop_active(&self, value: bool) {
         (*self).set_color_loop_active(value)
     }
+
     fn color_loop_direction(&self) -> ColorLoopDirectionEnum {
         (*self).color_loop_direction()
     }
+
     fn set_color_loop_direction(&self, value: ColorLoopDirectionEnum) {
         (*self).set_color_loop_direction(value)
     }
+
     fn color_loop_time(&self) -> u16 {
         (*self).color_loop_time()
     }
+
     fn set_color_loop_time(&self, value: u16) {
         (*self).set_color_loop_time(value)
     }
+
     fn color_loop_start_enhanced_hue(&self) -> u16 {
         (*self).color_loop_start_enhanced_hue()
     }
+
     fn set_color_loop_start_enhanced_hue(&self, value: u16) {
         (*self).set_color_loop_start_enhanced_hue(value)
     }
+
     fn color_loop_stored_enhanced_hue(&self) -> u16 {
         (*self).color_loop_stored_enhanced_hue()
     }
+
     fn set_color_loop_stored_enhanced_hue(&self, value: u16) {
         (*self).set_color_loop_stored_enhanced_hue(value)
     }
+
     fn start_up_color_temperature_mireds(&self) -> Result<Nullable<u16>, Error> {
         (*self).start_up_color_temperature_mireds()
     }
+
     fn set_start_up_color_temperature_mireds(&self, value: Nullable<u16>) -> Result<(), Error> {
         (*self).set_start_up_color_temperature_mireds(value)
     }
+
     fn set_device_xy(&self, x: u16, y: u16) -> Result<(u16, u16), ()> {
         (*self).set_device_xy(x, y)
     }
+
     fn set_device_hue_saturation(
         &self,
         enhanced_hue: u16,
@@ -266,9 +297,11 @@ where
     ) -> Result<(u16, u8), ()> {
         (*self).set_device_hue_saturation(enhanced_hue, saturation)
     }
+
     fn set_device_color_temperature_mireds(&self, mireds: u16) -> Result<u16, ()> {
         (*self).set_device_color_temperature_mireds(mireds)
     }
+
     fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) -> impl Future<Output = ()> {
         (*self).run(notify)
     }
@@ -362,7 +395,7 @@ struct ColorControlState {
 }
 
 impl ColorControlState {
-    fn new(defaults: AttributeDefaults) -> Self {
+    const fn new(defaults: AttributeDefaults) -> Self {
         Self {
             options: defaults.options,
             remaining_time: 0,
@@ -433,7 +466,7 @@ impl<H: ColorControlHooks> ColorControlHandler<'_, H, NoOnOff, NoLevelControl> {
 impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
     ColorControlHandler<'a, H, OH, LH>
 {
-    fn new_internal(
+    const fn new_internal(
         dataver: Dataver,
         endpoint_id: EndptId,
         hooks: H,
@@ -453,7 +486,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
     /// Construct a handler without driving `init` (no validation, no
     /// startup behaviour). Useful for unit tests and for the
     /// scenes-integration-only skeleton path.
-    pub fn new(
+    pub const fn new(
         dataver: Dataver,
         endpoint_id: EndptId,
         hooks: H,
@@ -712,7 +745,9 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             .set_color_mode(ColorModeEnum::CurrentXAndCurrentY);
         self.hooks
             .set_enhanced_color_mode(EnhancedColorModeEnum::CurrentXAndCurrentY);
+
         let cluster_id = <Self as SceneClusterHandler>::CLUSTER_ID;
+
         ctx.notify_attr_changed(self.endpoint_id, cluster_id, AttributeId::CurrentX as _);
         ctx.notify_attr_changed(self.endpoint_id, cluster_id, AttributeId::CurrentY as _);
         ctx.notify_attr_changed(self.endpoint_id, cluster_id, AttributeId::ColorMode as _);
@@ -721,6 +756,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             cluster_id,
             AttributeId::EnhancedColorMode as _,
         );
+
         if !scene_apply {
             self.notify_scenable_changed();
         }
@@ -738,7 +774,9 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             .set_color_mode(ColorModeEnum::ColorTemperatureMireds);
         self.hooks
             .set_enhanced_color_mode(EnhancedColorModeEnum::ColorTemperatureMireds);
+
         let cluster_id = <Self as SceneClusterHandler>::CLUSTER_ID;
+
         ctx.notify_attr_changed(
             self.endpoint_id,
             cluster_id,
@@ -750,6 +788,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             cluster_id,
             AttributeId::EnhancedColorMode as _,
         );
+
         if !scene_apply {
             self.notify_scenable_changed();
         }
@@ -770,7 +809,9 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             .set_color_mode(ColorModeEnum::CurrentHueAndCurrentSaturation);
         self.hooks
             .set_enhanced_color_mode(EnhancedColorModeEnum::CurrentHueAndCurrentSaturation);
+
         let cluster_id = <Self as SceneClusterHandler>::CLUSTER_ID;
+
         ctx.notify_attr_changed(
             self.endpoint_id,
             cluster_id,
@@ -787,6 +828,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             cluster_id,
             AttributeId::EnhancedColorMode as _,
         );
+
         if !scene_apply {
             self.notify_scenable_changed();
         }
@@ -807,7 +849,9 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             .set_color_mode(ColorModeEnum::CurrentHueAndCurrentSaturation);
         self.hooks
             .set_enhanced_color_mode(EnhancedColorModeEnum::EnhancedCurrentHueAndCurrentSaturation);
+
         let cluster_id = <Self as SceneClusterHandler>::CLUSTER_ID;
+
         ctx.notify_attr_changed(
             self.endpoint_id,
             cluster_id,
@@ -824,6 +868,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             cluster_id,
             AttributeId::EnhancedColorMode as _,
         );
+
         if !scene_apply {
             self.notify_scenable_changed();
         }
@@ -841,7 +886,9 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         self.hooks.set_color_loop_active(true);
         self.hooks.set_color_loop_direction(direction);
         self.hooks.set_color_loop_time(time);
+
         let cluster_id = <Self as SceneClusterHandler>::CLUSTER_ID;
+
         ctx.notify_attr_changed(
             self.endpoint_id,
             cluster_id,
@@ -857,6 +904,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             cluster_id,
             AttributeId::ColorLoopTime as _,
         );
+
         if !scene_apply {
             self.notify_scenable_changed();
         }
@@ -882,9 +930,11 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         let Some(on_off_handler) = self.on_off_handler.lock(|h| h.get()) else {
             return true;
         };
+
         if on_off_handler.on_off() {
             return true;
         }
+
         // OptionsMask bit set → consult OptionsOverride; else consult Options attribute.
         if options_mask.contains(OptionsBitmap::EXECUTE_IF_OFF) {
             options_override.contains(OptionsBitmap::EXECUTE_IF_OFF)
@@ -902,6 +952,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         let tgt = target as i32;
         let up_distance = ((tgt - cur).rem_euclid(0x10000)) as u32; // 0..65535
         let down_distance = ((cur - tgt).rem_euclid(0x10000)) as u32;
+
         match direction {
             DirectionEnum::Up => up_distance as i32,
             DirectionEnum::Down => -(down_distance as i32),
@@ -936,6 +987,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if prev_eh == new_eh && !is_end_of_transition {
             return;
         }
+
         self.hooks.set_enhanced_current_hue(new_eh);
         self.hooks
             .set_color_mode(ColorModeEnum::CurrentHueAndCurrentSaturation);
@@ -956,8 +1008,10 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 false
             }
         });
+
         if should_notify {
             let cluster_id = Self::cluster_id();
+
             ctx.notify_attr_changed(self.endpoint_id, cluster_id, AttributeId::CurrentHue as _);
             if is_enhanced {
                 ctx.notify_attr_changed(
@@ -973,6 +1027,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 AttributeId::EnhancedColorMode as _,
             );
         }
+
         self.notify_scenable_changed();
     }
 
@@ -987,9 +1042,11 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if prev == new_sat && !is_end_of_transition {
             return;
         }
+
         self.hooks.set_current_saturation(new_sat);
         self.hooks
             .set_color_mode(ColorModeEnum::CurrentHueAndCurrentSaturation);
+
         // EnhancedColorMode: keep enhanced variant if already enhanced.
         let current_emode = self.hooks.enhanced_color_mode();
         if !matches!(
@@ -1000,6 +1057,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             self.hooks
                 .set_enhanced_color_mode(EnhancedColorModeEnum::CurrentHueAndCurrentSaturation);
         }
+
         let should_notify = self.with_state(|s| {
             let now = Instant::now();
             let elapsed = now - s.last_saturation_notification;
@@ -1010,8 +1068,10 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 false
             }
         });
+
         if should_notify {
             let cluster_id = Self::cluster_id();
+
             ctx.notify_attr_changed(
                 self.endpoint_id,
                 cluster_id,
@@ -1024,6 +1084,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 AttributeId::EnhancedColorMode as _,
             );
         }
+
         self.notify_scenable_changed();
     }
 
@@ -1032,6 +1093,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
     fn drive_device_hue_saturation(&self) {
         let eh = self.hooks.enhanced_current_hue();
         let sat = self.hooks.current_saturation();
+
         if let Err(()) = self.hooks.set_device_hue_saturation(eh, sat) {
             warn!("set_device_hue_saturation failed");
         }
@@ -1060,6 +1122,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         // Initial RemainingTime (deciseconds).
         let total = Duration::from_millis(transition_ms as u64);
         let start_time = Instant::now();
+
         if self.with_state(|s| s.write_remaining_time_quietly(total, true)) {
             ctx.notify_attr_changed(
                 self.endpoint_id,
@@ -1074,10 +1137,13 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             if hue_delta.is_some() {
                 self.set_hue(ctx, final_eh, true, is_enhanced);
             }
+
             if let Some(t) = target_saturation {
                 self.set_saturation(ctx, t, true);
             }
+
             self.drive_device_hue_saturation();
+
             let notify_rt = self
                 .with_state(|s| s.write_remaining_time_quietly(Duration::from_millis(0), false));
             if notify_rt {
@@ -1087,6 +1153,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                     AttributeId::RemainingTime as _,
                 );
             }
+
             return Ok(());
         }
 
@@ -1101,12 +1168,14 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 let cur_eh = if is_end { final_eh } else { new_eh };
                 self.set_hue(ctx, cur_eh, is_end, is_enhanced);
             }
+
             if let Some(t) = target_saturation {
                 let delta_now = ((sat_delta_total as i64) * progress_milli as i64 / 1000) as i32;
                 let new_sat = (start_sat as i32 + delta_now).clamp(0, SATURATION_MAX as i32) as u8;
                 let final_sat = if is_end { t } else { new_sat };
                 self.set_saturation(ctx, final_sat, is_end);
             }
+
             self.drive_device_hue_saturation();
 
             // Update RemainingTime.
@@ -1115,6 +1184,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             } else {
                 Duration::from_millis(transition_ms as u64 - elapsed_ms)
             };
+
             let notify_rt = self.with_state(|s| s.write_remaining_time_quietly(remaining, false));
             if notify_rt {
                 ctx.notify_attr_changed(
@@ -1127,12 +1197,14 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             if is_end {
                 return Ok(());
             }
+
             // Sleep at most until the transition's end so the final
             // tick fires at `transition_ms` exactly. Without this cap
             // the loop would overshoot by up to `TRANSITION_TICK` and
             // a read that lands during the slop sees a pre-final value.
             let remaining_ms = (transition_ms as u64).saturating_sub(elapsed_ms);
             let wait = TRANSITION_TICK.min(Duration::from_millis(remaining_ms));
+
             Timer::after(wait).await;
         }
     }
@@ -1150,6 +1222,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if rate_enhanced_per_sec == 0 {
             return Ok(());
         }
+
         // Position is derived from elapsed time (rather than
         // accumulating per-tick deltas) so the effective rate matches
         // the requested `rate_per_sec` regardless of tick granularity.
@@ -1160,12 +1233,15 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             MoveModeEnum::Down => -(rate_enhanced_per_sec as i64),
             _ => return Ok(()),
         };
+
         loop {
             let elapsed_ms = (Instant::now() - start_time).as_millis() as i64;
             let delta = signed_rate * elapsed_ms / 1000;
             let new_eh = ((start_eh as i64 + delta).rem_euclid(0x10000)) as u16;
+
             self.set_hue(ctx, new_eh, false, is_enhanced);
             self.drive_device_hue_saturation();
+
             Timer::after(TRANSITION_TICK).await;
         }
     }
@@ -1181,6 +1257,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if rate_per_sec == 0 {
             return Ok(());
         }
+
         let start_sat = self.hooks.current_saturation();
         let start_time = Instant::now();
         let signed_rate: i64 = match direction {
@@ -1188,17 +1265,21 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             MoveModeEnum::Down => -(rate_per_sec as i64),
             _ => return Ok(()),
         };
+
         loop {
             let elapsed_ms = (Instant::now() - start_time).as_millis() as i64;
             let delta = signed_rate * elapsed_ms / 1000;
             let new_sat = (start_sat as i64 + delta).clamp(0, SATURATION_MAX as i64) as u8;
             let is_end =
                 (signed_rate > 0 && new_sat == SATURATION_MAX) || (signed_rate < 0 && new_sat == 0);
+
             self.set_saturation(ctx, new_sat, is_end);
             self.drive_device_hue_saturation();
+
             if is_end {
                 return Ok(());
             }
+
             Timer::after(TRANSITION_TICK).await;
         }
     }
@@ -1214,18 +1295,22 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
     ) {
         let prev_x = self.hooks.current_x();
         let prev_y = self.hooks.current_y();
+
         if prev_x == new_x && prev_y == new_y && !is_end_of_transition {
             return;
         }
+
         self.hooks.set_current_x(new_x);
         self.hooks.set_current_y(new_y);
         self.hooks
             .set_color_mode(ColorModeEnum::CurrentXAndCurrentY);
         self.hooks
             .set_enhanced_color_mode(EnhancedColorModeEnum::CurrentXAndCurrentY);
+
         let should_notify = self.with_state(|s| {
             let now = Instant::now();
             let elapsed = now - s.last_xy_notification;
+
             if is_end_of_transition || elapsed >= Duration::from_secs(1) {
                 s.last_xy_notification = now;
                 true
@@ -1233,8 +1318,10 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 false
             }
         });
+
         if should_notify {
             let cluster_id = Self::cluster_id();
+
             ctx.notify_attr_changed(self.endpoint_id, cluster_id, AttributeId::CurrentX as _);
             ctx.notify_attr_changed(self.endpoint_id, cluster_id, AttributeId::CurrentY as _);
             ctx.notify_attr_changed(self.endpoint_id, cluster_id, AttributeId::ColorMode as _);
@@ -1244,6 +1331,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 AttributeId::EnhancedColorMode as _,
             );
         }
+
         self.notify_scenable_changed();
     }
 
@@ -1251,6 +1339,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
     fn drive_device_xy(&self) {
         let x = self.hooks.current_x();
         let y = self.hooks.current_y();
+
         if let Err(()) = self.hooks.set_device_xy(x, y) {
             warn!("set_device_xy failed");
         }
@@ -1265,14 +1354,17 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         is_end_of_transition: bool,
     ) {
         let prev = self.hooks.color_temperature_mireds();
+
         if prev == new_mireds && !is_end_of_transition {
             return;
         }
+
         self.hooks.set_color_temperature_mireds(new_mireds);
         self.hooks
             .set_color_mode(ColorModeEnum::ColorTemperatureMireds);
         self.hooks
             .set_enhanced_color_mode(EnhancedColorModeEnum::ColorTemperatureMireds);
+
         let should_notify = self.with_state(|s| {
             let now = Instant::now();
             let elapsed = now - s.last_color_temperature_notification;
@@ -1283,8 +1375,10 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 false
             }
         });
+
         if should_notify {
             let cluster_id = Self::cluster_id();
+
             ctx.notify_attr_changed(
                 self.endpoint_id,
                 cluster_id,
@@ -1297,12 +1391,14 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 AttributeId::EnhancedColorMode as _,
             );
         }
+
         self.notify_scenable_changed();
     }
 
     /// Drive the device with the latest colour-temperature value.
     fn drive_device_color_temperature(&self) {
         let mireds = self.hooks.color_temperature_mireds();
+
         if let Err(()) = self.hooks.set_device_color_temperature_mireds(mireds) {
             warn!("set_device_color_temperature_mireds failed");
         }
@@ -1323,6 +1419,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
 
         let total = Duration::from_millis(transition_ms as u64);
         let start_time = Instant::now();
+
         if self.with_state(|s| s.write_remaining_time_quietly(total, true)) {
             ctx.notify_attr_changed(
                 self.endpoint_id,
@@ -1333,7 +1430,9 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
 
         if transition_ms == 0 || (dx == 0 && dy == 0) {
             self.set_xy(ctx, target_x, target_y, true);
+
             self.drive_device_xy();
+
             let notify_rt = self
                 .with_state(|s| s.write_remaining_time_quietly(Duration::from_millis(0), false));
             if notify_rt {
@@ -1343,6 +1442,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                     AttributeId::RemainingTime as _,
                 );
             }
+
             return Ok(());
         }
 
@@ -1350,25 +1450,31 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             let elapsed_ms = (Instant::now() - start_time).as_millis() as u64;
             let progress = (elapsed_ms.saturating_mul(1000) / transition_ms as u64).min(1000);
             let is_end = progress >= 1000;
+
             let cur_x = if is_end {
                 target_x
             } else {
                 (start_x + (dx as i64 * progress as i64 / 1000) as i32).clamp(0, XY_MAX as i32)
                     as u16
             };
+
             let cur_y = if is_end {
                 target_y
             } else {
                 (start_y + (dy as i64 * progress as i64 / 1000) as i32).clamp(0, XY_MAX as i32)
                     as u16
             };
+
             self.set_xy(ctx, cur_x, cur_y, is_end);
+
             self.drive_device_xy();
+
             let remaining = if is_end {
                 Duration::from_millis(0)
             } else {
                 Duration::from_millis(transition_ms as u64 - elapsed_ms)
             };
+
             let notify_rt = self.with_state(|s| s.write_remaining_time_quietly(remaining, false));
             if notify_rt {
                 ctx.notify_attr_changed(
@@ -1377,11 +1483,14 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                     AttributeId::RemainingTime as _,
                 );
             }
+
             if is_end {
                 return Ok(());
             }
+
             let remaining_ms = (transition_ms as u64).saturating_sub(elapsed_ms);
             let wait = TRANSITION_TICK.min(Duration::from_millis(remaining_ms));
+
             Timer::after(wait).await;
         }
     }
@@ -1397,25 +1506,36 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if rate_x == 0 && rate_y == 0 {
             return Ok(());
         }
+
         let start_x = self.hooks.current_x() as i64;
         let start_y = self.hooks.current_y() as i64;
         let start_time = Instant::now();
+
         loop {
             let elapsed_ms = (Instant::now() - start_time).as_millis() as i64;
+
             let delta_x = rate_x as i64 * elapsed_ms / 1000;
             let delta_y = rate_y as i64 * elapsed_ms / 1000;
+
             let new_x = (start_x + delta_x).clamp(0, XY_MAX as i64) as u16;
             let new_y = (start_y + delta_y).clamp(0, XY_MAX as i64) as u16;
+
             let x_pinned = (rate_x > 0 && new_x == XY_MAX) || (rate_x < 0 && new_x == 0);
             let y_pinned = (rate_y > 0 && new_y == XY_MAX) || (rate_y < 0 && new_y == 0);
+
             let x_done = rate_x == 0 || x_pinned;
             let y_done = rate_y == 0 || y_pinned;
+
             let is_end = x_done && y_done;
+
             self.set_xy(ctx, new_x, new_y, is_end);
+
             self.drive_device_xy();
+
             if is_end {
                 return Ok(());
             }
+
             Timer::after(TRANSITION_TICK).await;
         }
     }
@@ -1431,11 +1551,13 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             H::COLOR_TEMP_PHYSICAL_MIN_MIREDS,
             H::COLOR_TEMP_PHYSICAL_MAX_MIREDS,
         );
+
         let start = self.hooks.color_temperature_mireds() as i32;
         let delta = target as i32 - start;
 
         let total = Duration::from_millis(transition_ms as u64);
         let start_time = Instant::now();
+
         if self.with_state(|s| s.write_remaining_time_quietly(total, true)) {
             ctx.notify_attr_changed(
                 self.endpoint_id,
@@ -1447,6 +1569,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if transition_ms == 0 || delta == 0 {
             self.set_color_temperature(ctx, target, true);
             self.drive_device_color_temperature();
+
             let notify_rt = self
                 .with_state(|s| s.write_remaining_time_quietly(Duration::from_millis(0), false));
             if notify_rt {
@@ -1456,6 +1579,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                     AttributeId::RemainingTime as _,
                 );
             }
+
             return Ok(());
         }
 
@@ -1463,6 +1587,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             let elapsed_ms = (Instant::now() - start_time).as_millis() as u64;
             let progress = (elapsed_ms.saturating_mul(1000) / transition_ms as u64).min(1000);
             let is_end = progress >= 1000;
+
             let value = if is_end {
                 target
             } else {
@@ -1471,13 +1596,16 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                     H::COLOR_TEMP_PHYSICAL_MAX_MIREDS as i32,
                 ) as u16
             };
+
             self.set_color_temperature(ctx, value, is_end);
             self.drive_device_color_temperature();
+
             let remaining = if is_end {
                 Duration::from_millis(0)
             } else {
                 Duration::from_millis(transition_ms as u64 - elapsed_ms)
             };
+
             let notify_rt = self.with_state(|s| s.write_remaining_time_quietly(remaining, false));
             if notify_rt {
                 ctx.notify_attr_changed(
@@ -1486,11 +1614,14 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                     AttributeId::RemainingTime as _,
                 );
             }
+
             if is_end {
                 return Ok(());
             }
+
             let remaining_ms = (transition_ms as u64).saturating_sub(elapsed_ms);
             let wait = TRANSITION_TICK.min(Duration::from_millis(remaining_ms));
+
             Timer::after(wait).await;
         }
     }
@@ -1508,24 +1639,31 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if rate_per_sec == 0 {
             return Ok(());
         }
+
         let lo = min_mireds.max(H::COLOR_TEMP_PHYSICAL_MIN_MIREDS);
         let hi = max_mireds.min(H::COLOR_TEMP_PHYSICAL_MAX_MIREDS);
+
         if lo >= hi {
             return Ok(());
         }
+
         let start_mireds = self.hooks.color_temperature_mireds() as i64;
         let start_time = Instant::now();
+
         loop {
             let elapsed_ms = (Instant::now() - start_time).as_millis() as i64;
             let delta = rate_per_sec as i64 * elapsed_ms / 1000;
             let new_mireds = (start_mireds + delta).clamp(lo as i64, hi as i64) as u16;
             let pinned =
                 (rate_per_sec > 0 && new_mireds == hi) || (rate_per_sec < 0 && new_mireds == lo);
+
             self.set_color_temperature(ctx, new_mireds, pinned);
             self.drive_device_color_temperature();
+
             if pinned {
                 return Ok(());
             }
+
             Timer::after(TRANSITION_TICK).await;
         }
     }
@@ -1551,19 +1689,24 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
 
         let time_secs = if time_secs == 0 { 25 } else { time_secs };
         let total_ms = time_secs as u64 * 1000;
+
         let start_eh = self.hooks.enhanced_current_hue();
         let start_time = Instant::now();
+
         let signed_rate: i64 = match direction {
             ColorLoopDirectionEnum::Increment => 0x10000,
             ColorLoopDirectionEnum::Decrement => -0x10000,
         };
+
         loop {
             let elapsed_ms = (Instant::now() - start_time).as_millis() as u64;
             let raw_delta = signed_rate * elapsed_ms as i64 / total_ms as i64;
+
             // Snap to the nearest revolution boundary when within
             // SNAP_HUE_UNITS of it (either side).
             let abs = raw_delta.unsigned_abs() as i64;
             let rem_mod = abs % 0x10000;
+
             let snapped_delta = if rem_mod >= 0x10000 - SNAP_HUE_UNITS {
                 raw_delta + signed_rate.signum() * (0x10000 - rem_mod)
             } else if rem_mod <= SNAP_HUE_UNITS && abs >= 0x10000 {
@@ -1571,7 +1714,9 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             } else {
                 raw_delta
             };
+
             let new_eh = ((start_eh as i64 + snapped_delta).rem_euclid(0x10000)) as u16;
+
             self.set_hue(ctx, new_eh, false, true);
             self.drive_device_hue_saturation();
 
@@ -1581,6 +1726,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             let next_boundary_ms = (revs + 1) * total_ms;
             let to_boundary = next_boundary_ms.saturating_sub(elapsed_ms);
             let wait = TRANSITION_TICK.min(Duration::from_millis(to_boundary));
+
             Timer::after(wait).await;
         }
     }
@@ -1716,18 +1862,22 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if hue > HUE_U8_MAX {
             return Err(ErrorCode::ConstraintError.into());
         }
+
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
+
         let current_eh = self.hooks.enhanced_current_hue();
         let target_eh = (hue as u16) << 8;
         let delta = Self::hue_path_delta(current_eh, target_eh, direction);
+
         self.task_signal.signal(Task::HueSaturationMoveTo {
             hue_delta: Some(delta),
             target_saturation: None,
             transition_ms: transition_time_ds as u32 * 100,
             is_enhanced: false,
         });
+
         Ok(())
     }
 
@@ -1742,14 +1892,17 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
+
         let current_eh = self.hooks.enhanced_current_hue();
         let delta = Self::hue_path_delta(current_eh, enhanced_hue, direction);
+
         self.task_signal.signal(Task::HueSaturationMoveTo {
             hue_delta: Some(delta),
             target_saturation: None,
             transition_ms: transition_time_ds as u32 * 100,
             is_enhanced: true,
         });
+
         Ok(())
     }
 
@@ -1765,12 +1918,15 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             self.task_signal.signal(Task::Stop);
             return Ok(());
         }
+
         if rate == 0 {
             return Err(ErrorCode::InvalidCommand.into());
         }
+
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
+
         // For the non-enhanced command, `rate` is in u8 hue units/sec
         // — multiply by 256 to land in enhanced units/sec.
         let rate_eh_per_sec = if is_enhanced {
@@ -1778,11 +1934,13 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         } else {
             (rate as u32) * 256
         };
+
         self.task_signal.signal(Task::HueMove {
             direction: move_mode,
             rate_enhanced_per_sec: rate_eh_per_sec,
             is_enhanced,
         });
+
         Ok(())
     }
 
@@ -1797,17 +1955,21 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             self.task_signal.signal(Task::Stop);
             return Ok(());
         }
+
         if rate == 0 {
             return Err(ErrorCode::InvalidCommand.into());
         }
+
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
+
         self.task_signal.signal(Task::HueMove {
             direction: move_mode,
             rate_enhanced_per_sec: rate as u32,
             is_enhanced: true,
         });
+
         Ok(())
     }
 
@@ -1822,20 +1984,25 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if step_size == 0 {
             return Err(ErrorCode::InvalidCommand.into());
         }
+
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
+
         let _ = self.hooks.enhanced_current_hue();
+
         let signed_step: i32 = match step_mode {
             StepModeEnum::Up => (step_size as i32) << 8,
             StepModeEnum::Down => -((step_size as i32) << 8),
         };
+
         self.task_signal.signal(Task::HueSaturationMoveTo {
             hue_delta: Some(signed_step),
             target_saturation: None,
             transition_ms: transition_time_ds as u32 * 100,
             is_enhanced: false,
         });
+
         Ok(())
     }
 
@@ -1850,19 +2017,23 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if step_size == 0 {
             return Err(ErrorCode::InvalidCommand.into());
         }
+
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
+
         let signed_step: i32 = match step_mode {
             StepModeEnum::Up => step_size as i32,
             StepModeEnum::Down => -(step_size as i32),
         };
+
         self.task_signal.signal(Task::HueSaturationMoveTo {
             hue_delta: Some(signed_step),
             target_saturation: None,
             transition_ms: transition_time_ds as u32 * 100,
             is_enhanced: true,
         });
+
         Ok(())
     }
 
@@ -1876,15 +2047,18 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if saturation > SATURATION_MAX {
             return Err(ErrorCode::ConstraintError.into());
         }
+
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
+
         self.task_signal.signal(Task::HueSaturationMoveTo {
             hue_delta: None,
             target_saturation: Some(saturation),
             transition_ms: transition_time_ds as u32 * 100,
             is_enhanced: false,
         });
+
         Ok(())
     }
 
@@ -1899,16 +2073,20 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             self.task_signal.signal(Task::Stop);
             return Ok(());
         }
+
         if rate == 0 {
             return Err(ErrorCode::InvalidCommand.into());
         }
+
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
+
         self.task_signal.signal(Task::SaturationMove {
             direction: move_mode,
             rate_per_sec: rate as u32,
         });
+
         Ok(())
     }
 
@@ -1923,20 +2101,24 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if step_size == 0 {
             return Err(ErrorCode::InvalidCommand.into());
         }
+
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
+
         let current = self.hooks.current_saturation();
         let new_sat = match step_mode {
             StepModeEnum::Up => current.saturating_add(step_size).min(SATURATION_MAX),
             StepModeEnum::Down => current.saturating_sub(step_size),
         };
+
         self.task_signal.signal(Task::HueSaturationMoveTo {
             hue_delta: None,
             target_saturation: Some(new_sat),
             transition_ms: transition_time_ds as u32 * 100,
             is_enhanced: false,
         });
+
         Ok(())
     }
 
@@ -1953,23 +2135,28 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if (!is_enhanced && hue > HUE_U8_MAX) || saturation > SATURATION_MAX {
             return Err(ErrorCode::ConstraintError.into());
         }
+
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
+
         // MoveToHueAndSaturation uses Shortest direction implicitly.
         let target_eh = if is_enhanced {
             enhanced_hue
         } else {
             (hue as u16) << 8
         };
+
         let current_eh = self.hooks.enhanced_current_hue();
         let delta = Self::hue_path_delta(current_eh, target_eh, DirectionEnum::Shortest);
+
         self.task_signal.signal(Task::HueSaturationMoveTo {
             hue_delta: Some(delta),
             target_saturation: Some(saturation),
             transition_ms: transition_time_ds as u32 * 100,
             is_enhanced,
         });
+
         Ok(())
     }
 
@@ -1981,7 +2168,9 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
+
         self.task_signal.signal(Task::Stop);
+
         Ok(())
     }
 
@@ -1996,14 +2185,17 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if color_x > XY_MAX || color_y > XY_MAX {
             return Err(ErrorCode::ConstraintError.into());
         }
+
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
+
         self.task_signal.signal(Task::XyMoveTo {
             target_x: color_x,
             target_y: color_y,
             transition_ms: transition_time_ds as u32 * 100,
         });
+
         Ok(())
     }
 
@@ -2019,13 +2211,16 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             self.task_signal.signal(Task::Stop);
             return Ok(());
         }
+
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
+
         self.task_signal.signal(Task::XyMove {
             rate_x_per_sec: rate_x as i32,
             rate_y_per_sec: rate_y as i32,
         });
+
         Ok(())
     }
 
@@ -2041,18 +2236,23 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if step_x == 0 && step_y == 0 {
             return Err(ErrorCode::InvalidCommand.into());
         }
+
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
+
         let cur_x = self.hooks.current_x() as i32;
         let cur_y = self.hooks.current_y() as i32;
+
         let target_x = (cur_x + step_x as i32).clamp(0, XY_MAX as i32) as u16;
         let target_y = (cur_y + step_y as i32).clamp(0, XY_MAX as i32) as u16;
+
         self.task_signal.signal(Task::XyMoveTo {
             target_x,
             target_y,
             transition_ms: transition_time_ds as u32 * 100,
         });
+
         Ok(())
     }
 
@@ -2068,17 +2268,21 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if mireds == 0 {
             return Err(ErrorCode::ConstraintError.into());
         }
+
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
+
         let clamped = mireds.clamp(
             H::COLOR_TEMP_PHYSICAL_MIN_MIREDS,
             H::COLOR_TEMP_PHYSICAL_MAX_MIREDS,
         );
+
         self.task_signal.signal(Task::ColorTemperatureMoveTo {
             target_mireds: clamped,
             transition_ms: transition_time_ds as u32 * 100,
         });
+
         Ok(())
     }
 
@@ -2095,17 +2299,21 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
             self.task_signal.signal(Task::Stop);
             return Ok(());
         }
+
         if rate == 0 {
             return Err(ErrorCode::InvalidCommand.into());
         }
+
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
+
         let signed_rate: i32 = match move_mode {
             MoveModeEnum::Up => rate as i32,
             MoveModeEnum::Down => -(rate as i32),
             MoveModeEnum::Stop => return Ok(()),
         };
+
         // Treat 0 as "no caller-supplied bound" — fall back to the
         // physical bound so the move runs to that edge.
         let min_mireds = if color_temperature_minimum_mireds == 0 {
@@ -2113,16 +2321,19 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         } else {
             color_temperature_minimum_mireds
         };
+
         let max_mireds = if color_temperature_maximum_mireds == 0 {
             H::COLOR_TEMP_PHYSICAL_MAX_MIREDS
         } else {
             color_temperature_maximum_mireds
         };
+
         self.task_signal.signal(Task::ColorTemperatureMove {
             rate_mireds_per_sec: signed_rate,
             min_mireds,
             max_mireds,
         });
+
         Ok(())
     }
 
@@ -2139,31 +2350,39 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         if step_size == 0 {
             return Err(ErrorCode::InvalidCommand.into());
         }
+
         if !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
+
         let signed_step: i32 = match step_mode {
             StepModeEnum::Up => step_size as i32,
             StepModeEnum::Down => -(step_size as i32),
         };
+
         let min_mireds = if color_temperature_minimum_mireds == 0 {
             H::COLOR_TEMP_PHYSICAL_MIN_MIREDS
         } else {
             color_temperature_minimum_mireds
         };
+
         let max_mireds = if color_temperature_maximum_mireds == 0 {
             H::COLOR_TEMP_PHYSICAL_MAX_MIREDS
         } else {
             color_temperature_maximum_mireds
         };
+
         let lo = min_mireds.max(H::COLOR_TEMP_PHYSICAL_MIN_MIREDS);
         let hi = max_mireds.min(H::COLOR_TEMP_PHYSICAL_MAX_MIREDS);
+
         let cur = self.hooks.color_temperature_mireds() as i32;
         let target = (cur + signed_step).clamp(lo as i32, hi as i32) as u16;
+
         self.task_signal.signal(Task::ColorTemperatureMoveTo {
             target_mireds: target,
             transition_ms: transition_time_ds as u32 * 100,
         });
+
         Ok(())
     }
 
@@ -2184,6 +2403,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
 
         // 1. Apply config updates (direction, time, start hue) up front.
         let cluster_id = Self::cluster_id();
+
         if update_flags.contains(UpdateFlagsBitmap::UPDATE_DIRECTION) {
             self.hooks.set_color_loop_direction(direction);
             ctx.notify_attr_changed(
@@ -2192,6 +2412,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 AttributeId::ColorLoopDirection as _,
             );
         }
+
         if update_flags.contains(UpdateFlagsBitmap::UPDATE_TIME) {
             self.hooks.set_color_loop_time(time);
             ctx.notify_attr_changed(
@@ -2200,6 +2421,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 AttributeId::ColorLoopTime as _,
             );
         }
+
         if update_flags.contains(UpdateFlagsBitmap::UPDATE_START_HUE) {
             self.hooks.set_color_loop_start_enhanced_hue(start_hue);
             ctx.notify_attr_changed(
@@ -2220,13 +2442,17 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 if was_active {
                     // Restore the saved hue before stopping the loop.
                     let restore = self.hooks.color_loop_stored_enhanced_hue();
+
                     self.task_signal.signal(Task::Stop);
+
                     self.hooks.set_color_loop_active(false);
+
                     ctx.notify_attr_changed(
                         self.endpoint_id,
                         cluster_id,
                         AttributeId::ColorLoopActive as _,
                     );
+
                     // Set hue directly so the restored value shows up
                     // immediately rather than waiting on the next tick.
                     self.set_hue(&ctx, restore, true, true);
@@ -2240,19 +2466,24 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 // the pre-loop value with a mid-loop value).
                 if !was_active {
                     let cur = self.hooks.enhanced_current_hue();
+
                     self.hooks.set_color_loop_stored_enhanced_hue(cur);
+
                     ctx.notify_attr_changed(
                         self.endpoint_id,
                         cluster_id,
                         AttributeId::ColorLoopStoredEnhancedHue as _,
                     );
+
                     self.hooks.set_color_loop_active(true);
+
                     ctx.notify_attr_changed(
                         self.endpoint_id,
                         cluster_id,
                         AttributeId::ColorLoopActive as _,
                     );
                 }
+
                 // Seed EnhancedCurrentHue per the action.
                 let seed = match action {
                     ColorLoopActionEnum::ActivateFromColorLoopStartEnhancedHue => {
@@ -2261,8 +2492,10 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                     // ActivateFromEnhancedCurrentHue keeps current value.
                     _ => self.hooks.enhanced_current_hue(),
                 };
+
                 self.set_hue(&ctx, seed, true, true);
                 self.drive_device_hue_saturation();
+
                 // Start (or restart) the loop task with the latest config.
                 self.task_signal.signal(Task::ColorLoop {
                     direction: self.hooks.color_loop_direction(),
@@ -2270,6 +2503,7 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 });
             }
         }
+
         Ok(())
     }
 }
@@ -2285,21 +2519,26 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         let mut hooks_fut = pin!(self.hooks.run(|_message| {
             // No out-of-band handling yet.
         }));
+
         loop {
-            let mut task = match select(&mut hooks_fut, self.task_signal.wait_signalled()).await {
+            let result = select(&mut hooks_fut, self.task_signal.wait_signalled()).await;
+
+            let mut task = match result {
                 Either::First(_) => {
                     panic!("ColorControlHooks::run returned; implementers MUST not return.")
                 }
                 Either::Second(task) => task,
             };
+
             loop {
-                match select3(
+                let result = select3(
                     &mut hooks_fut,
                     self.task_manager(&ctx, task),
                     self.task_signal.wait_signalled(),
                 )
-                .await
-                {
+                .await;
+
+                match result {
                     Either3::First(_) => {
                         panic!("ColorControlHooks::run returned; implementers MUST not return.")
                     }
@@ -2448,9 +2687,11 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
         if value.bits() & !OptionsBitmap::EXECUTE_IF_OFF.bits() != 0 {
             return Err(ErrorCode::ConstraintError.into());
         }
+
         self.with_state_notify(ctx, |s| {
             s.options = value;
         });
+
         Ok(())
     }
 
@@ -2467,10 +2708,13 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHa
                     break 'a Err(ErrorCode::ConstraintError.into());
                 }
             }
+
             let res = self.hooks.set_start_up_color_temperature_mireds(value);
+
             if res.is_ok() {
                 ctx.notify_changed();
             }
+
             res
         })
     }
@@ -2863,6 +3107,7 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
         for avp in avp_list.iter() {
             let avp = avp?;
             let attr_id = avp.attribute_id()?;
+
             if attr_id == AttributeId::EnhancedColorMode as _ {
                 if let Some(v) = avp.value_unsigned_8()? {
                     mode = enhanced_color_mode_from_u8(v);
@@ -2892,7 +3137,9 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 .and_then(color_loop_direction_from_u8)
                 .unwrap_or(ColorLoopDirectionEnum::Increment);
             let time = color_loop_time.unwrap_or(0x0019);
+
             self.apply_color_loop(ctx, direction, time, true);
+
             return Ok(());
         }
 
@@ -2905,12 +3152,14 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 let (Some(x), Some(y)) = (current_x, current_y) else {
                     return Ok(());
                 };
+
                 self.apply_xy(ctx, x, y, true);
             }
             EnhancedColorModeEnum::ColorTemperatureMireds => {
                 let Some(mireds) = color_temperature_mireds else {
                     return Ok(());
                 };
+
                 self.apply_color_temperature(ctx, mireds, true);
             }
             EnhancedColorModeEnum::CurrentHueAndCurrentSaturation => {
@@ -2921,12 +3170,14 @@ impl<H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
                 ) else {
                     return Ok(());
                 };
+
                 self.apply_hue_saturation(ctx, hue, sat, true);
             }
             EnhancedColorModeEnum::EnhancedCurrentHueAndCurrentSaturation => {
                 let (Some(hue), Some(sat)) = (enhanced_current_hue, current_saturation) else {
                     return Ok(());
                 };
+
                 self.apply_enhanced_hue_saturation(ctx, hue, sat, true);
             }
         }
@@ -3015,86 +3266,114 @@ mod tests {
             .with_features(F)
             .with_attrs(with!(required))
             .with_cmds(with!());
+
         const COLOR_CAPABILITIES: ColorCapabilitiesBitmap =
             ColorCapabilitiesBitmap::from_bits_retain(F as u16);
+
         const COLOR_TEMP_PHYSICAL_MIN_MIREDS: u16 = 153;
+
         const COLOR_TEMP_PHYSICAL_MAX_MIREDS: u16 = 500;
 
         fn enhanced_current_hue(&self) -> u16 {
             self.enhanced_current_hue.get()
         }
+
         fn set_enhanced_current_hue(&self, value: u16) {
             self.enhanced_current_hue.set(value);
         }
+
         fn current_saturation(&self) -> u8 {
             self.current_saturation.get()
         }
+
         fn set_current_saturation(&self, value: u8) {
             self.current_saturation.set(value);
         }
+
         fn current_x(&self) -> u16 {
             self.current_x.get()
         }
+
         fn set_current_x(&self, value: u16) {
             self.current_x.set(value);
         }
+
         fn current_y(&self) -> u16 {
             self.current_y.get()
         }
+
         fn set_current_y(&self, value: u16) {
             self.current_y.set(value);
         }
+
         fn color_temperature_mireds(&self) -> u16 {
             self.color_temperature_mireds.get()
         }
+
         fn set_color_temperature_mireds(&self, value: u16) {
             self.color_temperature_mireds.set(value);
         }
+
         fn color_mode(&self) -> ColorModeEnum {
             self.color_mode.get()
         }
+
         fn set_color_mode(&self, value: ColorModeEnum) {
             self.color_mode.set(value);
         }
+
         fn enhanced_color_mode(&self) -> EnhancedColorModeEnum {
             self.enhanced_color_mode.get()
         }
+
         fn set_enhanced_color_mode(&self, value: EnhancedColorModeEnum) {
             self.enhanced_color_mode.set(value);
         }
+
         fn color_loop_active(&self) -> bool {
             self.color_loop_active.get()
         }
+
         fn set_color_loop_active(&self, value: bool) {
             self.color_loop_active.set(value);
         }
+
         fn color_loop_direction(&self) -> ColorLoopDirectionEnum {
             self.color_loop_direction.get()
         }
+
         fn set_color_loop_direction(&self, value: ColorLoopDirectionEnum) {
             self.color_loop_direction.set(value);
         }
+
         fn color_loop_time(&self) -> u16 {
             self.color_loop_time.get()
         }
+
         fn set_color_loop_time(&self, value: u16) {
             self.color_loop_time.set(value);
         }
+
         fn color_loop_start_enhanced_hue(&self) -> u16 {
             self.color_loop_start_enhanced_hue.get()
         }
+
         fn set_color_loop_start_enhanced_hue(&self, value: u16) {
             self.color_loop_start_enhanced_hue.set(value);
         }
+
         fn color_loop_stored_enhanced_hue(&self) -> u16 {
             self.color_loop_stored_enhanced_hue.get()
         }
+
         fn set_color_loop_stored_enhanced_hue(&self, value: u16) {
             self.color_loop_stored_enhanced_hue.set(value);
         }
+
         fn set_device_xy(&self, x: u16, y: u16) -> Result<(u16, u16), ()> {
             Ok((x, y))
         }
+
         fn set_device_hue_saturation(
             &self,
             enhanced_hue: u16,
@@ -3102,6 +3381,7 @@ mod tests {
         ) -> Result<(u16, u8), ()> {
             Ok((enhanced_hue, saturation))
         }
+
         fn set_device_color_temperature_mireds(&self, mireds: u16) -> Result<u16, ()> {
             Ok(mireds)
         }
@@ -3118,6 +3398,7 @@ mod tests {
                 count: Cell::new(0),
             }
         }
+
         fn count(&self) -> u32 {
             self.count.get()
         }
