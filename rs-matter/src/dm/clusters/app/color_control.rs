@@ -88,6 +88,226 @@ pub enum SetDeviceColor {
     ColorTemperature { mireds: u16 },
 }
 
+/// Gamma encoding for the RGB output of [`SetDeviceColor::to_rgb`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum RgbGamma {
+    /// Linear-light RGB. Each channel is proportional to luminous
+    /// intensity. Use for PWM duty cycles and additive LED mixing.
+    Linear,
+    /// sRGB gamma (IEC 61966-2-1). Use when the consumer expects a
+    /// display-ready value.
+    SRgb,
+}
+
+/// sRGB encoding LUT — maps linear `0..=255` to sRGB-encoded `0..=255`
+/// per IEC 61966-2-1. Avoids needing `libm::powf` for the gamma curve
+/// at the cost of one bit of precision at the bottom end.
+const SRGB_GAMMA_LUT: [u8; 256] = [
+    0, 13, 22, 28, 34, 38, 42, 46, 50, 53, 56, 59, 61, 64, 66, 69, //
+    71, 73, 75, 77, 79, 81, 83, 85, 86, 88, 90, 92, 93, 95, 96, 98, //
+    99, 101, 102, 104, 105, 106, 108, 109, 110, 112, 113, 114, 115, 117, 118, 119, //
+    120, 121, 122, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, //
+    137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 148, 149, 150, 151, //
+    152, 153, 154, 155, 155, 156, 157, 158, 159, 159, 160, 161, 162, 163, 163, 164, //
+    165, 166, 167, 167, 168, 169, 170, 170, 171, 172, 173, 173, 174, 175, 175, 176, //
+    177, 178, 178, 179, 180, 180, 181, 182, 182, 183, 184, 185, 185, 186, 187, 187, //
+    188, 189, 189, 190, 190, 191, 192, 192, 193, 194, 194, 195, 196, 196, 197, 197, //
+    198, 199, 199, 200, 200, 201, 202, 202, 203, 203, 204, 205, 205, 206, 206, 207, //
+    208, 208, 209, 209, 210, 210, 211, 212, 212, 213, 213, 214, 214, 215, 215, 216, //
+    216, 217, 218, 218, 219, 219, 220, 220, 221, 221, 222, 222, 223, 223, 224, 224, //
+    225, 226, 226, 227, 227, 228, 228, 229, 229, 230, 230, 231, 231, 232, 232, 233, //
+    233, 234, 234, 235, 235, 236, 236, 237, 237, 238, 238, 238, 239, 239, 240, 240, //
+    241, 241, 242, 242, 243, 243, 244, 244, 245, 245, 246, 246, 246, 247, 247, 248, //
+    248, 249, 249, 250, 250, 251, 251, 251, 252, 252, 253, 253, 254, 254, 255, 255, //
+];
+
+impl SetDeviceColor {
+    /// Convert to an sRGB-primaries RGB triplet, each channel
+    /// `0..=255`, with the requested `gamma` encoding. Brightness is
+    /// assumed full (the brightest channel of the result hits 255),
+    /// since this colour command carries no separate luminance.
+    ///
+    /// Suitable for driving an RGB LED — use [`RgbGamma::Linear`] for
+    /// PWM duty cycles and [`RgbGamma::SRgb`] when the consumer
+    /// expects a display-encoded value.
+    pub fn to_rgb(self, gamma: RgbGamma) -> (u8, u8, u8) {
+        let (r, g, b) = self.to_linear_rgb_f32();
+        let to_u8 = |c: f32| (c.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+        let (rl, gl, bl) = (to_u8(r), to_u8(g), to_u8(b));
+        match gamma {
+            RgbGamma::Linear => (rl, gl, bl),
+            RgbGamma::SRgb => (
+                SRGB_GAMMA_LUT[rl as usize],
+                SRGB_GAMMA_LUT[gl as usize],
+                SRGB_GAMMA_LUT[bl as usize],
+            ),
+        }
+    }
+
+    /// Convert to CIE 1931 xy chromaticity (each value `0..=0xFEFF`).
+    /// Idempotent on the `Xy` variant.
+    pub fn to_xy(self) -> (u16, u16) {
+        match self {
+            SetDeviceColor::Xy { x, y } => (x, y),
+            SetDeviceColor::HueSaturation {
+                enhanced_hue,
+                saturation,
+            } => {
+                let (r, g, b) = hsv_to_linear_rgb_f32(enhanced_hue, saturation);
+                linear_rgb_to_xy(r, g, b)
+            }
+            SetDeviceColor::ColorTemperature { mireds } => ct_mireds_to_xy_f32_pair(mireds),
+        }
+    }
+
+    /// Convert to enhanced-hue + saturation. Idempotent on the
+    /// `HueSaturation` variant. Brightness is assumed full.
+    pub fn to_hue_saturation(self) -> (u16, u8) {
+        let (r, g, b) = match self {
+            SetDeviceColor::HueSaturation {
+                enhanced_hue,
+                saturation,
+            } => return (enhanced_hue, saturation),
+            SetDeviceColor::Xy { x, y } => xy_to_linear_rgb_f32(x, y),
+            SetDeviceColor::ColorTemperature { mireds } => {
+                let (x, y) = ct_mireds_to_xy_f32_pair(mireds);
+                xy_to_linear_rgb_f32(x, y)
+            }
+        };
+        linear_rgb_to_hue_saturation(r, g, b)
+    }
+
+    /// Internal: dispatch to the per-variant linear-RGB converter.
+    fn to_linear_rgb_f32(self) -> (f32, f32, f32) {
+        match self {
+            SetDeviceColor::Xy { x, y } => xy_to_linear_rgb_f32(x, y),
+            SetDeviceColor::HueSaturation {
+                enhanced_hue,
+                saturation,
+            } => hsv_to_linear_rgb_f32(enhanced_hue, saturation),
+            SetDeviceColor::ColorTemperature { mireds } => {
+                let (x, y) = ct_mireds_to_xy_f32_pair(mireds);
+                xy_to_linear_rgb_f32(x, y)
+            }
+        }
+    }
+}
+
+/// HSV (V=1) → linear sRGB, each channel `0.0..=1.0`.
+fn hsv_to_linear_rgb_f32(enhanced_hue: u16, saturation: u8) -> (f32, f32, f32) {
+    let h_deg = enhanced_hue as f32 * 360.0 / 65536.0;
+    let s = saturation as f32 / 254.0;
+    let v = 1.0_f32;
+    let c = v * s;
+    let h6 = h_deg / 60.0;
+    let x = c * (1.0 - (h6.rem_euclid(2.0) - 1.0).abs());
+    let m = v - c;
+    let (r, g, b) = match h6 as i32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    (r + m, g + m, b + m)
+}
+
+/// CIE xy chromaticity → linear sRGB, normalised so the brightest
+/// channel is `1.0` (full brightness at the given chromaticity).
+/// Out-of-gamut inputs are clamped per-channel.
+fn xy_to_linear_rgb_f32(x_u16: u16, y_u16: u16) -> (f32, f32, f32) {
+    let x = x_u16 as f32 / 0xFEFF as f32;
+    let y = y_u16 as f32 / 0xFEFF as f32;
+    if y < 1e-4 {
+        return (0.0, 0.0, 0.0);
+    }
+    // Y=1.0 (we normalise at the end), so X=x/y, Z=(1-x-y)/y.
+    let x_xyz = x / y;
+    let y_xyz = 1.0;
+    let z_xyz = (1.0 - x - y) / y;
+    // sRGB D65 inverse matrix (XYZ → linear sRGB).
+    let r = 3.2406 * x_xyz - 1.5372 * y_xyz - 0.4986 * z_xyz;
+    let g = -0.9689 * x_xyz + 1.8758 * y_xyz + 0.0415 * z_xyz;
+    let b = 0.0557 * x_xyz - 0.2040 * y_xyz + 1.0570 * z_xyz;
+    let r = r.max(0.0);
+    let g = g.max(0.0);
+    let b = b.max(0.0);
+    let max_c = r.max(g).max(b);
+    if max_c <= 1e-6 {
+        (0.0, 0.0, 0.0)
+    } else {
+        (r / max_c, g / max_c, b / max_c)
+    }
+}
+
+/// Linear sRGB → CIE xy chromaticity (each `0..=0xFEFF`).
+fn linear_rgb_to_xy(r: f32, g: f32, b: f32) -> (u16, u16) {
+    // sRGB D65 forward matrix (linear sRGB → XYZ).
+    let x_xyz = 0.4124 * r + 0.3576 * g + 0.1805 * b;
+    let y_xyz = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    let z_xyz = 0.0193 * r + 0.1192 * g + 0.9505 * b;
+    let sum = x_xyz + y_xyz + z_xyz;
+    if sum < 1e-6 {
+        return (0, 0);
+    }
+    let x = (x_xyz / sum) * 0xFEFF as f32;
+    let y = (y_xyz / sum) * 0xFEFF as f32;
+    (
+        x.clamp(0.0, 0xFEFF as f32) as u16,
+        y.clamp(0.0, 0xFEFF as f32) as u16,
+    )
+}
+
+/// Linear sRGB → enhanced hue + saturation (V is discarded — the
+/// returned values describe the chromaticity at full brightness).
+fn linear_rgb_to_hue_saturation(r: f32, g: f32, b: f32) -> (u16, u8) {
+    let max_c = r.max(g).max(b);
+    let min_c = r.min(g).min(b);
+    let delta = max_c - min_c;
+    if delta < 1e-6 {
+        return (0, 0);
+    }
+    let h6 = if (max_c - r).abs() < 1e-6 {
+        ((g - b) / delta).rem_euclid(6.0)
+    } else if (max_c - g).abs() < 1e-6 {
+        (b - r) / delta + 2.0
+    } else {
+        (r - g) / delta + 4.0
+    };
+    let h_deg = (h6 * 60.0).rem_euclid(360.0);
+    let s = if max_c > 0.0 { delta / max_c } else { 0.0 };
+    let enhanced_hue = (h_deg * 65536.0 / 360.0).clamp(0.0, 65535.0) as u16;
+    let saturation = (s * 254.0 + 0.5).clamp(0.0, 254.0) as u8;
+    (enhanced_hue, saturation)
+}
+
+/// Colour temperature in mireds → CIE xy on the Planckian locus
+/// (Krystek 1985 approximation via CIE 1960 UCS).
+#[allow(clippy::excessive_precision)]
+fn ct_mireds_to_xy_f32_pair(mireds: u16) -> (u16, u16) {
+    if mireds == 0 {
+        return (0, 0);
+    }
+    let t = 1_000_000.0_f32 / mireds as f32;
+    let t2 = t * t;
+    let u = (0.860117757 + 1.54118254e-4 * t + 1.28641212e-7 * t2)
+        / (1.0 + 8.42420235e-4 * t + 7.08145163e-7 * t2);
+    let v = (0.317398726 + 4.22806245e-5 * t + 4.20481691e-8 * t2)
+        / (1.0 - 2.89741816e-5 * t + 1.61456053e-7 * t2);
+    let denom = 2.0 * u - 8.0 * v + 4.0;
+    if denom.abs() < 1e-6 {
+        return (0, 0);
+    }
+    let x = (3.0 * u / denom) * 0xFEFF as f32;
+    let y = (2.0 * v / denom) * 0xFEFF as f32;
+    (
+        x.clamp(0.0, 0xFEFF as f32) as u16,
+        y.clamp(0.0, 0xFEFF as f32) as u16,
+    )
+}
+
 /// Device-supplied bindings for the Color Control cluster.
 ///
 /// The cluster owns and persists all attribute state internally; the
@@ -3740,5 +3960,115 @@ mod tests {
             h.with_state(|s| s.enhanced_color_mode),
             EnhancedColorModeEnum::CurrentXAndCurrentY
         ));
+    }
+
+    // ---- SetDeviceColor conversion utilities ----
+
+    #[test]
+    fn hsv_to_rgb_primary_colours() {
+        // Pure red: hue=0, full sat.
+        let (r, g, b) = SetDeviceColor::HueSaturation {
+            enhanced_hue: 0,
+            saturation: 254,
+        }
+        .to_rgb(RgbGamma::Linear);
+        assert_eq!((r, g, b), (255, 0, 0));
+
+        // Pure green: hue=120° → enhanced 65536/3 (≈ 21845).
+        let (r, g, b) = SetDeviceColor::HueSaturation {
+            enhanced_hue: 21845,
+            saturation: 254,
+        }
+        .to_rgb(RgbGamma::Linear);
+        // Allow 1-unit jitter on the 0 channels due to f32 rounding.
+        assert!(r <= 1 && g == 255 && b <= 1, "got ({r}, {g}, {b})");
+
+        // Pure blue: hue=240° → enhanced 2*65536/3 (≈ 43690).
+        let (r, g, b) = SetDeviceColor::HueSaturation {
+            enhanced_hue: 43690,
+            saturation: 254,
+        }
+        .to_rgb(RgbGamma::Linear);
+        assert!(r <= 1 && g <= 1 && b == 255, "got ({r}, {g}, {b})");
+
+        // Zero saturation: any hue → white.
+        let (r, g, b) = SetDeviceColor::HueSaturation {
+            enhanced_hue: 12345,
+            saturation: 0,
+        }
+        .to_rgb(RgbGamma::Linear);
+        assert_eq!((r, g, b), (255, 255, 255));
+    }
+
+    #[test]
+    fn srgb_gamma_brighter_than_linear_in_mid_range() {
+        // At hue=0 (red), saturation 127 gives linear (255, 128, 128)
+        // — the brightest channel is always full at full brightness,
+        // so the mid-tone reveal happens on the off-channels.
+        let src = SetDeviceColor::HueSaturation {
+            enhanced_hue: 0,
+            saturation: 127,
+        };
+        let (_, g_lin, _) = src.to_rgb(RgbGamma::Linear);
+        let (_, g_srgb, _) = src.to_rgb(RgbGamma::SRgb);
+        assert!(
+            g_srgb > g_lin,
+            "sRGB should brighten mid-tones; lin={g_lin} srgb={g_srgb}"
+        );
+        // The bright channel is at the curve's endpoint, where the
+        // two encodings agree.
+        let (r_full, _, _) = SetDeviceColor::HueSaturation {
+            enhanced_hue: 0,
+            saturation: 254,
+        }
+        .to_rgb(RgbGamma::SRgb);
+        assert_eq!(r_full, 255);
+    }
+
+    #[test]
+    fn to_xy_idempotent_on_xy_variant() {
+        assert_eq!(
+            SetDeviceColor::Xy {
+                x: 0x1234,
+                y: 0x5678
+            }
+            .to_xy(),
+            (0x1234, 0x5678)
+        );
+    }
+
+    #[test]
+    fn to_hue_saturation_idempotent_on_hs_variant() {
+        let src = SetDeviceColor::HueSaturation {
+            enhanced_hue: 0x4000,
+            saturation: 200,
+        };
+        assert_eq!(src.to_hue_saturation(), (0x4000, 200));
+    }
+
+    #[test]
+    fn ct_to_xy_planckian_locus_4000k() {
+        // 4000 K ≈ 250 mireds. Planckian locus at 4000K sits at
+        // approximately (0.381, 0.377). The Krystek approximation
+        // should land within ±0.005 in xy-space.
+        let (x, y) = SetDeviceColor::ColorTemperature { mireds: 250 }.to_xy();
+        let x_f = x as f32 / 0xFEFF as f32;
+        let y_f = y as f32 / 0xFEFF as f32;
+        assert!((x_f - 0.381).abs() < 0.005, "expected x ≈ 0.381, got {x_f}");
+        assert!((y_f - 0.377).abs() < 0.005, "expected y ≈ 0.377, got {y_f}");
+    }
+
+    #[test]
+    fn xy_red_roundtrips_through_hue() {
+        // Pure red in xy (sRGB-ish: 0.64, 0.33) should map to hue ≈ 0°.
+        let red = SetDeviceColor::Xy {
+            x: (0.64 * 0xFEFF as f32) as u16,
+            y: (0.33 * 0xFEFF as f32) as u16,
+        };
+        let (hue, sat) = red.to_hue_saturation();
+        // hue near 0 (or near 65535 due to the circular wrap).
+        assert!(hue < 1000 || hue > 64500, "expected hue near 0°, got {hue}");
+        // Should be very saturated.
+        assert!(sat > 240, "expected high saturation, got {sat}");
     }
 }
