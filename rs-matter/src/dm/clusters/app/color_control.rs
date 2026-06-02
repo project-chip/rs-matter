@@ -61,7 +61,7 @@ pub struct AttributeDefaults {
 impl AttributeDefaults {
     pub const fn new() -> Self {
         Self {
-            options: OptionsBitmap::from_bits_retain(0),
+            options: OptionsBitmap::from_bits_truncate(0),
         }
     }
 }
@@ -201,7 +201,16 @@ fn hsv_to_linear_rgb_f32(enhanced_hue: u16, saturation: u8) -> (f32, f32, f32) {
     let v = 1.0_f32;
     let c = v * s;
     let h6 = h_deg / 60.0;
-    let x = c * (1.0 - (h6.rem_euclid(2.0) - 1.0).abs());
+    // h6 ∈ [0, 6); fold to [0, 2) without f32 `%` (needs `__fmodf` on
+    // soft-float targets like riscv32imc).
+    let h6_mod2 = if h6 < 2.0 {
+        h6
+    } else if h6 < 4.0 {
+        h6 - 2.0
+    } else {
+        h6 - 4.0
+    };
+    let x = c * (1.0 - (h6_mod2 - 1.0).abs());
     let m = v - c;
     let (r, g, b) = match h6 as i32 {
         0 => (c, x, 0.0),
@@ -269,14 +278,22 @@ fn linear_rgb_to_hue_saturation(r: f32, g: f32, b: f32) -> (u16, u8) {
     if delta < 1e-6 {
         return (0, 0);
     }
+    // (g-b)/delta ∈ [-1, 1] when r is the max channel; fold the
+    // negative half into [0, 6) without f32 `%`.
     let h6 = if (max_c - r).abs() < 1e-6 {
-        ((g - b) / delta).rem_euclid(6.0)
+        let v = (g - b) / delta;
+        if v < 0.0 {
+            v + 6.0
+        } else {
+            v
+        }
     } else if (max_c - g).abs() < 1e-6 {
         (b - r) / delta + 2.0
     } else {
         (r - g) / delta + 4.0
     };
-    let h_deg = (h6 * 60.0).rem_euclid(360.0);
+    // h6 ∈ [0, 6]; only the boundary h6 == 6.0 needs wrapping.
+    let h_deg = if h6 >= 6.0 { 0.0 } else { h6 * 60.0 };
     let s = if max_c > 0.0 { delta / max_c } else { 0.0 };
     let enhanced_hue = (h_deg * 65536.0 / 360.0).clamp(0.0, 65535.0) as u16;
     let saturation = (s * 254.0 + 0.5).clamp(0.0, 254.0) as u8;
@@ -3432,7 +3449,7 @@ pub mod test {
             ));
 
         const COLOR_CAPABILITIES: ColorCapabilitiesBitmap =
-            ColorCapabilitiesBitmap::from_bits_retain(
+            ColorCapabilitiesBitmap::from_bits_truncate(
                 ColorCapabilitiesBitmap::HUE_SATURATION.bits()
                     | ColorCapabilitiesBitmap::ENHANCED_HUE.bits()
                     | ColorCapabilitiesBitmap::COLOR_LOOP.bits()
@@ -3496,7 +3513,7 @@ mod tests {
             .with_cmds(with!());
 
         const COLOR_CAPABILITIES: ColorCapabilitiesBitmap =
-            ColorCapabilitiesBitmap::from_bits_retain(F as u16);
+            ColorCapabilitiesBitmap::from_bits_truncate(F as u16);
 
         const COLOR_TEMP_PHYSICAL_MIN_MIREDS: u16 = 153;
         const COLOR_TEMP_PHYSICAL_MAX_MIREDS: u16 = 500;

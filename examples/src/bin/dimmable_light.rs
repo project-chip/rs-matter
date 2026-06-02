@@ -99,20 +99,9 @@ fn main() -> Result<(), Error> {
 }
 
 fn run() -> Result<(), Error> {
-    #[cfg(not(feature = "chip-test"))]
     env_logger::init_from_env(
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "debug"),
     );
-
-    #[cfg(feature = "chip-test")]
-    env_logger::builder()
-        .format(|buf, record| {
-            use std::io::Write;
-            writeln!(buf, "{}: {}", record.level(), record.args())
-        })
-        .target(env_logger::Target::Stdout)
-        .filter_level(::log::LevelFilter::Debug)
-        .init();
 
     info!(
         "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
@@ -133,9 +122,6 @@ fn run() -> Result<(), Error> {
 
     // Persistence
     let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
-    #[cfg(feature = "chip-test")]
-    let mut kv = rs_matter::persist::FileKvBlobStore::new_default();
-    #[cfg(not(feature = "chip-test"))]
     let mut kv = rs_matter::persist::DirKvBlobStore::new_default();
     futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
     futures_lite::future::block_on(events.load_persist(&mut kv, kv_buf))?;
