@@ -3208,6 +3208,269 @@ fn color_loop_direction_from_u8(v: u8) -> Option<ColorLoopDirectionEnum> {
     }
 }
 
+/// Re-usable test/demo `ColorControlHooks` implementation. Mirrors
+/// the shape of [`crate::dm::clusters::app::on_off::test`] and
+/// [`crate::dm::clusters::app::level_control::test`] — application
+/// integration tests and examples can use this without writing their
+/// own hooks scaffolding.
+pub mod test {
+    use crate::dm::clusters::app::color_control::{
+        ColorCapabilitiesBitmap, ColorControlHooks, ColorLoopDirectionEnum, ColorModeEnum,
+        EnhancedColorModeEnum,
+    };
+    use crate::dm::clusters::decl::color_control::{AttributeId, CommandId, Feature, FULL_CLUSTER};
+    use crate::dm::Cluster;
+    use crate::error::Error;
+    use crate::tlv::Nullable;
+    use crate::utils::cell::RefCell;
+    use crate::utils::sync::blocking::Mutex;
+    use crate::with;
+
+    struct TestColorControlState {
+        enhanced_current_hue: u16,
+        current_saturation: u8,
+        current_x: u16,
+        current_y: u16,
+        color_temperature_mireds: u16,
+        color_mode: ColorModeEnum,
+        enhanced_color_mode: EnhancedColorModeEnum,
+        color_loop_active: bool,
+        color_loop_direction: ColorLoopDirectionEnum,
+        color_loop_time: u16,
+        color_loop_start_enhanced_hue: u16,
+        color_loop_stored_enhanced_hue: u16,
+        start_up_color_temperature_mireds: Option<u16>,
+    }
+
+    impl TestColorControlState {
+        const fn new() -> Self {
+            Self {
+                enhanced_current_hue: 0,
+                current_saturation: 0,
+                // Defaults that fall inside chip-tool's spec ranges
+                // (CurrentX/Y bounded by 0xFEFF, mireds non-zero).
+                current_x: 0x616B,
+                current_y: 0x607D,
+                color_temperature_mireds: 250,
+                color_mode: ColorModeEnum::ColorTemperatureMireds,
+                enhanced_color_mode: EnhancedColorModeEnum::ColorTemperatureMireds,
+                color_loop_active: false,
+                color_loop_direction: ColorLoopDirectionEnum::Increment,
+                color_loop_time: 25,
+                color_loop_start_enhanced_hue: 0x2300,
+                color_loop_stored_enhanced_hue: 0,
+                start_up_color_temperature_mireds: None,
+            }
+        }
+    }
+
+    /// All-features-enabled [`ColorControlHooks`] backed by an
+    /// in-memory state cell. Useful in integration tests, demos, and
+    /// the bundled `light_tests` example.
+    pub struct TestColorControlDeviceLogic {
+        state: Mutex<RefCell<TestColorControlState>>,
+    }
+
+    impl TestColorControlDeviceLogic {
+        pub const fn new() -> Self {
+            Self {
+                state: Mutex::new(RefCell::new(TestColorControlState::new())),
+            }
+        }
+    }
+
+    impl Default for TestColorControlDeviceLogic {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl ColorControlHooks for TestColorControlDeviceLogic {
+        const CLUSTER: Cluster<'static> = FULL_CLUSTER
+            .with_features(
+                Feature::HUE_AND_SATURATION.bits()
+                    | Feature::ENHANCED_HUE.bits()
+                    | Feature::COLOR_LOOP.bits()
+                    | Feature::XY.bits()
+                    | Feature::COLOR_TEMPERATURE.bits(),
+            )
+            .with_attrs(with!(
+                required;
+                AttributeId::CurrentHue
+                    | AttributeId::CurrentSaturation
+                    | AttributeId::RemainingTime
+                    | AttributeId::CurrentX
+                    | AttributeId::CurrentY
+                    | AttributeId::ColorTemperatureMireds
+                    | AttributeId::ColorMode
+                    | AttributeId::Options
+                    | AttributeId::NumberOfPrimaries
+                    | AttributeId::EnhancedCurrentHue
+                    | AttributeId::EnhancedColorMode
+                    | AttributeId::ColorLoopActive
+                    | AttributeId::ColorLoopDirection
+                    | AttributeId::ColorLoopTime
+                    | AttributeId::ColorLoopStartEnhancedHue
+                    | AttributeId::ColorLoopStoredEnhancedHue
+                    | AttributeId::ColorCapabilities
+                    | AttributeId::ColorTempPhysicalMinMireds
+                    | AttributeId::ColorTempPhysicalMaxMireds
+                    | AttributeId::CoupleColorTempToLevelMinMireds
+                    | AttributeId::StartUpColorTemperatureMireds
+            ))
+            .with_cmds(with!(
+                CommandId::MoveToHue
+                    | CommandId::MoveHue
+                    | CommandId::StepHue
+                    | CommandId::MoveToSaturation
+                    | CommandId::MoveSaturation
+                    | CommandId::StepSaturation
+                    | CommandId::MoveToHueAndSaturation
+                    | CommandId::MoveToColor
+                    | CommandId::MoveColor
+                    | CommandId::StepColor
+                    | CommandId::MoveToColorTemperature
+                    | CommandId::EnhancedMoveToHue
+                    | CommandId::EnhancedMoveHue
+                    | CommandId::EnhancedStepHue
+                    | CommandId::EnhancedMoveToHueAndSaturation
+                    | CommandId::ColorLoopSet
+                    | CommandId::StopMoveStep
+                    | CommandId::MoveColorTemperature
+                    | CommandId::StepColorTemperature
+            ));
+
+        const COLOR_CAPABILITIES: ColorCapabilitiesBitmap =
+            ColorCapabilitiesBitmap::from_bits_retain(
+                ColorCapabilitiesBitmap::HUE_SATURATION.bits()
+                    | ColorCapabilitiesBitmap::ENHANCED_HUE.bits()
+                    | ColorCapabilitiesBitmap::COLOR_LOOP.bits()
+                    | ColorCapabilitiesBitmap::XY.bits()
+                    | ColorCapabilitiesBitmap::COLOR_TEMPERATURE.bits(),
+            );
+
+        const COLOR_TEMP_PHYSICAL_MIN_MIREDS: u16 = 153;
+        const COLOR_TEMP_PHYSICAL_MAX_MIREDS: u16 = 500;
+        const COUPLE_COLOR_TEMP_TO_LEVEL_MIN_MIREDS: u16 = Self::COLOR_TEMP_PHYSICAL_MIN_MIREDS;
+
+        fn enhanced_current_hue(&self) -> u16 {
+            self.state.lock(|s| s.borrow().enhanced_current_hue)
+        }
+        fn set_enhanced_current_hue(&self, value: u16) {
+            self.state
+                .lock(|s| s.borrow_mut().enhanced_current_hue = value);
+        }
+        fn current_saturation(&self) -> u8 {
+            self.state.lock(|s| s.borrow().current_saturation)
+        }
+        fn set_current_saturation(&self, value: u8) {
+            self.state
+                .lock(|s| s.borrow_mut().current_saturation = value);
+        }
+        fn current_x(&self) -> u16 {
+            self.state.lock(|s| s.borrow().current_x)
+        }
+        fn set_current_x(&self, value: u16) {
+            self.state.lock(|s| s.borrow_mut().current_x = value);
+        }
+        fn current_y(&self) -> u16 {
+            self.state.lock(|s| s.borrow().current_y)
+        }
+        fn set_current_y(&self, value: u16) {
+            self.state.lock(|s| s.borrow_mut().current_y = value);
+        }
+        fn color_temperature_mireds(&self) -> u16 {
+            self.state.lock(|s| s.borrow().color_temperature_mireds)
+        }
+        fn set_color_temperature_mireds(&self, value: u16) {
+            self.state
+                .lock(|s| s.borrow_mut().color_temperature_mireds = value);
+        }
+        fn color_mode(&self) -> ColorModeEnum {
+            self.state.lock(|s| s.borrow().color_mode)
+        }
+        fn set_color_mode(&self, value: ColorModeEnum) {
+            self.state.lock(|s| s.borrow_mut().color_mode = value);
+        }
+        fn enhanced_color_mode(&self) -> EnhancedColorModeEnum {
+            self.state.lock(|s| s.borrow().enhanced_color_mode)
+        }
+        fn set_enhanced_color_mode(&self, value: EnhancedColorModeEnum) {
+            self.state
+                .lock(|s| s.borrow_mut().enhanced_color_mode = value);
+        }
+        fn color_loop_active(&self) -> bool {
+            self.state.lock(|s| s.borrow().color_loop_active)
+        }
+        fn set_color_loop_active(&self, value: bool) {
+            self.state
+                .lock(|s| s.borrow_mut().color_loop_active = value);
+        }
+        fn color_loop_direction(&self) -> ColorLoopDirectionEnum {
+            self.state.lock(|s| s.borrow().color_loop_direction)
+        }
+        fn set_color_loop_direction(&self, value: ColorLoopDirectionEnum) {
+            self.state
+                .lock(|s| s.borrow_mut().color_loop_direction = value);
+        }
+        fn color_loop_time(&self) -> u16 {
+            self.state.lock(|s| s.borrow().color_loop_time)
+        }
+        fn set_color_loop_time(&self, value: u16) {
+            self.state.lock(|s| s.borrow_mut().color_loop_time = value);
+        }
+        fn color_loop_start_enhanced_hue(&self) -> u16 {
+            self.state
+                .lock(|s| s.borrow().color_loop_start_enhanced_hue)
+        }
+        fn set_color_loop_start_enhanced_hue(&self, value: u16) {
+            self.state
+                .lock(|s| s.borrow_mut().color_loop_start_enhanced_hue = value);
+        }
+        fn color_loop_stored_enhanced_hue(&self) -> u16 {
+            self.state
+                .lock(|s| s.borrow().color_loop_stored_enhanced_hue)
+        }
+        fn set_color_loop_stored_enhanced_hue(&self, value: u16) {
+            self.state
+                .lock(|s| s.borrow_mut().color_loop_stored_enhanced_hue = value);
+        }
+        fn start_up_color_temperature_mireds(&self) -> Result<Nullable<u16>, Error> {
+            Ok(
+                match self
+                    .state
+                    .lock(|s| s.borrow().start_up_color_temperature_mireds)
+                {
+                    Some(v) => Nullable::some(v),
+                    None => Nullable::none(),
+                },
+            )
+        }
+        fn set_start_up_color_temperature_mireds(&self, value: Nullable<u16>) -> Result<(), Error> {
+            self.state.lock(|s| {
+                s.borrow_mut().start_up_color_temperature_mireds = value.into_option();
+            });
+            Ok(())
+        }
+
+        fn set_device_xy(&self, x: u16, y: u16) -> Result<(u16, u16), ()> {
+            // Stub actuator — applications using this for real hardware
+            // would wire LED drivers here.
+            Ok((x, y))
+        }
+        fn set_device_hue_saturation(
+            &self,
+            enhanced_hue: u16,
+            saturation: u8,
+        ) -> Result<(u16, u8), ()> {
+            Ok((enhanced_hue, saturation))
+        }
+        fn set_device_color_temperature_mireds(&self, mireds: u16) -> Result<u16, ()> {
+            Ok(mireds)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! Unit tests for the ColorControl scenes integration — no
