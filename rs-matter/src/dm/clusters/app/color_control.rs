@@ -4084,7 +4084,10 @@ mod tests {
         };
         let (hue, sat) = red.to_hue_saturation();
         // hue near 0 (or near 65535 due to the circular wrap).
-        assert!(hue < 1000 || hue > 64500, "expected hue near 0°, got {hue}");
+        assert!(
+            !(1000..=64500).contains(&hue),
+            "expected hue near 0°, got {hue}"
+        );
         // Should be very saturated.
         assert!(sat > 240, "expected high saturation, got {sat}");
     }
