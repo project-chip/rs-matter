@@ -71,6 +71,14 @@ pub const DEV_TYPE_DIMMABLE_LIGHT: DeviceType = DeviceType {
     drev: 3,
 };
 
+/// Extended Color Light — mandates OnOff, LevelControl, and
+/// ColorControl with the full feature set (HUE_AND_SATURATION, XY,
+/// COLOR_TEMPERATURE, ENHANCED_HUE, COLOR_LOOP).
+pub const DEV_TYPE_EXTENDED_COLOR_LIGHT: DeviceType = DeviceType {
+    dtype: 0x010D,
+    drev: 4,
+};
+
 /// A constant representing the Smart Speaker device in Matter.
 pub const DEV_TYPE_SMART_SPEAKER: DeviceType = DeviceType {
     dtype: 0x0022,

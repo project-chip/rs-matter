@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2025-2026 Project CHIP Authors
+ *    Copyright (c) 2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -15,7 +15,9 @@
  *    limitations under the License.
  */
 
-//! An example Matter device that implements the On/Off and LevelControl cluster over Ethernet.
+//! Example Matter device exercising OnOff + LevelControl + ColorControl
+//! over Ethernet. Used to drive the chip-tool `light` itest suite
+//! (`Test_TC_OO_*`, `Test_TC_LVL_*`, `Test_TC_CC_*`).
 #![allow(clippy::uninlined_format_args)]
 
 use core::cell::Cell;
@@ -35,6 +37,7 @@ use futures_lite::StreamExt;
 
 use rand::RngCore;
 use rs_matter::crypto::{default_crypto, Crypto};
+use rs_matter::dm::clusters::app::color_control::{self, ColorControlHooks};
 use rs_matter::dm::clusters::app::level_control::{self, LevelControlHooks};
 use rs_matter::dm::clusters::app::on_off::{self, OnOffHooks, StartUpOnOffEnum};
 use rs_matter::dm::clusters::decl::level_control::{
@@ -45,7 +48,7 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
-use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
+use rs_matter::dm::devices::DEV_TYPE_EXTENDED_COLOR_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::events::Events;
 use rs_matter::dm::networks::eth::EthNetwork;
@@ -73,9 +76,6 @@ use static_cell::StaticCell;
 #[path = "../common/mdns.rs"]
 mod mdns;
 
-// Statically allocate in BSS the bigger objects
-// `rs-matter` supports efficient initialization of BSS objects (with `init`)
-// as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
 static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
@@ -84,24 +84,21 @@ static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
-        // Increase the stack size until the example can work without stack blowups.
-        // Note that the used stack size increases exponentially by lowering the level of compiler optimizations,
-        // as lower optimization settings prevent the Rust compiler from inlining constructor functions
-        // which often results in (unnecessary) memory moves and increased stack utilization:
-        // e.g., an opt-level of "0" will require a several times' larger stack.
-        //
-        // Optimizing/lowering `rs-matter` memory consumption is an ongoing topic.
         .stack_size(550 * 1024)
         .spawn(run)
         .unwrap();
-
     thread.join().unwrap()
 }
 
 fn run() -> Result<(), Error> {
-    env_logger::init_from_env(
-        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "debug"),
-    );
+    env_logger::builder()
+        .format(|buf, record| {
+            use std::io::Write;
+            writeln!(buf, "{}: {}", record.level(), record.args())
+        })
+        .target(env_logger::Target::Stdout)
+        .filter_level(::log::LevelFilter::Debug)
+        .init();
 
     info!(
         "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
@@ -117,24 +114,17 @@ fn run() -> Result<(), Error> {
         MATTER_PORT,
     ));
 
-    // Create the event queue
     let events = EVENTS.uninit().init_with(Events::init());
 
-    // Persistence
     let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
-    let mut kv = rs_matter::persist::DirKvBlobStore::new_default();
+    let mut kv = rs_matter::persist::FileKvBlobStore::new_default();
     futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
     futures_lite::future::block_on(events.load_persist(&mut kv, kv_buf))?;
 
-    // Create the transport buffers
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
-
-    // Create the subscriptions
     let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
 
-    // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
-
     let mut rand = crypto.rand()?;
 
     // OnOff cluster setup
@@ -153,24 +143,36 @@ fn run() -> Result<(), Error> {
         },
     );
 
-    // Cluster wiring, validation and initialisation
+    // OnOff↔LC wiring
     on_off_handler.init(Some(&level_control_handler));
     level_control_handler.init(Some(&on_off_handler));
 
-    // Create the Data Model instance
+    // ColorControl cluster setup — coupled to the same OnOff so
+    // EXECUTE_IF_OFF gating works.
+    let color_control_handler = color_control::ColorControlHandler::new(
+        Dataver::new_rand(&mut rand),
+        1,
+        ColorControlDeviceLogic::new(),
+        color_control::AttributeDefaults::default(),
+    );
+    color_control_handler.init(Some(&on_off_handler));
+
     let dm = DataModel::new(
         matter,
         &crypto,
         buffers,
         subscriptions,
         events,
-        dm_handler(rand, &on_off_handler, &level_control_handler),
+        dm_handler(
+            rand,
+            &on_off_handler,
+            &level_control_handler,
+            &color_control_handler,
+        ),
         SharedKvBlobStore::new(kv, kv_buf),
         SharedNetworks::new(EthNetwork::new_default()),
     );
 
-    // Create a default responder capable of handling up to 3 subscriptions
-    // All other subscription requests will be turned down with "resource exhausted"
     let responder = DefaultResponder::new(&dm);
     info!(
         "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
@@ -178,11 +180,7 @@ fn run() -> Result<(), Error> {
         core::mem::size_of_val(&responder.run::<4, 4>())
     );
 
-    // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
-    // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
-
-    // Run the background job of the data model
     let mut dm_job = pin!(dm.run());
 
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
@@ -193,26 +191,16 @@ fn run() -> Result<(), Error> {
         core::mem::size_of_val(&mdns::run_mdns(matter, &crypto))
     );
 
-    // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto));
     let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
-    // We need to always print the QR text, because the test runner expects it to be printed
-    // even if the device is already commissioned
     matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
 
     if !matter.is_commissioned() {
-        // If the device is not commissioned yet, print the QR code to the console
-        // and enable basic commissioning
-
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
-
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &())?;
     }
 
-    // Listen to SIGTERM (or Ctrl-C on Windows, where SIGTERM is not
-    // supported by `async-signal`) because at the end of the test we'll
-    // receive it.
     #[cfg(not(windows))]
     let mut term_signal = Signals::new([Signal::Term])?;
     #[cfg(windows)]
@@ -222,40 +210,37 @@ fn run() -> Result<(), Error> {
         Ok(())
     });
 
-    // Combine all async tasks in a single one
     let all = select3(
         &mut transport,
         &mut mdns,
         select3(&mut respond, &mut dm_job, &mut term).coalesce(),
     );
 
-    // Run with a simple `block_on`. Any local executor would do.
     futures_lite::future::block_on(all.coalesce())
 }
 
-/// The Node meta-data describing our Matter device.
 const NODE: Node<'static> = Node {
     endpoints: &[
         root_endpoint!(eth),
         Endpoint::new(
             1,
-            devices!(DEV_TYPE_DIMMABLE_LIGHT),
+            devices!(DEV_TYPE_EXTENDED_COLOR_LIGHT),
             clusters!(
                 desc::DescHandler::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 OnOffDeviceLogic::CLUSTER,
                 LevelControlDeviceLogic::CLUSTER,
+                ColorControlDeviceLogic::CLUSTER,
             ),
         ),
     ],
 };
 
-/// The Data Model handler + meta-data for our Matter device.
-/// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
+fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks, CH: ColorControlHooks>(
     mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
+    color_control: &'a color_control::ColorControlHandler<'a, CH, OH, LH>,
 ) -> impl DataModelHandler + 'a {
     (
         NODE,
@@ -277,11 +262,25 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
             .chain(
                 EpClMatcher::new(Some(1), Some(LevelControlDeviceLogic::CLUSTER.id)),
                 level_control::HandlerAsyncAdaptor(level_control),
+            )
+            .chain(
+                EpClMatcher::new(Some(1), Some(ColorControlDeviceLogic::CLUSTER.id)),
+                color_control::HandlerAsyncAdaptor(color_control),
             ),
     )
 }
 
-// Implementing the LevelControl business logic
+// ---- ColorControl business logic ----
+//
+// The cluster owns all attribute state internally — this example just
+// re-exports the bundled `TestColorControlDeviceLogic` (all 5 features
+// enabled, stub actuator) as `ColorControlDeviceLogic` for naming
+// symmetry with `LevelControlDeviceLogic` / `OnOffDeviceLogic`.
+
+pub use rs_matter::dm::clusters::app::color_control::test::TestColorControlDeviceLogic as ColorControlDeviceLogic;
+
+// ---- LevelControl business logic (identical to dimmable_light) ----
+
 pub struct LevelControlDeviceLogic {
     current_level: Cell<Option<u8>>,
     start_up_current_level: Cell<Option<u8>>,
@@ -336,7 +335,6 @@ impl LevelControlHooks for LevelControlDeviceLogic {
         ));
 
     fn set_device_level(&self, level: u8) -> Result<Option<u8>, ()> {
-        // This is where business logic is implemented to physically change the level of the device.
         Ok(Some(level))
     }
 
@@ -345,10 +343,7 @@ impl LevelControlHooks for LevelControlDeviceLogic {
     }
 
     fn set_current_level(&self, level: Option<u8>) {
-        info!(
-            "LevelControlDeviceLogic::set_current_level: setting level to {:?}",
-            level
-        );
+        info!("set_current_level: {:?}", level);
         self.current_level.set(level);
     }
 
@@ -362,11 +357,8 @@ impl LevelControlHooks for LevelControlDeviceLogic {
     }
 }
 
-// Implementing the OnOff business logic
+// ---- OnOff business logic (identical to dimmable_light) ----
 
-// A simple serializer and deserializer for persisting the OnOff state in a single byte.
-// Stores the on_off state in the first bit.
-// Stores the start_up_on_off state in the remaining bits.
 #[derive(Default)]
 struct OnOffPersistentState {
     on_off: bool,
@@ -375,11 +367,6 @@ struct OnOffPersistentState {
 
 impl OnOffPersistentState {
     fn to_bytes_from_values(on_off: bool, start_up_on_off: Option<StartUpOnOffEnum>) -> u8 {
-        trace!(
-            "to_bytes_from_values: got on_off: {} | start_up_on_off: {:?}",
-            on_off,
-            start_up_on_off
-        );
         let on_off = on_off as u8;
         let start_up_on_off: u8 = match start_up_on_off {
             Some(StartUpOnOffEnum::Off) => 0,
@@ -387,12 +374,6 @@ impl OnOffPersistentState {
             Some(StartUpOnOffEnum::Toggle) => 2,
             None => 3,
         };
-        trace!(
-            "to_bytes_from_values: vals before writing on_off: {} | start_up_on_off: {}",
-            on_off,
-            start_up_on_off
-        );
-        trace!("final val: {}", on_off + (start_up_on_off << 1));
         on_off + (start_up_on_off << 1)
     }
 
@@ -417,28 +398,20 @@ pub struct OnOffDeviceLogic {
     storage_path: PathBuf,
 }
 
-const STORAGE_FILE_NAME: &str = "rs-matter-on-off-state";
+const STORAGE_FILE_NAME: &str = "rs-matter-light-tests-on-off-state";
 
 impl OnOffDeviceLogic {
     pub fn new() -> Self {
         let storage_path = std::env::temp_dir().join(STORAGE_FILE_NAME);
-        info!(
-            "OnOffDeviceLogic using storage path: {}",
-            storage_path.as_path().to_str().unwrap_or("none")
-        );
-
         let persisted_state = match fs::File::open(storage_path.as_path()) {
             Ok(mut file) => {
                 let mut buf: [u8; 1] = [0];
                 file.read_exact(&mut buf).unwrap();
-
-                trace!("OnOffDeviceLogic::new: read from storage: {:0x}", buf[0]);
-
+                trace!("OnOffDeviceLogic::new: read {:0x}", buf[0]);
                 OnOffPersistentState::from_bytes(buf[0]).unwrap()
             }
             Err(_) => OnOffPersistentState::default(),
         };
-
         Self {
             on_off: Cell::new(persisted_state.on_off),
             start_up_on_off: Cell::new(persisted_state.start_up_on_off),
@@ -448,18 +421,11 @@ impl OnOffDeviceLogic {
 
     fn save_state(&self) -> Result<(), Error> {
         let mut file = fs::File::create(self.storage_path.as_path())?;
-
         let value = OnOffPersistentState::to_bytes_from_values(
             self.on_off.get(),
             self.start_up_on_off.get(),
         );
-
-        let buf = &[value];
-
-        trace!("save_storage: wrote {:0x}", value);
-
-        file.write_all(buf)?;
-
+        file.write_all(&[value])?;
         Ok(())
     }
 }

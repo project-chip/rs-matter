@@ -460,11 +460,16 @@ pub(crate) const CAMERA_TESTS: &[&str] = &[
     "TC_WEBRTCP_2_1",
 ];
 
-/// LevelControl + OnOff YAML tests — run against the `dimmable_light` example.
-///
-/// Mirrors the list in `.github/workflows/chiptool-tests.yml`. Requires the
-/// `chip-test` cargo feature on the build (see [`TestSuite::default_features`]).
+/// OnOff + LevelControl + ColorControl YAML/Python tests — run
+/// against the `light_tests` example.
 pub(crate) const LIGHT_TESTS: &[&str] = &[
+    // OnOff
+    "Test_TC_OO_2_1",
+    "Test_TC_OO_2_2",
+    "Test_TC_OO_2_4",
+    "Test_TC_OO_2_6",
+    // "Test_TC_OO_2_7", // TODO: not yet passing
+    // LevelControl
     "Test_TC_LVL_2_1",
     "Test_TC_LVL_2_2",
     "Test_TC_LVL_3_1",
@@ -473,11 +478,40 @@ pub(crate) const LIGHT_TESTS: &[&str] = &[
     "Test_TC_LVL_6_1",
     "Test_TC_LVL_7_1",
     // "Test_TC_LVL_9_1", // TODO: not yet passing
-    "Test_TC_OO_2_1",
-    "Test_TC_OO_2_2",
-    "Test_TC_OO_2_4",
-    "Test_TC_OO_2_6",
-    // "Test_TC_OO_2_7", // TODO: not yet passing
+    // ColorControl — attribute reads + write validation (Python).
+    "TC_CC_2_1",
+    "TC_CC_2_2",
+    // ColorControl — Hue (HUE_AND_SATURATION).
+    "Test_TC_CC_3_1",
+    "Test_TC_CC_3_2",
+    "Test_TC_CC_3_3",
+    // ColorControl — Saturation (HUE_AND_SATURATION).
+    "Test_TC_CC_4_1",
+    "Test_TC_CC_4_2",
+    "Test_TC_CC_4_3",
+    "Test_TC_CC_4_4",
+    // ColorControl — XY.
+    "Test_TC_CC_5_1",
+    "Test_TC_CC_5_2",
+    "Test_TC_CC_5_3",
+    // ColorControl — Color temperature.
+    "Test_TC_CC_6_1",
+    "Test_TC_CC_6_2",
+    "Test_TC_CC_6_3",
+    // "Test_TC_CC_6_5", // TODO: needs persistence of
+    // StartUpColorTemperatureMireds + ColorTemperatureMireds across
+    // reboots, which the light_tests example doesn't implement.
+    // ColorControl — Enhanced hue.
+    "Test_TC_CC_7_1",
+    "Test_TC_CC_7_2",
+    "Test_TC_CC_7_3",
+    "Test_TC_CC_7_4",
+    // ColorControl — Enhanced MoveToHueAndSaturation.
+    "Test_TC_CC_8_1",
+    // ColorControl — Color loop.
+    "Test_TC_CC_9_1",
+    "Test_TC_CC_9_2",
+    "Test_TC_CC_9_3",
 ];
 
 /// Scenes Management YAML tests — run against the `scenes_tests` example.
@@ -515,7 +549,7 @@ pub(crate) enum TestSuite {
     SystemYaml,
     /// Matter 1.5 camera-related clusters.
     Camera,
-    /// OnOff + LevelControl, exercising the dimmable_light example.
+    /// OnOff + LevelControl + ColorControl, exercising the `light_tests` example.
     Light,
     /// Scenes Management cluster — runs against the `scenes_tests` example.
     Scenes,
@@ -561,7 +595,7 @@ impl TestSuite {
         match self {
             Self::System | Self::SystemPython | Self::SystemYaml => "chip_tool_tests",
             Self::Camera => "camera_tests",
-            Self::Light => "dimmable_light",
+            Self::Light => "light_tests",
             Self::Scenes => "scenes_tests",
             Self::Commissioner => "commissioner_tests",
         }
@@ -570,11 +604,13 @@ impl TestSuite {
     /// Cargo features the example binary must be built with for this suite.
     pub(crate) fn default_features(&self) -> &'static [&'static str] {
         match self {
-            Self::System | Self::SystemPython | Self::SystemYaml | Self::Camera | Self::Scenes => {
-                &[]
-            }
-            Self::Light => &["chip-test"],
-            Self::Commissioner => &[],
+            Self::System
+            | Self::SystemPython
+            | Self::SystemYaml
+            | Self::Camera
+            | Self::Light
+            | Self::Scenes
+            | Self::Commissioner => &[],
         }
     }
 
