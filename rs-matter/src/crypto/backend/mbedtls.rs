@@ -1643,13 +1643,3 @@ unsafe extern "C" fn mbedtls_platform_entropy_source<T: RngCore>(
 
     0
 }
-
-/// MbedTLS platform zeroize function.
-// TODO: Make it user-provided
-#[cfg(not(target_os = "espidf"))]
-#[no_mangle]
-unsafe extern "C" fn mbedtls_platform_zeroize(dst: *mut c_uchar, len: u32) {
-    for i in 0..len as isize {
-        dst.offset(i).write_volatile(0);
-    }
-}
