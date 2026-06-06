@@ -327,6 +327,10 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> crate::crypto::EcPoint<'a, L
 {
     type Scalar<'s> = DummyCrypto;
 
+    fn is_valid_pubkey(&self) -> Result<bool, Error> {
+        unimplemented!()
+    }
+
     fn neg(&self) -> Result<Self, Error> {
         unimplemented!()
     }

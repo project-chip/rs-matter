@@ -654,6 +654,18 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> crate::crypto::EcPoint<'a, L
     where
         Self: 'a + 's;
 
+    fn is_valid_pubkey(&self) -> Result<bool, Error> {
+        // RFC-9383 public-key validation: on the curve and not the identity
+        // (point at infinity). `is_on_curve` also rejects out-of-range
+        // coordinates.
+        let mut ctx = openssl_check!(BigNumContext::new())?;
+
+        let on_curve = openssl_check!(self.point.is_on_curve(&self.group.group, &mut ctx))?;
+        let infinity = self.point.is_infinity(&self.group.group);
+
+        Ok(on_curve && !infinity)
+    }
+
     fn neg(&self) -> Result<Self, Error> {
         let mut result = openssl_check!(self.point.to_owned(&self.group.group))?;
 

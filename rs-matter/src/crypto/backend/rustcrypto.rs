@@ -905,6 +905,16 @@ where
 {
     type Scalar<'s> = ECScalar<SCALAR_LEN, C>;
 
+    fn is_valid_pubkey(&self) -> Result<bool, Error> {
+        // The point was produced by `ECPoint::new` via
+        // `AffinePoint::from_encoded_point`, which already rejects points that
+        // are not on the curve (and out-of-range coordinates). The only
+        // remaining RFC-9383 check is that it is not the identity element.
+        use elliptic_curve::group::Group;
+
+        Ok(!bool::from(self.0.is_identity()))
+    }
+
     fn neg(&self) -> Result<Self, Error> {
         Ok(Self(self.0.neg()))
     }

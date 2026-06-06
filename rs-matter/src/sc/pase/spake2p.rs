@@ -31,7 +31,7 @@ use crate::crypto::{
     EC_CANON_POINT_LEN, EC_CANON_SCALAR_LEN, EC_POINT_ZEROED, EC_SCALAR_ZEROED, HASH_LEN,
     HASH_ZEROED, HMAC_HASH_LEN, HMAC_HASH_ZEROED, UINT320_CANON_LEN,
 };
-use crate::error::Error;
+use crate::error::{Error, ErrorCode};
 use crate::sc::SCStatusCodes;
 use crate::utils::init::{init, Init};
 
@@ -276,6 +276,15 @@ impl Spake2P {
         b_pt_out: &mut CanonEcPoint,
         cb_out: &mut HmacHash,
     ) -> Result<(), Error> {
+        // RFC 9383 §4: validate the prover's public share `X` before using it.
+        // Reject any point that is off the curve or the identity (for cofactor-1
+        // curves like P-256, `h*X == I` iff `X == I`); an unchecked identity/
+        // invalid point would let the peer force the shared secret.
+        if !crypto.ec_point(a_pt)?.is_valid_pubkey()? {
+            error!("SPAKE2+: invalid prover public share (pA)");
+            Err(ErrorCode::InvalidData)?;
+        }
+
         let (w0, l_pt) = if let Some(pw) = verifier.password.as_ref().map(|pw| pw.reference()) {
             // Derive w0 and L from the password
             let mut w0s_w1s = Spake2pW::new();
@@ -470,6 +479,18 @@ impl Spake2P {
         let b_pt_ec = crypto
             .ec_point(b_pt)
             .map_err(|_| SCStatusCodes::InvalidParameter)?;
+
+        // RFC 9383 §4: validate the verifier's public share `Y` before using it.
+        // Reject off-curve or identity points (for cofactor-1 curves like P-256,
+        // `h*Y == I` iff `Y == I`).
+        if !b_pt_ec
+            .is_valid_pubkey()
+            .map_err(|_| SCStatusCodes::InvalidParameter)?
+        {
+            error!("SPAKE2+: invalid verifier public share (pB)");
+            return Err(SCStatusCodes::InvalidParameter);
+        }
+
         Self::compute_ke_ca_cb(
             &crypto,
             tt_hash.reference(),
@@ -1004,6 +1025,75 @@ mod tests {
             prover.ke().access(),
             v_ke.access(),
             "Prover and verifier should derive the same Ke"
+        );
+    }
+
+    #[test]
+    fn test_ec_point_is_valid_pubkey() {
+        use crate::crypto::EcPoint;
+
+        let crypto = test_only_crypto();
+
+        // A genuine on-curve, non-identity point (an RFC test vector X) is valid.
+        let valid = unwrap!(crypto.ec_point(RFC_T[0].x_pt));
+        assert!(unwrap!(valid.is_valid_pubkey()));
+
+        // Corrupt the Y coordinate so the point is no longer on the curve. The
+        // SEC1 layout is `0x04 || X(32) || Y(32)`; flipping the last byte yields
+        // an off-curve encoding. Depending on the backend this is rejected either
+        // at `ec_point` parsing time or by `is_valid_pubkey()`; both are acceptable —
+        // what matters is that such a point never passes validation.
+        let mut bad = EC_POINT_ZEROED;
+        bad.access_mut().copy_from_slice(RFC_T[0].x_pt.access());
+        let last = bad.access().len() - 1;
+        bad.access_mut()[last] ^= 0x01;
+
+        let rejected = match crypto.ec_point(bad.reference()) {
+            Err(_) => true,
+            Ok(pt) => !unwrap!(pt.is_valid_pubkey()),
+        };
+        assert!(rejected, "an off-curve point must not pass validation");
+    }
+
+    #[test]
+    fn test_setup_verifier_rejects_invalid_pa() {
+        // The verifier must reject a malformed/off-curve prover share `pA`
+        // (RFC 9383 §4 peer-public-key validation), rather than proceeding.
+        let password: u32 = 123456;
+        let password_bytes = password.to_le_bytes();
+        let password_ref = Spake2pVerifierPasswordRef::new(&password_bytes);
+        let salt = [0x42u8; 32];
+        let iterations = 2000u32;
+
+        let mut verifier = Spake2P::new();
+        let mut verifier_data = Spake2pVerifierData {
+            password: Some(password_ref.into()),
+            verifier: Spake2pVerifierStr::new(),
+            salt: Spake2pVerifierSalt::new(),
+            salt_len: SPAKE2P_VERIFIER_SALT_LEN as u8,
+            count: iterations,
+        };
+        verifier_data.salt.load(Spake2pVerifierSaltRef::new(&salt));
+
+        // An off-curve `pA`: a valid X encoding with a flipped Y byte.
+        let mut bad_a = EC_POINT_ZEROED;
+        bad_a.access_mut().copy_from_slice(RFC_T[0].x_pt.access());
+        let last = bad_a.access().len() - 1;
+        bad_a.access_mut()[last] ^= 0x01;
+
+        let mut b_pt = CanonEcPoint::new();
+        let mut cb = HmacHash::new();
+        let result = verifier.setup_verifier(
+            test_only_crypto(),
+            &verifier_data,
+            bad_a.reference(),
+            &mut b_pt,
+            &mut cb,
+        );
+
+        assert!(
+            result.is_err(),
+            "setup_verifier must reject an invalid prover share pA"
         );
     }
 
