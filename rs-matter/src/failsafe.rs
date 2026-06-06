@@ -429,6 +429,20 @@ impl FailSafe {
                 .verify_chain_start(&crypto, time)
                 .finalise(buf)
                 .map_err(|_| ErrorCode::InvalidCommand)?;
+
+            // Matter spec extra: an RCAC SHALL NOT carry a
+            // `pathLenConstraint` greater than `1` — the deepest valid
+            // Matter chain is RCAC → ICAC → NOC, i.e. at most one
+            // intermediate CA below the root. Mirrors CHIP's
+            // `ValidateChipRCAC`.
+            if let Some(path_len) = root_ref
+                .basic_constraints_path_len()
+                .map_err(|_| ErrorCode::InvalidCommand)?
+            {
+                if path_len > 1 {
+                    Err(ErrorCode::InvalidCommand)?;
+                }
+            }
         }
 
         self.root_ca.clear();
