@@ -693,6 +693,118 @@ impl<'a> CertRef<'a> {
         Ok(id.0)
     }
 
+    /// `BasicConstraints` extension value, or `None` if the extension is absent.
+    ///
+    /// Returned as `(is_ca, path_len_constraint)`. RCAC and ICAC SHALL set
+    /// `is_ca = true`; NOC SHALL set `is_ca = false`. Only ICAC SHALL carry a
+    /// `path_len_constraint` (value `0`) per Matter spec.
+    fn basic_constraints(&self) -> Result<Option<(bool, Option<u8>)>, Error> {
+        let ext = self
+            .extensions()?
+            .iter()
+            .do_try_find(|e| Ok(matches!(e, Extension::BasicConstraints(_))))?;
+
+        Ok(match ext {
+            Some(Extension::BasicConstraints(bc)) => Some((bc.is_ca, bc.path)),
+            _ => None,
+        })
+    }
+
+    /// `BasicConstraints.pathLenConstraint`, or `None` if absent (either the
+    /// extension itself is missing or the field is omitted).
+    ///
+    /// Exposed for the `AddTrustedRootCertificate` flow, which the Matter spec
+    /// requires to additionally reject an RCAC whose `pathLenConstraint` is
+    /// greater than `1` (see CHIP's `ValidateChipRCAC`).
+    pub fn basic_constraints_path_len(&self) -> Result<Option<u8>, Error> {
+        Ok(self.basic_constraints()?.and_then(|(_, p)| p))
+    }
+
+    /// Whether ANY `future-extensions` extension on this cert carries a DER
+    /// X.509 sub-extension with `critical = TRUE`.
+    ///
+    /// Matter TLV `future-extensions` is a DER blob spliced verbatim into the
+    /// X.509 TBS extensions SEQUENCE; per RFC 5280 §4.2 (and Matter Core
+    /// spec), a verifier MUST reject the certificate if it encounters a
+    /// critical extension it doesn't recognise. None of those sub-extensions
+    /// are recognised by this verifier, so any critical flag is a rejection.
+    fn has_critical_future_extension(&self) -> Result<bool, Error> {
+        for ext in self.extensions()?.iter() {
+            if let Extension::FutureExtensions(bytes) = ext? {
+                if der_blob_has_critical_extension(bytes.0)? {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// `KeyUsage` extension bits (Matter-TLV encoding — see
+    /// [`crate::cert::x509::key_usage_tlv`]), or `None` if absent.
+    fn key_usage(&self) -> Result<Option<u16>, Error> {
+        let ext = self
+            .extensions()?
+            .iter()
+            .do_try_find(|e| Ok(matches!(e, Extension::KeyUsage(_))))?;
+
+        Ok(match ext {
+            Some(Extension::KeyUsage(bits)) => Some(bits),
+            _ => None,
+        })
+    }
+
+    /// Whether the `ExtendedKeyUsage` extension is present AND contains every
+    /// purpose in `required` (each value matches the small-integer Matter TLV
+    /// encoding: `1`=ServerAuth, `2`=ClientAuth, etc.).
+    ///
+    /// Returns `Ok(false)` if the extension is absent or any required purpose
+    /// is missing.
+    fn ext_key_usage_has_all(&self, required: &[u8]) -> Result<bool, Error> {
+        let ext = self
+            .extensions()?
+            .iter()
+            .do_try_find(|e| Ok(matches!(e, Extension::ExtKeyUsage(_))))?;
+
+        let Some(Extension::ExtKeyUsage(list)) = ext else {
+            return Ok(false);
+        };
+
+        for need in required {
+            let mut found = false;
+            for v in list.iter() {
+                if v? == *need {
+                    found = true;
+                    break;
+                }
+            }
+
+            if !found {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Subject-DN-derived Matter certificate type.
+    ///
+    /// Per Matter Core spec ("Operational Certificate Encoding"), a NOC
+    /// has a `Matter-Node-Id` RDN, an ICAC a `Matter-ICAC-Id`, and an RCAC a
+    /// `Matter-RootCA-Id`. The three are mutually exclusive in a well-formed
+    /// cert; we pick the first one we recognise.
+    fn cert_type(&self) -> Result<MatterCertType, Error> {
+        for dn in self.subject()?.iter() {
+            match dn?.tag()? {
+                DNTag::NodeId => return Ok(MatterCertType::Noc),
+                DNTag::IcaId => return Ok(MatterCertType::Icac),
+                DNTag::RootCaId => return Ok(MatterCertType::Rcac),
+                _ => {}
+            }
+        }
+
+        Err(ErrorCode::InvalidData.into())
+    }
+
     fn is_authority(&self, their: &CertRef) -> Result<bool, Error> {
         let their_subject = their.get_subject_key_id()?;
 
@@ -808,19 +920,167 @@ impl fmt::Display for CertRef<'_> {
     }
 }
 
+/// Matter operational-cert type, derived from the subject DN's CA-id tags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+enum MatterCertType {
+    /// Root CA certificate (subject carries `Matter-RootCA-Id`).
+    Rcac,
+    /// Intermediate CA certificate (subject carries `Matter-ICAC-Id`).
+    Icac,
+    /// Node Operational Certificate (subject carries `Matter-Node-Id`).
+    Noc,
+}
+
+/// Walk a Matter TLV `future-extensions` blob — zero or more
+/// concatenated DER X.509 `Extension` SEQUENCEs (RFC 5280 §4.1:
+/// `SEQUENCE { OID, BOOLEAN OPTIONAL critical, OCTET STRING extnValue }`) —
+/// and return `true` on the first sub-extension whose `critical` flag is
+/// `TRUE`.
+fn der_blob_has_critical_extension(bytes: &[u8]) -> Result<bool, Error> {
+    use der::asn1::{AnyRef, ObjectIdentifier, OctetStringRef};
+    use der::{Decode, Reader, SliceReader, Tag};
+
+    let mut reader = SliceReader::new(bytes).map_err(|_| ErrorCode::InvalidData)?;
+    while !reader.is_finished() {
+        let any = AnyRef::decode(&mut reader).map_err(|_| ErrorCode::InvalidData)?;
+        let mut inner = SliceReader::new(any.value()).map_err(|_| ErrorCode::InvalidData)?;
+
+        // Skip the OID.
+        ObjectIdentifier::decode(&mut inner).map_err(|_| ErrorCode::InvalidData)?;
+
+        // OPTIONAL critical BOOLEAN before the mandatory OCTET STRING
+        // `extnValue`.
+        if !inner.is_finished()
+            && inner.peek_tag().map_err(|_| ErrorCode::InvalidData)? == Tag::Boolean
+            && bool::decode(&mut inner).map_err(|_| ErrorCode::InvalidData)?
+        {
+            return Ok(true);
+        }
+        // Consume `extnValue` so we land on the next `Extension`
+        // SEQUENCE (or the end of the blob).
+        let _ = OctetStringRef::decode(&mut inner).map_err(|_| ErrorCode::InvalidData)?;
+    }
+    Ok(false)
+}
+
 pub struct CertVerifier<'a, C> {
     cert: &'a CertRef<'a>,
     crypto: C,
     utc_time: UtcTime,
+    /// Position of `cert` in the chain being verified. `0` for the leaf
+    /// (NOC), incremented at each step toward the root.
+    depth: u8,
 }
 
 impl<'a, C: Crypto> CertVerifier<'a, C> {
-    pub fn new(cert: &'a CertRef<'a>, crypto: C, utc_time: UtcTime) -> Self {
+    pub const fn new(cert: &'a CertRef<'a>, crypto: C, utc_time: UtcTime) -> Self {
         Self {
             cert,
             crypto,
             utc_time,
+            depth: 0,
         }
+    }
+
+    /// Validate the Matter-mandated usage policy on `self.cert` for its
+    /// position in the chain against the spec rules from Matter Core spec
+    /// ("Operational Certificate Encoding"):
+    ///
+    /// - A leaf NOC (cert type `Noc`, depth `0`) SHALL have
+    ///   `BasicConstraints.cA = FALSE`, a `KeyUsage` containing
+    ///   `digitalSignature`, and an `ExtendedKeyUsage` containing both
+    ///   `serverAuth` and `clientAuth`.
+    /// - A CA cert (cert type `Icac` or `Rcac`) SHALL have
+    ///   `BasicConstraints.cA = TRUE` and a `KeyUsage` containing
+    ///   `keyCertSign`. If a `pathLenConstraint` is present, the number
+    ///   of non-self-issued intermediates below this cert
+    ///   (`depth - 1`) MUST NOT exceed it.
+    /// - A NOC SHALL NOT appear at depth > 0, and an ICAC/RCAC at
+    ///   depth `0` is only valid as a standalone-root validation (e.g.
+    ///   the `AddTrustedRootCertificate` flow), which still requires
+    ///   the CA usage policy here.
+    fn verify_usage(&self) -> Result<(), Error> {
+        use self::x509::key_usage_tlv;
+
+        // Per RFC 5280 §4.2 / Matter Core spec, an unrecognised critical
+        // extension SHALL force certificate rejection. Every sub-extension
+        // carried in a `future-extensions` blob is by definition not one
+        // we process here, so any critical flag is fatal.
+        if self.cert.has_critical_future_extension()? {
+            Err(ErrorCode::InvalidData)?;
+        }
+
+        let cert_type = self.cert.cert_type()?;
+        let key_usage = self
+            .cert
+            .key_usage()?
+            .ok_or_else(|| Error::new(ErrorCode::InvalidData))?;
+
+        match cert_type {
+            MatterCertType::Noc => {
+                // A NOC is only legal at depth 0 (chain leaf).
+                if self.depth != 0 {
+                    Err(ErrorCode::InvalidData)?;
+                }
+
+                // `BasicConstraints.cA` SHALL be FALSE. The extension
+                // itself is mandatory on a NOC; treat absence as a
+                // violation.
+                let (is_ca, _) = self
+                    .cert
+                    .basic_constraints()?
+                    .ok_or_else(|| Error::new(ErrorCode::InvalidData))?;
+                if is_ca {
+                    Err(ErrorCode::InvalidData)?;
+                }
+
+                // `KeyUsage` MUST include `digitalSignature`.
+                if (key_usage & key_usage_tlv::DIGITAL_SIGNATURE) == 0 {
+                    Err(ErrorCode::InvalidData)?;
+                }
+
+                // `ExtendedKeyUsage` MUST include both `serverAuth` (1)
+                // and `clientAuth` (2) per the Matter NOC profile.
+                const SERVER_AUTH: u8 = 1;
+                const CLIENT_AUTH: u8 = 2;
+                if !self
+                    .cert
+                    .ext_key_usage_has_all(&[SERVER_AUTH, CLIENT_AUTH])?
+                {
+                    Err(ErrorCode::InvalidData)?;
+                }
+            }
+            MatterCertType::Icac | MatterCertType::Rcac => {
+                let (is_ca, path_len) = self
+                    .cert
+                    .basic_constraints()?
+                    .ok_or_else(|| Error::new(ErrorCode::InvalidData))?;
+                if !is_ca {
+                    Err(ErrorCode::InvalidData)?;
+                }
+
+                // `KeyUsage` MUST include `keyCertSign`.
+                if (key_usage & key_usage_tlv::KEY_CERT_SIGN) == 0 {
+                    Err(ErrorCode::InvalidData)?;
+                }
+
+                // RFC 5280 §4.2.1.9: `pathLenConstraint` gives the
+                // maximum number of non-self-issued intermediate certs
+                // that may follow this one in a valid path. The leaf
+                // (depth 0) is not counted, so we compare against
+                // `depth - 1`. When this cert is itself at depth 0
+                // (standalone-root validation) the constraint is
+                // trivially satisfied.
+                if let (Some(max_intermediates), depth) = (path_len, self.depth) {
+                    if depth > 0 && depth - 1 > max_intermediates {
+                        Err(ErrorCode::InvalidData)?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub fn add_cert<'p>(
@@ -870,7 +1130,16 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
             }
         }
 
-        Ok(CertVerifier::new(parent, self.crypto, self.utc_time))
+        // Matter spec usage checks (BasicConstraints / KeyUsage /
+        // ExtendedKeyUsage / pathLenConstraint / cert type)
+        self.verify_usage()?;
+
+        Ok(CertVerifier {
+            cert: parent,
+            crypto: self.crypto,
+            utc_time: self.utc_time,
+            depth: self.depth.saturating_add(1),
+        })
     }
 
     pub fn finalise(self, buf: &mut [u8]) -> Result<(), Error> {
@@ -1039,6 +1308,134 @@ mod tests {
 
         let asn1_len = unwrap!(cert.as_asn1(&mut buf));
         assert_eq!(&buf[..asn1_len], UNORDERED_EXTENSIONS_DER);
+    }
+
+    /// Direct coverage of the `future-extensions` DER walker used by
+    /// `CertRef::has_critical_future_extension` and gated by
+    /// `CertVerifier::verify_usage`. Exercising it via synthetic bytes
+    /// avoids having to rebuild and re-sign a full Matter cert just to
+    /// inject a critical sub-extension.
+    #[test]
+    fn test_der_blob_has_critical_extension() {
+        use super::der_blob_has_critical_extension;
+
+        // A minimal DER `Extension` SEQUENCE we can splice in/out of a
+        // `future-extensions` blob:
+        //   30 LL                                  -- SEQUENCE, length LL
+        //     06 03 55 1D 63                       -- OID 2.5.29.99
+        //     [optional 01 01 (00|FF)]             -- critical BOOLEAN
+        //     04 00                                -- empty OCTET STRING
+        const NON_CRITICAL: &[u8] = &[
+            0x30, 0x0A, 0x06, 0x03, 0x55, 0x1D, 0x63, 0x01, 0x01, 0x00, 0x04, 0x00,
+        ];
+        const CRITICAL: &[u8] = &[
+            0x30, 0x0A, 0x06, 0x03, 0x55, 0x1D, 0x63, 0x01, 0x01, 0xFF, 0x04, 0x00,
+        ];
+        const DEFAULTED: &[u8] = &[
+            // BOOLEAN omitted entirely → defaults to FALSE.
+            0x30, 0x07, 0x06, 0x03, 0x55, 0x1D, 0x63, 0x04, 0x00,
+        ];
+
+        // Empty blob — vacuously fine.
+        assert!(!unwrap!(der_blob_has_critical_extension(&[])));
+
+        // Single sub-extension, the three critical-flag spellings.
+        assert!(!unwrap!(der_blob_has_critical_extension(NON_CRITICAL)));
+        assert!(!unwrap!(der_blob_has_critical_extension(DEFAULTED)));
+        assert!(unwrap!(der_blob_has_critical_extension(CRITICAL)));
+
+        // The walker must scan ALL sub-extensions, not just the first.
+        let mut two_noncritical = heapless::Vec::<u8, 64>::new();
+        unwrap!(two_noncritical.extend_from_slice(NON_CRITICAL));
+        unwrap!(two_noncritical.extend_from_slice(DEFAULTED));
+        assert!(!unwrap!(der_blob_has_critical_extension(&two_noncritical)));
+
+        let mut second_is_critical = heapless::Vec::<u8, 64>::new();
+        unwrap!(second_is_critical.extend_from_slice(NON_CRITICAL));
+        unwrap!(second_is_critical.extend_from_slice(CRITICAL));
+        assert!(unwrap!(der_blob_has_critical_extension(
+            &second_is_critical
+        )));
+    }
+
+    /// Sanity-check the per-extension accessors that `CertVerifier`
+    /// gates the chain on. The baked NOC/ICAC/RCAC test data is the
+    /// closest thing we have to real wire bytes — make sure the
+    /// accessors return the spec-mandated shape for each cert type.
+    #[test]
+    fn test_extension_accessors_on_known_chain() {
+        use super::x509::key_usage_tlv;
+        use super::MatterCertType;
+
+        let noc = CertRef::new(TLVElement::new(NOC1_SUCCESS));
+        let icac = CertRef::new(TLVElement::new(ICAC1_SUCCESS));
+        let rca = CertRef::new(TLVElement::new(RCA1_SUCCESS));
+
+        // --- NOC (leaf, depth 0) ---
+        assert_eq!(unwrap!(noc.cert_type()), MatterCertType::Noc);
+
+        let (noc_ca, noc_path) = unwrap!(unwrap!(noc.basic_constraints()));
+        assert!(!noc_ca, "NOC must have cA = FALSE");
+        assert_eq!(noc_path, None, "NOC must not carry pathLenConstraint");
+
+        let noc_ku = unwrap!(unwrap!(noc.key_usage()));
+        assert_ne!(
+            noc_ku & key_usage_tlv::DIGITAL_SIGNATURE,
+            0,
+            "NOC KeyUsage must include digitalSignature"
+        );
+
+        assert!(
+            unwrap!(noc.ext_key_usage_has_all(&[1, 2])),
+            "NOC ExtKeyUsage must include both serverAuth (1) and clientAuth (2)"
+        );
+
+        assert!(
+            !unwrap!(noc.has_critical_future_extension()),
+            "test NOC carries no future-extensions"
+        );
+
+        // --- ICAC (intermediate CA) ---
+        assert_eq!(unwrap!(icac.cert_type()), MatterCertType::Icac);
+
+        let (icac_ca, icac_path) = unwrap!(unwrap!(icac.basic_constraints()));
+        assert!(icac_ca, "ICAC must have cA = TRUE");
+        // Matter spec mandates pathLenConstraint=0 on an ICAC, but the
+        // verifier only kicks in when the field is actually present
+        // (RFC 5280 §4.2.1.9). The baked test data omits it entirely,
+        // which we tolerate — assert the parser surfaces that faithfully.
+        assert!(
+            matches!(icac_path, None | Some(0)),
+            "unexpected pathLenConstraint on ICAC: {icac_path:?}"
+        );
+
+        let icac_ku = unwrap!(unwrap!(icac.key_usage()));
+        assert_ne!(
+            icac_ku & key_usage_tlv::KEY_CERT_SIGN,
+            0,
+            "ICAC KeyUsage must include keyCertSign"
+        );
+
+        assert!(
+            !unwrap!(icac.ext_key_usage_has_all(&[1, 2])),
+            "ICAC has no ExtendedKeyUsage extension"
+        );
+
+        // --- RCAC (root CA) ---
+        assert_eq!(unwrap!(rca.cert_type()), MatterCertType::Rcac);
+
+        let (rca_ca, rca_path) = unwrap!(unwrap!(rca.basic_constraints()));
+        assert!(rca_ca, "RCAC must have cA = TRUE");
+        assert_eq!(rca_path, None, "RCAC must not carry pathLenConstraint");
+        // Matches the failsafe `pathLen <= 1` accessor too.
+        assert_eq!(unwrap!(rca.basic_constraints_path_len()), None);
+
+        let rca_ku = unwrap!(unwrap!(rca.key_usage()));
+        assert_ne!(
+            rca_ku & key_usage_tlv::KEY_CERT_SIGN,
+            0,
+            "RCAC KeyUsage must include keyCertSign"
+        );
     }
 
     // Group 1
