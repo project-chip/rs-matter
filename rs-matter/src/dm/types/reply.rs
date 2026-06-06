@@ -24,6 +24,7 @@ use crate::im::{
 };
 use crate::tlv::{TLVArray, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
+use crate::utils::storage::WriteBuf;
 
 use super::{
     AttrDetails, CmdDetails, InvokeContextInstance, ReadContextInstance, WriteContextInstance,
@@ -84,14 +85,14 @@ where
         self.exchange
     }
 
-    pub async fn process_read<T: TLVWrite + Send>(
+    pub async fn process_read(
         &mut self,
         item: &Result<AttrDetails, AttrStatus>,
-        mut tw: T,
+        tw: &mut WriteBuf<'_>,
     ) -> Result<(), Error> {
         let tail = tw.get_tail();
 
-        let result = self.do_process_read(item, &mut tw).await;
+        let result = self.do_process_read(item, &mut *tw).await;
 
         if result.is_err() {
             // If there was an error, rewind to the tail so we don't write any data.
@@ -101,16 +102,16 @@ where
         result
     }
 
-    async fn do_process_read<T: TLVWrite + Send>(
+    async fn do_process_read(
         &mut self,
         item: &Result<AttrDetails, AttrStatus>,
-        mut tw: T,
+        tw: &mut WriteBuf<'_>,
     ) -> Result<(), Error> {
         let result = match item {
             Ok(attr) => {
                 let pos = tw.get_tail();
 
-                let result = self.read(attr, &mut tw).await;
+                let result = self.read(attr, &mut *tw).await;
 
                 match result {
                     Ok(()) => Ok(None),
@@ -137,11 +138,7 @@ where
         }
     }
 
-    pub async fn read<T: TLVWrite + Send>(
-        &mut self,
-        attr: &AttrDetails,
-        tw: T,
-    ) -> Result<(), Error> {
+    pub async fn read(&mut self, attr: &AttrDetails, tw: &mut WriteBuf<'_>) -> Result<(), Error> {
         self.context
             .handler()
             .read(
@@ -151,14 +148,14 @@ where
             .await
     }
 
-    pub async fn process_write<T: TLVWrite>(
+    pub async fn process_write(
         &mut self,
         item: &Result<(AttrDetails, TLVElement<'_>), AttrStatus>,
-        mut tw: T,
+        tw: &mut WriteBuf<'_>,
     ) -> Result<(), Error> {
         let tail = tw.get_tail();
 
-        let result = self.do_process_write(item, &mut tw).await;
+        let result = self.do_process_write(item, &mut *tw).await;
 
         if result.is_err() {
             // If there was an error, rewind to the tail so we don't write any data.
@@ -168,10 +165,10 @@ where
         result
     }
 
-    async fn do_process_write<T: TLVWrite>(
+    async fn do_process_write(
         &mut self,
         item: &Result<(AttrDetails, TLVElement<'_>), AttrStatus>,
-        mut tw: T,
+        tw: &mut WriteBuf<'_>,
     ) -> Result<(), Error> {
         let result = match item {
             Ok((attr, data)) => {
@@ -228,14 +225,14 @@ where
             .await
     }
 
-    pub async fn process_invoke<T: TLVWrite + Send>(
+    pub async fn process_invoke(
         &mut self,
         item: &Result<(CmdDetails, TLVElement<'_>), CmdStatus>,
-        mut tw: T,
+        tw: &mut WriteBuf<'_>,
     ) -> Result<(), Error> {
         let tail = tw.get_tail();
 
-        let result = self.do_process_invoke(item, &mut tw).await;
+        let result = self.do_process_invoke(item, &mut *tw).await;
 
         if result.is_err() {
             // If there was an error, rewind to the tail so we don't write any data.
@@ -245,16 +242,16 @@ where
         result
     }
 
-    async fn do_process_invoke<T: TLVWrite + Send>(
+    async fn do_process_invoke(
         &mut self,
         item: &Result<(CmdDetails, TLVElement<'_>), CmdStatus>,
-        mut tw: T,
+        tw: &mut WriteBuf<'_>,
     ) -> Result<(), Error> {
         let result = match item {
             Ok((cmd, data)) => {
                 let pos = tw.get_tail();
 
-                let result = self.invoke(cmd, data, &mut tw).await;
+                let result = self.invoke(cmd, data, &mut *tw).await;
 
                 match result {
                     Ok(()) => {
@@ -287,11 +284,11 @@ where
         }
     }
 
-    pub async fn invoke<T: TLVWrite + Send>(
+    pub async fn invoke(
         &mut self,
         cmd: &CmdDetails,
         data: &TLVElement<'_>,
-        tw: T,
+        tw: &mut WriteBuf<'_>,
     ) -> Result<(), Error> {
         self.context
             .handler()
@@ -326,14 +323,14 @@ impl EventReader {
         }
     }
 
-    pub fn process_read<T: TLVWrite>(
+    pub fn process_read(
         &mut self,
         event: EventData<'_>,
         paths: &TLVArray<'_, EventPath>,
         event_filters: &Option<TLVArray<'_, EventFilter>>,
         node: &Node<'_>,
         accessor: &Accessor<'_>,
-        mut tw: T,
+        tw: &mut WriteBuf<'_>,
     ) -> Result<bool, Error> {
         let event_number = event.event_number;
         if !(event_number > self.max_seen_event_number
@@ -345,7 +342,7 @@ impl EventReader {
 
         let tail = tw.get_tail();
 
-        let result = self.do_process_read(event, paths, event_filters, node, accessor, &mut tw);
+        let result = self.do_process_read(event, paths, event_filters, node, accessor, &mut *tw);
 
         if result.is_err() {
             // If there was an error, rewind to the tail so we don't write any data
@@ -363,14 +360,14 @@ impl EventReader {
         result
     }
 
-    fn do_process_read<T: TLVWrite>(
+    fn do_process_read(
         &mut self,
         event: EventData<'_>,
         paths: &TLVArray<'_, EventPath>,
         event_filters: &Option<TLVArray<'_, EventFilter>>,
         node: &Node<'_>,
         accessor: &Accessor<'_>,
-        mut tw: T,
+        tw: &mut WriteBuf<'_>,
     ) -> Result<bool, Error> {
         if self.fabric_filtered && !Self::matches_fabric(&event, accessor) {
             return Ok(false);
@@ -380,7 +377,7 @@ impl EventReader {
             && Self::matches_filters(&event, event_filters)?
             && Self::matches_access(&event, node, accessor)?
         {
-            EventResp::Data(event).to_tlv(&TagType::Anonymous, &mut tw)?;
+            EventResp::Data(event).to_tlv(&TagType::Anonymous, &mut *tw)?;
 
             Ok(true)
         } else {
