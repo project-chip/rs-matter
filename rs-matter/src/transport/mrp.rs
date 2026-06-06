@@ -17,7 +17,8 @@
 
 use embassy_time::Instant;
 
-use crate::error::*;
+use crate::dm::clusters::basic_info::BasicInfoConfig;
+use crate::error::{Error, ErrorCode};
 
 use super::{plain_hdr::PlainHdr, proto_hdr::ProtoHdr};
 
@@ -29,6 +30,41 @@ const MRP_BACKOFF_BASE: (u64, u64) = (16, 10); // 1.6
 const MRP_BACKOFF_JITTER: (u64, u64) = (25, 100); // 0.25
 const MRP_BACKOFF_MARGIN: (u64, u64) = (11, 10); // 1.1
 const MRP_JITTER_RAND_MAX: u8 = u8::MAX;
+
+/// Fallback for `MRP_SESSION_IDLE_INTERVAL` when neither the peer nor our
+/// own `BasicInfoConfig::sii` advertised a value. Matches the docstring
+/// default on [`BasicInfoConfig::sii`].
+const MRP_DEFAULT_IDLE_INTERVAL_MS: u32 = 5000;
+
+/// Fallback for `MRP_SESSION_ACTIVE_THRESHOLD` when the peer didn't
+/// advertise one. Matter Core spec §4.12 default.
+const MRP_DEFAULT_ACTIVE_THRESHOLD_MS: u16 = 4000;
+
+/// Resolve the default peer-MRP timing for a freshly-created [`Session`]
+/// from our own [`BasicInfoConfig`] (Matter Core spec §4.12.8): a peer
+/// that never advertises `session_parameters` will be addressed using
+/// our own SAI / SII as a reasonable approximation. Returns
+/// `(active_interval_ms, idle_interval_ms, active_threshold_ms)`.
+///
+/// `Some(0)` is treated identically to `None` — an interval of zero
+/// would collapse the MRP backoff to a tight retransmit loop and is
+/// never a valid configuration, so the fallback constants are used
+/// instead.
+///
+/// [`Session`]: crate::transport::session::Session
+pub fn default_peer_mrp_params(dev_det: &BasicInfoConfig<'_>) -> (u32, u32, u16) {
+    (
+        dev_det
+            .sai
+            .filter(|&v| v > 0)
+            .unwrap_or(MRP_BASE_RETRY_INTERVAL_MS),
+        dev_det
+            .sii
+            .filter(|&v| v > 0)
+            .unwrap_or(MRP_DEFAULT_IDLE_INTERVAL_MS),
+        MRP_DEFAULT_ACTIVE_THRESHOLD_MS,
+    )
+}
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -43,8 +79,15 @@ pub struct RetransEntry {
 
 impl RetransEntry {
     pub fn new(base_delay_interval_ms: Option<u32>, msg_ctr: u32) -> Self {
+        // Defence-in-depth: a future code path that bypasses the
+        // peer-side / dev_det-side zero filters must never collapse the
+        // backoff into a zero-delay retransmit loop. Treat `Some(0)`
+        // identically to `None`.
+        let base_delay_interval_ms = base_delay_interval_ms
+            .filter(|&v| v > 0)
+            .unwrap_or(MRP_BASE_RETRY_INTERVAL_MS);
         Self {
-            base_delay_interval_ms: base_delay_interval_ms.unwrap_or(MRP_BASE_RETRY_INTERVAL_MS),
+            base_delay_interval_ms,
             msg_ctr,
             counter: 0,
         }
