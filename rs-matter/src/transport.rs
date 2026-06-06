@@ -274,9 +274,10 @@ impl Transport {
         matter.with_state(|state| {
             let mut rand = crypto.rand()?;
 
-            let session = state
-                .sessions
-                .add(rand.next_u32(), false, peer_addr, None)?;
+            let session =
+                state
+                    .sessions
+                    .add(rand.next_u32(), false, peer_addr, None, matter.dev_det())?;
 
             // Generate ephemeral initiator node ID per spec:
             // "Randomly selected for each session by the initiator from the Operational Node ID range"
@@ -1042,6 +1043,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                         false,
                         packet.peer,
                         packet.header.plain.get_src_nodeid(),
+                        self.matter.dev_det(),
                     )?;
 
                     // Session created successfully: decode, indicate packet payload slice and process further
@@ -1053,6 +1055,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     &self.crypto,
                     &state.fabrics,
                     packet,
+                    self.matter.dev_det(),
                 )?;
                 set_payload(packet, payload_range);
 

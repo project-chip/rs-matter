@@ -100,7 +100,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
     }
 
     async fn handle_inner(&mut self, exchange: &mut Exchange<'_>) -> Result<bool, Error> {
-        let session = ReservedSession::reserve(exchange.matter(), &self.crypto).await?;
+        let mut session = ReservedSession::reserve(exchange.matter(), &self.crypto).await?;
 
         if !self.update_session_timeout(exchange, true).await? {
             return Ok(true);
@@ -114,7 +114,10 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         // Also clear the per-exchange `session_timeout` we set above so
         // the next inbound PASE attempt isn't rejected as "another PAKE
         // session in progress".
-        if !self.handle_pbkdfparamrequest(exchange).await? {
+        if !self
+            .handle_pbkdfparamrequest(exchange, &mut session)
+            .await?
+        {
             self.clear_session_timeout(exchange)?;
             return Ok(true);
         }
@@ -157,6 +160,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
     async fn handle_pbkdfparamrequest(
         &mut self,
         exchange: &mut Exchange<'_>,
+        session: &mut ReservedSession<'_>,
     ) -> Result<bool, Error> {
         check_opcode(exchange, OpCode::PBKDFParamRequest)?;
 
@@ -198,6 +202,22 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                 if req.passcode_id != 0 {
                     error!("Can't yet handle passcode_id != 0");
                     Err(ErrorCode::Invalid)?;
+                }
+
+                // Stash the initiator's MRP `session_parameters` (Matter
+                // Core spec §4.12.8) on both the unsecured session that
+                // currently carries the PASE handshake (so PASEPake2
+                // retransmits honour the peer's SAI) and on the reserved
+                // PASE session that takes over after PASEPake3.
+                if let Some(params) = req.session_parameters.as_ref() {
+                    exchange.with_state(|state| {
+                        exchange
+                            .id()
+                            .session(&mut state.sessions)
+                            .set_peer_session_params(params);
+                        Ok(())
+                    })?;
+                    session.set_peer_session_params(params)?;
                 }
 
                 let mut rand = self.crypto.rand()?;

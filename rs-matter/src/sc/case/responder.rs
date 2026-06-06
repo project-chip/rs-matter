@@ -95,9 +95,9 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
     /// # Arguments
     /// - `exchange` - The exchange to handle the CASE protocol on
     pub async fn handle(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        let session = ReservedSession::reserve(exchange.matter(), self.crypto).await?;
+        let mut session = ReservedSession::reserve(exchange.matter(), self.crypto).await?;
 
-        self.handle_casesigma1(exchange).await?;
+        self.handle_casesigma1(exchange, &mut session).await?;
 
         exchange.recv_fetch().await?;
 
@@ -112,7 +112,14 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
     ///
     /// # Arguments
     /// - `exchange` - The exchange to handle the CASE Sigma1 message on
-    async fn handle_casesigma1(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    /// - `session` - The reserved CASE session slot that receives the
+    ///   peer's MRP `session_parameters` from Sigma1 so they're in place
+    ///   before it transitions to the established CASE session.
+    async fn handle_casesigma1(
+        &mut self,
+        exchange: &mut Exchange<'_>,
+        session: &mut ReservedSession<'_>,
+    ) -> Result<(), Error> {
         check_opcode(exchange, OpCode::CASESigma1)?;
 
         let req = Sigma1Req::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
@@ -165,6 +172,24 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
             resumption_id,
             tt_hash,
         )?;
+
+        // Stash the initiator's advertised MRP `session_parameters`
+        // (Matter Core spec §4.12.8) so the responder uses the peer's
+        // SAI as the retransmission base interval for Sigma2 and any
+        // post-handshake traffic. We apply them both to the unsecured
+        // session that the handshake currently rides on (so Sigma2
+        // retransmits use them) and to the reserved CASE session that
+        // takes over after Sigma3.
+        if let Some(params) = req.session_parameters.as_ref() {
+            exchange.with_state(|state| {
+                exchange
+                    .id()
+                    .session(&mut state.sessions)
+                    .set_peer_session_params(params);
+                Ok(())
+            })?;
+            session.set_peer_session_params(params)?;
+        }
 
         trace!(
             "Destination ID matched to fabric index {}",

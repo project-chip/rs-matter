@@ -682,17 +682,17 @@ impl TxMessage<'_> {
                 .get(self.exchange_id.session_id())
                 .ok_or(ErrorCode::NoSession)?;
 
+            // The session's `peer_active_interval_ms` / `peer_idle_interval_ms`
+            // are seeded from our own `BasicInfoConfig` at session-creation
+            // time and overwritten once Sigma1 / Sigma2 / PBKDFParamRequest /
+            // PBKDFParamResponse delivers a real peer value, so MRP
+            // retransmission backoff to this peer reflects whichever is
+            // more accurate (Matter Core spec §4.12.8).
             let (peer, retransmission) = session.pre_send(
                 Some(self.exchange_id.exchange_index()),
                 &mut self.packet.header,
-                // NOTE: It is not entirely correct to use our own SAI/SII when sending to a peer,
-                // as the peer might be slower than us
-                //
-                // However, given that for now `rs-matter` would be in the role of the device rather
-                // than a controller, that's a good-enough approximation (i.e. if we are running on Thread,
-                // the controller would either be running on Thread as well, or on a network faster than ours)
-                self.matter.dev_det().sai,
-                self.matter.dev_det().sii,
+                Some(session.get_peer_active_interval_ms()),
+                Some(session.get_peer_idle_interval_ms()),
             )?;
 
             self.packet.peer = peer;
@@ -1457,10 +1457,11 @@ mod tests {
     }
 
     fn fill_sessions(matter: &Matter<'_>, reserved: bool) {
+        let dev_det = matter.dev_det();
         matter.with_state(|state| loop {
             if state
                 .sessions
-                .add(0, reserved, network::Address::new(), None)
+                .add(0, reserved, network::Address::new(), None, dev_det)
                 .is_err()
             {
                 break;
