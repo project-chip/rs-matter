@@ -605,6 +605,17 @@ pub trait EcPoint<'a, const LEN: usize, const SCALAR_LEN: usize> {
     where
         Self: 'a + 's;
 
+    /// Return `true` if this point is a valid public key on the curve, i.e. it
+    /// is on the curve, its coordinates are in range, and it is **not** the
+    /// identity (point at infinity) — equivalently, per RFC 9383 §4, that the
+    /// cofactor multiple `h*P` is not the identity element.
+    ///
+    /// SPAKE2+ requires this validation on the peer's public share (`X` on the
+    /// verifier side, `Y` on the prover side); an unchecked identity/invalid
+    /// point lets a peer force the shared secret and break the protocol's
+    /// guarantees.
+    fn is_valid_pubkey(&self) -> Result<bool, Error>;
+
     /// Negate this EC point.
     fn neg(&self) -> Result<Self, Error>
     where

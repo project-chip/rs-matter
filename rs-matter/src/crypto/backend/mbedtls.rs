@@ -952,6 +952,30 @@ where
     where
         Self: 'a + 's;
 
+    fn is_valid_pubkey(&self) -> Result<bool, Error> {
+        // `mbedtls_ecp_check_pubkey` performs the full RFC-9383 public-key
+        // validation: the point is on the curve, its coordinates are in range,
+        // and it is not the identity (zero) point. It returns `0` for a valid
+        // key, `MBEDTLS_ERR_ECP_INVALID_KEY` for an invalid point, or *another*
+        // negative error code on an internal failure. Map the first two to the
+        // boolean verdict and let `merr_check!` panic on any other failure, as
+        // the rest of this backend does for unrecoverable internal errors.
+        let rc = self.group.access(|group| unsafe {
+            mbedtls_rs_sys::mbedtls_ecp_check_pubkey(&group.raw, &self.raw)
+        });
+
+        match rc {
+            0 => Ok(true),
+            mbedtls_rs_sys::MBEDTLS_ERR_ECP_INVALID_KEY => Ok(false),
+            other => {
+                // Not a validity verdict — an internal failure. Surface it the
+                // same way as every other call in this backend (panic).
+                merr_check!(other)?;
+                unreachable!()
+            }
+        }
+    }
+
     fn neg(&self) -> Result<Self, Error> {
         assert!(unsafe { mbedtls_rs_sys::mbedtls_mpi_cmp_int(&self.raw.private_Z, 1) } == 0);
 
