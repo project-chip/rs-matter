@@ -688,6 +688,163 @@ impl MatterService {
     }
 }
 
+/// A query target for mDNS browse/resolve.
+///
+/// This is the *query-side* analog of the *publish-side* [`MatterService`] enum:
+/// it identifies a single Matter service instance to resolve (SRV/TXT/A/AAAA),
+/// rather than describing one to advertise.
+///
+/// Note that *browsing* (enumerating all commissionable or operational nodes)
+/// does not need a `MatterMdnsService` - it is a PTR query against the bare
+/// service type. See [`MdnsQuery::browse`].
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum MatterMdnsService {
+    /// A specific operational (commissioned) node.
+    ///
+    /// The instance name is `<compressed-fabric-id-hex>-<node-id-hex>._matter._tcp.local`.
+    Operational {
+        compressed_fabric_id: u64,
+        node_id: u64,
+    },
+    /// A specific commissionable instance.
+    ///
+    /// The instance name is `<id-hex>._matterc._udp.local`.
+    Commissionable { id: u64 },
+}
+
+impl MatterMdnsService {
+    /// Write the fully-qualified mDNS instance name for this service into `buf`.
+    ///
+    /// This is the name to issue SRV/TXT/A/AAAA queries against when resolving.
+    pub fn instance_name(&self, buf: &mut heapless::String<128>) {
+        buf.clear();
+
+        match self {
+            Self::Operational {
+                compressed_fabric_id,
+                node_id,
+            } => {
+                write_unwrap!(
+                    buf,
+                    "{:016X}-{:016X}._matter._tcp.local",
+                    compressed_fabric_id,
+                    node_id
+                );
+            }
+            Self::Commissionable { id } => {
+                write_unwrap!(buf, "{:016X}._matterc._udp.local", id);
+            }
+        }
+    }
+
+    /// Whether the given mDNS instance name refers to this service, comparing
+    /// case-insensitively and ignoring a trailing dot.
+    pub fn matches_instance_name(&self, name: &str) -> bool {
+        let mut expected = heapless::String::<128>::new();
+        self.instance_name(&mut expected);
+
+        expected
+            .trim_end_matches('.')
+            .eq_ignore_ascii_case(name.trim_end_matches('.'))
+    }
+}
+
+/// A borrowed view of a single Matter service record, assembled from *one* mDNS
+/// response packet.
+///
+/// All fields borrow either short-lived parser scratch or the receive buffer;
+/// nothing here outlives the callback invocation it is passed to. This keeps
+/// discovery allocation-free on the library side - the caller copies out only
+/// the fields it cares about (e.g. a [`SocketAddr`], or a full
+/// [`DiscoveredDevice`] assembled via [`DiscoveredDevice::set_txt_value`]).
+///
+/// Because the view is assembled per-packet, it is only complete if the
+/// responder packed the PTR/SRV/TXT/A/AAAA records into a single packet (as
+/// RFC 6763 compliant responders, including `rs-matter`'s own, do). If a peer
+/// splits records across packets, the caller will observe partial views and
+/// must merge them itself.
+#[derive(Debug, Clone, Copy)]
+pub struct MdnsAnswer<'a> {
+    /// The mDNS instance name, e.g. `ABCD1234._matterc._udp.local` for a
+    /// commissionable node or `<fab>-<node>._matter._tcp.local` for an
+    /// operational one.
+    pub instance_name: &'a str,
+    /// The SRV target hostname (e.g. `host.local`), if an SRV record was present.
+    pub hostname: Option<&'a str>,
+    /// The port from the SRV record, if present.
+    pub port: Option<u16>,
+    /// Addresses correlated to `hostname` from A/AAAA records in this packet,
+    /// sorted by priority (best first, see [`score_ip_address`]).
+    pub addrs: &'a [IpAddr],
+    /// Raw TXT key/value pairs from this packet.
+    pub txt: &'a [(&'a str, &'a str)],
+}
+
+impl MdnsAnswer<'_> {
+    /// Parse the peer's MRP/session parameters (`SII`/`SAI`/`SAT`) from this
+    /// answer's TXT records, per Matter Core spec §4.3.4.
+    pub fn session_params(&self) -> ResolvedSessionParams {
+        let mut params = ResolvedSessionParams::default();
+
+        for (key, value) in self.txt {
+            match *key {
+                "SII" => params.sii = value.parse().ok(),
+                "SAI" => params.sai = value.parse().ok(),
+                "SAT" => params.sat = value.parse().ok(),
+                _ => {}
+            }
+        }
+
+        params
+    }
+}
+
+/// The peer's MRP/session parameters as advertised in operational mDNS TXT
+/// records (`SII` = session idle interval, `SAI` = session active interval,
+/// `SAT` = session active threshold).
+///
+/// Carried out of [`Matter::resolve`](crate::Matter::resolve) so the CASE
+/// initiator can seed the new session's MRP backoff from the peer's advertised
+/// values rather than local defaults.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ResolvedSessionParams {
+    /// Session Idle Interval (`SII`), milliseconds.
+    pub sii: Option<u32>,
+    /// Session Active Interval (`SAI`), milliseconds.
+    pub sai: Option<u32>,
+    /// Session Active Threshold (`SAT`), milliseconds.
+    pub sat: Option<u16>,
+}
+
+/// The result of a successful [`Matter::resolve`](crate::Matter::resolve): the
+/// peer's address plus its advertised MRP/session parameters.
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedNode {
+    /// The resolved peer address (best-scored address + port).
+    pub addr: SocketAddr,
+    /// The peer's MRP/session parameters from the operational TXT records.
+    pub params: ResolvedSessionParams,
+}
+
+/// The state of the single in-flight mDNS resolve "rendezvous" shared between
+/// [`Matter::resolve`](crate::Matter::resolve) callers and the running mDNS
+/// responder.
+///
+/// At most one resolve is in flight at a time; callers serialize on the `Idle`
+/// state. See `Matter::resolve` for the protocol.
+#[derive(Debug, Clone)]
+pub(crate) enum MdnsResolveState {
+    /// No resolve in progress; a caller may place a request.
+    Idle,
+    /// A caller has placed a request; the responder has not yet picked it up.
+    Requested(MatterMdnsService),
+    /// The responder picked up the request and sent the query; awaiting an answer.
+    InFlight(MatterMdnsService),
+    /// The responder deposited a resolved address (+ session params) for the request.
+    Resolved(MatterMdnsService, IpAddr, u16, ResolvedSessionParams),
+}
+
 /// A utility type for expanding a `MatterService` type into a full mDNS service description
 ///
 /// Useful as an implementation detail when interfacing with OS-specific mDNS libraries.

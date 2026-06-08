@@ -23,7 +23,9 @@
 use core::net::IpAddr;
 use core::pin::pin;
 
-use embassy_futures::select::select;
+use domain::base::Message;
+
+use embassy_futures::select::{select, select3};
 use embassy_time::{Duration, Timer};
 
 use rand_core::RngCore;
@@ -47,13 +49,16 @@ use crate::Matter;
 use super::{MatterService, Service};
 
 pub use proto::{Host, RespondMode};
-pub use querier::discover_commissionable;
+pub use querier::{build_browse_query, build_resolve_query, parse_into_answer};
 
 mod proto;
 pub mod querier;
 mod types;
 
 const MAX_SERVICES: usize = MAX_FABRICS + 1;
+
+/// The maximum number of IP addresses surfaced per discovered device.
+const MAX_DEVICE_ADDRS: usize = 4;
 
 /// A built-in mDNS responder for Matter, utilizing a custom mDNS protocol implementation.
 ///
@@ -84,6 +89,20 @@ impl BuiltinMdnsResponder {
     ///
     /// # Arguments
     /// * `rand` - An object implementing the `RngCore` trait for generating random numbers.
+    /// * `send` - An object implementing the `NetworkSend` trait for sending mDNS packets.
+    /// * `recv` - An object implementing the `NetworkReceive` trait for receiving mDNS packets.
+    /// * `host` - A reference to the `Host` instance that provides basic mDNS host information.
+    /// * `ipv4_interface` - An optional IPv4 address for the interface to use for mDNS broadcasts.
+    /// * `ipv6_interface` - An optional IPv6 interface index for the interface to use for mDNS broadcasts.
+    /// Run the mDNS responder.
+    ///
+    /// On a single shared socket, this concurrently:
+    /// - broadcasts the local Matter services and answers inbound queries about them, and
+    /// - services [`Matter::resolve`](crate::Matter::resolve) requests by firing the
+    ///   corresponding mDNS query and depositing the parsed answer back for the
+    ///   awaiting resolver.
+    ///
+    /// # Arguments
     /// * `send` - An object implementing the `NetworkSend` trait for sending mDNS packets.
     /// * `recv` - An object implementing the `NetworkReceive` trait for receiving mDNS packets.
     /// * `host` - A reference to the `Host` instance that provides basic mDNS host information.
@@ -132,10 +151,82 @@ impl BuiltinMdnsResponder {
             ipv4_interface,
             ipv6_interface,
             matter,
-            &crypto
+            &crypto,
+        ));
+        let mut resolve = pin!(Self::resolve(
+            &send,
+            ipv4_interface,
+            ipv6_interface,
+            matter,
+            &crypto,
         ));
 
-        select(&mut broadcast, &mut respond).coalesce().await
+        select3(&mut broadcast, &mut respond, &mut resolve)
+            .coalesce()
+            .await
+    }
+
+    /// Service [`Matter::resolve`] requests: pick up a pending resolve request
+    /// and emit the corresponding mDNS query on the shared socket.
+    async fn resolve<S, C>(
+        send: &IfMutex<(S, &mut Vec<MatterService, MAX_SERVICES>)>,
+        ipv4_interface: Option<Ipv4Addr>,
+        ipv6_interface: Option<u32>,
+        matter: &Matter<'_>,
+        crypto: C,
+    ) -> Result<(), Error>
+    where
+        S: NetworkSend,
+        C: Crypto,
+    {
+        loop {
+            let service = matter.wait_mdns_resolve_request().await;
+
+            let mut name = heapless::String::<128>::new();
+            service.instance_name(&mut name);
+
+            // A small random delay before sending, as per spec (collision avoidance).
+            Self::rand_delay(&crypto).await?;
+
+            let mut send_guard = send.lock().await;
+            let send = &mut send_guard.0;
+
+            // Acquire the Matter transport TX buffer only for the duration of
+            // this one query, so as not to starve the Matter send loop.
+            let tx_buf = matter.transport_tx_buffer();
+            let mut tx_buf = tx_buf.get().await.ok_or(ErrorCode::ResourceExhausted)?;
+            let buf = &mut *tx_buf;
+
+            let len = build_resolve_query(&name, buf)?;
+
+            for addr in Self::broadcast_addrs(ipv4_interface, ipv6_interface) {
+                if let Err(e) = send.send_to(&buf[..len], Address::Udp(addr)).await {
+                    warn!("Failed to send mDNS query to {}: {}", addr, e);
+                } else {
+                    debug!("Sent mDNS resolve query {} to {}", name, addr);
+                }
+            }
+        }
+    }
+
+    /// The mDNS multicast send targets for the configured interfaces.
+    fn broadcast_addrs(
+        ipv4_interface: Option<Ipv4Addr>,
+        ipv6_interface: Option<u32>,
+    ) -> impl Iterator<Item = SocketAddr> {
+        Iterator::chain(
+            ipv4_interface
+                .map(|_| SocketAddr::V4(SocketAddrV4::new(MDNS_IPV4_BROADCAST_ADDR, MDNS_PORT)))
+                .into_iter(),
+            ipv6_interface.map(|interface| {
+                SocketAddr::V6(SocketAddrV6::new(
+                    MDNS_IPV6_BROADCAST_ADDR,
+                    MDNS_PORT,
+                    0,
+                    interface,
+                ))
+            }),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -300,6 +391,27 @@ impl BuiltinMdnsResponder {
                 let mut rx_buf = rx_buf.get().await.ok_or(ErrorCode::ResourceExhausted)?;
                 let rx_buf = &mut *rx_buf;
 
+                let (len, addr) = recv.recv_from(rx_buf).await?;
+                let packet = &rx_buf[..len];
+
+                // Demultiplex the inbound packet by the DNS QR bit: responses
+                // (QR=1) are answers to our own browse/resolve queries; queries
+                // (QR=0) are questions about our services to be responded to.
+                let is_response = matches!(
+                    Message::from_octets(packet).map(|m| m.header().flags().qr),
+                    Ok(true)
+                );
+
+                if is_response {
+                    // Deposit any answer that matches an in-flight resolve request.
+                    if let Err(e) = parse_into_answer::<MAX_DEVICE_ADDRS, _>(packet, |answer| {
+                        matter.try_deposit_mdns_answer(answer);
+                    }) {
+                        debug!("Failed to parse mDNS response: {:?}", e);
+                    }
+                    continue;
+                }
+
                 let mut send_guard = send.lock().await;
 
                 let send_guard = &mut *send_guard;
@@ -312,9 +424,6 @@ impl BuiltinMdnsResponder {
                         .map_err(|_| Error::from(ErrorCode::ResourceExhausted))
                 })?;
 
-                let (len, addr) = recv.recv_from(rx_buf).await?;
-                let query = &rx_buf[..len];
-
                 for service in &*services_new {
                     trace!(
                         "Considering mDNS query for service {:?} from {}",
@@ -325,7 +434,7 @@ impl BuiltinMdnsResponder {
                     Self::respond_one(
                         &mut *send,
                         addr,
-                        query,
+                        packet,
                         host,
                         service,
                         ipv4_interface,

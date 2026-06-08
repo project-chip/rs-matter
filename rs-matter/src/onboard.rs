@@ -257,7 +257,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         // Sign the device NOC. The returned slice lives in
         // `noc_generator.buf` — independent of `buf`, so we can use
         // both side-by-side below.
-        let noc = Self::csr_request(matter, &csr_nonce, |csr_der| {
+        let noc = Self::csr_request(matter, crypto, &csr_nonce, |csr_der| {
             noc_generator.generate(crypto, csr_der, device_node_id, &[], validity)
         })
         .await?;
@@ -277,7 +277,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
             buf[..rcac.len()].copy_from_slice(rcac);
             Ok::<_, Error>(rcac.len())
         })?;
-        Self::add_trusted_root_certificate(matter, &buf[..rcac_len]).await?;
+        Self::add_trusted_root_certificate(matter, crypto, &buf[..rcac_len]).await?;
 
         // IPK as sent on the wire is the **epoch key** (the raw
         // 16-byte input to the group-key derivation), not the
@@ -300,6 +300,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         // the full `[RCAC, ICAC, NOC]` chain is shipped.
         let fabric_index = Self::add_noc(
             matter,
+            crypto,
             noc,
             &buf[..icac_len],
             &ipk_bytes,
@@ -394,13 +395,14 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     /// borrow on this method.
     pub(crate) async fn csr_request<F, R>(
         matter: &Matter<'_>,
+        crypto: &C,
         csr_nonce: &[u8; 32],
         use_csr: F,
     ) -> Result<R, Error>
     where
         F: FnOnce(&[u8]) -> Result<R, Error>,
     {
-        let exchange = Exchange::initiate(matter, 0, 0, true).await?;
+        let exchange = Exchange::initiate(matter, crypto, 0, 0, true).await?;
 
         let handle = exchange
             .operational_credentials()
@@ -441,9 +443,10 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     /// projection borrow when it invokes this.
     pub(crate) async fn add_trusted_root_certificate(
         matter: &Matter<'_>,
+        crypto: &C,
         rcac_tlv: &[u8],
     ) -> Result<(), Error> {
-        let exchange = Exchange::initiate(matter, 0, 0, true).await?;
+        let exchange = Exchange::initiate(matter, crypto, 0, 0, true).await?;
 
         exchange
             .operational_credentials()
@@ -462,13 +465,14 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     /// Static-style: see [`Self::add_trusted_root_certificate`].
     pub(crate) async fn add_noc(
         matter: &Matter<'_>,
+        crypto: &C,
         noc: &[u8],
         icac: &[u8],
         ipk: &[u8],
         admin_case_subject: u64,
         admin_vendor_id: u16,
     ) -> Result<NonZeroU8, Error> {
-        let exchange = Exchange::initiate(matter, 0, 0, true).await?;
+        let exchange = Exchange::initiate(matter, crypto, 0, 0, true).await?;
 
         let handle = exchange
             .operational_credentials()
@@ -517,7 +521,9 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         fab_idx: NonZeroU8,
         peer_node_id: NodeId,
     ) -> Result<(), Error> {
-        let exchange = Exchange::initiate(self.matter, fab_idx.get(), peer_node_id, true).await?;
+        let exchange =
+            Exchange::initiate(self.matter, &self.crypto, fab_idx.get(), peer_node_id, true)
+                .await?;
 
         let handle = exchange
             .general_commissioning()
@@ -541,7 +547,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     /// PASE session — there is at most one in flight on a given Matter
     /// stack at a time, which is the controller's normal case.
     async fn open_pase_exchange(&self) -> Result<Exchange<'_>, Error> {
-        Exchange::initiate(self.matter, 0, 0, true).await
+        Exchange::initiate(self.matter, &self.crypto, 0, 0, true).await
     }
 
     /// DAC verification placeholder.

@@ -706,8 +706,14 @@ impl<
             self.set_state(*session_id, SessionState::AwaitingAnswer);
         }
 
-        let exchange =
-            Exchange::initiate(ctx.matter(), session.fab_idx, session.peer_node_id, true).await?;
+        let exchange = Exchange::initiate(
+            ctx.matter(),
+            ctx.crypto(),
+            session.fab_idx,
+            session.peer_node_id,
+            true,
+        )
+        .await?;
 
         // Single-shot client-trait invoke for all four commands. The
         // codegen `WebRtcTransportRequestorClient` methods bake in

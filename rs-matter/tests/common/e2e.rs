@@ -149,6 +149,7 @@ impl<C: Crypto> E2eRunner<C> {
     pub async fn initiate_exchange(&self) -> Result<Exchange<'_>, Error> {
         Exchange::initiate(
             self.matter_client(),
+            rs_matter::crypto::test_only_crypto(),
             1, /*just one fabric in tests*/
             Self::REMOTE_PEER_ID,
             true,

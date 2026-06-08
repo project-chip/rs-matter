@@ -16,6 +16,7 @@
  */
 
 use core::fmt::{self, Display};
+use core::num::NonZeroU8;
 use core::pin::pin;
 
 use either::Either as EitherIo;
@@ -27,7 +28,9 @@ use crate::crypto::Crypto;
 use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
 use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
+use crate::sc::case::CaseInitiator;
 use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
+use crate::transport::network::mdns::MatterMdnsService;
 use crate::transport::session::Sessions;
 use crate::transport::TxPayloadState;
 use crate::utils::storage::WriteBuf;
@@ -1031,21 +1034,98 @@ impl<'a> Exchange<'a> {
 
     /// Create a new initiator exchange on the provided Matter stack for the provided peer Node ID.
     ///
-    /// For now, this method will fail if there is no existing session in the provided Matter stack
-    /// for the provided peer Node ID.
+    /// If a suitable session for `(fabric_idx, peer_node_id, secure)` already
+    /// exists, an exchange is opened on it directly (the common case - the
+    /// session and its peer address are reused, no mDNS).
     ///
-    /// In future, this method will do an mDNS lookup and create a new session on its own.
-    #[inline(always)]
-    pub async fn initiate(
+    /// Otherwise, for a `secure` request on a real fabric (`fabric_idx != 0`),
+    /// the peer's operational address is resolved over mDNS and a fresh CASE
+    /// session is established (driving [`CaseInitiator`]) before the exchange is
+    /// opened on it. The peer's MRP/session parameters advertised in the mDNS
+    /// TXT records seed the new session.
+    ///
+    /// Requires a running mDNS responder (e.g. `BuiltinMdnsResponder::run`) to
+    /// service the resolve; without one the resolve times out and this returns
+    /// [`ErrorCode::NotFound`].
+    pub async fn initiate<C: Crypto>(
         matter: &'a Matter<'a>,
+        crypto: C,
         fabric_idx: u8,
         peer_node_id: NodeId,
         secure: bool,
     ) -> Result<Self, Error> {
-        matter
+        match matter
             .transport
             .initiate(matter, fabric_idx, peer_node_id, secure)
             .await
+        {
+            Ok(exchange) => Ok(exchange),
+            // No existing CASE session for a real fabric: resolve + establish, then retry.
+            Err(e) if secure && fabric_idx != 0 && e.code() == ErrorCode::NoSession => {
+                Self::establish_case(matter, &crypto, fabric_idx, peer_node_id).await?;
+
+                matter
+                    .transport
+                    .initiate(matter, fabric_idx, peer_node_id, secure)
+                    .await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The mDNS resolve timeout used when auto-establishing an operational CASE
+    /// session. Single-shot for now (no backoff re-query); see follow-ups.
+    const OPERATIONAL_RESOLVE_TIMEOUT_MS: u32 = 5_000;
+
+    /// Resolve a peer's operational address over mDNS and establish a CASE
+    /// session to it, seeding the session with the peer's advertised MRP params.
+    async fn establish_case<C: Crypto>(
+        matter: &'a Matter<'a>,
+        crypto: &C,
+        fabric_idx: u8,
+        peer_node_id: NodeId,
+    ) -> Result<(), Error> {
+        let fab_idx = unwrap!(NonZeroU8::new(fabric_idx));
+
+        let compressed_fabric_id = matter.with_state(|state| {
+            Ok::<_, Error>(state.fabrics.fabric(fab_idx)?.compressed_fabric_id())
+        })?;
+
+        let service = MatterMdnsService::Operational {
+            compressed_fabric_id,
+            node_id: peer_node_id,
+        };
+
+        let resolved = matter
+            .resolve(service, Self::OPERATIONAL_RESOLVE_TIMEOUT_MS)
+            .await?;
+
+        // Establish CASE over a fresh, one-shot unsecured exchange to the
+        // resolved address. On success a secure session keyed at
+        // `(fabric_idx, peer_node_id, secure=true)` is recorded in the stack.
+        {
+            let mut exchange =
+                Self::initiate_unsecured(matter, crypto, network::Address::Udp(resolved.addr))
+                    .await?;
+
+            CaseInitiator::initiate(&mut exchange, crypto, fab_idx, peer_node_id).await?;
+        }
+
+        // Seed the new CASE session's peer MRP/session params from the resolve
+        // TXT (rs-matter does not yet exchange these in CASE Sigma1/2).
+        let params = sc::SessionParameters {
+            sii: resolved.params.sii,
+            sai: resolved.params.sai,
+            sat: resolved.params.sat,
+            ..Default::default()
+        };
+
+        matter.with_state(|state| {
+            if let Some(session) = state.sessions.get_for_node(fabric_idx, peer_node_id, true) {
+                session.set_peer_session_params(&params);
+            }
+            Ok::<(), Error>(())
+        })
     }
 
     /// Create a new initiator exchange on the provided Matter stack for the provided session ID.

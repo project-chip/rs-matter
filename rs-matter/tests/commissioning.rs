@@ -42,7 +42,7 @@
 use core::pin::pin;
 use std::net::{TcpListener, UdpSocket};
 
-use embassy_futures::select::{select, select4, Either};
+use embassy_futures::select::{select, select3, Either};
 use embassy_time::{Duration, Timer};
 
 use log::{debug, info, warn};
@@ -75,7 +75,6 @@ use rs_matter::persist::DummyKvBlobStoreAccess;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::{PaseInitiator, MAX_COMM_WINDOW_TIMEOUT_SECS};
 use rs_matter::transport::exchange::Exchange;
-use rs_matter::transport::network::mdns::{CommissionableFilter, DiscoveredDevice};
 use rs_matter::transport::network::tcp::TcpNetwork;
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
@@ -95,15 +94,9 @@ mod common;
 
 /// Passcode used by `TEST_DEV_COMM`
 const TEST_PASSCODE: u32 = 20202021;
-/// Discriminator used by `TEST_DEV_COMM`
-const TEST_DISCRIMINATOR: u16 = 3840;
 
 const PASE_TIMEOUT_SECS: u64 = 30;
 const IM_TIMEOUT_SECS: u64 = 10;
-const DISCOVERY_TIMEOUT_MS: u32 = 30_000;
-const MAX_DEVICE_ADDRESSES: usize = 4;
-#[cfg(not(feature = "astro-dnssd"))]
-const MAX_DISCOVERED_DEVICES: usize = 8;
 
 static DEVICE_MATTER: StaticCell<Matter> = StaticCell::new();
 static DEVICE_BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
@@ -240,10 +233,15 @@ macro_rules! commissioning_test {
                  starting commissioning test..."
             );
 
+            // NOTE: the mDNS responder is intentionally NOT started here. mDNS
+            // discovery is skipped in this in-process test (see
+            // `discover_and_resolve_device`); device and controller share the
+            // host's real :5353, which is unreliable for multicast loopback
+            // (SO_REUSEPORT semantics + any system avahi-daemon). The mDNS
+            // protocol code is covered by unit tests instead.
             let device_fut = async {
-                select4(
+                select3(
                     device_matter.run(&device_crypto, &device_net, &device_net, NoNetwork),
-                    common::mdns::run_mdns(device_matter, test_only_crypto()),
                     responder.run::<4, 4>(),
                     dm.run(),
                 )
@@ -294,8 +292,8 @@ async fn run_controller_flow<C: Crypto>(
     crypto: &C,
     use_tcp: bool,
 ) -> Result<(), Error> {
-    info!("=== Phase 1: mDNS Discovery ===");
-    let peer_addr = discover_and_resolve_device(DISCOVERY_TIMEOUT_MS, use_tcp).await?;
+    info!("=== Phase 1: Resolve device endpoint (mDNS skipped) ===");
+    let peer_addr = discover_and_resolve_device(use_tcp)?;
 
     info!("=== Phase 2: PASE Session Establishment ===");
     establish_pase_session(matter, crypto, peer_addr, TEST_PASSCODE).await?;
@@ -446,167 +444,29 @@ async fn test_commission<C: Crypto>(
 // Phase 1: mDNS Discovery
 // ============================================================================
 
-async fn discover_and_resolve_device(timeout_ms: u32, use_tcp: bool) -> Result<Address, Error> {
-    info!("Starting mDNS discovery with discriminator: {TEST_DISCRIMINATOR}");
-    let filter = CommissionableFilter {
-        discriminator: Some(TEST_DISCRIMINATOR),
-        ..Default::default()
-    };
-    let device = discover_device::<MAX_DEVICE_ADDRESSES>(&filter, timeout_ms).await?;
-
-    info!(
-        "Discovered: {} with {} address(es), discriminator={}",
-        device.instance_name,
-        device.addresses().len(),
-        device.discriminator,
-    );
-    for addr in device.addresses() {
-        info!("  Address: {addr}");
-    }
-
-    resolve_device_address(&device, use_tcp)
-}
-
-#[cfg(feature = "astro-dnssd")]
-async fn discover_device<const A: usize>(
-    filter: &CommissionableFilter,
-    timeout_ms: u32,
-) -> Result<DiscoveredDevice<A>, Error> {
-    use rs_matter::transport::network::mdns::astro;
-
-    let filter_owned = filter.clone();
-    let (tx, rx) = async_channel::bounded(1);
-    std::thread::spawn(move || {
-        let _ = tx.send_blocking(astro::discover_commissionable::<A>(
-            &filter_owned,
-            timeout_ms,
-        ));
-    });
-
-    let devices = rx
-        .recv()
-        .await
-        .map_err(|_| Error::from(rs_matter::error::ErrorCode::Failure))??;
-
-    devices.into_iter().next().ok_or_else(|| {
-        warn!("No devices found matching filter {:?}", filter);
-        rs_matter::error::ErrorCode::NotFound.into()
-    })
-}
-
-#[cfg(not(feature = "astro-dnssd"))]
-async fn discover_device<const A: usize>(
-    filter: &CommissionableFilter,
-    timeout_ms: u32,
-) -> Result<DiscoveredDevice<A>, Error> {
-    use rs_matter::transport::network::mdns::builtin::discover_commissionable;
-    use rs_matter::transport::network::mdns::{MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR};
-
-    // Create a dedicated mDNS socket bound to port 5353
-    // This is separate from the Matter communication socket because mDNS
-    // responses are sent as multicast to port 5353
-    let mdns_socket = create_mdns_socket()?;
-
-    let (ipv4_addr, ipv6_available, interface) = find_network_interface()?;
-
-    // Join multicast groups
-    if ipv6_available {
-        mdns_socket
-            .get_ref()
-            .join_multicast_v6(&MDNS_IPV6_BROADCAST_ADDR, interface)
-            .map_err(|e| {
-                warn!("Failed to join IPv6 multicast: {e}");
-                rs_matter::error::ErrorCode::NoNetworkInterface
-            })?;
-    }
-
-    mdns_socket
-        .get_ref()
-        .join_multicast_v4(&MDNS_IPV4_BROADCAST_ADDR, &ipv4_addr)
-        .map_err(|e| {
-            warn!("Failed to join IPv4 multicast: {e}");
-            rs_matter::error::ErrorCode::NoNetworkInterface
-        })?;
-
-    info!("Joined multicast groups on interface (IPv6: {ipv6_available})");
-
-    let ipv6_interface = if ipv6_available {
-        Some(interface)
-    } else {
-        None
-    };
-
-    let mut mdns_buf = [0u8; 1500];
-    let devices = discover_commissionable::<_, _, MAX_DISCOVERED_DEVICES, A>(
-        &mut &mdns_socket,
-        &mut &mdns_socket,
-        filter,
-        timeout_ms,
-        &mut mdns_buf,
-        Some(ipv4_addr),
-        ipv6_interface,
-    )
-    .await?;
-
-    devices.into_iter().next().ok_or_else(|| {
-        warn!("No devices found matching filter {:?}", filter);
-        rs_matter::error::ErrorCode::NotFound.into()
-    })
-}
-
-fn resolve_device_address<const A: usize>(
-    device: &DiscoveredDevice<A>,
-    use_tcp: bool,
-) -> Result<Address, Error> {
-    let interface_index = get_default_interface_index().unwrap_or(0);
-
-    let device_addr = device
-        .addresses()
-        .iter()
-        .filter(|addr| {
-            if let std::net::IpAddr::V6(v6) = addr {
-                // fe80::1 is often returned incorrectly by DNS resolution on macOS
-                if v6.segments() == [0xfe80, 0, 0, 0, 0, 0, 0, 1] {
-                    debug!("Skipping fe80::1 (likely incorrect DNS resolution)");
-                    return false;
-                }
-            }
-            true
-        })
-        .min_by_key(|addr| match addr {
-            std::net::IpAddr::V4(_) => 0, // prefer IPv4 to avoid scope-id issues
-            std::net::IpAddr::V6(_) => 1,
-        })
-        .ok_or_else(|| {
-            warn!("Discovered device has no usable address");
-            rs_matter::error::ErrorCode::InvalidData
-        })?;
-
-    info!("Using address: {}:{}", device_addr, device.port);
+/// Resolve the device's operational endpoint.
+///
+/// mDNS discovery is intentionally skipped in this in-process test: device and
+/// controller share the host's real `:5353`, whose multicast loopback is
+/// unreliable (`SO_REUSEPORT` delivery semantics plus any system avahi-daemon),
+/// making discovery flaky and environment-dependent. The mDNS protocol code
+/// (query building, response parsing, the resolve rendezvous) is covered by
+/// unit tests instead. Here we use the device's known localhost address: it
+/// binds `MATTER_SOCKET_BIND_ADDR` (`[::]:MATTER_PORT`), reachable via the
+/// host's IPv4 address.
+fn discover_and_resolve_device(use_tcp: bool) -> Result<Address, Error> {
+    let (ipv4, _ipv6_available, _interface) = find_network_interface()?;
 
     let make_addr = if use_tcp { Address::Tcp } else { Address::Udp };
+    let peer_addr = make_addr(SocketAddr::V6(SocketAddrV6::new(
+        ipv4.to_ipv6_mapped(),
+        MATTER_PORT,
+        0,
+        0,
+    )));
 
-    let peer_addr = match device_addr {
-        std::net::IpAddr::V4(v4) => {
-            let ipv6 = v4.to_ipv6_mapped();
-            make_addr(SocketAddr::V6(SocketAddrV6::new(ipv6, device.port, 0, 0)))
-        }
-        std::net::IpAddr::V6(v6) => {
-            let scope_id = if is_ipv6_link_local(v6) {
-                interface_index
-            } else {
-                0
-            };
-            make_addr(SocketAddr::V6(SocketAddrV6::new(
-                *v6,
-                device.port,
-                0,
-                scope_id,
-            )))
-        }
-    };
+    info!("Using device address (mDNS discovery skipped): {peer_addr}");
 
-    info!("Peer address: {peer_addr}");
     Ok(peer_addr)
 }
 
@@ -678,7 +538,14 @@ async fn read_onoff_with_timeout(
     fab_idx: core::num::NonZeroU8,
     peer_node_id: u64,
 ) -> Result<bool, Error> {
-    let exchange = Exchange::initiate(matter, fab_idx.get(), peer_node_id, true).await?;
+    let exchange = Exchange::initiate(
+        matter,
+        test_only_crypto(),
+        fab_idx.get(),
+        peer_node_id,
+        true,
+    )
+    .await?;
     debug!("IM read exchange initiated: {}", exchange.id());
 
     let mut read_fut = pin!(read_onoff(exchange));
@@ -708,7 +575,14 @@ async fn invoke_toggle_with_timeout(
     fab_idx: core::num::NonZeroU8,
     peer_node_id: u64,
 ) -> Result<IMStatusCode, Error> {
-    let exchange = Exchange::initiate(matter, fab_idx.get(), peer_node_id, true).await?;
+    let exchange = Exchange::initiate(
+        matter,
+        test_only_crypto(),
+        fab_idx.get(),
+        peer_node_id,
+        true,
+    )
+    .await?;
     debug!("Invoke exchange initiated: {}", exchange.id());
 
     let mut invoke_fut = pin!(invoke_toggle(exchange));
@@ -758,46 +632,10 @@ fn create_dual_stack_socket() -> Result<async_io::Async<UdpSocket>, Error> {
         .map_err(|_| rs_matter::error::ErrorCode::NoNetworkInterface.into())
 }
 
-/// Create a controller-side mDNS discovery socket.
-///
-/// `SO_REUSEPORT` lets this socket share port 5353 with the device's mDNS
-/// socket when both run in the same process. Multicast loopback ensures
-/// the device's broadcasts are receivable on the same host.
-#[cfg(not(feature = "astro-dnssd"))]
-fn create_mdns_socket() -> Result<async_io::Async<UdpSocket>, Error> {
-    use rs_matter::transport::network::mdns::MDNS_PORT;
-
-    let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))
-        .map_err(|_| rs_matter::error::ErrorCode::NoNetworkInterface)?;
-    socket
-        .set_reuse_address(true)
-        .map_err(|_| rs_matter::error::ErrorCode::NoNetworkInterface)?;
-    socket
-        .set_reuse_port(true)
-        .map_err(|_| rs_matter::error::ErrorCode::NoNetworkInterface)?;
-    socket
-        .set_only_v6(false)
-        .map_err(|_| rs_matter::error::ErrorCode::NoNetworkInterface)?;
-    socket
-        .set_multicast_loop_v4(true)
-        .map_err(|_| rs_matter::error::ErrorCode::NoNetworkInterface)?;
-    socket
-        .set_multicast_loop_v6(true)
-        .map_err(|_| rs_matter::error::ErrorCode::NoNetworkInterface)?;
-    let bind_addr = std::net::SocketAddrV6::new(std::net::Ipv6Addr::UNSPECIFIED, MDNS_PORT, 0, 0);
-    socket
-        .bind(&bind_addr.into())
-        .map_err(|_| rs_matter::error::ErrorCode::NoNetworkInterface)?;
-    let socket: UdpSocket = socket.into();
-    async_io::Async::new_nonblocking(socket)
-        .map_err(|_| rs_matter::error::ErrorCode::NoNetworkInterface.into())
-}
-
-/// Find a suitable network interface for mDNS.
+/// Find a suitable network interface for the device's localhost endpoint.
 ///
 /// Returns `(ipv4_addr, ipv6_addr_opt, interface_index)`.
 /// Falls back to IPv4-only when no dual-stack interface is available.
-#[cfg(not(feature = "astro-dnssd"))]
 fn find_network_interface() -> Result<(std::net::Ipv4Addr, bool, u32), Error> {
     use nix::net::if_::InterfaceFlags;
     use nix::sys::socket::SockaddrIn6;
@@ -850,35 +688,4 @@ fn find_network_interface() -> Result<(std::net::Ipv4Addr, bool, u32), Error> {
     info!("Using network interface {iname} (index {if_index}) with {ip} (IPv6: {ipv6_available})");
 
     Ok((ip, ipv6_available, if_index))
-}
-
-fn get_default_interface_index() -> Option<u32> {
-    use nix::net::if_::InterfaceFlags;
-
-    nix::ifaddrs::getifaddrs()
-        .ok()?
-        .filter(|ia| {
-            ia.flags.contains(InterfaceFlags::IFF_UP)
-                && ia
-                    .flags
-                    .intersects(InterfaceFlags::IFF_BROADCAST | InterfaceFlags::IFF_MULTICAST)
-                && !ia
-                    .flags
-                    .intersects(InterfaceFlags::IFF_LOOPBACK | InterfaceFlags::IFF_POINTOPOINT)
-        })
-        .find_map(|ia| {
-            let has_ipv6 = ia
-                .address
-                .map(|addr| addr.as_sockaddr_in6().is_some())
-                .unwrap_or(false);
-            if has_ipv6 {
-                nix::net::if_::if_nametoindex::<str>(ia.interface_name.as_str()).ok()
-            } else {
-                None
-            }
-        })
-}
-
-fn is_ipv6_link_local(addr: &std::net::Ipv6Addr) -> bool {
-    (addr.segments()[0] & 0xffc0) == 0xfe80
 }
