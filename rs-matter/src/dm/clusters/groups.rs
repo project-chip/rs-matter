@@ -125,7 +125,7 @@ impl ClusterHandler for GroupsHandler {
                         persist.store(fabric)?;
                     }
 
-                    ctx.exchange().matter().notify_groups_changed();
+                    ctx.exchange().matter().transport().notify_groups_changed();
 
                     Ok(IMStatusCode::Success)
                 }
@@ -251,7 +251,7 @@ impl ClusterHandler for GroupsHandler {
                     persist.store(fabric)?;
                 }
 
-                ctx.exchange().matter().notify_groups_changed();
+                ctx.exchange().matter().transport().notify_groups_changed();
 
                 Ok(IMStatusCode::Success)
             } else {
@@ -282,7 +282,7 @@ impl ClusterHandler for GroupsHandler {
                 persist.store(fabric)?;
             }
 
-            ctx.exchange().matter().notify_groups_changed();
+            ctx.exchange().matter().transport().notify_groups_changed();
 
             Ok(())
         })?;

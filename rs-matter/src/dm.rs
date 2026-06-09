@@ -213,7 +213,7 @@ where
     }
 
     fn check_timeouts(&self, exch_id: Option<ExchangeId>) -> Result<(), Error> {
-        let mut notify_mdns = || self.matter.notify_mdns_changed();
+        let mut notify_mdns = || self.matter.transport().notify_mdns_changed();
         let mut notify_change =
             |endpt_id, clust_id| self.notify_cluster_changed(endpt_id, clust_id);
 
@@ -628,7 +628,7 @@ where
             // notifies) all wake the loop early. With no subscription there is
             // no deadline, so just wait to be notified.
             let mut notification = pin!(self.subscriptions.notification.wait());
-            let mut session_removed = pin!(matter.session_removed.wait());
+            let mut session_removed = pin!(matter.transport().wait_session_removed());
 
             // With no subscription (or none primed) the deadline is `Instant::MAX`,
             // so the timer effectively never fires and the loop just waits to be

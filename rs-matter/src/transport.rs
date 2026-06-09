@@ -16,12 +16,13 @@
  */
 
 use core::fmt::{self, Display};
+use core::future::Future;
 use core::num::NonZeroU8;
 use core::ops::{Deref, DerefMut};
 use core::pin::pin;
 
-use embassy_futures::select::{select, select3, select4};
-use embassy_time::Timer;
+use embassy_futures::select::{select, select3, select4, Either};
+use embassy_time::{Duration, Timer};
 
 use rand_core::RngCore;
 
@@ -37,14 +38,16 @@ use crate::sc::{
     sc_write, OpCode, SCStatusCodes, SessionParameters, StatusReport, PROTO_ID_SECURE_CHANNEL,
 };
 use crate::tlv::TLVElement;
-use crate::transport::network::mdns::MatterMdnsService;
+use crate::transport::network::mdns::{
+    MatterMdnsService, MdnsAnswer, MdnsResolveState, ResolvedNode,
+};
 use crate::transport::network::NetworkMulticast;
 use crate::utils::init::{init, Init};
 use crate::utils::ipv6::compute_group_multicast_addr;
 use crate::utils::select::Coalesce;
 use crate::utils::storage::Vec;
 use crate::utils::storage::{pooled::BufferAccess, ParseBuf, WriteBuf};
-use crate::utils::sync::{IfMutex, IfMutexGuard, Notification};
+use crate::utils::sync::{IfMutex, IfMutexGuard, Notification, Signal};
 use crate::{Matter, MATTER_PORT};
 
 use exchange::{
@@ -94,6 +97,15 @@ pub struct Transport {
     group_addrs: IfMutex<Vec<Ipv6Addr, MAX_GROUP_ADDRS>>,
     /// Notification for when an exchange is dropped.
     exchange_dropped: Notification,
+    /// A notification that the Matter mDNS services might have changed
+    mdns_changed: Notification,
+    /// The single in-flight mDNS resolve rendezvous, shared between [`Transport::resolve`]
+    /// callers and the running mDNS responder.
+    mdns_resolve: Signal<MdnsResolveState>,
+    /// A notification that a session had been removed
+    session_removed: Notification,
+    /// A notification that the groups have been modified
+    groups_modified: Notification,
     /// Device SAI (Secure Association Identifier)
     device_sai: Option<u32>,
     /// Device SII (Secure Identity Identifier)
@@ -109,6 +121,10 @@ impl Transport {
             tx: IfMutex::new(Packet::new()),
             group_addrs: IfMutex::new(Vec::new()),
             exchange_dropped: Notification::new(),
+            mdns_changed: Notification::new(),
+            mdns_resolve: Signal::new(MdnsResolveState::Idle),
+            session_removed: Notification::new(),
+            groups_modified: Notification::new(),
             device_sai: dev_det.sai,
             device_sii: dev_det.sii,
         }
@@ -121,6 +137,10 @@ impl Transport {
             tx <- IfMutex::init(Packet::init()),
             group_addrs <- IfMutex::init(Vec::new()),
             exchange_dropped: Notification::new(),
+            mdns_changed: Notification::new(),
+            mdns_resolve: Signal::new(MdnsResolveState::Idle),
+            session_removed: Notification::new(),
+            groups_modified: Notification::new(),
             device_sai: dev_det.sai,
             device_sii: dev_det.sii,
         })
@@ -157,6 +177,142 @@ impl Transport {
     /// needs a TX buffer.
     pub fn tx_buffer(&self) -> PacketBufferExternalAccess<'_, MAX_TX_BUF_SIZE> {
         PacketBufferExternalAccess(&self.tx)
+    }
+
+    /// Notify that the Matter mDNS services _might_ have changed.
+    pub(crate) fn notify_mdns_changed(&self) {
+        self.mdns_changed.notify();
+    }
+
+    /// A hook for user code to wait for notification that the Matter mDNS services might have changed.
+    ///
+    /// Once this future resolves, user code is supposed to inspect the mDNS services for changes, and
+    /// if there are changes, re-publish the changed mDNS services in an mDNS responder accordingly.
+    pub fn wait_mdns(&self) -> impl Future<Output = ()> + '_ {
+        self.mdns_changed.wait()
+    }
+
+    /// Notify that groups have changed (keys, key maps, or membership) and
+    /// multicast registrations need updating.
+    pub(crate) fn notify_groups_changed(&self) {
+        self.groups_modified.notify();
+    }
+
+    /// Wait until the groups have changed (see [`Transport::notify_groups_changed`]).
+    pub(crate) fn wait_groups_changed(&self) -> impl Future<Output = ()> + '_ {
+        self.groups_modified.wait()
+    }
+
+    /// Notify that a session has been removed.
+    pub(crate) fn notify_session_removed(&self) {
+        self.session_removed.notify();
+    }
+
+    /// Wait until a session has been removed (see [`Transport::notify_session_removed`]).
+    pub(crate) fn wait_session_removed(&self) -> impl Future<Output = ()> + '_ {
+        self.session_removed.wait()
+    }
+
+    /// Resolve a Matter service instance's address over mDNS.
+    ///
+    /// Places a single resolve request into the shared rendezvous and waits up
+    /// to `timeout_ms` for the running mDNS responder to fire the query and
+    /// deposit an answer. Multiple concurrent callers serialize: each waits for
+    /// any in-flight resolve to finish before placing its own.
+    ///
+    /// Returns [`ErrorCode::NotFound`] if no answer arrives within the timeout.
+    /// If this future is dropped before completing, the rendezvous is reset so
+    /// other callers can proceed.
+    ///
+    /// Requires a running mDNS responder (e.g. `BuiltinMdnsResponder::run`) to
+    /// service the request; without one, every resolve will time out.
+    pub(crate) async fn resolve(
+        &self,
+        service: MatterMdnsService,
+        timeout_ms: u32,
+    ) -> Result<ResolvedNode, Error> {
+        // 1. Serialize with other resolvers and place the request.
+        self.mdns_resolve
+            .wait(|state| {
+                if matches!(state, MdnsResolveState::Idle) {
+                    *state = MdnsResolveState::Requested(service.clone());
+                    Some(())
+                } else {
+                    None
+                }
+            })
+            .await;
+
+        // 2. Ensure the slot is released if this future is dropped (or times out).
+        let mut guard = ResolveGuard {
+            signal: &self.mdns_resolve,
+            armed: true,
+        };
+
+        // 3. Wait for the responder to deposit our answer, or time out.
+        let wait = self.mdns_resolve.wait(|state| match state {
+            MdnsResolveState::Resolved(svc, ip, port, params) if *svc == service => {
+                let node = ResolvedNode {
+                    addr: SocketAddr::new(*ip, *port),
+                    params: *params,
+                };
+                *state = MdnsResolveState::Idle;
+                Some(node)
+            }
+            _ => None,
+        });
+
+        let timer = Timer::after(Duration::from_millis(timeout_ms as u64));
+
+        match select(pin!(wait), pin!(timer)).await {
+            Either::First(node) => {
+                // The `wait` above already reset the slot to `Idle`.
+                guard.armed = false;
+                Ok(node)
+            }
+            Either::Second(_) => Err(ErrorCode::NotFound.into()),
+        }
+    }
+
+    /// Responder-side: await the next pending mDNS resolve request, marking it
+    /// in-flight.
+    pub(crate) async fn wait_mdns_resolve_request(&self) -> MatterMdnsService {
+        self.mdns_resolve
+            .wait(|state| match state {
+                MdnsResolveState::Requested(service) => {
+                    let service = service.clone();
+                    *state = MdnsResolveState::InFlight(service.clone());
+                    Some(service)
+                }
+                _ => None,
+            })
+            .await
+    }
+
+    /// Responder-side: best-effort deposit of a parsed mDNS answer.
+    ///
+    /// If an in-flight resolve request matches the answer's instance name (and
+    /// the answer carries an address), record the resolved address and wake the
+    /// waiting [`Transport::resolve`] caller. Otherwise the answer is ignored.
+    pub(crate) fn try_deposit_mdns_answer(&self, answer: &MdnsAnswer<'_>) {
+        let Some(ip) = answer.addrs.first().copied() else {
+            return;
+        };
+        let Some(port) = answer.port else {
+            return;
+        };
+
+        let params = answer.session_params();
+
+        self.mdns_resolve.modify(|state| {
+            if let MdnsResolveState::InFlight(service) = state {
+                if service.matches_instance_name(answer.instance_name) {
+                    *state = MdnsResolveState::Resolved(service.clone(), ip, port, params);
+                    return (true, ());
+                }
+            }
+            (false, ())
+        });
     }
 
     pub(crate) async fn accept_if<'a, F>(
@@ -254,7 +410,7 @@ impl Transport {
             node_id: peer_node_id,
         };
 
-        let resolved = matter.resolve(service, Self::RESOLVE_TIMEOUT_MS).await?;
+        let resolved = self.resolve(service, Self::RESOLVE_TIMEOUT_MS).await?;
 
         // Establish CASE over a fresh, one-shot unsecured exchange to the
         // resolved address. On success a secure session keyed at
@@ -313,12 +469,9 @@ impl Transport {
         // no operational identity, so the peer *address* is what identifies one.
         let peer_addr = match target {
             PaseTarget::Addr(addr) => addr,
-            PaseTarget::Resolve(service) => Address::Udp(
-                matter
-                    .resolve(service, Self::RESOLVE_TIMEOUT_MS)
-                    .await?
-                    .addr,
-            ),
+            PaseTarget::Resolve(service) => {
+                Address::Udp(self.resolve(service, Self::RESOLVE_TIMEOUT_MS).await?.addr)
+            }
         };
 
         // Reuse an existing PASE session to this peer, if present.
@@ -464,7 +617,7 @@ impl Transport {
     ) -> Result<Exchange<'a>, Error> {
         let session_id = self.create_plaintext_session(matter, crypto, peer_addr)?;
 
-        matter.transport.initiate_for_session(matter, session_id)
+        self.initiate_for_session(matter, session_id)
     }
 
     pub(crate) async fn get_if_rx<F>(&self, f: F) -> PacketAccess<'_, MAX_RX_BUF_SIZE>
@@ -489,6 +642,30 @@ impl Transport {
         F: Fn(&Packet<N>) -> bool,
     {
         PacketAccess(packet_mutex.lock_if(f).await, false)
+    }
+}
+
+/// Resets the mDNS resolve rendezvous to `Idle` on drop, unless disarmed.
+///
+/// This guarantees that a dropped (cancelled or timed-out) [`Transport::resolve`]
+/// future does not leave the single-slot rendezvous occupied for other callers.
+struct ResolveGuard<'a> {
+    signal: &'a Signal<MdnsResolveState>,
+    armed: bool,
+}
+
+impl Drop for ResolveGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.signal.modify(|state| {
+                if matches!(state, MdnsResolveState::Idle) {
+                    (false, ())
+                } else {
+                    *state = MdnsResolveState::Idle;
+                    (true, ())
+                }
+            });
+        }
     }
 }
 
@@ -521,7 +698,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         // C++ E2E tests rely on this log line to determine when the tested app is ready
         debug!("APP STATUS: Starting event loop");
 
-        let mut joined = self.matter.transport.group_addrs.lock().await;
+        let mut joined = self.transport().group_addrs.lock().await;
 
         let send = IfMutex::new(send);
 
@@ -595,7 +772,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     ),
                 },
                 None => {
-                    self.matter.groups_modified.wait().await;
+                    self.transport().wait_groups_changed().await;
                 }
             }
         }
@@ -713,8 +890,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         loop {
             trace!("Waiting for orphaned RX packets");
 
-            self.matter
-                .transport
+            self.transport()
                 .rx
                 .with(|packet| self.handle_orphaned_rx_packet(packet).then_some(()))
                 .await;
@@ -747,7 +923,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
 
             if wait {
                 let mut timeout = pin!(Timer::after(embassy_time::Duration::from_millis(100)));
-                let mut wait = pin!(self.matter.transport.exchange_dropped.wait());
+                let mut wait = pin!(self.transport().exchange_dropped.wait());
 
                 select(&mut timeout, &mut wait).await;
             }
@@ -867,7 +1043,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
 
                     // See above why `unwrap` is safe
                     let mut session = unwrap!(state.sessions.remove(session_id));
-                    self.matter.session_removed.notify();
+                    self.transport().notify_session_removed();
 
                     self.write_packet(packet, Some(&mut session), None, true, |wb| {
                         sc_write(wb, SCStatusCodes::CloseSession, &[])
@@ -943,7 +1119,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                             .map(|sess| sess.id)
                         {
                             state.sessions.remove(session_id);
-                            self.matter.session_removed.notify();
+                            self.transport().notify_session_removed();
                         }
                     });
                 } else {
@@ -1014,7 +1190,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
 
             exchange.role = Role::Responder(ResponderState::Dropped);
             packet.buf.clear();
-            self.matter.transport.exchange_dropped.notify();
+            self.transport().exchange_dropped.notify();
 
             true
         })
@@ -1094,7 +1270,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     exchange_id.display(unwrap!(state.sessions.get(session_id))) // Session exists or else we wouldn't be here
                 );
 
-                self.write_evict_session_packet(packet, &mut state.sessions, &self.matter.session_removed, session_id, false)?;
+                self.write_evict_session_packet(packet, &mut state.sessions, session_id, false)?;
             } else {
                 // Found a dropped exchange which has no outstanding (re)transmission
                 // Send a standalone ACK if necessary and then close it
@@ -1316,8 +1492,8 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
             let (peer, retransmission) = session.pre_send(
                 exchange_index,
                 &mut packet.header,
-                self.matter.transport.device_sai,
-                self.matter.transport.device_sii,
+                self.transport().device_sai,
+                self.transport().device_sii,
             )?;
 
             packet.peer = peer;
@@ -1368,13 +1544,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 .get_session_for_eviction()
                 .map(|sess| sess.id);
             if let Some(id) = id {
-                self.write_evict_session_packet(
-                    packet,
-                    &mut state.sessions,
-                    &self.matter.session_removed,
-                    id,
-                    encode,
-                )?;
+                self.write_evict_session_packet(packet, &mut state.sessions, id, encode)?;
 
                 Ok(true)
             } else {
@@ -1389,7 +1559,6 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         &self,
         packet: &mut Packet<N>,
         sessions: &mut Sessions,
-        session_removed: &Notification,
         id: u32,
         encode: bool,
     ) -> Result<(), Error> {
@@ -1398,7 +1567,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
 
         // It is a responsibility of the caller to ensure that this method is called with a valid session ID
         let mut session = unwrap!(sessions.remove(id));
-        session_removed.notify();
+        self.transport().notify_session_removed();
 
         debug!(
             "Evicting session {} [SID:{:x},RSID:{:x}]",
@@ -1478,6 +1647,11 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 Ok(())
             }
         }
+    }
+
+    #[inline(always)]
+    const fn transport(&self) -> &Transport {
+        self.matter.transport()
     }
 }
 

@@ -196,7 +196,7 @@ impl<'a> GenCommHandler<'a> {
         F: FnOnce(&mut MatterState, &mut dyn FnMut()) -> Result<T, E>,
         E: From<Error>,
     {
-        let mut notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
+        let mut notify_mdns = || ctx.exchange().matter().transport().notify_mdns_changed();
 
         ctx.exchange().with_state_ex(|state| {
             let sess = ctx.exchange().id().session(&mut state.sessions);
@@ -293,7 +293,7 @@ impl ClusterHandler for GenCommHandler<'_> {
         // the bare `failsafe.arm(0, ...)` path only flips the state to
         // `Idle` and would leave the staged fabric committed.
         let status = if expiry_length_seconds == 0 {
-            let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
+            let notify_mdns = || ctx.exchange().matter().transport().notify_mdns_changed();
             let notify_change = |endpt_id, clust_id| ctx.notify_cluster_changed(endpt_id, clust_id);
 
             CommissioningErrorEnum::map(ctx.exchange().with_state(|state| {
@@ -435,7 +435,7 @@ impl ClusterHandler for GenCommHandler<'_> {
 
                 state.pase.close_comm_window(notify_mdns, notify_change)?;
                 state.sessions.remove_pase(pase_sess_id);
-                ctx.exchange().matter().session_removed.notify();
+                ctx.exchange().matter().transport().notify_session_removed();
 
                 // Finally, persist the fabric and the network settings, prior to sending the other party a "success" status
                 persist.store(fabric)?;

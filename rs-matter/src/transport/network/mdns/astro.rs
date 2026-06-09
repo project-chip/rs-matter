@@ -54,7 +54,7 @@ impl AstroMdnsResponder {
     /// - `matter`: A reference to the Matter instance to get mDNS services from.
     pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
         loop {
-            matter.wait_mdns().await;
+            matter.transport().wait_mdns().await;
 
             let mut services = HashSet::new();
             matter.mdns_services(|service| {

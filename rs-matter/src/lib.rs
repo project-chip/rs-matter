@@ -29,13 +29,6 @@
 #![allow(clippy::uninlined_format_args)]
 #![recursion_limit = "1024"]
 
-use core::future::Future;
-use core::net::SocketAddr;
-use core::pin::pin;
-
-use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Timer};
-
 use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::{
     self, BasicInfoConfig, BasicInfoSettings, FULL_CLUSTER as BASIC_INFO_CLUSTER,
@@ -54,9 +47,7 @@ use crate::pairing::DiscoveryCapabilities;
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, BASIC_INFO_KEY};
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
 use crate::sc::pase::Pase;
-use crate::transport::network::mdns::{
-    MatterMdnsService, MatterService, MdnsAnswer, MdnsResolveState, ResolvedNode,
-};
+use crate::transport::network::mdns::MatterService;
 use crate::transport::network::{NetworkMulticast, NetworkReceive, NetworkSend};
 use crate::transport::session::Sessions;
 use crate::transport::{
@@ -66,7 +57,6 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::pooled::BufferAccess;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::{Notification, Signal};
 
 use rand_core::RngCore;
 
@@ -142,18 +132,7 @@ pub struct Matter<'a> {
     /// The internal state of the Matter Object, protected by a mutex for concurrent access from different threads and async tasks.
     state: Mutex<RefCell<MatterState>>,
     /// The transport state of the Matter Object
-    ///
-    /// Public for unit tests
-    pub transport: Transport,
-    /// A notification that the Matter mDNS services might have changed
-    mdns_changed: Notification,
-    /// The single in-flight mDNS resolve rendezvous, shared between [`Matter::resolve`]
-    /// callers and the running mDNS responder.
-    mdns_resolve: Signal<MdnsResolveState>,
-    /// A notification that a session had been removed
-    session_removed: Notification,
-    /// A notification that the groups have been modified
-    groups_modified: Notification,
+    transport: Transport,
     /// The basic information configuration for this Matter device
     dev_det: &'a BasicInfoConfig<'a>,
     /// The basic commissioning data for this Matter device
@@ -185,10 +164,6 @@ impl<'a> Matter<'a> {
         Self {
             state: Mutex::new(RefCell::new(MatterState::new())),
             transport: Transport::new(dev_det),
-            mdns_changed: Notification::new(),
-            mdns_resolve: Signal::new(MdnsResolveState::Idle),
-            session_removed: Notification::new(),
-            groups_modified: Notification::new(),
             dev_det,
             dev_comm,
             dev_att,
@@ -216,10 +191,6 @@ impl<'a> Matter<'a> {
             Self {
                 state <- Mutex::init(RefCell::init(MatterState::init())),
                 transport <- Transport::init(dev_det),
-                mdns_changed: Notification::new(),
-                mdns_resolve: Signal::new(MdnsResolveState::Idle),
-                session_removed: Notification::new(),
-                groups_modified: Notification::new(),
                 dev_det,
                 dev_comm,
                 dev_att,
@@ -244,12 +215,22 @@ impl<'a> Matter<'a> {
         self.port
     }
 
+    /// Get a reference to the transport state of this Matter object.
+    ///
+    /// All transport-related state and operations (mDNS change/resolve
+    /// rendezvous, session/group notifications, RX/TX buffers, exchange
+    /// initiation/acceptance) live on [`Transport`].
+    #[inline(always)]
+    pub const fn transport(&self) -> &Transport {
+        &self.transport
+    }
+
     pub fn transport_rx_buffer(&self) -> PacketBufferExternalAccess<'_, MAX_RX_BUF_SIZE> {
-        self.transport.rx_buffer()
+        self.transport().rx_buffer()
     }
 
     pub fn transport_tx_buffer(&self) -> PacketBufferExternalAccess<'_, MAX_TX_BUF_SIZE> {
-        self.transport.tx_buffer()
+        self.transport().tx_buffer()
     }
 
     /// A utility method to replace the initial Device Attestation with another one.
@@ -268,7 +249,7 @@ impl<'a> Matter<'a> {
     /// # Arguments
     /// - `disc_caps`: The discovery capabilities to be used in the QR code payload
     pub fn print_standard_qr_text(&self, disc_caps: DiscoveryCapabilities) -> Result<(), Error> {
-        let rx_buf = self.transport.rx_buffer();
+        let rx_buf = self.transport().rx_buffer();
 
         let mut buf = rx_buf.get_immediate().ok_or(ErrorCode::NoMemory)?;
         let buf = &mut *buf;
@@ -306,7 +287,7 @@ impl<'a> Matter<'a> {
             self.dev_comm.compute_pretty_pairing_code()
         );
 
-        let rx_buf = self.transport.rx_buffer();
+        let rx_buf = self.transport().rx_buffer();
 
         let mut buf = rx_buf.get_immediate().ok_or(ErrorCode::NoMemory)?;
         let buf = &mut *buf;
@@ -392,7 +373,7 @@ impl<'a> Matter<'a> {
         crypto: C,
         notify: &dyn AttrChangeNotifier,
     ) -> Result<(), Error> {
-        let notify_mdns = || self.notify_mdns_changed();
+        let notify_mdns = || self.transport().notify_mdns_changed();
         let notify_change = |endpt_id, clust_id| notify.notify_cluster_changed(endpt_id, clust_id);
 
         self.with_state(|state| {
@@ -426,7 +407,7 @@ impl<'a> Matter<'a> {
     /// [`crate::dm::DataModel::close_comm_window`] when a `DataModel`
     /// is available.
     pub fn close_comm_window(&self, notify: &dyn AttrChangeNotifier) -> Result<bool, Error> {
-        let notify_mdns = || self.notify_mdns_changed();
+        let notify_mdns = || self.transport().notify_mdns_changed();
         let notify_change = |endpt_id, clust_id| notify.notify_cluster_changed(endpt_id, clust_id);
 
         self.with_state(|state| state.pase.close_comm_window(notify_mdns, notify_change))
@@ -535,14 +516,8 @@ impl<'a> Matter<'a> {
         self.with_state(|state| {
             state.sessions.reset();
 
-            self.transport.reset()
+            self.transport().reset()
         })
-    }
-
-    /// Notify that groups have changed (keys, key maps, or membership) and
-    /// multicast registrations need updating.
-    pub fn notify_groups_changed(&self) {
-        self.groups_modified.notify();
     }
 
     /// Reset the Matter persistable state by removing all fabrics and resetting basic info settings
@@ -567,7 +542,7 @@ impl<'a> Matter<'a> {
             state.rtc.reset_persist(&mut kv, buf).await?;
         }
 
-        self.notify_mdns_changed();
+        self.transport().notify_mdns_changed();
 
         Ok(())
     }
@@ -591,7 +566,7 @@ impl<'a> Matter<'a> {
             state.rtc.load_persist(&mut kv, buf).await?;
         }
 
-        self.notify_mdns_changed();
+        self.transport().notify_mdns_changed();
 
         Ok(())
     }
@@ -626,145 +601,6 @@ impl<'a> Matter<'a> {
 
             Ok(())
         })
-    }
-
-    /// Notify that the Matter mDNS services _might_ have changed.
-    pub(crate) fn notify_mdns_changed(&self) {
-        self.mdns_changed.notify();
-    }
-
-    /// A hook for user code to wait for notification that the Matter mDNS services might have changed.
-    ///
-    /// Once this future resolves, user code is supposed to inspect the mDNS services for changes, and
-    /// if there are changes, re-publish the changed mDNS services in an mDNS responder accordingly.
-    pub fn wait_mdns(&self) -> impl Future<Output = ()> + '_ {
-        self.mdns_changed.wait()
-    }
-
-    /// Resolve a Matter service instance's address over mDNS.
-    ///
-    /// Places a single resolve request into the shared rendezvous and waits up
-    /// to `timeout_ms` for the running mDNS responder to fire the query and
-    /// deposit an answer. Multiple concurrent callers serialize: each waits for
-    /// any in-flight resolve to finish before placing its own.
-    ///
-    /// Returns [`ErrorCode::NotFound`] if no answer arrives within the timeout.
-    /// If this future is dropped before completing, the rendezvous is reset so
-    /// other callers can proceed.
-    ///
-    /// Requires a running mDNS responder (e.g. `BuiltinMdnsResponder::run`) to
-    /// service the request; without one, every resolve will time out.
-    pub async fn resolve(
-        &self,
-        service: MatterMdnsService,
-        timeout_ms: u32,
-    ) -> Result<ResolvedNode, Error> {
-        // 1. Serialize with other resolvers and place the request.
-        self.mdns_resolve
-            .wait(|state| {
-                if matches!(state, MdnsResolveState::Idle) {
-                    *state = MdnsResolveState::Requested(service.clone());
-                    Some(())
-                } else {
-                    None
-                }
-            })
-            .await;
-
-        // 2. Ensure the slot is released if this future is dropped (or times out).
-        let mut guard = ResolveGuard {
-            signal: &self.mdns_resolve,
-            armed: true,
-        };
-
-        // 3. Wait for the responder to deposit our answer, or time out.
-        let wait = self.mdns_resolve.wait(|state| match state {
-            MdnsResolveState::Resolved(svc, ip, port, params) if *svc == service => {
-                let node = ResolvedNode {
-                    addr: SocketAddr::new(*ip, *port),
-                    params: *params,
-                };
-                *state = MdnsResolveState::Idle;
-                Some(node)
-            }
-            _ => None,
-        });
-
-        let timer = Timer::after(Duration::from_millis(timeout_ms as u64));
-
-        match select(pin!(wait), pin!(timer)).await {
-            Either::First(node) => {
-                // The `wait` above already reset the slot to `Idle`.
-                guard.armed = false;
-                Ok(node)
-            }
-            Either::Second(_) => Err(ErrorCode::NotFound.into()),
-        }
-    }
-
-    /// Responder-side: await the next pending mDNS resolve request, marking it
-    /// in-flight.
-    pub(crate) async fn wait_mdns_resolve_request(&self) -> MatterMdnsService {
-        self.mdns_resolve
-            .wait(|state| match state {
-                MdnsResolveState::Requested(service) => {
-                    let service = service.clone();
-                    *state = MdnsResolveState::InFlight(service.clone());
-                    Some(service)
-                }
-                _ => None,
-            })
-            .await
-    }
-
-    /// Responder-side: best-effort deposit of a parsed mDNS answer.
-    ///
-    /// If an in-flight resolve request matches the answer's instance name (and
-    /// the answer carries an address), record the resolved address and wake the
-    /// waiting [`Matter::resolve`] caller. Otherwise the answer is ignored.
-    pub(crate) fn try_deposit_mdns_answer(&self, answer: &MdnsAnswer<'_>) {
-        let Some(ip) = answer.addrs.first().copied() else {
-            return;
-        };
-        let Some(port) = answer.port else {
-            return;
-        };
-
-        let params = answer.session_params();
-
-        self.mdns_resolve.modify(|state| {
-            if let MdnsResolveState::InFlight(service) = state {
-                if service.matches_instance_name(answer.instance_name) {
-                    *state = MdnsResolveState::Resolved(service.clone(), ip, port, params);
-                    return (true, ());
-                }
-            }
-            (false, ())
-        });
-    }
-}
-
-/// Resets the mDNS resolve rendezvous to `Idle` on drop, unless disarmed.
-///
-/// This guarantees that a dropped (cancelled or timed-out) [`Matter::resolve`]
-/// future does not leave the single-slot rendezvous occupied for other callers.
-struct ResolveGuard<'a> {
-    signal: &'a Signal<MdnsResolveState>,
-    armed: bool,
-}
-
-impl Drop for ResolveGuard<'_> {
-    fn drop(&mut self) {
-        if self.armed {
-            self.signal.modify(|state| {
-                if matches!(state, MdnsResolveState::Idle) {
-                    (false, ())
-                } else {
-                    *state = MdnsResolveState::Idle;
-                    (true, ())
-                }
-            });
-        }
     }
 }
 
@@ -856,10 +692,10 @@ mod resolve_tests {
         let service = op_service();
 
         let resolved = block_on(async {
-            let resolver = matter.resolve(service.clone(), 5_000);
+            let resolver = matter.transport().resolve(service.clone(), 5_000);
 
             let responder = async {
-                let picked = matter.wait_mdns_resolve_request().await;
+                let picked = matter.transport().wait_mdns_resolve_request().await;
                 assert_eq!(picked, service);
 
                 let mut name = heapless::String::<128>::new();
@@ -874,7 +710,7 @@ mod resolve_tests {
                     txt: &[("SII", "300"), ("SAI", "4000"), ("SAT", "5000")],
                 };
 
-                matter.try_deposit_mdns_answer(&answer);
+                matter.transport().try_deposit_mdns_answer(&answer);
             };
 
             let (node, ()) = zip(resolver, responder).await;
@@ -898,10 +734,10 @@ mod resolve_tests {
     fn resolve_times_out_and_releases_slot() {
         let matter = test_matter();
 
-        let err = block_on(matter.resolve(op_service(), 50)).unwrap_err();
+        let err = block_on(matter.transport().resolve(op_service(), 50)).unwrap_err();
         assert!(matches!(err.code(), ErrorCode::NotFound));
 
-        let err = block_on(matter.resolve(op_service(), 50)).unwrap_err();
+        let err = block_on(matter.transport().resolve(op_service(), 50)).unwrap_err();
         assert!(matches!(err.code(), ErrorCode::NotFound));
     }
 
@@ -921,9 +757,9 @@ mod resolve_tests {
             addrs: &addrs,
             txt: &[],
         };
-        matter.try_deposit_mdns_answer(&answer);
+        matter.transport().try_deposit_mdns_answer(&answer);
 
-        let err = block_on(matter.resolve(op_service(), 50)).unwrap_err();
+        let err = block_on(matter.transport().resolve(op_service(), 50)).unwrap_err();
         assert!(matches!(err.code(), ErrorCode::NotFound));
     }
 }

@@ -73,7 +73,7 @@ impl AvahiMdnsResponder {
         }
 
         loop {
-            matter.wait_mdns().await;
+            matter.transport().wait_mdns().await;
 
             let mut services = HashSet::new();
             matter.mdns_services(|service| {

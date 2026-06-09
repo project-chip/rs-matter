@@ -180,7 +180,7 @@ impl BuiltinMdnsResponder {
         C: Crypto,
     {
         loop {
-            let service = matter.wait_mdns_resolve_request().await;
+            let service = matter.transport().wait_mdns_resolve_request().await;
 
             let mut name = heapless::String::<128>::new();
             service.instance_name(&mut name);
@@ -244,7 +244,7 @@ impl BuiltinMdnsResponder {
         C: Crypto,
     {
         loop {
-            let mut notification = pin!(matter.wait_mdns());
+            let mut notification = pin!(matter.transport().wait_mdns());
             let mut timeout = pin!(Timer::after(Duration::from_secs(30)));
 
             select(&mut notification, &mut timeout).await;
@@ -405,7 +405,7 @@ impl BuiltinMdnsResponder {
                 if is_response {
                     // Deposit any answer that matches an in-flight resolve request.
                     if let Err(e) = parse_into_answer::<MAX_DEVICE_ADDRS, _>(packet, |answer| {
-                        matter.try_deposit_mdns_answer(answer);
+                        matter.transport().try_deposit_mdns_answer(answer);
                     }) {
                         debug!("Failed to parse mDNS response: {:?}", e);
                     }

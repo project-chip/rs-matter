@@ -240,7 +240,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                 persist.store(fabric)?;
             }
 
-            ctx.exchange().matter().notify_groups_changed();
+            ctx.exchange().matter().transport().notify_groups_changed();
 
             Ok(())
         })?;
@@ -403,7 +403,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                 persist.store(fabric)?;
             }
 
-            ctx.exchange().matter().notify_groups_changed();
+            ctx.exchange().matter().transport().notify_groups_changed();
 
             Ok(())
         })?;
@@ -510,7 +510,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                 persist.store(fabric)?;
             }
 
-            ctx.exchange().matter().notify_groups_changed();
+            ctx.exchange().matter().transport().notify_groups_changed();
 
             Ok(())
         })?;

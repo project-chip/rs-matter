@@ -108,7 +108,7 @@ impl ExchangeId {
         self.check_no_pending_retrans(matter)?;
 
         loop {
-            let mut recv = pin!(matter.transport.get_if_rx(|packet| {
+            let mut recv = pin!(matter.transport().get_if_rx(|packet| {
                 if packet.buf.is_empty() {
                     false
                 } else {
@@ -127,7 +127,7 @@ impl ExchangeId {
                 }
             }));
 
-            let mut session_removed = pin!(matter.session_removed.wait());
+            let mut session_removed = pin!(matter.transport().wait_session_removed());
 
             let mut timeout = pin!(Timer::after(Duration::from_millis(
                 RetransEntry::new(matter.dev_det().sai, 0).max_delay_ms() * 3 / 2
@@ -210,7 +210,7 @@ impl ExchangeId {
 
             loop {
                 let mut notification = pin!(self.internal_wait_ack(matter));
-                let mut session_removed = pin!(matter.session_removed.wait());
+                let mut session_removed = pin!(matter.transport().wait_session_removed());
                 let mut timer = pin!(Timer::at(expired));
 
                 if !matches!(
@@ -1104,7 +1104,7 @@ impl<'a> Exchange<'a> {
     /// Create a new initiator exchange on the provided Matter stack for the provided session ID.
     #[inline(always)]
     pub fn initiate_for_session(matter: &'a Matter<'a>, session_id: u32) -> Result<Self, Error> {
-        matter.transport.initiate_for_session(matter, session_id)
+        matter.transport().initiate_for_session(matter, session_id)
     }
 
     /// Create a new initiator exchange on a new unsecured (plain-text) session to
@@ -1148,7 +1148,7 @@ impl<'a> Exchange<'a> {
     ) -> Result<Self, Error> {
         if received_timeout_ms > 0 {
             loop {
-                let mut accept = pin!(matter.transport.accept_if(matter, |_, exch, _| {
+                let mut accept = pin!(matter.transport().accept_if(matter, |_, exch, _| {
                     exch.mrp.has_rx_timed_out(received_timeout_ms as _)
                 }));
 
@@ -1161,7 +1161,7 @@ impl<'a> Exchange<'a> {
                 }
             }
         } else {
-            matter.transport.accept_if(matter, |_, _, _| true).await
+            matter.transport().accept_if(matter, |_, _, _| true).await
         }
     }
 
@@ -1462,7 +1462,7 @@ impl Drop for Exchange<'_> {
                 {
                     // Group session with no remaining exchanges — remove it
                     state.sessions.remove(self.id.session_id());
-                    self.matter.session_removed.notify();
+                    self.matter.transport().notify_session_removed();
                 }
 
                 Ok(true)
@@ -1472,7 +1472,7 @@ impl Drop for Exchange<'_> {
         });
 
         if !matches!(closed, Ok(true)) {
-            self.matter.transport.exchange_dropped.notify();
+            self.matter.transport().exchange_dropped.notify();
         }
     }
 }

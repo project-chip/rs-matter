@@ -88,7 +88,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         let pake_failed = matches!(result, Ok(false) | Err(_));
 
         if pake_failed {
-            let notify_mdns = || exchange.matter().notify_mdns_changed();
+            let notify_mdns = || exchange.matter().transport().notify_mdns_changed();
             let notify_change =
                 |endpt_id, cluster_id| self.notify.notify_cluster_changed(endpt_id, cluster_id);
 
@@ -170,7 +170,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         let mut salt_len = 0usize;
         let mut count = 0;
 
-        let notify_mdns = || exchange.matter().notify_mdns_changed();
+        let notify_mdns = || exchange.matter().transport().notify_mdns_changed();
         let notify_change =
             |endpt_id, cluster_id| self.notify.notify_cluster_changed(endpt_id, cluster_id);
 
@@ -298,7 +298,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         let mut b_pt = EC_POINT_ZEROED;
         let mut cb = HMAC_HASH_ZEROED;
 
-        let notify_mdns = || exchange.matter().notify_mdns_changed();
+        let notify_mdns = || exchange.matter().transport().notify_mdns_changed();
         let notify_change =
             |endpt_id, cluster_id| self.notify.notify_cluster_changed(endpt_id, cluster_id);
 
