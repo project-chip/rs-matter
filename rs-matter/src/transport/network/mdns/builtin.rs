@@ -25,7 +25,7 @@ use core::pin::pin;
 
 use domain::base::Message;
 
-use embassy_futures::select::{select, select3};
+use embassy_futures::select::{select, select4};
 use embassy_time::{Duration, Timer};
 
 use rand_core::RngCore;
@@ -160,8 +160,15 @@ impl BuiltinMdnsResponder {
             matter,
             &crypto,
         ));
+        let mut browse = pin!(Self::browse(
+            &send,
+            ipv4_interface,
+            ipv6_interface,
+            matter,
+            &crypto,
+        ));
 
-        select3(&mut broadcast, &mut respond, &mut resolve)
+        select4(&mut broadcast, &mut respond, &mut resolve, &mut browse)
             .coalesce()
             .await
     }
@@ -204,6 +211,51 @@ impl BuiltinMdnsResponder {
                     warn!("Failed to send mDNS query to {}: {}", addr, e);
                 } else {
                     debug!("Sent mDNS resolve query {} to {}", name, addr);
+                }
+            }
+        }
+    }
+
+    /// Service [`Transport::browse_commissionable`] requests: pick up a pending
+    /// browse request and emit the corresponding commissionable mDNS query on the
+    /// shared socket. The query is narrowed to the most selective subtype the
+    /// filter offers (`_L`/`_S`/`_V`/`_T`/`_CM`, see
+    /// [`CommissionableFilter::service_type`]); the responder then deposits the
+    /// first answer matching the full filter.
+    async fn browse<S, C>(
+        send: &IfMutex<(S, &mut Vec<MatterLocalService, MAX_SERVICES>)>,
+        ipv4_interface: Option<Ipv4Addr>,
+        ipv6_interface: Option<u32>,
+        matter: &Matter<'_>,
+        crypto: C,
+    ) -> Result<(), Error>
+    where
+        S: NetworkSend,
+        C: Crypto,
+    {
+        loop {
+            let filter = matter.transport().wait_mdns_browse_request().await;
+
+            let mut name = heapless::String::<64>::new();
+            filter.service_type(&mut name, true);
+
+            // A small random delay before sending, as per spec (collision avoidance).
+            Self::rand_delay(&crypto).await?;
+
+            let mut send_guard = send.lock().await;
+            let send = &mut send_guard.0;
+
+            let tx_buf = matter.transport_tx_buffer();
+            let mut tx_buf = tx_buf.get().await.ok_or(ErrorCode::ResourceExhausted)?;
+            let buf = &mut *tx_buf;
+
+            let len = build_browse_query(&name, buf)?;
+
+            for addr in Self::broadcast_addrs(ipv4_interface, ipv6_interface) {
+                if let Err(e) = send.send_to(&buf[..len], Address::Udp(addr)).await {
+                    warn!("Failed to send mDNS browse query to {}: {}", addr, e);
+                } else {
+                    debug!("Sent mDNS browse query {} to {}", name, addr);
                 }
             }
         }
@@ -403,9 +455,11 @@ impl BuiltinMdnsResponder {
                 );
 
                 if is_response {
-                    // Deposit any answer that matches an in-flight resolve request.
+                    // Deposit any answer that matches an in-flight resolve or
+                    // browse request.
                     if let Err(e) = parse_into_answer::<MAX_DEVICE_ADDRS, _>(packet, |answer| {
                         matter.transport().try_deposit_mdns_answer(answer);
+                        matter.transport().try_deposit_mdns_browse_answer(answer);
                     }) {
                         debug!("Failed to parse mDNS response: {:?}", e);
                     }

@@ -22,7 +22,7 @@ use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::EitherIter;
-use crate::utils::storage::{write_split, WriteBuf};
+use crate::utils::storage::{write_split, Vec, WriteBuf};
 
 use super::{MatterLocalService, MatterRemoteService};
 
@@ -79,7 +79,7 @@ impl<const A: usize> PushUnique<A> for std::vec::Vec<DiscoveredDevice<A>> {
 /// The mDNS subtype filtering supports discriminator, short discriminator,
 /// vendor ID, device type, and commissioning mode. Product ID filtering
 /// is done post-discovery by checking TXT records.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CommissionableFilter {
     /// Filter by long discriminator (12-bit)
@@ -173,6 +173,70 @@ impl CommissionableFilter {
         }
 
         if self.commissioning_mode_only && !device.commissioning_mode.is_commissionable() {
+            return false;
+        }
+
+        true
+    }
+
+    /// Whether a discovered commissionable mDNS answer matches **all** of this
+    /// filter's non-`None` fields (AND semantics).
+    ///
+    /// Allocation-free counterpart of [`CommissionableFilter::matches`] that reads
+    /// the relevant Matter commissionable TXT records (`D`, `VP`, `CM`, `DT`)
+    /// straight off a borrowed [`MdnsAnswer`] - used by the live browse path which
+    /// must not assemble a heavyweight [`DiscoveredDevice`].
+    pub fn matches_answer(&self, answer: &MdnsAnswer<'_>) -> bool {
+        let mut discriminator: Option<u16> = None;
+        let mut vendor_id: Option<u16> = None;
+        let mut product_id: Option<u16> = None;
+        let mut device_type: Option<u32> = None;
+        let mut commissioning = CommissioningMode::Disabled;
+
+        for (key, value) in answer.txt {
+            if key.eq_ignore_ascii_case("D") {
+                discriminator = value.parse::<u16>().ok().filter(|d| *d <= 0xFFF);
+            } else if key.eq_ignore_ascii_case("VP") {
+                if let Some(plus) = value.find('+') {
+                    vendor_id = value[..plus].parse::<u16>().ok();
+                    product_id = value[plus + 1..].parse::<u16>().ok();
+                } else {
+                    vendor_id = value.parse::<u16>().ok();
+                }
+            } else if key.eq_ignore_ascii_case("CM") {
+                commissioning = CommissioningMode::from_txt_value(value);
+            } else if key.eq_ignore_ascii_case("DT") {
+                device_type = value.parse::<u32>().ok();
+            }
+        }
+
+        if let Some(want) = self.discriminator {
+            if discriminator != Some(want) {
+                return false;
+            }
+        }
+        if let Some(want) = self.short_discriminator {
+            // Short discriminator is the upper 4 bits of the 12-bit discriminator.
+            if discriminator.map(|d| (d >> 8) as u8) != Some(want) {
+                return false;
+            }
+        }
+        if let Some(want) = self.vendor_id {
+            if vendor_id != Some(want) {
+                return false;
+            }
+        }
+        if let Some(want) = self.product_id {
+            if product_id != Some(want) {
+                return false;
+            }
+        }
+        if let Some(want) = self.device_type {
+            if device_type != Some(want) {
+                return false;
+            }
+        }
+        if self.commissioning_mode_only && !commissioning.is_commissionable() {
             return false;
         }
 
@@ -796,6 +860,47 @@ pub(crate) enum MdnsResolveState {
     InFlight(MatterRemoteService),
     /// The responder deposited a resolved address (+ session params) for the request.
     Resolved(MatterRemoteService, IpAddr, u16, ResolvedSessionParams),
+}
+
+/// Maximum number of already-tried commissionable instance ids a single
+/// [`Transport::browse_commissionable`](crate::transport::Transport::browse_commissionable)
+/// request can exclude - i.e. how many short-discriminator-collision candidates
+/// a caller can step through before giving up. Small and fixed (no heap).
+pub(crate) const MAX_BROWSE_EXCLUDE: usize = 6;
+
+/// The set of commissionable instance ids to skip on a browse (already tried).
+pub(crate) type BrowseExclude = Vec<u64, MAX_BROWSE_EXCLUDE>;
+
+/// The state of the single in-flight mDNS commissionable-**browse** "rendezvous"
+/// shared between
+/// [`Transport::browse_commissionable`](crate::transport::Transport::browse_commissionable)
+/// callers and the running mDNS responder.
+///
+/// Prototype: at most one browse in flight at a time, returning the *first*
+/// matching node whose id is not in the request's exclude set (so a caller can
+/// step to the "next" candidate on a short-discriminator collision). See
+/// `Transport::browse_commissionable` for the protocol.
+#[derive(Debug, Clone)]
+pub(crate) enum MdnsBrowseState {
+    /// No browse in progress; a caller may place a request.
+    Idle,
+    /// A caller has placed a request (filter + ids to skip); not yet picked up.
+    Requested {
+        filter: CommissionableFilter,
+        exclude: BrowseExclude,
+    },
+    /// The responder picked up the request and sent the browse query; awaiting a match.
+    InFlight {
+        filter: CommissionableFilter,
+        exclude: BrowseExclude,
+    },
+    /// The responder deposited the first matching, non-excluded commissionable node.
+    Found {
+        filter: CommissionableFilter,
+        ip: IpAddr,
+        port: u16,
+        id: u64,
+    },
 }
 
 /// A utility type for expanding a `MatterLocalService` type into a full mDNS service description
@@ -1610,7 +1715,7 @@ mod tests {
     #[cfg(feature = "std")]
     #[test]
     fn push_if_unique_vec_adds_new_device() {
-        let mut devices = Vec::new();
+        let mut devices = std::vec::Vec::new();
         let mut device = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device.set_instance_name("device1");
 
@@ -1621,7 +1726,7 @@ mod tests {
     #[cfg(feature = "std")]
     #[test]
     fn push_if_unique_vec_rejects_duplicate() {
-        let mut devices = Vec::new();
+        let mut devices = std::vec::Vec::new();
 
         let mut device1 = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device1.set_instance_name("device1");
@@ -1637,7 +1742,7 @@ mod tests {
     #[cfg(feature = "std")]
     #[test]
     fn push_if_unique_vec_rejects_case_insensitive_duplicate() {
-        let mut devices = Vec::new();
+        let mut devices = std::vec::Vec::new();
 
         let mut device1 = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device1.set_instance_name("device1");
@@ -1653,7 +1758,7 @@ mod tests {
     #[cfg(feature = "std")]
     #[test]
     fn push_if_unique_allows_different_names() {
-        let mut devices = Vec::new();
+        let mut devices = std::vec::Vec::new();
 
         let mut device1 = DiscoveredDevice::<MAX_ADDRESSES_PER_DEVICE>::default();
         device1.set_instance_name("device1");
@@ -1838,7 +1943,7 @@ mod tests {
         device.add_address(IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)));
         device.add_address(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
 
-        let addrs: Vec<SocketAddr> = device.socket_addresses().collect();
+        let addrs: std::vec::Vec<SocketAddr> = device.socket_addresses().collect();
         assert_eq!(addrs.len(), 2);
         assert_eq!(
             addrs[0],

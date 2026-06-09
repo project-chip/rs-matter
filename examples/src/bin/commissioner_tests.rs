@@ -61,7 +61,6 @@ use rs_matter::error::{Error, ErrorCode};
 use rs_matter::onboard::cac::{IcacGenerator, RcacGenerator};
 use rs_matter::onboard::noc::NocGenerator;
 use rs_matter::onboard::{CommissionOptions, Commissioner};
-use rs_matter::transport::exchange::PaseTarget;
 use rs_matter::transport::network::{Address, NoNetwork};
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::Matter;
@@ -269,7 +268,7 @@ async fn run_commission<C: Crypto>(
 
     let phase1 = {
         let mut commission_fut = pin!(commissioner.commission(
-            PaseTarget::Addr(Address::Udp(args.peer_addr)),
+            Address::Udp(args.peer_addr),
             args.passcode,
             &opts,
             DEVICE_NODE_ID,

@@ -1001,22 +1001,6 @@ impl<'a> OwnedSender<'a> {
     }
 }
 
-/// How [`Exchange::initiate_pase`] locates the peer when a new PASE session must
-/// be established.
-///
-/// PASE only applies to a **commissionable** (not-yet-commissioned) node, so the
-/// only thing to resolve is a commissionable instance id - an operational node
-/// is reached over CASE via [`Exchange::initiate`] instead.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum PaseTarget {
-    /// An explicit, already-known peer address.
-    Addr(network::Address),
-    /// The commissionable instance id (the random 64-bit id in the
-    /// `<id-hex>._matterc._udp` mDNS instance name) to resolve over mDNS.
-    Resolve(u64),
-}
-
 /// An exchange within a Matter stack, representing a session and an exchange within that session.
 ///
 /// This is the main API for sending and receiving messages within the Matter stack.
@@ -1073,13 +1057,11 @@ impl<'a> Exchange<'a> {
     }
 
     /// Open an exchange over a **PASE** session to a not-yet-commissioned node
-    /// (use-case 2).
+    /// at the given peer address (use-case 2).
     ///
-    /// The peer address is taken from `target` (an explicit address, or a
-    /// commissionable instance resolved over mDNS). If a PASE session **to that
-    /// peer** already exists, an exchange is opened on it directly via
-    /// [`Exchange::initiate_for_session`]. Otherwise a new PASE session is
-    /// established: a plaintext session is opened and the PASE protocol
+    /// If a PASE session **to that peer** already exists, an exchange is opened on
+    /// it directly via [`Exchange::initiate_for_session`]. Otherwise a new PASE
+    /// session is established: a plaintext session is opened and the PASE protocol
     /// ([`crate::sc::pase::PaseInitiator`]) is run with `passcode`, then an
     /// exchange is opened on the resulting PASE session.
     ///
@@ -1087,20 +1069,22 @@ impl<'a> Exchange<'a> {
     /// commissioner can drive several concurrent commissionings.
     ///
     /// The peer's MRP/session parameters are negotiated by PASE itself
-    /// (PBKDFParamRequest/Response), so they are not seeded from mDNS here.
+    /// (PBKDFParamRequest/Response).
     ///
-    /// Resolving (`PaseTarget::Resolve`) requires a running mDNS responder; without
-    /// one the resolve times out with [`ErrorCode::NotFound`].
+    /// Discovery of the address is out of scope here (it may come from mDNS - see
+    /// [`crate::transport::Transport::browse_commissionable`] - or from a BLE/BTP
+    /// advertisement, etc.); this method is transport-agnostic and takes the
+    /// already-known address.
     #[inline(always)]
     pub async fn initiate_pase<C: Crypto>(
         matter: &'a Matter<'a>,
         crypto: C,
-        target: PaseTarget,
+        peer_addr: network::Address,
         passcode: u32,
     ) -> Result<Self, Error> {
         matter
             .transport
-            .initiate_pase(matter, crypto, target, passcode)
+            .initiate_pase(matter, crypto, peer_addr, passcode)
             .await
     }
 

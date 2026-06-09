@@ -74,7 +74,7 @@ use rs_matter::onboard::{CommissionOptions, Commissioner};
 use rs_matter::persist::DummyKvBlobStoreAccess;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter::transport::exchange::{Exchange, PaseTarget};
+use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::tcp::TcpNetwork;
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
@@ -417,7 +417,7 @@ async fn test_commission<C: Crypto>(
     // Phase 1 — establishes PASE (lazily on first step) then ArmFailSafe → ... → AddNOC.
     let result = commissioner
         .commission(
-            PaseTarget::Addr(peer_addr),
+            peer_addr,
             TEST_PASSCODE,
             &opts,
             DEVICE_NODE_ID,

@@ -38,7 +38,10 @@ use crate::sc::{
     sc_write, OpCode, SCStatusCodes, SessionParameters, StatusReport, PROTO_ID_SECURE_CHANNEL,
 };
 use crate::tlv::TLVElement;
-use crate::transport::network::mdns::{MdnsAnswer, MdnsResolveState, ResolvedNode};
+use crate::transport::network::mdns::{
+    BrowseExclude, CommissionableFilter, MdnsAnswer, MdnsBrowseState, MdnsResolveState,
+    ResolvedNode,
+};
 use crate::transport::network::{MatterRemoteService, NetworkMulticast};
 use crate::utils::init::{init, Init};
 use crate::utils::ipv6::compute_group_multicast_addr;
@@ -48,9 +51,7 @@ use crate::utils::storage::{pooled::BufferAccess, ParseBuf, WriteBuf};
 use crate::utils::sync::{IfMutex, IfMutexGuard, Notification, Signal};
 use crate::{Matter, MATTER_PORT};
 
-use exchange::{
-    Exchange, ExchangeId, ExchangeState, MessageMeta, PaseTarget, ResponderState, Role,
-};
+use exchange::{Exchange, ExchangeId, ExchangeState, MessageMeta, ResponderState, Role};
 use network::{Address, Ipv6Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV6};
 use packet::PacketHdr;
 use proto_hdr::ProtoHdr;
@@ -100,6 +101,9 @@ pub struct Transport {
     /// The single in-flight mDNS resolve rendezvous, shared between [`Transport::resolve`]
     /// callers and the running mDNS responder.
     mdns_resolve: Signal<MdnsResolveState>,
+    /// The single in-flight mDNS commissionable-browse rendezvous, shared between
+    /// [`Transport::browse_commissionable`] callers and the running mDNS responder.
+    mdns_browse: Signal<MdnsBrowseState>,
     /// A notification that a session had been removed
     session_removed: Notification,
     /// A notification that the groups have been modified
@@ -121,6 +125,7 @@ impl Transport {
             exchange_dropped: Notification::new(),
             mdns_changed: Notification::new(),
             mdns_resolve: Signal::new(MdnsResolveState::Idle),
+            mdns_browse: Signal::new(MdnsBrowseState::Idle),
             session_removed: Notification::new(),
             groups_modified: Notification::new(),
             device_sai: dev_det.sai,
@@ -137,6 +142,7 @@ impl Transport {
             exchange_dropped: Notification::new(),
             mdns_changed: Notification::new(),
             mdns_resolve: Signal::new(MdnsResolveState::Idle),
+            mdns_browse: Signal::new(MdnsBrowseState::Idle),
             session_removed: Notification::new(),
             groups_modified: Notification::new(),
             device_sai: dev_det.sai,
@@ -313,6 +319,142 @@ impl Transport {
         });
     }
 
+    /// Browse the mDNS network for a **commissionable** node matching `filter`,
+    /// returning the first match's address and commissionable instance id.
+    ///
+    /// Places a single browse request into the shared rendezvous and waits up to
+    /// `timeout_ms` for the running mDNS responder to fire the browse query and
+    /// deposit the first node whose advertisement matches **all** non-`None`
+    /// fields of `filter` (see [`CommissionableFilter::matches_answer`]) and whose
+    /// commissionable instance id is **not** in `exclude`. Multiple concurrent
+    /// callers serialize.
+    ///
+    /// `exclude` is how a caller steps to the **next** candidate when several
+    /// nodes share a (short) discriminator: pass the ids already tried (PASE
+    /// failed), and the next un-tried match is returned; repeat until
+    /// [`ErrorCode::NotFound`] (exhausted). Pass `&[]` for the first attempt.
+    /// At most [`MAX_BROWSE_EXCLUDE`](crate::transport::network::mdns) ids - more
+    /// returns [`ErrorCode::ResourceExhausted`].
+    ///
+    /// Returns `(address, commissionable_instance_id)` - the address can be fed
+    /// straight into [`Transport::initiate_pase`] to start PASE. Returns
+    /// [`ErrorCode::NotFound`] on timeout; the rendezvous is reset if this future
+    /// is dropped.
+    ///
+    /// Requires a running mDNS responder (e.g. `BuiltinMdnsResponder::run`).
+    ///
+    // TODO: A BLE/BTP equivalent is needed to discover wireless devices that
+    // advertise commissionable over BLE rather than mDNS - future work.
+    pub async fn browse_commissionable(
+        &self,
+        filter: &CommissionableFilter,
+        exclude: &[u64],
+        timeout_ms: u32,
+    ) -> Result<(Address, u64), Error> {
+        let mut exclude_vec = BrowseExclude::new();
+        exclude_vec
+            .extend_from_slice(exclude)
+            .map_err(|_| ErrorCode::ResourceExhausted)?;
+
+        // 1. Serialize with other browsers and place the request.
+        self.mdns_browse
+            .wait(|state| {
+                if matches!(state, MdnsBrowseState::Idle) {
+                    *state = MdnsBrowseState::Requested {
+                        filter: filter.clone(),
+                        exclude: exclude_vec.clone(),
+                    };
+                    Some(())
+                } else {
+                    None
+                }
+            })
+            .await;
+
+        // 2. Release the slot if this future is dropped (or times out).
+        let mut guard = BrowseGuard {
+            signal: &self.mdns_browse,
+            armed: true,
+        };
+
+        // 3. Wait for the first matching, non-excluded commissionable node, or time out.
+        let wait = self.mdns_browse.wait(|state| match state {
+            MdnsBrowseState::Found {
+                filter: f,
+                ip,
+                port,
+                id,
+            } if *f == *filter => {
+                let found = (Address::Udp(SocketAddr::new(*ip, *port)), *id);
+                *state = MdnsBrowseState::Idle;
+                Some(found)
+            }
+            _ => None,
+        });
+
+        let timer = Timer::after(Duration::from_millis(timeout_ms as u64));
+
+        match select(pin!(wait), pin!(timer)).await {
+            Either::First(found) => {
+                guard.armed = false;
+                Ok(found)
+            }
+            Either::Second(_) => Err(ErrorCode::NotFound.into()),
+        }
+    }
+
+    /// Responder-side: await the next pending mDNS browse request, marking it
+    /// in-flight. Returns the filter to query for (the exclude set is consulted
+    /// later, at deposit time).
+    pub(crate) async fn wait_mdns_browse_request(&self) -> CommissionableFilter {
+        self.mdns_browse
+            .wait(|state| match state {
+                MdnsBrowseState::Requested { filter, exclude } => {
+                    let filter = filter.clone();
+                    *state = MdnsBrowseState::InFlight {
+                        filter: filter.clone(),
+                        exclude: core::mem::take(exclude),
+                    };
+                    Some(filter)
+                }
+                _ => None,
+            })
+            .await
+    }
+
+    /// Responder-side: best-effort deposit of a parsed mDNS answer against an
+    /// in-flight browse request.
+    ///
+    /// If the answer matches the in-flight filter, carries an address and a
+    /// parseable commissionable instance id, and that id is not excluded, record
+    /// it as the (first non-excluded) match.
+    pub(crate) fn try_deposit_mdns_browse_answer(&self, answer: &MdnsAnswer<'_>) {
+        let Some(ip) = answer.addrs.first().copied() else {
+            return;
+        };
+        let Some(port) = answer.port else {
+            return;
+        };
+        let Some(id) = commissionable_instance_id(answer.instance_name) else {
+            return;
+        };
+
+        self.mdns_browse.modify(|state| {
+            if let MdnsBrowseState::InFlight { filter, exclude } = state {
+                if !exclude.contains(&id) && filter.matches_answer(answer) {
+                    *state = MdnsBrowseState::Found {
+                        filter: filter.clone(),
+                        ip,
+                        port,
+                        id,
+                    };
+                    return (true, ());
+                }
+            }
+            (false, ())
+        });
+    }
+
     pub(crate) async fn accept_if<'a, F>(
         &self,
         matter: &'a Matter<'a>,
@@ -445,38 +587,27 @@ impl Transport {
         self.initiate_for_session(matter, session_id)
     }
 
-    /// Open an exchange over a PASE session to a not-yet-commissioned node.
+    /// Open an exchange over a PASE session to a not-yet-commissioned node at the
+    /// given peer address.
     ///
-    /// The peer address is taken from `target` (an explicit address, or a
-    /// commissionable instance resolved over mDNS). If a PASE session **to that
-    /// peer** already exists, an exchange is opened on it directly. Otherwise a
-    /// new PASE session is established: a plaintext session is opened and the
-    /// PASE protocol ([`PaseInitiator`]) is run with `passcode`, then an exchange
-    /// is opened on the resulting PASE session.
+    /// If a PASE session **to that peer** already exists, an exchange is opened on
+    /// it directly. Otherwise a new PASE session is established: a plaintext
+    /// session is opened and the PASE protocol ([`PaseInitiator`]) is run with
+    /// `passcode`, then an exchange is opened on the resulting PASE session.
     ///
     /// Reuse is keyed by peer address (not a single global PASE session), so a
     /// commissioner can drive several concurrent commissionings.
+    ///
+    /// Discovery of the address is out of scope (mDNS via
+    /// [`Transport::browse_commissionable`], a BLE/BTP advertisement, etc.); this
+    /// method is transport-agnostic and takes the already-known address.
     pub(crate) async fn initiate_pase<'a, C: Crypto>(
         &self,
         matter: &'a Matter<'a>,
         crypto: C,
-        target: PaseTarget,
+        peer_addr: Address,
         passcode: u32,
     ) -> Result<Exchange<'a>, Error> {
-        // Determine the peer address (resolving if needed). PASE sessions carry
-        // no operational identity, so the peer *address* is what identifies one.
-        let peer_addr = match target {
-            PaseTarget::Addr(addr) => addr,
-            PaseTarget::Resolve(id) => Address::Udp(
-                self.resolve(
-                    MatterRemoteService::Commissionable { id },
-                    Self::RESOLVE_TIMEOUT_MS,
-                )
-                .await?
-                .addr,
-            ),
-        };
-
         // Reuse an existing PASE session to this peer, if present.
         let existing = matter.with_state(|state| {
             Ok::<_, Error>(state.sessions.get_pase_for_addr(&peer_addr).map(|s| s.id))
@@ -670,6 +801,35 @@ impl Drop for ResolveGuard<'_> {
             });
         }
     }
+}
+
+/// Resets the mDNS browse rendezvous to `Idle` on drop, unless disarmed (the
+/// browse analog of [`ResolveGuard`]).
+struct BrowseGuard<'a> {
+    signal: &'a Signal<MdnsBrowseState>,
+    armed: bool,
+}
+
+impl Drop for BrowseGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.signal.modify(|state| {
+                if matches!(state, MdnsBrowseState::Idle) {
+                    (false, ())
+                } else {
+                    *state = MdnsBrowseState::Idle;
+                    (true, ())
+                }
+            });
+        }
+    }
+}
+
+/// Parse the commissionable instance id (the random 64-bit id) from the leading
+/// label of an mDNS instance name like `<16-hex>._matterc._udp.local`.
+fn commissionable_instance_id(instance_name: &str) -> Option<u64> {
+    let label = instance_name.split('.').next()?;
+    u64::from_str_radix(label, 16).ok()
 }
 
 /// The Matter Transport Runner, responsible for running the network transport by processing incoming and ougoing packets

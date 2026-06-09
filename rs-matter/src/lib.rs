@@ -764,3 +764,154 @@ mod resolve_tests {
         assert!(matches!(err.code(), ErrorCode::NotFound));
     }
 }
+
+#[cfg(test)]
+mod browse_tests {
+    use core::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    use futures_lite::future::{block_on, zip};
+
+    use crate::error::ErrorCode;
+    use crate::transport::network::mdns::{CommissionableFilter, MdnsAnswer};
+    use crate::transport::network::Address;
+
+    use super::test::test_matter;
+
+    /// A browser and the responder rendezvous: the responder picks up the request,
+    /// deposits a matching commissionable answer, and the browser returns its
+    /// address + commissionable instance id.
+    #[test]
+    fn browse_rendezvous_delivers_first_match() {
+        let matter = test_matter();
+
+        let filter = CommissionableFilter {
+            discriminator: Some(0xA5A),
+            vendor_id: Some(0xFFF1),
+            ..Default::default()
+        };
+
+        let found = block_on(async {
+            let browser = matter
+                .transport()
+                .browse_commissionable(&filter, &[], 5_000);
+
+            let responder = async {
+                let picked = matter.transport().wait_mdns_browse_request().await;
+                assert_eq!(picked, filter);
+
+                // A non-matching node (wrong vendor) must be ignored.
+                let other_addrs = [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))];
+                let other = MdnsAnswer {
+                    instance_name: "0000000000000001._matterc._udp.local",
+                    hostname: None,
+                    port: Some(5540),
+                    addrs: &other_addrs,
+                    txt: &[("D", "2650"), ("VP", "9999+1"), ("CM", "1")],
+                };
+                matter.transport().try_deposit_mdns_browse_answer(&other);
+
+                // The matching node (D=0xA5A=2650, VP vendor 0xFFF1=65521).
+                let addrs = [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7))];
+                let answer = MdnsAnswer {
+                    instance_name: "00000000ABCD1234._matterc._udp.local",
+                    hostname: None,
+                    port: Some(5541),
+                    addrs: &addrs,
+                    txt: &[("D", "2650"), ("VP", "65521+42"), ("CM", "1")],
+                };
+                matter.transport().try_deposit_mdns_browse_answer(&answer);
+            };
+
+            let (found, ()) = zip(browser, responder).await;
+            found
+        })
+        .unwrap();
+
+        assert_eq!(
+            found,
+            (
+                Address::Udp(SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7)),
+                    5541
+                )),
+                0x00000000ABCD1234,
+            )
+        );
+    }
+
+    /// Without a responder, a browse times out and releases the slot (drop-clean).
+    #[test]
+    fn browse_times_out_and_releases_slot() {
+        let matter = test_matter();
+        let filter = CommissionableFilter {
+            short_discriminator: Some(0xA),
+            ..Default::default()
+        };
+
+        let err = block_on(matter.transport().browse_commissionable(&filter, &[], 50)).unwrap_err();
+        assert!(matches!(err.code(), ErrorCode::NotFound));
+
+        let err = block_on(matter.transport().browse_commissionable(&filter, &[], 50)).unwrap_err();
+        assert!(matches!(err.code(), ErrorCode::NotFound));
+    }
+
+    /// `exclude` steps past an already-tried candidate: with two nodes sharing the
+    /// (short) discriminator, excluding the first id yields the second.
+    #[test]
+    fn browse_exclude_steps_to_next_match() {
+        let matter = test_matter();
+
+        // Short discriminator 0xA = top 4 bits of 0xA12 (2578) and 0xAFF (2815).
+        let filter = CommissionableFilter {
+            short_discriminator: Some(0xA),
+            ..Default::default()
+        };
+
+        // Both nodes match the filter; exclude the first id, expect the second.
+        let found = block_on(async {
+            let browser = matter
+                .transport()
+                .browse_commissionable(&filter, &[0x1111], 5_000);
+
+            let responder = async {
+                matter.transport().wait_mdns_browse_request().await;
+
+                let addrs_a = [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))];
+                let node_a = MdnsAnswer {
+                    instance_name: "0000000000001111._matterc._udp.local",
+                    hostname: None,
+                    port: Some(5540),
+                    addrs: &addrs_a,
+                    txt: &[("D", "2578"), ("CM", "1")], // 0xA12, short 0xA
+                };
+                // Excluded id -> ignored.
+                matter.transport().try_deposit_mdns_browse_answer(&node_a);
+
+                let addrs_b = [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2))];
+                let node_b = MdnsAnswer {
+                    instance_name: "0000000000002222._matterc._udp.local",
+                    hostname: None,
+                    port: Some(5541),
+                    addrs: &addrs_b,
+                    txt: &[("D", "2815"), ("CM", "1")], // 0xAFF, short 0xA
+                };
+                matter.transport().try_deposit_mdns_browse_answer(&node_b);
+            };
+
+            let (found, ()) = zip(browser, responder).await;
+            found
+        })
+        .unwrap();
+
+        assert_eq!(
+            found,
+            (
+                Address::Udp(SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+                    5541
+                )),
+                0x2222,
+            )
+        );
+    }
+}
