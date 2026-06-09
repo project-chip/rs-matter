@@ -38,10 +38,8 @@ use crate::sc::{
     sc_write, OpCode, SCStatusCodes, SessionParameters, StatusReport, PROTO_ID_SECURE_CHANNEL,
 };
 use crate::tlv::TLVElement;
-use crate::transport::network::mdns::{
-    MatterMdnsService, MdnsAnswer, MdnsResolveState, ResolvedNode,
-};
-use crate::transport::network::NetworkMulticast;
+use crate::transport::network::mdns::{MdnsAnswer, MdnsResolveState, ResolvedNode};
+use crate::transport::network::{MatterRemoteService, NetworkMulticast};
 use crate::utils::init::{init, Init};
 use crate::utils::ipv6::compute_group_multicast_addr;
 use crate::utils::select::Coalesce;
@@ -228,7 +226,7 @@ impl Transport {
     /// service the request; without one, every resolve will time out.
     pub(crate) async fn resolve(
         &self,
-        service: MatterMdnsService,
+        service: MatterRemoteService,
         timeout_ms: u32,
     ) -> Result<ResolvedNode, Error> {
         // 1. Serialize with other resolvers and place the request.
@@ -276,7 +274,7 @@ impl Transport {
 
     /// Responder-side: await the next pending mDNS resolve request, marking it
     /// in-flight.
-    pub(crate) async fn wait_mdns_resolve_request(&self) -> MatterMdnsService {
+    pub(crate) async fn wait_mdns_resolve_request(&self) -> MatterRemoteService {
         self.mdns_resolve
             .wait(|state| match state {
                 MdnsResolveState::Requested(service) => {
@@ -405,7 +403,7 @@ impl Transport {
             Ok::<_, Error>(state.fabrics.fabric(fabric_idx)?.compressed_fabric_id())
         })?;
 
-        let service = MatterMdnsService::Operational {
+        let service = MatterRemoteService::Operational {
             compressed_fabric_id,
             node_id: peer_node_id,
         };
@@ -469,9 +467,14 @@ impl Transport {
         // no operational identity, so the peer *address* is what identifies one.
         let peer_addr = match target {
             PaseTarget::Addr(addr) => addr,
-            PaseTarget::Resolve(service) => {
-                Address::Udp(self.resolve(service, Self::RESOLVE_TIMEOUT_MS).await?.addr)
-            }
+            PaseTarget::Resolve(id) => Address::Udp(
+                self.resolve(
+                    MatterRemoteService::Commissionable { id },
+                    Self::RESOLVE_TIMEOUT_MS,
+                )
+                .await?
+                .addr,
+            ),
         };
 
         // Reuse an existing PASE session to this peer, if present.

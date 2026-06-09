@@ -24,6 +24,8 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::EitherIter;
 use crate::utils::storage::{write_split, WriteBuf};
 
+use super::{MatterLocalService, MatterRemoteService};
+
 #[cfg(feature = "astro-dnssd")]
 pub mod astro;
 #[cfg(feature = "zbus")]
@@ -496,31 +498,7 @@ where
     }
 }
 
-/// A type capturing all the information necessary to publish a commissioned
-/// Matter fabric or a non-commissioned Matter instance over mDNS.
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum MatterService {
-    /// A commissioned Matter service for a particular fabric
-    ///
-    /// The published name is in the form `<compressed-fabric-id-hex>-<node-id-hex>`.
-    Commissioned {
-        compressed_fabric_id: u64,
-        node_id: u64,
-    },
-    /// A non-commissioned Matter service
-    ///
-    /// The published name is in the form `<id-hex>`. The discriminator should be used as an mDNS TXT entry
-    Commissionable {
-        id: u64,
-        /// The discriminator to be communicated over mDNS
-        discriminator: u16,
-        /// Whether this is an enhanced (ECM) commissioning window (`CM=2`) vs basic (`CM=1`)
-        enhanced: bool,
-    },
-}
-
-impl MatterService {
+impl MatterLocalService {
     /// Build a full mDNS service description for this Matter service, including
     /// the service name, type, protocol, port, subtypes, and TXT records.
     #[allow(clippy::type_complexity)]
@@ -688,32 +666,7 @@ impl MatterService {
     }
 }
 
-/// A query target for mDNS browse/resolve.
-///
-/// This is the *query-side* analog of the *publish-side* [`MatterService`] enum:
-/// it identifies a single Matter service instance to resolve (SRV/TXT/A/AAAA),
-/// rather than describing one to advertise.
-///
-/// Note that *browsing* (enumerating all commissionable or operational nodes)
-/// does not need a `MatterMdnsService` - it is a PTR query against the bare
-/// service type. See [`MdnsQuery::browse`].
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum MatterMdnsService {
-    /// A specific operational (commissioned) node.
-    ///
-    /// The instance name is `<compressed-fabric-id-hex>-<node-id-hex>._matter._tcp.local`.
-    Operational {
-        compressed_fabric_id: u64,
-        node_id: u64,
-    },
-    /// A specific commissionable instance.
-    ///
-    /// The instance name is `<id-hex>._matterc._udp.local`.
-    Commissionable { id: u64 },
-}
-
-impl MatterMdnsService {
+impl MatterRemoteService {
     /// Write the fully-qualified mDNS instance name for this service into `buf`.
     ///
     /// This is the name to issue SRV/TXT/A/AAAA queries against when resolving.
@@ -838,14 +791,14 @@ pub(crate) enum MdnsResolveState {
     /// No resolve in progress; a caller may place a request.
     Idle,
     /// A caller has placed a request; the responder has not yet picked it up.
-    Requested(MatterMdnsService),
+    Requested(MatterRemoteService),
     /// The responder picked up the request and sent the query; awaiting an answer.
-    InFlight(MatterMdnsService),
+    InFlight(MatterRemoteService),
     /// The responder deposited a resolved address (+ session params) for the request.
-    Resolved(MatterMdnsService, IpAddr, u16, ResolvedSessionParams),
+    Resolved(MatterRemoteService, IpAddr, u16, ResolvedSessionParams),
 }
 
-/// A utility type for expanding a `MatterService` type into a full mDNS service description
+/// A utility type for expanding a `MatterLocalService` type into a full mDNS service description
 ///
 /// Useful as an implementation detail when interfacing with OS-specific mDNS libraries.
 pub struct Service<'a, S, T>
@@ -878,11 +831,11 @@ mod tests {
     #[test]
     fn can_compute_short_discriminator() {
         let discriminator: u16 = 0b0000_1111_0000_0000;
-        let short = MatterService::compute_short_discriminator(discriminator);
+        let short = MatterLocalService::compute_short_discriminator(discriminator);
         assert_eq!(short, 0b1111);
 
         let discriminator: u16 = 840;
-        let short = MatterService::compute_short_discriminator(discriminator);
+        let short = MatterLocalService::compute_short_discriminator(discriminator);
         assert_eq!(short, 3);
     }
 

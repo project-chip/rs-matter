@@ -33,7 +33,7 @@ use crate::error::{Error, ErrorCode};
 use crate::group_keys::{GroupKeySet, KeySet};
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, FABRIC_KEYS_START};
 use crate::tlv::{FromTLV, TLVElement, ToTLV};
-use crate::transport::network::mdns::MatterService;
+use crate::transport::network::MatterLocalService;
 use crate::utils::init::{init, Init, InitMaybeUninit, IntoFallibleInit};
 use crate::utils::storage::Vec;
 
@@ -465,12 +465,12 @@ impl Fabric {
         Ok(())
     }
 
-    pub fn mdns_service(&self) -> Option<MatterService> {
+    pub fn mdns_service(&self) -> Option<MatterLocalService> {
         self.mdns_service_for(self.node_id)
     }
 
-    pub fn mdns_service_for(&self, node_id: u64) -> Option<MatterService> {
-        (!self.noc.is_empty()).then_some(MatterService::Commissioned {
+    pub fn mdns_service_for(&self, node_id: u64) -> Option<MatterLocalService> {
+        (!self.noc.is_empty()).then_some(MatterLocalService::Commissioned {
             compressed_fabric_id: self.compressed_fabric_id,
             node_id,
         })

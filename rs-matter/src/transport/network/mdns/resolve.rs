@@ -27,7 +27,7 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use zbus::Connection;
 
 use crate::error::Error;
-use crate::transport::network::mdns::MatterService;
+use crate::transport::network::MatterLocalService;
 use crate::utils::zbus_proxies::resolve::manager::ManagerProxy;
 use crate::Matter;
 
@@ -65,7 +65,7 @@ const DNS_TYPE_PTR: u16 = 12;
 ///
 /// For testing, easiest is to run the application with `sudo` or as root.
 pub struct ResolveMdnsResponder {
-    services: HashMap<MatterService, OwnedObjectPath>,
+    services: HashMap<MatterLocalService, OwnedObjectPath>,
     connection: Connection,
 }
 
@@ -104,7 +104,7 @@ impl ResolveMdnsResponder {
     async fn update_services(
         &mut self,
         matter: &Matter<'_>,
-        services: &HashSet<MatterService>,
+        services: &HashSet<MatterLocalService>,
     ) -> Result<(), Error> {
         for service in services {
             if !self.services.contains_key(service) {
@@ -135,9 +135,9 @@ impl ResolveMdnsResponder {
     async fn register(
         &mut self,
         matter: &Matter<'_>,
-        service: &MatterService,
+        service: &MatterLocalService,
     ) -> Result<OwnedObjectPath, Error> {
-        // Scratch buffer for expanding `MatterService` into a `Service` view —
+        // Scratch buffer for expanding `MatterLocalService` into a `Service` view —
         // the strings (name, subtypes, TXT values) are formatted into this buffer.
         let mut buf = [0u8; 512];
         let (service, _) = service.service(matter.dev_det(), matter.port(), &mut buf)?;

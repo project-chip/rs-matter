@@ -46,7 +46,7 @@ use crate::utils::storage::Vec;
 use crate::utils::sync::IfMutex;
 use crate::Matter;
 
-use super::{MatterService, Service};
+use super::{MatterLocalService, Service};
 
 pub use proto::{Host, RespondMode};
 pub use querier::{build_browse_query, build_resolve_query, parse_into_answer};
@@ -64,8 +64,8 @@ const MAX_DEVICE_ADDRS: usize = 4;
 ///
 /// `no_std` and `no-alloc` and thus suitable for MCUs as well when there is no running mDNS service as part of the OS,
 pub struct BuiltinMdnsResponder {
-    services_cur: Vec<MatterService, MAX_SERVICES>,
-    services_new: Vec<MatterService, MAX_SERVICES>,
+    services_cur: Vec<MatterLocalService, MAX_SERVICES>,
+    services_new: Vec<MatterLocalService, MAX_SERVICES>,
 }
 
 impl BuiltinMdnsResponder {
@@ -169,7 +169,7 @@ impl BuiltinMdnsResponder {
     /// Service [`Matter::resolve`] requests: pick up a pending resolve request
     /// and emit the corresponding mDNS query on the shared socket.
     async fn resolve<S, C>(
-        send: &IfMutex<(S, &mut Vec<MatterService, MAX_SERVICES>)>,
+        send: &IfMutex<(S, &mut Vec<MatterLocalService, MAX_SERVICES>)>,
         ipv4_interface: Option<Ipv4Addr>,
         ipv6_interface: Option<u32>,
         matter: &Matter<'_>,
@@ -231,8 +231,8 @@ impl BuiltinMdnsResponder {
 
     #[allow(clippy::too_many_arguments)]
     async fn broadcast<S, C>(
-        send: &IfMutex<(S, &mut Vec<MatterService, MAX_SERVICES>)>,
-        services_cur: &mut Vec<MatterService, MAX_SERVICES>,
+        send: &IfMutex<(S, &mut Vec<MatterLocalService, MAX_SERVICES>)>,
+        services_cur: &mut Vec<MatterLocalService, MAX_SERVICES>,
         host: &Host<'_>,
         ipv4_interface: Option<Ipv4Addr>,
         ipv6_interface: Option<u32>,
@@ -309,7 +309,7 @@ impl BuiltinMdnsResponder {
     async fn broadcast_one<S, C>(
         mut send: S,
         host: &Host<'_>,
-        service: &MatterService,
+        service: &MatterLocalService,
         service_remove: bool,
         ipv4_interface: Option<Ipv4Addr>,
         ipv6_interface: Option<u32>,
@@ -364,7 +364,7 @@ impl BuiltinMdnsResponder {
 
     #[allow(clippy::too_many_arguments)]
     async fn respond<S, R, C>(
-        send: &IfMutex<(S, &mut Vec<MatterService, MAX_SERVICES>)>,
+        send: &IfMutex<(S, &mut Vec<MatterLocalService, MAX_SERVICES>)>,
         mut recv: R,
         host: &Host<'_>,
         ipv4_interface: Option<Ipv4Addr>,
@@ -454,7 +454,7 @@ impl BuiltinMdnsResponder {
         addr: Address,
         query: &[u8],
         host: &Host<'_>,
-        service: &MatterService,
+        service: &MatterLocalService,
         ipv4_interface: Option<Ipv4Addr>,
         ipv6_interface: Option<u32>,
         matter: &Matter<'_>,

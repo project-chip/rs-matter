@@ -29,7 +29,6 @@ use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
 use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
 use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
-use crate::transport::network::mdns::MatterMdnsService;
 use crate::transport::session::Sessions;
 use crate::transport::TxPayloadState;
 use crate::utils::storage::WriteBuf;
@@ -1004,14 +1003,18 @@ impl<'a> OwnedSender<'a> {
 
 /// How [`Exchange::initiate_pase`] locates the peer when a new PASE session must
 /// be established.
+///
+/// PASE only applies to a **commissionable** (not-yet-commissioned) node, so the
+/// only thing to resolve is a commissionable instance id - an operational node
+/// is reached over CASE via [`Exchange::initiate`] instead.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PaseTarget {
     /// An explicit, already-known peer address.
     Addr(network::Address),
-    /// A commissionable service to resolve over mDNS (typically
-    /// [`MatterMdnsService::Commissionable`]).
-    Resolve(MatterMdnsService),
+    /// The commissionable instance id (the random 64-bit id in the
+    /// `<id-hex>._matterc._udp` mDNS instance name) to resolve over mDNS.
+    Resolve(u64),
 }
 
 /// An exchange within a Matter stack, representing a session and an exchange within that session.

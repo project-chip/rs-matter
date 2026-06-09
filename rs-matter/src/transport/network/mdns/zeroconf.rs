@@ -31,7 +31,7 @@ use zeroconf::txt_record::TTxtRecord;
 use zeroconf::{MdnsBrowser, ServiceDiscovery, ServiceType};
 
 use crate::error::{Error, ErrorCode};
-use crate::transport::network::mdns::MatterService;
+use crate::transport::network::MatterLocalService;
 use crate::Matter;
 
 use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
@@ -39,7 +39,7 @@ use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
 /// An mDNS responder for Matter utilizing the `zeroconf` crate.
 /// In theory, it should work on all of Linux, MacOS and Windows, however seems to have issues on MacOSX and Windows.
 pub struct ZeroconfMdnsResponder {
-    services: HashMap<MatterService, MdnsEntry>,
+    services: HashMap<MatterLocalService, MdnsEntry>,
 }
 
 impl ZeroconfMdnsResponder {
@@ -76,7 +76,7 @@ impl ZeroconfMdnsResponder {
     fn update_services(
         &mut self,
         matter: &Matter<'_>,
-        services: &HashSet<MatterService>,
+        services: &HashSet<MatterLocalService>,
     ) -> Result<(), Error> {
         for service in services {
             if !self.services.contains_key(service) {
@@ -127,9 +127,9 @@ struct SendableZeroconfMdnsService {
 }
 
 impl SendableZeroconfMdnsService {
-    /// Create a new `SendableZeroconfMdnsService` from a `MatterService`.
-    fn new(matter: &Matter<'_>, mdns_service: &MatterService) -> Result<Self, Error> {
-        // Scratch buffer for expanding `MatterService` into a `Service` view —
+    /// Create a new `SendableZeroconfMdnsService` from a `MatterLocalService`.
+    fn new(matter: &Matter<'_>, mdns_service: &MatterLocalService) -> Result<Self, Error> {
+        // Scratch buffer for expanding `MatterLocalService` into a `Service` view —
         // the strings (name, subtypes, TXT values) are formatted into this buffer.
         let mut buf = [0u8; 512];
         let (service, _) = mdns_service.service(matter.dev_det(), matter.port(), &mut buf)?;

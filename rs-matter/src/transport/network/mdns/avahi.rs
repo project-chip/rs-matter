@@ -34,7 +34,7 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use zbus::Connection;
 
 use crate::error::Error;
-use crate::transport::network::mdns::MatterService;
+use crate::transport::network::MatterLocalService;
 use crate::utils::zbus_proxies::avahi::entry_group::EntryGroupProxy;
 use crate::utils::zbus_proxies::avahi::server2::Server2Proxy;
 use crate::utils::zbus_proxies::avahi::service_browser::ServiceBrowserProxy;
@@ -49,7 +49,7 @@ const AVAHI_PROTO_UNSPEC: i32 = -1;
 
 /// An mDNS responder for Matter utilizing the Avahi daemon over DBus.
 pub struct AvahiMdnsResponder {
-    services: HashMap<MatterService, OwnedObjectPath>,
+    services: HashMap<MatterLocalService, OwnedObjectPath>,
     connection: Connection,
 }
 
@@ -93,7 +93,7 @@ impl AvahiMdnsResponder {
     async fn update_services(
         &mut self,
         matter: &Matter<'_>,
-        services: &HashSet<MatterService>,
+        services: &HashSet<MatterLocalService>,
     ) -> Result<(), Error> {
         for service in services {
             if !self.services.contains_key(service) {
@@ -124,9 +124,9 @@ impl AvahiMdnsResponder {
     async fn register(
         &mut self,
         matter: &Matter<'_>,
-        service: &MatterService,
+        service: &MatterLocalService,
     ) -> Result<OwnedObjectPath, Error> {
-        // Scratch buffer for expanding `MatterService` into a `Service` view —
+        // Scratch buffer for expanding `MatterLocalService` into a `Service` view —
         // the strings (name, subtypes, TXT values) are formatted into this buffer.
         let mut buf = [0u8; 512];
         let (service, _) = service.service(matter.dev_det(), matter.port(), &mut buf)?;

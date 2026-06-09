@@ -47,7 +47,7 @@ use crate::pairing::DiscoveryCapabilities;
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, BASIC_INFO_KEY};
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
 use crate::sc::pase::Pase;
-use crate::transport::network::mdns::MatterService;
+use crate::transport::network::MatterLocalService;
 use crate::transport::network::{NetworkMulticast, NetworkReceive, NetworkSend};
 use crate::transport::session::Sessions;
 use crate::transport::{
@@ -574,7 +574,7 @@ impl<'a> Matter<'a> {
     /// Invoke the given closure for each currently published Matter mDNS service.
     pub fn mdns_services<F>(&self, mut f: F) -> Result<(), Error>
     where
-        F: FnMut(MatterService) -> Result<(), Error>,
+        F: FnMut(MatterLocalService) -> Result<(), Error>,
     {
         debug!("=== Currently published mDNS services");
 
@@ -672,12 +672,13 @@ mod resolve_tests {
     use futures_lite::future::{block_on, zip};
 
     use crate::error::ErrorCode;
-    use crate::transport::network::mdns::{MatterMdnsService, MdnsAnswer};
+    use crate::transport::network::mdns::MdnsAnswer;
+    use crate::transport::network::MatterRemoteService;
 
     use super::test::test_matter;
 
-    fn op_service() -> MatterMdnsService {
-        MatterMdnsService::Operational {
+    fn op_service() -> MatterRemoteService {
+        MatterRemoteService::Operational {
             compressed_fabric_id: 0x1122,
             node_id: 0x3344,
         }

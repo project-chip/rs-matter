@@ -26,7 +26,7 @@ use std::net::ToSocketAddrs;
 use std::time::Duration;
 
 use crate::error::{Error, ErrorCode};
-use crate::transport::network::mdns::MatterService;
+use crate::transport::network::MatterLocalService;
 use crate::Matter;
 
 use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
@@ -37,7 +37,7 @@ use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
 /// NOTE: For Linux, you need to install the avahi-compat libraries. E.g., on Ubuntu:
 /// `sudo apt install -y libavahi-compat-libdnssd-dev libavahi-compat-libdnssd1`
 pub struct AstroMdnsResponder {
-    services: HashMap<MatterService, RegisteredDnsService>,
+    services: HashMap<MatterLocalService, RegisteredDnsService>,
 }
 
 impl AstroMdnsResponder {
@@ -74,7 +74,7 @@ impl AstroMdnsResponder {
     fn update_services(
         &mut self,
         matter: &Matter<'_>,
-        services: &HashSet<MatterService>,
+        services: &HashSet<MatterLocalService>,
     ) -> Result<(), Error> {
         for service in services {
             if !self.services.contains_key(service) {
@@ -104,9 +104,9 @@ impl AstroMdnsResponder {
     fn register(
         &mut self,
         matter: &Matter<'_>,
-        service: &MatterService,
+        service: &MatterLocalService,
     ) -> Result<RegisteredDnsService, Error> {
-        // Scratch buffer for expanding `MatterService` into a `Service` view —
+        // Scratch buffer for expanding `MatterLocalService` into a `Service` view —
         // the strings (name, subtypes, TXT values) are formatted into this buffer.
         let mut buf = [0u8; 512];
         let (service, _) = service.service(matter.dev_det(), matter.port(), &mut buf)?;

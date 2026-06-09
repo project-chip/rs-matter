@@ -43,6 +43,63 @@ pub const MAX_RX_LARGE_PACKET_SIZE: usize = 1024 * 1024;
 // Maximum TCP TX packet size per Matter spec
 pub const MAX_TX_LARGE_PACKET_SIZE: usize = MAX_RX_LARGE_PACKET_SIZE;
 
+/// A Matter service that **this** node advertises (publishes) over a discovery
+/// transport such as mDNS.
+///
+/// This is the *publish-side* identity; the *query-side* analog is
+/// [`MatterRemoteService`]. The discovery-transport encoding (e.g. the mDNS
+/// `Service` record) lives in the [`mdns`] module
+/// (`MatterLocalService::service`).
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum MatterLocalService {
+    /// A commissioned Matter service for a particular fabric
+    ///
+    /// The published name is in the form `<compressed-fabric-id-hex>-<node-id-hex>`.
+    Commissioned {
+        compressed_fabric_id: u64,
+        node_id: u64,
+    },
+    /// A non-commissioned Matter service
+    ///
+    /// The published name is in the form `<id-hex>`. The discriminator should be used as an mDNS TXT entry
+    Commissionable {
+        id: u64,
+        /// The discriminator to be communicated over mDNS
+        discriminator: u16,
+        /// Whether this is an enhanced (ECM) commissioning window (`CM=2`) vs basic (`CM=1`)
+        enhanced: bool,
+    },
+}
+
+/// A Matter service **elsewhere** that this node resolves / looks up over a
+/// discovery transport such as mDNS.
+///
+/// This is the *query-side* analog of the *publish-side* [`MatterLocalService`]:
+/// it identifies a single Matter service instance to resolve (SRV/TXT/A/AAAA),
+/// rather than describing one to advertise. The discovery-transport encoding
+/// (e.g. the mDNS instance name) lives in the [`mdns`] module
+/// (`MatterRemoteService::instance_name`).
+///
+/// Note that *browsing* (enumerating all commissionable or operational nodes)
+/// does not need a `MatterRemoteService` - it is a PTR query against the bare
+/// service type.
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum MatterRemoteService {
+    /// A specific operational (commissioned) node.
+    ///
+    /// The instance name is `<compressed-fabric-id-hex>-<node-id-hex>._matter._tcp.local`.
+    Operational {
+        compressed_fabric_id: u64,
+        node_id: u64,
+    },
+    /// A specific commissionable instance.
+    ///
+    /// The instance name is `<id-hex>._matterc._udp.local`.
+    Commissionable { id: u64 },
+}
+
 /// A Bluetooth address.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub struct BtAddr(pub [u8; 6]);
