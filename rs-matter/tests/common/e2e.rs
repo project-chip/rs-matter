@@ -150,9 +150,8 @@ impl<C: Crypto> E2eRunner<C> {
         Exchange::initiate(
             self.matter_client(),
             rs_matter::crypto::test_only_crypto(),
-            1, /*just one fabric in tests*/
+            NonZeroU8::new(1).unwrap(), /*just one fabric in tests*/
             Self::REMOTE_PEER_ID,
-            true,
         )
         .await
     }

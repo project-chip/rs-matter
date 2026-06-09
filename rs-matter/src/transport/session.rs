@@ -331,10 +331,23 @@ impl Session {
         }
     }
 
-    pub(crate) fn is_for_node(&self, fabric_idx: u8, peer_node_id: u64, secure: bool) -> bool {
-        self.get_local_fabric_idx() == fabric_idx
+    /// Whether this is a CASE session to the given peer node ID and fabric index.
+    pub(crate) fn is_for_node(&self, fabric_idx: NonZeroU8, peer_node_id: u64) -> bool {
+        self.get_local_fabric_idx() == fabric_idx.get()
             && self.peer_nodeid == Some(peer_node_id)
-            && self.is_encrypted() == secure
+            && self.is_encrypted()
+            && !self.reserved
+    }
+
+    /// Whether this is a PASE session to the given peer address.
+    ///
+    /// PASE sessions are all keyed at fabric 0 / node 0 (no operational
+    /// identity yet), so the peer *address* is what distinguishes one PASE
+    /// session from another - which matters on a commissioner that may have
+    /// several PASE sessions (to different devices) in flight at once.
+    pub(crate) fn is_pase_for_addr(&self, peer_addr: &Address) -> bool {
+        matches!(self.mode, SessionMode::Pase { .. })
+            && self.peer_addr == *peer_addr
             && !self.reserved
     }
 
@@ -1218,11 +1231,16 @@ impl Sessions {
         session
     }
 
+    /// Find the operational (CASE) session for a `(fabric, node)` pair.
+    ///
+    /// Operational sessions are by definition encrypted and on a real fabric,
+    /// so the lookup always matches an encrypted session - there is no
+    /// "unsecured by node" lookup (unsecured/PASE sessions carry no operational
+    /// identity; see [`Sessions::get_pase_for_addr`]).
     pub(crate) fn get_for_node(
         &mut self,
-        fabric_idx: u8,
+        fabric_idx: NonZeroU8,
         peer_node_id: u64,
-        secure: bool,
     ) -> Option<&mut Session> {
         // Prefer a TCP-backed session (larger payloads, no MRP fragmentation
         // limits) over UDP when both are available for the same peer. This
@@ -1232,7 +1250,7 @@ impl Sessions {
             .sessions
             .iter()
             .enumerate()
-            .filter(|(_, s)| !s.expired && s.is_for_node(fabric_idx, peer_node_id, secure))
+            .filter(|(_, s)| !s.expired && s.is_for_node(fabric_idx, peer_node_id))
             .max_by_key(|(_, s)| i32::from(s.peer_addr.is_tcp()))
             .map(|(i, _)| i)?;
 
@@ -1241,6 +1259,24 @@ impl Sessions {
         session.update_last_used();
 
         Some(session)
+    }
+
+    /// Find an in-flight PASE session to the given peer address.
+    ///
+    /// Used by [`Exchange::initiate_pase`](crate::transport::exchange::Exchange::initiate_pase)
+    /// to reuse a PASE session per peer (rather than assuming a single global
+    /// one), so a commissioner can drive several concurrent commissionings.
+    pub(crate) fn get_pase_for_addr(&mut self, peer_addr: &Address) -> Option<&mut Session> {
+        let mut session = self
+            .sessions
+            .iter_mut()
+            .find(|s| !s.expired && s.is_pase_for_addr(peer_addr));
+
+        if let Some(session) = session.as_mut() {
+            session.update_last_used();
+        }
+
+        session
     }
 
     pub(crate) fn get_for_rx(

@@ -126,14 +126,8 @@ impl<'a, C: Crypto> TimeSyncClient<'a, C> {
             tts.fab_idx, tts.node_id, tts.endpoint
         );
 
-        let exchange = Exchange::initiate(
-            self.matter,
-            &self.crypto,
-            tts.fab_idx.get(),
-            tts.node_id,
-            true,
-        )
-        .await?;
+        let exchange =
+            Exchange::initiate(self.matter, &self.crypto, tts.fab_idx, tts.node_id).await?;
 
         let result = exchange
             .time_synchronization()

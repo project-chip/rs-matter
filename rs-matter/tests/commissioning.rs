@@ -73,8 +73,8 @@ use rs_matter::onboard::noc::NocGenerator;
 use rs_matter::onboard::{CommissionOptions, Commissioner};
 use rs_matter::persist::DummyKvBlobStoreAccess;
 use rs_matter::respond::DefaultResponder;
-use rs_matter::sc::pase::{PaseInitiator, MAX_COMM_WINDOW_TIMEOUT_SECS};
-use rs_matter::transport::exchange::Exchange;
+use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::transport::exchange::{Exchange, PaseTarget};
 use rs_matter::transport::network::tcp::TcpNetwork;
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
@@ -95,7 +95,6 @@ mod common;
 /// Passcode used by `TEST_DEV_COMM`
 const TEST_PASSCODE: u32 = 20202021;
 
-const PASE_TIMEOUT_SECS: u64 = 30;
 const IM_TIMEOUT_SECS: u64 = 10;
 
 static DEVICE_MATTER: StaticCell<Matter> = StaticCell::new();
@@ -295,10 +294,7 @@ async fn run_controller_flow<C: Crypto>(
     info!("=== Phase 1: Resolve device endpoint (mDNS skipped) ===");
     let peer_addr = discover_and_resolve_device(use_tcp)?;
 
-    info!("=== Phase 2: PASE Session Establishment ===");
-    establish_pase_session(matter, crypto, peer_addr, TEST_PASSCODE).await?;
-
-    info!("=== Phase 3: Commissioner — commission() + complete_via_case() ===");
+    info!("=== Phase 2: Commissioner — commission() (incl. PASE) + complete_via_case() ===");
     let (controller_fab_idx, device_node_id) = test_commission(matter, crypto, peer_addr).await?;
 
     // Cherry on top: after `CommissioningComplete` the device has
@@ -418,9 +414,15 @@ async fn test_commission<C: Crypto>(
         ..CommissionOptions::default()
     };
 
-    // Phase 1 — over PASE: ArmFailSafe → ... → AddNOC.
+    // Phase 1 — establishes PASE (lazily on first step) then ArmFailSafe → ... → AddNOC.
     let result = commissioner
-        .commission(&opts, DEVICE_NODE_ID, VALID_FOREVER)
+        .commission(
+            PaseTarget::Addr(peer_addr),
+            TEST_PASSCODE,
+            &opts,
+            DEVICE_NODE_ID,
+            VALID_FOREVER,
+        )
         .await?;
     info!(
         "commission() phase 1 ok: device_fabric_index={}, device_node_id=0x{:016x}",
@@ -471,38 +473,6 @@ fn discover_and_resolve_device(use_tcp: bool) -> Result<Address, Error> {
 }
 
 // ============================================================================
-// Phase 2: PASE Session
-// ============================================================================
-
-async fn establish_pase_session<C: Crypto>(
-    matter: &Matter<'_>,
-    crypto: &C,
-    peer_addr: Address,
-    passcode: u32,
-) -> Result<(), Error> {
-    let mut exchange = Exchange::initiate_unsecured(matter, crypto, peer_addr).await?;
-    info!("Unsecured exchange initiated: {}", exchange.id());
-
-    let mut pase_fut = pin!(PaseInitiator::initiate(&mut exchange, crypto, passcode));
-    let mut timeout = pin!(Timer::after(Duration::from_secs(PASE_TIMEOUT_SECS)));
-
-    match select(&mut pase_fut, &mut timeout).await {
-        Either::First(Ok(())) => {
-            info!("PASE session established successfully!");
-            Ok(())
-        }
-        Either::First(Err(e)) => {
-            warn!("PASE handshake failed: {e:?}");
-            Err(e)
-        }
-        Either::Second(_) => {
-            warn!("PASE handshake timed out after {PASE_TIMEOUT_SECS} seconds");
-            Err(rs_matter::error::ErrorCode::RxTimeout.into())
-        }
-    }
-}
-
-// ============================================================================
 // Phase 3: Interaction Model Operations
 // ============================================================================
 
@@ -538,14 +508,7 @@ async fn read_onoff_with_timeout(
     fab_idx: core::num::NonZeroU8,
     peer_node_id: u64,
 ) -> Result<bool, Error> {
-    let exchange = Exchange::initiate(
-        matter,
-        test_only_crypto(),
-        fab_idx.get(),
-        peer_node_id,
-        true,
-    )
-    .await?;
+    let exchange = Exchange::initiate(matter, test_only_crypto(), fab_idx, peer_node_id).await?;
     debug!("IM read exchange initiated: {}", exchange.id());
 
     let mut read_fut = pin!(read_onoff(exchange));
@@ -575,14 +538,7 @@ async fn invoke_toggle_with_timeout(
     fab_idx: core::num::NonZeroU8,
     peer_node_id: u64,
 ) -> Result<IMStatusCode, Error> {
-    let exchange = Exchange::initiate(
-        matter,
-        test_only_crypto(),
-        fab_idx.get(),
-        peer_node_id,
-        true,
-    )
-    .await?;
+    let exchange = Exchange::initiate(matter, test_only_crypto(), fab_idx, peer_node_id).await?;
     debug!("Invoke exchange initiated: {}", exchange.id());
 
     let mut invoke_fut = pin!(invoke_toggle(exchange));

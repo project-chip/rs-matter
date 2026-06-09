@@ -706,14 +706,10 @@ impl<
             self.set_state(*session_id, SessionState::AwaitingAnswer);
         }
 
-        let exchange = Exchange::initiate(
-            ctx.matter(),
-            ctx.crypto(),
-            session.fab_idx,
-            session.peer_node_id,
-            true,
-        )
-        .await?;
+        // A WebRTC peer session is always on a real (non-zero) fabric.
+        let fab_idx = core::num::NonZeroU8::new(session.fab_idx).ok_or(ErrorCode::Invalid)?;
+        let exchange =
+            Exchange::initiate(ctx.matter(), ctx.crypto(), fab_idx, session.peer_node_id).await?;
 
         // Single-shot client-trait invoke for all four commands. The
         // codegen `WebRtcTransportRequestorClient` methods bake in

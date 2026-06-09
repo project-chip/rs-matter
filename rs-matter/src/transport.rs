@@ -16,6 +16,7 @@
  */
 
 use core::fmt::{self, Display};
+use core::num::NonZeroU8;
 use core::ops::{Deref, DerefMut};
 use core::pin::pin;
 
@@ -30,8 +31,13 @@ use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{MAX_FABRICS, MAX_GROUPS_PER_FABRIC};
 use crate::fmt::Bytes;
-use crate::sc::{sc_write, OpCode, SCStatusCodes, StatusReport, PROTO_ID_SECURE_CHANNEL};
+use crate::sc::case::CaseInitiator;
+use crate::sc::pase::PaseInitiator;
+use crate::sc::{
+    sc_write, OpCode, SCStatusCodes, SessionParameters, StatusReport, PROTO_ID_SECURE_CHANNEL,
+};
 use crate::tlv::TLVElement;
+use crate::transport::network::mdns::MatterMdnsService;
 use crate::transport::network::NetworkMulticast;
 use crate::utils::init::{init, Init};
 use crate::utils::ipv6::compute_group_multicast_addr;
@@ -41,7 +47,9 @@ use crate::utils::storage::{pooled::BufferAccess, ParseBuf, WriteBuf};
 use crate::utils::sync::{IfMutex, IfMutexGuard, Notification};
 use crate::{Matter, MATTER_PORT};
 
-use exchange::{Exchange, ExchangeId, ExchangeState, MessageMeta, ResponderState, Role};
+use exchange::{
+    Exchange, ExchangeId, ExchangeState, MessageMeta, PaseTarget, ResponderState, Role,
+};
 use network::{Address, Ipv6Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV6};
 use packet::PacketHdr;
 use proto_hdr::ProtoHdr;
@@ -201,26 +209,141 @@ impl Transport {
         Ok(exchange)
     }
 
-    pub(crate) async fn initiate<'a>(
+    /// The mDNS resolve timeout used when auto-establishing a session
+    /// (CASE operational resolve, or PASE commissionable resolve).
+    /// Single-shot for now (no backoff re-query); see follow-ups.
+    const RESOLVE_TIMEOUT_MS: u32 = 5_000;
+
+    /// Open an exchange over a CASE session to an already-commissioned node.
+    ///
+    /// If a CASE session for `(fabric_idx, peer_node_id)` already exists, an
+    /// exchange is opened on it directly (the common case - session and peer
+    /// address reused, no mDNS). Otherwise the peer's operational address is
+    /// resolved over mDNS and a fresh CASE session is established (driving
+    /// [`CaseInitiator`]) before the exchange is opened on it; the peer's
+    /// MRP/session parameters advertised in the mDNS TXT records seed the
+    /// session.
+    pub(crate) async fn initiate<'a, C: Crypto>(
         &self,
         matter: &'a Matter<'a>,
-        fabric_idx: u8,
+        crypto: C,
+        fabric_idx: NonZeroU8,
         peer_node_id: NodeId,
-        secure: bool,
     ) -> Result<Exchange<'a>, Error> {
-        // TODO: Future: once we have mDNS lookups in place
-        // create a new session if no suitable one is found
-
-        let session_id = matter.with_state(|state| {
-            // (block necessary, or else we end up re-borrowing `Sessions` as mut twice)
-
-            Ok::<_, ErrorCode>(
+        // Reuse an existing CASE session if present.
+        let existing = matter.with_state(|state| {
+            Ok::<_, Error>(
                 state
                     .sessions
-                    .get_for_node(fabric_idx, peer_node_id, secure)
-                    .ok_or(ErrorCode::NoSession)?
-                    .id,
+                    .get_for_node(fabric_idx, peer_node_id)
+                    .map(|s| s.id),
             )
+        })?;
+
+        if let Some(session_id) = existing {
+            return self.initiate_for_session(matter, session_id);
+        }
+
+        // No CASE session: resolve the operational address and establish one.
+        let compressed_fabric_id = matter.with_state(|state| {
+            Ok::<_, Error>(state.fabrics.fabric(fabric_idx)?.compressed_fabric_id())
+        })?;
+
+        let service = MatterMdnsService::Operational {
+            compressed_fabric_id,
+            node_id: peer_node_id,
+        };
+
+        let resolved = matter.resolve(service, Self::RESOLVE_TIMEOUT_MS).await?;
+
+        // Establish CASE over a fresh, one-shot unsecured exchange to the
+        // resolved address. On success a secure session keyed at
+        // `(fabric_idx, peer_node_id)` is recorded in the stack.
+        {
+            let mut exchange = self
+                .initiate_plaintext(matter, &crypto, Address::Udp(resolved.addr))
+                .await?;
+
+            CaseInitiator::initiate(&mut exchange, &crypto, fabric_idx, peer_node_id).await?;
+        }
+
+        // Seed the new CASE session's peer MRP/session params from the resolve
+        // TXT (rs-matter does not yet exchange these in CASE Sigma1/2) and grab
+        // its id for the exchange.
+        let params = SessionParameters {
+            sii: resolved.params.sii,
+            sai: resolved.params.sai,
+            sat: resolved.params.sat,
+            ..Default::default()
+        };
+
+        let session_id = matter.with_state(|state| {
+            let session = state
+                .sessions
+                .get_for_node(fabric_idx, peer_node_id)
+                .ok_or(ErrorCode::NoSession)?;
+
+            session.set_peer_session_params(&params);
+
+            Ok::<_, Error>(session.id)
+        })?;
+
+        self.initiate_for_session(matter, session_id)
+    }
+
+    /// Open an exchange over a PASE session to a not-yet-commissioned node.
+    ///
+    /// The peer address is taken from `target` (an explicit address, or a
+    /// commissionable instance resolved over mDNS). If a PASE session **to that
+    /// peer** already exists, an exchange is opened on it directly. Otherwise a
+    /// new PASE session is established: a plaintext session is opened and the
+    /// PASE protocol ([`PaseInitiator`]) is run with `passcode`, then an exchange
+    /// is opened on the resulting PASE session.
+    ///
+    /// Reuse is keyed by peer address (not a single global PASE session), so a
+    /// commissioner can drive several concurrent commissionings.
+    pub(crate) async fn initiate_pase<'a, C: Crypto>(
+        &self,
+        matter: &'a Matter<'a>,
+        crypto: C,
+        target: PaseTarget,
+        passcode: u32,
+    ) -> Result<Exchange<'a>, Error> {
+        // Determine the peer address (resolving if needed). PASE sessions carry
+        // no operational identity, so the peer *address* is what identifies one.
+        let peer_addr = match target {
+            PaseTarget::Addr(addr) => addr,
+            PaseTarget::Resolve(service) => Address::Udp(
+                matter
+                    .resolve(service, Self::RESOLVE_TIMEOUT_MS)
+                    .await?
+                    .addr,
+            ),
+        };
+
+        // Reuse an existing PASE session to this peer, if present.
+        let existing = matter.with_state(|state| {
+            Ok::<_, Error>(state.sessions.get_pase_for_addr(&peer_addr).map(|s| s.id))
+        })?;
+
+        if let Some(session_id) = existing {
+            return self.initiate_for_session(matter, session_id);
+        }
+
+        // Establish a new PASE session to this peer.
+        {
+            let mut handshake = self.initiate_plaintext(matter, &crypto, peer_addr).await?;
+            PaseInitiator::initiate(&mut handshake, &crypto, passcode).await?;
+            // The PASE-establishment exchange is one-shot; drop it here so the
+            // caller opens fresh exchanges on the new PASE session.
+        }
+
+        let session_id = matter.with_state(|state| {
+            state
+                .sessions
+                .get_pase_for_addr(&peer_addr)
+                .map(|s| s.id)
+                .ok_or_else(|| Error::from(ErrorCode::NoSession))
         })?;
 
         self.initiate_for_session(matter, session_id)
@@ -265,7 +388,7 @@ impl Transport {
     /// This is the low-level building block for controller-initiated communication
     /// (e.g. PASE/CASE initiator flows), analogous to the SDK's
     /// `SessionManager::CreateUnauthenticatedSession()`.
-    pub(crate) fn create_unsecured_session<C: Crypto>(
+    pub(crate) fn create_plaintext_session<C: Crypto>(
         &self,
         matter: &Matter<'_>,
         crypto: C,
@@ -301,20 +424,45 @@ impl Transport {
         })
     }
 
-    /// Create a new unsecured session and initiate an exchange on it in one step.
+    /// Create a new initiator exchange on a new plaintext session to
+    /// the given peer address, evicting an existing session and retrying once if
+    /// there is no space.
     ///
-    /// This is a convenience method that combines `create_unsecured_session()` and
-    /// `initiate_for_session()`. Fails immediately if there is no space for a new session.
-    ///
-    /// For flows that need the session ID (e.g. to upgrade the session after PASE/CASE),
-    /// use `create_unsecured_session()` + `initiate_for_session()` separately.
-    pub(crate) fn initiate_unsecured_now<'a, C: Crypto>(
+    /// Low-level primitive used to carry the first handshake message of PASE
+    /// ([`PaseInitiator`]) or CASE ([`CaseInitiator`]).
+    async fn initiate_plaintext<'a, C: Crypto>(
         &self,
         matter: &'a Matter<'a>,
         crypto: C,
         peer_addr: Address,
     ) -> Result<Exchange<'a>, Error> {
-        let session_id = self.create_unsecured_session(matter, crypto, peer_addr)?;
+        match self.try_initiate_plaintext(matter, &crypto, peer_addr) {
+            Ok(exchange) => Ok(exchange),
+            Err(e) if e.code() == ErrorCode::NoSpaceSessions => {
+                matter
+                    .transport_runner(&crypto)
+                    .evict_some_session()
+                    .await?;
+                self.try_initiate_plaintext(matter, &crypto, peer_addr)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Create a new plaintext session and initiate an exchange on it in one step.
+    ///
+    /// This is a convenience method that combines `create_plaintext_session()` and
+    /// `initiate_for_session()`. Fails immediately if there is no space for a new session.
+    ///
+    /// For flows that need the session ID (e.g. to upgrade the session after PASE/CASE),
+    /// use `create_plaintext_session()` + `initiate_for_session()` separately.
+    fn try_initiate_plaintext<'a, C: Crypto>(
+        &self,
+        matter: &'a Matter<'a>,
+        crypto: C,
+        peer_addr: Address,
+    ) -> Result<Exchange<'a>, Error> {
+        let session_id = self.create_plaintext_session(matter, crypto, peer_addr)?;
 
         matter.transport.initiate_for_session(matter, session_id)
     }
@@ -1704,7 +1852,7 @@ mod tests {
 
         let session_id = matter
             .transport
-            .create_unsecured_session(&matter, &crypto, peer)
+            .create_plaintext_session(&matter, &crypto, peer)
             .unwrap();
 
         matter.with_state(|state| {
@@ -1725,7 +1873,7 @@ mod tests {
 
         let exchange = matter
             .transport
-            .initiate_unsecured_now(&matter, &crypto, peer)
+            .try_initiate_plaintext(&matter, &crypto, peer)
             .unwrap();
 
         exchange
