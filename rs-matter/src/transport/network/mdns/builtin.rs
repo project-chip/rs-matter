@@ -46,29 +46,26 @@ use crate::utils::storage::Vec;
 use crate::utils::sync::IfMutex;
 use crate::Matter;
 
-use super::{MatterLocalService, Service};
+use super::{MatterLocalService, MdnsLocalService};
 
-pub use proto::{Host, RespondMode};
-pub use querier::{build_browse_query, build_resolve_query, parse_into_answer};
+pub use query::{build_browse_query, build_resolve_query, parse_into_answer};
+pub use respond::{Host, RespondMode};
 
-mod proto;
-pub mod querier;
+mod query;
+mod respond;
 mod types;
 
 const MAX_SERVICES: usize = MAX_FABRICS + 1;
 
-/// The maximum number of IP addresses surfaced per discovered device.
-const MAX_DEVICE_ADDRS: usize = 4;
-
 /// A built-in mDNS responder for Matter, utilizing a custom mDNS protocol implementation.
 ///
 /// `no_std` and `no-alloc` and thus suitable for MCUs as well when there is no running mDNS service as part of the OS,
-pub struct BuiltinMdnsResponder {
+pub struct BuiltinMdns {
     services_cur: Vec<MatterLocalService, MAX_SERVICES>,
     services_new: Vec<MatterLocalService, MAX_SERVICES>,
 }
 
-impl BuiltinMdnsResponder {
+impl BuiltinMdns {
     /// Create a new instance of the built-in mDNS responder.
     pub const fn new() -> Self {
         Self {
@@ -85,22 +82,16 @@ impl BuiltinMdnsResponder {
         })
     }
 
-    /// Run the mDNS responder.
-    ///
-    /// # Arguments
-    /// * `rand` - An object implementing the `RngCore` trait for generating random numbers.
-    /// * `send` - An object implementing the `NetworkSend` trait for sending mDNS packets.
-    /// * `recv` - An object implementing the `NetworkReceive` trait for receiving mDNS packets.
-    /// * `host` - A reference to the `Host` instance that provides basic mDNS host information.
-    /// * `ipv4_interface` - An optional IPv4 address for the interface to use for mDNS broadcasts.
-    /// * `ipv6_interface` - An optional IPv6 interface index for the interface to use for mDNS broadcasts.
-    /// Run the mDNS responder.
+    /// Run the built-in mDNS responder + querier.
     ///
     /// On a single shared socket, this concurrently:
-    /// - broadcasts the local Matter services and answers inbound queries about them, and
-    /// - services [`Matter::resolve`](crate::Matter::resolve) requests by firing the
-    ///   corresponding mDNS query and depositing the parsed answer back for the
-    ///   awaiting resolver.
+    /// - broadcasts the local Matter services and answers inbound queries about them,
+    /// - services [`Transport::resolve`](crate::transport::Transport::resolve) requests, and
+    /// - services [`Transport::browse_commissionable`](crate::transport::Transport::browse_commissionable)
+    ///   requests,
+    ///
+    /// firing the corresponding mDNS query and depositing the parsed answers back
+    /// for the awaiting caller.
     ///
     /// # Arguments
     /// * `send` - An object implementing the `NetworkSend` trait for sending mDNS packets.
@@ -108,6 +99,8 @@ impl BuiltinMdnsResponder {
     /// * `host` - A reference to the `Host` instance that provides basic mDNS host information.
     /// * `ipv4_interface` - An optional IPv4 address for the interface to use for mDNS broadcasts.
     /// * `ipv6_interface` - An optional IPv6 interface index for the interface to use for mDNS broadcasts.
+    /// * `matter` - The Matter instance whose services to publish / whose resolve+browse to service.
+    /// * `crypto` - The crypto backend (used for randomized send delays).
     #[allow(clippy::too_many_arguments)]
     pub async fn run<S, R, C>(
         &mut self,
@@ -173,7 +166,7 @@ impl BuiltinMdnsResponder {
             .await
     }
 
-    /// Service [`Matter::resolve`] requests: pick up a pending resolve request
+    /// MdnsLocalService [`Matter::resolve`] requests: pick up a pending resolve request
     /// and emit the corresponding mDNS query on the shared socket.
     async fn resolve<S, C>(
         send: &IfMutex<(S, &mut Vec<MatterLocalService, MAX_SERVICES>)>,
@@ -216,7 +209,7 @@ impl BuiltinMdnsResponder {
         }
     }
 
-    /// Service [`Transport::browse_commissionable`] requests: pick up a pending
+    /// MdnsLocalService [`Transport::browse_commissionable`] requests: pick up a pending
     /// browse request and emit the corresponding commissionable mDNS query on the
     /// shared socket. The query is narrowed to the most selective subtype the
     /// filter offers (`_L`/`_S`/`_V`/`_T`/`_CM`, see
@@ -316,7 +309,7 @@ impl BuiltinMdnsResponder {
             for service in &*services_cur {
                 if !services_new.iter().any(|s| s == service) {
                     trace!(
-                        "Service {:?} is no longer live and will be retired",
+                        "MdnsLocalService {:?} is no longer live and will be retired",
                         service
                     );
 
@@ -457,11 +450,13 @@ impl BuiltinMdnsResponder {
                 if is_response {
                     // Deposit any answer that matches an in-flight resolve or
                     // browse request.
-                    if let Err(e) = parse_into_answer::<MAX_DEVICE_ADDRS, _>(packet, |answer| {
-                        matter.transport().try_deposit_mdns_answer(answer);
-                        matter.transport().try_deposit_mdns_browse_answer(answer);
-                    }) {
-                        debug!("Failed to parse mDNS response: {:?}", e);
+                    match parse_into_answer(packet) {
+                        Ok(Some(answer)) => {
+                            matter.transport().try_deposit_mdns_resolve(&answer);
+                            matter.transport().try_deposit_mdns_browse(&answer);
+                        }
+                        Ok(None) => {}
+                        Err(e) => debug!("Failed to parse mDNS response: {:?}", e),
                     }
                     continue;
                 }
@@ -604,7 +599,7 @@ impl BuiltinMdnsResponder {
     }
 }
 
-impl Default for BuiltinMdnsResponder {
+impl Default for BuiltinMdns {
     fn default() -> Self {
         Self::new()
     }

@@ -371,7 +371,8 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         passcode: u32,
         expiry_seconds: u16,
     ) -> Result<(), Error> {
-        let exchange = Self::pase_exchange(self.matter, &self.crypto, peer_addr, passcode).await?;
+        let exchange =
+            Exchange::initiate_pase(self.matter, &self.crypto, peer_addr, passcode).await?;
 
         let handle = exchange
             .general_commissioning()
@@ -417,7 +418,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     where
         F: FnOnce(&[u8]) -> Result<R, Error>,
     {
-        let exchange = Self::pase_exchange(matter, crypto, peer_addr, passcode).await?;
+        let exchange = Exchange::initiate_pase(matter, crypto, peer_addr, passcode).await?;
 
         let handle = exchange
             .operational_credentials()
@@ -463,7 +464,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         passcode: u32,
         rcac_tlv: &[u8],
     ) -> Result<(), Error> {
-        let exchange = Self::pase_exchange(matter, crypto, peer_addr, passcode).await?;
+        let exchange = Exchange::initiate_pase(matter, crypto, peer_addr, passcode).await?;
 
         exchange
             .operational_credentials()
@@ -492,7 +493,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         admin_case_subject: u64,
         admin_vendor_id: u16,
     ) -> Result<NonZeroU8, Error> {
-        let exchange = Self::pase_exchange(matter, crypto, peer_addr, passcode).await?;
+        let exchange = Exchange::initiate_pase(matter, crypto, peer_addr, passcode).await?;
 
         let handle = exchange
             .operational_credentials()
@@ -557,21 +558,6 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         }
 
         Ok(())
-    }
-
-    /// Open a fresh exchange over the device's PASE session.
-    ///
-    /// Delegates to [`Exchange::initiate_pase`], which establishes the PASE
-    /// session on the first call and reuses it on subsequent ones — so every
-    /// commissioning transaction (ArmFailSafe, CSR, AddTrustedRoot, AddNOC)
-    /// runs over the same PASE session.
-    async fn pase_exchange<'m>(
-        matter: &'m Matter<'m>,
-        crypto: &C,
-        peer_addr: Address,
-        passcode: u32,
-    ) -> Result<Exchange<'m>, Error> {
-        Exchange::initiate_pase(matter, crypto, peer_addr, passcode).await
     }
 
     /// DAC verification placeholder.

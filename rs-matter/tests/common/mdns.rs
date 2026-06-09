@@ -32,12 +32,12 @@ use rs_matter::{crypto::Crypto, error::Error};
 #[allow(unused)]
 pub async fn run_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(), Error> {
     #[cfg(feature = "astro-dnssd")]
-    rs_matter::transport::network::mdns::astro::AstroMdnsResponder::new()
+    rs_matter::transport::network::mdns::astro::AstroMdns::new()
         .run(matter)
         .await?;
 
     #[cfg(all(feature = "zeroconf", not(feature = "astro-dnssd")))]
-    rs_matter::transport::network::mdns::zeroconf::ZeroconfMdnsResponder::new()
+    rs_matter::transport::network::mdns::zeroconf::ZeroconfMdns::new()
         .run(matter)
         .await?;
 
@@ -49,7 +49,7 @@ pub async fn run_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(), E
         feature = "zbus",
         not(any(feature = "zeroconf", feature = "astro-dnssd"))
     ))]
-    rs_matter::transport::network::mdns::avahi::AvahiMdnsResponder::new(
+    rs_matter::transport::network::mdns::avahi::AvahiMdns::new(
         rs_matter::utils::zbus::Connection::system().await.unwrap(),
     )
     .run(matter)
@@ -114,7 +114,7 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
 
     let (ipv4_addr, ipv6_addr, interface) = initialize_network()?;
 
-    use rs_matter::transport::network::mdns::builtin::{BuiltinMdnsResponder, Host};
+    use rs_matter::transport::network::mdns::builtin::{BuiltinMdns, Host};
     use rs_matter::transport::network::mdns::{
         MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_SOCKET_DEFAULT_BIND_ADDR,
     };
@@ -140,7 +140,7 @@ async fn run_builtin_mdns<C: Crypto>(matter: &Matter<'_>, crypto: C) -> Result<(
         .get_ref()
         .join_multicast_v4(&MDNS_IPV4_BROADCAST_ADDR, &ipv4_addr)?;
 
-    BuiltinMdnsResponder::new()
+    BuiltinMdns::new()
         .run(
             &socket,
             &socket,

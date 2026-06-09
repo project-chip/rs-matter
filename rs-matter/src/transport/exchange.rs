@@ -1041,7 +1041,7 @@ impl<'a> Exchange<'a> {
     /// in the mDNS TXT records seed the session.
     ///
     /// Establishing requires a running mDNS responder (e.g.
-    /// `BuiltinMdnsResponder::run`) to service the resolve; without one the
+    /// `BuiltinMdns::run`) to service the resolve; without one the
     /// resolve times out and this returns [`ErrorCode::NotFound`].
     #[inline(always)]
     pub async fn initiate<C: Crypto>(

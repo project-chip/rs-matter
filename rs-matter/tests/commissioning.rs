@@ -27,11 +27,11 @@
 //!
 //! ## Platform support
 //!
-//! - **Linux** (no extra features): uses `BuiltinMdnsResponder` + builtin
-//!   multicast querier on the device and controller sides respectively.
-//! - **macOS** (with `astro-dnssd` feature): uses `AstroMdnsResponder` on the
-//!   device side (integrates with the OS Bonjour daemon, so no port-5353
-//!   conflict) and `astro::discover_commissionable` on the controller side.
+//! - **Linux** (no extra features): uses `BuiltinMdns` (responder + querier)
+//!   on the device and controller sides.
+//! - **macOS** (with `astro-dnssd` feature): uses `AstroMdns` (integrates with
+//!   the OS Bonjour daemon, so no port-5353 conflict) on both sides; its
+//!   `run()` services the resolve/browse rendezvous like the builtin one.
 
 #![cfg(all(
     feature = "std",

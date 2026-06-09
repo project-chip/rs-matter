@@ -21,38 +21,127 @@
 
 use astro_dnssd::{DNSServiceBuilder, RegisteredDnsService, ServiceBrowserBuilder};
 
+use embassy_futures::select::select3;
+use embassy_time::Timer;
+
+use crate::utils::select::Coalesce;
+
 use std::collections::{HashMap, HashSet};
 use std::net::ToSocketAddrs;
 use std::time::Duration;
 
 use crate::error::{Error, ErrorCode};
+use crate::transport::network::mdns::{CommissionableFilter, MdnsRemoteService};
 use crate::transport::network::MatterLocalService;
 use crate::Matter;
 
-use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
+/// mDNS interval (ms) between non-blocking polls of the OS browser while a
+/// commissionable browse is in flight; we yield to the executor in between so
+/// the Matter transport (running on the same executor) is not starved.
+const BROWSE_POLL_INTERVAL_MS: u64 = 50;
 
-/// An mDNS responder for Matter utilizing the `astro-dnssd` crate.
+/// An mDNS implementation for Matter utilizing the `astro-dnssd` crate.
 /// In theory, it should work on all of Linux, MacOS and Windows, however only known to work on MacOSX.
 ///
 /// NOTE: For Linux, you need to install the avahi-compat libraries. E.g., on Ubuntu:
 /// `sudo apt install -y libavahi-compat-libdnssd-dev libavahi-compat-libdnssd1`
-pub struct AstroMdnsResponder {
+pub struct AstroMdns {
     services: HashMap<MatterLocalService, RegisteredDnsService>,
 }
 
-impl AstroMdnsResponder {
-    /// Create a new `AstroMdnsResponder`.
+impl Default for AstroMdns {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AstroMdns {
+    /// Create a new `AstroMdns`.
     pub fn new() -> Self {
         Self {
             services: HashMap::new(),
         }
     }
 
-    /// Run the mDNS responder
+    /// Run the mDNS responder + querier.
+    ///
+    /// Concurrently (a) publishes the local Matter services and keeps them in
+    /// sync, and (b) services [`Transport::browse_commissionable`](crate::transport::Transport::browse_commissionable)
+    /// requests by browsing the system DNS-SD daemon and depositing matches.
     ///
     /// # Arguments
     /// - `matter`: A reference to the Matter instance to get mDNS services from.
     pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
+        let mut responder = core::pin::pin!(self.run_responder(matter));
+        let mut browse = core::pin::pin!(Self::run_browse(matter));
+        let mut resolve = core::pin::pin!(Self::run_resolve(matter));
+
+        select3(&mut responder, &mut browse, &mut resolve)
+            .coalesce()
+            .await
+    }
+
+    /// Service operational-resolve requests.
+    ///
+    /// `astro-dnssd` has no targeted "resolve this instance" call, so we browse
+    /// the requested service's type and match its instance label, then resolve
+    /// the address and deposit it. Polled non-blocking with a yield, only while
+    /// the resolve is in flight.
+    async fn run_resolve(matter: &Matter<'_>) -> Result<(), Error> {
+        loop {
+            let service = matter.transport().wait_mdns_resolve_request().await;
+
+            let mut name_buf: heapless::String<128> = heapless::String::new();
+            service.instance_name(&mut name_buf);
+            let label = name_buf.split('.').next().unwrap_or("").to_string();
+
+            let browser = ServiceBrowserBuilder::new(service.service_type())
+                .browse()
+                .map_err(|e| {
+                    error!("Failed to create service browser: {:?}", e);
+                    ErrorCode::MdnsError
+                })?;
+
+            while matter.transport().mdns_resolve_in_flight() {
+                match browser.recv_timeout(Duration::ZERO) {
+                    Ok(svc) if svc.name == label => {
+                        let host_with_port = format!("{}:{}", svc.hostname, svc.port);
+                        let ip = host_with_port
+                            .to_socket_addrs()
+                            .ok()
+                            .and_then(|mut addrs| addrs.next())
+                            .map(|addr| addr.ip());
+
+                        if let Some(ip) = ip {
+                            let mut txt: Vec<(&str, &str)> = Vec::new();
+                            if let Some(ref txt_record) = svc.txt_record {
+                                for (key, value) in txt_record {
+                                    txt.push((key, value));
+                                }
+                            }
+                            // Match is by the full instance name we requested.
+                            matter
+                                .transport()
+                                .try_deposit_mdns_resolve(&MdnsRemoteService {
+                                    instance_name: name_buf.as_str(),
+                                    port: Some(svc.port),
+                                    addrs: core::iter::once(ip),
+                                    txt: txt.iter().copied(),
+                                });
+                        }
+                    }
+                    Ok(_) => {} // a different instance of the same type
+                    Err(astro_dnssd::BrowseError::Timeout) => {}
+                    Err(e) => debug!("Browse error: {:?}", e),
+                }
+
+                Timer::after(embassy_time::Duration::from_millis(BROWSE_POLL_INTERVAL_MS)).await;
+            }
+        }
+    }
+
+    /// Publish the local Matter services and keep them in sync with the stack.
+    async fn run_responder(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
         loop {
             matter.transport().wait_mdns().await;
 
@@ -68,6 +157,65 @@ impl AstroMdnsResponder {
             self.update_services(matter, &services)?;
 
             info!("mDNS services updated");
+        }
+    }
+
+    /// Service commissionable-browse requests via the system DNS-SD daemon.
+    ///
+    /// `astro-dnssd` does not support subtype-filtered browse, so we browse all
+    /// `_matterc._udp` services and let the deposit apply the full filter. The
+    /// daemon's browser is polled non-blocking with a yield in between, and only
+    /// while the browse is in flight, so the Matter transport is not starved.
+    async fn run_browse(matter: &Matter<'_>) -> Result<(), Error> {
+        loop {
+            let _filter: CommissionableFilter = matter.transport().wait_mdns_browse_request().await;
+
+            let browser = ServiceBrowserBuilder::new("_matterc._udp")
+                .browse()
+                .map_err(|e| {
+                    error!("Failed to create service browser: {:?}", e);
+                    ErrorCode::MdnsError
+                })?;
+
+            while matter.transport().mdns_browse_in_flight() {
+                match browser.recv_timeout(Duration::ZERO) {
+                    // Resolve address + TXT and deposit; the filter/exclude checks
+                    // happen inside the deposit. `to_socket_addrs` is a brief
+                    // blocking lookup, acceptable on the commissioning-browse path.
+                    Ok(service) => {
+                        let host_with_port = format!("{}:{}", service.hostname, service.port);
+                        let ip = host_with_port
+                            .to_socket_addrs()
+                            .ok()
+                            .and_then(|mut addrs| addrs.next())
+                            .map(|addr| addr.ip());
+
+                        if let Some(ip) = ip {
+                            let mut txt: Vec<(&str, &str)> = Vec::new();
+                            if let Some(ref txt_record) = service.txt_record {
+                                for (key, value) in txt_record {
+                                    txt.push((key, value));
+                                }
+                            }
+
+                            matter
+                                .transport()
+                                .try_deposit_mdns_browse(&MdnsRemoteService {
+                                    instance_name: service.name.as_str(),
+                                    port: Some(service.port),
+                                    addrs: core::iter::once(ip),
+                                    txt: txt.iter().copied(),
+                                });
+                        } else {
+                            warn!("Could not resolve hostname: {}", service.hostname);
+                        }
+                    }
+                    Err(astro_dnssd::BrowseError::Timeout) => {}
+                    Err(e) => debug!("Browse error: {:?}", e),
+                }
+
+                Timer::after(embassy_time::Duration::from_millis(BROWSE_POLL_INTERVAL_MS)).await;
+            }
         }
     }
 
@@ -106,7 +254,7 @@ impl AstroMdnsResponder {
         matter: &Matter<'_>,
         service: &MatterLocalService,
     ) -> Result<RegisteredDnsService, Error> {
-        // Scratch buffer for expanding `MatterLocalService` into a `Service` view —
+        // Scratch buffer for expanding `MatterLocalService` into a `MdnsLocalService` view —
         // the strings (name, subtypes, TXT values) are formatted into this buffer.
         let mut buf = [0u8; 512];
         let (service, _) = service.service(matter.dev_det(), matter.port(), &mut buf)?;
@@ -136,105 +284,4 @@ impl AstroMdnsResponder {
 
         Ok(svc)
     }
-}
-
-/// Discover commissionable Matter devices using the system's DNS-SD service.
-///
-/// This function uses the `astro-dnssd` crate which wraps the system's native
-/// DNS-SD implementation (Bonjour on macOS, Avahi on Linux).
-///
-/// # Arguments
-/// * `filter` - Filter criteria for discovered devices
-/// * `timeout_ms` - Discovery timeout in milliseconds
-///
-/// # Returns
-/// A vector of discovered devices matching the filter criteria
-pub fn discover_commissionable<const A: usize>(
-    filter: &CommissionableFilter,
-    timeout_ms: u32,
-) -> Result<Vec<DiscoveredDevice<A>>, Error> {
-    let mut results = Vec::new();
-
-    // Note: astro-dnssd doesn't support subtype filtering in browse,
-    // so we browse for all _matterc._udp services and filter results afterward
-    let service_type = "_matterc._udp";
-
-    info!("Browsing for mDNS services: {}", service_type);
-
-    let browser = ServiceBrowserBuilder::new(service_type)
-        .browse()
-        .map_err(|e| {
-            error!("Failed to create service browser: {:?}", e);
-            ErrorCode::MdnsError
-        })?;
-
-    let timeout = Duration::from_millis(timeout_ms as u64);
-    let start = std::time::Instant::now();
-
-    // Poll for services until timeout
-    while start.elapsed() < timeout {
-        let remaining = timeout.saturating_sub(start.elapsed());
-        if remaining.is_zero() {
-            break;
-        }
-
-        match browser.recv_timeout(remaining.min(Duration::from_millis(100))) {
-            Ok(service) => {
-                info!(
-                    "Discovered service: {} on {}:{} (domain: {})",
-                    service.name, service.hostname, service.port, service.domain
-                );
-
-                let mut device = DiscoveredDevice::default();
-                device.set_instance_name(&service.name);
-                device.port = service.port;
-
-                let host_with_port = format!("{}:{}", service.hostname, service.port);
-                let resolved = if let Ok(addrs) = host_with_port.to_socket_addrs() {
-                    // Add all resolved addresses (they will be sorted by priority)
-                    for addr in addrs {
-                        device.add_address(addr.ip());
-                    }
-                    true
-                } else {
-                    // Try resolving just the hostname
-                    let host: &str = &service.hostname;
-                    if let Ok(addrs) = (host, service.port).to_socket_addrs() {
-                        for addr in addrs {
-                            device.add_address(addr.ip());
-                        }
-                        true
-                    } else {
-                        false
-                    }
-                };
-
-                if !resolved || device.addresses().is_empty() {
-                    warn!("Could not resolve hostname: {}", service.hostname);
-                    continue;
-                }
-
-                if let Some(ref txt_record) = service.txt_record {
-                    for (key, value) in txt_record {
-                        device.set_txt_value(key, value);
-                    }
-                }
-
-                if filter.matches(&device) {
-                    results.push_if_unique(device);
-                }
-            }
-            Err(astro_dnssd::BrowseError::Timeout) => {
-                // Continue polling
-            }
-            Err(e) => {
-                debug!("Browse error: {:?}", e);
-                // Continue trying until timeout
-            }
-        }
-    }
-
-    info!("mDNS discovery found {} devices", results.len());
-
-    Ok(results)
 }

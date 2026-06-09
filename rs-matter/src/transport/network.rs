@@ -48,7 +48,7 @@ pub const MAX_TX_LARGE_PACKET_SIZE: usize = MAX_RX_LARGE_PACKET_SIZE;
 ///
 /// This is the *publish-side* identity; the *query-side* analog is
 /// [`MatterRemoteService`]. The discovery-transport encoding (e.g. the mDNS
-/// `Service` record) lives in the [`mdns`] module
+/// `MdnsLocalService` record) lives in the [`mdns`] module
 /// (`MatterLocalService::service`).
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
