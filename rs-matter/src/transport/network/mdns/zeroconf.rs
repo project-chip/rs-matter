@@ -78,27 +78,20 @@ impl ZeroconfMdns {
 
     /// Run the mDNS responder + querier.
     ///
-    /// Concurrently (a) publishes the local Matter services and keeps them in
-    /// sync, and (b) services the resolve and
-    /// [`Transport::browse_commissionable`](crate::transport::Transport::browse_commissionable)
-    /// rendezvous. `zeroconf`'s browser is `!Send` and event-loop based, so each
-    /// query runs the browser on a dedicated thread that collects results into a
-    /// shared buffer which the async side drains and deposits.
-    ///
     /// # Arguments
     /// - `matter`: A reference to the Matter instance to get mDNS services from.
     pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
-        let mut responder = pin!(self.run_responder(matter));
-        let mut browse = pin!(Self::run_browse(matter));
+        let mut respond = pin!(self.run_respond(matter));
         let mut resolve = pin!(Self::run_resolve(matter));
+        let mut browse = pin!(Self::run_browse(matter));
 
-        select3(&mut responder, &mut browse, &mut resolve)
+        select3(&mut respond, &mut resolve, &mut browse)
             .coalesce()
             .await
     }
 
     /// Publish the local Matter services and keep them in sync with the stack.
-    async fn run_responder(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
+    async fn run_respond(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
         loop {
             matter.transport().wait_mdns().await;
 
@@ -114,36 +107,6 @@ impl ZeroconfMdns {
             self.update_services(matter, &services)?;
 
             info!("mDNS services updated");
-        }
-    }
-
-    /// Service commissionable-browse requests: run a `_matterc._udp` browser on a
-    /// worker thread and deposit each discovered service (filter + exclude checks
-    /// happen in the deposit) while the browse is in flight.
-    async fn run_browse(matter: &Matter<'_>) -> Result<(), Error> {
-        loop {
-            let _filter = matter.transport().wait_mdns_browse_request().await;
-
-            let service_type = ServiceType::new("matterc", "udp")?;
-            let (discovered, _stop) = Self::spawn_browser(service_type);
-
-            while matter.transport().mdns_browse_in_flight() {
-                Self::drain(&discovered, |svc| {
-                    if let Ok(ip) = svc.address().parse::<IpAddr>() {
-                        let pairs = txt_pairs(svc);
-                        matter
-                            .transport()
-                            .try_deposit_mdns_browse(&MdnsRemoteService {
-                                instance_name: DottedName(svc.name()),
-                                port: Some(*svc.port()),
-                                addrs: core::iter::once(ip),
-                                txt: pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())),
-                            });
-                    }
-                });
-
-                Timer::after(embassy_time::Duration::from_millis(QUERY_POLL_INTERVAL_MS)).await;
-            }
         }
     }
 
@@ -178,6 +141,36 @@ impl ZeroconfMdns {
                             .transport()
                             .try_deposit_mdns_resolve(&MdnsRemoteService {
                                 instance_name: DottedName(name_buf.as_str()),
+                                port: Some(*svc.port()),
+                                addrs: core::iter::once(ip),
+                                txt: pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+                            });
+                    }
+                });
+
+                Timer::after(embassy_time::Duration::from_millis(QUERY_POLL_INTERVAL_MS)).await;
+            }
+        }
+    }
+
+    /// Service commissionable-browse requests: run a `_matterc._udp` browser on a
+    /// worker thread and deposit each discovered service (filter + exclude checks
+    /// happen in the deposit) while the browse is in flight.
+    async fn run_browse(matter: &Matter<'_>) -> Result<(), Error> {
+        loop {
+            let _filter = matter.transport().wait_mdns_browse_request().await;
+
+            let service_type = ServiceType::new("matterc", "udp")?;
+            let (discovered, _stop) = Self::spawn_browser(service_type);
+
+            while matter.transport().mdns_browse_in_flight() {
+                Self::drain(&discovered, |svc| {
+                    if let Ok(ip) = svc.address().parse::<IpAddr>() {
+                        let pairs = txt_pairs(svc);
+                        matter
+                            .transport()
+                            .try_deposit_mdns_browse(&MdnsRemoteService {
+                                instance_name: DottedName(svc.name()),
                                 port: Some(*svc.port()),
                                 addrs: core::iter::once(ip),
                                 txt: pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())),

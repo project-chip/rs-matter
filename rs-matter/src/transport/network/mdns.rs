@@ -362,11 +362,7 @@ where
 ///
 /// Mirroring `MdnsLocalService`, it carries `addrs` and `txt` as **iterators**
 /// rather than collected buffers, so neither the builtin parser nor the OS-backed
-/// responders need a fixed-size, upper-bounded scratch `Vec`. The builtin parser
-/// materializes each address / TXT pair on the fly by walking the receive buffer
-/// (so a single packet must carry the PTR/SRV/TXT/A/AAAA records, as RFC 6763
-/// compliant responders including `rs-matter`'s own do); the OS backends wrap
-/// their native records. Nothing is allocated and nothing is bounded.
+/// responders need a fixed-size, upper-bounded scratch `Vec`.
 ///
 /// Type parameters (bounds applied at the use sites, not here):
 /// - `I`: the instance name as a label iterator (`domain`'s `ToLabelIter`) - a
@@ -611,48 +607,6 @@ impl CommissioningMode {
     }
 }
 
-/// Score an IP address for prioritization.
-///
-/// Higher scores indicate more preferred addresses. The priority order follows
-/// the Matter specification:
-///
-/// 1. Link-local IPv6 (highest priority) - most likely to work for local discovery
-/// 2. Unique local IPv6 (ULA, fc00::/7) - private network addresses
-/// 3. Global unicast IPv6 - routable addresses
-/// 4. IPv4 (lowest priority)
-///
-/// This prioritization prefers IPv6 over IPv4 and local addresses over global ones,
-/// which aligns with Matter's preference for link-local communication.
-pub fn score_ip_address(addr: &IpAddr) -> u8 {
-    match addr {
-        IpAddr::V6(ipv6) => {
-            if ipv6.is_unicast_link_local() {
-                // Link-local IPv6 (fe80::/10) - highest priority
-                100
-            } else if ipv6.is_unique_local() {
-                // Unique local address (fc00::/7) - second priority
-                80
-            } else if is_ipv6_global_unicast(ipv6) {
-                // Global unicast - third priority
-                60
-            } else {
-                // Other IPv6 (multicast, etc.)
-                40
-            }
-        }
-        IpAddr::V4(_) => {
-            // IPv4 - lowest priority
-            20
-        }
-    }
-}
-
-/// Check if an IPv6 address is global unicast (2000::/3)
-fn is_ipv6_global_unicast(addr: &Ipv6Addr) -> bool {
-    let segments = addr.segments();
-    (segments[0] & 0xe000) == 0x2000
-}
-
 /// A textual, dotted mDNS name (e.g. `ABCD1234._matterc._udp.local`) viewed as a
 /// sequence of labels, **borrowing** the string - no allocation.
 ///
@@ -662,12 +616,6 @@ fn is_ipv6_global_unicast(addr: &Ipv6Addr) -> bool {
 #[derive(Debug, Clone, Copy)]
 pub struct DottedName<'a>(pub &'a str);
 
-/// Reinterpret a single textual label as a `domain` [`Label`]; an over-long
-/// (invalid) label folds to the empty root label, which won't match anything.
-fn str_to_label(s: &str) -> &Label {
-    Label::from_slice(s.as_bytes()).unwrap_or_else(|_| Label::root())
-}
-
 impl ToLabelIter for DottedName<'_> {
     type LabelIter<'t>
         = core::iter::Map<core::str::Split<'t, char>, fn(&str) -> &Label>
@@ -675,30 +623,16 @@ impl ToLabelIter for DottedName<'_> {
         Self: 't;
 
     fn iter_labels(&self) -> Self::LabelIter<'_> {
+        /// Reinterpret a single textual label as a `domain` [`Label`]; an over-long
+        /// (invalid) label folds to the empty root label, which won't match anything.
+        fn str_to_label(s: &str) -> &Label {
+            Label::from_slice(s.as_bytes()).unwrap_or_else(|_| Label::root())
+        }
+
         self.0
             .trim_end_matches('.')
             .split('.')
             .map(str_to_label as fn(&str) -> &Label)
-    }
-}
-
-/// The commissionable instance id (the leading label, parsed as hex) of a
-/// discovered instance, or `None` if the first label isn't a single hex id.
-/// Used to dedup/exclude browse candidates by id.
-pub(crate) fn commissionable_instance_id<I: ToLabelIter>(instance: &I) -> Option<u64> {
-    let first = instance.iter_labels().find(|l| !l.is_empty())?;
-    parse_hex_u64(core::str::from_utf8(first.as_slice()).ok()?)
-}
-
-/// Parse a hex string as a `u64` (case-insensitive). `None` on empty/overflow/
-/// non-hex input. Used to read the hex id label out of an mDNS instance name.
-fn parse_hex_u64(s: &str) -> Option<u64> {
-    // `from_str_radix` accepts a leading `+`/`-`; reject those so a malformed
-    // label can't masquerade as a valid id.
-    if s.bytes().all(|b| b.is_ascii_hexdigit()) {
-        u64::from_str_radix(s, 16).ok()
-    } else {
-        None
     }
 }
 
@@ -781,6 +715,68 @@ pub(crate) enum MdnsBrowseState {
     },
     /// The responder deposited the first matching, non-excluded commissionable node.
     Found { ip: IpAddr, port: u16, id: u64 },
+}
+
+/// Score an IP address for prioritization.
+///
+/// Higher scores indicate more preferred addresses. The priority order follows
+/// the Matter specification:
+///
+/// 1. Link-local IPv6 (highest priority) - most likely to work for local discovery
+/// 2. Unique local IPv6 (ULA, fc00::/7) - private network addresses
+/// 3. Global unicast IPv6 - routable addresses
+/// 4. IPv4 (lowest priority)
+///
+/// This prioritization prefers IPv6 over IPv4 and local addresses over global ones,
+/// which aligns with Matter's preference for link-local communication.
+pub fn score_ip_address(addr: &IpAddr) -> u8 {
+    match addr {
+        IpAddr::V6(ipv6) => {
+            if ipv6.is_unicast_link_local() {
+                // Link-local IPv6 (fe80::/10) - highest priority
+                100
+            } else if ipv6.is_unique_local() {
+                // Unique local address (fc00::/7) - second priority
+                80
+            } else if is_ipv6_global_unicast(ipv6) {
+                // Global unicast - third priority
+                60
+            } else {
+                // Other IPv6 (multicast, etc.)
+                40
+            }
+        }
+        IpAddr::V4(_) => {
+            // IPv4 - lowest priority
+            20
+        }
+    }
+}
+
+/// Check if an IPv6 address is global unicast (2000::/3)
+fn is_ipv6_global_unicast(addr: &Ipv6Addr) -> bool {
+    let segments = addr.segments();
+    (segments[0] & 0xe000) == 0x2000
+}
+
+/// The commissionable instance id (the leading label, parsed as hex) of a
+/// discovered instance, or `None` if the first label isn't a single hex id.
+/// Used to dedup/exclude browse candidates by id.
+pub(crate) fn commissionable_instance_id<I: ToLabelIter>(instance: &I) -> Option<u64> {
+    let first = instance.iter_labels().find(|l| !l.is_empty())?;
+    parse_hex_u64(core::str::from_utf8(first.as_slice()).ok()?)
+}
+
+/// Parse a hex string as a `u64` (case-insensitive). `None` on empty/overflow/
+/// non-hex input. Used to read the hex id label out of an mDNS instance name.
+fn parse_hex_u64(s: &str) -> Option<u64> {
+    // `from_str_radix` accepts a leading `+`/`-`; reject those so a malformed
+    // label can't masquerade as a valid id.
+    if s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        u64::from_str_radix(s, 16).ok()
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

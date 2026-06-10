@@ -65,20 +65,36 @@ impl AstroMdns {
 
     /// Run the mDNS responder + querier.
     ///
-    /// Concurrently (a) publishes the local Matter services and keeps them in
-    /// sync, and (b) services [`Transport::browse_commissionable`](crate::transport::Transport::browse_commissionable)
-    /// requests by browsing the system DNS-SD daemon and depositing matches.
-    ///
     /// # Arguments
     /// - `matter`: A reference to the Matter instance to get mDNS services from.
     pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
-        let mut responder = core::pin::pin!(self.run_responder(matter));
-        let mut browse = core::pin::pin!(Self::run_browse(matter));
+        let mut respond = core::pin::pin!(self.run_respond(matter));
         let mut resolve = core::pin::pin!(Self::run_resolve(matter));
+        let mut browse = core::pin::pin!(Self::run_browse(matter));
 
-        select3(&mut responder, &mut browse, &mut resolve)
+        select3(&mut respond, &mut resolve, &mut browse)
             .coalesce()
             .await
+    }
+
+    /// Publish the local Matter services and keep them in sync with the stack.
+    async fn run_respond(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
+        loop {
+            matter.transport().wait_mdns().await;
+
+            let mut services = HashSet::new();
+            matter.mdns_services(|service| {
+                services.insert(service);
+
+                Ok(())
+            })?;
+
+            info!("mDNS services changed, updating...");
+
+            self.update_services(matter, &services)?;
+
+            info!("mDNS services updated");
+        }
     }
 
     /// Service operational-resolve requests.
@@ -137,26 +153,6 @@ impl AstroMdns {
 
                 Timer::after(embassy_time::Duration::from_millis(BROWSE_POLL_INTERVAL_MS)).await;
             }
-        }
-    }
-
-    /// Publish the local Matter services and keep them in sync with the stack.
-    async fn run_responder(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
-        loop {
-            matter.transport().wait_mdns().await;
-
-            let mut services = HashSet::new();
-            matter.mdns_services(|service| {
-                services.insert(service);
-
-                Ok(())
-            })?;
-
-            info!("mDNS services changed, updating...");
-
-            self.update_services(matter, &services)?;
-
-            info!("mDNS services updated");
         }
     }
 
