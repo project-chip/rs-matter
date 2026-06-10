@@ -84,8 +84,20 @@ fn run_command_with(
 
     let cmd = cmd.stdin(Stdio::null());
 
+    // When not echoing the command output live, capture its stdout to a temp
+    // file rather than discarding it, so that on failure we can surface it.
+    // The integration-test runner (`run_python_test.py`) funnels the test
+    // script's own stdout/stderr — including Python tracebacks — into *its*
+    // stdout; discarding it (as a plain `Stdio::null()` did) leaves a failing
+    // test with no diagnostic output at all, which is especially painful in
+    // CI where the failure can't be reproduced locally.
+    let mut captured_stdout = None;
     if !print_cmd_output {
-        cmd.stdout(Stdio::null());
+        let path = env::temp_dir().join(format!("xtask-cmd-stdout-{}.log", std::process::id()));
+        let file = File::create(&path)
+            .with_context(|| format!("Failed to create capture file: {}", path.display()))?;
+        cmd.stdout(Stdio::from(file));
+        captured_stdout = Some(path);
     }
 
     if suppress_err {
@@ -97,7 +109,26 @@ fn run_command_with(
         .with_context(|| format!("Failed to execute command: {cmd:?}"))?;
 
     if !status.success() {
+        // Surface the captured stdout (if any) so the failure is diagnosable
+        // both locally and in the CI artifact (which `tee`s xtask's output).
+        if let Some(path) = &captured_stdout {
+            if let Ok(out) = fs::read_to_string(path) {
+                let out = out.trim_end();
+                if !out.is_empty() {
+                    eprintln!("----- captured command stdout (on failure) -----");
+                    eprintln!("{out}");
+                    eprintln!("----- end captured command stdout -----");
+                }
+            }
+        }
+        if let Some(path) = captured_stdout {
+            let _ = fs::remove_file(path);
+        }
         anyhow::bail!("Command failed with status: {status}");
+    }
+
+    if let Some(path) = captured_stdout {
+        let _ = fs::remove_file(path);
     }
 
     Ok(())
