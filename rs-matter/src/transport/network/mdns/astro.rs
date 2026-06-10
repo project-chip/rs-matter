@@ -31,7 +31,7 @@ use std::net::ToSocketAddrs;
 use std::time::Duration;
 
 use crate::error::{Error, ErrorCode};
-use crate::transport::network::mdns::{CommissionableFilter, MdnsRemoteService};
+use crate::transport::network::mdns::{CommissionableFilter, DottedName, MdnsRemoteService};
 use crate::transport::network::MatterLocalService;
 use crate::Matter;
 
@@ -123,7 +123,7 @@ impl AstroMdns {
                             matter
                                 .transport()
                                 .try_deposit_mdns_resolve(&MdnsRemoteService {
-                                    instance_name: name_buf.as_str(),
+                                    instance_name: DottedName(name_buf.as_str()),
                                     port: Some(svc.port),
                                     addrs: core::iter::once(ip),
                                     txt: txt.iter().copied(),
@@ -201,7 +201,7 @@ impl AstroMdns {
                             matter
                                 .transport()
                                 .try_deposit_mdns_browse(&MdnsRemoteService {
-                                    instance_name: service.name.as_str(),
+                                    instance_name: DottedName(service.name.as_str()),
                                     port: Some(service.port),
                                     addrs: core::iter::once(ip),
                                     txt: txt.iter().copied(),

@@ -18,6 +18,8 @@
 use core::fmt::Write;
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 
+use domain::base::name::{Label, ToLabelIter};
+
 use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::EitherIter;
@@ -252,26 +254,65 @@ impl MatterRemoteService {
         }
     }
 
-    /// The fully-qualified instance-name suffix for this service's type, i.e.
-    /// everything after the leading instance label: `._matter._tcp.local` for
-    /// operational nodes, `._matterc._udp.local` for commissionable ones.
-    fn instance_suffix(&self) -> &'static str {
+    /// The service-type suffix labels that follow the leading instance label:
+    /// `_matter`/`_tcp`/`local` for operational nodes, `_matterc`/`_udp`/`local`
+    /// for commissionable ones.
+    fn suffix_labels(&self) -> &'static [&'static str] {
         match self {
-            Self::Operational { .. } => "._matter._tcp.local",
-            Self::Commissionable { .. } => "._matterc._udp.local",
+            Self::Operational { .. } => &["_matter", "_tcp", "local"],
+            Self::Commissionable { .. } => &["_matterc", "_udp", "local"],
         }
     }
 
-    /// Whether the given mDNS instance name refers to this service.
-    ///
-    /// Rather than rendering the expected name into a scratch buffer and
-    /// string-comparing, this strips the service-type suffix (e.g.
-    /// `._matter._tcp.local`, case-insensitively) and parses the leading
-    /// instance label as hex, comparing the resulting id(s) **numerically** -
-    /// allocation-free and tolerant of zero-padding differences.
-    pub fn matches_instance_name(&self, name: &str) -> bool {
-        let Some(label) = strip_suffix_ci(name.trim_end_matches('.'), self.instance_suffix())
-        else {
+    /// The mDNS instance-name labels for this service: the leading hex id label
+    /// (written into `buf`) followed by the static service-type labels. Used to
+    /// build a query name directly from labels (via `NameSlice`), avoiding a
+    /// full-name buffer + re-parse.
+    pub(crate) fn query_name_labels<'b>(&self, buf: &'b mut heapless::String<33>) -> [&'b str; 4] {
+        buf.clear();
+
+        match self {
+            Self::Operational {
+                compressed_fabric_id,
+                node_id,
+            } => {
+                write_unwrap!(buf, "{:016X}-{:016X}", compressed_fabric_id, node_id);
+                [buf.as_str(), "_matter", "_tcp", "local"]
+            }
+            Self::Commissionable { id } => {
+                write_unwrap!(buf, "{:016X}", id);
+                [buf.as_str(), "_matterc", "_udp", "local"]
+            }
+        }
+    }
+
+    /// Whether the given mDNS instance (as a label iterator) refers to this
+    /// service. Walks the labels directly: the first label must hold the matching
+    /// hex id(s), and the remaining labels the service-type suffix (compared
+    /// case-insensitively). No name is ever rendered into a buffer - it reads the
+    /// `domain` (or OS) name's labels in place.
+    pub fn matches_instance<I: ToLabelIter>(&self, instance: &I) -> bool {
+        // Skip the empty root label that absolute names carry.
+        let mut labels = instance.iter_labels().filter(|l| !l.is_empty());
+
+        let Some(first) = labels.next() else {
+            return false;
+        };
+
+        // The remaining labels must be exactly the service-type suffix.
+        let mut suffix = self.suffix_labels().iter();
+        for label in labels {
+            match suffix.next() {
+                Some(expected) if label.as_slice().eq_ignore_ascii_case(expected.as_bytes()) => {}
+                _ => return false,
+            }
+        }
+        if suffix.next().is_some() {
+            return false;
+        }
+
+        // The first label holds the hex id(s).
+        let Ok(first) = core::str::from_utf8(first.as_slice()) else {
             return false;
         };
 
@@ -280,14 +321,14 @@ impl MatterRemoteService {
                 compressed_fabric_id,
                 node_id,
             } => {
-                let Some((fabric, node)) = label.split_once('-') else {
+                let Some((fabric, node)) = first.split_once('-') else {
                     return false;
                 };
 
                 parse_hex_u64(fabric) == Some(*compressed_fabric_id)
                     && parse_hex_u64(node) == Some(*node_id)
             }
-            Self::Commissionable { id } => parse_hex_u64(label) == Some(*id),
+            Self::Commissionable { id } => parse_hex_u64(first) == Some(*id),
         }
     }
 }
@@ -328,9 +369,10 @@ where
 /// their native records. Nothing is allocated and nothing is bounded.
 ///
 /// Type parameters (bounds applied at the use sites, not here):
-/// - `I`: the instance name, anything `Display` - a `&str` for the OS backends, a
-///   wire-format parsed name for the builtin parser. It is never rendered to a
-///   string unless a match actually needs one.
+/// - `I`: the instance name as a label iterator (`domain`'s `ToLabelIter`) - a
+///   `ParsedName` straight from the packet for the builtin parser, a [`DottedName`]
+///   over the OS backends' native `&str`. Matched label-by-label, never rendered
+///   to a buffer.
 /// - `A`: an `Iterator<Item = IpAddr>` over the service's addresses.
 /// - `T`: an `Iterator<Item = (&str, &str)>` over the raw TXT key/value pairs.
 #[derive(Debug, Clone, Copy)]
@@ -420,19 +462,37 @@ impl CommissionableFilter {
         buf.clear();
         let suffix = if include_local { ".local" } else { "" };
 
-        if let Some(disc) = self.discriminator {
-            write_unwrap!(buf, "_L{}._sub._matterc._udp{}", disc, suffix);
-        } else if let Some(short_disc) = self.short_discriminator {
-            write_unwrap!(buf, "_S{}._sub._matterc._udp{}", short_disc, suffix);
-        } else if let Some(vid) = self.vendor_id {
-            write_unwrap!(buf, "_V{}._sub._matterc._udp{}", vid, suffix);
-        } else if let Some(dt) = self.device_type {
-            write_unwrap!(buf, "_T{}._sub._matterc._udp{}", dt, suffix);
-        } else if self.commissioning_mode_only {
-            write_unwrap!(buf, "_CM._sub._matterc._udp{}", suffix);
+        let mut sbuf = heapless::String::<24>::new();
+        if let Some(sub) = self.subtype(&mut sbuf) {
+            write_unwrap!(buf, "{}._sub._matterc._udp{}", sub, suffix);
         } else {
             write_unwrap!(buf, "_matterc._udp{}", suffix);
         }
+    }
+
+    /// The single most-selective browse subtype label this filter offers,
+    /// written into `buf`, in the priority order `_L` > `_S` > `_V` > `_T` >
+    /// `_CM` (see [`CommissionableFilter::service_type`]), or `None` for an
+    /// unfiltered browse. Used to build the browse query name directly from
+    /// labels (via `NameSlice`), and as the single source of the priority logic.
+    pub(crate) fn subtype<'b>(&self, buf: &'b mut heapless::String<24>) -> Option<&'b str> {
+        buf.clear();
+
+        if let Some(disc) = self.discriminator {
+            write_unwrap!(buf, "_L{}", disc);
+        } else if let Some(short_disc) = self.short_discriminator {
+            write_unwrap!(buf, "_S{}", short_disc);
+        } else if let Some(vid) = self.vendor_id {
+            write_unwrap!(buf, "_V{}", vid);
+        } else if let Some(dt) = self.device_type {
+            write_unwrap!(buf, "_T{}", dt);
+        } else if self.commissioning_mode_only {
+            write_unwrap!(buf, "_CM");
+        } else {
+            return None;
+        }
+
+        Some(buf.as_str())
     }
 
     /// Whether a discovered [`MdnsRemoteService`] matches this filter (AND over
@@ -593,12 +653,41 @@ fn is_ipv6_global_unicast(addr: &Ipv6Addr) -> bool {
     (segments[0] & 0xe000) == 0x2000
 }
 
-/// Strip `suffix` from the end of `s`, comparing the suffix case-insensitively
-/// (ASCII). Returns the leading remainder, or `None` if `s` doesn't end with it.
-fn strip_suffix_ci<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
-    let split = s.len().checked_sub(suffix.len())?;
-    // mDNS instance names are ASCII, so a byte split is always a char boundary.
-    (s.is_char_boundary(split) && s[split..].eq_ignore_ascii_case(suffix)).then(|| &s[..split])
+/// A textual, dotted mDNS name (e.g. `ABCD1234._matterc._udp.local`) viewed as a
+/// sequence of labels, **borrowing** the string - no allocation.
+///
+/// Lets the OS-backed responders hand their native `&str` instance names to the
+/// shared [`MdnsRemoteService`] machinery (which matches label-by-label via
+/// [`ToLabelIter`]) without rendering anything.
+#[derive(Debug, Clone, Copy)]
+pub struct DottedName<'a>(pub &'a str);
+
+/// Reinterpret a single textual label as a `domain` [`Label`]; an over-long
+/// (invalid) label folds to the empty root label, which won't match anything.
+fn str_to_label(s: &str) -> &Label {
+    Label::from_slice(s.as_bytes()).unwrap_or_else(|_| Label::root())
+}
+
+impl ToLabelIter for DottedName<'_> {
+    type LabelIter<'t>
+        = core::iter::Map<core::str::Split<'t, char>, fn(&str) -> &Label>
+    where
+        Self: 't;
+
+    fn iter_labels(&self) -> Self::LabelIter<'_> {
+        self.0
+            .trim_end_matches('.')
+            .split('.')
+            .map(str_to_label as fn(&str) -> &Label)
+    }
+}
+
+/// The commissionable instance id (the leading label, parsed as hex) of a
+/// discovered instance, or `None` if the first label isn't a single hex id.
+/// Used to dedup/exclude browse candidates by id.
+pub(crate) fn commissionable_instance_id<I: ToLabelIter>(instance: &I) -> Option<u64> {
+    let first = instance.iter_labels().find(|l| !l.is_empty())?;
+    parse_hex_u64(core::str::from_utf8(first.as_slice()).ok()?)
 }
 
 /// Parse a hex string as a `u64` (case-insensitive). `None` on empty/overflow/

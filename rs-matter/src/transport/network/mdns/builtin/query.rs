@@ -26,7 +26,7 @@
 use domain::base::header::Flags;
 use domain::base::iana::{Class, Opcode, Rcode, Rtype};
 use domain::base::message_builder::MessageBuilder;
-use domain::base::{Message, Name, ParsedName, UnknownRecordData};
+use domain::base::{Message, ParsedName, ToName, UnknownRecordData};
 use domain::rdata::{Aaaa, Ptr, Srv, A};
 
 use crate::error::Error;
@@ -36,22 +36,30 @@ use crate::transport::network::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// Build an mDNS browse query: a PTR question against a service type
 /// (e.g. `_matterc._udp.local` or a subtype like `_L840._sub._matterc._udp.local`).
-pub fn build_browse_query(service_type: &str, buf: &mut [u8]) -> Result<usize, Error> {
-    build_query(service_type, Rtype::PTR, buf)
+///
+/// `name` is any [`ToName`] - the builtin passes a [`NameSlice`] built straight
+/// from labels, so no name buffer is allocated or re-parsed.
+///
+/// [`NameSlice`]: crate::transport::network::mdns::builtin::types::NameSlice
+pub fn build_browse_query(name: impl ToName, buf: &mut [u8]) -> Result<usize, Error> {
+    build_query(name, Rtype::PTR, buf)
 }
 
 /// Build an mDNS resolve query: an `ANY` question against a specific instance
 /// name (e.g. `ABCD1234._matterc._udp.local`), which compliant responders answer
 /// with the instance's SRV/TXT records (plus A/AAAA in the additional section).
-pub fn build_resolve_query(instance_name: &str, buf: &mut [u8]) -> Result<usize, Error> {
-    build_query(instance_name, Rtype::ANY, buf)
+///
+/// `name` is any [`ToName`] (see [`build_browse_query`]).
+pub fn build_resolve_query(name: impl ToName, buf: &mut [u8]) -> Result<usize, Error> {
+    build_query(name, Rtype::ANY, buf)
 }
 
 /// Build an mDNS query for a given name and record type.
 ///
 /// The query deliberately does *not* set the QU (unicast-response) bit, so
-/// responders multicast their replies.
-fn build_query(name: &str, rtype: Rtype, buf: &mut [u8]) -> Result<usize, Error> {
+/// responders multicast their replies. The name is composed straight into the
+/// message buffer (no intermediate name buffer).
+fn build_query(name: impl ToName, rtype: Rtype, buf: &mut [u8]) -> Result<usize, Error> {
     let buf = Buf::new(buf);
     let message = MessageBuilder::from_target(buf)?;
 
@@ -66,8 +74,7 @@ fn build_query(name: &str, rtype: Rtype, buf: &mut [u8]) -> Result<usize, Error>
     flags.qr = false; // This is a query
     header.set_flags(flags);
 
-    let name = Name::<heapless::Vec<u8, 128>>::from_chars(name.chars())?;
-    question.push((&name, rtype, Class::IN))?;
+    question.push((name, rtype, Class::IN))?;
 
     let buf = question.finish();
     Ok(buf.1)
@@ -265,6 +272,7 @@ mod tests {
     use core::fmt::Write as _;
 
     use crate::transport::network::mdns::builtin::respond::Host;
+    use crate::transport::network::mdns::builtin::types::NameSlice;
     use crate::transport::network::mdns::MdnsLocalService;
     use crate::transport::network::Ipv6Addr;
 
@@ -306,7 +314,8 @@ mod tests {
     #[test]
     fn build_query_is_a_query() {
         let mut buf = [0u8; 512];
-        let len = build_browse_query("_matterc._udp.local", &mut buf).unwrap();
+        let len =
+            build_browse_query(NameSlice::new(["_matterc", "_udp", "local"]), &mut buf).unwrap();
         assert!(len > 0);
 
         let message = Message::from_octets(&buf[..len]).unwrap();
@@ -318,7 +327,8 @@ mod tests {
     fn ignores_queries() {
         // A query packet (QR=0) must yield no answer.
         let mut buf = [0u8; 512];
-        let len = build_browse_query("_matterc._udp.local", &mut buf).unwrap();
+        let len =
+            build_browse_query(NameSlice::new(["_matterc", "_udp", "local"]), &mut buf).unwrap();
 
         assert!(parse_into_answer(&buf[..len]).unwrap().is_none());
     }

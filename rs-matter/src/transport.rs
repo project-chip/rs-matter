@@ -15,11 +15,13 @@
  *    limitations under the License.
  */
 
-use core::fmt::{self, Display, Write};
+use core::fmt::{self, Display};
 use core::future::Future;
 use core::num::NonZeroU8;
 use core::ops::{Deref, DerefMut};
 use core::pin::pin;
+
+use domain::base::name::ToLabelIter;
 
 use embassy_futures::select::{select, select3, select4, Either};
 use embassy_time::{Duration, Timer};
@@ -39,8 +41,8 @@ use crate::sc::{
 };
 use crate::tlv::TLVElement;
 use crate::transport::network::mdns::{
-    score_ip_address, BrowseExclude, CommissionableFilter, MdnsBrowseState, MdnsRemoteService,
-    MdnsResolveState, ResolvedNode,
+    commissionable_instance_id, score_ip_address, BrowseExclude, CommissionableFilter,
+    MdnsBrowseState, MdnsRemoteService, MdnsResolveState, ResolvedNode,
 };
 use crate::transport::network::{MatterRemoteService, NetworkMulticast};
 use crate::utils::init::{init, Init};
@@ -73,13 +75,6 @@ pub const MATTER_SOCKET_BIND_ADDR: SocketAddr =
 const MAX_GROUP_ADDRS: usize = MAX_FABRICS * MAX_GROUPS_PER_FABRIC;
 
 const ACCEPT_TIMEOUT_MS: u64 = 1000;
-
-/// Scratch buffer size for rendering an mDNS instance name when matching a
-/// deposited service answer. Bounded by the Matter instance-name formats - operational
-/// `<16hex>-<16hex>._matter._tcp.local.` (~53 chars) and commissionable
-/// `<16hex>._matterc._udp.local.` (~37) - so 64 leaves headroom; an over-long
-/// (non-Matter) name simply fails to render and is treated as no-match.
-const MAX_INSTANCE_NAME_LEN: usize = 64;
 
 #[cfg(feature = "large-buffers")]
 pub(crate) const MAX_RX_BUF_SIZE: usize = network::MAX_RX_LARGE_PACKET_SIZE;
@@ -333,15 +328,10 @@ impl Transport {
     /// former lazily over the packet, the latter over their native records).
     pub(crate) fn try_deposit_mdns_resolve<'a, I, A, T>(&self, answer: &MdnsRemoteService<I, A, T>)
     where
-        I: Display,
+        I: ToLabelIter,
         A: Iterator<Item = IpAddr> + Clone,
         T: Iterator<Item = (&'a str, &'a str)> + Clone,
     {
-        let mut name = heapless::String::<MAX_INSTANCE_NAME_LEN>::new();
-        if write!(name, "{}", answer.instance_name).is_err() {
-            return;
-        }
-
         let Some(ip) = answer.addrs.clone().max_by_key(score_ip_address) else {
             return;
         };
@@ -353,7 +343,7 @@ impl Transport {
 
         self.mdns_resolve.modify(|state| {
             if let MdnsResolveState::InFlight { service } = state {
-                if service.matches_instance_name(&name) {
+                if service.matches_instance(&answer.instance_name) {
                     *state = MdnsResolveState::Resolved {
                         ip,
                         port,
@@ -485,30 +475,25 @@ impl Transport {
     ///
     /// The single browse-deposit entry point shared by the builtin parser and
     /// the OS-backed responders - both hand it an [`MdnsRemoteService`].
-    pub(crate) fn try_deposit_mdns_browse<'a, I, A, T>(&self, service: &MdnsRemoteService<I, A, T>)
+    pub(crate) fn try_deposit_mdns_browse<'a, I, A, T>(&self, answer: &MdnsRemoteService<I, A, T>)
     where
-        I: Display,
+        I: ToLabelIter,
         A: Iterator<Item = IpAddr> + Clone,
         T: Iterator<Item = (&'a str, &'a str)> + Clone,
     {
-        let mut name = heapless::String::<MAX_INSTANCE_NAME_LEN>::new();
-        if write!(name, "{}", service.instance_name).is_err() {
-            return;
-        }
-
-        let Some(id) = commissionable_instance_id(&name) else {
+        let Some(id) = commissionable_instance_id(&answer.instance_name) else {
             return;
         };
-        let Some(ip) = service.addrs.clone().max_by_key(score_ip_address) else {
+        let Some(ip) = answer.addrs.clone().max_by_key(score_ip_address) else {
             return;
         };
-        let Some(port) = service.port else {
+        let Some(port) = answer.port else {
             return;
         };
 
         self.mdns_browse.modify(|state| {
             if let MdnsBrowseState::InFlight { filter, exclude } = state {
-                if !exclude.contains(&id) && filter.matches(service) {
+                if !exclude.contains(&id) && filter.matches(answer) {
                     *state = MdnsBrowseState::Found { ip, port, id };
                     return (true, ());
                 }
@@ -885,13 +870,6 @@ impl Drop for MdnsBrowseGuard<'_> {
             });
         }
     }
-}
-
-/// Parse the commissionable instance id (the random 64-bit id) from the leading
-/// label of an mDNS instance name like `<16-hex>._matterc._udp.local`.
-fn commissionable_instance_id(instance_name: &str) -> Option<u64> {
-    let label = instance_name.split('.').next()?;
-    u64::from_str_radix(label, 16).ok()
 }
 
 /// The Matter Transport Runner, responsible for running the network transport by processing incoming and ougoing packets
@@ -2296,7 +2274,7 @@ mod resolve_tests {
 
     use crate::error::ErrorCode;
     use crate::test::test_matter;
-    use crate::transport::network::mdns::MdnsRemoteService;
+    use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
     use crate::transport::network::MatterRemoteService;
 
     fn op_service() -> MatterRemoteService {
@@ -2325,7 +2303,7 @@ mod resolve_tests {
                 service.instance_name(&mut name);
 
                 let answer = MdnsRemoteService {
-                    instance_name: name.as_str(),
+                    instance_name: DottedName(name.as_str()),
                     port: Some(1234),
                     addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5))].into_iter(),
                     txt: [("SII", "300"), ("SAI", "4000"), ("SAT", "5000")].into_iter(),
@@ -2371,7 +2349,7 @@ mod resolve_tests {
         let mut name = heapless::String::<128>::new();
         op_service().instance_name(&mut name);
         let answer = MdnsRemoteService {
-            instance_name: name.as_str(),
+            instance_name: DottedName(name.as_str()),
             port: Some(1234),
             addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 9))].into_iter(),
             txt: core::iter::empty::<(&str, &str)>(),
@@ -2391,7 +2369,7 @@ mod browse_tests {
 
     use crate::error::ErrorCode;
     use crate::test::test_matter;
-    use crate::transport::network::mdns::{CommissionableFilter, MdnsRemoteService};
+    use crate::transport::network::mdns::{CommissionableFilter, DottedName, MdnsRemoteService};
     use crate::transport::network::Address;
 
     /// A browser and the responder rendezvous: the responder picks up the request,
@@ -2418,7 +2396,7 @@ mod browse_tests {
 
                 // A non-matching node (wrong vendor) must be ignored.
                 let other = MdnsRemoteService {
-                    instance_name: "0000000000000001._matterc._udp.local",
+                    instance_name: DottedName("0000000000000001._matterc._udp.local"),
                     port: Some(5540),
                     addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))].into_iter(),
                     txt: [("D", "2650"), ("VP", "9999+1"), ("CM", "1")].into_iter(),
@@ -2427,7 +2405,7 @@ mod browse_tests {
 
                 // The matching node (D=0xA5A=2650, VP vendor 0xFFF1=65521).
                 let answer = MdnsRemoteService {
-                    instance_name: "00000000ABCD1234._matterc._udp.local",
+                    instance_name: DottedName("00000000ABCD1234._matterc._udp.local"),
                     port: Some(5541),
                     addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7))].into_iter(),
                     txt: [("D", "2650"), ("VP", "65521+42"), ("CM", "1")].into_iter(),
@@ -2490,7 +2468,7 @@ mod browse_tests {
                 matter.transport().wait_mdns_browse_request().await;
 
                 let node_a = MdnsRemoteService {
-                    instance_name: "0000000000001111._matterc._udp.local",
+                    instance_name: DottedName("0000000000001111._matterc._udp.local"),
                     port: Some(5540),
                     addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))].into_iter(),
                     txt: [("D", "2578"), ("CM", "1")].into_iter(), // 0xA12, short 0xA
@@ -2499,7 +2477,7 @@ mod browse_tests {
                 matter.transport().try_deposit_mdns_browse(&node_a);
 
                 let node_b = MdnsRemoteService {
-                    instance_name: "0000000000002222._matterc._udp.local",
+                    instance_name: DottedName("0000000000002222._matterc._udp.local"),
                     port: Some(5541),
                     addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2))].into_iter(),
                     txt: [("D", "2815"), ("CM", "1")].into_iter(), // 0xAFF, short 0xA

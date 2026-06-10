@@ -36,7 +36,7 @@ use zeroconf::txt_record::TTxtRecord;
 use zeroconf::{MdnsBrowser, ServiceDiscovery, ServiceType};
 
 use crate::error::{Error, ErrorCode};
-use crate::transport::network::mdns::MdnsRemoteService;
+use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
 use crate::transport::network::MatterLocalService;
 use crate::utils::select::Coalesce;
 use crate::Matter;
@@ -134,7 +134,7 @@ impl ZeroconfMdns {
                         matter
                             .transport()
                             .try_deposit_mdns_browse(&MdnsRemoteService {
-                                instance_name: svc.name(),
+                                instance_name: DottedName(svc.name()),
                                 port: Some(*svc.port()),
                                 addrs: core::iter::once(ip),
                                 txt: pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())),
@@ -177,7 +177,7 @@ impl ZeroconfMdns {
                         matter
                             .transport()
                             .try_deposit_mdns_resolve(&MdnsRemoteService {
-                                instance_name: name_buf.as_str(),
+                                instance_name: DottedName(name_buf.as_str()),
                                 port: Some(*svc.port()),
                                 addrs: core::iter::once(ip),
                                 txt: pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())),

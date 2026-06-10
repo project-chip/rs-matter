@@ -33,7 +33,7 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use zbus::Connection;
 
 use crate::error::Error;
-use crate::transport::network::mdns::MdnsRemoteService;
+use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
 use crate::transport::network::MatterLocalService;
 use crate::utils::select::Coalesce;
 use crate::utils::zbus_proxies::avahi::entry_group::EntryGroupProxy;
@@ -146,7 +146,7 @@ impl AvahiMdns {
                             matter
                                 .transport()
                                 .try_deposit_mdns_resolve(&MdnsRemoteService {
-                                    instance_name: name_buf.as_str(),
+                                    instance_name: DottedName(name_buf.as_str()),
                                     port: Some(port),
                                     addrs: core::iter::once(ip),
                                     txt: txt_pairs.iter().copied(),
@@ -265,7 +265,7 @@ impl AvahiMdns {
                     matter
                         .transport()
                         .try_deposit_mdns_browse(&MdnsRemoteService {
-                            instance_name: &name,
+                            instance_name: DottedName(&name),
                             port: Some(port),
                             addrs: core::iter::once(ip),
                             txt: txt_pairs.iter().copied(),

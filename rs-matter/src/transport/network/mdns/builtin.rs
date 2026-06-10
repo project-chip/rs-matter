@@ -51,6 +51,8 @@ use super::{MatterLocalService, MdnsLocalService};
 pub use query::{build_browse_query, build_resolve_query, parse_into_answer};
 pub use respond::{Host, RespondMode};
 
+use types::NameSlice;
+
 mod query;
 mod respond;
 mod types;
@@ -182,8 +184,11 @@ impl BuiltinMdns {
         loop {
             let service = matter.transport().wait_mdns_resolve_request().await;
 
-            let mut name = heapless::String::<128>::new();
-            service.instance_name(&mut name);
+            // Compose the instance name straight from labels (a tiny buffer for
+            // the variable hex label; the rest are static `&str`s) - no full-name
+            // buffer + re-parse.
+            let mut label = heapless::String::<33>::new();
+            let name = NameSlice::new(service.query_name_labels(&mut label));
 
             // A small random delay before sending, as per spec (collision avoidance).
             Self::rand_delay(&crypto).await?;
@@ -229,9 +234,6 @@ impl BuiltinMdns {
         loop {
             let filter = matter.transport().wait_mdns_browse_request().await;
 
-            let mut name = heapless::String::<64>::new();
-            filter.service_type(&mut name, true);
-
             // A small random delay before sending, as per spec (collision avoidance).
             Self::rand_delay(&crypto).await?;
 
@@ -242,13 +244,24 @@ impl BuiltinMdns {
             let mut tx_buf = tx_buf.get().await.ok_or(ErrorCode::ResourceExhausted)?;
             let buf = &mut *tx_buf;
 
-            let len = build_browse_query(&name, buf)?;
+            // Compose the browse name straight from labels: the most-selective
+            // subtype (a tiny buffer) under `_sub._matterc._udp.local`, or the
+            // bare service type for an unfiltered browse - no full-name buffer.
+            let mut sbuf = heapless::String::<24>::new();
+            let len = if let Some(sub) = filter.subtype(&mut sbuf) {
+                build_browse_query(
+                    NameSlice::new([sub, "_sub", "_matterc", "_udp", "local"]),
+                    buf,
+                )?
+            } else {
+                build_browse_query(NameSlice::new(["_matterc", "_udp", "local"]), buf)?
+            };
 
             for addr in Self::broadcast_addrs(ipv4_interface, ipv6_interface) {
                 if let Err(e) = send.send_to(&buf[..len], Address::Udp(addr)).await {
                     warn!("Failed to send mDNS browse query to {}: {}", addr, e);
                 } else {
-                    debug!("Sent mDNS browse query {} to {}", name, addr);
+                    debug!("Sent mDNS browse query to {}", addr);
                 }
             }
         }

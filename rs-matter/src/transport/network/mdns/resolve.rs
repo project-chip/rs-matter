@@ -31,7 +31,7 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use zbus::Connection;
 
 use crate::error::Error;
-use crate::transport::network::mdns::MdnsRemoteService;
+use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
 use crate::transport::network::MatterLocalService;
 use crate::utils::select::Coalesce;
 use crate::utils::zbus_proxies::resolve::manager::ManagerProxy;
@@ -212,7 +212,7 @@ impl ResolveMdns {
                 matter
                     .transport()
                     .try_deposit_mdns_browse(&MdnsRemoteService {
-                        instance_name,
+                        instance_name: DottedName(instance_name),
                         port: Some(*port),
                         addrs: core::iter::once(ip),
                         txt: txt.iter().copied(),
@@ -235,7 +235,7 @@ impl ResolveMdns {
                 matter
                     .transport()
                     .try_deposit_mdns_resolve(&MdnsRemoteService {
-                        instance_name,
+                        instance_name: DottedName(instance_name),
                         port: Some(*port),
                         addrs: core::iter::once(ip),
                         txt: txt.iter().copied(),
