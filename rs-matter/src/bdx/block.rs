@@ -15,8 +15,9 @@
  *    limitations under the License.
  */
 
-//! This module defines the BDX block-transfer control messages: `BlockQuery`, `BlockAck`,
-//! `BlockAckEOF` and `BlockQueryWithSkip`, per the Matter Core Spec. 
+//! This module defines the BDX block-transfer messages: the data-carrying `Block` and
+//! `BlockEOF`, plus the control messages `BlockQuery`, `BlockQueryWithSkip`, `BlockAck` and
+//! `BlockAckEOF`, per the Matter Core Spec.
 
 use core::borrow::Borrow;
 
@@ -121,6 +122,71 @@ impl BlockQueryWithSkip {
     }
 }
 
+/// A block of data being transferred by a `Block` and `BlockEOF` message
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataBlock<'a> {
+    /// The counter of this block.
+    pub block_counter: BlockCounter,
+    /// The block's data
+    pub data: &'a [u8],
+}
+
+impl<'a> DataBlock<'a> {
+    pub fn read<T>(pb: &'a mut ReadBuf<T>) -> Result<Self, Error>
+    where
+        T: Borrow<[u8]>,
+    {
+        let block_counter = BlockCounter::read(pb)?;
+        // The data is the remainder of the message.
+        let data = pb.as_slice();
+
+        Ok(Self {
+            block_counter,
+            data,
+        })
+    }
+
+    pub fn write(&self, wb: &mut WriteBuf) -> Result<(), Error> {
+        self.block_counter.write(wb)?;
+        wb.copy_from_slice(self.data)?;
+        Ok(())
+    }
+}
+
+/// A BDX `Block` message, carries one block of transfer data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Block<'a>(pub DataBlock<'a>);
+
+impl<'a> Block<'a> {
+    pub fn read<T>(pb: &'a mut ReadBuf<T>) -> Result<Self, Error>
+    where
+        T: Borrow<[u8]>,
+    {
+        Ok(Self(DataBlock::read(pb)?))
+    }
+
+    pub fn write(&self, wb: &mut WriteBuf) -> Result<(), Error> {
+        self.0.write(wb)
+    }
+}
+
+/// A BDX `BlockEOF` message, carries the final block of transfer data
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockEOF<'a>(pub DataBlock<'a>);
+
+impl<'a> BlockEOF<'a> {
+    pub fn read<T>(pb: &'a mut ReadBuf<T>) -> Result<Self, Error>
+    where
+        T: Borrow<[u8]>,
+    {
+        Ok(Self(DataBlock::read(pb)?))
+    }
+
+    pub fn write(&self, wb: &mut WriteBuf) -> Result<(), Error> {
+        self.0.write(wb)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::utils::storage::{ReadBuf, WriteBuf};
@@ -158,5 +224,38 @@ mod tests {
 
         let mut rb = ReadBuf::new(&buf[..len]);
         assert_eq!(msg, BlockQueryWithSkip::read(&mut rb).unwrap());
+    }
+
+    #[test]
+    fn block_roundtrip() {
+        let msg = Block(DataBlock {
+            block_counter: BlockCounter(3),
+            data: b"some block data",
+        });
+
+        let mut buf = [0; 64];
+        let mut wb = WriteBuf::new(&mut buf);
+        msg.write(&mut wb).unwrap();
+        let len = wb.as_slice().len();
+
+        let mut rb = ReadBuf::new(&buf[..len]);
+        assert_eq!(msg, Block::read(&mut rb).unwrap());
+    }
+
+    // `BlockEOF` shares `DataBlock` with `Block`, but unlike `Block` its data may be empty
+    #[test]
+    fn block_eof_empty_roundtrip() {
+        let msg = BlockEOF(DataBlock {
+            block_counter: BlockCounter(9),
+            data: &[],
+        });
+
+        let mut buf = [0; 64];
+        let mut wb = WriteBuf::new(&mut buf);
+        msg.write(&mut wb).unwrap();
+        let len = wb.as_slice().len();
+
+        let mut rb = ReadBuf::new(&buf[..len]);
+        assert_eq!(msg, BlockEOF::read(&mut rb).unwrap());
     }
 }
