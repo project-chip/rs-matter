@@ -19,7 +19,7 @@
 //! `ReceiveInit` and `ReceiveAccept`. They share the `TransferInit`/`TransferAccept` wire
 //! format defined here.
 //!
-//! Currently only `SendInit` is implemented.
+//! Currently `SendInit` and `ReceiveInit` are implemented.
 
 use core::borrow::Borrow;
 
@@ -56,26 +56,27 @@ bitflags::bitflags! {
     }
 }
 
-/// A BDX `SendInit` message as per the Matter Core Spec.
+/// The shared payload of the BDX `SendInit` and `ReceiveInit` messages, as per the Matter
+/// Core Spec. Both messages have an identical wire format except for opcode, so we combine them here.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SendInit<'a> {
+pub struct TransferInit<'a> {
     /// The proposed transfer-control mode(s) (sender-drive / receiver-drive / async).
     pub transfer_ctl: TransferControlFlags,
     /// The highest BDX version supported by the sender (0..=15). Currently always 0.
     pub version: u8,
     /// The proposed maximum block size for the transfer.
     pub max_block_size: u16,
-    /// Optional proposed start offset of the data; `None` if this 
+    /// Optional proposed start offset of the data; `None` if absent.
     pub start_offset: Option<u64>,
     /// The proposed maximum length of the data; `None` for an indefinite-length transfer.
     pub max_length: Option<u64>,
-    /// The file designator, opaque byte string
+    /// The file designator, opaque byte string.
     pub file_designator: &'a [u8],
     /// Optional trailing metadata, as a TLV element; `None` if absent.
     pub metadata: Option<TLVElement<'a>>,
 }
 
-impl<'a> SendInit<'a> {
+impl<'a> TransferInit<'a> {
     pub fn read<T>(pb: &'a mut ReadBuf<T>) -> Result<Self, Error>
     where
         T: Borrow<[u8]>,
@@ -173,16 +174,90 @@ impl<'a> SendInit<'a> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SendInit<'a>(pub TransferInit<'a>);
+
+impl<'a> SendInit<'a> {
+    pub fn read<T>(pb: &'a mut ReadBuf<T>) -> Result<Self, Error>
+    where
+        T: Borrow<[u8]>,
+    {
+        Ok(Self(TransferInit::read(pb)?))
+    }
+
+    pub fn write(&self, wb: &mut WriteBuf) -> Result<(), Error> {
+        self.0.write(wb)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceiveInit<'a>(pub TransferInit<'a>);
+
+impl<'a> ReceiveInit<'a> {
+    pub fn read<T>(pb: &'a mut ReadBuf<T>) -> Result<Self, Error>
+    where
+        T: Borrow<[u8]>,
+    {
+        Ok(Self(TransferInit::read(pb)?))
+    }
+
+    pub fn write(&self, wb: &mut WriteBuf) -> Result<(), Error> {
+        self.0.write(wb)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::utils::storage::{ReadBuf, WriteBuf};
 
     use super::*;
 
-    // Unlike im.rs, we can't lean on the tlv layer doing serialization, so we keep a little
+    // Unlike im.rs, we can't lean on the TLV layer doing serialization, so we keep a little
     // suite here that checks the BDX-custom serialization works.
 
-    /// Write `msg`, read it back, and assert the result is identical to the original.
+    
+    #[test]
+    fn send_init_minimal() {
+        check_roundtrip_send_init(SendInit(TransferInit {
+            transfer_ctl: TransferControlFlags::SENDER_DRIVE,
+            version: 1,
+            max_block_size: 1024,
+            start_offset: None,
+            max_length: None,
+            file_designator: b"my-file",
+            metadata: None,
+        }));
+    }
+
+    #[test]
+    fn send_init_with_range_and_metadata() {
+        check_roundtrip_send_init(SendInit(TransferInit {
+            transfer_ctl: TransferControlFlags::RECEIVER_DRIVE,
+            version: 1,
+            max_block_size: 512,
+            start_offset: Some(42),
+            max_length: Some(100_000),
+            file_designator: b"ota.bin",
+            // An (empty) anonymous TLV structure: 0x15 = struct start, 0x18 = end-of-container.
+            metadata: Some(TLVElement::new(&[0x15, 0x18])),
+        }));
+    }
+
+    #[test]
+    fn send_init_widerange() {
+        check_roundtrip_send_init(SendInit(TransferInit {
+            transfer_ctl: TransferControlFlags::SENDER_DRIVE,
+            version: 1,
+            max_block_size: 1280,
+            start_offset: Some(8),
+            max_length: Some(u64::from(u32::MAX) + 1),
+            file_designator: b"big",
+            metadata: None,
+        }));
+    }
+
+    // Utilities for roundtrip testing
+
     fn check_roundtrip_send_init(msg: SendInit) {
         let mut buf = [0; 256];
 
@@ -196,43 +271,4 @@ mod tests {
         assert_eq!(msg, parsed);
     }
 
-    #[test]
-    fn send_init_minimal() {
-        check_roundtrip_send_init(SendInit {
-            transfer_ctl: TransferControlFlags::SENDER_DRIVE,
-            version: 1,
-            max_block_size: 1024,
-            start_offset: None,
-            max_length: None,
-            file_designator: b"my-file",
-            metadata: None,
-        });
-    }
-
-    #[test]
-    fn send_init_with_range_and_metadata() {
-        check_roundtrip_send_init(SendInit {
-            transfer_ctl: TransferControlFlags::RECEIVER_DRIVE,
-            version: 1,
-            max_block_size: 512,
-            start_offset: Some(42),
-            max_length: Some(100_000),
-            file_designator: b"ota.bin",
-            // An (empty) anonymous TLV structure: 0x15 = struct start, 0x18 = end-of-container.
-            metadata: Some(TLVElement::new(&[0x15, 0x18])),
-        });
-    }
-
-    #[test]
-    fn send_init_widerange() {
-        check_roundtrip_send_init(SendInit {
-            transfer_ctl: TransferControlFlags::SENDER_DRIVE,
-            version: 1,
-            max_block_size: 1280,
-            start_offset: Some(8),
-            max_length: Some(u64::from(u32::MAX) + 1),
-            file_designator: b"big",
-            metadata: None,
-        });
-    }
 }
