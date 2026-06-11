@@ -574,4 +574,61 @@ mod tests {
             assert!(result.is_ok());
         });
     }
+
+    // ── creds-by-id / connect_once tests (deferred non-concurrent connect) ──
+
+    #[test]
+    fn creds_by_id_returns_matching_or_none() {
+        let networks = make_networks(
+            &[(b"MySSID", b"MyPass"), (b"OtherSSID", b"OtherPass")],
+            false,
+        );
+        let mut buf = [0u8; MAX_CREDS_SIZE];
+
+        // An existing network is looked up by id.
+        let creds = TestMgr::creds(&networks, b"MySSID", &mut buf)
+            .unwrap()
+            .unwrap();
+        match creds {
+            WirelessCreds::Wifi { ssid, pass } => {
+                assert_eq!(ssid, b"MySSID");
+                assert_eq!(pass, b"MyPass");
+            }
+            _ => panic!("Expected WiFi creds"),
+        }
+
+        // A missing network is `Ok(None)` (not found), not an error.
+        assert!(TestMgr::creds(&networks, b"NonExistent", &mut buf)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn connect_once_connects_to_named_network() {
+        let networks = make_networks(&[(b"MySSID", b"MyPass")], false);
+        let net_ctl = FakeNetCtl::new();
+        let mut buf = [0u8; MAX_CREDS_SIZE];
+        // `new` takes the networks/net_ctl by value, so the manager owns them;
+        // `Ok` already implies `FakeNetCtl::connect` ran (its only `Ok` path
+        // sets `connected = true`), so there's no need to inspect it afterwards.
+        let mut mgr = TestMgr::new(networks, net_ctl, &mut buf);
+
+        embassy_futures::block_on(async {
+            assert!(mgr.connect_once(b"MySSID").await.is_ok());
+        });
+    }
+
+    #[test]
+    fn connect_once_unknown_network_is_invalid_data() {
+        let networks = make_networks(&[], false);
+        let net_ctl = FakeNetCtl::new();
+        let mut buf = [0u8; MAX_CREDS_SIZE];
+        let mut mgr = TestMgr::new(networks, net_ctl, &mut buf);
+
+        embassy_futures::block_on(async {
+            // No matching network -> a deferred connect can't proceed.
+            let err = mgr.connect_once(b"MySSID").await.unwrap_err();
+            assert!(matches!(err.code(), ErrorCode::InvalidData));
+        });
+    }
 }
