@@ -68,6 +68,7 @@ pub(crate) mod fmt;
 
 pub mod acl;
 pub mod attest;
+pub mod bdx;
 pub mod cert;
 pub mod crypto;
 pub mod dm;
