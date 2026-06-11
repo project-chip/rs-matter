@@ -48,6 +48,22 @@ pub const DEV_TYPE_AGGREGATOR: DeviceType = DeviceType {
     drev: 1,
 };
 
+/// The OTA Requestor device type: a node that obtains and applies software
+/// updates. It hosts the OTA Software Update Requestor cluster (server) and is a
+/// client of the OTA Software Update Provider cluster.
+pub const DEV_TYPE_OTA_REQUESTOR: DeviceType = DeviceType {
+    dtype: 0x0012,
+    drev: 1,
+};
+
+/// The OTA Provider device type: a node that serves software updates. It hosts
+/// the OTA Software Update Provider cluster (server) and is a client of the OTA
+/// Software Update Requestor cluster.
+pub const DEV_TYPE_OTA_PROVIDER: DeviceType = DeviceType {
+    dtype: 0x0014,
+    drev: 1,
+};
+
 /// A constant representing the On/Off Light device in Matter.
 ///
 /// Matter Device Library revision history: rev 1 was Zigbee-3.0

@@ -538,6 +538,12 @@ pub(crate) fn opcode(meta: &MessageMeta) -> Option<OpCode> {
 /// ascending `offset` order, with the block's payload. A `write` error aborts
 /// the transfer.
 pub trait BdxSink {
+    /// Called once, after transfer negotiation and before any [`write`](Self::write),
+    /// with the total transfer length in bytes if the sender committed to a
+    /// definite length (`None` for an indefinite transfer). The default does
+    /// nothing; sinks that report progress override it.
+    fn begin(&mut self, _total: Option<u64>) {}
+
     /// Store `data` at byte `offset` from the start of the transferred file.
     async fn write(&mut self, offset: u64, data: &[u8]) -> Result<(), Error>;
 }
@@ -546,6 +552,10 @@ impl<T> BdxSink for &mut T
 where
     T: BdxSink,
 {
+    fn begin(&mut self, total: Option<u64>) {
+        (**self).begin(total)
+    }
+
     async fn write(&mut self, offset: u64, data: &[u8]) -> Result<(), Error> {
         (**self).write(offset, data).await
     }
@@ -558,6 +568,15 @@ where
 /// requested length (for an unknown-size source) or reaching
 /// [`size`](Self::size) ends the transfer.
 pub trait BdxSource {
+    /// Called once with the requested file designator before any
+    /// [`size`](Self::size)/[`read`](Self::read). Resolve it to a transferable
+    /// payload, or return an error to reject the transfer (the engine then
+    /// aborts with `FileDesignatorUnknown`). The designator borrows the incoming
+    /// message, so a source that needs it later must copy it. Default: accept.
+    fn begin(&mut self, _file_designator: &[u8]) -> Result<(), Error> {
+        Ok(())
+    }
+
     /// The total length of the transfer in bytes, if known. `Some` enables a
     /// definite-length transfer; `None` an indefinite one.
     fn size(&self) -> Option<u64>;
@@ -571,6 +590,10 @@ impl<T> BdxSource for &mut T
 where
     T: BdxSource,
 {
+    fn begin(&mut self, file_designator: &[u8]) -> Result<(), Error> {
+        (**self).begin(file_designator)
+    }
+
     fn size(&self) -> Option<u64> {
         (**self).size()
     }
@@ -659,8 +682,9 @@ async fn recv_block<S: BdxSink>(
 
 /// The outcome of receiving the `ReceiveAccept` (deferred-abort, as above).
 enum AcceptRecv {
-    /// Accepted: `true` if the Sender drives, `false` if the Receiver drives.
-    Ok(bool),
+    /// Accepted: sender-drive flag (`true` if the Sender drives) and the
+    /// negotiated definite length, if any.
+    Ok(bool, Option<u64>),
     /// Accepted but no drive mode was selected.
     NoMethod,
     /// A message other than `ReceiveAccept`.
@@ -706,9 +730,12 @@ pub async fn download<S: BdxSink>(
         let rx = exchange.recv_fetch().await?;
         let meta = rx.meta();
         if classify(&meta)? == OpCode::ReceiveAccept {
-            let tc = TransferAccept::parse(true, rx.payload())?.transfer_control;
+            let accept = TransferAccept::parse(true, rx.payload())?;
+            let tc = accept.transfer_control;
             if tc.sender_drive || tc.receiver_drive {
-                AcceptRecv::Ok(tc.sender_drive)
+                let total =
+                    (accept.range_control.def_len && accept.length > 0).then_some(accept.length);
+                AcceptRecv::Ok(tc.sender_drive, total)
             } else {
                 AcceptRecv::NoMethod
             }
@@ -718,13 +745,15 @@ pub async fn download<S: BdxSink>(
     };
     exchange.rx_done()?;
 
-    let sender_drive = match recv {
-        AcceptRecv::Ok(sender_drive) => sender_drive,
+    let (sender_drive, total) = match recv {
+        AcceptRecv::Ok(sender_drive, total) => (sender_drive, total),
         AcceptRecv::NoMethod => {
             return abort(exchange, BdxStatus::TransferMethodNotSupported).await
         }
         AcceptRecv::Unexpected => return abort(exchange, BdxStatus::UnexpectedMessage).await,
     };
+
+    sink.begin(total);
 
     let mut offset = 0;
     let mut counter = 0u32;
@@ -769,6 +798,7 @@ pub async fn download<S: BdxSink>(
     }
 
     exchange.acknowledge().await?;
+
     Ok(offset)
 }
 
@@ -780,6 +810,8 @@ enum InitRecv {
     StartOffset,
     /// The Initiator did not propose Sender-drive, which is all we support here.
     Method,
+    /// The source rejected the requested file designator.
+    FileUnknown,
     /// A message other than `ReceiveInit`.
     Unexpected,
 }
@@ -807,6 +839,8 @@ pub async fn serve<S: BdxSource>(
                 InitRecv::StartOffset
             } else if !init.transfer_control.sender_drive {
                 InitRecv::Method
+            } else if source.begin(init.file_designator).is_err() {
+                InitRecv::FileUnknown
             } else {
                 InitRecv::Ok(init.max_block_size)
             }
@@ -820,6 +854,7 @@ pub async fn serve<S: BdxSource>(
         InitRecv::Ok(pmbs) => pmbs,
         InitRecv::StartOffset => return abort(exchange, BdxStatus::StartOffsetNotSupported).await,
         InitRecv::Method => return abort(exchange, BdxStatus::TransferMethodNotSupported).await,
+        InitRecv::FileUnknown => return abort(exchange, BdxStatus::FileDesignatorUnknown).await,
         InitRecv::Unexpected => return abort(exchange, BdxStatus::UnexpectedMessage).await,
     };
 
