@@ -24,6 +24,7 @@
 
 use num_derive::FromPrimitive;
 
+use crate::sc::{GeneralCode, StatusReport};
 use crate::transport::exchange::MessageMeta;
 
 pub use block::*;
@@ -75,5 +76,38 @@ impl OpCode {
 impl From<OpCode> for MessageMeta {
     fn from(op: OpCode) -> Self {
         op.meta()
+    }
+}
+
+/// An enumeration of all possible error codes that can be returned by the BDX protocol.
+#[derive(FromPrimitive, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum BdxStatusCode {
+    LengthTooLarge = 0x0012,
+    LengthTooShort = 0x0013,
+    LengthMismatch = 0x0014,
+    LengthRequired = 0x0015,
+    BadMessageContents = 0x0016,
+    BadBlockCounter = 0x0017,
+    UnexpectedMessage = 0x0018,
+    ResponderBusy = 0x0019,
+    TransferFailedUnknownError = 0x001F,
+    TransferMethodNotSupported = 0x0050,
+    FileDesignatorUnknown = 0x0051,
+    StartOffsetNotSupported = 0x0052,
+    VersionNotSupported = 0x0053,
+    Unknown = 0x005F,
+}
+
+impl BdxStatusCode {
+    /// Build the `StatusReport` that carries this BDX status code.
+    pub fn as_report(&self) -> StatusReport<'static> {
+        StatusReport {
+            // BDX `StatusReport` always denote a failure, see 11.22.3.2 in Core Spec
+            general_code: GeneralCode::Failure,
+            proto_id: PROTO_ID_BDX as u32,
+            proto_code: *self as u16,
+            proto_data: &[],
+        }
     }
 }
