@@ -78,7 +78,7 @@ mod mdns;
 
 fn main() -> Result<(), Error> {
     env_logger::init_from_env(
-        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "debug"),
+        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
     );
 
     let args = std::env::args().skip(1).collect::<Vec<_>>();
