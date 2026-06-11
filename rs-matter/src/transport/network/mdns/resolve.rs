@@ -19,19 +19,26 @@
 //!
 //! Requires the systemd-resolved daemon to be installed, configured with mDNS enabled and running.
 
+use core::pin::pin;
+
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 
 use domain::base::Name;
+use embassy_futures::select::select3;
+use embassy_time::{Duration, Timer};
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use zbus::Connection;
 
 use crate::error::Error;
-use crate::transport::network::mdns::MatterService;
+use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
+use crate::transport::network::MatterLocalService;
+use crate::utils::select::Coalesce;
 use crate::utils::zbus_proxies::resolve::manager::ManagerProxy;
 use crate::Matter;
 
-use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
+/// Interval (ms) at which a running query re-checks whether it is still in flight.
+const QUERY_POLL_INTERVAL_MS: u64 = 250;
 
 /// Interface index for "any interface"
 const IF_INDEX_ANY: i32 = 0;
@@ -64,13 +71,13 @@ const DNS_TYPE_PTR: u16 = 12;
 /// required by the systemd-resolved daemon so as to register mDNS services.
 ///
 /// For testing, easiest is to run the application with `sudo` or as root.
-pub struct ResolveMdnsResponder {
-    services: HashMap<MatterService, OwnedObjectPath>,
+pub struct ResolveMdns {
+    services: HashMap<MatterLocalService, OwnedObjectPath>,
     connection: Connection,
 }
 
-impl ResolveMdnsResponder {
-    /// Create a new instance of the systemd-resolved mDNS responder.
+impl ResolveMdns {
+    /// Create a new instance of the systemd-resolved mDNS implementation.
     pub fn new(connection: Connection) -> Self {
         Self {
             services: HashMap::new(),
@@ -78,13 +85,26 @@ impl ResolveMdnsResponder {
         }
     }
 
-    /// Run the mDNS responder
+    /// Run the mDNS responder + querier.
     ///
     /// # Arguments
     /// - `matter`: A reference to the Matter instance to get mDNS services from.
     pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
+        let connection = self.connection.clone();
+
+        let mut respond = pin!(self.run_respond(matter));
+        let mut resolve = pin!(Self::run_resolve(matter, &connection));
+        let mut browse = pin!(Self::run_browse(matter, &connection));
+
+        select3(&mut respond, &mut resolve, &mut browse)
+            .coalesce()
+            .await
+    }
+
+    /// Publish the local Matter services and keep them in sync with the stack.
+    async fn run_respond(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
         loop {
-            matter.wait_mdns().await;
+            matter.transport().wait_mdns().await;
 
             let mut services = HashSet::new();
             matter.mdns_services(|service| {
@@ -101,10 +121,128 @@ impl ResolveMdnsResponder {
         }
     }
 
+    /// Service commissionable-browse requests: PTR-query `_matterc._udp.local`,
+    /// resolve each discovered instance, and deposit it (filter + exclude checks
+    /// happen in the deposit) while the browse is in flight.
+    async fn run_browse(matter: &Matter<'_>, connection: &Connection) -> Result<(), Error> {
+        loop {
+            let _filter = matter.transport().wait_mdns_browse_request().await;
+
+            let resolve = ManagerProxy::new(connection).await?;
+
+            while matter.transport().mdns_browse_in_flight() {
+                if let Ok((records, _flags)) = resolve
+                    .resolve_record(
+                        IF_INDEX_ANY,
+                        "_matterc._udp.local",
+                        DNS_CLASS_IN,
+                        DNS_TYPE_PTR,
+                        0,
+                    )
+                    .await
+                {
+                    for instance in records
+                        .into_iter()
+                        .filter_map(|(_if, _rt, _rc, rdata)| parse_dns_name(&rdata))
+                    {
+                        let Some((name, type_, domain)) = parse_service_instance(&instance) else {
+                            continue;
+                        };
+
+                        if let Ok((srv_data, txt_data, _cn, _ct, _cd, _fl)) = resolve
+                            .resolve_service(IF_INDEX_ANY, &name, &type_, &domain, AF_UNSPEC, 0)
+                            .await
+                        {
+                            Self::deposit_browse(matter, &instance, &srv_data, &txt_data);
+                        }
+
+                        if !matter.transport().mdns_browse_in_flight() {
+                            break;
+                        }
+                    }
+                }
+
+                Timer::after(Duration::from_millis(QUERY_POLL_INTERVAL_MS)).await;
+            }
+        }
+    }
+
+    /// Service operational-resolve requests: resolve the requested instance and
+    /// deposit its address + MRP params, while the resolve is in flight.
+    async fn run_resolve(matter: &Matter<'_>, connection: &Connection) -> Result<(), Error> {
+        loop {
+            let service = matter.transport().wait_mdns_resolve_request().await;
+
+            let mut name_buf: heapless::String<128> = heapless::String::new();
+            service.instance_name(&mut name_buf);
+            let label = name_buf.split('.').next().unwrap_or("").to_string();
+            let service_type = service.service_type();
+
+            let resolve = ManagerProxy::new(connection).await?;
+
+            while matter.transport().mdns_resolve_in_flight() {
+                if let Ok((srv_data, txt_data, _cn, _ct, _cd, _fl)) = resolve
+                    .resolve_service(IF_INDEX_ANY, &label, service_type, "local", AF_UNSPEC, 0)
+                    .await
+                {
+                    Self::deposit_resolve(matter, name_buf.as_str(), &srv_data, &txt_data);
+                }
+
+                Timer::after(Duration::from_millis(QUERY_POLL_INTERVAL_MS)).await;
+            }
+        }
+    }
+
+    /// Deposit a resolved browse hit (matched by `instance_name` for its id).
+    #[allow(clippy::type_complexity)]
+    fn deposit_browse(
+        matter: &Matter<'_>,
+        instance_name: &str,
+        srv_data: &[(u16, u16, u16, String, Vec<(i32, i32, Vec<u8>)>, String)],
+        txt_data: &[Vec<u8>],
+    ) {
+        for (_p, _w, port, _host, addresses, _ch) in srv_data {
+            if let Some(ip) = first_address(addresses) {
+                let txt = txt_iter(txt_data);
+                matter
+                    .transport()
+                    .try_deposit_mdns_browse(&MdnsRemoteService {
+                        instance_name: DottedName(instance_name),
+                        port: Some(*port),
+                        addrs: core::iter::once(ip),
+                        txt: txt.iter().copied(),
+                    });
+            }
+        }
+    }
+
+    /// Deposit a resolved operational hit (matched by `instance_name`).
+    #[allow(clippy::type_complexity)]
+    fn deposit_resolve(
+        matter: &Matter<'_>,
+        instance_name: &str,
+        srv_data: &[(u16, u16, u16, String, Vec<(i32, i32, Vec<u8>)>, String)],
+        txt_data: &[Vec<u8>],
+    ) {
+        for (_p, _w, port, _host, addresses, _ch) in srv_data {
+            if let Some(ip) = first_address(addresses) {
+                let txt = txt_iter(txt_data);
+                matter
+                    .transport()
+                    .try_deposit_mdns_resolve(&MdnsRemoteService {
+                        instance_name: DottedName(instance_name),
+                        port: Some(*port),
+                        addrs: core::iter::once(ip),
+                        txt: txt.iter().copied(),
+                    });
+            }
+        }
+    }
+
     async fn update_services(
         &mut self,
         matter: &Matter<'_>,
-        services: &HashSet<MatterService>,
+        services: &HashSet<MatterLocalService>,
     ) -> Result<(), Error> {
         for service in services {
             if !self.services.contains_key(service) {
@@ -135,9 +273,9 @@ impl ResolveMdnsResponder {
     async fn register(
         &mut self,
         matter: &Matter<'_>,
-        service: &MatterService,
+        service: &MatterLocalService,
     ) -> Result<OwnedObjectPath, Error> {
-        // Scratch buffer for expanding `MatterService` into a `Service` view —
+        // Scratch buffer for expanding `MatterLocalService` into a `MdnsLocalService` view —
         // the strings (name, subtypes, TXT values) are formatted into this buffer.
         let mut buf = [0u8; 512];
         let (service, _) = service.service(matter.dev_det(), matter.port(), &mut buf)?;
@@ -183,117 +321,27 @@ impl ResolveMdnsResponder {
     }
 }
 
-/// Discover commissionable Matter devices using systemd-resolved over DBus.
-///
-/// # Arguments
-/// * `connection` - A reference to the DBus system connection
-/// * `filter` - Filter criteria for discovered devices
-///
-/// # Returns
-/// A vector of discovered devices matching the filter criteria
-///
-/// # Note
-/// systemd-resolved doesn't support service browsing with subtypes, so we browse for all
-/// `_matterc._udp.local` services and filter the results afterward.
-pub async fn discover_commissionable<const A: usize>(
-    connection: &Connection,
-    filter: &CommissionableFilter,
-) -> Result<Vec<DiscoveredDevice<A>>, Error> {
-    let mut results = Vec::new();
+/// The first parseable IP address from a systemd-resolved address list
+/// (`(ifindex, family, bytes)` triples), best-effort.
+fn first_address(addresses: &[(i32, i32, Vec<u8>)]) -> Option<IpAddr> {
+    addresses
+        .iter()
+        .find_map(|(_ifindex, family, bytes)| parse_ip_address(*family, bytes))
+}
 
-    info!("Browsing for mDNS services via systemd-resolved: _matterc._udp.local");
-
-    let resolve = ManagerProxy::new(connection).await?;
-
-    let ptr_query = "_matterc._udp.local";
-    let (records, _flags) = match resolve
-        .resolve_record(IF_INDEX_ANY, ptr_query, DNS_CLASS_IN, DNS_TYPE_PTR, 0)
-        .await
-    {
-        Ok(result) => result,
-        Err(e) => {
-            warn!("Failed to query PTR records: {:?}", e);
-            return Ok(results);
-        }
-    };
-
-    let service_instances = records
-        .into_iter()
-        .filter_map(|(_ifindex, _rtype, _rclass, rdata)| parse_dns_name(&rdata))
-        .collect::<Vec<_>>();
-
-    for instance in &service_instances {
-        let (name, type_, domain) = match parse_service_instance(instance) {
-            Some(parts) => parts,
-            None => {
-                warn!("Failed to parse service instance: {}", instance);
-                continue;
-            }
-        };
-
-        debug!(
-            "Resolving service: name='{}', type='{}', domain='{}'",
-            name, type_, domain
-        );
-
-        match resolve
-            .resolve_service(IF_INDEX_ANY, &name, &type_, &domain, AF_UNSPEC, 0)
-            .await
-        {
-            Ok((
-                srv_data,
-                txt_data,
-                _canonical_name,
-                _canonical_type,
-                _canonical_domain,
-                _flags,
-            )) => {
-                for (_priority, _weight, port, _hostname, addresses, _canonical_hostname) in
-                    srv_data
-                {
-                    let mut device = DiscoveredDevice::default();
-                    device.set_instance_name(&name);
-                    device.port = port;
-
-                    // Add all available addresses (they will be sorted by priority)
-                    for (_ifindex, family, addr_bytes) in &addresses {
-                        if let Some(ip) = parse_ip_address(*family, addr_bytes) {
-                            device.add_address(ip);
-                        }
-                    }
-
-                    if device.addresses().is_empty() {
-                        warn!("No valid address found for service: {}", name);
-                        continue;
-                    }
-
-                    for txt_record in &txt_data {
-                        if let Ok(s) = core::str::from_utf8(txt_record) {
-                            if let Some(eq_pos) = s.find('=') {
-                                let key = &s[..eq_pos];
-                                let value = &s[eq_pos + 1..];
-                                device.set_txt_value(key, value);
-                            }
-                        }
-                    }
-
-                    if filter.matches(&device) {
-                        results.push_if_unique(device);
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("Failed to resolve service {}: {:?}", name, e);
+/// Borrowed `(key, value)` view over systemd-resolved TXT records (each a
+/// `key=value` (or bare `key`) UTF-8 byte string).
+fn txt_iter(txt_data: &[Vec<u8>]) -> Vec<(&str, &str)> {
+    let mut pairs = Vec::new();
+    for entry in txt_data {
+        if let Ok(s) = core::str::from_utf8(entry) {
+            match s.find('=') {
+                Some(eq) => pairs.push((&s[..eq], &s[eq + 1..])),
+                None => pairs.push((s, "")),
             }
         }
     }
-
-    info!(
-        "systemd-resolved mDNS discovery found {} devices",
-        results.len()
-    );
-
-    Ok(results)
+    pairs
 }
 
 /// Parse a DNS wire format domain name into a string.

@@ -85,7 +85,7 @@ use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
 use rs_matter::transport::network::btp::Btp;
-use rs_matter::transport::network::mdns::builtin::{BuiltinMdnsResponder, Host};
+use rs_matter::transport::network::mdns::builtin::{BuiltinMdns, Host};
 use rs_matter::transport::network::{
     Address, ChainedNetwork, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend, NoNetwork,
 };
@@ -364,7 +364,7 @@ fn main() -> ! {
 
     report_size("Data Model", size_of_val(dm), &mut aux_total);
 
-    let mdns = mk_static!(BuiltinMdnsResponder, BuiltinMdnsResponder::new());
+    let mdns = mk_static!(BuiltinMdns, BuiltinMdns::new());
 
     report_size("mDNS responder", size_of_val(&*mdns), &mut aux_total);
 
@@ -528,7 +528,7 @@ async fn dm_task(dm: &'static AppDataModel<'static>) {
 
 #[inline(always)]
 fn mdns_task_fut<'a, C: Crypto + 'a>(
-    mdns: &'a mut BuiltinMdnsResponder,
+    mdns: &'a mut BuiltinMdns,
     matter: &'a Matter<'a>,
     crypto: C,
 ) -> impl Future<Output = Result<(), Error>> + 'a {
@@ -549,7 +549,7 @@ fn mdns_task_fut<'a, C: Crypto + 'a>(
 
 #[embassy_executor::task]
 async fn mdns_task(
-    mdns: &'static mut BuiltinMdnsResponder,
+    mdns: &'static mut BuiltinMdns,
     matter: &'static Matter<'static>,
     crypto: &'static AppCrypto,
 ) {
@@ -651,7 +651,8 @@ fn dm_handler<'a>(
     wifi_diag: &'a dyn WifiDiag,
     net_ctl: &'a AppNetCtl,
 ) -> AppDmHandler<'a> {
-    endpoints::WifiSysHandlerBuilder::new(net_ctl, wifi_diag).build(rand)
+    endpoints::WifiSysHandlerBuilder::new(net_ctl, wifi_diag)
+        .build(rand)
         .chain(
             EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
             Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),

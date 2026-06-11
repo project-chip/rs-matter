@@ -61,8 +61,6 @@ use rs_matter::error::{Error, ErrorCode};
 use rs_matter::onboard::cac::{IcacGenerator, RcacGenerator};
 use rs_matter::onboard::noc::NocGenerator;
 use rs_matter::onboard::{CommissionOptions, Commissioner};
-use rs_matter::sc::pase::PaseInitiator;
-use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{Address, NoNetwork};
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::Matter;
@@ -74,7 +72,6 @@ use static_cell::StaticCell;
 const DEFAULT_PASSCODE: u32 = 20202021;
 const DEFAULT_PEER_ADDR: &str = "[::1]:5540";
 
-const PASE_TIMEOUT_SECS: u64 = 30;
 const COMMISSION_TIMEOUT_SECS: u64 = 60;
 
 static CTRL_MATTER: StaticCell<Matter> = StaticCell::new();
@@ -186,11 +183,7 @@ async fn run_commission<C: Crypto>(
     crypto: &C,
     args: Args,
 ) -> Result<CommissionResult, Error> {
-    info!("=== PASE handshake against {} ===", args.peer_addr);
-    establish_pase(matter, crypto, args.peer_addr, args.passcode).await?;
-    info!("PASE established");
-
-    info!("=== Commissioner::commission (phase 1 — over PASE) ===");
+    info!("=== Commissioner::commission (phase 1 — PASE + over PASE) ===");
 
     // chip-tool's conventional admin NodeID + test vendor — matches
     // what `chip-all-clusters-app` expects on the device-side ACL.
@@ -274,8 +267,13 @@ async fn run_commission<C: Crypto>(
     };
 
     let phase1 = {
-        let mut commission_fut =
-            pin!(commissioner.commission(&opts, DEVICE_NODE_ID, VALID_FOREVER));
+        let mut commission_fut = pin!(commissioner.commission(
+            Address::Udp(args.peer_addr),
+            args.passcode,
+            &opts,
+            DEVICE_NODE_ID,
+            VALID_FOREVER,
+        ));
         let mut timeout = pin!(Timer::after(Duration::from_secs(COMMISSION_TIMEOUT_SECS)));
         match select(&mut commission_fut, &mut timeout).await {
             Either::First(r) => r?,
@@ -309,25 +307,4 @@ async fn run_commission<C: Crypto>(
         fabric_index: phase1.fabric_index,
         device_node_id: phase1.device_node_id,
     })
-}
-
-async fn establish_pase<C: Crypto>(
-    matter: &Matter<'_>,
-    crypto: &C,
-    peer_addr: SocketAddr,
-    passcode: u32,
-) -> Result<(), Error> {
-    let peer = Address::Udp(peer_addr);
-
-    let mut exchange = Exchange::initiate_unsecured(matter, crypto, peer).await?;
-    let mut pase_fut = pin!(PaseInitiator::initiate(&mut exchange, crypto, passcode));
-    let mut timeout = pin!(Timer::after(Duration::from_secs(PASE_TIMEOUT_SECS)));
-
-    match select(&mut pase_fut, &mut timeout).await {
-        Either::First(r) => r,
-        Either::Second(_) => {
-            error!("PASE timed out after {PASE_TIMEOUT_SECS}s");
-            Err(ErrorCode::RxTimeout.into())
-        }
-    }
 }

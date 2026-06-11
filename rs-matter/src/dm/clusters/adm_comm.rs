@@ -98,7 +98,7 @@ impl ClusterHandler for AdminCommHandler {
     }
 
     fn window_status(&self, ctx: impl ReadContext) -> Result<CommissioningWindowStatusEnum, Error> {
-        let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
+        let notify_mdns = || ctx.exchange().matter().transport().notify_mdns_changed();
         let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
         ctx.exchange().with_state(|state| {
@@ -119,7 +119,7 @@ impl ClusterHandler for AdminCommHandler {
     }
 
     fn admin_fabric_index(&self, ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
+        let notify_mdns = || ctx.exchange().matter().transport().notify_mdns_changed();
         let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
         ctx.exchange().with_state(|state| {
@@ -142,7 +142,7 @@ impl ClusterHandler for AdminCommHandler {
     }
 
     fn admin_vendor_id(&self, ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
-        let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
+        let notify_mdns = || ctx.exchange().matter().transport().notify_mdns_changed();
         let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
         ctx.exchange().with_state(|state| {
@@ -165,7 +165,7 @@ impl ClusterHandler for AdminCommHandler {
         ctx: impl InvokeContext,
         request: OpenCommissioningWindowRequest<'_>,
     ) -> Result<(), Error> {
-        let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
+        let notify_mdns = || ctx.exchange().matter().transport().notify_mdns_changed();
         let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
         // Validate the PAKE parameters up front so we can surface
@@ -217,7 +217,7 @@ impl ClusterHandler for AdminCommHandler {
         ctx: impl InvokeContext,
         request: OpenBasicCommissioningWindowRequest<'_>,
     ) -> Result<(), Error> {
-        let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
+        let notify_mdns = || ctx.exchange().matter().transport().notify_mdns_changed();
         let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
         ctx.exchange().with_state(|state| {
@@ -253,7 +253,7 @@ impl ClusterHandler for AdminCommHandler {
     }
 
     fn handle_revoke_commissioning(&self, ctx: impl InvokeContext) -> Result<(), Error> {
-        let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
+        let notify_mdns = || ctx.exchange().matter().transport().notify_mdns_changed();
         let notify_change = |_, _| ctx.notify_own_cluster_changed();
 
         // Per Matter Core spec (and CHIP's
@@ -298,7 +298,7 @@ impl ClusterHandler for AdminCommHandler {
                 notify_change,
             )?;
 
-            ctx.exchange().matter().session_removed.notify();
+            ctx.exchange().matter().transport().notify_session_removed();
             Ok::<_, Error>(())
         })?;
 

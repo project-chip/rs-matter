@@ -31,7 +31,7 @@ use crate::error::{Error, ErrorCode};
 use crate::transport::network::mdns::builtin::types::{Buf, NameSlice, Txt};
 use crate::utils::bitflags::bitflags;
 
-use super::Service;
+use super::MdnsLocalService;
 
 impl From<ShortBuf> for Error {
     fn from(_: ShortBuf) -> Self {
@@ -111,7 +111,7 @@ impl Host<'_> {
     /// the cache-flush bit.
     pub fn broadcast<'a, S, T>(
         &self,
-        service: &Service<'a, S, T>,
+        service: &MdnsLocalService<'a, S, T>,
         buf: &mut [u8],
         host_ttl_sec: u32,
         service_ttl_sec: u32,
@@ -166,7 +166,7 @@ impl Host<'_> {
     /// TTLs, and the cache-flush bit on authoritative records.
     pub fn respond<'a, S, T>(
         &self,
-        service: &Service<'a, S, T>,
+        service: &MdnsLocalService<'a, S, T>,
         data: &[u8],
         buf: &mut [u8],
         ttl_sec: u32,
@@ -253,7 +253,7 @@ impl Host<'_> {
     #[allow(clippy::too_many_arguments)]
     fn answer<'a, S, T, C>(
         &self,
-        service: &Service<'a, S, T>,
+        service: &MdnsLocalService<'a, S, T>,
         message: &Message<&[u8]>,
         answer: &mut AnswerBuilder<C>,
         ad: &mut AdditionalData,
@@ -299,7 +299,7 @@ impl Host<'_> {
     /// to be an issue.
     fn additional<'a, S, T, C>(
         &self,
-        service: &Service<'a, S, T>,
+        service: &MdnsLocalService<'a, S, T>,
         ad: AdditionalData,
         additional: &mut AdditionalBuilder<C>,
         ttl_sec: u32,
@@ -345,7 +345,7 @@ impl Host<'_> {
         &self,
         name: N,
         rtype: Rtype,
-        service: &Service<'a, S, T>,
+        service: &MdnsLocalService<'a, S, T>,
         answer: &mut R,
         ad: &mut AdditionalData,
         delay: &mut bool,
@@ -417,7 +417,7 @@ impl Host<'_> {
         &self,
         name: N,
         rtype: Rtype,
-        service: &Service<'a, S, T>,
+        service: &MdnsLocalService<'a, S, T>,
         answer: &mut R,
         ad: &mut AdditionalData,
         delay: &mut bool,
@@ -448,7 +448,7 @@ impl Host<'_> {
                 replied = true;
             }
             Rtype::PTR => {
-                if name.name_eq(&Service::<S, T>::dns_sd_fqdn()) {
+                if name.name_eq(&MdnsLocalService::<S, T>::dns_sd_fqdn()) {
                     service.add_dns_sd_service_type(answer, ttl_sec)?;
                     service.add_dns_sd_service_subtypes(answer, ttl_sec)?;
                     *ad |= AdditionalData::IPS | AdditionalData::SRV | AdditionalData::TXT;
@@ -548,7 +548,7 @@ impl Host<'_> {
     }
 }
 
-impl<'a, S, T> Service<'a, S, T>
+impl<'a, S, T> MdnsLocalService<'a, S, T>
 where
     S: Iterator<Item = &'a str> + Clone,
     T: Iterator<Item = (&'a str, &'a str)> + Clone,
@@ -715,12 +715,12 @@ mod tests {
     use domain::rdata::AllRecordData;
 
     use crate::transport::network::mdns::builtin::types::Buf;
-    use crate::transport::network::mdns::Service;
+    use crate::transport::network::mdns::MdnsLocalService;
 
     use super::Host;
 
     /// A test fixture for a service, holding subtypes and TXT records as slices.
-    /// At "use" time, converted to a `Service` with iterator-typed fields.
+    /// At "use" time, converted to a `MdnsLocalService` with iterator-typed fields.
     struct TestService<'a> {
         name: &'a str,
         service: &'a str,
@@ -734,12 +734,12 @@ mod tests {
     impl<'a> TestService<'a> {
         fn as_service(
             &self,
-        ) -> Service<
+        ) -> MdnsLocalService<
             'a,
             impl Iterator<Item = &'a str> + Clone + '_,
             impl Iterator<Item = (&'a str, &'a str)> + Clone + '_,
         > {
-            Service {
+            MdnsLocalService {
                 name: self.name,
                 service: self.service,
                 protocol: self.protocol,
@@ -894,7 +894,7 @@ mod tests {
                 // Per-service responses: each service emits its own packet, so
                 // host A/AAAA additionals repeat per service.
                 &[
-                    // Service 1 (bar._matterc._udp): A, AAAA, SRV, TXT
+                    // MdnsLocalService 1 (bar._matterc._udp): A, AAAA, SRV, TXT
                     Answer {
                         owner: "foo.local",
                         details: AnswerDetails::A(Ipv4Addr::new(192, 168, 0, 1)),
@@ -914,7 +914,7 @@ mod tests {
                         owner: "bar._matterc._udp.local",
                         details: AnswerDetails::Txt(&[("a", "b"), ("c", "d")]),
                     },
-                    // Service 2 (ddd._matter._tcp): A, AAAA, SRV, TXT
+                    // MdnsLocalService 2 (ddd._matter._tcp): A, AAAA, SRV, TXT
                     Answer {
                         owner: "foo.local",
                         details: AnswerDetails::A(Ipv4Addr::new(192, 168, 0, 1)),

@@ -16,6 +16,7 @@
  */
 
 use core::fmt::{self, Display};
+use core::num::NonZeroU8;
 use core::pin::pin;
 
 use either::Either as EitherIo;
@@ -106,7 +107,7 @@ impl ExchangeId {
         self.check_no_pending_retrans(matter)?;
 
         loop {
-            let mut recv = pin!(matter.transport.get_if_rx(|packet| {
+            let mut recv = pin!(matter.transport().get_if_rx(|packet| {
                 if packet.buf.is_empty() {
                     false
                 } else {
@@ -125,7 +126,7 @@ impl ExchangeId {
                 }
             }));
 
-            let mut session_removed = pin!(matter.session_removed.wait());
+            let mut session_removed = pin!(matter.transport().wait_session_removed());
 
             let mut timeout = pin!(Timer::after(Duration::from_millis(
                 RetransEntry::new(matter.dev_det().sai, 0).max_delay_ms() * 3 / 2
@@ -208,7 +209,7 @@ impl ExchangeId {
 
             loop {
                 let mut notification = pin!(self.internal_wait_ack(matter));
-                let mut session_removed = pin!(matter.session_removed.wait());
+                let mut session_removed = pin!(matter.transport().wait_session_removed());
                 let mut timer = pin!(Timer::at(expired));
 
                 if !matches!(
@@ -1029,64 +1030,91 @@ impl<'a> Exchange<'a> {
         self.matter
     }
 
-    /// Create a new initiator exchange on the provided Matter stack for the provided peer Node ID.
+    /// Open an exchange over a CASE session to an already-commissioned node.
     ///
-    /// For now, this method will fail if there is no existing session in the provided Matter stack
-    /// for the provided peer Node ID.
+    /// If a CASE session for `(fabric_idx, peer_node_id)` already exists, an
+    /// exchange is opened on it directly via [`Exchange::initiate_for_session`]
+    /// (the common case - session and peer address reused, no mDNS). Otherwise
+    /// the peer's operational address is resolved over mDNS and a fresh CASE
+    /// session is established (driving [`crate::sc::case::CaseInitiator`]) before
+    /// the exchange is opened on it; the peer's MRP/session parameters advertised
+    /// in the mDNS TXT records seed the session.
     ///
-    /// In future, this method will do an mDNS lookup and create a new session on its own.
+    /// Establishing requires a running mDNS responder (e.g.
+    /// `BuiltinMdns::run`) to service the resolve; without one the
+    /// resolve times out and this returns [`ErrorCode::NotFound`].
     #[inline(always)]
-    pub async fn initiate(
+    pub async fn initiate<C: Crypto>(
         matter: &'a Matter<'a>,
-        fabric_idx: u8,
+        crypto: C,
+        fabric_idx: NonZeroU8,
         peer_node_id: NodeId,
-        secure: bool,
     ) -> Result<Self, Error> {
         matter
             .transport
-            .initiate(matter, fabric_idx, peer_node_id, secure)
+            .initiate(matter, crypto, fabric_idx, peer_node_id)
+            .await
+    }
+
+    /// Open an exchange over a **PASE** session to a not-yet-commissioned node
+    /// at the given peer address (use-case 2).
+    ///
+    /// If a PASE session **to that peer** already exists, an exchange is opened on
+    /// it directly via [`Exchange::initiate_for_session`]. Otherwise a new PASE
+    /// session is established: a plaintext session is opened and the PASE protocol
+    /// ([`crate::sc::pase::PaseInitiator`]) is run with `passcode`, then an
+    /// exchange is opened on the resulting PASE session.
+    ///
+    /// Reuse is keyed by peer address (not a single global PASE session), so a
+    /// commissioner can drive several concurrent commissionings.
+    ///
+    /// The peer's MRP/session parameters are negotiated by PASE itself
+    /// (PBKDFParamRequest/Response).
+    ///
+    /// Discovery of the address is out of scope here (it may come from mDNS - see
+    /// [`crate::transport::Transport::browse_commissionable`] - or from a BLE/BTP
+    /// advertisement, etc.); this method is transport-agnostic and takes the
+    /// already-known address.
+    #[inline(always)]
+    pub async fn initiate_pase<C: Crypto>(
+        matter: &'a Matter<'a>,
+        crypto: C,
+        peer_addr: network::Address,
+        passcode: u32,
+    ) -> Result<Self, Error> {
+        matter
+            .transport
+            .initiate_pase(matter, crypto, peer_addr, passcode)
             .await
     }
 
     /// Create a new initiator exchange on the provided Matter stack for the provided session ID.
     #[inline(always)]
     pub fn initiate_for_session(matter: &'a Matter<'a>, session_id: u32) -> Result<Self, Error> {
-        matter.transport.initiate_for_session(matter, session_id)
+        matter.transport().initiate_for_session(matter, session_id)
     }
 
-    /// Create a new initiator exchange on a new unsecured (plain-text) session to the given peer address.
+    /// Create a new initiator exchange on a new unsecured (plain-text) session to
+    /// the given peer address.
     ///
-    /// This is used by controllers to start a PASE or CASE handshake with a device.
-    /// The returned exchange can be used to send the first handshake message
-    /// (e.g. `PBKDFParamRequest` for PASE, or `Sigma1` for CASE).
-    ///
-    /// If there is no space for a new session, the method will attempt to evict
-    /// a session and retry.
-    ///
-    /// For flows that need direct access to the session ID (e.g. to upgrade the session
-    /// with derived keys after a successful handshake), use
-    /// `Transport::create_unsecured_session()` + `Exchange::initiate_for_session()` separately.
+    /// Low-level primitive below the three high-level entry points
+    /// ([`Exchange::initiate`], [`Exchange::initiate_pase`],
+    /// [`Exchange::initiate_for_session`]): the returned exchange carries the
+    /// first handshake message of PASE ([`crate::sc::pase::PaseInitiator`]) or
+    /// CASE ([`crate::sc::case::CaseInitiator`]). Use this only when driving a handshake protocol
+    /// directly; otherwise prefer `initiate_pase` (which runs PASE for you) or
+    /// `initiate` (CASE). If there is no space for a new session, an existing
+    /// session is evicted and the operation retried.
+    #[inline(always)]
     pub async fn initiate_unsecured<C: Crypto>(
         matter: &'a Matter<'a>,
         crypto: C,
         peer_addr: network::Address,
     ) -> Result<Self, Error> {
-        match matter
+        matter
             .transport
-            .initiate_unsecured_now(matter, &crypto, peer_addr)
-        {
-            Ok(exchange) => Ok(exchange),
-            Err(e) if e.code() == ErrorCode::NoSpaceSessions => {
-                matter
-                    .transport_runner(&crypto)
-                    .evict_some_session()
-                    .await?;
-                matter
-                    .transport
-                    .initiate_unsecured_now(matter, &crypto, peer_addr)
-            }
-            Err(e) => Err(e),
-        }
+            .initiate_plaintext(matter, crypto, peer_addr)
+            .await
     }
 
     /// Accepts a new responder exchange pending on the provided Matter stack.
@@ -1107,7 +1135,7 @@ impl<'a> Exchange<'a> {
     ) -> Result<Self, Error> {
         if received_timeout_ms > 0 {
             loop {
-                let mut accept = pin!(matter.transport.accept_if(matter, |_, exch, _| {
+                let mut accept = pin!(matter.transport().accept_if(matter, |_, exch, _| {
                     exch.mrp.has_rx_timed_out(received_timeout_ms as _)
                 }));
 
@@ -1120,7 +1148,7 @@ impl<'a> Exchange<'a> {
                 }
             }
         } else {
-            matter.transport.accept_if(matter, |_, _, _| true).await
+            matter.transport().accept_if(matter, |_, _, _| true).await
         }
     }
 
@@ -1421,7 +1449,7 @@ impl Drop for Exchange<'_> {
                 {
                     // Group session with no remaining exchanges — remove it
                     state.sessions.remove(self.id.session_id());
-                    self.matter.session_removed.notify();
+                    self.matter.transport().notify_session_removed();
                 }
 
                 Ok(true)
@@ -1431,7 +1459,7 @@ impl Drop for Exchange<'_> {
         });
 
         if !matches!(closed, Ok(true)) {
-            self.matter.transport.exchange_dropped.notify();
+            self.matter.transport().exchange_dropped.notify();
         }
     }
 }

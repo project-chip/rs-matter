@@ -29,8 +29,6 @@
 #![allow(clippy::uninlined_format_args)]
 #![recursion_limit = "1024"]
 
-use core::future::Future;
-
 use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::{
     self, BasicInfoConfig, BasicInfoSettings, FULL_CLUSTER as BASIC_INFO_CLUSTER,
@@ -49,7 +47,7 @@ use crate::pairing::DiscoveryCapabilities;
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, BASIC_INFO_KEY};
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
 use crate::sc::pase::Pase;
-use crate::transport::network::mdns::MatterService;
+use crate::transport::network::MatterLocalService;
 use crate::transport::network::{NetworkMulticast, NetworkReceive, NetworkSend};
 use crate::transport::session::Sessions;
 use crate::transport::{
@@ -59,7 +57,6 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::pooled::BufferAccess;
 use crate::utils::sync::blocking::Mutex;
-use crate::utils::sync::Notification;
 
 use rand_core::RngCore;
 
@@ -135,15 +132,7 @@ pub struct Matter<'a> {
     /// The internal state of the Matter Object, protected by a mutex for concurrent access from different threads and async tasks.
     state: Mutex<RefCell<MatterState>>,
     /// The transport state of the Matter Object
-    ///
-    /// Public for unit tests
-    pub transport: Transport,
-    /// A notification that the Matter mDNS services might have changed
-    mdns_changed: Notification,
-    /// A notification that a session had been removed
-    session_removed: Notification,
-    /// A notification that the groups have been modified
-    groups_modified: Notification,
+    transport: Transport,
     /// The basic information configuration for this Matter device
     dev_det: &'a BasicInfoConfig<'a>,
     /// The basic commissioning data for this Matter device
@@ -175,9 +164,6 @@ impl<'a> Matter<'a> {
         Self {
             state: Mutex::new(RefCell::new(MatterState::new())),
             transport: Transport::new(dev_det),
-            mdns_changed: Notification::new(),
-            session_removed: Notification::new(),
-            groups_modified: Notification::new(),
             dev_det,
             dev_comm,
             dev_att,
@@ -205,9 +191,6 @@ impl<'a> Matter<'a> {
             Self {
                 state <- Mutex::init(RefCell::init(MatterState::init())),
                 transport <- Transport::init(dev_det),
-                mdns_changed: Notification::new(),
-                session_removed: Notification::new(),
-                groups_modified: Notification::new(),
                 dev_det,
                 dev_comm,
                 dev_att,
@@ -232,12 +215,22 @@ impl<'a> Matter<'a> {
         self.port
     }
 
+    /// Get a reference to the transport state of this Matter object.
+    ///
+    /// All transport-related state and operations (mDNS change/resolve
+    /// rendezvous, session/group notifications, RX/TX buffers, exchange
+    /// initiation/acceptance) live on [`Transport`].
+    #[inline(always)]
+    pub const fn transport(&self) -> &Transport {
+        &self.transport
+    }
+
     pub fn transport_rx_buffer(&self) -> PacketBufferExternalAccess<'_, MAX_RX_BUF_SIZE> {
-        self.transport.rx_buffer()
+        self.transport().rx_buffer()
     }
 
     pub fn transport_tx_buffer(&self) -> PacketBufferExternalAccess<'_, MAX_TX_BUF_SIZE> {
-        self.transport.tx_buffer()
+        self.transport().tx_buffer()
     }
 
     /// A utility method to replace the initial Device Attestation with another one.
@@ -256,7 +249,7 @@ impl<'a> Matter<'a> {
     /// # Arguments
     /// - `disc_caps`: The discovery capabilities to be used in the QR code payload
     pub fn print_standard_qr_text(&self, disc_caps: DiscoveryCapabilities) -> Result<(), Error> {
-        let rx_buf = self.transport.rx_buffer();
+        let rx_buf = self.transport().rx_buffer();
 
         let mut buf = rx_buf.get_immediate().ok_or(ErrorCode::NoMemory)?;
         let buf = &mut *buf;
@@ -294,7 +287,7 @@ impl<'a> Matter<'a> {
             self.dev_comm.compute_pretty_pairing_code()
         );
 
-        let rx_buf = self.transport.rx_buffer();
+        let rx_buf = self.transport().rx_buffer();
 
         let mut buf = rx_buf.get_immediate().ok_or(ErrorCode::NoMemory)?;
         let buf = &mut *buf;
@@ -380,7 +373,7 @@ impl<'a> Matter<'a> {
         crypto: C,
         notify: &dyn AttrChangeNotifier,
     ) -> Result<(), Error> {
-        let notify_mdns = || self.notify_mdns_changed();
+        let notify_mdns = || self.transport().notify_mdns_changed();
         let notify_change = |endpt_id, clust_id| notify.notify_cluster_changed(endpt_id, clust_id);
 
         self.with_state(|state| {
@@ -414,7 +407,7 @@ impl<'a> Matter<'a> {
     /// [`crate::dm::DataModel::close_comm_window`] when a `DataModel`
     /// is available.
     pub fn close_comm_window(&self, notify: &dyn AttrChangeNotifier) -> Result<bool, Error> {
-        let notify_mdns = || self.notify_mdns_changed();
+        let notify_mdns = || self.transport().notify_mdns_changed();
         let notify_change = |endpt_id, clust_id| notify.notify_cluster_changed(endpt_id, clust_id);
 
         self.with_state(|state| state.pase.close_comm_window(notify_mdns, notify_change))
@@ -523,14 +516,8 @@ impl<'a> Matter<'a> {
         self.with_state(|state| {
             state.sessions.reset();
 
-            self.transport.reset()
+            self.transport().reset()
         })
-    }
-
-    /// Notify that groups have changed (keys, key maps, or membership) and
-    /// multicast registrations need updating.
-    pub fn notify_groups_changed(&self) {
-        self.groups_modified.notify();
     }
 
     /// Reset the Matter persistable state by removing all fabrics and resetting basic info settings
@@ -555,7 +542,7 @@ impl<'a> Matter<'a> {
             state.rtc.reset_persist(&mut kv, buf).await?;
         }
 
-        self.notify_mdns_changed();
+        self.transport().notify_mdns_changed();
 
         Ok(())
     }
@@ -579,7 +566,7 @@ impl<'a> Matter<'a> {
             state.rtc.load_persist(&mut kv, buf).await?;
         }
 
-        self.notify_mdns_changed();
+        self.transport().notify_mdns_changed();
 
         Ok(())
     }
@@ -587,7 +574,7 @@ impl<'a> Matter<'a> {
     /// Invoke the given closure for each currently published Matter mDNS service.
     pub fn mdns_services<F>(&self, mut f: F) -> Result<(), Error>
     where
-        F: FnMut(MatterService) -> Result<(), Error>,
+        F: FnMut(MatterLocalService) -> Result<(), Error>,
     {
         debug!("=== Currently published mDNS services");
 
@@ -614,19 +601,6 @@ impl<'a> Matter<'a> {
 
             Ok(())
         })
-    }
-
-    /// Notify that the Matter mDNS services _might_ have changed.
-    pub(crate) fn notify_mdns_changed(&self) {
-        self.mdns_changed.notify();
-    }
-
-    /// A hook for user code to wait for notification that the Matter mDNS services might have changed.
-    ///
-    /// Once this future resolves, user code is supposed to inspect the mDNS services for changes, and
-    /// if there are changes, re-publish the changed mDNS services in an mDNS responder accordingly.
-    pub fn wait_mdns(&self) -> impl Future<Output = ()> + '_ {
-        self.mdns_changed.wait()
     }
 }
 

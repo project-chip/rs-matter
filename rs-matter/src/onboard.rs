@@ -229,11 +229,16 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     /// the device rolls back.
     pub async fn commission(
         &mut self,
+        peer_addr: Address,
+        passcode: u32,
         opts: &CommissionOptions,
         device_node_id: NodeId,
         validity: Validity,
     ) -> Result<CommissionResult, Error> {
-        self.arm_fail_safe(opts.fail_safe_secs).await?;
+        // The first PASE step (ArmFailSafe) establishes the PASE session via
+        // `initiate_pase`; the rest reuse it.
+        self.arm_fail_safe(peer_addr, passcode, opts.fail_safe_secs)
+            .await?;
 
         // Device Attestation — structural hook. See [`CommissionOptions::allow_test_attestation`].
         self.verify_device_attestation(opts).await?;
@@ -257,7 +262,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         // Sign the device NOC. The returned slice lives in
         // `noc_generator.buf` — independent of `buf`, so we can use
         // both side-by-side below.
-        let noc = Self::csr_request(matter, &csr_nonce, |csr_der| {
+        let noc = Self::csr_request(matter, crypto, peer_addr, passcode, &csr_nonce, |csr_der| {
             noc_generator.generate(crypto, csr_der, device_node_id, &[], validity)
         })
         .await?;
@@ -277,7 +282,8 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
             buf[..rcac.len()].copy_from_slice(rcac);
             Ok::<_, Error>(rcac.len())
         })?;
-        Self::add_trusted_root_certificate(matter, &buf[..rcac_len]).await?;
+        Self::add_trusted_root_certificate(matter, crypto, peer_addr, passcode, &buf[..rcac_len])
+            .await?;
 
         // IPK as sent on the wire is the **epoch key** (the raw
         // 16-byte input to the group-key derivation), not the
@@ -300,6 +306,9 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         // the full `[RCAC, ICAC, NOC]` chain is shipped.
         let fabric_index = Self::add_noc(
             matter,
+            crypto,
+            peer_addr,
+            passcode,
             noc,
             &buf[..icac_len],
             &ipk_bytes,
@@ -356,8 +365,14 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     }
 
     /// `GeneralCommissioning::ArmFailSafe(expiry, breadcrumb=0)`.
-    pub(crate) async fn arm_fail_safe(&self, expiry_seconds: u16) -> Result<(), Error> {
-        let exchange = self.open_pase_exchange().await?;
+    pub(crate) async fn arm_fail_safe(
+        &self,
+        peer_addr: Address,
+        passcode: u32,
+        expiry_seconds: u16,
+    ) -> Result<(), Error> {
+        let exchange =
+            Exchange::initiate_pase(self.matter, &self.crypto, peer_addr, passcode).await?;
 
         let handle = exchange
             .general_commissioning()
@@ -392,15 +407,18 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     /// closure that re-borrows other `Commissioner` fields (e.g.
     /// `noc_generator`, `crypto`) without conflicting with a `&self`
     /// borrow on this method.
-    pub(crate) async fn csr_request<F, R>(
-        matter: &Matter<'_>,
+    pub(crate) async fn csr_request<'m, F, R>(
+        matter: &'m Matter<'m>,
+        crypto: &C,
+        peer_addr: Address,
+        passcode: u32,
         csr_nonce: &[u8; 32],
         use_csr: F,
     ) -> Result<R, Error>
     where
         F: FnOnce(&[u8]) -> Result<R, Error>,
     {
-        let exchange = Exchange::initiate(matter, 0, 0, true).await?;
+        let exchange = Exchange::initiate_pase(matter, crypto, peer_addr, passcode).await?;
 
         let handle = exchange
             .operational_credentials()
@@ -439,11 +457,14 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     /// Static-style for the same reason as [`Self::csr_request`] — the
     /// caller in [`Self::commission`] is holding a `&mut self.noc_generator`
     /// projection borrow when it invokes this.
-    pub(crate) async fn add_trusted_root_certificate(
-        matter: &Matter<'_>,
+    pub(crate) async fn add_trusted_root_certificate<'m>(
+        matter: &'m Matter<'m>,
+        crypto: &C,
+        peer_addr: Address,
+        passcode: u32,
         rcac_tlv: &[u8],
     ) -> Result<(), Error> {
-        let exchange = Exchange::initiate(matter, 0, 0, true).await?;
+        let exchange = Exchange::initiate_pase(matter, crypto, peer_addr, passcode).await?;
 
         exchange
             .operational_credentials()
@@ -460,15 +481,19 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     /// directly off the RCAC (no ICAC tier).
     ///
     /// Static-style: see [`Self::add_trusted_root_certificate`].
-    pub(crate) async fn add_noc(
-        matter: &Matter<'_>,
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn add_noc<'m>(
+        matter: &'m Matter<'m>,
+        crypto: &C,
+        peer_addr: Address,
+        passcode: u32,
         noc: &[u8],
         icac: &[u8],
         ipk: &[u8],
         admin_case_subject: u64,
         admin_vendor_id: u16,
     ) -> Result<NonZeroU8, Error> {
-        let exchange = Exchange::initiate(matter, 0, 0, true).await?;
+        let exchange = Exchange::initiate_pase(matter, crypto, peer_addr, passcode).await?;
 
         let handle = exchange
             .operational_credentials()
@@ -517,7 +542,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         fab_idx: NonZeroU8,
         peer_node_id: NodeId,
     ) -> Result<(), Error> {
-        let exchange = Exchange::initiate(self.matter, fab_idx.get(), peer_node_id, true).await?;
+        let exchange = Exchange::initiate(self.matter, &self.crypto, fab_idx, peer_node_id).await?;
 
         let handle = exchange
             .general_commissioning()
@@ -533,15 +558,6 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
         }
 
         Ok(())
-    }
-
-    /// Open a fresh exchange over the established PASE session.
-    ///
-    /// `(fab=0, peer=0, secure=true)` is rs-matter's lookup tuple for the
-    /// PASE session — there is at most one in flight on a given Matter
-    /// stack at a time, which is the controller's normal case.
-    async fn open_pase_exchange(&self) -> Result<Exchange<'_>, Error> {
-        Exchange::initiate(self.matter, 0, 0, true).await
     }
 
     /// DAC verification placeholder.

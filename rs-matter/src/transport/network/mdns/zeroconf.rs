@@ -18,11 +18,16 @@
 //! An mDNS implementation based on the `zeroconf` crate.
 //! (On Linux requires the Avahi daemon to be installed and running; does not work with `systemd-resolved`.)
 
+use core::pin::pin;
+
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use embassy_futures::select::select3;
+use embassy_time::Timer;
 
 use zeroconf::browser::TMdnsBrowser;
 use zeroconf::prelude::TEventLoop;
@@ -31,32 +36,64 @@ use zeroconf::txt_record::TTxtRecord;
 use zeroconf::{MdnsBrowser, ServiceDiscovery, ServiceType};
 
 use crate::error::{Error, ErrorCode};
-use crate::transport::network::mdns::MatterService;
+use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
+use crate::transport::network::MatterLocalService;
+use crate::utils::select::Coalesce;
 use crate::Matter;
 
-use super::{CommissionableFilter, DiscoveredDevice, PushUnique};
+/// Interval (ms) at which the async side drains discovered services from the
+/// browser thread and re-checks whether the query is still in flight.
+const QUERY_POLL_INTERVAL_MS: u64 = 100;
 
-/// An mDNS responder for Matter utilizing the `zeroconf` crate.
-/// In theory, it should work on all of Linux, MacOS and Windows, however seems to have issues on MacOSX and Windows.
-pub struct ZeroconfMdnsResponder {
-    services: HashMap<MatterService, MdnsEntry>,
+/// Collect a discovered service's TXT records into owned `(key, value)` pairs.
+fn txt_pairs(svc: &ServiceDiscovery) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    if let Some(txt) = svc.txt() {
+        for (key, value) in txt.iter() {
+            pairs.push((key, value));
+        }
+    }
+    pairs
 }
 
-impl ZeroconfMdnsResponder {
-    /// Create a new `ZeroconfMdnsResponder`.
+/// An mDNS implementation for Matter utilizing the `zeroconf` crate.
+/// In theory, it should work on all of Linux, MacOS and Windows, however seems to have issues on MacOSX and Windows.
+pub struct ZeroconfMdns {
+    services: HashMap<MatterLocalService, MdnsEntry>,
+}
+
+impl Default for ZeroconfMdns {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ZeroconfMdns {
+    /// Create a new `ZeroconfMdns`.
     pub fn new() -> Self {
         Self {
             services: HashMap::new(),
         }
     }
 
-    /// Run the mDNS responder
+    /// Run the mDNS responder + querier.
     ///
     /// # Arguments
     /// - `matter`: A reference to the Matter instance to get mDNS services from.
     pub async fn run(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
+        let mut respond = pin!(self.run_respond(matter));
+        let mut resolve = pin!(Self::run_resolve(matter));
+        let mut browse = pin!(Self::run_browse(matter));
+
+        select3(&mut respond, &mut resolve, &mut browse)
+            .coalesce()
+            .await
+    }
+
+    /// Publish the local Matter services and keep them in sync with the stack.
+    async fn run_respond(&mut self, matter: &Matter<'_>) -> Result<(), Error> {
         loop {
-            matter.wait_mdns().await;
+            matter.transport().wait_mdns().await;
 
             let mut services = HashSet::new();
             matter.mdns_services(|service| {
@@ -73,10 +110,132 @@ impl ZeroconfMdnsResponder {
         }
     }
 
+    /// Service operational-resolve requests: run a browser for the requested
+    /// service's type on a worker thread and deposit the instance whose name
+    /// matches the requested one, while the resolve is in flight.
+    async fn run_resolve(matter: &Matter<'_>) -> Result<(), Error> {
+        loop {
+            let service = matter.transport().wait_mdns_resolve_request().await;
+
+            let mut name_buf: heapless::String<128> = heapless::String::new();
+            service.instance_name(&mut name_buf);
+            let label = name_buf.split('.').next().unwrap_or("").to_string();
+
+            // `_matter._tcp` -> ("matter", "tcp"), `_matterc._udp` -> ("matterc", "udp")
+            let mut parts = service.service_type().trim_start_matches('_').split("._");
+            let svc_name = parts.next().unwrap_or("matter");
+            let proto = parts.next().unwrap_or("tcp");
+            let service_type = ServiceType::new(svc_name, proto)?;
+
+            let (discovered, _stop) = Self::spawn_browser(service_type);
+
+            while matter.transport().mdns_resolve_in_flight() {
+                Self::drain(&discovered, |svc| {
+                    if svc.name() != &label {
+                        return;
+                    }
+                    if let Ok(ip) = svc.address().parse::<IpAddr>() {
+                        let pairs = txt_pairs(svc);
+                        // Match is by the full instance name we requested.
+                        matter
+                            .transport()
+                            .try_deposit_mdns_resolve(&MdnsRemoteService {
+                                instance_name: DottedName(name_buf.as_str()),
+                                port: Some(*svc.port()),
+                                addrs: core::iter::once(ip),
+                                txt: pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+                            });
+                    }
+                });
+
+                Timer::after(embassy_time::Duration::from_millis(QUERY_POLL_INTERVAL_MS)).await;
+            }
+        }
+    }
+
+    /// Service commissionable-browse requests: run a `_matterc._udp` browser on a
+    /// worker thread and deposit each discovered service (filter + exclude checks
+    /// happen in the deposit) while the browse is in flight.
+    async fn run_browse(matter: &Matter<'_>) -> Result<(), Error> {
+        loop {
+            let _filter = matter.transport().wait_mdns_browse_request().await;
+
+            let service_type = ServiceType::new("matterc", "udp")?;
+            let (discovered, _stop) = Self::spawn_browser(service_type);
+
+            while matter.transport().mdns_browse_in_flight() {
+                Self::drain(&discovered, |svc| {
+                    if let Ok(ip) = svc.address().parse::<IpAddr>() {
+                        let pairs = txt_pairs(svc);
+                        matter
+                            .transport()
+                            .try_deposit_mdns_browse(&MdnsRemoteService {
+                                instance_name: DottedName(svc.name()),
+                                port: Some(*svc.port()),
+                                addrs: core::iter::once(ip),
+                                txt: pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+                            });
+                    }
+                });
+
+                Timer::after(embassy_time::Duration::from_millis(QUERY_POLL_INTERVAL_MS)).await;
+            }
+        }
+    }
+
+    /// Spawn a `zeroconf` browser for `service_type` on a worker thread (the
+    /// browser is `!Send` + event-loop based), collecting discoveries into a
+    /// shared buffer. The returned [`MdnsEntry`] signals the thread to stop on drop.
+    fn spawn_browser(service_type: ServiceType) -> (Arc<Mutex<Vec<ServiceDiscovery>>>, MdnsEntry) {
+        let discovered: Arc<Mutex<Vec<ServiceDiscovery>>> = Arc::new(Mutex::new(Vec::new()));
+        let discovered_thread = discovered.clone();
+        let (stop_tx, stop_rx) = sync_channel::<()>(1);
+
+        let _ = std::thread::spawn(move || {
+            let mut browser = MdnsBrowser::new(service_type);
+            browser.set_service_discovered_callback(Box::new(
+                move |result: zeroconf::Result<ServiceDiscovery>, _context| {
+                    if let Ok(service) = result {
+                        if let Ok(mut guard) = discovered_thread.lock() {
+                            guard.push(service);
+                        }
+                    }
+                },
+            ));
+
+            match browser.browse_services() {
+                Ok(event_loop) => {
+                    // Keep polling only while the stop channel is open and empty;
+                    // a sent `()` *or* a disconnect (the `MdnsEntry` was dropped)
+                    // both mean "stop" - otherwise `is_err()` would also treat a
+                    // disconnect as "keep going" and leak this thread forever.
+                    while matches!(stop_rx.try_recv(), Err(TryRecvError::Empty)) {
+                        if let Err(e) = event_loop.poll(Duration::from_millis(100)) {
+                            warn!("Browser poll error: {:?}", e);
+                            break;
+                        }
+                    }
+                }
+                Err(e) => error!("Failed to start zeroconf browser: {:?}", e),
+            }
+        });
+
+        (discovered, MdnsEntry(stop_tx))
+    }
+
+    /// Drain the discovered-services buffer, invoking `f` for each.
+    fn drain(discovered: &Arc<Mutex<Vec<ServiceDiscovery>>>, mut f: impl FnMut(&ServiceDiscovery)) {
+        if let Ok(mut guard) = discovered.lock() {
+            for svc in guard.drain(..) {
+                f(&svc);
+            }
+        }
+    }
+
     fn update_services(
         &mut self,
         matter: &Matter<'_>,
-        services: &HashSet<MatterService>,
+        services: &HashSet<MatterLocalService>,
     ) -> Result<(), Error> {
         for service in services {
             if !self.services.contains_key(service) {
@@ -127,9 +286,9 @@ struct SendableZeroconfMdnsService {
 }
 
 impl SendableZeroconfMdnsService {
-    /// Create a new `SendableZeroconfMdnsService` from a `MatterService`.
-    fn new(matter: &Matter<'_>, mdns_service: &MatterService) -> Result<Self, Error> {
-        // Scratch buffer for expanding `MatterService` into a `Service` view —
+    /// Create a new `SendableZeroconfMdnsService` from a `MatterLocalService`.
+    fn new(matter: &Matter<'_>, mdns_service: &MatterLocalService) -> Result<Self, Error> {
+        // Scratch buffer for expanding `MatterLocalService` into a `MdnsLocalService` view —
         // the strings (name, subtypes, TXT values) are formatted into this buffer.
         let mut buf = [0u8; 512];
         let (service, _) = mdns_service.service(matter.dev_det(), matter.port(), &mut buf)?;
@@ -184,7 +343,9 @@ impl SendableZeroconfMdnsService {
 
         let event_loop = mdns_service.register()?;
 
-        while receiver.try_recv().is_err() {
+        // Stop on a sent `()` or on disconnect (the `MdnsEntry` was dropped);
+        // see the matching note in `spawn_browser`.
+        while matches!(receiver.try_recv(), Err(TryRecvError::Empty)) {
             event_loop.poll(std::time::Duration::from_secs(1))?;
         }
 
@@ -208,131 +369,4 @@ impl From<zeroconf::error::Error> for Error {
     fn from(e: zeroconf::error::Error) -> Self {
         Self::new_with_details(ErrorCode::MdnsError, Box::new(e))
     }
-}
-
-/// Discover commissionable Matter devices using the zeroconf crate.
-///
-/// # Arguments
-/// * `filter` - Filter criteria for discovered devices
-/// * `timeout_ms` - Discovery timeout in milliseconds
-///
-/// # Returns
-/// A vector of discovered devices matching the filter criteria
-///
-/// # Note
-/// This function is blocking and spawns a background thread for the mDNS browser event loop.
-pub fn discover_commissionable<const A: usize>(
-    filter: &CommissionableFilter,
-    timeout_ms: u32,
-) -> Result<Vec<DiscoveredDevice<A>>, Error> {
-    // Build the service type - zeroconf doesn't support subtype filtering in browse,
-    // so we browse for all _matterc._udp and filter results afterward
-    let service_type = ServiceType::new("matterc", "udp")?;
-
-    info!("Browsing for mDNS services via zeroconf: _matterc._udp");
-
-    // Shared state for collecting discovered devices
-    let discovered: Arc<Mutex<Vec<ServiceDiscovery>>> = Arc::new(Mutex::new(Vec::new()));
-    let discovered_clone = discovered.clone();
-
-    // Channel to signal the browser thread to stop
-    let (stop_tx, stop_rx) = sync_channel::<()>(1);
-
-    let browser_handle = std::thread::spawn(move || -> Result<(), Error> {
-        let mut browser = MdnsBrowser::new(service_type);
-
-        let discovered_callback = discovered_clone.clone();
-        browser.set_service_discovered_callback(Box::new(
-            move |result: zeroconf::Result<ServiceDiscovery>, _context| {
-                if let Ok(service) = result {
-                    debug!(
-                        "Discovered service: {} at {}:{}",
-                        service.name(),
-                        service.address(),
-                        service.port()
-                    );
-                    if let Ok(mut guard) = discovered_callback.lock() {
-                        guard.push(service);
-                    }
-                }
-            },
-        ));
-
-        let event_loop = browser.browse_services()?;
-
-        // Poll until stop signal or timeout
-        while stop_rx.try_recv().is_err() {
-            if let Err(e) = event_loop.poll(Duration::from_millis(100)) {
-                warn!("Browser poll error: {:?}", e);
-                break;
-            }
-        }
-
-        Ok(())
-    });
-
-    let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
-    while Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(100));
-    }
-
-    // Signal browser thread to stop
-    let _ = stop_tx.send(());
-
-    // Wait for browser thread to finish and handle any errors
-    match browser_handle.join() {
-        Ok(bg_thread_res) => bg_thread_res?,
-        Err(panic_payload) => {
-            let panic_msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
-                s.to_string()
-            } else if let Some(s) = panic_payload.downcast_ref::<String>() {
-                s.clone()
-            } else {
-                "unknown panic".to_string()
-            };
-
-            return Err(Error::new_with_details(
-                ErrorCode::MdnsError,
-                format!("Browser thread panicked: {panic_msg}").into(),
-            ));
-        }
-    }
-
-    // Process discovered services
-    let mut results = Vec::new();
-
-    let services = discovered
-        .lock()
-        .map_err(|_| Error::new(ErrorCode::MdnsError))?;
-
-    for service in services.iter() {
-        let mut device = DiscoveredDevice::default();
-
-        device.set_instance_name(service.name());
-        device.port = *service.port();
-
-        // Parse and add IP address
-        if let Ok(ip) = service.address().parse::<IpAddr>() {
-            device.add_address(ip);
-        } else {
-            warn!("Could not parse IP address: {}", service.address());
-            continue;
-        }
-
-        // Parse TXT records
-        if let Some(txt) = service.txt() {
-            for (key, value) in txt.iter() {
-                device.set_txt_value(key.as_str(), value.as_str());
-            }
-        }
-
-        // Apply filters and add to results if unique
-        if filter.matches(&device) {
-            results.push_if_unique(device);
-        }
-    }
-
-    info!("Zeroconf mDNS discovery found {} devices", results.len());
-
-    Ok(results)
 }

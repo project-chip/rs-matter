@@ -28,7 +28,7 @@
 //! Drive it from your application's async runtime:
 //!
 //! ```ignore
-//! let client = TimeSyncClient::new(&matter);
+//! let client = TimeSyncClient::new(&matter, &crypto);
 //! let _ = client.run(
 //!     embassy_time::Duration::from_secs(60 * 60),
 //!     persist_access,
@@ -38,6 +38,7 @@
 
 use embassy_time::{Duration, Timer};
 
+use crate::crypto::Crypto;
 use crate::dm::clusters::decl::time_synchronization::{
     GranularityEnum, TimeSourceEnum, TimeSynchronizationClient as _,
 };
@@ -55,14 +56,19 @@ use crate::Matter;
 /// `run` / `refresh_once` methods take the KV-store handle and the
 /// attribute-change notifier (typically your `DataModel`) by reference
 /// so the same client struct can be re-used across refresh cycles.
-pub struct TimeSyncClient<'a> {
+pub struct TimeSyncClient<'a, C> {
     matter: &'a Matter<'a>,
+    crypto: C,
 }
 
-impl<'a> TimeSyncClient<'a> {
+impl<'a, C: Crypto> TimeSyncClient<'a, C> {
     /// Create a new client bound to `matter`.
-    pub const fn new(matter: &'a Matter<'a>) -> Self {
-        Self { matter }
+    ///
+    /// `crypto` is needed because reading the trusted time source may require
+    /// establishing a fresh CASE session (via [`Exchange::initiate`]) when none
+    /// is cached.
+    pub const fn new(matter: &'a Matter<'a>, crypto: C) -> Self {
+        Self { matter, crypto }
     }
 
     /// Run the periodic refresh loop. Calls
@@ -121,7 +127,7 @@ impl<'a> TimeSyncClient<'a> {
         );
 
         let exchange =
-            Exchange::initiate(self.matter, tts.fab_idx.get(), tts.node_id, true).await?;
+            Exchange::initiate(self.matter, &self.crypto, tts.fab_idx, tts.node_id).await?;
 
         let result = exchange
             .time_synchronization()

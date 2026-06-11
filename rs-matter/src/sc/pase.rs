@@ -37,7 +37,7 @@ use crate::tlv::{FromTLV, OctetStr, ToTLV};
 use crate::transport::exchange::{Exchange, ExchangeId};
 use crate::utils::init::{init, Init};
 use crate::utils::maybe::Maybe;
-use crate::MatterService;
+use crate::MatterLocalService;
 
 pub use initiator::PaseInitiator;
 pub use responder::PaseResponder;
@@ -174,8 +174,8 @@ impl CommWindow {
     }
 
     /// Get the mDNS service info
-    pub fn mdns_service(&self) -> MatterService {
-        MatterService::Commissionable {
+    pub fn mdns_service(&self) -> MatterLocalService {
+        MatterLocalService::Commissionable {
             id: self.mdns_id,
             discriminator: self.discriminator,
             enhanced: matches!(self.comm_window_type(), CommWindowType::Enhanced),

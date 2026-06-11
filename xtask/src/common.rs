@@ -17,6 +17,7 @@
 
 //! A common module for setting up the connectedhomeip repo
 
+use std::cell::Cell;
 use std::env;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
@@ -84,8 +85,20 @@ fn run_command_with(
 
     let cmd = cmd.stdin(Stdio::null());
 
+    // When not echoing the command output live, capture its stdout to a temp
+    // file rather than discarding it, so that on failure we can surface it.
+    // The integration-test runner (`run_python_test.py`) funnels the test
+    // script's own stdout/stderr — including Python tracebacks — into *its*
+    // stdout; discarding it (as a plain `Stdio::null()` did) leaves a failing
+    // test with no diagnostic output at all, which is especially painful in
+    // CI where the failure can't be reproduced locally.
+    let mut captured_stdout = None;
     if !print_cmd_output {
-        cmd.stdout(Stdio::null());
+        let path = env::temp_dir().join(format!("xtask-cmd-stdout-{}.log", std::process::id()));
+        let file = File::create(&path)
+            .with_context(|| format!("Failed to create capture file: {}", path.display()))?;
+        cmd.stdout(Stdio::from(file));
+        captured_stdout = Some(path);
     }
 
     if suppress_err {
@@ -97,7 +110,26 @@ fn run_command_with(
         .with_context(|| format!("Failed to execute command: {cmd:?}"))?;
 
     if !status.success() {
+        // Surface the captured stdout (if any) so the failure is diagnosable
+        // both locally and in the CI artifact (which `tee`s xtask's output).
+        if let Some(path) = &captured_stdout {
+            if let Ok(out) = fs::read_to_string(path) {
+                let out = out.trim_end();
+                if !out.is_empty() {
+                    eprintln!("----- captured command stdout (on failure) -----");
+                    eprintln!("{out}");
+                    eprintln!("----- end captured command stdout -----");
+                }
+            }
+        }
+        if let Some(path) = captured_stdout {
+            let _ = fs::remove_file(path);
+        }
         anyhow::bail!("Command failed with status: {status}");
+    }
+
+    if let Some(path) = captured_stdout {
+        let _ = fs::remove_file(path);
     }
 
     Ok(())
@@ -106,6 +138,12 @@ fn run_command_with(
 pub struct ChipBuilder {
     chip_dir: PathBuf,
     print_cmd_output: bool,
+    /// Set by `setup_chip` when the checkout's HEAD actually moved (the tracked
+    /// branch advanced, or the ref was switched). Dependent rebuilds (chip-tool
+    /// / the example apps via `out/` cleaning, and the Python wheel) consult it
+    /// so they refresh against the new sources instead of trusting their
+    /// "already built / already installed" probes.
+    checkout_changed: Cell<bool>,
 }
 
 impl ChipBuilder {
@@ -113,7 +151,24 @@ impl ChipBuilder {
         Self {
             chip_dir,
             print_cmd_output,
+            checkout_changed: Cell::new(false),
         }
+    }
+
+    /// The current `HEAD` commit of the chip checkout, or `None` if it can't be
+    /// determined (e.g. the repo doesn't exist yet).
+    fn git_head(&self, chip_dir: &Path) -> Option<String> {
+        let out = Command::new("git")
+            .current_dir(chip_dir)
+            .arg("rev-parse")
+            .arg("HEAD")
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
     pub fn print_tooling(&self) -> anyhow::Result<()> {
@@ -197,16 +252,47 @@ impl ChipBuilder {
             );
         }
 
-        // Probe both the wheel and a representative pytest dep (`zeroconf`).
-        // If either is missing we re-run `build_python.sh`, which is
-        // idempotent against an existing venv when invoked with `-c no`.
+        // `build_python.sh` hard-codes `<venv>/bin/pip`, but on Ubuntu 24.04 /
+        // Python 3.12 the pigweed venv ends up with `bin/pip3` and no bare
+        // `bin/pip`, so that step dies with exit 127 ("No such file or
+        // directory"). Since we now (re)run `build_python.sh` more eagerly (on a
+        // checkout bump, or to (re)install requirements), make sure the alias
+        // exists first — this affects CI on the same OS just as much as a local
+        // box. Best-effort and idempotent.
+        //
+        // `unix`-gated: the chip integration tests only run on Linux/macOS (the
+        // C++ SDK doesn't build on Windows), but `xtask` itself should still
+        // compile there for its other commands, so the Unix-only `symlink` API
+        // must not be referenced unconditionally.
+        #[cfg(unix)]
+        {
+            let pip = venv_dir.join("bin/pip");
+            let pip3 = venv_dir.join("bin/pip3");
+            if !pip.exists() && pip3.exists() {
+                info!("Creating missing `bin/pip` -> `bin/pip3` alias in the pigweed venv");
+                let _ = fs::remove_file(&pip); // clear any dangling symlink first
+                std::os::unix::fs::symlink("pip3", &pip)
+                    .with_context(|| format!("Failed to symlink {}", pip.display()))?;
+            }
+        }
+
+        // Probe the wheel, a representative pytest dep (`zeroconf`), and
+        // `nest_asyncio` (see the explicit install below). If any is missing we
+        // re-run `build_python.sh` (idempotent with `-c no`) and re-install
+        // `nest_asyncio`.
         let probe = Command::new(venv_dir.join("bin/python3"))
             .arg("-c")
-            .arg("import matter.testing.metadata, matter.testing.tasks, zeroconf")
+            .arg("import matter.testing.metadata, matter.testing.tasks, zeroconf, nest_asyncio")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
-        if !force_rebuild && probe.map(|s| s.success()).unwrap_or(false) {
+        // Also rebuild when the checkout moved (the wheel is generated from the
+        // chip sources, so a tip bump can make the installed wheel stale even
+        // though the probe imports still succeed).
+        if !force_rebuild
+            && !self.checkout_changed.get()
+            && probe.map(|s| s.success()).unwrap_or(false)
+        {
             info!("CHIP Python wheel and test requirements already installed in pigweed venv");
             return Ok(());
         }
@@ -240,6 +326,27 @@ impl ChipBuilder {
                 .current_dir(chip_dir)
                 .env("PW_ACTIVATE_SKIP_CHECKS", "1")
                 .arg(cmd_line),
+            self.print_cmd_output,
+            !self.print_cmd_output,
+        )?;
+
+        // `src/python_testing/TC_OPCREDS_3_8.py` does a top-level
+        // `import nest_asyncio`, but `nest_asyncio` is declared in *no* CHIP
+        // requirements file (`src/python_testing/requirements.txt`,
+        // `scripts/tests/requirements.txt`, …). It only ever resolved because
+        // it was pulled in transitively (via `ipykernel`); when the v1.5-branch
+        // advances, CI's `hashFiles`-keyed cache is invalidated and the venv is
+        // rebuilt from those requirements *without* `nest_asyncio`, so the test
+        // crashes at import with `ModuleNotFoundError`. Install it explicitly so
+        // the venv doesn't depend on a transitive accident. Idempotent (pip is a
+        // no-op when already satisfied).
+        run_command_with(
+            Command::new(venv_dir.join("bin/python3"))
+                .current_dir(chip_dir)
+                .arg("-m")
+                .arg("pip")
+                .arg("install")
+                .arg("nest_asyncio"),
             self.print_cmd_output,
             !self.print_cmd_output,
         )?;
@@ -294,7 +401,12 @@ impl ChipBuilder {
         // Check system dependencies
         self.check_tooling()?;
 
+        // Remember where we were so we can tell, after checkout, whether the
+        // checkout actually moved (and thus what needs rebuilding).
+        let head_before = self.git_head(chip_dir);
+
         // Clone or update Chip repository
+        let mut fetched = false;
         if !chip_dir.exists() {
             info!("Cloning Chip repository...");
 
@@ -315,23 +427,25 @@ impl ChipBuilder {
             }
 
             run_command(&mut cmd, self.print_cmd_output)?;
-
-            File::create(chip_dir.join(chip_gitref))?;
         } else {
             info!("Chip repository already exists");
 
-            if force_rebuild || !chip_dir.join(chip_gitref).exists() {
-                if force_rebuild {
-                    info!("Force rebuild requested for chip-tool, cleaning previous build artifacts...");
-                } else {
-                    info!("Git reference {chip_gitref} not found, cleaning previous build artifacts...");
-                }
-
-                let out_dir = chip_dir.join("out");
-                if out_dir.exists() {
-                    fs::remove_dir_all(&out_dir)
-                        .context("Failed to remove existing out directory")?;
-                }
+            // Track the tip of the requested ref: fetch it so a *moving* branch
+            // (e.g. `v1.5-branch`) is followed rather than pinned to whatever
+            // commit was first cloned. Best-effort — an offline fetch failure
+            // just leaves the existing checkout in place.
+            let mut fetch = Command::new("git");
+            fetch
+                .current_dir(chip_dir)
+                .arg("fetch")
+                .arg("origin")
+                .arg(chip_gitref);
+            if !self.print_cmd_output {
+                fetch.arg("--quiet");
+            }
+            fetched = run_command(&mut fetch, self.print_cmd_output).is_ok();
+            if !fetched {
+                warn!("git fetch origin {chip_gitref} failed; using the current checkout");
             }
         }
 
@@ -350,6 +464,37 @@ impl ChipBuilder {
         cmd.arg("--");
 
         run_command(&mut cmd, self.print_cmd_output)?;
+
+        // Fast-forward to the freshly fetched tip (branch tracking). Guarded on
+        // `fetched` so a stale `FETCH_HEAD` from a previous run is never used.
+        if fetched {
+            let mut reset = Command::new("git");
+            reset
+                .current_dir(chip_dir)
+                .arg("reset")
+                .arg("--hard")
+                .arg("FETCH_HEAD");
+            if !self.print_cmd_output {
+                reset.arg("--quiet");
+            }
+            run_command(&mut reset, self.print_cmd_output)?;
+        }
+
+        // Did HEAD actually move (tip advanced, or ref switched)? A fresh clone
+        // (`head_before == None`) and `--force-rebuild` both count as "changed".
+        let head_after = self.git_head(chip_dir);
+        let checkout_changed = force_rebuild || head_before.is_none() || head_before != head_after;
+        self.checkout_changed.set(checkout_changed);
+
+        // When the checkout moved, drop stale `out/` so chip-tool and the
+        // example apps are rebuilt against the new sources.
+        if checkout_changed {
+            let out_dir = chip_dir.join("out");
+            if out_dir.exists() {
+                info!("Checkout changed; cleaning previous build artifacts...");
+                fs::remove_dir_all(&out_dir).context("Failed to remove existing out directory")?;
+            }
+        }
 
         // Detect host platform for selective submodule initialization
         let platform = self.host_platform()?;

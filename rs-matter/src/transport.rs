@@ -16,11 +16,15 @@
  */
 
 use core::fmt::{self, Display};
+use core::future::Future;
+use core::num::NonZeroU8;
 use core::ops::{Deref, DerefMut};
 use core::pin::pin;
 
-use embassy_futures::select::{select, select3, select4};
-use embassy_time::Timer;
+use domain::base::name::ToLabelIter;
+
+use embassy_futures::select::{select, select3, select4, Either};
+use embassy_time::{Duration, Timer};
 
 use rand_core::RngCore;
 
@@ -30,19 +34,27 @@ use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{MAX_FABRICS, MAX_GROUPS_PER_FABRIC};
 use crate::fmt::Bytes;
-use crate::sc::{sc_write, OpCode, SCStatusCodes, StatusReport, PROTO_ID_SECURE_CHANNEL};
+use crate::sc::case::CaseInitiator;
+use crate::sc::pase::PaseInitiator;
+use crate::sc::{
+    sc_write, OpCode, SCStatusCodes, SessionParameters, StatusReport, PROTO_ID_SECURE_CHANNEL,
+};
 use crate::tlv::TLVElement;
-use crate::transport::network::NetworkMulticast;
+use crate::transport::network::mdns::{
+    commissionable_instance_id, score_ip_address, BrowseExclude, CommissionableFilter,
+    MdnsBrowseState, MdnsRemoteService, MdnsResolveState, ResolvedNode,
+};
+use crate::transport::network::{MatterRemoteService, NetworkMulticast};
 use crate::utils::init::{init, Init};
 use crate::utils::ipv6::compute_group_multicast_addr;
 use crate::utils::select::Coalesce;
 use crate::utils::storage::Vec;
 use crate::utils::storage::{pooled::BufferAccess, ParseBuf, WriteBuf};
-use crate::utils::sync::{IfMutex, IfMutexGuard, Notification};
+use crate::utils::sync::{IfMutex, IfMutexGuard, Notification, Signal};
 use crate::{Matter, MATTER_PORT};
 
 use exchange::{Exchange, ExchangeId, ExchangeState, MessageMeta, ResponderState, Role};
-use network::{Address, Ipv6Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV6};
+use network::{Address, IpAddr, Ipv6Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV6};
 use packet::PacketHdr;
 use proto_hdr::ProtoHdr;
 use session::{Session, Sessions};
@@ -86,6 +98,18 @@ pub struct Transport {
     group_addrs: IfMutex<Vec<Ipv6Addr, MAX_GROUP_ADDRS>>,
     /// Notification for when an exchange is dropped.
     exchange_dropped: Notification,
+    /// A notification that the Matter mDNS services might have changed
+    mdns_changed: Notification,
+    /// The single in-flight mDNS resolve rendezvous, shared between [`Transport::resolve`]
+    /// callers and the running mDNS responder.
+    mdns_resolve: Signal<MdnsResolveState>,
+    /// The single in-flight mDNS commissionable-browse rendezvous, shared between
+    /// [`Transport::browse_commissionable`] callers and the running mDNS responder.
+    mdns_browse: Signal<MdnsBrowseState>,
+    /// A notification that a session had been removed
+    session_removed: Notification,
+    /// A notification that the groups have been modified
+    groups_modified: Notification,
     /// Device SAI (Secure Association Identifier)
     device_sai: Option<u32>,
     /// Device SII (Secure Identity Identifier)
@@ -101,6 +125,11 @@ impl Transport {
             tx: IfMutex::new(Packet::new()),
             group_addrs: IfMutex::new(Vec::new()),
             exchange_dropped: Notification::new(),
+            mdns_changed: Notification::new(),
+            mdns_resolve: Signal::new(MdnsResolveState::Idle),
+            mdns_browse: Signal::new(MdnsBrowseState::Idle),
+            session_removed: Notification::new(),
+            groups_modified: Notification::new(),
             device_sai: dev_det.sai,
             device_sii: dev_det.sii,
         }
@@ -113,6 +142,11 @@ impl Transport {
             tx <- IfMutex::init(Packet::init()),
             group_addrs <- IfMutex::init(Vec::new()),
             exchange_dropped: Notification::new(),
+            mdns_changed: Notification::new(),
+            mdns_resolve: Signal::new(MdnsResolveState::Idle),
+            mdns_browse: Signal::new(MdnsBrowseState::Idle),
+            session_removed: Notification::new(),
+            groups_modified: Notification::new(),
             device_sai: dev_det.sai,
             device_sii: dev_det.sii,
         })
@@ -149,6 +183,323 @@ impl Transport {
     /// needs a TX buffer.
     pub fn tx_buffer(&self) -> PacketBufferExternalAccess<'_, MAX_TX_BUF_SIZE> {
         PacketBufferExternalAccess(&self.tx)
+    }
+
+    /// Notify that the Matter mDNS services _might_ have changed.
+    pub(crate) fn notify_mdns_changed(&self) {
+        self.mdns_changed.notify();
+    }
+
+    /// A hook for user code to wait for notification that the Matter mDNS services might have changed.
+    ///
+    /// Once this future resolves, user code is supposed to inspect the mDNS services for changes, and
+    /// if there are changes, re-publish the changed mDNS services in an mDNS responder accordingly.
+    pub fn wait_mdns(&self) -> impl Future<Output = ()> + '_ {
+        self.mdns_changed.wait()
+    }
+
+    /// Notify that groups have changed (keys, key maps, or membership) and
+    /// multicast registrations need updating.
+    pub(crate) fn notify_groups_changed(&self) {
+        self.groups_modified.notify();
+    }
+
+    /// Wait until the groups have changed (see [`Transport::notify_groups_changed`]).
+    fn wait_groups_changed(&self) -> impl Future<Output = ()> + '_ {
+        self.groups_modified.wait()
+    }
+
+    /// Notify that a session has been removed.
+    pub(crate) fn notify_session_removed(&self) {
+        self.session_removed.notify();
+    }
+
+    /// Wait until a session has been removed (see [`Transport::notify_session_removed`]).
+    pub(crate) fn wait_session_removed(&self) -> impl Future<Output = ()> + '_ {
+        self.session_removed.wait()
+    }
+
+    /// Resolve a Matter service instance's address over mDNS.
+    ///
+    /// Places a single resolve request into the shared rendezvous and waits up
+    /// to `timeout_ms` for the running mDNS responder to fire the query and
+    /// deposit a service answer. Multiple concurrent callers serialize: each waits for
+    /// any in-flight resolve to finish before placing its own.
+    ///
+    /// Returns [`ErrorCode::NotFound`] if no service answer arrives within the timeout.
+    /// If this future is dropped before completing, the rendezvous is reset so
+    /// other callers can proceed.
+    ///
+    /// Requires a running mDNS responder (e.g. `BuiltinMdns::run`) to
+    /// service the request; without one, every resolve will time out.
+    async fn resolve(
+        &self,
+        service: MatterRemoteService,
+        timeout_ms: u32,
+    ) -> Result<ResolvedNode, Error> {
+        // 1. Serialize with other resolvers and place the request.
+        self.mdns_resolve
+            .wait(|state| {
+                if matches!(state, MdnsResolveState::Idle) {
+                    *state = MdnsResolveState::Requested {
+                        service: service.clone(),
+                    };
+                    Some(())
+                } else {
+                    None
+                }
+            })
+            .await;
+
+        // 2. Ensure the slot is released if this future is dropped (or times out).
+        let mut guard = MdnsResolveGuard {
+            signal: &self.mdns_resolve,
+            armed: true,
+        };
+
+        // 3. Wait for the responder to deposit our answer, or time out.
+        let mut wait = pin!(self.mdns_resolve.wait(|state| match state {
+            MdnsResolveState::Resolved {
+                ip,
+                port,
+                sii,
+                sai,
+                sat,
+            } => {
+                let node = ResolvedNode {
+                    addr: SocketAddr::new(*ip, *port),
+                    sii: *sii,
+                    sai: *sai,
+                    sat: *sat,
+                };
+                *state = MdnsResolveState::Idle;
+                Some(node)
+            }
+            _ => None,
+        }));
+
+        let mut timer = pin!(Timer::after(Duration::from_millis(timeout_ms as u64)));
+
+        match select(&mut wait, &mut timer).await {
+            Either::First(node) => {
+                // The `wait` above already reset the slot to `Idle`.
+                guard.armed = false;
+
+                Ok(node)
+            }
+            Either::Second(_) => Err(ErrorCode::NotFound.into()),
+        }
+    }
+
+    /// Responder-side: await the next pending mDNS resolve request, marking it
+    /// in-flight.
+    pub(crate) async fn wait_mdns_resolve_request(&self) -> MatterRemoteService {
+        self.mdns_resolve
+            .wait(|state| match state {
+                MdnsResolveState::Requested { service } => {
+                    let service = service.clone();
+                    *state = MdnsResolveState::InFlight {
+                        service: service.clone(),
+                    };
+                    Some(service)
+                }
+                _ => None,
+            })
+            .await
+    }
+
+    /// Whether an operational resolve is currently in flight.
+    ///
+    /// Used by the OS-backed mDNS implementations to poll-drive their resolve
+    /// loop only while a request is outstanding.
+    #[allow(dead_code)]
+    pub(crate) fn mdns_resolve_in_flight(&self) -> bool {
+        self.mdns_resolve
+            .modify(|state| (false, matches!(state, MdnsResolveState::InFlight { .. })))
+    }
+
+    /// Deposit a discovered [`MdnsRemoteService`] against an in-flight resolve
+    /// request, transitioning it to `Resolved` if the answer's instance name
+    /// matches. Best-effort: a non-matching, address-less, or absent request is
+    /// a no-op.
+    ///
+    /// The single resolve-deposit entry point shared by the builtin parser and
+    /// the OS-backed responders - both hand it an [`MdnsRemoteService`] (the
+    /// former lazily over the packet, the latter over their native records).
+    pub(crate) fn try_deposit_mdns_resolve<'a, I, A, T>(&self, answer: &MdnsRemoteService<I, A, T>)
+    where
+        I: ToLabelIter,
+        A: Iterator<Item = IpAddr> + Clone,
+        T: Iterator<Item = (&'a str, &'a str)> + Clone,
+    {
+        let Some(ip) = answer.addrs.clone().max_by_key(score_ip_address) else {
+            return;
+        };
+        let Some(port) = answer.port else {
+            return;
+        };
+
+        let (sii, sai, sat) = answer.session_params();
+
+        self.mdns_resolve.modify(|state| {
+            if let MdnsResolveState::InFlight { service } = state {
+                if service.matches_instance(&answer.instance_name) {
+                    *state = MdnsResolveState::Resolved {
+                        ip,
+                        port,
+                        sii,
+                        sai,
+                        sat,
+                    };
+                    return (true, ());
+                }
+            }
+            (false, ())
+        });
+    }
+
+    /// Browse the mDNS network for a **commissionable** node matching `filter`,
+    /// returning the first match's address and commissionable instance id.
+    ///
+    /// Places a single browse request into the shared rendezvous and waits up to
+    /// `timeout_ms` for the running mDNS responder to fire the browse query and
+    /// deposit the first node whose advertisement matches **all** non-`None`
+    /// fields of `filter` (see [`CommissionableFilter::matches`]) and whose
+    /// commissionable instance id is **not** in `exclude`. Multiple concurrent
+    /// callers serialize.
+    ///
+    /// `exclude` is how a caller steps to the **next** candidate when several
+    /// nodes share a (short) discriminator: pass the ids already tried (PASE
+    /// failed), and the next un-tried match is returned; repeat until
+    /// [`ErrorCode::NotFound`] (exhausted). Pass `&[]` for the first attempt.
+    /// At most [`MAX_BROWSE_EXCLUDE`](crate::transport::network::mdns) ids - more
+    /// returns [`ErrorCode::ResourceExhausted`].
+    ///
+    /// Returns `(address, commissionable_instance_id)` - the address can be fed
+    /// straight into [`Transport::initiate_pase`] to start PASE. Returns
+    /// [`ErrorCode::NotFound`] on timeout; the rendezvous is reset if this future
+    /// is dropped.
+    ///
+    /// Requires a running mDNS responder (e.g. `BuiltinMdns::run`).
+    ///
+    // TODO: A BLE/BTP equivalent is needed to discover wireless devices that
+    // advertise commissionable over BLE rather than mDNS - future work.
+    pub async fn browse_commissionable(
+        &self,
+        filter: &CommissionableFilter,
+        exclude: &[u64],
+        timeout_ms: u32,
+    ) -> Result<(Address, u64), Error> {
+        let mut exclude_vec = BrowseExclude::new();
+        exclude_vec
+            .extend_from_slice(exclude)
+            .map_err(|_| ErrorCode::ResourceExhausted)?;
+
+        // 1. Serialize with other browsers and place the request.
+        self.mdns_browse
+            .wait(|state| {
+                if matches!(state, MdnsBrowseState::Idle) {
+                    *state = MdnsBrowseState::Requested {
+                        filter: filter.clone(),
+                        exclude: exclude_vec.clone(),
+                    };
+                    Some(())
+                } else {
+                    None
+                }
+            })
+            .await;
+
+        // 2. Release the slot if this future is dropped (or times out).
+        let mut guard = MdnsBrowseGuard {
+            signal: &self.mdns_browse,
+            armed: true,
+        };
+
+        // 3. Wait for the first matching, non-excluded commissionable node, or time out.
+        let mut wait = pin!(self.mdns_browse.wait(|state| match state {
+            MdnsBrowseState::Found { ip, port, id } => {
+                let found = (Address::Udp(SocketAddr::new(*ip, *port)), *id);
+                *state = MdnsBrowseState::Idle;
+                Some(found)
+            }
+            _ => None,
+        }));
+
+        let mut timer = pin!(Timer::after(Duration::from_millis(timeout_ms as u64)));
+
+        match select(&mut wait, &mut timer).await {
+            Either::First(found) => {
+                guard.armed = false;
+
+                Ok(found)
+            }
+            Either::Second(_) => Err(ErrorCode::NotFound.into()),
+        }
+    }
+
+    /// Responder-side: await the next pending mDNS browse request, marking it
+    /// in-flight. Returns the filter to query for (the exclude set is consulted
+    /// later, at deposit time).
+    pub(crate) async fn wait_mdns_browse_request(&self) -> CommissionableFilter {
+        self.mdns_browse
+            .wait(|state| match state {
+                MdnsBrowseState::Requested { filter, exclude } => {
+                    let filter = filter.clone();
+                    *state = MdnsBrowseState::InFlight {
+                        filter: filter.clone(),
+                        exclude: core::mem::take(exclude),
+                    };
+
+                    Some(filter)
+                }
+                _ => None,
+            })
+            .await
+    }
+
+    /// Whether a commissionable browse is currently in flight.
+    ///
+    /// Used by the OS-backed mDNS implementations to poll-drive their browse
+    /// loop only while a request is outstanding.
+    #[allow(dead_code)]
+    pub(crate) fn mdns_browse_in_flight(&self) -> bool {
+        self.mdns_browse
+            .modify(|state| (false, matches!(state, MdnsBrowseState::InFlight { .. })))
+    }
+
+    /// Deposit a discovered [`MdnsRemoteService`] against an in-flight browse
+    /// request, transitioning it to `Found` if the instance is not excluded and
+    /// its TXT records match the filter. Best-effort: a non-matching, excluded,
+    /// address-less, or absent request is a no-op.
+    ///
+    /// The single browse-deposit entry point shared by the builtin parser and
+    /// the OS-backed responders - both hand it an [`MdnsRemoteService`].
+    pub(crate) fn try_deposit_mdns_browse<'a, I, A, T>(&self, answer: &MdnsRemoteService<I, A, T>)
+    where
+        I: ToLabelIter,
+        A: Iterator<Item = IpAddr> + Clone,
+        T: Iterator<Item = (&'a str, &'a str)> + Clone,
+    {
+        let Some(id) = commissionable_instance_id(&answer.instance_name) else {
+            return;
+        };
+        let Some(ip) = answer.addrs.clone().max_by_key(score_ip_address) else {
+            return;
+        };
+        let Some(port) = answer.port else {
+            return;
+        };
+
+        self.mdns_browse.modify(|state| {
+            if let MdnsBrowseState::InFlight { filter, exclude } = state {
+                if !exclude.contains(&id) && filter.matches(answer) {
+                    *state = MdnsBrowseState::Found { ip, port, id };
+                    return (true, ());
+                }
+            }
+            (false, ())
+        });
     }
 
     pub(crate) async fn accept_if<'a, F>(
@@ -201,26 +552,132 @@ impl Transport {
         Ok(exchange)
     }
 
-    pub(crate) async fn initiate<'a>(
+    /// The mDNS resolve timeout used when auto-establishing a session
+    /// (CASE operational resolve, or PASE commissionable resolve).
+    /// Single-shot for now (no backoff re-query); see follow-ups.
+    const RESOLVE_TIMEOUT_MS: u32 = 5_000;
+
+    /// Open an exchange over a CASE session to an already-commissioned node.
+    ///
+    /// If a CASE session for `(fabric_idx, peer_node_id)` already exists, an
+    /// exchange is opened on it directly (the common case - session and peer
+    /// address reused, no mDNS). Otherwise the peer's operational address is
+    /// resolved over mDNS and a fresh CASE session is established (driving
+    /// [`CaseInitiator`]) before the exchange is opened on it; the peer's
+    /// MRP/session parameters advertised in the mDNS TXT records seed the
+    /// session.
+    pub(crate) async fn initiate<'a, C: Crypto>(
         &self,
         matter: &'a Matter<'a>,
-        fabric_idx: u8,
+        crypto: C,
+        fabric_idx: NonZeroU8,
         peer_node_id: NodeId,
-        secure: bool,
     ) -> Result<Exchange<'a>, Error> {
-        // TODO: Future: once we have mDNS lookups in place
-        // create a new session if no suitable one is found
-
-        let session_id = matter.with_state(|state| {
-            // (block necessary, or else we end up re-borrowing `Sessions` as mut twice)
-
-            Ok::<_, ErrorCode>(
+        // Reuse an existing CASE session if present.
+        let existing = matter.with_state(|state| {
+            Ok::<_, Error>(
                 state
                     .sessions
-                    .get_for_node(fabric_idx, peer_node_id, secure)
-                    .ok_or(ErrorCode::NoSession)?
-                    .id,
+                    .get_for_node(fabric_idx, peer_node_id)
+                    .map(|s| s.id),
             )
+        })?;
+
+        if let Some(session_id) = existing {
+            return self.initiate_for_session(matter, session_id);
+        }
+
+        // No CASE session: resolve the operational address and establish one.
+        let compressed_fabric_id = matter.with_state(|state| {
+            Ok::<_, Error>(state.fabrics.fabric(fabric_idx)?.compressed_fabric_id())
+        })?;
+
+        let service = MatterRemoteService::Operational {
+            compressed_fabric_id,
+            node_id: peer_node_id,
+        };
+
+        let resolved = self.resolve(service, Self::RESOLVE_TIMEOUT_MS).await?;
+
+        // Establish CASE over a fresh, one-shot unsecured exchange to the
+        // resolved address. On success a secure session keyed at
+        // `(fabric_idx, peer_node_id)` is recorded in the stack.
+        {
+            let mut exchange = self
+                .initiate_plaintext(matter, &crypto, Address::Udp(resolved.addr))
+                .await?;
+
+            CaseInitiator::initiate(&mut exchange, &crypto, fabric_idx, peer_node_id).await?;
+        }
+
+        // Seed the new CASE session's peer MRP/session params from the resolve
+        // TXT (rs-matter does not yet exchange these in CASE Sigma1/2) and grab
+        // its id for the exchange.
+        let params = SessionParameters {
+            sii: resolved.sii,
+            sai: resolved.sai,
+            sat: resolved.sat,
+            ..Default::default()
+        };
+
+        let session_id = matter.with_state(|state| {
+            let session = state
+                .sessions
+                .get_for_node(fabric_idx, peer_node_id)
+                .ok_or(ErrorCode::NoSession)?;
+
+            session.set_peer_session_params(&params);
+
+            Ok::<_, Error>(session.id)
+        })?;
+
+        self.initiate_for_session(matter, session_id)
+    }
+
+    /// Open an exchange over a PASE session to a not-yet-commissioned node at the
+    /// given peer address.
+    ///
+    /// If a PASE session **to that peer** already exists, an exchange is opened on
+    /// it directly. Otherwise a new PASE session is established: a plaintext
+    /// session is opened and the PASE protocol ([`PaseInitiator`]) is run with
+    /// `passcode`, then an exchange is opened on the resulting PASE session.
+    ///
+    /// Reuse is keyed by peer address (not a single global PASE session), so a
+    /// commissioner can drive several concurrent commissionings.
+    ///
+    /// Discovery of the address is out of scope (mDNS via
+    /// [`Transport::browse_commissionable`], a BLE/BTP advertisement, etc.); this
+    /// method is transport-agnostic and takes the already-known address.
+    pub(crate) async fn initiate_pase<'a, C: Crypto>(
+        &self,
+        matter: &'a Matter<'a>,
+        crypto: C,
+        peer_addr: Address,
+        passcode: u32,
+    ) -> Result<Exchange<'a>, Error> {
+        // Reuse an existing PASE session to this peer, if present.
+        let existing = matter.with_state(|state| {
+            Ok::<_, Error>(state.sessions.get_pase_for_addr(&peer_addr).map(|s| s.id))
+        })?;
+
+        if let Some(session_id) = existing {
+            return self.initiate_for_session(matter, session_id);
+        }
+
+        // Establish a new PASE session to this peer.
+        {
+            let mut handshake = self.initiate_plaintext(matter, &crypto, peer_addr).await?;
+            PaseInitiator::initiate(&mut handshake, &crypto, passcode).await?;
+            // The PASE-establishment exchange is one-shot; drop it here so the
+            // caller opens fresh exchanges on the new PASE session.
+        }
+
+        let session_id = matter.with_state(|state| {
+            state
+                .sessions
+                .get_pase_for_addr(&peer_addr)
+                .map(|s| s.id)
+                .ok_or_else(|| Error::from(ErrorCode::NoSession))
         })?;
 
         self.initiate_for_session(matter, session_id)
@@ -258,6 +715,49 @@ impl Transport {
         })
     }
 
+    /// Create a new initiator exchange on a new plaintext session to
+    /// the given peer address, evicting an existing session and retrying once if
+    /// there is no space.
+    ///
+    /// Low-level primitive used to carry the first handshake message of PASE
+    /// ([`PaseInitiator`]) or CASE ([`CaseInitiator`]).
+    async fn initiate_plaintext<'a, C: Crypto>(
+        &self,
+        matter: &'a Matter<'a>,
+        crypto: C,
+        peer_addr: Address,
+    ) -> Result<Exchange<'a>, Error> {
+        match self.try_initiate_plaintext(matter, &crypto, peer_addr) {
+            Ok(exchange) => Ok(exchange),
+            Err(e) if e.code() == ErrorCode::NoSpaceSessions => {
+                matter
+                    .transport_runner(&crypto)
+                    .evict_some_session()
+                    .await?;
+                self.try_initiate_plaintext(matter, &crypto, peer_addr)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Create a new plaintext session and initiate an exchange on it in one step.
+    ///
+    /// This is a convenience method that combines `create_plaintext_session()` and
+    /// `initiate_for_session()`. Fails immediately if there is no space for a new session.
+    ///
+    /// For flows that need the session ID (e.g. to upgrade the session after PASE/CASE),
+    /// use `create_plaintext_session()` + `initiate_for_session()` separately.
+    fn try_initiate_plaintext<'a, C: Crypto>(
+        &self,
+        matter: &'a Matter<'a>,
+        crypto: C,
+        peer_addr: Address,
+    ) -> Result<Exchange<'a>, Error> {
+        let session_id = self.create_plaintext_session(matter, crypto, peer_addr)?;
+
+        self.initiate_for_session(matter, session_id)
+    }
+
     /// Create a new unsecured (plain-text) session to a given peer address.
     ///
     /// Returns the internal session ID that can be used with `initiate_for_session()`.
@@ -265,7 +765,7 @@ impl Transport {
     /// This is the low-level building block for controller-initiated communication
     /// (e.g. PASE/CASE initiator flows), analogous to the SDK's
     /// `SessionManager::CreateUnauthenticatedSession()`.
-    pub(crate) fn create_unsecured_session<C: Crypto>(
+    fn create_plaintext_session<C: Crypto>(
         &self,
         matter: &Matter<'_>,
         crypto: C,
@@ -301,24 +801,6 @@ impl Transport {
         })
     }
 
-    /// Create a new unsecured session and initiate an exchange on it in one step.
-    ///
-    /// This is a convenience method that combines `create_unsecured_session()` and
-    /// `initiate_for_session()`. Fails immediately if there is no space for a new session.
-    ///
-    /// For flows that need the session ID (e.g. to upgrade the session after PASE/CASE),
-    /// use `create_unsecured_session()` + `initiate_for_session()` separately.
-    pub(crate) fn initiate_unsecured_now<'a, C: Crypto>(
-        &self,
-        matter: &'a Matter<'a>,
-        crypto: C,
-        peer_addr: Address,
-    ) -> Result<Exchange<'a>, Error> {
-        let session_id = self.create_unsecured_session(matter, crypto, peer_addr)?;
-
-        matter.transport.initiate_for_session(matter, session_id)
-    }
-
     pub(crate) async fn get_if_rx<F>(&self, f: F) -> PacketAccess<'_, MAX_RX_BUF_SIZE>
     where
         F: Fn(&Packet<MAX_RX_BUF_SIZE>) -> bool,
@@ -341,6 +823,52 @@ impl Transport {
         F: Fn(&Packet<N>) -> bool,
     {
         PacketAccess(packet_mutex.lock_if(f).await, false)
+    }
+}
+
+/// Resets the mDNS resolve rendezvous to `Idle` on drop, unless disarmed.
+///
+/// This guarantees that a dropped (cancelled or timed-out) [`Transport::resolve`]
+/// future does not leave the single-slot rendezvous occupied for other callers.
+struct MdnsResolveGuard<'a> {
+    signal: &'a Signal<MdnsResolveState>,
+    armed: bool,
+}
+
+impl Drop for MdnsResolveGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.signal.modify(|state| {
+                if matches!(state, MdnsResolveState::Idle) {
+                    (false, ())
+                } else {
+                    *state = MdnsResolveState::Idle;
+                    (true, ())
+                }
+            });
+        }
+    }
+}
+
+/// Resets the mDNS browse rendezvous to `Idle` on drop, unless disarmed (the
+/// browse analog of [`ResolveGuard`]).
+struct MdnsBrowseGuard<'a> {
+    signal: &'a Signal<MdnsBrowseState>,
+    armed: bool,
+}
+
+impl Drop for MdnsBrowseGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.signal.modify(|state| {
+                if matches!(state, MdnsBrowseState::Idle) {
+                    (false, ())
+                } else {
+                    *state = MdnsBrowseState::Idle;
+                    (true, ())
+                }
+            });
+        }
     }
 }
 
@@ -373,7 +901,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         // C++ E2E tests rely on this log line to determine when the tested app is ready
         debug!("APP STATUS: Starting event loop");
 
-        let mut joined = self.matter.transport.group_addrs.lock().await;
+        let mut joined = self.transport().group_addrs.lock().await;
 
         let send = IfMutex::new(send);
 
@@ -447,7 +975,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     ),
                 },
                 None => {
-                    self.matter.groups_modified.wait().await;
+                    self.transport().wait_groups_changed().await;
                 }
             }
         }
@@ -565,8 +1093,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         loop {
             trace!("Waiting for orphaned RX packets");
 
-            self.matter
-                .transport
+            self.transport()
                 .rx
                 .with(|packet| self.handle_orphaned_rx_packet(packet).then_some(()))
                 .await;
@@ -599,7 +1126,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
 
             if wait {
                 let mut timeout = pin!(Timer::after(embassy_time::Duration::from_millis(100)));
-                let mut wait = pin!(self.matter.transport.exchange_dropped.wait());
+                let mut wait = pin!(self.transport().exchange_dropped.wait());
 
                 select(&mut timeout, &mut wait).await;
             }
@@ -719,7 +1246,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
 
                     // See above why `unwrap` is safe
                     let mut session = unwrap!(state.sessions.remove(session_id));
-                    self.matter.session_removed.notify();
+                    self.transport().notify_session_removed();
 
                     self.write_packet(packet, Some(&mut session), None, true, |wb| {
                         sc_write(wb, SCStatusCodes::CloseSession, &[])
@@ -795,7 +1322,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                             .map(|sess| sess.id)
                         {
                             state.sessions.remove(session_id);
-                            self.matter.session_removed.notify();
+                            self.transport().notify_session_removed();
                         }
                     });
                 } else {
@@ -866,7 +1393,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
 
             exchange.role = Role::Responder(ResponderState::Dropped);
             packet.buf.clear();
-            self.matter.transport.exchange_dropped.notify();
+            self.transport().exchange_dropped.notify();
 
             true
         })
@@ -946,7 +1473,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     exchange_id.display(unwrap!(state.sessions.get(session_id))) // Session exists or else we wouldn't be here
                 );
 
-                self.write_evict_session_packet(packet, &mut state.sessions, &self.matter.session_removed, session_id, false)?;
+                self.write_evict_session_packet(packet, &mut state.sessions, session_id, false)?;
             } else {
                 // Found a dropped exchange which has no outstanding (re)transmission
                 // Send a standalone ACK if necessary and then close it
@@ -1168,8 +1695,8 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
             let (peer, retransmission) = session.pre_send(
                 exchange_index,
                 &mut packet.header,
-                self.matter.transport.device_sai,
-                self.matter.transport.device_sii,
+                self.transport().device_sai,
+                self.transport().device_sii,
             )?;
 
             packet.peer = peer;
@@ -1220,13 +1747,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 .get_session_for_eviction()
                 .map(|sess| sess.id);
             if let Some(id) = id {
-                self.write_evict_session_packet(
-                    packet,
-                    &mut state.sessions,
-                    &self.matter.session_removed,
-                    id,
-                    encode,
-                )?;
+                self.write_evict_session_packet(packet, &mut state.sessions, id, encode)?;
 
                 Ok(true)
             } else {
@@ -1241,7 +1762,6 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         &self,
         packet: &mut Packet<N>,
         sessions: &mut Sessions,
-        session_removed: &Notification,
         id: u32,
         encode: bool,
     ) -> Result<(), Error> {
@@ -1250,7 +1770,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
 
         // It is a responsibility of the caller to ensure that this method is called with a valid session ID
         let mut session = unwrap!(sessions.remove(id));
-        session_removed.notify();
+        self.transport().notify_session_removed();
 
         debug!(
             "Evicting session {} [SID:{:x},RSID:{:x}]",
@@ -1330,6 +1850,11 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 Ok(())
             }
         }
+    }
+
+    #[inline(always)]
+    const fn transport(&self) -> &Transport {
+        self.matter.transport()
     }
 }
 
@@ -1704,7 +2229,7 @@ mod tests {
 
         let session_id = matter
             .transport
-            .create_unsecured_session(&matter, &crypto, peer)
+            .create_plaintext_session(&matter, &crypto, peer)
             .unwrap();
 
         matter.with_state(|state| {
@@ -1725,7 +2250,7 @@ mod tests {
 
         let exchange = matter
             .transport
-            .initiate_unsecured_now(&matter, &crypto, peer)
+            .try_initiate_plaintext(&matter, &crypto, peer)
             .unwrap();
 
         exchange
@@ -1738,5 +2263,242 @@ mod tests {
                 Ok(())
             })
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use core::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    use futures_lite::future::{block_on, zip};
+
+    use crate::error::ErrorCode;
+    use crate::test::test_matter;
+    use crate::transport::network::mdns::{DottedName, MdnsRemoteService};
+    use crate::transport::network::MatterRemoteService;
+
+    fn op_service() -> MatterRemoteService {
+        MatterRemoteService::Operational {
+            compressed_fabric_id: 0x1122,
+            node_id: 0x3344,
+        }
+    }
+
+    /// A resolver and the responder rendezvous on the single in-flight slot: the
+    /// responder picks up the request and deposits an answer, which the resolver
+    /// returns as the resolved `Address`.
+    #[test]
+    fn resolve_rendezvous_delivers_answer() {
+        let matter = test_matter();
+        let service = op_service();
+
+        let resolved = block_on(async {
+            let resolver = matter.transport().resolve(service.clone(), 5_000);
+
+            let responder = async {
+                let picked = matter.transport().wait_mdns_resolve_request().await;
+                assert_eq!(picked, service);
+
+                let mut name = heapless::String::<128>::new();
+                service.instance_name(&mut name);
+
+                let answer = MdnsRemoteService {
+                    instance_name: DottedName(name.as_str()),
+                    port: Some(1234),
+                    addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5))].into_iter(),
+                    txt: [("SII", "300"), ("SAI", "4000"), ("SAT", "5000")].into_iter(),
+                };
+
+                matter.transport().try_deposit_mdns_resolve(&answer);
+            };
+
+            let (node, ()) = zip(resolver, responder).await;
+            node
+        })
+        .unwrap();
+
+        assert_eq!(
+            resolved.addr,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)), 1234)
+        );
+        // The peer's MRP/session params are carried out of the resolve TXT.
+        assert_eq!(resolved.sii, Some(300));
+        assert_eq!(resolved.sai, Some(4000));
+        assert_eq!(resolved.sat, Some(5000));
+    }
+
+    /// Without a responder, a resolve times out and releases the slot (drop-clean),
+    /// so a subsequent resolve also simply times out rather than hanging.
+    #[test]
+    fn resolve_times_out_and_releases_slot() {
+        let matter = test_matter();
+
+        let err = block_on(matter.transport().resolve(op_service(), 50)).unwrap_err();
+        assert!(matches!(err.code(), ErrorCode::NotFound));
+
+        let err = block_on(matter.transport().resolve(op_service(), 50)).unwrap_err();
+        assert!(matches!(err.code(), ErrorCode::NotFound));
+    }
+
+    /// Depositing an answer with no in-flight request is a no-op (does not strand
+    /// a phantom answer): a later resolve still times out.
+    #[test]
+    fn deposit_without_request_is_noop() {
+        let matter = test_matter();
+
+        let mut name = heapless::String::<128>::new();
+        op_service().instance_name(&mut name);
+        let answer = MdnsRemoteService {
+            instance_name: DottedName(name.as_str()),
+            port: Some(1234),
+            addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 9))].into_iter(),
+            txt: core::iter::empty::<(&str, &str)>(),
+        };
+        matter.transport().try_deposit_mdns_resolve(&answer);
+
+        let err = block_on(matter.transport().resolve(op_service(), 50)).unwrap_err();
+        assert!(matches!(err.code(), ErrorCode::NotFound));
+    }
+}
+
+#[cfg(test)]
+mod browse_tests {
+    use core::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    use futures_lite::future::{block_on, zip};
+
+    use crate::error::ErrorCode;
+    use crate::test::test_matter;
+    use crate::transport::network::mdns::{CommissionableFilter, DottedName, MdnsRemoteService};
+    use crate::transport::network::Address;
+
+    /// A browser and the responder rendezvous: the responder picks up the request,
+    /// deposits a matching commissionable answer, and the browser returns its
+    /// address + commissionable instance id.
+    #[test]
+    fn browse_rendezvous_delivers_first_match() {
+        let matter = test_matter();
+
+        let filter = CommissionableFilter {
+            discriminator: Some(0xA5A),
+            vendor_id: Some(0xFFF1),
+            ..Default::default()
+        };
+
+        let found = block_on(async {
+            let browser = matter
+                .transport()
+                .browse_commissionable(&filter, &[], 5_000);
+
+            let responder = async {
+                let picked = matter.transport().wait_mdns_browse_request().await;
+                assert_eq!(picked, filter);
+
+                // A non-matching node (wrong vendor) must be ignored.
+                let other = MdnsRemoteService {
+                    instance_name: DottedName("0000000000000001._matterc._udp.local"),
+                    port: Some(5540),
+                    addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))].into_iter(),
+                    txt: [("D", "2650"), ("VP", "9999+1"), ("CM", "1")].into_iter(),
+                };
+                matter.transport().try_deposit_mdns_browse(&other);
+
+                // The matching node (D=0xA5A=2650, VP vendor 0xFFF1=65521).
+                let answer = MdnsRemoteService {
+                    instance_name: DottedName("00000000ABCD1234._matterc._udp.local"),
+                    port: Some(5541),
+                    addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7))].into_iter(),
+                    txt: [("D", "2650"), ("VP", "65521+42"), ("CM", "1")].into_iter(),
+                };
+                matter.transport().try_deposit_mdns_browse(&answer);
+            };
+
+            let (found, ()) = zip(browser, responder).await;
+            found
+        })
+        .unwrap();
+
+        assert_eq!(
+            found,
+            (
+                Address::Udp(SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7)),
+                    5541
+                )),
+                0x00000000ABCD1234,
+            )
+        );
+    }
+
+    /// Without a responder, a browse times out and releases the slot (drop-clean).
+    #[test]
+    fn browse_times_out_and_releases_slot() {
+        let matter = test_matter();
+        let filter = CommissionableFilter {
+            short_discriminator: Some(0xA),
+            ..Default::default()
+        };
+
+        let err = block_on(matter.transport().browse_commissionable(&filter, &[], 50)).unwrap_err();
+        assert!(matches!(err.code(), ErrorCode::NotFound));
+
+        let err = block_on(matter.transport().browse_commissionable(&filter, &[], 50)).unwrap_err();
+        assert!(matches!(err.code(), ErrorCode::NotFound));
+    }
+
+    /// `exclude` steps past an already-tried candidate: with two nodes sharing the
+    /// (short) discriminator, excluding the first id yields the second.
+    #[test]
+    fn browse_exclude_steps_to_next_match() {
+        let matter = test_matter();
+
+        // Short discriminator 0xA = top 4 bits of 0xA12 (2578) and 0xAFF (2815).
+        let filter = CommissionableFilter {
+            short_discriminator: Some(0xA),
+            ..Default::default()
+        };
+
+        // Both nodes match the filter; exclude the first id, expect the second.
+        let found = block_on(async {
+            let browser = matter
+                .transport()
+                .browse_commissionable(&filter, &[0x1111], 5_000);
+
+            let responder = async {
+                matter.transport().wait_mdns_browse_request().await;
+
+                let node_a = MdnsRemoteService {
+                    instance_name: DottedName("0000000000001111._matterc._udp.local"),
+                    port: Some(5540),
+                    addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))].into_iter(),
+                    txt: [("D", "2578"), ("CM", "1")].into_iter(), // 0xA12, short 0xA
+                };
+                // Excluded id -> ignored.
+                matter.transport().try_deposit_mdns_browse(&node_a);
+
+                let node_b = MdnsRemoteService {
+                    instance_name: DottedName("0000000000002222._matterc._udp.local"),
+                    port: Some(5541),
+                    addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2))].into_iter(),
+                    txt: [("D", "2815"), ("CM", "1")].into_iter(), // 0xAFF, short 0xA
+                };
+                matter.transport().try_deposit_mdns_browse(&node_b);
+            };
+
+            let (found, ()) = zip(browser, responder).await;
+            found
+        })
+        .unwrap();
+
+        assert_eq!(
+            found,
+            (
+                Address::Udp(SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+                    5541
+                )),
+                0x2222,
+            )
+        );
     }
 }

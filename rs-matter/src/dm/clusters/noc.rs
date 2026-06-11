@@ -679,7 +679,7 @@ impl ClusterHandler for NocHandler {
 
         let fab_idx = NonZeroU8::new(request.fabric_index()?).ok_or(ErrorCode::ConstraintError)?;
 
-        let notify_mdns = || ctx.exchange().matter().notify_mdns_changed();
+        let notify_mdns = || ctx.exchange().matter().transport().notify_mdns_changed();
 
         let mut persist = FabricPersist::new(ctx.kv());
 
@@ -698,7 +698,7 @@ impl ClusterHandler for NocHandler {
                 state.sessions.remove_for_fabric(fab_idx, expire_sess_id);
 
                 // Notify that a session was removed
-                ctx.exchange().matter().session_removed.notify();
+                ctx.exchange().matter().transport().notify_session_removed();
 
                 // Notify that our mDNS records might have changed
                 notify_mdns();
