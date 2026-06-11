@@ -293,7 +293,12 @@ impl Transport {
 
     /// Responder-side: await the next pending mDNS resolve request, marking it
     /// in-flight.
-    pub(crate) async fn wait_mdns_resolve_request(&self) -> MatterRemoteService {
+    ///
+    /// Part of the public responder contract: a third-party mDNS responder
+    /// (living outside this crate) drives the resolve use case by awaiting a
+    /// request here, issuing its own query, and depositing any answers via
+    /// [`Transport::try_deposit_mdns_resolve`].
+    pub async fn wait_mdns_resolve_request(&self) -> MatterRemoteService {
         self.mdns_resolve
             .wait(|state| match state {
                 MdnsResolveState::Requested { service } => {
@@ -310,10 +315,10 @@ impl Transport {
 
     /// Whether an operational resolve is currently in flight.
     ///
-    /// Used by the OS-backed mDNS implementations to poll-drive their resolve
+    /// Used by mDNS implementations to poll-drive their resolve
     /// loop only while a request is outstanding.
     #[allow(dead_code)]
-    pub(crate) fn mdns_resolve_in_flight(&self) -> bool {
+    pub fn mdns_resolve_in_flight(&self) -> bool {
         self.mdns_resolve
             .modify(|state| (false, matches!(state, MdnsResolveState::InFlight { .. })))
     }
@@ -323,10 +328,11 @@ impl Transport {
     /// matches. Best-effort: a non-matching, address-less, or absent request is
     /// a no-op.
     ///
-    /// The single resolve-deposit entry point shared by the builtin parser and
-    /// the OS-backed responders - both hand it an [`MdnsRemoteService`] (the
-    /// former lazily over the packet, the latter over their native records).
-    pub(crate) fn try_deposit_mdns_resolve<'a, I, A, T>(&self, answer: &MdnsRemoteService<I, A, T>)
+    /// The single resolve-deposit entry point shared by the builtin parser, the
+    /// OS-backed responders, and any third-party responder - all hand it an
+    /// [`MdnsRemoteService`] (the builtin lazily over the packet, the others over
+    /// their native records).
+    pub fn try_deposit_mdns_resolve<'a, I, A, T>(&self, answer: &MdnsRemoteService<I, A, T>)
     where
         I: ToLabelIter,
         A: Iterator<Item = IpAddr> + Clone,
@@ -441,7 +447,12 @@ impl Transport {
     /// Responder-side: await the next pending mDNS browse request, marking it
     /// in-flight. Returns the filter to query for (the exclude set is consulted
     /// later, at deposit time).
-    pub(crate) async fn wait_mdns_browse_request(&self) -> CommissionableFilter {
+    ///
+    /// Part of the public responder contract: a third-party mDNS responder
+    /// (living outside this crate) drives the commissionable-browse use case by
+    /// awaiting a request here, issuing its own query, and depositing matches via
+    /// [`Transport::try_deposit_mdns_browse`].
+    pub async fn wait_mdns_browse_request(&self) -> CommissionableFilter {
         self.mdns_browse
             .wait(|state| match state {
                 MdnsBrowseState::Requested { filter, exclude } => {
@@ -460,10 +471,10 @@ impl Transport {
 
     /// Whether a commissionable browse is currently in flight.
     ///
-    /// Used by the OS-backed mDNS implementations to poll-drive their browse
+    /// Used by mDNS implementations to poll-drive their browse
     /// loop only while a request is outstanding.
     #[allow(dead_code)]
-    pub(crate) fn mdns_browse_in_flight(&self) -> bool {
+    pub fn mdns_browse_in_flight(&self) -> bool {
         self.mdns_browse
             .modify(|state| (false, matches!(state, MdnsBrowseState::InFlight { .. })))
     }
@@ -473,9 +484,10 @@ impl Transport {
     /// its TXT records match the filter. Best-effort: a non-matching, excluded,
     /// address-less, or absent request is a no-op.
     ///
-    /// The single browse-deposit entry point shared by the builtin parser and
-    /// the OS-backed responders - both hand it an [`MdnsRemoteService`].
-    pub(crate) fn try_deposit_mdns_browse<'a, I, A, T>(&self, answer: &MdnsRemoteService<I, A, T>)
+    /// The single browse-deposit entry point shared by the builtin parser, the
+    /// OS-backed responders, and any third-party responder - all hand it an
+    /// [`MdnsRemoteService`].
+    pub fn try_deposit_mdns_browse<'a, I, A, T>(&self, answer: &MdnsRemoteService<I, A, T>)
     where
         I: ToLabelIter,
         A: Iterator<Item = IpAddr> + Clone,
