@@ -22,7 +22,7 @@ use core::pin::pin;
 use embassy_futures::select::select;
 use embassy_time::Timer;
 
-use crate::dm::clusters::net_comm::{self, NetCtlError, WirelessCreds};
+use crate::dm::clusters::net_comm::{self, NetCtlError, NetworksError, WirelessCreds};
 use crate::dm::clusters::wifi_diag;
 use crate::error::{Error, ErrorCode};
 use crate::utils::select::Coalesce;
@@ -82,6 +82,41 @@ where
         }
     }
 
+    /// Perform a single, one-shot connect to the network with the given ID.
+    ///
+    /// Unlike [`WirelessMgr::run`] - which is the operational connectivity
+    /// maintainer and therefore only acts once the device is commissioned - this
+    /// method connects immediately, regardless of the commissioning status.
+    ///
+    /// It exists to support **non-concurrent** commissioning over BLE: there, the
+    /// commissioner's `ConnectNetwork` command arrives while the operational
+    /// (Wifi/Thread) network cannot yet run (the radio is busy with BLE), so the
+    /// actual connect must be *deferred* and replayed once BLE is torn down and
+    /// the operational network is brought up - but still *before* commissioning
+    /// completes (the commissioner re-establishes a CASE session over the
+    /// operational network and only then sends `CommissioningComplete`).
+    ///
+    /// The credentials are looked up by `network_id` from the networks storage
+    /// (they were stored earlier by the commissioner's `AddOrUpdate*Network`
+    /// command). Returns `Ok(())` on a successful connect; the same retry/backoff
+    /// as the operational loop is applied before giving up.
+    pub async fn connect_once(&mut self, network_id: &[u8]) -> Result<(), Error> {
+        let creds = Self::creds(&self.networks, network_id, self.buf)?;
+
+        let Some(creds) = creds else {
+            warn!("No network with the requested ID found; cannot perform the deferred connect");
+            return Err(ErrorCode::InvalidData.into());
+        };
+
+        match Self::connect(&self.net_ctl, &creds).await {
+            Ok(()) => Ok(()),
+            // Surface the underlying error verbatim, or map a typed connection
+            // failure to a generic "no network interface" error.
+            Err(NetCtlError::Other(e)) => Err(e),
+            Err(_) => Err(ErrorCode::NoNetworkInterface.into()),
+        }
+    }
+
     async fn run_connect(networks: &W, net_ctl: &T, buf: &mut [u8]) -> Result<(), Error> {
         // Try to connect to the networks in a round-robin fashion until we succeed or the commissioning status changes.
 
@@ -137,59 +172,104 @@ where
         }
     }
 
+    /// Look up the credentials for a specific `network_id`, copying them into
+    /// `buf` and returning a `WirelessCreds` borrowing from it (or `None` if no
+    /// such network is recorded). Mirrors [`WirelessMgr::next_creds`] but selects
+    /// a network by ID rather than by round-robin position.
+    fn creds<'d>(
+        networks: &W,
+        network_id: &[u8],
+        buf: &'d mut [u8],
+    ) -> Result<Option<WirelessCreds<'d>>, Error> {
+        let mut offsets = None;
+
+        let found = networks.access(|networks| {
+            networks.creds(network_id, &mut |creds| {
+                offsets = Some(Self::copy_creds(buf, creds)?);
+
+                Ok(())
+            })
+        });
+
+        // A missing network is not an error here - the caller decides what to do.
+        if matches!(found, Err(NetworksError::NetworkIdNotFound)) {
+            return Ok(None);
+        }
+
+        found.map_err(|e| match e {
+            NetworksError::Other(e) => e,
+            _ => ErrorCode::InvalidData.into(),
+        })?;
+
+        Ok(offsets.map(|offsets| Self::rebuild_creds(buf, offsets)))
+    }
+
     fn next_creds<'d>(
         networks: &W,
         last_network_id: Option<&[u8]>,
         buf: &'d mut [u8],
     ) -> Result<Option<WirelessCreds<'d>>, Error> {
-        let mut next_creds_offsets = None;
+        let mut offsets = None;
 
         networks.access(|networks| {
             networks.next_creds(last_network_id, &mut |creds| {
-                match creds {
-                    WirelessCreds::Wifi { ssid, pass } => {
-                        if ssid.len() + pass.len() > buf.len() {
-                            error!("SSID and password too large");
-                            return Err(ErrorCode::InvalidData.into());
-                        }
-
-                        buf[..ssid.len()].copy_from_slice(ssid);
-                        buf[ssid.len()..][..pass.len()].copy_from_slice(pass);
-
-                        next_creds_offsets = Some((ssid.len(), Some(pass.len())))
-                    }
-                    WirelessCreds::Thread { dataset_tlv } => {
-                        if dataset_tlv.len() > buf.len() {
-                            error!("Dataset TLV too large");
-                            return Err(ErrorCode::InvalidData.into());
-                        }
-
-                        buf[..dataset_tlv.len()].copy_from_slice(dataset_tlv);
-
-                        next_creds_offsets = Some((dataset_tlv.len(), None))
-                    }
-                }
+                offsets = Some(Self::copy_creds(buf, creds)?);
 
                 Ok(())
             })
         })?;
 
-        let next_creds = if let Some((len1, len2)) = next_creds_offsets {
-            Some(if let Some(len2) = len2 {
-                WirelessCreds::Wifi {
-                    ssid: &buf[..len1],
-                    pass: &buf[len1..][..len2],
-                }
-            } else {
-                WirelessCreds::Thread {
-                    dataset_tlv: &buf[..len1],
-                }
-            })
-        } else {
-            None
-        };
+        Ok(offsets.map(|offsets| Self::rebuild_creds(buf, offsets)))
+    }
 
-        Ok(next_creds)
+    /// Copy the credentials yielded by a `Networks` accessor into `buf`,
+    /// returning the byte offsets of the copied fields: `(len1, Some(len2))` for
+    /// WiFi (`ssid` then `pass`), or `(len1, None)` for Thread (the dataset TLV).
+    ///
+    /// The yielded `WirelessCreds` borrow from the (locked) networks storage, so
+    /// they cannot outlive the accessor; copying into the caller's `buf` lets the
+    /// credentials be used (e.g. passed to `connect`) outside the lock. Pair with
+    /// [`WirelessMgr::rebuild_creds`] to turn the offsets back into a borrowing
+    /// `WirelessCreds`.
+    fn copy_creds(buf: &mut [u8], creds: &WirelessCreds) -> Result<(usize, Option<usize>), Error> {
+        match creds {
+            WirelessCreds::Wifi { ssid, pass } => {
+                if ssid.len() + pass.len() > buf.len() {
+                    error!("SSID and password too large");
+                    return Err(ErrorCode::InvalidData.into());
+                }
+
+                buf[..ssid.len()].copy_from_slice(ssid);
+                buf[ssid.len()..][..pass.len()].copy_from_slice(pass);
+
+                Ok((ssid.len(), Some(pass.len())))
+            }
+            WirelessCreds::Thread { dataset_tlv } => {
+                if dataset_tlv.len() > buf.len() {
+                    error!("Dataset TLV too large");
+                    return Err(ErrorCode::InvalidData.into());
+                }
+
+                buf[..dataset_tlv.len()].copy_from_slice(dataset_tlv);
+
+                Ok((dataset_tlv.len(), None))
+            }
+        }
+    }
+
+    /// Reconstruct a `WirelessCreds` borrowing from `buf`, given the offsets
+    /// returned by [`WirelessMgr::copy_creds`].
+    fn rebuild_creds(buf: &[u8], (len1, len2): (usize, Option<usize>)) -> WirelessCreds<'_> {
+        if let Some(len2) = len2 {
+            WirelessCreds::Wifi {
+                ssid: &buf[..len1],
+                pass: &buf[len1..][..len2],
+            }
+        } else {
+            WirelessCreds::Thread {
+                dataset_tlv: &buf[..len1],
+            }
+        }
     }
 
     async fn connect(net_ctl: &T, creds: &WirelessCreds<'_>) -> Result<(), NetCtlError> {
@@ -492,6 +572,63 @@ mod tests {
             // Since FakeNetCtl starts disconnected, this should return immediately.
             let result = TestMgr::wait_while_connected_status(&net_ctl, true).await;
             assert!(result.is_ok());
+        });
+    }
+
+    // ── creds-by-id / connect_once tests (deferred non-concurrent connect) ──
+
+    #[test]
+    fn creds_by_id_returns_matching_or_none() {
+        let networks = make_networks(
+            &[(b"MySSID", b"MyPass"), (b"OtherSSID", b"OtherPass")],
+            false,
+        );
+        let mut buf = [0u8; MAX_CREDS_SIZE];
+
+        // An existing network is looked up by id.
+        let creds = TestMgr::creds(&networks, b"MySSID", &mut buf)
+            .unwrap()
+            .unwrap();
+        match creds {
+            WirelessCreds::Wifi { ssid, pass } => {
+                assert_eq!(ssid, b"MySSID");
+                assert_eq!(pass, b"MyPass");
+            }
+            _ => panic!("Expected WiFi creds"),
+        }
+
+        // A missing network is `Ok(None)` (not found), not an error.
+        assert!(TestMgr::creds(&networks, b"NonExistent", &mut buf)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn connect_once_connects_to_named_network() {
+        let networks = make_networks(&[(b"MySSID", b"MyPass")], false);
+        let net_ctl = FakeNetCtl::new();
+        let mut buf = [0u8; MAX_CREDS_SIZE];
+        // `new` takes the networks/net_ctl by value, so the manager owns them;
+        // `Ok` already implies `FakeNetCtl::connect` ran (its only `Ok` path
+        // sets `connected = true`), so there's no need to inspect it afterwards.
+        let mut mgr = TestMgr::new(networks, net_ctl, &mut buf);
+
+        embassy_futures::block_on(async {
+            assert!(mgr.connect_once(b"MySSID").await.is_ok());
+        });
+    }
+
+    #[test]
+    fn connect_once_unknown_network_is_invalid_data() {
+        let networks = make_networks(&[], false);
+        let net_ctl = FakeNetCtl::new();
+        let mut buf = [0u8; MAX_CREDS_SIZE];
+        let mut mgr = TestMgr::new(networks, net_ctl, &mut buf);
+
+        embassy_futures::block_on(async {
+            // No matching network -> a deferred connect can't proceed.
+            let err = mgr.connect_once(b"MySSID").await.unwrap_err();
+            assert!(matches!(err.code(), ErrorCode::InvalidData));
         });
     }
 }
