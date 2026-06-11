@@ -22,7 +22,7 @@ use core::pin::pin;
 
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -205,7 +205,11 @@ impl ZeroconfMdns {
 
             match browser.browse_services() {
                 Ok(event_loop) => {
-                    while stop_rx.try_recv().is_err() {
+                    // Keep polling only while the stop channel is open and empty;
+                    // a sent `()` *or* a disconnect (the `MdnsEntry` was dropped)
+                    // both mean "stop" - otherwise `is_err()` would also treat a
+                    // disconnect as "keep going" and leak this thread forever.
+                    while matches!(stop_rx.try_recv(), Err(TryRecvError::Empty)) {
                         if let Err(e) = event_loop.poll(Duration::from_millis(100)) {
                             warn!("Browser poll error: {:?}", e);
                             break;
@@ -339,7 +343,9 @@ impl SendableZeroconfMdnsService {
 
         let event_loop = mdns_service.register()?;
 
-        while receiver.try_recv().is_err() {
+        // Stop on a sent `()` or on disconnect (the `MdnsEntry` was dropped);
+        // see the matching note in `spawn_browser`.
+        while matches!(receiver.try_recv(), Err(TryRecvError::Empty)) {
             event_loop.poll(std::time::Duration::from_secs(1))?;
         }
 

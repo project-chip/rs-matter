@@ -259,13 +259,21 @@ impl ChipBuilder {
         // checkout bump, or to (re)install requirements), make sure the alias
         // exists first — this affects CI on the same OS just as much as a local
         // box. Best-effort and idempotent.
-        let pip = venv_dir.join("bin/pip");
-        let pip3 = venv_dir.join("bin/pip3");
-        if !pip.exists() && pip3.exists() {
-            info!("Creating missing `bin/pip` -> `bin/pip3` alias in the pigweed venv");
-            let _ = fs::remove_file(&pip); // clear any dangling symlink first
-            std::os::unix::fs::symlink("pip3", &pip)
-                .with_context(|| format!("Failed to symlink {}", pip.display()))?;
+        //
+        // `unix`-gated: the chip integration tests only run on Linux/macOS (the
+        // C++ SDK doesn't build on Windows), but `xtask` itself should still
+        // compile there for its other commands, so the Unix-only `symlink` API
+        // must not be referenced unconditionally.
+        #[cfg(unix)]
+        {
+            let pip = venv_dir.join("bin/pip");
+            let pip3 = venv_dir.join("bin/pip3");
+            if !pip.exists() && pip3.exists() {
+                info!("Creating missing `bin/pip` -> `bin/pip3` alias in the pigweed venv");
+                let _ = fs::remove_file(&pip); // clear any dangling symlink first
+                std::os::unix::fs::symlink("pip3", &pip)
+                    .with_context(|| format!("Failed to symlink {}", pip.display()))?;
+            }
         }
 
         // Probe the wheel, a representative pytest dep (`zeroconf`), and
