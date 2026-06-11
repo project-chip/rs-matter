@@ -336,8 +336,7 @@ mod tests {
 
     use super::*;
 
-    // Unlike im.rs, we can't lean on the TLV layer doing serialization, so we keep a little
-    // suite here that checks the BDX-custom serialization works.
+    // Unlike im.rs, we can't lean on the TLV layer for testing, hence little suite for BDX serialization
 
     
     #[test]

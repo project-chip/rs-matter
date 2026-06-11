@@ -26,8 +26,10 @@ use num_derive::FromPrimitive;
 
 use crate::transport::exchange::MessageMeta;
 
+pub use block::*;
 pub use init::*;
 
+mod block;
 mod init;
 
 /// BDX Protocol ID, as per the Matter Core Spec.
