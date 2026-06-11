@@ -16,10 +16,7 @@
  */
 
 //! This module defines the BDX transfer-initiation messages: `SendInit`, `SendAccept`,
-//! `ReceiveInit` and `ReceiveAccept`. They share the `TransferInit`/`TransferAccept` wire
-//! format defined here.
-//!
-//! Currently `SendInit` and `ReceiveInit` are implemented.
+//! `ReceiveInit` and `ReceiveAccept`, per the Matter Core Spec.
 
 use core::borrow::Borrow;
 
@@ -53,6 +50,27 @@ bitflags::bitflags! {
         const START_OFFSET = 0x02;
         /// The `start_offset`/`max_length` fields are 64-bit (rather than 32-bit) wide.
         const WIDERANGE = 0x10;
+    }
+}
+
+/// Several messages use fields with variable size (4 or 8 bytes); this reads those fields
+fn read_range_field<T>(pb: &mut ReadBuf<T>, widerange: bool) -> Result<u64, Error>
+where
+    T: Borrow<[u8]>,
+{
+    if widerange {
+        pb.le_u64()
+    } else {
+        pb.le_u32().map(|v| v as u64)
+    }
+}
+
+/// Several messages use fields with variable size (4 or 8 bytes); this writes those fields
+fn write_range_field(wb: &mut WriteBuf, value: u64, widerange: bool) -> Result<(), Error> {
+    if widerange {
+        wb.le_u64(value)
+    } else {
+        wb.le_u32(value as u32)
     }
 }
 
@@ -92,12 +110,12 @@ impl<'a> TransferInit<'a> {
 
         let start_offset = range_ctl
             .contains(RangeControlFlags::START_OFFSET)
-            .then(|| Self::read_range_field(pb, widerange))
+            .then(|| read_range_field(pb, widerange))
             .transpose()?;
 
         let max_length = range_ctl
             .contains(RangeControlFlags::DEF_LEN)
-            .then(|| Self::read_range_field(pb, widerange))
+            .then(|| read_range_field(pb, widerange))
             .transpose()?;
 
         let file_des_len = pb.le_u16()? as usize;
@@ -138,10 +156,10 @@ impl<'a> TransferInit<'a> {
         wb.le_u16(self.max_block_size)?;
 
         if let Some(start_offset) = self.start_offset {
-            Self::write_range_field(wb, start_offset, widerange)?;
+            write_range_field(wb, start_offset, widerange)?;
         }
         if let Some(max_length) = self.max_length {
-            Self::write_range_field(wb, max_length, widerange)?;
+            write_range_field(wb, max_length, widerange)?;
         }
 
         wb.le_u16(self.file_designator.len() as u16)?;
@@ -152,25 +170,6 @@ impl<'a> TransferInit<'a> {
         }
 
         Ok(())
-    }
-
-    fn read_range_field<T>(pb: &mut ReadBuf<T>, widerange: bool) -> Result<u64, Error>
-    where
-        T: Borrow<[u8]>,
-    {
-        if widerange {
-            pb.le_u64()
-        } else {
-            pb.le_u32().map(|v| v as u64)
-        }
-    }
-
-    fn write_range_field(wb: &mut WriteBuf, value: u64, widerange: bool) -> Result<(), Error> {
-        if widerange {
-            wb.le_u64(value)
-        } else {
-            wb.le_u32(value as u32)
-        }
     }
 }
 
@@ -203,6 +202,131 @@ impl<'a> ReceiveInit<'a> {
 
     pub fn write(&self, wb: &mut WriteBuf) -> Result<(), Error> {
         self.0.write(wb)
+    }
+}
+
+/// A BDX `SendAccept` message, as per the Matter Core Spec.
+///
+/// Sent by a node accepting a peer's `ReceiveInit`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SendAccept<'a> {
+    /// The chosen transfer-control mode (exactly one of sender-drive / receiver-drive / async).
+    pub transfer_ctl: TransferControlFlags,
+    /// The chosen BDX version for the transfer (0..=15). Currently always 0.
+    pub version: u8,
+    /// The chosen maximum block size for the transfer.
+    pub max_block_size: u16,
+    /// Optional trailing metadata, as a TLV element
+    pub metadata: Option<TLVElement<'a>>,
+}
+
+impl<'a> SendAccept<'a> {
+    pub fn read<T>(pb: &'a mut ReadBuf<T>) -> Result<Self, Error>
+    where
+        T: Borrow<[u8]>,
+    {
+        let transfer_ctl_byte = pb.le_u8()?;
+        let version = transfer_ctl_byte & VERSION_MASK;
+        let transfer_ctl = TransferControlFlags::from_bits_truncate(transfer_ctl_byte & !VERSION_MASK);
+
+        let max_block_size = pb.le_u16()?;
+
+        // Whatever follows is metadata (possibly empty).
+        let rest = pb.as_slice();
+        let metadata = (!rest.is_empty()).then(|| TLVElement::new(rest));
+
+        Ok(Self {
+            transfer_ctl,
+            version,
+            max_block_size,
+            metadata,
+        })
+    }
+
+    pub fn write(&self, wb: &mut WriteBuf) -> Result<(), Error> {
+        wb.le_u8((self.version & VERSION_MASK) | self.transfer_ctl.bits())?;
+        wb.le_u16(self.max_block_size)?;
+
+        if let Some(metadata) = &self.metadata {
+            wb.copy_from_slice(metadata.raw_data())?;
+        }
+
+        Ok(())
+    }
+}
+
+/// A BDX `ReceiveAccept` message, as per the Matter Core Spec (Table 100).
+///
+/// Sent by a node accepting a peer's `SendInit`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceiveAccept<'a> {
+    /// The chosen transfer-control mode (exactly one of sender-drive / receiver-drive / async).
+    pub transfer_ctl: TransferControlFlags,
+    /// The chosen BDX version for the transfer (0..=15). Currently always 0.
+    pub version: u8,
+    /// The chosen maximum block size for the transfer.
+    pub max_block_size: u16,
+    /// The chosen length of the transfer; `None` for an indefinite-length transfer.
+    pub length: Option<u64>,
+    /// Optional trailing metadata, as a TLV element
+    pub metadata: Option<TLVElement<'a>>,
+
+    // n.b. the C++ SDK has an additional "start_offset" field on this message, but the Core Spec 
+    // has no such field, see Table 100.
+}
+
+impl<'a> ReceiveAccept<'a> {
+    pub fn read<T>(pb: &'a mut ReadBuf<T>) -> Result<Self, Error>
+    where
+        T: Borrow<[u8]>,
+    {
+        let transfer_ctl_byte = pb.le_u8()?;
+        let version = transfer_ctl_byte & VERSION_MASK;
+        let transfer_ctl = TransferControlFlags::from_bits_truncate(transfer_ctl_byte & !VERSION_MASK);
+
+        let range_ctl = RangeControlFlags::from_bits_truncate(pb.le_u8()?);
+        let max_block_size = pb.le_u16()?;
+
+        let widerange = range_ctl.contains(RangeControlFlags::WIDERANGE);
+
+        let length = range_ctl
+            .contains(RangeControlFlags::DEF_LEN)
+            .then(|| read_range_field(pb, widerange))
+            .transpose()?;
+
+        // Whatever follows is metadata (possibly empty).
+        let rest = pb.as_slice();
+        let metadata = (!rest.is_empty()).then(|| TLVElement::new(rest));
+
+        Ok(Self {
+            transfer_ctl,
+            version,
+            max_block_size,
+            length,
+            metadata,
+        })
+    }
+
+    pub fn write(&self, wb: &mut WriteBuf) -> Result<(), Error> {
+        let widerange = self.length.is_some_and(|v| v > u32::MAX as u64);
+
+        let mut range_ctl = RangeControlFlags::empty();
+        range_ctl.set(RangeControlFlags::DEF_LEN, self.length.is_some());
+        range_ctl.set(RangeControlFlags::WIDERANGE, widerange);
+
+        wb.le_u8((self.version & VERSION_MASK) | self.transfer_ctl.bits())?;
+        wb.le_u8(range_ctl.bits())?;
+        wb.le_u16(self.max_block_size)?;
+
+        if let Some(length) = self.length {
+            write_range_field(wb, length, widerange)?;
+        }
+
+        if let Some(metadata) = &self.metadata {
+            wb.copy_from_slice(metadata.raw_data())?;
+        }
+
+        Ok(())
     }
 }
 
@@ -256,6 +380,39 @@ mod tests {
         }));
     }
 
+    #[test]
+    fn send_accept_roundtrip() {
+        check_roundtrip_send_accept(SendAccept {
+            transfer_ctl: TransferControlFlags::SENDER_DRIVE,
+            version: 1,
+            max_block_size: 1024,
+            // An (empty) anonymous TLV structure: 0x15 = struct start, 0x18 = end-of-container.
+            metadata: Some(TLVElement::new(&[0x15, 0x18])),
+        });
+    }
+
+    #[test]
+    fn receive_accept_with_length_and_metadata() {
+        check_roundtrip_receive_accept(ReceiveAccept {
+            transfer_ctl: TransferControlFlags::RECEIVER_DRIVE,
+            version: 1,
+            max_block_size: 512,
+            length: Some(100_000),
+            metadata: Some(TLVElement::new(&[0x15, 0x18])),
+        });
+    }
+
+    #[test]
+    fn receive_accept_widerange() {
+        check_roundtrip_receive_accept(ReceiveAccept {
+            transfer_ctl: TransferControlFlags::RECEIVER_DRIVE,
+            version: 1,
+            max_block_size: 1280,
+            length: Some(u64::from(u32::MAX) + 1),
+            metadata: None,
+        });
+    }
+
     // Utilities for roundtrip testing
 
     fn check_roundtrip_send_init(msg: SendInit) {
@@ -267,6 +424,32 @@ mod tests {
 
         let mut rb = ReadBuf::new(&buf[..len]);
         let parsed = SendInit::read(&mut rb).unwrap();
+
+        assert_eq!(msg, parsed);
+    }
+
+    fn check_roundtrip_send_accept(msg: SendAccept) {
+        let mut buf = [0; 256];
+
+        let mut wb = WriteBuf::new(&mut buf);
+        msg.write(&mut wb).unwrap();
+        let len = wb.as_slice().len();
+
+        let mut rb = ReadBuf::new(&buf[..len]);
+        let parsed = SendAccept::read(&mut rb).unwrap();
+
+        assert_eq!(msg, parsed);
+    }
+
+    fn check_roundtrip_receive_accept(msg: ReceiveAccept) {
+        let mut buf = [0; 256];
+
+        let mut wb = WriteBuf::new(&mut buf);
+        msg.write(&mut wb).unwrap();
+        let len = wb.as_slice().len();
+
+        let mut rb = ReadBuf::new(&buf[..len]);
+        let parsed = ReceiveAccept::read(&mut rb).unwrap();
 
         assert_eq!(msg, parsed);
     }
