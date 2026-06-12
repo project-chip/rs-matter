@@ -31,7 +31,7 @@ name = "bridge"
 name = "camera_tests"
 
 [[bin]]
-name = "chip_tool_tests"
+name = "system_tests"
 
 [[bin]]
 name = "commissioner_tests"

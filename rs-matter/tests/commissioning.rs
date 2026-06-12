@@ -409,7 +409,7 @@ async fn test_commission<C: Crypto>(
     );
 
     let opts = CommissionOptions {
-        // Test DAC — chip_tool_tests / TEST_DEV_ATT.
+        // Test DAC — system_tests / TEST_DEV_ATT.
         allow_test_attestation: true,
         ..CommissionOptions::default()
     };

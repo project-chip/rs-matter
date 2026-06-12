@@ -56,7 +56,7 @@ jobs:
       - name: Enable IPv6 on the runner interface
         # GHA Linux runners have IPv6 enabled in the kernel but no IPv6
         # address assigned to their primary NIC, so any service that
-        # publishes an mDNS AAAA record (rs-matter's `chip_tool_tests`
+        # publishes an mDNS AAAA record (rs-matter's `system_tests`
         # advertises one when its DUT side has any non-unspecified
         # IPv6 address — see `examples/src/common/mdns.rs::initialize_network`)
         # ends up advertising IPv4 only. TC_SC_4_3 step 10 explicitly
@@ -96,7 +96,7 @@ jobs:
 
       - name: Run System integration tests with RustCrypto
         run: |
-          # `tee` so the chip_tool_tests stdout/stderr (and the python
+          # `tee` so the system_tests stdout/stderr (and the python
           # framework's mDNS browse, PASE traces, etc.) end up both in
           # the live action log AND in a file we upload as an artifact.
           # Without it, a failure half a suite in is harder to diagnose
@@ -151,7 +151,7 @@ jobs:
           # transitions live there), `test_log.INFO` and
           # `test_summary.yaml`. The `/tmp/itest-*.log` files are the
           # captured stdout/stderr of each `cargo xtask itest` step.
-          # `/tmp/chip_kvs` is `chip_tool_tests`' on-disk persistence
+          # `/tmp/chip_kvs` is `system_tests`' on-disk persistence
           # snapshot at the time the failing test exited — useful for
           # spotting unexpected fabric / commissioning state.
           path: |

@@ -77,7 +77,7 @@ enum Command {
     },
     /// Setup Chip environment for integration testing
     ItestSetup(ItestSetupArgs),
-    /// Build the to-be-tested executable (`chip-tool-tests`)
+    /// Build the to-be-tested executable (`system-tests`)
     ItestExe(BuildArgs),
     /// Print Chip integration test tooling information
     ItestTools,
@@ -236,7 +236,7 @@ struct BuildArgs {
     /// Build profile (debug or release)
     #[arg(long, default_value = "debug")]
     profile: String,
-    /// Build target application name. Defaults to `chip_tool_tests` for
+    /// Build target application name. Defaults to `system_tests` for
     /// `itest-exe`; for `itest`, defaults to the selected suite's example
     /// binary (see `--suite`).
     #[arg(long)]
@@ -253,7 +253,7 @@ struct BuildArgs {
 impl BuildArgs {
     /// Resolve `target` for the standalone `itest-exe` command.
     fn target_or_default(&self) -> &str {
-        self.target.as_deref().unwrap_or("chip_tool_tests")
+        self.target.as_deref().unwrap_or("system_tests")
     }
 }
 

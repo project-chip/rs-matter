@@ -222,7 +222,7 @@ fn main() -> Result<(), Error> {
     // `--app-pipe <path>` is only ever supplied by `TC_BINFO_3_2`. We use it
     // as the trigger to switch the device's BasicInformation cluster metadata
     // to the variant that exposes the provisional `ConfigurationVersion`
-    // attribute, while leaving the default chip_tool_tests build (used by
+    // attribute, while leaving the default system_tests build (used by
     // `TestBasicInformation` and everything else) on the upstream-1.5
     // attribute set.
     let app_pipe = parse_app_pipe_override();
@@ -429,7 +429,7 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 /// on an endpoint and clients MAY ignore them — i.e. having Groups on
 /// EP0 is permitted but does mean a strict device-type-conformance
 /// run (`TC_DeviceConformance::test_TC_IDM_10_5`) would flag it as an
-/// "extra cluster". That test is not on `chip_tool_tests`'s active
+/// "extra cluster". That test is not on `system_tests`'s active
 /// run list (see the `TC_DeviceConformance` skip comment in
 /// `xtask/src/itest.rs`). The library-level `g*` macro variants and
 /// the Groups EpClMatcher in `with_sys()` were dropped to keep
@@ -542,7 +542,7 @@ const BASIC_INFO_CLUSTER_CV_EXPOSED: Cluster<'static> = BASIC_INFO_FULL_CLUSTER
 /// We can't condition this at the rs-matter library level because `Cluster`'s
 /// `WithAttrs` filter is a plain `fn`-pointer with no access to runtime
 /// state, so we keep the choice in the test app and pick at startup. Other
-/// chip_tool_tests-driven YAML/Python tests (notably `TestBasicInformation`,
+/// system_tests-driven YAML/Python tests (notably `TestBasicInformation`,
 /// which asserts an exact `AttributeList` from upstream's 1.5 dataset where
 /// `ConfigurationVersion` was deliberately removed in
 /// `connectedhomeip@faf4d09ad1`) keep using the default `NODE`.
@@ -864,7 +864,7 @@ where
 
         let res = SoftwareFault::emit_for(emitter, ROOT_ENDPOINT_ID, |b| {
             b.id(1)?
-                .name(Some("rs-matter chip_tool_tests"))?
+                .name(Some("rs-matter system_tests"))?
                 .fault_recording(Some(rs_matter::tlv::Octets::new(&[])))?
                 .end()
         });
