@@ -233,14 +233,14 @@ impl<'a, I> OtaBdxServer<'a, I> {
 }
 
 impl<I: OtaImages> ExchangeHandler for OtaBdxServer<'_, I> {
-    async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
         let mut block_buf = [0u8; MAX_BLOCK_SIZE];
         let mut source = ImageSource {
             images: self.images,
             file_designator: heapless::Vec::new(),
         };
 
-        bdx::serve(exchange, &mut block_buf, &mut source).await?;
+        bdx::serve(&mut exchange, &mut block_buf, &mut source).await?;
 
         Ok(())
     }

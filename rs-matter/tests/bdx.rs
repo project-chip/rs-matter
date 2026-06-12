@@ -27,6 +27,7 @@
 mod common;
 
 use core::future::Future;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
@@ -81,13 +82,13 @@ struct ServeHandler {
 }
 
 impl ExchangeHandler for ServeHandler {
-    async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
         let mut block_buf = [0u8; BLOCK_SIZE as usize];
         let mut source = TestSource {
             image: self.image.clone(),
         };
 
-        let sent = bdx::serve(exchange, &mut block_buf, &mut source).await?;
+        let sent = bdx::serve(&mut exchange, &mut block_buf, &mut source).await?;
         assert_eq!(sent as usize, IMAGE_LEN);
 
         Ok(())
@@ -210,6 +211,22 @@ fn image_of(len: usize) -> Vec<u8> {
     (0..len).map(|i| (i % 251) as u8).collect()
 }
 
+/// Responder for the pull test: a following sender that serves the next image
+/// (one per accepted exchange) via `BdxWriter::accept`.
+struct PullResponder<'a> {
+    images: &'a [Vec<u8>],
+    next: AtomicUsize,
+}
+
+impl ExchangeHandler for PullResponder<'_> {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let image = &self.images[self.next.fetch_add(1, Ordering::Relaxed)];
+        let mut writer = BdxWriter::accept(exchange).await?;
+        write_all(&mut writer, image).await?;
+        writer.finish().await
+    }
+}
+
 /// `pull`: the initiator drives as the Receiver (`BdxReader`), the responder
 /// follows as the Sender (`BdxWriter::accept`). Exercises a driving reader and a
 /// following writer, across [`STREAM_SIZES`] back-to-back on one session.
@@ -219,21 +236,13 @@ fn test_bdx_pull_streaming() {
 
     let runner = new_default_runner();
     let images: Vec<Vec<u8>> = STREAM_SIZES.iter().map(|&n| image_of(n)).collect();
+    let responder = PullResponder {
+        images: &images,
+        next: AtomicUsize::new(0),
+    };
 
     futures_lite::future::block_on(async {
-        // Responder: stream each image as a following sender.
-        let device = async {
-            for image in &images {
-                let exchange = Exchange::accept(&runner.matter).await?;
-                let mut writer = BdxWriter::accept(exchange).await?;
-                write_all(&mut writer, image).await?;
-                writer.finish().await?;
-            }
-            Ok::<_, Error>(())
-        };
-
-        // Initiator: pull and read each transfer, asserting it round-trips.
-        let initiator = async {
+        select(runner.run_responder(responder), async {
             for image in &images {
                 let exchange = runner.initiate_exchange().await?;
                 let mut reader = exchange.pull(FILE_DESIGNATOR).await?;
@@ -241,13 +250,28 @@ fn test_bdx_pull_streaming() {
                 assert_eq!(&received, image, "pull size {}", image.len());
             }
             Ok::<_, Error>(())
-        };
-
-        select(runner.run_device(device), initiator)
-            .coalesce()
-            .await
-            .unwrap();
+        })
+        .coalesce()
+        .await
+        .unwrap();
     });
+}
+
+/// Responder for the push test: a following receiver that reads the next image
+/// (one per accepted exchange) via `BdxReader::accept` and asserts it.
+struct PushResponder<'a> {
+    images: &'a [Vec<u8>],
+    next: AtomicUsize,
+}
+
+impl ExchangeHandler for PushResponder<'_> {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let image = &self.images[self.next.fetch_add(1, Ordering::Relaxed)];
+        let mut reader = BdxReader::accept(exchange).await?;
+        let received = read_all(&mut reader).await?;
+        assert_eq!(&received, image, "push size {}", image.len());
+        Ok(())
+    }
 }
 
 /// `push`: the initiator drives as the Sender (`BdxWriter`), the responder
@@ -259,21 +283,13 @@ fn test_bdx_push_streaming() {
 
     let runner = new_default_runner();
     let images: Vec<Vec<u8>> = STREAM_SIZES.iter().map(|&n| image_of(n)).collect();
+    let responder = PushResponder {
+        images: &images,
+        next: AtomicUsize::new(0),
+    };
 
     futures_lite::future::block_on(async {
-        // Responder: read each transfer as a following receiver and assert it.
-        let device = async {
-            for image in &images {
-                let exchange = Exchange::accept(&runner.matter).await?;
-                let mut reader = BdxReader::accept(exchange).await?;
-                let received = read_all(&mut reader).await?;
-                assert_eq!(&received, image, "push size {}", image.len());
-            }
-            Ok::<_, Error>(())
-        };
-
-        // Initiator: push and write each image.
-        let initiator = async {
+        select(runner.run_responder(responder), async {
             for image in &images {
                 let exchange = runner.initiate_exchange().await?;
                 let mut writer = exchange.push(FILE_DESIGNATOR).await?;
@@ -284,12 +300,10 @@ fn test_bdx_push_streaming() {
                 .await?;
             }
             Ok::<_, Error>(())
-        };
-
-        select(runner.run_device(device), initiator)
-            .coalesce()
-            .await
-            .unwrap();
+        })
+        .coalesce()
+        .await
+        .unwrap();
     });
 }
 
@@ -311,10 +325,10 @@ async fn send_bdx_status(exchange: &mut Exchange<'_>, status: bdx::BdxStatus) ->
 struct RejectInitHandler;
 
 impl ExchangeHandler for RejectInitHandler {
-    async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
         exchange.recv_fetch().await?;
         exchange.rx_done()?;
-        send_bdx_status(exchange, bdx::BdxStatus::FileDesignatorUnknown).await
+        send_bdx_status(&mut exchange, bdx::BdxStatus::FileDesignatorUnknown).await
     }
 }
 
@@ -345,7 +359,7 @@ fn test_bdx_pull_rejected_at_negotiation() {
 struct AbortMidStreamHandler;
 
 impl ExchangeHandler for AbortMidStreamHandler {
-    async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
         // Accept the ReceiveInit as a (driving) sender.
         exchange.recv_fetch().await?;
         exchange.rx_done()?;
@@ -384,7 +398,7 @@ impl ExchangeHandler for AbortMidStreamHandler {
         // ...consume its BlockAck, then abort instead of sending the next block.
         exchange.recv_fetch().await?;
         exchange.rx_done()?;
-        send_bdx_status(exchange, bdx::BdxStatus::TransferFailedUnknownError).await
+        send_bdx_status(&mut exchange, bdx::BdxStatus::TransferFailedUnknownError).await
     }
 }
 

@@ -258,48 +258,6 @@ impl<C: Crypto> E2eRunner<C> {
         .await
     }
 
-    /// Like [`run_responder`](Self::run_responder), but instead of a
-    /// [`Responder`] it drives a caller-supplied `device` future on the remote
-    /// (tested) instance. The future typically accepts owned exchanges via
-    /// [`Exchange::accept`] on `self.matter` - useful for protocols (e.g. the
-    /// streaming BDX `accept` constructors) that consume the exchange by value.
-    #[allow(dead_code)] // Only used by some of the test binaries that share `common`.
-    pub async fn run_device<F>(&self, device: F) -> Result<(), Error>
-    where
-        F: core::future::Future<Output = Result<(), Error>>,
-    {
-        self.init()?;
-
-        let mut buf1 = [heapless::Vec::new(); 1];
-        let mut buf2 = [heapless::Vec::new(); 1];
-
-        let mut pipe1 = NetworkPipe::<MAX_RX_PACKET_SIZE>::new(&mut buf1);
-        let mut pipe2 = NetworkPipe::<MAX_TX_PACKET_SIZE>::new(&mut buf2);
-
-        let (send_remote, recv_local) = pipe1.split();
-        let (send_local, recv_remote) = pipe2.split();
-
-        let matter_client = &self.matter_client;
-
-        select3(
-            matter_client.run(
-                &self.crypto,
-                NetworkSendImpl(send_local),
-                NetworkReceiveImpl(recv_local),
-                NoNetwork,
-            ),
-            self.matter.run(
-                &self.crypto,
-                NetworkSendImpl(send_remote),
-                NetworkReceiveImpl(recv_remote),
-                NoNetwork,
-            ),
-            device,
-        )
-        .coalesce()
-        .await
-    }
-
     fn new_matter() -> Matter<'static> {
         #[cfg(not(feature = "std"))]
         use rs_matter::utils::rand::dummy_rand as rand;
