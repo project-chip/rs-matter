@@ -946,6 +946,604 @@ pub async fn serve<S: BdxSource>(
     Ok(offset)
 }
 
+// ===========================================================================
+// Streaming API: `BdxReader` / `BdxWriter` + the `BdxPull` / `BdxPush` traits.
+//
+// Unlike `download`/`serve` (which pump a whole transfer through a sink/source
+// in one call), these expose byte-stream `read`/`write` handles that drive the
+// BDX protocol incrementally. The same handle works whether this endpoint
+// *drives* the synchronous transfer or *follows* the peer (selected during
+// negotiation), so a reader on one side pairs with a writer on the other,
+// regardless of which side initiated.
+// ===========================================================================
+
+/// The number of header bytes preceding a block's data (the 32-bit block counter).
+const BLOCK_HEADER_LEN: usize = 4;
+
+/// The block size proposed (and, for the writer, staged) by the streaming API.
+/// This is the maximum size over non-TCP transports.
+const STREAM_BLOCK_SIZE: u16 = 1024;
+
+/// How this endpoint participates in a synchronous transfer.
+///
+/// This is the extension point for the (currently unimplemented) asynchronous
+/// mode: adding an `Async` variant here, handled in the `read`/`write` step
+/// helpers, would not change the public `read`/`write` surface.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum Drive {
+    /// We control the pace: as a receiver we send `BlockQuery`; as a sender we
+    /// send `Block` and await `BlockAck`.
+    Driver,
+    /// We follow the peer's pace: as a receiver we await `Block` and send
+    /// `BlockAck`; as a sender we await `BlockQuery` before sending `Block`.
+    Follower,
+}
+
+/// Build the streaming `*Init` proposal (both drive modes, indefinite length).
+async fn send_init(
+    exchange: &mut Exchange<'_>,
+    opcode: OpCode,
+    file_designator: &[u8],
+) -> Result<(), Error> {
+    let init = TransferInit {
+        transfer_control: TransferControl {
+            version: BDX_VERSION,
+            sender_drive: true,
+            receiver_drive: true,
+            async_mode: false,
+        },
+        range_control: RangeControl::default(),
+        max_block_size: STREAM_BLOCK_SIZE,
+        start_offset: 0,
+        length: 0,
+        file_designator,
+        metadata: &[],
+    };
+
+    exchange
+        .send_with(|_, wb| {
+            init.write(wb)?;
+            Ok(Some(opcode.into()))
+        })
+        .await
+}
+
+/// Send a streaming `*Accept` with the chosen transfer control and block size.
+async fn send_accept(
+    exchange: &mut Exchange<'_>,
+    receive: bool,
+    transfer_control: TransferControl,
+    max_block_size: u16,
+) -> Result<(), Error> {
+    let accept = TransferAccept {
+        receive,
+        transfer_control,
+        range_control: RangeControl::default(),
+        max_block_size,
+        length: 0,
+        metadata: &[],
+    };
+
+    let opcode = if receive {
+        OpCode::ReceiveAccept
+    } else {
+        OpCode::SendAccept
+    };
+
+    exchange
+        .send_with(|_, wb| {
+            accept.write(wb)?;
+            Ok(Some(opcode.into()))
+        })
+        .await
+}
+
+/// Await the `*Accept` and return the negotiated transfer control + block size,
+/// or `None` if the responder selected no drive mode.
+async fn recv_accept(
+    exchange: &mut Exchange<'_>,
+    receive: bool,
+) -> Result<Option<(TransferControl, u16)>, Error> {
+    let expected = if receive {
+        OpCode::ReceiveAccept
+    } else {
+        OpCode::SendAccept
+    };
+
+    enum Outcome {
+        Ok(TransferControl, u16),
+        NoMethod,
+        Unexpected,
+        Aborted(Error),
+    }
+
+    exchange.recv_fetch().await?;
+    let meta = exchange.rx()?.meta();
+    let outcome = {
+        let payload = exchange.rx()?.payload();
+        match classify(&meta) {
+            Ok(op) if op == expected => {
+                let accept = TransferAccept::parse(receive, payload)?;
+                let tc = accept.transfer_control;
+                if tc.sender_drive || tc.receiver_drive {
+                    Outcome::Ok(tc, accept.max_block_size)
+                } else {
+                    Outcome::NoMethod
+                }
+            }
+            Ok(_) => Outcome::Unexpected,
+            Err(e) => Outcome::Aborted(e),
+        }
+    };
+    exchange.rx_done()?;
+
+    match outcome {
+        Outcome::Ok(tc, mbs) => Ok(Some((tc, mbs))),
+        Outcome::NoMethod => Ok(None),
+        Outcome::Unexpected => abort(exchange, BdxStatus::UnexpectedMessage).await,
+        Outcome::Aborted(e) => Err(e),
+    }
+}
+
+/// Await the opening `*Init` and return its proposed transfer control + block
+/// size (the responder side of a transfer).
+async fn recv_init(
+    exchange: &mut Exchange<'_>,
+    expected: OpCode,
+) -> Result<(TransferControl, u16), Error> {
+    enum Outcome {
+        Ok(TransferControl, u16),
+        Unexpected,
+        Aborted(Error),
+    }
+
+    exchange.recv_fetch().await?;
+    let meta = exchange.rx()?.meta();
+    let outcome = {
+        let payload = exchange.rx()?.payload();
+        match classify(&meta) {
+            Ok(op) if op == expected => {
+                let init = TransferInit::parse(payload)?;
+                Outcome::Ok(init.transfer_control, init.max_block_size)
+            }
+            Ok(_) => Outcome::Unexpected,
+            Err(e) => Outcome::Aborted(e),
+        }
+    };
+    exchange.rx_done()?;
+
+    match outcome {
+        Outcome::Ok(tc, pmbs) => Ok((tc, pmbs)),
+        Outcome::Unexpected => abort(exchange, BdxStatus::UnexpectedMessage).await,
+        Outcome::Aborted(e) => Err(e),
+    }
+}
+
+/// The transfer control to echo back in an `*Accept` to select a single drive
+/// mode (with this protocol version, and no other proposals).
+fn select(sender_drive: bool) -> TransferControl {
+    TransferControl {
+        version: BDX_VERSION,
+        sender_drive,
+        receiver_drive: !sender_drive,
+        async_mode: false,
+    }
+}
+
+/// An extension trait for initiating a BDX *download*: `pull` makes this node the
+/// (typically driving) Receiver and returns a [`BdxReader`].
+pub trait BdxPull<'a> {
+    /// Initiate a BDX download of `file_designator`, negotiate the transfer, and
+    /// return a reader positioned at the start of the data.
+    async fn pull(self, file_designator: &[u8]) -> Result<BdxReader<'a>, Error>;
+}
+
+impl<'a> BdxPull<'a> for Exchange<'a> {
+    async fn pull(mut self, file_designator: &[u8]) -> Result<BdxReader<'a>, Error> {
+        send_init(&mut self, OpCode::ReceiveInit, file_designator).await?;
+
+        match recv_accept(&mut self, true).await? {
+            // We are the receiver: we drive iff receiver-drive was selected.
+            Some((tc, _mbs)) => {
+                let drive = if tc.receiver_drive {
+                    Drive::Driver
+                } else {
+                    Drive::Follower
+                };
+                Ok(BdxReader::new(self, drive))
+            }
+            None => abort(&mut self, BdxStatus::TransferMethodNotSupported).await,
+        }
+    }
+}
+
+/// An extension trait for initiating a BDX *upload*: `push` makes this node the
+/// (typically driving) Sender and returns a [`BdxWriter`].
+pub trait BdxPush<'a> {
+    /// Initiate a BDX upload of `file_designator`, negotiate the transfer, and
+    /// return a writer ready to stream the data.
+    async fn push(self, file_designator: &[u8]) -> Result<BdxWriter<'a>, Error>;
+}
+
+impl<'a> BdxPush<'a> for Exchange<'a> {
+    async fn push(mut self, file_designator: &[u8]) -> Result<BdxWriter<'a>, Error> {
+        send_init(&mut self, OpCode::SendInit, file_designator).await?;
+
+        match recv_accept(&mut self, false).await? {
+            // We are the sender: we drive iff sender-drive was selected.
+            Some((tc, mbs)) => {
+                let drive = if tc.sender_drive {
+                    Drive::Driver
+                } else {
+                    Drive::Follower
+                };
+                Ok(BdxWriter::new(self, drive, mbs))
+            }
+            None => abort(&mut self, BdxStatus::TransferMethodNotSupported).await,
+        }
+    }
+}
+
+/// A reader over a BDX transfer - the Receiver side.
+///
+/// Obtained from [`Exchange::pull`](BdxPull::pull) on the initiating side, or
+/// [`BdxReader::accept`] on the responding side (the swapped counterpart of a
+/// [`BdxWriter`]). [`read`](Self::read) drives the protocol as needed and copies
+/// the next bytes of the transfer into the caller's buffer, returning `0` at the
+/// end of the transfer.
+pub struct BdxReader<'a> {
+    exchange: Exchange<'a>,
+    drive: Drive,
+    /// Driver: the counter to put in the next `BlockQuery`. Follower: the
+    /// expected counter of the next incoming block.
+    counter: u32,
+    /// The counter of the block currently held in the exchange RX buffer.
+    held_counter: u32,
+    /// Whether the held block is the final (`BlockEof`) block.
+    held_eof: bool,
+    /// How many bytes of the held block's data have been consumed.
+    block_pos: usize,
+    /// Whether a (partially consumed) block is held in the exchange RX buffer.
+    holding: bool,
+    /// Whether the transfer has completed.
+    finished: bool,
+}
+
+impl<'a> BdxReader<'a> {
+    fn new(exchange: Exchange<'a>, drive: Drive) -> Self {
+        Self {
+            exchange,
+            drive,
+            counter: 0,
+            held_counter: 0,
+            held_eof: false,
+            block_pos: 0,
+            holding: false,
+            finished: false,
+        }
+    }
+
+    /// Accept an incoming BDX upload (a `SendInit`) and become the Receiver,
+    /// returning a reader for the data the initiator is pushing. The responder
+    /// counterpart of [`Exchange::push`](BdxPush::push).
+    pub async fn accept(mut exchange: Exchange<'a>) -> Result<Self, Error> {
+        let (tc, _pmbs) = recv_init(&mut exchange, OpCode::SendInit).await?;
+
+        // Let the initiating sender drive if it can; otherwise we drive.
+        let drive = if tc.sender_drive {
+            Drive::Follower
+        } else if tc.receiver_drive {
+            Drive::Driver
+        } else {
+            return abort(&mut exchange, BdxStatus::TransferMethodNotSupported).await;
+        };
+
+        send_accept(
+            &mut exchange,
+            false,
+            select(drive == Drive::Follower),
+            _pmbs.min(STREAM_BLOCK_SIZE),
+        )
+        .await?;
+
+        Ok(Self::new(exchange, drive))
+    }
+
+    /// Read the next bytes of the transfer into `buf`, returning the number of
+    /// bytes read. Returns `0` once the whole transfer has been received.
+    pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+
+        loop {
+            if self.finished {
+                return Ok(0);
+            }
+
+            if self.holding {
+                // Serve from the block held in the exchange RX buffer.
+                let n = {
+                    let payload = self.exchange.rx()?.payload();
+                    let data = &payload[BLOCK_HEADER_LEN..];
+                    if self.block_pos < data.len() {
+                        let remaining = &data[self.block_pos..];
+                        let n = remaining.len().min(buf.len());
+                        buf[..n].copy_from_slice(&remaining[..n]);
+                        Some(n)
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(n) = n {
+                    self.block_pos += n;
+                    return Ok(n);
+                }
+
+                // The held block is fully consumed - acknowledge / advance.
+                self.release_block().await?;
+                continue;
+            }
+
+            // Nothing held and not finished: fetch the next block.
+            self.receive_block().await?;
+        }
+    }
+
+    /// Obtain the next block, holding it in the exchange RX buffer.
+    async fn receive_block(&mut self) -> Result<(), Error> {
+        enum Outcome {
+            Ok(bool),
+            BadCounter,
+            Unexpected,
+            Aborted(Error),
+        }
+
+        if matches!(self.drive, Drive::Driver) {
+            // Request the next block (this also acknowledges the previous one).
+            self.send_control(OpCode::BlockQuery, self.counter).await?;
+        }
+
+        self.exchange.recv_fetch().await?;
+        let meta = self.exchange.rx()?.meta();
+        let outcome = {
+            let payload = self.exchange.rx()?.payload();
+            match classify(&meta) {
+                Ok(op) if matches!(op, OpCode::Block | OpCode::BlockEof) => {
+                    let block = Block::parse(payload)?;
+                    if block.block_counter != self.counter {
+                        Outcome::BadCounter
+                    } else {
+                        Outcome::Ok(op == OpCode::BlockEof)
+                    }
+                }
+                Ok(_) => Outcome::Unexpected,
+                Err(e) => Outcome::Aborted(e),
+            }
+        };
+
+        match outcome {
+            Outcome::Ok(is_eof) => {
+                // Keep the block held; `read` serves its data directly from RX.
+                self.held_counter = self.counter;
+                self.held_eof = is_eof;
+                self.counter = self.counter.wrapping_add(1);
+                self.block_pos = 0;
+                self.holding = true;
+                Ok(())
+            }
+            Outcome::BadCounter => {
+                self.exchange.rx_done()?;
+                abort(&mut self.exchange, BdxStatus::BadBlockCounter).await
+            }
+            Outcome::Unexpected => {
+                self.exchange.rx_done()?;
+                abort(&mut self.exchange, BdxStatus::UnexpectedMessage).await
+            }
+            Outcome::Aborted(e) => {
+                self.exchange.rx_done()?;
+                Err(e)
+            }
+        }
+    }
+
+    /// Acknowledge the consumed block and release the RX buffer, finalizing the
+    /// transfer if it was the last block.
+    async fn release_block(&mut self) -> Result<(), Error> {
+        let counter = self.held_counter;
+
+        if self.held_eof {
+            self.send_control(OpCode::BlockAckEof, counter).await?;
+            self.exchange.rx_done()?;
+            self.exchange.acknowledge().await?;
+            self.finished = true;
+        } else if matches!(self.drive, Drive::Follower) {
+            // Sender-driven: acknowledge so the next block is sent.
+            self.send_control(OpCode::BlockAck, counter).await?;
+            self.exchange.rx_done()?;
+        } else {
+            // Receiver-driven: the next `BlockQuery` is the acknowledgement.
+            self.exchange.rx_done()?;
+        }
+
+        self.holding = false;
+        Ok(())
+    }
+
+    /// Send a counter-only control message (`BlockQuery`/`BlockAck`/`BlockAckEof`).
+    async fn send_control(&mut self, opcode: OpCode, counter: u32) -> Result<(), Error> {
+        self.exchange
+            .send_with(|_, wb| {
+                BlockQuery {
+                    block_counter: counter,
+                }
+                .write(wb)?;
+                Ok(Some(opcode.into()))
+            })
+            .await
+    }
+}
+
+/// A writer over a BDX transfer - the Sender side.
+///
+/// Obtained from [`Exchange::push`](BdxPush::push) on the initiating side, or
+/// [`BdxWriter::accept`] on the responding side (the swapped counterpart of a
+/// [`BdxReader`]). [`write`](Self::write) stages and sends the data, driving the
+/// protocol as needed; [`finish`](Self::finish) flushes the final block and
+/// completes the transfer.
+pub struct BdxWriter<'a> {
+    exchange: Exchange<'a>,
+    drive: Drive,
+    max_block_size: usize,
+    /// Driver: the counter for the next block to send. Follower: the expected
+    /// counter of the next `BlockQuery`.
+    counter: u32,
+    block: [u8; STREAM_BLOCK_SIZE as usize],
+    block_len: usize,
+}
+
+impl<'a> BdxWriter<'a> {
+    fn new(exchange: Exchange<'a>, drive: Drive, max_block_size: u16) -> Self {
+        Self {
+            exchange,
+            drive,
+            max_block_size: max_block_size.clamp(1, STREAM_BLOCK_SIZE) as usize,
+            counter: 0,
+            block: [0; STREAM_BLOCK_SIZE as usize],
+            block_len: 0,
+        }
+    }
+
+    /// Accept an incoming BDX download (a `ReceiveInit`) and become the Sender,
+    /// returning a writer for the data the initiator is pulling. The responder
+    /// counterpart of [`Exchange::pull`](BdxPull::pull).
+    pub async fn accept(mut exchange: Exchange<'a>) -> Result<Self, Error> {
+        let (tc, pmbs) = recv_init(&mut exchange, OpCode::ReceiveInit).await?;
+
+        // Let the initiating receiver drive if it can; otherwise we drive.
+        let drive = if tc.receiver_drive {
+            Drive::Follower
+        } else if tc.sender_drive {
+            Drive::Driver
+        } else {
+            return abort(&mut exchange, BdxStatus::TransferMethodNotSupported).await;
+        };
+
+        let mbs = pmbs.min(STREAM_BLOCK_SIZE);
+        send_accept(&mut exchange, true, select(drive == Drive::Driver), mbs).await?;
+
+        Ok(Self::new(exchange, drive, mbs))
+    }
+
+    /// Stage and send `data`, returning the number of bytes accepted (`< data.len()`
+    /// only when the current block fills; call again with the remainder).
+    pub async fn write(&mut self, data: &[u8]) -> Result<usize, Error> {
+        if data.is_empty() {
+            return Ok(0);
+        }
+
+        let space = self.max_block_size - self.block_len;
+        let n = space.min(data.len());
+        self.block[self.block_len..self.block_len + n].copy_from_slice(&data[..n]);
+        self.block_len += n;
+
+        if self.block_len == self.max_block_size {
+            self.flush(false).await?;
+        }
+
+        Ok(n)
+    }
+
+    /// Flush the final (possibly empty) block and complete the transfer.
+    pub async fn finish(mut self) -> Result<(), Error> {
+        self.flush(true).await?;
+        self.exchange.acknowledge().await
+    }
+
+    /// Send the staged bytes as one block, driving/awaiting acknowledgement per
+    /// the negotiated drive mode.
+    async fn flush(&mut self, is_eof: bool) -> Result<(), Error> {
+        let counter = self.counter;
+
+        if matches!(self.drive, Drive::Follower) {
+            // Receiver-driven: wait to be asked for this block.
+            self.recv_control(OpCode::BlockQuery, counter).await?;
+        }
+
+        let opcode = if is_eof {
+            OpCode::BlockEof
+        } else {
+            OpCode::Block
+        };
+        let len = self.block_len;
+        {
+            let data = &self.block[..len];
+            self.exchange
+                .send_with(|_, wb| {
+                    Block {
+                        block_counter: counter,
+                        data,
+                    }
+                    .write(wb)?;
+                    Ok(Some(opcode.into()))
+                })
+                .await?;
+        }
+        self.block_len = 0;
+
+        if matches!(self.drive, Drive::Driver) {
+            let ack = if is_eof {
+                OpCode::BlockAckEof
+            } else {
+                OpCode::BlockAck
+            };
+            self.recv_control(ack, counter).await?;
+        } else if is_eof {
+            // Receiver-driven: the receiver acknowledges the final block.
+            self.recv_control(OpCode::BlockAckEof, counter).await?;
+        }
+
+        self.counter = self.counter.wrapping_add(1);
+        Ok(())
+    }
+
+    /// Await a specific counter-only control message and validate its counter.
+    async fn recv_control(&mut self, expected: OpCode, expected_counter: u32) -> Result<(), Error> {
+        enum Outcome {
+            Ok,
+            BadCounter,
+            Unexpected,
+            Aborted(Error),
+        }
+
+        self.exchange.recv_fetch().await?;
+        let meta = self.exchange.rx()?.meta();
+        let outcome = {
+            let payload = self.exchange.rx()?.payload();
+            match classify(&meta) {
+                Ok(op) if op == expected => {
+                    if BlockQuery::parse(payload)?.block_counter == expected_counter {
+                        Outcome::Ok
+                    } else {
+                        Outcome::BadCounter
+                    }
+                }
+                Ok(_) => Outcome::Unexpected,
+                Err(e) => Outcome::Aborted(e),
+            }
+        };
+        self.exchange.rx_done()?;
+
+        match outcome {
+            Outcome::Ok => Ok(()),
+            Outcome::BadCounter => abort(&mut self.exchange, BdxStatus::BadBlockCounter).await,
+            Outcome::Unexpected => abort(&mut self.exchange, BdxStatus::UnexpectedMessage).await,
+            Outcome::Aborted(e) => Err(e),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::utils::storage::WriteBuf;
