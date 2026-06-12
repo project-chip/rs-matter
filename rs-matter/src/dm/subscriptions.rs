@@ -623,7 +623,7 @@ impl<const N: usize> SubscriptionsInner<N> {
             );
             self.subscriptions_count -= 1;
         } else if keep {
-            info!("Subscription {:?} kept after reporting; max-attr-change-id: {}, max-seen-event-number: {}", sub.ids(), sub.max_seen_attr_change_id, sub.max_seen_event_number);
+            debug!("Subscription {:?} kept after reporting; max-attr-change-id: {}, max-seen-event-number: {}", sub.ids(), sub.max_seen_attr_change_id, sub.max_seen_event_number);
 
             unwrap!(self.subscriptions.push(sub));
             unwrap!(buffers.push(buffer).map_err(|_| ()));

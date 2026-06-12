@@ -1176,7 +1176,7 @@ where
             self.send(ReportDataChunkState::Done, suppress_last_resp, wb)
                 .await
         } else {
-            info!("No data to report, skipping sending ReportData response");
+            debug!("No data to report, skipping sending ReportData response");
 
             Ok(true)
         }
