@@ -92,3 +92,12 @@ socket2 = "0.5"
 async-executor = "1"
 async-channel = { version = "2", optional = true }
 str0m = { version = "0.18", optional = true }
+
+# The `webrtc` feature pulls `str0m` -> `dimpl` -> `rcgen`, and `rcgen` 0.14.8
+# fails to compile against `time` >= 0.3.48 (a coherence regression in that
+# `time` release: its associated-type-projected `From<HourBase>` impl spuriously
+# conflicts with `rcgen`'s blanket `impl<T: Into<String>> From<T> for ...`). We
+# don't control `rcgen`, so constrain `time` below 0.3.48 here. This is
+# examples-only (`rs-matter` itself doesn't depend on `str0m`/`rcgen`). Remove
+# once `rcgen`/`time` resolve the conflict upstream.
+time = { version = ">=0.3, <0.3.48", default-features = false }
