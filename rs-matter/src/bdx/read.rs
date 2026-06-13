@@ -194,6 +194,7 @@ impl<'a> BdxReader<'a> {
         }
 
         self.holding = false;
+
         Ok(())
     }
 
@@ -273,6 +274,7 @@ impl<'a> BdxPushResponder<'a> {
     pub async fn accept(mut exchange: Exchange<'a>) -> Result<Self, Error> {
         let (transfer_control, max_block_size, length) =
             recv_init_hold(&mut exchange, OpCode::SendInit).await?;
+
         Ok(Self {
             exchange,
             transfer_control,
@@ -309,7 +311,9 @@ impl<'a> BdxPushResponder<'a> {
         // Cap the sender's proposed block size by what our RX buffer can hold.
         let mbs = self.max_block_size.clamp(1, MAX_RX_BLOCK_SIZE);
         let length = self.length;
+
         self.exchange.rx_done()?;
+
         // A `SendAccept` carries no length; the receiver learned it from the `SendInit`.
         send_accept(
             &mut self.exchange,

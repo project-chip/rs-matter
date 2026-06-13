@@ -170,6 +170,7 @@ pub(super) async fn recv_accept(
             Err(e) => Outcome::Aborted(e),
         }
     };
+
     exchange.rx_done()?;
 
     match outcome {

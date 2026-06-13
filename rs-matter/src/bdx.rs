@@ -181,15 +181,19 @@ impl TransferControl {
 
     fn to_byte(self) -> u8 {
         let mut b = self.version & Self::VERSION_MASK;
+
         if self.sender_drive {
             b |= Self::SENDER_DRIVE;
         }
+
         if self.receiver_drive {
             b |= Self::RECEIVER_DRIVE;
         }
+
         if self.async_mode {
             b |= Self::ASYNC;
         }
+
         b
     }
 }
@@ -221,15 +225,19 @@ impl RangeControl {
 
     fn to_byte(self) -> u8 {
         let mut b = 0;
+
         if self.def_len {
             b |= Self::DEF_LEN;
         }
+
         if self.start_offset {
             b |= Self::START_OFFSET;
         }
+
         if self.wide_range {
             b |= Self::WIDE_RANGE;
         }
+
         b
     }
 }
@@ -311,6 +319,7 @@ impl<'a> TransferInit<'a> {
         wb.le_u8(self.transfer_control.to_byte())?;
         wb.le_u8(self.range_control.to_byte())?;
         wb.le_u16(self.max_block_size)?;
+
         if self.range_control.start_offset {
             if self.range_control.wide_range {
                 wb.le_u64(self.start_offset)?;
@@ -318,6 +327,7 @@ impl<'a> TransferInit<'a> {
                 wb.le_u32(self.start_offset as u32)?;
             }
         }
+
         if self.range_control.def_len {
             if self.range_control.wide_range {
                 wb.le_u64(self.length)?;
@@ -325,9 +335,11 @@ impl<'a> TransferInit<'a> {
                 wb.le_u32(self.length as u32)?;
             }
         }
+
         wb.le_u16(self.file_designator.len() as u16)?;
         wb.append(self.file_designator)?;
         wb.append(self.metadata)?;
+
         Ok(())
     }
 }
@@ -398,9 +410,11 @@ impl<'a> TransferAccept<'a> {
     /// Encode this message's payload (without the protocol header).
     pub fn write(&self, wb: &mut WriteBuf) -> Result<(), Error> {
         wb.le_u8(self.transfer_control.to_byte())?;
+
         if self.receive {
             wb.le_u8(self.range_control.to_byte())?;
             wb.le_u16(self.max_block_size)?;
+
             if self.range_control.def_len {
                 if self.range_control.wide_range {
                     wb.le_u64(self.length)?;
@@ -411,7 +425,9 @@ impl<'a> TransferAccept<'a> {
         } else {
             wb.le_u16(self.max_block_size)?;
         }
+
         wb.append(self.metadata)?;
+
         Ok(())
     }
 }
@@ -434,6 +450,7 @@ impl<'a> Block<'a> {
         let block_counter = rb.le_u32()?;
         // The remaining bytes are the block data; borrow them from `payload`.
         let data = &payload[rb.read_off()..];
+
         Ok(Self {
             block_counter,
             data,
@@ -444,6 +461,7 @@ impl<'a> Block<'a> {
     pub fn write(&self, wb: &mut WriteBuf) -> Result<(), Error> {
         wb.le_u32(self.block_counter)?;
         wb.append(self.data)?;
+
         Ok(())
     }
 }
@@ -463,6 +481,7 @@ impl BlockQuery {
     /// Parse a `BlockQuery`/`BlockAck`/`BlockAckEof` payload.
     pub fn parse(payload: &[u8]) -> Result<Self, Error> {
         let mut rb = ReadBuf::new(payload);
+
         Ok(Self {
             block_counter: rb.le_u32()?,
         })
@@ -488,6 +507,7 @@ impl BlockQueryWithSkip {
     /// Parse a `BlockQueryWithSkip` payload.
     pub fn parse(payload: &[u8]) -> Result<Self, Error> {
         let mut rb = ReadBuf::new(payload);
+
         Ok(Self {
             block_counter: rb.le_u32()?,
             bytes_to_skip: rb.le_u64()?,
@@ -498,6 +518,7 @@ impl BlockQueryWithSkip {
     pub fn write(&self, wb: &mut WriteBuf) -> Result<(), Error> {
         wb.le_u32(self.block_counter)?;
         wb.le_u64(self.bytes_to_skip)?;
+
         Ok(())
     }
 }
@@ -523,6 +544,7 @@ const BLOCK_HEADER_LEN: usize = 4;
 /// max-block-size field.
 const fn max_block_size(payload: usize) -> u16 {
     let data = payload - BLOCK_HEADER_LEN;
+
     if data > u16::MAX as usize {
         u16::MAX
     } else {

@@ -232,6 +232,7 @@ impl<I: OtaImages> ExchangeHandler for OtaBdxServer<'_, I> {
 
         let mut buf = [0u8; MAX_BLOCK_SIZE];
         let mut offset = 0u64;
+
         loop {
             let n = self.images.read(&fd, offset, &mut buf).await?;
             if n == 0 {
@@ -243,6 +244,7 @@ impl<I: OtaImages> ExchangeHandler for OtaBdxServer<'_, I> {
                 let written = writer.write(chunk).await?;
                 chunk = &chunk[written..];
             }
+
             offset += n as u64;
         }
 

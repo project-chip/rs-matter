@@ -57,6 +57,7 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
         // We can never stage more than the buffer holds; negotiation already
         // bounded `max_block_size`, but clamp defensively.
         let max_block_size = (max_block_size as usize).min(buf.len());
+
         Self {
             exchange,
             drive,
@@ -92,6 +93,7 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
     /// Flush the final (possibly empty) block and complete the transfer.
     pub async fn finish(mut self) -> Result<(), Error> {
         self.send_block(true).await?;
+
         self.exchange.acknowledge().await
     }
 
@@ -139,6 +141,7 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
         }
 
         self.counter = self.counter.wrapping_add(1);
+
         Ok(())
     }
 
@@ -167,6 +170,7 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
                 Err(e) => Outcome::Aborted(e),
             }
         };
+
         self.exchange.rx_done()?;
 
         match outcome {
@@ -192,6 +196,7 @@ impl embedded_io_async::Write for BdxWriter<'_, '_> {
         if self.block_len > 0 {
             self.send_block(false).await?;
         }
+
         Ok(())
     }
 }
@@ -250,6 +255,7 @@ impl<'a> BdxPullResponder<'a> {
     pub async fn accept(mut exchange: Exchange<'a>) -> Result<Self, Error> {
         let (transfer_control, max_block_size, _length) =
             recv_init_hold(&mut exchange, OpCode::ReceiveInit).await?;
+
         Ok(Self {
             exchange,
             transfer_control,
@@ -286,7 +292,9 @@ impl<'a> BdxPullResponder<'a> {
         // Cap the receiver's proposed block size by our staging buffer and TX buffer.
         let cap = buf.len().min(MAX_TX_BLOCK_SIZE as usize) as u16;
         let mbs = self.max_block_size.clamp(1, cap);
+
         self.exchange.rx_done()?;
+
         send_accept(
             &mut self.exchange,
             true,

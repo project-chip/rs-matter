@@ -255,6 +255,7 @@ impl ClusterHandler for OtaRequestorHandler<'_> {
         }
 
         self.dataver.changed();
+
         Ok(())
     }
 
@@ -414,6 +415,7 @@ where
                 _ => None,
             }
         };
+
         handle.complete().await?;
 
         let Some(new_version) = new_version else {
@@ -431,6 +433,7 @@ where
         let total = reader.len();
         let mut received = 0u64;
         let mut buf = [0u8; MAX_BLOCK_SIZE as usize];
+
         loop {
             let n = reader.read(&mut buf).await?;
             if n == 0 {
@@ -458,10 +461,12 @@ where
                     .end()
             })
             .await?;
+
         let action = {
             let resp = handle.response()?;
             resp.action()?
         };
+
         handle.complete().await?;
 
         if !matches!(action, ApplyUpdateActionEnum::Proceed) {
