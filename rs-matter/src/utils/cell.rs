@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2024-2025 Project CHIP Authors
+ *    Copyright (c) 2024-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -673,12 +673,16 @@ impl<T: ?Sized + Ord> Ord for RefCell<T> {
     }
 }
 
-impl<T> From<T> for RefCell<T> {
-    /// Creates a new `RefCell<T>` containing the given value.
-    fn from(t: T) -> RefCell<T> {
-        RefCell::new(t)
-    }
-}
+// NOTE: `core::cell::RefCell` defines `impl<T> From<T> for RefCell<T>`, but we
+// deliberately do NOT mirror it here. Because this `RefCell` is a crate-local
+// type (a copy of `core`'s, plus our `init` support), such a blanket `From<T>`
+// impl is subject to coherence checks against every *visible* impl in our
+// dependency graph - and `time` >= 0.3.48 has an
+// `impl From<HourBase> for <HourBase as ModifierValue>::Type` whose
+// associated-type projection the compiler cannot prove disjoint from
+// `RefCell<_>`, yielding a spurious `E0119`. `core`'s own impl is immune (the
+// orphan rule seals it and `time` is not in `core`'s graph). The impl is unused
+// anyway, so we simply omit it. See the `time` 0.3.48 coherence regression.
 
 struct BorrowRef<'b> {
     borrow: &'b Cell<BorrowFlag>,

@@ -36,15 +36,15 @@ rs-matter = { path = "../rs-matter", default-features = false, features = ["rust
 [target.'cfg(not(target_os = "none"))'.dependencies]
 log = { version = "0.4", features = ["max_level_info"] }
 simple_logger = "5"
-embassy-sync = { version = "0.7", features = ["log"] }
+embassy-sync = { version = "0.8", features = ["log"] }
 embassy-time = { version = "0.5", features = ["std", "log"] }
 embassy-executor = { version = "0.10", features = ["platform-std", "log"] }
 critical-section = { version = "1", features = ["std"] }
 rs-matter = { path = "../rs-matter", default-features = false, features = ["log"] }
 
 [target.'cfg(target_os = "none")'.dependencies]
-defmt = "0.3"
-embassy-sync = { version = "0.7", features = ["defmt"] }
+defmt = "1"
+embassy-sync = { version = "0.8", features = ["defmt"] }
 embassy-time = { version = "0.5", features = ["defmt"] }
 embassy-executor = { version = "0.10", features = ["defmt"] }
 embedded-alloc = "0.6"

@@ -80,25 +80,44 @@ pub use crate::persist::BINDINGS_KEY;
 /// reaching for the lifetime-parameterised handler type.
 pub const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
 
-/// One stored binding entry.
+/// One binding entry: the *local* endpoint it is attached to, the fabric it
+/// belongs to, and the destination it points at.
 ///
-/// Wire layout follows the standard `derive(FromTLV, ToTLV)` shape —
-/// a TLV struct with positional context-tagged fields (0 = first
-/// declared field, 1 = second, …). `Option<T>` fields are
-/// omit-if-`None`. The encoding is decoupled from the wire-level
-/// `TargetStruct` (which puts `FabricIndex` at ctx 254): we own the
-/// persisted layout and only need it to be self-consistent.
+/// This is the single entry type used for storage, persistence, and the
+/// application-facing read API ([`Bindings::get`]). Application code that *acts*
+/// on the device's bindings (e.g. a switch reading its binding list to decide
+/// which node(s) to send a command to) receives it cloned, so the registry lock
+/// is never held across the `await` of the subsequent remote invoke. It is small
+/// but not trivially `Copy`, hence `Clone`.
+///
+/// `local_endpoint` is **this** device's endpoint that hosts the binding — not
+/// to be confused with the remote target's `endpoint`. A *unicast* target has
+/// both `node` and `endpoint` set (`cluster` optional); a *groupcast* target has
+/// `group` set instead. The destination fields mirror the spec's `TargetStruct`.
+///
+/// Wire layout follows the standard `derive(FromTLV, ToTLV)` shape — a TLV
+/// struct with positional context-tagged fields. `Option<T>` fields are
+/// omit-if-`None`. The encoding is decoupled from the wire-level `TargetStruct`
+/// (which puts `FabricIndex` at ctx 254): we own the persisted layout and only
+/// need it to be self-consistent.
 #[derive(Debug, Clone, FromTLV, ToTLV)]
-struct StoredBinding {
-    endpoint_id: EndptId,
-    fab_idx: NonZeroU8,
-    node: Option<u64>,
-    group: Option<u16>,
-    endpoint: Option<EndptId>,
-    cluster: Option<ClusterId>,
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Binding {
+    /// The *local* endpoint this binding is attached to.
+    pub local_endpoint: EndptId,
+    /// The fabric this binding belongs to.
+    pub fab_idx: NonZeroU8,
+    /// The remote node id (set for a unicast target).
+    pub node: Option<u64>,
+    /// The group id (set for a groupcast target).
+    pub group: Option<u16>,
+    /// The remote endpoint (set for a unicast target).
+    pub endpoint: Option<EndptId>,
+    /// The cluster to address (optional).
+    pub cluster: Option<ClusterId>,
 }
 
-/// Shared registry of Binding entries across every endpoint and
+/// Shared registry of [`Binding`] entries across every endpoint and
 /// fabric. Persisted as a single TLV blob under [`BINDINGS_KEY`].
 ///
 /// `N` bounds the total number of entries the device can hold. Per
@@ -106,7 +125,7 @@ struct StoredBinding {
 /// minimum-per-fabric; the spec also says the total must be
 /// `min_per_fabric × supported_fabrics` — pick `N` accordingly.
 pub struct Bindings<const N: usize> {
-    state: Mutex<RefCell<Vec<StoredBinding, N>>>,
+    state: Mutex<RefCell<Vec<Binding, N>>>,
 }
 
 impl<const N: usize> Bindings<N> {
@@ -137,7 +156,7 @@ impl<const N: usize> Bindings<N> {
             return Ok(());
         };
 
-        let loaded = Vec::<StoredBinding, N>::from_tlv(&TLVElement::new(data))?;
+        let loaded = Vec::<Binding, N>::from_tlv(&TLVElement::new(data))?;
         self.state.lock(|cell| *cell.borrow_mut() = loaded);
 
         info!("Loaded Binding entries for all endpoints from storage");
@@ -156,15 +175,15 @@ impl<const N: usize> Bindings<N> {
         persist.run()
     }
 
-    /// Validate a `TargetStruct` against spec and return a
-    /// fully-built `StoredBinding`. `endpoint_id` and `fab_idx` come
-    /// from the dispatch context (they are not on the wire entry for
-    /// this attribute write — the framework auto-injects fab_idx).
+    /// Validate a `TargetStruct` against spec and return a fully-built
+    /// [`Binding`]. `local_endpoint` and `fab_idx` come from the dispatch
+    /// context (they are not on the wire entry for this attribute write — the
+    /// framework auto-injects fab_idx).
     fn parse_target(
-        endpoint_id: EndptId,
+        local_endpoint: EndptId,
         fab_idx: NonZeroU8,
         t: &TargetStruct<'_>,
-    ) -> Result<StoredBinding, Error> {
+    ) -> Result<Binding, Error> {
         let node = t.node()?;
         let group = t.group()?;
         let endpoint = t.endpoint()?;
@@ -187,8 +206,8 @@ impl<const N: usize> Bindings<N> {
             return Err(ErrorCode::ConstraintError.into());
         }
 
-        Ok(StoredBinding {
-            endpoint_id,
+        Ok(Binding {
+            local_endpoint,
             fab_idx,
             node,
             group,
@@ -209,18 +228,20 @@ impl<const N: usize> Bindings<N> {
         // Two-pass validation: parse every supplied target *before*
         // mutating state so a malformed input never partially clears
         // the existing entries on this fabric.
-        let mut parsed: Vec<StoredBinding, N> = Vec::new();
+        let mut parsed: Vec<Binding, N> = Vec::new();
         for t in list {
             let t = t?;
             let sb = Self::parse_target(endpoint_id, fab_idx, &t)?;
             parsed.push(sb).map_err(|_| ErrorCode::ResourceExhausted)?;
         }
 
+        let count = parsed.len();
+
         self.state.lock(|cell| {
             let mut state = cell.borrow_mut();
             // Drop every existing entry on this (endpoint, fabric)
             // in O(N) — one pass, in-place shift.
-            state.retain(|e| !(e.endpoint_id == endpoint_id && e.fab_idx == fab_idx));
+            state.retain(|e| !(e.local_endpoint == endpoint_id && e.fab_idx == fab_idx));
             // Now bulk-insert the validated list. Capacity-exhausted
             // here means the *combined* fabric counts exceeded `N`.
             for sb in parsed {
@@ -228,6 +249,18 @@ impl<const N: usize> Bindings<N> {
             }
             Ok::<_, Error>(())
         })?;
+
+        if count == 0 {
+            info!(
+                "Binding: cleared all targets on endpoint {}, fabric {}",
+                endpoint_id, fab_idx
+            );
+        } else {
+            info!(
+                "Binding: replaced list on endpoint {}, fabric {} with {} target(s)",
+                endpoint_id, fab_idx, count
+            );
+        }
 
         self.store_persist(ctx)
     }
@@ -242,6 +275,11 @@ impl<const N: usize> Bindings<N> {
     ) -> Result<(), Error> {
         let sb = Self::parse_target(endpoint_id, fab_idx, entry)?;
 
+        info!(
+            "Binding: add on endpoint {}, fabric {} -> node {:?}, group {:?}, endpoint {:?}, cluster {:?}",
+            endpoint_id, fab_idx, sb.node, sb.group, sb.endpoint, sb.cluster
+        );
+
         self.state.lock(|cell| {
             cell.borrow_mut()
                 .push(sb)
@@ -250,6 +288,41 @@ impl<const N: usize> Bindings<N> {
         })?;
 
         self.store_persist(ctx)
+    }
+
+    /// The total number of [`Binding`] entries in the registry, across **all**
+    /// local endpoints and fabrics. See [`Bindings::get`].
+    pub fn len(&self) -> usize {
+        self.state.lock(|cell| cell.borrow().len())
+    }
+
+    /// Whether the registry holds no bindings.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The `index`-th [`Binding`] in the registry (across all endpoints and
+    /// fabrics), cloned out so the registry lock is not held by the caller, or
+    /// `None` if `index` is out of range.
+    ///
+    /// This flat, index-based accessor lets application code iterate the bindings
+    /// and perform async work (e.g. a remote invoke) per entry without holding
+    /// the lock across the `await`. Each [`Binding`] carries its `local_endpoint`
+    /// and `fab_idx`, so the caller filters on those itself:
+    ///
+    /// ```ignore
+    /// for i in 0..bindings.len() {
+    ///     let Some(b) = bindings.get(i) else { break };
+    ///     if b.local_endpoint != MY_ENDPOINT { continue; }
+    ///     if let (Some(node), Some(ep)) = (b.node, b.endpoint) {
+    ///         // lock already released here - safe to await
+    ///         let exchange = Exchange::initiate(matter, &crypto, b.fab_idx, node).await?;
+    ///         exchange.on_off().toggle(ep).await?;
+    ///     }
+    /// }
+    /// ```
+    pub fn get(&self, index: usize) -> Option<Binding> {
+        self.state.lock(|cell| cell.borrow().get(index).cloned())
     }
 
     /// Render every entry on `endpoint_id` matching the read filter
@@ -267,7 +340,7 @@ impl<const N: usize> Bindings<N> {
             let state = cell.borrow();
             let mut iter = state
                 .iter()
-                .filter(|e| e.endpoint_id == endpoint_id)
+                .filter(|e| e.local_endpoint == endpoint_id)
                 .filter(|e| fab_filter.is_none_or(|f| e.fab_idx == f));
 
             match builder {

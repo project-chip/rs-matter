@@ -8,6 +8,9 @@ license = "MIT OR Apache-2.0"
 name = "onoff_light"
 
 [[bin]]
+name = "onoff_light_switch"
+
+[[bin]]
 name = "onoff_light_bt"
 required-features = ["zbus"]
 
@@ -28,7 +31,7 @@ name = "bridge"
 name = "camera_tests"
 
 [[bin]]
-name = "chip_tool_tests"
+name = "system_tests"
 
 [[bin]]
 name = "commissioner_tests"
@@ -73,7 +76,7 @@ env_logger = "0.11"
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "tracing-log"], optional = true }
 embassy-futures = "0.1"
-embassy-sync = "0.7"
+embassy-sync = "0.8"
 embassy-time = { version = "0.5", features = ["std"] }
 embassy-time-queue-utils = { version = "0.3", features = ["generic-queue-64"] }
 static_cell = "1"
@@ -89,3 +92,12 @@ socket2 = "0.5"
 async-executor = "1"
 async-channel = { version = "2", optional = true }
 str0m = { version = "0.18", optional = true }
+
+# The `webrtc` feature pulls `str0m` -> `dimpl` -> `rcgen`, and `rcgen` 0.14.8
+# fails to compile against `time` >= 0.3.48 (a coherence regression in that
+# `time` release: its associated-type-projected `From<HourBase>` impl spuriously
+# conflicts with `rcgen`'s blanket `impl<T: Into<String>> From<T> for ...`). We
+# don't control `rcgen`, so constrain `time` below 0.3.48 here. This is
+# examples-only (`rs-matter` itself doesn't depend on `str0m`/`rcgen`). Remove
+# once `rcgen`/`time` resolve the conflict upstream.
+time = { version = ">=0.3, <0.3.48", default-features = false }

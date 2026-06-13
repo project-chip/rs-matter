@@ -30,7 +30,7 @@ use crate::common::{run_command, ChipBuilder};
 
 /// System cluster tests + general Matter protocol/IM/SC tests.
 ///
-/// Run against the `chip_tool_tests` example. This is the default suite
+/// Run against the `system_tests` example. This is the default suite
 /// when `cargo xtask itest` is invoked without `--suite`.
 ///
 /// Names matching the `TC_*` convention are dispatched to
@@ -194,7 +194,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // to corrupt fields in the Sigma2 it sends back during CASE Handshake — the
     // test then drives a DUT_Commissioner through the resulting CASE failures.
     // We pass `--string-arg th_server_app_path:<chip-all-clusters-app>` (built
-    // lazily via `needs_chip_all_clusters_app`), move chip_tool_tests off the
+    // lazily via `needs_chip_all_clusters_app`), move system_tests off the
     // default Matter port via `--port 5541` so TH_SERVER can take 5540, and
     // hand the test `--PICS ci-pics-values` so `is_pics_sdk_ci_only=True` —
     // without that flag, every "TH prompts the user to commission DUT" step
@@ -203,7 +203,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // steps short-circuit to "Y" and the test verifies the framework
     // controller's CASE-error handling against the FaultInjection-corrupted
     // chip-all-clusters-app. NB: rs-matter code is exercised only via the
-    // initial CommissionDeviceTest commissioning of chip_tool_tests itself —
+    // initial CommissionDeviceTest commissioning of system_tests itself —
     // the body of the test then drives the controller against TH_SERVER, not
     // against the rs-matter DUT.
     "TC_SC_3_5",
@@ -225,9 +225,9 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // (provisional in Matter 1.5; upstream pulled it from the 1.5 dataset in
     // CHIP commit faf4d09ad1), so `TestBasicInformation`'s exact-set assertion
     // on `AttributeList` keeps passing. For `TC_BINFO_3_2` the
-    // `chip_tool_tests` binary swaps in an alternate `Node` whose
+    // `system_tests` binary swaps in an alternate `Node` whose
     // `BasicInformation` cluster metadata exposes `ConfigurationVersion` — see
-    // `NODE_BINFO_CV_EXPOSED` in `examples/src/bin/chip_tool_tests.rs`. The
+    // `NODE_BINFO_CV_EXPOSED` in `examples/src/bin/system_tests.rs`. The
     // switch is gated on the presence of `--app-pipe` (see `app_args_override`
     // below), which only this test passes.
     "TC_BINFO_3_2",
@@ -319,7 +319,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Fixed Label (optional system cluster)
     //
-    "TC_FLABEL_2_1", // FixedLabel wired on EP1 of `chip_tool_tests` with two static
+    "TC_FLABEL_2_1", // FixedLabel wired on EP1 of `system_tests` with two static
     //                  spec-conformant entries (see `FIXED_LABELS_EP1`). The test reads
     //                  the list, attempts a write (expected `UnsupportedWrite` since
     //                  `LabelList` is read-only), and re-reads to confirm stability.
@@ -420,7 +420,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //   // two problem entries:
     //   //
     //   //   a. **Groups on EP0** (1 problem, deliberate). The
-    //   //      `chip_tool_tests` fixture re-adds Groups at root for
+    //   //      `system_tests` fixture re-adds Groups at root for
     //   //      the `TestGroupMessaging` YAML test (group-addressed
     //   //      writes to `BasicInformation::NodeLabel` need EP0 to be
     //   //      a member of a multicast group, which only works via
@@ -428,7 +428,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //   //      Matter Core §7.16.4 explicitly permits extra clusters
     //   //      on an endpoint, but the conformance checker takes a
     //   //      strict view. See the `NODE` doc comment in
-    //   //      `examples/src/bin/chip_tool_tests.rs` for the full
+    //   //      `examples/src/bin/system_tests.rs` for the full
     //   //      rationale; the library-level `with_*_sys()` chain and
     //   //      the `g*` macro variants no longer add Groups at root,
     //   //      so device-type-pure compositions are the *default*.
@@ -593,7 +593,7 @@ impl TestSuite {
     /// Default `--target` (example binary) for this suite.
     pub(crate) fn default_target(&self) -> &'static str {
         match self {
-            Self::System | Self::SystemPython | Self::SystemYaml => "chip_tool_tests",
+            Self::System | Self::SystemPython | Self::SystemYaml => "system_tests",
             Self::Camera => "camera_tests",
             Self::Light => "light_tests",
             Self::Scenes => "scenes_tests",
@@ -697,7 +697,7 @@ impl ITests {
         self.chip_builder.build_python_wheel(force_rebuild)
     }
 
-    /// Build the executable (`chip-tool-tests`) that is to be tested with the Chip integration tests.
+    /// Build the executable (`system-tests`) that is to be tested with the Chip integration tests.
     pub fn build<'a>(
         &self,
         profile: &str,
@@ -1161,7 +1161,7 @@ impl ITests {
              --paa-trust-store-path credentials/development/paa-root-certs{extra_args_clause}{th_server_arg}"
         );
 
-        // Optional `--app-args` passed through to `chip_tool_tests`. Used by
+        // Optional `--app-args` passed through to `system_tests`. Used by
         // tests like TC_SC_7_1 that require non-default discriminator /
         // passcode values, which the test then asserts (`assert_not_equal`
         // against `3840` / `20202021`).
@@ -1344,17 +1344,17 @@ impl ITests {
             "TC_SC_4_1" => Some("--manual-code 34970112332"),
             // TC_SC_7_1 in post-cert mode asserts the device is *not* using
             // the spec-default discriminator (3840) / passcode (20202021).
-            // The QR code matches the values we pass to `chip_tool_tests`
+            // The QR code matches the values we pass to `system_tests`
             // via `--app-args` (see `app_args_override`).
             "TC_SC_7_1" => Some("--qr-code MT:-24J0KCZ16N71648G00"),
             // TC_DD_1_16_17 bundles two MatterBaseTests:
             //  - `test_TC_DD_1_16` parses `matter_test_config.qr_code_content`
             //  - `test_TC_DD_1_17` parses `matter_test_config.manual_code`
             // so we have to hand the framework both forms. The values are
-            // the spec-default chip_tool_tests credentials (discriminator
+            // the spec-default system_tests credentials (discriminator
             // 3840, passcode 20202021) — same as
             // `rs_matter::dm::devices::test::TEST_DEV_COMM`. The QR code is
-            // what `chip_tool_tests` prints at startup as
+            // what `system_tests` prints at startup as
             // `INFO: SetupQRCode: [...]`.
             "TC_DD_1_16_17" => Some(
                 "--manual-code 34970112332 \
@@ -1411,9 +1411,9 @@ impl ITests {
         matches!(test_name, "TC_SC_3_5")
     }
 
-    /// Optional `--app-args` passed straight through to `chip_tool_tests`.
+    /// Optional `--app-args` passed straight through to `system_tests`.
     ///
-    /// `chip_tool_tests` recognises `--discriminator <u16>` and
+    /// `system_tests` recognises `--discriminator <u16>` and
     /// `--passcode <u32>`; both override the spec-default `TEST_DEV_COMM`
     /// values for tests that demand non-defaults.
     fn app_args_override(test_name: &str) -> Option<&'static str> {
@@ -1438,7 +1438,7 @@ impl ITests {
             // TC_TestEventTrigger validates `GeneralDiagnostics::TestEventTrigger`
             // key/trigger handling — needs the canonical CHIP enable-key
             // 000102030405060708090a0b0c0d0e0f plumbed through to the device's
-            // `GenDiag::test_event_trigger` impl. The chip_tool_tests app
+            // `GenDiag::test_event_trigger` impl. The system_tests app
             // accepts `--enable-key <hex32>` (see `parse_enable_key_override`
             // in that binary) and wires it into a `TestEventTriggerDiag`
             // wrapper around `()` that flips `TestEventTriggersEnabled` to
@@ -1464,7 +1464,7 @@ impl ITests {
     fn extra_python_script_args(test_name: &str) -> &'static str {
         match test_name {
             // TC_ACE_1_4 needs the PIXITs that point at the application
-            // endpoint/cluster/attribute exposed by `chip_tool_tests`. Endpoint 1
+            // endpoint/cluster/attribute exposed by `system_tests`. Endpoint 1
             // hosts the OnOff cluster on a `DEV_TYPE_ON_OFF_LIGHT` (device type
             // 0x0100 == 256).
             "TC_ACE_1_4" => {
@@ -1609,10 +1609,10 @@ impl ITests {
             // TC_G_2_2 sends Groups commands against
             // `self.matter_test_config.endpoint` (e.g. lines 125/133/172/197)
             // while `GroupKeyManagement` reads stay hard-coded at EP0.
-            // `chip_tool_tests` no longer advertises Groups at the root
+            // `system_tests` no longer advertises Groups at the root
             // endpoint (Matter Core spec §9.11 — Root Node device type
             // doesn't list Groups, see the comment on `NODE` in
-            // `chip_tool_tests.rs`); Groups now lives on EP1/EP2 under the
+            // `system_tests.rs`); Groups now lives on EP1/EP2 under the
             // On/Off Light device type, so target EP1.
             "TC_G_2_2" => "--endpoint 1",
             // TC_DA_1_7 ("device attestation: distinct keys per DUT") normally
@@ -1626,14 +1626,14 @@ impl ITests {
             // DUT_Commissioner steps short-circuit to "Y" — see the
             // explanatory comment in `SYS_TESTS` above. Without the CI PICS
             // file the test hangs on `wait_for_user_input` waiting for an
-            // operator to commission the DUT_Commissioner from chip_tool_tests
+            // operator to commission the DUT_Commissioner from system_tests
             // (which doesn't act as a commissioner).
             "TC_SC_3_5" => "--PICS src/app/tests/suites/certification/ci-pics-values",
             // TC_DA_1_9 ("device attestation: revocation [DUT-Commissioner]")
             // is a commissioner-side test: it spawns `chip-all-clusters-app`
             // with a series of revoked DAC/PAI configurations and uses the
             // *test framework's* `ChipDeviceCtrl.CommissionWithCode` to verify
-            // that revoked credentials are rejected. The chip_tool_tests app
+            // that revoked credentials are rejected. The system_tests app
             // we launch is sidelined (the framework drives the controller
             // directly), but we still need to point the test at the cached
             // chip output from `cargo xtask itest-setup` and bump its

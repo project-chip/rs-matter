@@ -1,4 +1,4 @@
-# PICS values to be used when running the `chip_tool_tests` executable
+# PICS values to be used when running the `system_tests` executable
 #
 # Over time, all app clusters need to be turned off, because the `rs-matter` integration tests should
 # only test the utility/system clusters as well as the general TLV serde and IM layer behaviors

@@ -71,6 +71,25 @@ pub const DEV_TYPE_DIMMABLE_LIGHT: DeviceType = DeviceType {
     drev: 3,
 };
 
+/// On/Off Light Switch — a controller device type that mandates the
+/// `OnOff` cluster as a **client** (i.e. it initiates On/Off commands to a
+/// bound light) plus the `Binding` cluster as a server (its address book of
+/// bound targets). See the Matter Device Library spec.
+pub const DEV_TYPE_ON_OFF_LIGHT_SWITCH: DeviceType = DeviceType {
+    dtype: 0x0103,
+    drev: 3,
+};
+
+/// Generic Switch — a device type for a button/switch that reports user
+/// presses via the `Switch` cluster (as a **server**), emitting events such as
+/// `InitialPress`/`ShortRelease`. Ecosystems surface these events as automation
+/// triggers. Unlike `DEV_TYPE_ON_OFF_LIGHT_SWITCH`, it does not bind to or
+/// command any device itself. See the Matter Device Library spec.
+pub const DEV_TYPE_GENERIC_SWITCH: DeviceType = DeviceType {
+    dtype: 0x000F,
+    drev: 2,
+};
+
 /// Extended Color Light — mandates OnOff, LevelControl, and
 /// ColorControl with the full feature set (HUE_AND_SATURATION, XY,
 /// COLOR_TEMPERATURE, ENHANCED_HUE, COLOR_LOOP).

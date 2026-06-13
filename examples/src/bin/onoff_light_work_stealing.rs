@@ -75,24 +75,8 @@ static CRYPTO: StaticCell<RustCrypto<'static, FakeRng>> = StaticCell::new();
 static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
-    let thread = std::thread::Builder::new()
-        // Increase the stack size until the example can work without stack blowups.
-        // Note that the used stack size increases exponentially by lowering the level of compiler optimizations,
-        // as lower optimization settings prevent the Rust compiler from inlining constructor functions
-        // which often results in (unnecessary) memory moves and increased stack utilization:
-        // e.g., an opt-level of "0" will require a several times' larger stack.
-        //
-        // Optimizing/lowering `rs-matter` memory consumption is an ongoing topic.
-        .stack_size(550 * 1024)
-        .spawn(run)
-        .unwrap();
-
-    thread.join().unwrap()
-}
-
-fn run() -> Result<(), Error> {
     env_logger::init_from_env(
-        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "debug"),
+        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
     );
 
     info!(
