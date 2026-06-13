@@ -254,7 +254,8 @@ impl ClusterHandler for OtaRequestorHandler<'_> {
             }
         }
 
-        self.dataver.changed();
+        // Bump the dataver and notify subscribers of the changed attribute.
+        ctx.notify_changed();
 
         Ok(())
     }
@@ -271,6 +272,8 @@ impl ClusterHandler for OtaRequestorHandler<'_> {
         };
 
         self.state.set_provider(provider);
+        // The command mutated `DefaultOTAProviders` (on this same cluster); notify.
+        ctx.notify_own_attr_changed(AttributeId::DefaultOTAProviders as _);
         // Wake the driver to query this provider out-of-band.
         self.state.trigger.notify();
 
