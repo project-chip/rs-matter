@@ -111,6 +111,20 @@ where
     }
 }
 
+/// An [`ExchangeHandler`] that handles nothing - a convenient terminator for a
+/// [`ChainedExchangeHandler`].
+///
+/// By the time the chain reaches it, no handler matched the incoming protocol, so
+/// it simply drops the exchange (sending no reply); the peer will time out and
+/// retry as it would against any unsupported protocol.
+pub struct EmptyExchangeHandler;
+
+impl ExchangeHandler for EmptyExchangeHandler {
+    async fn handle(&self, _exchange: Exchange<'_>) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
 /// A generic responder utility for accepting and handling exchanges received by the provided `Matter` stack,
 /// by applying the provided `ExchangeHandler` instance to each accepted exchange.
 ///

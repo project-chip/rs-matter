@@ -22,19 +22,17 @@
 //! `QueryImage` with the location of a newer image (a `bdx://` URI), authorizes
 //! the apply via `ApplyUpdateRequest`, and notes completion via
 //! `NotifyUpdateApplied`. The image bytes are served over BDX by
-//! [`OtaBdxServer`], an [`ExchangeHandler`] that the application chains into its
-//! responder for the BDX protocol. Both delegate to a user-supplied
-//! [`OtaImages`] catalogue.
+//! [`OtaBdxServer`], a [`BdxServer`] that the application wraps in a
+//! [`Bdx`](crate::bdx::Bdx) handler and chains into its responder for the BDX
+//! protocol. Both delegate to a user-supplied [`OtaImages`] catalogue.
 
 use core::fmt::Write as _;
 use core::num::NonZeroU8;
 
-use crate::bdx::{BdxPullResponder, BdxStatus};
+use crate::bdx::{BdxPullResponder, BdxServer, BdxStatus};
 use crate::dm::{Cluster, Dataver, InvokeContext};
 use crate::error::{Error, ErrorCode};
-use crate::respond::ExchangeHandler;
 use crate::tlv::{Octets, TLVBuilderParent};
-use crate::transport::exchange::Exchange;
 use crate::with;
 
 pub use crate::dm::clusters::decl::ota_software_update_provider::*;
@@ -183,19 +181,21 @@ impl<I: OtaImages> ClusterHandler for OtaProviderHandler<'_, I> {
     }
 }
 
-/// A BDX protocol handler that serves OTA images. Chain it into your responder's
-/// exchange handler for the BDX protocol so requestors can download the image
-/// advertised by the OTA Provider cluster's `QueryImage` response.
+/// A [`BdxServer`] that serves OTA images. Wrap it in a [`Bdx`](crate::bdx::Bdx)
+/// handler and chain that into your responder for the BDX protocol, so requestors
+/// can download the image advertised by the OTA Provider cluster's `QueryImage`
+/// response.
 ///
 /// Given the exchange handler for the rest of your protocols (e.g. the default
 /// Interaction Model + Secure Channel chain), add BDX with
 /// [`ExchangeHandler::chain`](crate::respond::ExchangeHandler::chain):
 ///
 /// ```ignore
-/// use rs_matter::bdx::PROTO_ID_BDX;
+/// use rs_matter::bdx::{Bdx, PROTO_ID_BDX};
 /// use rs_matter::respond::Responder;
 ///
-/// let handler = im_and_sc_handler.chain(PROTO_ID_BDX, OtaBdxServer::new(&images));
+/// let bdx = Bdx::new(OtaBdxServer::new(&images));
+/// let handler = im_and_sc_handler.chain(PROTO_ID_BDX, bdx);
 /// let responder = Responder::new("ota-provider", handler, matter, 0);
 /// ```
 pub struct OtaBdxServer<'a, I> {
@@ -209,10 +209,12 @@ impl<'a, I> OtaBdxServer<'a, I> {
     }
 }
 
-impl<I: OtaImages> ExchangeHandler for OtaBdxServer<'_, I> {
-    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
-        let responder = BdxPullResponder::accept(exchange).await?;
+impl<I: OtaImages> BdxServer for OtaBdxServer<'_, I> {
+    fn serves(&self, fd: &[u8]) -> bool {
+        self.images.size(fd).is_some()
+    }
 
+    async fn serve(&self, responder: BdxPullResponder<'_>) -> Result<(), Error> {
         // Copy the requested designator out (the held init is released by
         // `reply`/`reject`), and reject anything we don't have.
         let mut fd = heapless::Vec::<u8, MAX_FILE_DESIGNATOR>::new();

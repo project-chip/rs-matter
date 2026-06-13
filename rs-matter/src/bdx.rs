@@ -42,9 +42,11 @@ use crate::utils::storage::{ReadBuf, WriteBuf};
 
 mod nego;
 mod read;
+mod server;
 mod write;
 
 pub use read::*;
+pub use server::*;
 pub use write::*;
 
 /// The Matter protocol id for BDX.

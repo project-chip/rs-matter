@@ -33,7 +33,8 @@ use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
 
 use rs_matter::bdx::{
-    self, BdxPull, BdxPullResponder, BdxPush, BdxPushResponder, BdxReader, BdxWriter,
+    self, Bdx, BdxPull, BdxPullResponder, BdxPush, BdxPushResponder, BdxReader, BdxServer,
+    BdxWriter, ChainedBdxServer, EmptyBdxServer,
 };
 use rs_matter::error::Error;
 use rs_matter::respond::ExchangeHandler;
@@ -195,6 +196,109 @@ fn test_bdx_push_streaming() {
                 })
                 .await?;
             }
+            Ok::<_, Error>(())
+        })
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+// ---- Server routing (`Bdx` / `BdxServer`) ----
+
+const SERVE_FD: &[u8] = b"download.img";
+const PROCESS_FD: &[u8] = b"upload.log";
+
+/// A [`BdxServer`] that *serves* (sends) a single image on [`SERVE_FD`].
+struct ImageServer {
+    image: Vec<u8>,
+}
+
+impl BdxServer for ImageServer {
+    fn serves(&self, fd: &[u8]) -> bool {
+        fd == SERVE_FD
+    }
+
+    async fn serve(&self, responder: BdxPullResponder<'_>) -> Result<(), Error> {
+        let mut wbuf = [0u8; 512];
+        let mut writer = responder
+            .reply(&mut wbuf, Some(self.image.len() as u64))
+            .await?;
+        write_all(&mut writer, &self.image).await?;
+        writer.finish().await
+    }
+}
+
+/// A [`BdxServer`] that *processes* (receives) a single upload on [`PROCESS_FD`],
+/// asserting the bytes it receives.
+struct LogSink {
+    expected: Vec<u8>,
+}
+
+impl BdxServer for LogSink {
+    fn processes(&self, fd: &[u8]) -> bool {
+        fd == PROCESS_FD
+    }
+
+    async fn process(&self, responder: BdxPushResponder<'_>) -> Result<(), Error> {
+        let mut reader = responder.reply().await?;
+        let received = read_all(&mut reader).await?;
+        assert_eq!(received, self.expected, "processed upload mismatch");
+
+        Ok(())
+    }
+}
+
+/// A single [`Bdx`] handler fronts two services on `PROTO_ID_BDX`, dispatched by
+/// file designator and direction: a download routes to the (sending) image
+/// server, an upload to the (receiving) log sink, and an unknown designator is
+/// rejected by the chain terminator.
+#[test]
+fn test_bdx_server_routing() {
+    init_env_logger();
+
+    let runner = new_default_runner();
+
+    let download = image_of(2500);
+    let upload = image_of(1500);
+
+    let server = ChainedBdxServer::new(
+        ImageServer {
+            image: download.clone(),
+        },
+        ChainedBdxServer::new(
+            LogSink {
+                expected: upload.clone(),
+            },
+            EmptyBdxServer,
+        ),
+    );
+    let bdx = Bdx::new(server);
+
+    futures_lite::future::block_on(async {
+        select(runner.run_responder(bdx), async {
+            // A download routes to the image server.
+            let exchange = runner.initiate_exchange().await?;
+            let mut reader = exchange.pull(SERVE_FD).await?;
+            let received = with_timeout(read_all(&mut reader)).await?;
+            assert_eq!(received, download);
+
+            // An upload routes to the log sink (which asserts the payload).
+            let exchange = runner.initiate_exchange().await?;
+            let mut wbuf = [0u8; 512];
+            let mut writer = exchange.push(&mut wbuf, PROCESS_FD).await?;
+            with_timeout(async {
+                write_all(&mut writer, &upload).await?;
+                writer.finish().await
+            })
+            .await?;
+
+            // An unknown designator is rejected by the chain terminator.
+            let exchange = runner.initiate_exchange().await?;
+            let result =
+                with_timeout(async { exchange.pull(b"unknown.bin").await.map(|_| ()) }).await;
+            assert!(result.is_err(), "unknown file designator must be rejected");
+
             Ok::<_, Error>(())
         })
         .coalesce()
