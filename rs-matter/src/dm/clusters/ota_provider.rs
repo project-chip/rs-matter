@@ -39,6 +39,11 @@ use crate::with;
 
 pub use crate::dm::clusters::decl::ota_software_update_provider::*;
 
+/// A sample [`OtaImagesRegistry`] + [`OtaImages`] implementation backed by the
+/// CSA-IOT Distributed Compliance Ledger and a CDN, over a pluggable HTTPS client.
+#[cfg(feature = "ota-dcl")]
+pub mod dcl;
+
 /// The largest BDX block the server will send over a non-TCP transport.
 const MAX_BLOCK_SIZE: usize = 1024;
 
@@ -62,25 +67,32 @@ pub trait OtaImagesRegistry {
     /// Decide whether an image strictly newer than `current_version` is
     /// available for the querying `(vendor_id, product_id)`, returning its
     /// metadata if so.
-    async fn query(
+    ///
+    /// The returned [`OtaImageMeta::file_designator`] is written into (and borrows)
+    /// the caller-provided `designator_buf`, so a registry can mint a designator
+    /// computed at runtime (e.g. encoding the resolved version) rather than being
+    /// limited to `'static` strings.
+    async fn query<'b>(
         &self,
         vendor_id: u16,
         product_id: u16,
         current_version: u32,
-    ) -> Option<OtaImageMeta<'_>>;
+        designator_buf: &'b mut [u8],
+    ) -> Option<OtaImageMeta<'b>>;
 }
 
 impl<T> OtaImagesRegistry for &T
 where
     T: OtaImagesRegistry,
 {
-    async fn query(
+    async fn query<'b>(
         &self,
         vendor_id: u16,
         product_id: u16,
         current_version: u32,
-    ) -> Option<OtaImageMeta<'_>> {
-        T::query(self, vendor_id, product_id, current_version).await
+        designator_buf: &'b mut [u8],
+    ) -> Option<OtaImageMeta<'b>> {
+        T::query(self, vendor_id, product_id, current_version, designator_buf).await
     }
 }
 
@@ -160,9 +172,10 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
         let product_id = request.product_id()?;
         let current_version = request.software_version()?;
 
+        let mut designator_buf = [0u8; MAX_FILE_DESIGNATOR];
         let Some(image) = self
             .images
-            .query(vendor_id, product_id, current_version)
+            .query(vendor_id, product_id, current_version, &mut designator_buf)
             .await
         else {
             // No applicable image (already up to date).
