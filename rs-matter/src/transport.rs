@@ -86,6 +86,16 @@ pub(crate) const MAX_RX_BUF_SIZE: usize = network::MAX_RX_PACKET_SIZE;
 #[cfg(not(feature = "large-buffers"))]
 pub(crate) const MAX_TX_BUF_SIZE: usize = network::MAX_TX_PACKET_SIZE;
 
+/// The maximum application payload of an incoming (RX) packet, i.e. the RX buffer
+/// minus the two packet headers (plain + protocol) and the trailing AEAD tag.
+pub const MAX_RX_PAYLOAD_SIZE: usize =
+    MAX_RX_BUF_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAIL_RESERVE;
+
+/// The maximum application payload of an outgoing (TX) packet, i.e. the TX buffer
+/// minus the two packet headers (plain + protocol) and the trailing AEAD tag.
+pub const MAX_TX_PAYLOAD_SIZE: usize =
+    MAX_TX_BUF_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAIL_RESERVE;
+
 /// Represents the state of the transport layer of a `Matter` instance.
 pub struct Transport {
     /// Buffer for an incoming (RX) packet.

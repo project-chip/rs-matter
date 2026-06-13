@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2024-2025 Project CHIP Authors
+ *    Copyright (c) 2024-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -54,7 +54,7 @@ impl BusySecureChannel {
         Self(())
     }
 
-    pub async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    pub async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
         let meta = exchange.recv().await?.meta();
         if meta.proto_id != PROTO_ID_SECURE_CHANNEL {
             Err(ErrorCode::InvalidProto)?;
@@ -81,7 +81,7 @@ impl BusySecureChannel {
 }
 
 impl ExchangeHandler for BusySecureChannel {
-    fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
+    fn handle(&self, exchange: Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
         BusySecureChannel::handle(self, exchange)
     }
 }

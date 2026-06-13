@@ -24,6 +24,7 @@ use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_time::{Duration, Instant, Timer};
 
 use crate::acl::Accessor;
+use crate::bdx::{self, PROTO_ID_BDX};
 use crate::crypto::Crypto;
 use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
@@ -590,6 +591,13 @@ impl Display for MessageMeta {
                     write!(f, "IM::{:02x}", self.proto_opcode)
                 }
             }
+            PROTO_ID_BDX => {
+                if let Ok(opcode) = self.opcode::<bdx::OpCode>() {
+                    write!(f, "BDX::{:?}", opcode)
+                } else {
+                    write!(f, "BDX::{:02x}", self.proto_opcode)
+                }
+            }
             _ => write!(f, "{:02x}::{:02x}", self.proto_id, self.proto_opcode),
         }
     }
@@ -611,6 +619,13 @@ impl defmt::Format for MessageMeta {
                     defmt::write!(f, "IM::{:?}", opcode)
                 } else {
                     defmt::write!(f, "IM::{:02x}", self.proto_opcode)
+                }
+            }
+            PROTO_ID_BDX => {
+                if let Ok(opcode) = self.opcode::<bdx::OpCode>() {
+                    defmt::write!(f, "BDX::{:?}", opcode)
+                } else {
+                    defmt::write!(f, "BDX::{:02x}", self.proto_opcode)
                 }
             }
             _ => defmt::write!(f, "{:02x}::{:02x}", self.proto_id, self.proto_opcode),

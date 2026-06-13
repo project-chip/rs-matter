@@ -15,7 +15,6 @@
  *    limitations under the License.
  */
 
-use core::future::Future;
 use core::num::NonZeroU8;
 use core::pin::pin;
 
@@ -976,8 +975,8 @@ where
     S: KvBlobStoreAccess,
     N: NetworksAccess,
 {
-    fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
-        DataModel::handle(self, exchange)
+    async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
+        DataModel::handle(self, &mut exchange).await
     }
 }
 

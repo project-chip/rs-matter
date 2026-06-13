@@ -37,6 +37,8 @@ pub mod grp_key_mgmt;
 pub mod identify;
 pub mod net_comm;
 pub mod noc;
+pub mod ota_provider;
+pub mod ota_requestor;
 pub mod scenes;
 pub mod sw_diag;
 pub mod thread_diag;

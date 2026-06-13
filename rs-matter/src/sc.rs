@@ -236,7 +236,7 @@ impl<'a, C: Crypto> SecureChannel<'a, C> {
         Self { crypto, notify }
     }
 
-    pub async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    pub async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
         if exchange.rx().is_err() {
             exchange.recv_fetch().await?;
         }
@@ -250,13 +250,13 @@ impl<'a, C: Crypto> SecureChannel<'a, C> {
             OpCode::PBKDFParamRequest => {
                 let mut pase = MaybeUninit::uninit(); // TODO LARGE BUFFER
                 pase.init_with(PaseResponder::init(&self.crypto, self.notify))
-                    .handle(exchange)
+                    .handle(&mut exchange)
                     .await
             }
             OpCode::CASESigma1 => {
                 let mut case = MaybeUninit::uninit(); // TODO LARGE BUFFER
                 case.init_with(CaseResponder::init(&self.crypto))
-                    .handle(exchange)
+                    .handle(&mut exchange)
                     .await
             }
             opcode => {
@@ -268,7 +268,7 @@ impl<'a, C: Crypto> SecureChannel<'a, C> {
 }
 
 impl<C: Crypto> ExchangeHandler for SecureChannel<'_, C> {
-    fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
+    fn handle(&self, exchange: Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
         SecureChannel::handle(self, exchange)
     }
 }

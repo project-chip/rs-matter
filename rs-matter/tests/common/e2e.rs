@@ -18,7 +18,7 @@
 use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use core::num::NonZeroU8;
 
-use embassy_futures::select::select4;
+use embassy_futures::select::{select3, select4};
 
 use embassy_sync::zerocopy_channel::{Channel, Receiver, Sender};
 
@@ -31,7 +31,7 @@ use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{DataModel, DataModelHandler, IMBuffer, Privilege};
 use rs_matter::error::Error;
 use rs_matter::persist::DummyKvBlobStoreAccess;
-use rs_matter::respond::Responder;
+use rs_matter::respond::{ExchangeHandler, Responder};
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{
     Address, NetworkReceive, NetworkSend, NoNetwork, MAX_RX_PACKET_SIZE, MAX_TX_PACKET_SIZE,
@@ -208,6 +208,51 @@ impl<C: Crypto> E2eRunner<C> {
             ),
             responder.run::<4>(),
             dm.run(),
+        )
+        .coalesce()
+        .await
+    }
+
+    /// Like [`run`](Self::run), but drives a custom [`ExchangeHandler`] on the
+    /// remote (tested) instance instead of the Interaction Model data model.
+    ///
+    /// Useful for exercising non-IM protocols (e.g. BDX) over the established
+    /// CASE session: pair it (via `select`) with a client flow that uses
+    /// [`initiate_exchange`](Self::initiate_exchange).
+    #[allow(dead_code)] // Only used by some of the test binaries that share `common`.
+    pub async fn run_responder<H>(&self, handler: H) -> Result<(), Error>
+    where
+        H: ExchangeHandler,
+    {
+        self.init()?;
+
+        let mut buf1 = [heapless::Vec::new(); 1];
+        let mut buf2 = [heapless::Vec::new(); 1];
+
+        let mut pipe1 = NetworkPipe::<MAX_RX_PACKET_SIZE>::new(&mut buf1);
+        let mut pipe2 = NetworkPipe::<MAX_TX_PACKET_SIZE>::new(&mut buf2);
+
+        let (send_remote, recv_local) = pipe1.split();
+        let (send_local, recv_remote) = pipe2.split();
+
+        let matter_client = &self.matter_client;
+
+        let responder = Responder::new("test-responder", handler, &self.matter, 0);
+
+        select3(
+            matter_client.run(
+                &self.crypto,
+                NetworkSendImpl(send_local),
+                NetworkReceiveImpl(recv_local),
+                NoNetwork,
+            ),
+            self.matter.run(
+                &self.crypto,
+                NetworkSendImpl(send_remote),
+                NetworkReceiveImpl(recv_remote),
+                NoNetwork,
+            ),
+            responder.run::<4>(),
         )
         .coalesce()
         .await
