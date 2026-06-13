@@ -24,7 +24,9 @@
 //! `NotifyUpdateApplied`. The image bytes are served over BDX by
 //! [`OtaBdxServer`], a [`BdxServer`] that the application wraps in a
 //! [`Bdx`](crate::bdx::Bdx) handler and chains into its responder for the BDX
-//! protocol. Both delegate to a user-supplied [`OtaImages`] catalogue.
+//! protocol. The two delegate to separate user-supplied sources - the cluster
+//! handler to an [`OtaImagesRegistry`] (which image to offer), the BDX server to
+//! an [`OtaImages`] (the image bytes) - so either can be used on its own.
 
 use core::fmt::Write as _;
 use core::num::NonZeroU8;
@@ -43,8 +45,8 @@ const MAX_BLOCK_SIZE: usize = 1024;
 /// The maximum supported BDX file designator length.
 const MAX_FILE_DESIGNATOR: usize = 128;
 
-/// A descriptor for an OTA image that a provider is willing to serve.
-pub struct OtaImage<'a> {
+/// Metadata describing an OTA image that a provider is willing to offer.
+pub struct OtaImageMeta<'a> {
     /// The version of the offered image. Must be newer than the requestor's.
     pub version: u32,
     /// The BDX file designator that identifies this image when downloaded.
@@ -54,17 +56,41 @@ pub struct OtaImage<'a> {
     pub size: Option<u64>,
 }
 
-/// A device-specific catalogue of OTA images served to requestors.
-pub trait OtaImages {
+/// A device-specific registry of OTA images: it decides which image (if any) to
+/// offer a querying requestor. Used by [`OtaProviderHandler`].
+pub trait OtaImagesRegistry {
     /// Decide whether an image strictly newer than `current_version` is
     /// available for the querying `(vendor_id, product_id)`, returning its
-    /// descriptor if so.
-    fn query(&self, vendor_id: u16, product_id: u16, current_version: u32) -> Option<OtaImage<'_>>;
+    /// metadata if so.
+    async fn query(
+        &self,
+        vendor_id: u16,
+        product_id: u16,
+        current_version: u32,
+    ) -> Option<OtaImageMeta<'_>>;
+}
 
+impl<T> OtaImagesRegistry for &T
+where
+    T: OtaImagesRegistry,
+{
+    async fn query(
+        &self,
+        vendor_id: u16,
+        product_id: u16,
+        current_version: u32,
+    ) -> Option<OtaImageMeta<'_>> {
+        T::query(self, vendor_id, product_id, current_version).await
+    }
+}
+
+/// The image bytes behind a BDX file designator: looked up and streamed during a
+/// download. Used by [`OtaBdxServer`].
+pub trait OtaImages {
     /// The total size of the image identified by `file_designator`. `None` means
     /// the designator is unknown and the BDX transfer is rejected
     /// (`FileDesignatorUnknown`).
-    fn size(&self, file_designator: &[u8]) -> Option<u64>;
+    async fn size(&self, file_designator: &[u8]) -> Option<u64>;
 
     /// Read up to `buf.len()` bytes of the image identified by `file_designator`
     /// at `offset`, returning the number of bytes read (`0` marks the end). An
@@ -77,25 +103,43 @@ pub trait OtaImages {
     ) -> Result<usize, Error>;
 }
 
-/// The server-side handler for the OTA Software Update Provider cluster.
-pub struct OtaProviderHandler<'a, I> {
-    dataver: Dataver,
-    images: &'a I,
+impl<T> OtaImages for &T
+where
+    T: OtaImages,
+{
+    async fn size(&self, file_designator: &[u8]) -> Option<u64> {
+        T::size(self, file_designator).await
+    }
+
+    async fn read(
+        &self,
+        file_designator: &[u8],
+        offset: u64,
+        buf: &mut [u8],
+    ) -> Result<usize, Error> {
+        T::read(self, file_designator, offset, buf).await
+    }
 }
 
-impl<'a, I> OtaProviderHandler<'a, I> {
-    /// Create a new handler backed by the given image catalogue.
-    pub const fn new(dataver: Dataver, images: &'a I) -> Self {
+/// The server-side handler for the OTA Software Update Provider cluster.
+pub struct OtaProviderHandler<I> {
+    dataver: Dataver,
+    images: I,
+}
+
+impl<I> OtaProviderHandler<I> {
+    /// Create a new handler backed by the given image registry.
+    pub const fn new(dataver: Dataver, images: I) -> Self {
         Self { dataver, images }
     }
 
-    /// Adapt this handler to the generic `rs-matter` `Handler` trait.
-    pub const fn adapt(self) -> HandlerAdaptor<Self> {
-        HandlerAdaptor(self)
+    /// Adapt this handler to the generic `rs-matter` `AsyncHandler` trait.
+    pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
+        HandlerAsyncAdaptor(self)
     }
 }
 
-impl<I: OtaImages> ClusterHandler for OtaProviderHandler<'_, I> {
+impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
 
     fn dataver(&self) -> u32 {
@@ -106,7 +150,7 @@ impl<I: OtaImages> ClusterHandler for OtaProviderHandler<'_, I> {
         self.dataver.changed();
     }
 
-    fn handle_query_image<P: TLVBuilderParent>(
+    async fn handle_query_image<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         request: QueryImageRequest<'_>,
@@ -116,7 +160,11 @@ impl<I: OtaImages> ClusterHandler for OtaProviderHandler<'_, I> {
         let product_id = request.product_id()?;
         let current_version = request.software_version()?;
 
-        let Some(image) = self.images.query(vendor_id, product_id, current_version) else {
+        let Some(image) = self
+            .images
+            .query(vendor_id, product_id, current_version)
+            .await
+        else {
             // No applicable image (already up to date).
             return response
                 .status(StatusEnum::NotAvailable)?
@@ -158,7 +206,7 @@ impl<I: OtaImages> ClusterHandler for OtaProviderHandler<'_, I> {
             .end()
     }
 
-    fn handle_apply_update_request<P: TLVBuilderParent>(
+    async fn handle_apply_update_request<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: ApplyUpdateRequestRequest<'_>,
@@ -171,7 +219,7 @@ impl<I: OtaImages> ClusterHandler for OtaProviderHandler<'_, I> {
             .end()
     }
 
-    fn handle_notify_update_applied(
+    async fn handle_notify_update_applied(
         &self,
         _ctx: impl InvokeContext,
         _request: NotifyUpdateAppliedRequest<'_>,
@@ -198,20 +246,20 @@ impl<I: OtaImages> ClusterHandler for OtaProviderHandler<'_, I> {
 /// let handler = im_and_sc_handler.chain(PROTO_ID_BDX, bdx);
 /// let responder = Responder::new("ota-provider", handler, matter, 0);
 /// ```
-pub struct OtaBdxServer<'a, I> {
-    images: &'a I,
+pub struct OtaBdxServer<I> {
+    images: I,
 }
 
-impl<'a, I> OtaBdxServer<'a, I> {
-    /// Create a new BDX image server backed by the given catalogue.
-    pub const fn new(images: &'a I) -> Self {
+impl<I> OtaBdxServer<I> {
+    /// Create a new BDX image server backed by the given image data source.
+    pub const fn new(images: I) -> Self {
         Self { images }
     }
 }
 
-impl<I: OtaImages> BdxServer for OtaBdxServer<'_, I> {
-    fn serves(&self, fd: &[u8]) -> bool {
-        self.images.size(fd).is_some()
+impl<I: OtaImages> BdxServer for OtaBdxServer<I> {
+    async fn serves(&self, fd: &[u8]) -> bool {
+        self.images.size(fd).await.is_some()
     }
 
     async fn serve(&self, responder: BdxPullResponder<'_>) -> Result<(), Error> {
@@ -222,7 +270,7 @@ impl<I: OtaImages> BdxServer for OtaBdxServer<'_, I> {
             return responder.reject(BdxStatus::FileDesignatorUnknown).await;
         }
 
-        let Some(size) = self.images.size(&fd) else {
+        let Some(size) = self.images.size(&fd).await else {
             return responder.reject(BdxStatus::FileDesignatorUnknown).await;
         };
 

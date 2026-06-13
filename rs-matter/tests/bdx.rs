@@ -215,7 +215,7 @@ struct ImageServer {
 }
 
 impl BdxServer for ImageServer {
-    fn serves(&self, fd: &[u8]) -> bool {
+    async fn serves(&self, fd: &[u8]) -> bool {
         fd == SERVE_FD
     }
 
@@ -236,7 +236,7 @@ struct LogSink {
 }
 
 impl BdxServer for LogSink {
-    fn processes(&self, fd: &[u8]) -> bool {
+    async fn processes(&self, fd: &[u8]) -> bool {
         fd == PROCESS_FD
     }
 

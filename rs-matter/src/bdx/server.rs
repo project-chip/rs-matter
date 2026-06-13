@@ -41,7 +41,7 @@ use super::*;
 pub trait BdxServer {
     /// Whether this server serves (can send) the file designated by `fd` when a
     /// peer requests to download it.
-    fn serves(&self, _fd: &[u8]) -> bool {
+    async fn serves(&self, _fd: &[u8]) -> bool {
         false
     }
 
@@ -55,7 +55,7 @@ pub trait BdxServer {
 
     /// Whether this server processes (can receive) the file designated by `fd`
     /// when a peer requests to upload it.
-    fn processes(&self, _fd: &[u8]) -> bool {
+    async fn processes(&self, _fd: &[u8]) -> bool {
         false
     }
 
@@ -75,16 +75,16 @@ impl<T> BdxServer for &T
 where
     T: BdxServer,
 {
-    fn serves(&self, fd: &[u8]) -> bool {
-        T::serves(self, fd)
+    async fn serves(&self, fd: &[u8]) -> bool {
+        T::serves(self, fd).await
     }
 
     async fn serve(&self, responder: BdxPullResponder<'_>) -> Result<(), Error> {
         T::serve(self, responder).await
     }
 
-    fn processes(&self, fd: &[u8]) -> bool {
-        T::processes(self, fd)
+    async fn processes(&self, fd: &[u8]) -> bool {
+        T::processes(self, fd).await
     }
 
     async fn process(&self, responder: BdxPushResponder<'_>) -> Result<(), Error> {
@@ -121,24 +121,24 @@ where
     H: BdxServer,
     T: BdxServer,
 {
-    fn serves(&self, fd: &[u8]) -> bool {
-        self.handler.serves(fd) || self.next.serves(fd)
+    async fn serves(&self, fd: &[u8]) -> bool {
+        self.handler.serves(fd).await || self.next.serves(fd).await
     }
 
     async fn serve(&self, responder: BdxPullResponder<'_>) -> Result<(), Error> {
-        if self.handler.serves(responder.fd()) {
+        if self.handler.serves(responder.fd()).await {
             self.handler.serve(responder).await
         } else {
             self.next.serve(responder).await
         }
     }
 
-    fn processes(&self, fd: &[u8]) -> bool {
-        self.handler.processes(fd) || self.next.processes(fd)
+    async fn processes(&self, fd: &[u8]) -> bool {
+        self.handler.processes(fd).await || self.next.processes(fd).await
     }
 
     async fn process(&self, responder: BdxPushResponder<'_>) -> Result<(), Error> {
-        if self.handler.processes(responder.fd()) {
+        if self.handler.processes(responder.fd()).await {
             self.handler.process(responder).await
         } else {
             self.next.process(responder).await
@@ -195,7 +195,7 @@ impl<T: BdxServer> ExchangeHandler for Bdx<T> {
             Some(OpCode::ReceiveInit) => {
                 let responder = BdxPullResponder::accept(exchange).await?;
 
-                if self.0.serves(responder.fd()) {
+                if self.0.serves(responder.fd()).await {
                     self.0.serve(responder).await
                 } else {
                     responder.reject(BdxStatus::FileDesignatorUnknown).await
@@ -205,7 +205,7 @@ impl<T: BdxServer> ExchangeHandler for Bdx<T> {
             Some(OpCode::SendInit) => {
                 let responder = BdxPushResponder::accept(exchange).await?;
 
-                if self.0.processes(responder.fd()) {
+                if self.0.processes(responder.fd()).await {
                     self.0.process(responder).await
                 } else {
                     responder.reject(BdxStatus::FileDesignatorUnknown).await
