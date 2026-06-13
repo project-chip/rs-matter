@@ -29,7 +29,7 @@
 use core::fmt::Write as _;
 use core::num::NonZeroU8;
 
-use crate::bdx::{self, BdxSource};
+use crate::bdx::{BdxPullResponder, BdxStatus};
 use crate::dm::{Cluster, Dataver, InvokeContext};
 use crate::error::{Error, ErrorCode};
 use crate::respond::ExchangeHandler;
@@ -63,7 +63,9 @@ pub trait OtaImages {
     /// descriptor if so.
     fn query(&self, vendor_id: u16, product_id: u16, current_version: u32) -> Option<OtaImage<'_>>;
 
-    /// The total size of the image identified by `file_designator`, if known.
+    /// The total size of the image identified by `file_designator`. `None` means
+    /// the designator is unknown and the BDX transfer is rejected
+    /// (`FileDesignatorUnknown`).
     fn size(&self, file_designator: &[u8]) -> Option<u64>;
 
     /// Read up to `buf.len()` bytes of the image identified by `file_designator`
@@ -181,31 +183,6 @@ impl<I: OtaImages> ClusterHandler for OtaProviderHandler<'_, I> {
     }
 }
 
-/// A BDX [`BdxSource`] over an [`OtaImages`] catalogue, resolving the requested
-/// file designator on [`begin`](BdxSource::begin).
-struct ImageSource<'a, I> {
-    images: &'a I,
-    file_designator: heapless::Vec<u8, MAX_FILE_DESIGNATOR>,
-}
-
-impl<I: OtaImages> BdxSource for ImageSource<'_, I> {
-    fn begin(&mut self, file_designator: &[u8]) -> Result<(), Error> {
-        self.file_designator.clear();
-        self.file_designator
-            .extend_from_slice(file_designator)
-            .map_err(|_| ErrorCode::NoSpace)?;
-        Ok(())
-    }
-
-    fn size(&self) -> Option<u64> {
-        self.images.size(&self.file_designator)
-    }
-
-    async fn read(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Error> {
-        self.images.read(&self.file_designator, offset, buf).await
-    }
-}
-
 /// A BDX protocol handler that serves OTA images. Chain it into your responder's
 /// exchange handler for the BDX protocol so requestors can download the image
 /// advertised by the OTA Provider cluster's `QueryImage` response.
@@ -233,15 +210,39 @@ impl<'a, I> OtaBdxServer<'a, I> {
 }
 
 impl<I: OtaImages> ExchangeHandler for OtaBdxServer<'_, I> {
-    async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
-        let mut block_buf = [0u8; MAX_BLOCK_SIZE];
-        let mut source = ImageSource {
-            images: self.images,
-            file_designator: heapless::Vec::new(),
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let responder = BdxPullResponder::accept(exchange).await?;
+
+        // Copy the requested designator out (the held init is released by
+        // `reply`/`reject`), and reject anything we don't have.
+        let mut fd = heapless::Vec::<u8, MAX_FILE_DESIGNATOR>::new();
+        if fd.extend_from_slice(responder.fd()).is_err() {
+            return responder.reject(BdxStatus::FileDesignatorUnknown).await;
+        }
+
+        let Some(size) = self.images.size(&fd) else {
+            return responder.reject(BdxStatus::FileDesignatorUnknown).await;
         };
 
-        bdx::serve(&mut exchange, &mut block_buf, &mut source).await?;
+        // Accept (advertising the definite length) and stream the image.
+        let mut writer = responder.reply(Some(size)).await?;
 
-        Ok(())
+        let mut buf = [0u8; MAX_BLOCK_SIZE];
+        let mut offset = 0u64;
+        loop {
+            let n = self.images.read(&fd, offset, &mut buf).await?;
+            if n == 0 {
+                break;
+            }
+
+            let mut chunk = &buf[..n];
+            while !chunk.is_empty() {
+                let written = writer.write(chunk).await?;
+                chunk = &chunk[written..];
+            }
+            offset += n as u64;
+        }
+
+        writer.finish().await
     }
 }

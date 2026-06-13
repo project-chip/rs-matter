@@ -29,7 +29,7 @@ use core::num::NonZeroU8;
 use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
 
-use crate::bdx::{self, BdxSink};
+use crate::bdx::BdxPull;
 use crate::crypto::Crypto;
 use crate::dm::{
     ArrayAttributeRead, ArrayAttributeWrite, Cluster, Dataver, InvokeContext, ReadContext,
@@ -285,35 +285,6 @@ fn bdx_file_designator(uri: &str) -> Result<&str, Error> {
         .ok_or_else(|| ErrorCode::InvalidData.into())
 }
 
-/// Adapts an [`OtaTarget`] to a BDX [`BdxSink`], updating the cluster's
-/// `UpdateStateProgress` (0..=100 percent) as the download proceeds.
-struct TargetSink<'a, T> {
-    target: &'a mut T,
-    state: &'a OtaState,
-    total: Option<u64>,
-    received: u64,
-}
-
-impl<T: OtaTarget> BdxSink for TargetSink<'_, T> {
-    fn begin(&mut self, total: Option<u64>) {
-        self.total = total;
-    }
-
-    async fn write(&mut self, offset: u64, data: &[u8]) -> Result<(), Error> {
-        self.target.write(offset, data).await?;
-
-        self.received += data.len() as u64;
-        // Report a percentage only for a definite-length transfer; otherwise
-        // leave the progress unset (null).
-        if let Some(total) = self.total.filter(|total| *total > 0) {
-            let percent = (self.received.min(total) * 100 / total) as u8;
-            self.state.progress.set(Some(percent));
-        }
-
-        Ok(())
-    }
-}
-
 /// The OTA Requestor driver: drives the query/download/apply flow against the
 /// providers in the shared [`OtaState`], delegating image handling to an
 /// [`OtaTarget`]. Run [`run`](Self::run) as a long-lived task.
@@ -453,21 +424,28 @@ where
         self.state.set_state(UpdateStateEnum::Downloading, Some(0));
         self.target.begin(new_version).await?;
 
-        let mut bdx_exchange =
+        let bdx_exchange =
             Exchange::initiate(self.matter, &self.crypto, fab_idx, provider.node_id).await?;
-        let mut sink = TargetSink {
-            target: &mut self.target,
-            state: self.state,
-            total: None,
-            received: 0,
-        };
-        bdx::download(
-            &mut bdx_exchange,
-            file_designator.as_bytes(),
-            MAX_BLOCK_SIZE,
-            &mut sink,
-        )
-        .await?;
+        let mut reader = bdx_exchange.pull(file_designator.as_bytes()).await?;
+
+        let total = reader.len();
+        let mut received = 0u64;
+        let mut buf = [0u8; MAX_BLOCK_SIZE as usize];
+        loop {
+            let n = reader.read(&mut buf).await?;
+            if n == 0 {
+                break;
+            }
+
+            self.target.write(received, &buf[..n]).await?;
+            received += n as u64;
+
+            // Report progress for a definite-length transfer.
+            if let Some(total) = total.filter(|total| *total > 0) {
+                let percent = (received.min(total) * 100 / total) as u8;
+                self.state.progress.set(Some(percent));
+            }
+        }
 
         // 3. ApplyUpdateRequest - ask the provider for permission to apply.
         let exchange =
