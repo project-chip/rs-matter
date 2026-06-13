@@ -81,7 +81,7 @@ async fn read_all(reader: &mut BdxReader<'_>) -> Result<Vec<u8>, Error> {
 
 /// Write a whole buffer via `BdxWriter`, in non-block-aligned chunks (and
 /// honoring the partial-accept return of `write`).
-async fn write_all(writer: &mut BdxWriter<'_>, mut data: &[u8]) -> Result<(), Error> {
+async fn write_all(writer: &mut BdxWriter<'_, '_>, mut data: &[u8]) -> Result<(), Error> {
     while !data.is_empty() {
         let n = writer.write(data).await?;
         assert!(n > 0);
@@ -111,7 +111,8 @@ impl ExchangeHandler for PullResponder<'_> {
         let image = &self.images[self.next.fetch_add(1, Ordering::Relaxed)];
         let responder = BdxPullResponder::accept(exchange).await?;
         assert_eq!(responder.fd(), FILE_DESIGNATOR);
-        let mut writer = responder.reply(Some(image.len() as u64)).await?;
+        let mut wbuf = [0u8; 1024];
+        let mut writer = responder.reply(&mut wbuf, Some(image.len() as u64)).await?;
         write_all(&mut writer, image).await?;
         writer.finish().await
     }
@@ -186,7 +187,8 @@ fn test_bdx_push_streaming() {
         select(runner.run_responder(responder), async {
             for image in &images {
                 let exchange = runner.initiate_exchange().await?;
-                let mut writer = exchange.push(FILE_DESIGNATOR).await?;
+                let mut wbuf = [0u8; 1024];
+                let mut writer = exchange.push(&mut wbuf, FILE_DESIGNATOR).await?;
                 with_timeout(async {
                     write_all(&mut writer, image).await?;
                     writer.finish().await

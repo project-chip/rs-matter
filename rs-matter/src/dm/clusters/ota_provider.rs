@@ -224,8 +224,11 @@ impl<I: OtaImages> ExchangeHandler for OtaBdxServer<'_, I> {
             return responder.reject(BdxStatus::FileDesignatorUnknown).await;
         };
 
-        // Accept (advertising the definite length) and stream the image.
-        let mut writer = responder.reply(Some(size)).await?;
+        // Accept (advertising the definite length) and stream the image. The
+        // writer stages each block in `wbuf`; `buf` holds the chunk read from the
+        // image source before it is handed to the writer.
+        let mut wbuf = [0u8; MAX_BLOCK_SIZE];
+        let mut writer = responder.reply(&mut wbuf, Some(size)).await?;
 
         let mut buf = [0u8; MAX_BLOCK_SIZE];
         let mut offset = 0u64;

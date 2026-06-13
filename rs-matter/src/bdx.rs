@@ -37,7 +37,15 @@ use num_derive::FromPrimitive;
 use crate::error::{Error, ErrorCode};
 use crate::sc::{self, GeneralCode, StatusReport};
 use crate::transport::exchange::{Exchange, MessageMeta};
-use crate::utils::storage::WriteBuf;
+use crate::transport::{MAX_RX_PAYLOAD_SIZE, MAX_TX_PAYLOAD_SIZE};
+use crate::utils::storage::{ReadBuf, WriteBuf};
+
+mod nego;
+mod read;
+mod write;
+
+pub use read::*;
+pub use write::*;
 
 /// The Matter protocol id for BDX.
 pub const PROTO_ID_BDX: u16 = 0x0002;
@@ -150,6 +158,18 @@ impl TransferControl {
     const ASYNC: u8 = 1 << 6;
     const VERSION_MASK: u8 = 0x0f;
 
+    /// The transfer control a Responder echoes back in an `*Accept` to select a
+    /// single (synchronous) drive mode: Sender-drive if `sender_drive`, else
+    /// Receiver-drive, at this protocol version.
+    pub(crate) const fn select(sender_drive: bool) -> Self {
+        Self {
+            version: BDX_VERSION,
+            sender_drive,
+            receiver_drive: !sender_drive,
+            async_mode: false,
+        }
+    }
+
     fn from_byte(b: u8) -> Self {
         Self {
             version: b & Self::VERSION_MASK,
@@ -214,77 +234,6 @@ impl RangeControl {
     }
 }
 
-/// A minimal little-endian cursor over a borrowed payload, yielding `'a` slices
-/// for the variable-length tail fields (file designator, block data, metadata).
-struct Cursor<'a> {
-    buf: &'a [u8],
-    off: usize,
-}
-
-impl<'a> Cursor<'a> {
-    fn new(buf: &'a [u8]) -> Self {
-        Self { buf, off: 0 }
-    }
-
-    fn u8(&mut self) -> Result<u8, Error> {
-        let b = *self.buf.get(self.off).ok_or(ErrorCode::TruncatedPacket)?;
-        self.off += 1;
-        Ok(b)
-    }
-
-    fn u16(&mut self) -> Result<u16, Error> {
-        Ok(u16::from_le_bytes(self.array()?))
-    }
-
-    fn u32(&mut self) -> Result<u32, Error> {
-        Ok(u32::from_le_bytes(self.array()?))
-    }
-
-    fn u64(&mut self) -> Result<u64, Error> {
-        Ok(u64::from_le_bytes(self.array()?))
-    }
-
-    fn array<const N: usize>(&mut self) -> Result<[u8; N], Error> {
-        let slice = self.take(N)?;
-        Ok(slice.try_into().unwrap())
-    }
-
-    /// A length-prefixed/sized slice of `n` bytes, borrowing the payload.
-    fn take(&mut self, n: usize) -> Result<&'a [u8], Error> {
-        let end = self.off.checked_add(n).ok_or(ErrorCode::TruncatedPacket)?;
-        let slice = self
-            .buf
-            .get(self.off..end)
-            .ok_or(ErrorCode::TruncatedPacket)?;
-        self.off = end;
-        Ok(slice)
-    }
-
-    /// The remainder of the payload (consumes it), borrowing the payload.
-    fn rest(&mut self) -> &'a [u8] {
-        let rest = &self.buf[self.off..];
-        self.off = self.buf.len();
-        rest
-    }
-
-    /// A range-controlled offset/length value (4 or 8 octets).
-    fn range_val(&mut self, wide: bool) -> Result<u64, Error> {
-        if wide {
-            self.u64()
-        } else {
-            Ok(self.u32()? as u64)
-        }
-    }
-}
-
-fn put_range_val(wb: &mut WriteBuf, value: u64, wide: bool) -> Result<(), Error> {
-    if wide {
-        wb.le_u64(value)
-    } else {
-        wb.le_u32(value as u32)
-    }
-}
-
 /// A `SendInit` (`OpCode::SendInit`) or `ReceiveInit` (`OpCode::ReceiveInit`)
 /// message - the opening message of a BDX session.
 ///
@@ -313,26 +262,38 @@ pub struct TransferInit<'a> {
 impl<'a> TransferInit<'a> {
     /// Parse a `SendInit`/`ReceiveInit` payload.
     pub fn parse(payload: &'a [u8]) -> Result<Self, Error> {
-        let mut c = Cursor::new(payload);
+        let mut rb = ReadBuf::new(payload);
 
-        let transfer_control = TransferControl::from_byte(c.u8()?);
-        let range_control = RangeControl::from_byte(c.u8()?);
-        let max_block_size = c.u16()?;
+        let transfer_control = TransferControl::from_byte(rb.le_u8()?);
+        let range_control = RangeControl::from_byte(rb.le_u8()?);
+        let max_block_size = rb.le_u16()?;
 
         let start_offset = if range_control.start_offset {
-            c.range_val(range_control.wide_range)?
+            if range_control.wide_range {
+                rb.le_u64()?
+            } else {
+                rb.le_u32()? as u64
+            }
         } else {
             0
         };
         let length = if range_control.def_len {
-            c.range_val(range_control.wide_range)?
+            if range_control.wide_range {
+                rb.le_u64()?
+            } else {
+                rb.le_u32()? as u64
+            }
         } else {
             0
         };
 
-        let fdl = c.u16()? as usize;
-        let file_designator = c.take(fdl)?;
-        let metadata = c.rest();
+        let fdl = rb.le_u16()? as usize;
+        // The variable-length tail (file designator + metadata) is sliced out of
+        // `payload` directly so it borrows for `'a` rather than for the `ReadBuf`.
+        let off = rb.read_off();
+        let end = off.checked_add(fdl).ok_or(ErrorCode::TruncatedPacket)?;
+        let file_designator = payload.get(off..end).ok_or(ErrorCode::TruncatedPacket)?;
+        let metadata = &payload[end..];
 
         Ok(Self {
             transfer_control,
@@ -351,10 +312,18 @@ impl<'a> TransferInit<'a> {
         wb.le_u8(self.range_control.to_byte())?;
         wb.le_u16(self.max_block_size)?;
         if self.range_control.start_offset {
-            put_range_val(wb, self.start_offset, self.range_control.wide_range)?;
+            if self.range_control.wide_range {
+                wb.le_u64(self.start_offset)?;
+            } else {
+                wb.le_u32(self.start_offset as u32)?;
+            }
         }
         if self.range_control.def_len {
-            put_range_val(wb, self.length, self.range_control.wide_range)?;
+            if self.range_control.wide_range {
+                wb.le_u64(self.length)?;
+            } else {
+                wb.le_u32(self.length as u32)?;
+            }
         }
         wb.le_u16(self.file_designator.len() as u16)?;
         wb.append(self.file_designator)?;
@@ -391,32 +360,30 @@ impl<'a> TransferAccept<'a> {
     /// Parse a `SendAccept` (`receive = false`) / `ReceiveAccept`
     /// (`receive = true`) payload.
     pub fn parse(receive: bool, payload: &'a [u8]) -> Result<Self, Error> {
-        let mut c = Cursor::new(payload);
+        let mut rb = ReadBuf::new(payload);
 
-        let transfer_control = TransferControl::from_byte(c.u8()?);
+        let transfer_control = TransferControl::from_byte(rb.le_u8()?);
 
-        let (range_control, length) = if receive {
-            let range_control = RangeControl::from_byte(c.u8()?);
+        let (range_control, max_block_size, length) = if receive {
+            let range_control = RangeControl::from_byte(rb.le_u8()?);
             // Max block size comes before the (optional) length.
-            let max_block_size = c.u16()?;
+            let max_block_size = rb.le_u16()?;
             let length = if range_control.def_len {
-                c.range_val(range_control.wide_range)?
+                if range_control.wide_range {
+                    rb.le_u64()?
+                } else {
+                    rb.le_u32()? as u64
+                }
             } else {
                 0
             };
-            return Ok(Self {
-                receive,
-                transfer_control,
-                range_control,
-                max_block_size,
-                length,
-                metadata: c.rest(),
-            });
+            (range_control, max_block_size, length)
         } else {
-            (RangeControl::default(), 0)
+            (RangeControl::default(), rb.le_u16()?, 0)
         };
 
-        let max_block_size = c.u16()?;
+        // Any trailing bytes are the (optional) metadata; borrow from `payload`.
+        let metadata = &payload[rb.read_off()..];
 
         Ok(Self {
             receive,
@@ -424,7 +391,7 @@ impl<'a> TransferAccept<'a> {
             range_control,
             max_block_size,
             length,
-            metadata: c.rest(),
+            metadata,
         })
     }
 
@@ -435,7 +402,11 @@ impl<'a> TransferAccept<'a> {
             wb.le_u8(self.range_control.to_byte())?;
             wb.le_u16(self.max_block_size)?;
             if self.range_control.def_len {
-                put_range_val(wb, self.length, self.range_control.wide_range)?;
+                if self.range_control.wide_range {
+                    wb.le_u64(self.length)?;
+                } else {
+                    wb.le_u32(self.length as u32)?;
+                }
             }
         } else {
             wb.le_u16(self.max_block_size)?;
@@ -459,11 +430,13 @@ pub struct Block<'a> {
 impl<'a> Block<'a> {
     /// Parse a `Block`/`BlockEof` payload.
     pub fn parse(payload: &'a [u8]) -> Result<Self, Error> {
-        let mut c = Cursor::new(payload);
-        let block_counter = c.u32()?;
+        let mut rb = ReadBuf::new(payload);
+        let block_counter = rb.le_u32()?;
+        // The remaining bytes are the block data; borrow them from `payload`.
+        let data = &payload[rb.read_off()..];
         Ok(Self {
             block_counter,
-            data: c.rest(),
+            data,
         })
     }
 
@@ -489,9 +462,9 @@ pub struct BlockQuery {
 impl BlockQuery {
     /// Parse a `BlockQuery`/`BlockAck`/`BlockAckEof` payload.
     pub fn parse(payload: &[u8]) -> Result<Self, Error> {
-        let mut c = Cursor::new(payload);
+        let mut rb = ReadBuf::new(payload);
         Ok(Self {
-            block_counter: c.u32()?,
+            block_counter: rb.le_u32()?,
         })
     }
 
@@ -514,10 +487,10 @@ pub struct BlockQueryWithSkip {
 impl BlockQueryWithSkip {
     /// Parse a `BlockQueryWithSkip` payload.
     pub fn parse(payload: &[u8]) -> Result<Self, Error> {
-        let mut c = Cursor::new(payload);
+        let mut rb = ReadBuf::new(payload);
         Ok(Self {
-            block_counter: c.u32()?,
-            bytes_to_skip: c.u64()?,
+            block_counter: rb.le_u32()?,
+            bytes_to_skip: rb.le_u64()?,
         })
     }
 
@@ -534,61 +507,38 @@ pub(crate) fn opcode(meta: &MessageMeta) -> Option<OpCode> {
     (meta.proto_id == PROTO_ID_BDX).then(|| OpCode::from_u8(meta.proto_opcode))?
 }
 
-/// Map the meta of a freshly received transfer message to a BDX opcode. A
-/// Secure Channel `StatusReport` means the peer aborted the transfer (mapped to
-/// an error); anything else is a protocol violation.
-fn classify(meta: &MessageMeta) -> Result<OpCode, Error> {
-    if meta.proto_id == PROTO_ID_BDX {
-        return opcode(meta).ok_or_else(|| ErrorCode::InvalidOpcode.into());
-    }
-
-    if meta.proto_id == sc::PROTO_ID_SECURE_CHANNEL
-        && meta.proto_opcode == sc::OpCode::StatusReport as u8
-    {
-        error!("BDX: peer aborted the transfer with a StatusReport");
-        return Err(ErrorCode::Invalid.into());
-    }
-
-    Err(ErrorCode::InvalidProto.into())
-}
-
-/// Send a BDX failure `StatusReport` (a Secure Channel `StatusReport` naming the
-/// BDX protocol).
-async fn send_status_report(exchange: &mut Exchange<'_>, status: BdxStatus) -> Result<(), Error> {
-    exchange
-        .send_with(|_, wb| {
-            status.as_report().write(wb)?;
-            Ok(Some(sc::OpCode::StatusReport.meta()))
-        })
-        .await
-}
-
-/// Send a BDX failure `StatusReport` and return an error, aborting the transfer.
-async fn abort<T>(exchange: &mut Exchange<'_>, status: BdxStatus) -> Result<T, Error> {
-    warn!("BDX: aborting the transfer ({:?})", status);
-
-    send_status_report(exchange, status).await?;
-
-    Err(ErrorCode::Invalid.into())
-}
-
 // ===========================================================================
-// Streaming API: `BdxReader` / `BdxWriter` + the `BdxPull` / `BdxPush` traits.
-//
-// Unlike `download`/`serve` (which pump a whole transfer through a sink/source
-// in one call), these expose byte-stream `read`/`write` handles that drive the
-// BDX protocol incrementally. The same handle works whether this endpoint
-// *drives* the synchronous transfer or *follows* the peer (selected during
-// negotiation), so a reader on one side pairs with a writer on the other,
-// regardless of which side initiated.
+// Shared streaming primitives (block size + drive mode) used by both the `read`
+// and `write` submodules. The negotiation/framing helpers live in `nego`, and
+// the byte-stream handles in `read`/`write`:
+// `BdxReader`/`BdxPull`/`BdxPushResponder` in `read`, and
+// `BdxWriter`/`BdxPush`/`BdxPullResponder` in `write`.
 // ===========================================================================
 
 /// The number of header bytes preceding a block's data (the 32-bit block counter).
 const BLOCK_HEADER_LEN: usize = 4;
 
-/// The block size proposed (and, for the writer, staged) by the streaming API.
-/// This is the maximum size over non-TCP transports.
-const STREAM_BLOCK_SIZE: u16 = 1024;
+/// The largest block *data* that fits in a `payload`-sized application payload
+/// once the block counter is accounted for, capped to the `u16` of the BDX
+/// max-block-size field.
+const fn max_block_size(payload: usize) -> u16 {
+    let data = payload - BLOCK_HEADER_LEN;
+    if data > u16::MAX as usize {
+        u16::MAX
+    } else {
+        data as u16
+    }
+}
+
+/// The largest block the *receiver* (`BdxReader`) can accept: it streams block
+/// data straight out of the exchange RX buffer, so its capacity is the RX
+/// application payload (minus the block counter).
+const MAX_RX_BLOCK_SIZE: u16 = max_block_size(MAX_RX_PAYLOAD_SIZE);
+
+/// The largest block the *sender* (`BdxWriter`) can emit into the exchange TX
+/// buffer. The writer additionally bounds the block size by its caller-provided
+/// staging buffer.
+const MAX_TX_BLOCK_SIZE: u16 = max_block_size(MAX_TX_PAYLOAD_SIZE);
 
 /// How this endpoint participates in a synchronous transfer.
 ///
@@ -603,699 +553,6 @@ enum Drive {
     /// We follow the peer's pace: as a receiver we await `Block` and send
     /// `BlockAck`; as a sender we await `BlockQuery` before sending `Block`.
     Follower,
-}
-
-/// Build the streaming `*Init` proposal (both drive modes, indefinite length).
-async fn send_init(
-    exchange: &mut Exchange<'_>,
-    opcode: OpCode,
-    file_designator: &[u8],
-) -> Result<(), Error> {
-    let init = TransferInit {
-        transfer_control: TransferControl {
-            version: BDX_VERSION,
-            sender_drive: true,
-            receiver_drive: true,
-            async_mode: false,
-        },
-        range_control: RangeControl::default(),
-        max_block_size: STREAM_BLOCK_SIZE,
-        start_offset: 0,
-        length: 0,
-        file_designator,
-        metadata: &[],
-    };
-
-    exchange
-        .send_with(|_, wb| {
-            init.write(wb)?;
-            Ok(Some(opcode.into()))
-        })
-        .await
-}
-
-/// Send a streaming `*Accept` selecting the transfer control + block size, and
-/// (for a `ReceiveAccept`) advertising the definite `length` if known.
-async fn send_accept(
-    exchange: &mut Exchange<'_>,
-    receive: bool,
-    transfer_control: TransferControl,
-    max_block_size: u16,
-    length: Option<u64>,
-) -> Result<(), Error> {
-    let accept = TransferAccept {
-        receive,
-        transfer_control,
-        // Only a `ReceiveAccept` carries range control + length.
-        range_control: RangeControl {
-            def_len: receive && length.is_some(),
-            start_offset: false,
-            wide_range: length.is_some_and(|len| len > u32::MAX as u64),
-        },
-        max_block_size,
-        length: length.unwrap_or(0),
-        metadata: &[],
-    };
-
-    let opcode = if receive {
-        OpCode::ReceiveAccept
-    } else {
-        OpCode::SendAccept
-    };
-
-    exchange
-        .send_with(|_, wb| {
-            accept.write(wb)?;
-            Ok(Some(opcode.into()))
-        })
-        .await
-}
-
-/// Await the `*Accept` and return the negotiated transfer control, block size,
-/// and definite length (if any), or `None` if no drive mode was selected.
-async fn recv_accept(
-    exchange: &mut Exchange<'_>,
-    receive: bool,
-) -> Result<Option<(TransferControl, u16, Option<u64>)>, Error> {
-    let expected = if receive {
-        OpCode::ReceiveAccept
-    } else {
-        OpCode::SendAccept
-    };
-
-    enum Outcome {
-        Ok(TransferControl, u16, Option<u64>),
-        NoMethod,
-        Unexpected,
-        Aborted(Error),
-    }
-
-    exchange.recv_fetch().await?;
-    let meta = exchange.rx()?.meta();
-    let outcome = {
-        let payload = exchange.rx()?.payload();
-        match classify(&meta) {
-            Ok(op) if op == expected => {
-                let accept = TransferAccept::parse(receive, payload)?;
-                let tc = accept.transfer_control;
-                if tc.sender_drive || tc.receiver_drive {
-                    let length = (accept.range_control.def_len && accept.length > 0)
-                        .then_some(accept.length);
-                    Outcome::Ok(tc, accept.max_block_size, length)
-                } else {
-                    Outcome::NoMethod
-                }
-            }
-            Ok(_) => Outcome::Unexpected,
-            Err(e) => Outcome::Aborted(e),
-        }
-    };
-    exchange.rx_done()?;
-
-    match outcome {
-        Outcome::Ok(tc, mbs, length) => Ok(Some((tc, mbs, length))),
-        Outcome::NoMethod => Ok(None),
-        Outcome::Unexpected => abort(exchange, BdxStatus::UnexpectedMessage).await,
-        Outcome::Aborted(e) => Err(e),
-    }
-}
-
-/// Await the opening `*Init` and *keep it held* in the exchange RX buffer (so the
-/// file designator can be borrowed via [`held_fd`]). Returns the proposed
-/// transfer control, block size, and definite length (if any). The caller is
-/// responsible for eventually releasing the held message (`rx_done`).
-async fn recv_init_hold(
-    exchange: &mut Exchange<'_>,
-    expected: OpCode,
-) -> Result<(TransferControl, u16, Option<u64>), Error> {
-    enum Outcome {
-        Ok(TransferControl, u16, Option<u64>),
-        Unexpected,
-        Aborted(Error),
-    }
-
-    exchange.recv_fetch().await?;
-    let meta = exchange.rx()?.meta();
-    let outcome = {
-        let payload = exchange.rx()?.payload();
-        match classify(&meta) {
-            Ok(op) if op == expected => {
-                let init = TransferInit::parse(payload)?;
-                let length = (init.range_control.def_len && init.length > 0).then_some(init.length);
-                Outcome::Ok(init.transfer_control, init.max_block_size, length)
-            }
-            Ok(_) => Outcome::Unexpected,
-            Err(e) => Outcome::Aborted(e),
-        }
-    };
-
-    match outcome {
-        // Leave the `*Init` held in RX; `held_fd` borrows its file designator.
-        Outcome::Ok(tc, pmbs, length) => Ok((tc, pmbs, length)),
-        Outcome::Unexpected => {
-            exchange.rx_done()?;
-            abort(exchange, BdxStatus::UnexpectedMessage).await
-        }
-        Outcome::Aborted(e) => {
-            exchange.rx_done()?;
-            Err(e)
-        }
-    }
-}
-
-/// Borrow the file designator of the `*Init` currently held in the exchange RX
-/// buffer (see [`recv_init_hold`]). Empty if nothing valid is held.
-fn held_fd<'x>(exchange: &'x Exchange<'_>) -> &'x [u8] {
-    exchange
-        .rx()
-        .ok()
-        .and_then(|rx| TransferInit::parse(rx.payload()).ok())
-        .map(|init| init.file_designator)
-        .unwrap_or(&[])
-}
-
-/// The transfer control to echo back in an `*Accept` to select a single drive
-/// mode (with this protocol version, and no other proposals).
-fn select(sender_drive: bool) -> TransferControl {
-    TransferControl {
-        version: BDX_VERSION,
-        sender_drive,
-        receiver_drive: !sender_drive,
-        async_mode: false,
-    }
-}
-
-/// An extension trait for initiating a BDX *download*: `pull` makes this node the
-/// (typically driving) Receiver and returns a [`BdxReader`].
-pub trait BdxPull<'a> {
-    /// Initiate a BDX download of `file_designator`, negotiate the transfer, and
-    /// return a reader positioned at the start of the data.
-    async fn pull(self, file_designator: &[u8]) -> Result<BdxReader<'a>, Error>;
-}
-
-impl<'a> BdxPull<'a> for Exchange<'a> {
-    async fn pull(mut self, file_designator: &[u8]) -> Result<BdxReader<'a>, Error> {
-        send_init(&mut self, OpCode::ReceiveInit, file_designator).await?;
-
-        match recv_accept(&mut self, true).await? {
-            // We are the receiver: we drive iff receiver-drive was selected.
-            Some((tc, _mbs, length)) => {
-                let drive = if tc.receiver_drive {
-                    Drive::Driver
-                } else {
-                    Drive::Follower
-                };
-                Ok(BdxReader::new(self, drive, length))
-            }
-            None => abort(&mut self, BdxStatus::TransferMethodNotSupported).await,
-        }
-    }
-}
-
-/// An extension trait for initiating a BDX *upload*: `push` makes this node the
-/// (typically driving) Sender and returns a [`BdxWriter`].
-pub trait BdxPush<'a> {
-    /// Initiate a BDX upload of `file_designator`, negotiate the transfer, and
-    /// return a writer ready to stream the data.
-    async fn push(self, file_designator: &[u8]) -> Result<BdxWriter<'a>, Error>;
-}
-
-impl<'a> BdxPush<'a> for Exchange<'a> {
-    async fn push(mut self, file_designator: &[u8]) -> Result<BdxWriter<'a>, Error> {
-        send_init(&mut self, OpCode::SendInit, file_designator).await?;
-
-        match recv_accept(&mut self, false).await? {
-            // We are the sender: we drive iff sender-drive was selected.
-            Some((tc, mbs, _length)) => {
-                let drive = if tc.sender_drive {
-                    Drive::Driver
-                } else {
-                    Drive::Follower
-                };
-                Ok(BdxWriter::new(self, drive, mbs))
-            }
-            None => abort(&mut self, BdxStatus::TransferMethodNotSupported).await,
-        }
-    }
-}
-
-/// The responding side of a [`pull`](BdxPull::pull): a peer requested a download
-/// (sent a `ReceiveInit`), so this node becomes the Sender. Inspect the request
-/// via [`fd`](Self::fd), then [`reply`](Self::reply) to obtain a [`BdxWriter`],
-/// or [`reject`](Self::reject) it.
-pub struct BdxPullResponder<'a> {
-    exchange: Exchange<'a>,
-    transfer_control: TransferControl,
-    max_block_size: u16,
-}
-
-impl<'a> BdxPullResponder<'a> {
-    /// Receive the incoming `ReceiveInit` on `exchange`, holding it until
-    /// [`reply`](Self::reply)/[`reject`](Self::reject).
-    pub async fn accept(mut exchange: Exchange<'a>) -> Result<Self, Error> {
-        let (transfer_control, max_block_size, _length) =
-            recv_init_hold(&mut exchange, OpCode::ReceiveInit).await?;
-        Ok(Self {
-            exchange,
-            transfer_control,
-            max_block_size,
-        })
-    }
-
-    /// The file designator the initiator requested (borrowed from the held init).
-    pub fn fd(&self) -> &[u8] {
-        held_fd(&self.exchange)
-    }
-
-    /// Accept the transfer and start sending. `length` advertises a definite
-    /// transfer length (enabling the receiver's progress reporting) when known.
-    pub async fn reply(mut self, length: Option<u64>) -> Result<BdxWriter<'a>, Error> {
-        // Prefer to let the initiating receiver drive (its `BdxReader` is the
-        // "driving receiver"); otherwise drive ourselves.
-        let tc = self.transfer_control;
-        let drive = if tc.receiver_drive {
-            Drive::Follower
-        } else if tc.sender_drive {
-            Drive::Driver
-        } else {
-            self.exchange.rx_done()?;
-            return abort(&mut self.exchange, BdxStatus::TransferMethodNotSupported).await;
-        };
-
-        let mbs = self.max_block_size.clamp(1, STREAM_BLOCK_SIZE);
-        self.exchange.rx_done()?;
-        send_accept(
-            &mut self.exchange,
-            true,
-            select(drive == Drive::Driver),
-            mbs,
-            length,
-        )
-        .await?;
-
-        Ok(BdxWriter::new(self.exchange, drive, mbs))
-    }
-
-    /// Reject the transfer with the given status (e.g. `FileDesignatorUnknown`).
-    pub async fn reject(mut self, status: BdxStatus) -> Result<(), Error> {
-        self.exchange.rx_done()?;
-        send_status_report(&mut self.exchange, status).await
-    }
-}
-
-/// The responding side of a [`push`](BdxPush::push): a peer requested an upload
-/// (sent a `SendInit`), so this node becomes the Receiver. Inspect the request
-/// via [`fd`](Self::fd)/[`len`](Self::len), then [`reply`](Self::reply) to obtain
-/// a [`BdxReader`], or [`reject`](Self::reject) it.
-pub struct BdxPushResponder<'a> {
-    exchange: Exchange<'a>,
-    transfer_control: TransferControl,
-    max_block_size: u16,
-    length: Option<u64>,
-}
-
-impl<'a> BdxPushResponder<'a> {
-    /// Receive the incoming `SendInit` on `exchange`, holding it until
-    /// [`reply`](Self::reply)/[`reject`](Self::reject).
-    pub async fn accept(mut exchange: Exchange<'a>) -> Result<Self, Error> {
-        let (transfer_control, max_block_size, length) =
-            recv_init_hold(&mut exchange, OpCode::SendInit).await?;
-        Ok(Self {
-            exchange,
-            transfer_control,
-            max_block_size,
-            length,
-        })
-    }
-
-    /// The file designator the initiator is sending (borrowed from the held init).
-    pub fn fd(&self) -> &[u8] {
-        held_fd(&self.exchange)
-    }
-
-    /// The definite length the initiator committed to, if any.
-    #[allow(clippy::len_without_is_empty)] // A transfer length, not a collection count.
-    pub fn len(&self) -> Option<u64> {
-        self.length
-    }
-
-    /// Accept the transfer and start receiving, returning a [`BdxReader`].
-    pub async fn reply(mut self) -> Result<BdxReader<'a>, Error> {
-        // Prefer to let the initiating sender drive (its `BdxWriter` is the
-        // "driving sender"); otherwise drive ourselves.
-        let tc = self.transfer_control;
-        let drive = if tc.sender_drive {
-            Drive::Follower
-        } else if tc.receiver_drive {
-            Drive::Driver
-        } else {
-            self.exchange.rx_done()?;
-            return abort(&mut self.exchange, BdxStatus::TransferMethodNotSupported).await;
-        };
-
-        let mbs = self.max_block_size.clamp(1, STREAM_BLOCK_SIZE);
-        let length = self.length;
-        self.exchange.rx_done()?;
-        // A `SendAccept` carries no length; the receiver learned it from the `SendInit`.
-        send_accept(
-            &mut self.exchange,
-            false,
-            select(drive == Drive::Follower),
-            mbs,
-            None,
-        )
-        .await?;
-
-        Ok(BdxReader::new(self.exchange, drive, length))
-    }
-
-    /// Reject the transfer with the given status.
-    pub async fn reject(mut self, status: BdxStatus) -> Result<(), Error> {
-        self.exchange.rx_done()?;
-        send_status_report(&mut self.exchange, status).await
-    }
-}
-
-/// A reader over a BDX transfer - the Receiver side.
-///
-/// Obtained from [`Exchange::pull`](BdxPull::pull) on the initiating side, or
-/// from [`BdxPushResponder::reply`] on the responding side. [`read`](Self::read)
-/// drives the protocol as needed and copies the next bytes of the transfer into
-/// the caller's buffer, returning `0` at the end of the transfer.
-pub struct BdxReader<'a> {
-    exchange: Exchange<'a>,
-    drive: Drive,
-    /// The negotiated definite length of the transfer, if the sender committed
-    /// to one.
-    len: Option<u64>,
-    /// Driver: the counter to put in the next `BlockQuery`. Follower: the
-    /// expected counter of the next incoming block.
-    counter: u32,
-    /// The counter of the block currently held in the exchange RX buffer.
-    held_counter: u32,
-    /// Whether the held block is the final (`BlockEof`) block.
-    held_eof: bool,
-    /// How many bytes of the held block's data have been consumed.
-    block_pos: usize,
-    /// Whether a (partially consumed) block is held in the exchange RX buffer.
-    holding: bool,
-    /// Whether the transfer has completed.
-    finished: bool,
-}
-
-impl<'a> BdxReader<'a> {
-    fn new(exchange: Exchange<'a>, drive: Drive, len: Option<u64>) -> Self {
-        Self {
-            exchange,
-            drive,
-            len,
-            counter: 0,
-            held_counter: 0,
-            held_eof: false,
-            block_pos: 0,
-            holding: false,
-            finished: false,
-        }
-    }
-
-    /// The total length of the transfer in bytes, if the sender committed to a
-    /// definite length during negotiation (`None` for an indefinite transfer).
-    #[allow(clippy::len_without_is_empty)] // A transfer length, not a collection count.
-    pub fn len(&self) -> Option<u64> {
-        self.len
-    }
-
-    /// Read the next bytes of the transfer into `buf`, returning the number of
-    /// bytes read. Returns `0` once the whole transfer has been received.
-    pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
-        if buf.is_empty() {
-            return Ok(0);
-        }
-
-        loop {
-            if self.finished {
-                return Ok(0);
-            }
-
-            if self.holding {
-                // Serve from the block held in the exchange RX buffer.
-                let n = {
-                    let payload = self.exchange.rx()?.payload();
-                    let data = &payload[BLOCK_HEADER_LEN..];
-                    if self.block_pos < data.len() {
-                        let remaining = &data[self.block_pos..];
-                        let n = remaining.len().min(buf.len());
-                        buf[..n].copy_from_slice(&remaining[..n]);
-                        Some(n)
-                    } else {
-                        None
-                    }
-                };
-
-                if let Some(n) = n {
-                    self.block_pos += n;
-                    return Ok(n);
-                }
-
-                // The held block is fully consumed - acknowledge / advance.
-                self.release_block().await?;
-                continue;
-            }
-
-            // Nothing held and not finished: fetch the next block.
-            self.receive_block().await?;
-        }
-    }
-
-    /// Obtain the next block, holding it in the exchange RX buffer.
-    async fn receive_block(&mut self) -> Result<(), Error> {
-        enum Outcome {
-            Ok(bool),
-            BadCounter,
-            Unexpected,
-            Aborted(Error),
-        }
-
-        if matches!(self.drive, Drive::Driver) {
-            // Request the next block (this also acknowledges the previous one).
-            self.send_control(OpCode::BlockQuery, self.counter).await?;
-        }
-
-        self.exchange.recv_fetch().await?;
-        let meta = self.exchange.rx()?.meta();
-        let outcome = {
-            let payload = self.exchange.rx()?.payload();
-            match classify(&meta) {
-                Ok(op) if matches!(op, OpCode::Block | OpCode::BlockEof) => {
-                    let block = Block::parse(payload)?;
-                    if block.block_counter != self.counter {
-                        Outcome::BadCounter
-                    } else {
-                        Outcome::Ok(op == OpCode::BlockEof)
-                    }
-                }
-                Ok(_) => Outcome::Unexpected,
-                Err(e) => Outcome::Aborted(e),
-            }
-        };
-
-        match outcome {
-            Outcome::Ok(is_eof) => {
-                // Keep the block held; `read` serves its data directly from RX.
-                self.held_counter = self.counter;
-                self.held_eof = is_eof;
-                self.counter = self.counter.wrapping_add(1);
-                self.block_pos = 0;
-                self.holding = true;
-                Ok(())
-            }
-            Outcome::BadCounter => {
-                self.exchange.rx_done()?;
-                abort(&mut self.exchange, BdxStatus::BadBlockCounter).await
-            }
-            Outcome::Unexpected => {
-                self.exchange.rx_done()?;
-                abort(&mut self.exchange, BdxStatus::UnexpectedMessage).await
-            }
-            Outcome::Aborted(e) => {
-                self.exchange.rx_done()?;
-                Err(e)
-            }
-        }
-    }
-
-    /// Acknowledge the consumed block and release the RX buffer, finalizing the
-    /// transfer if it was the last block.
-    async fn release_block(&mut self) -> Result<(), Error> {
-        let counter = self.held_counter;
-
-        if self.held_eof {
-            self.send_control(OpCode::BlockAckEof, counter).await?;
-            self.exchange.rx_done()?;
-            self.exchange.acknowledge().await?;
-            self.finished = true;
-        } else if matches!(self.drive, Drive::Follower) {
-            // Sender-driven: acknowledge so the next block is sent.
-            self.send_control(OpCode::BlockAck, counter).await?;
-            self.exchange.rx_done()?;
-        } else {
-            // Receiver-driven: the next `BlockQuery` is the acknowledgement.
-            self.exchange.rx_done()?;
-        }
-
-        self.holding = false;
-        Ok(())
-    }
-
-    /// Send a counter-only control message (`BlockQuery`/`BlockAck`/`BlockAckEof`).
-    async fn send_control(&mut self, opcode: OpCode, counter: u32) -> Result<(), Error> {
-        self.exchange
-            .send_with(|_, wb| {
-                BlockQuery {
-                    block_counter: counter,
-                }
-                .write(wb)?;
-                Ok(Some(opcode.into()))
-            })
-            .await
-    }
-}
-
-/// A writer over a BDX transfer - the Sender side.
-///
-/// Obtained from [`Exchange::push`](BdxPush::push) on the initiating side, or
-/// from [`BdxPullResponder::reply`] on the responding side. [`write`](Self::write)
-/// stages and sends the data, driving the protocol as needed;
-/// [`finish`](Self::finish) flushes the final block and completes the transfer.
-pub struct BdxWriter<'a> {
-    exchange: Exchange<'a>,
-    drive: Drive,
-    max_block_size: usize,
-    /// Driver: the counter for the next block to send. Follower: the expected
-    /// counter of the next `BlockQuery`.
-    counter: u32,
-    block: [u8; STREAM_BLOCK_SIZE as usize],
-    block_len: usize,
-}
-
-impl<'a> BdxWriter<'a> {
-    fn new(exchange: Exchange<'a>, drive: Drive, max_block_size: u16) -> Self {
-        Self {
-            exchange,
-            drive,
-            max_block_size: max_block_size.clamp(1, STREAM_BLOCK_SIZE) as usize,
-            counter: 0,
-            block: [0; STREAM_BLOCK_SIZE as usize],
-            block_len: 0,
-        }
-    }
-
-    /// Stage and send `data`, returning the number of bytes accepted (`< data.len()`
-    /// only when the current block fills; call again with the remainder).
-    pub async fn write(&mut self, data: &[u8]) -> Result<usize, Error> {
-        if data.is_empty() {
-            return Ok(0);
-        }
-
-        let space = self.max_block_size - self.block_len;
-        let n = space.min(data.len());
-        self.block[self.block_len..self.block_len + n].copy_from_slice(&data[..n]);
-        self.block_len += n;
-
-        if self.block_len == self.max_block_size {
-            self.flush(false).await?;
-        }
-
-        Ok(n)
-    }
-
-    /// Flush the final (possibly empty) block and complete the transfer.
-    pub async fn finish(mut self) -> Result<(), Error> {
-        self.flush(true).await?;
-        self.exchange.acknowledge().await
-    }
-
-    /// Send the staged bytes as one block, driving/awaiting acknowledgement per
-    /// the negotiated drive mode.
-    async fn flush(&mut self, is_eof: bool) -> Result<(), Error> {
-        let counter = self.counter;
-
-        if matches!(self.drive, Drive::Follower) {
-            // Receiver-driven: wait to be asked for this block.
-            self.recv_control(OpCode::BlockQuery, counter).await?;
-        }
-
-        let opcode = if is_eof {
-            OpCode::BlockEof
-        } else {
-            OpCode::Block
-        };
-        let len = self.block_len;
-        {
-            let data = &self.block[..len];
-            self.exchange
-                .send_with(|_, wb| {
-                    Block {
-                        block_counter: counter,
-                        data,
-                    }
-                    .write(wb)?;
-                    Ok(Some(opcode.into()))
-                })
-                .await?;
-        }
-        self.block_len = 0;
-
-        if matches!(self.drive, Drive::Driver) {
-            let ack = if is_eof {
-                OpCode::BlockAckEof
-            } else {
-                OpCode::BlockAck
-            };
-            self.recv_control(ack, counter).await?;
-        } else if is_eof {
-            // Receiver-driven: the receiver acknowledges the final block.
-            self.recv_control(OpCode::BlockAckEof, counter).await?;
-        }
-
-        self.counter = self.counter.wrapping_add(1);
-        Ok(())
-    }
-
-    /// Await a specific counter-only control message and validate its counter.
-    async fn recv_control(&mut self, expected: OpCode, expected_counter: u32) -> Result<(), Error> {
-        enum Outcome {
-            Ok,
-            BadCounter,
-            Unexpected,
-            Aborted(Error),
-        }
-
-        self.exchange.recv_fetch().await?;
-        let meta = self.exchange.rx()?.meta();
-        let outcome = {
-            let payload = self.exchange.rx()?.payload();
-            match classify(&meta) {
-                Ok(op) if op == expected => {
-                    if BlockQuery::parse(payload)?.block_counter == expected_counter {
-                        Outcome::Ok
-                    } else {
-                        Outcome::BadCounter
-                    }
-                }
-                Ok(_) => Outcome::Unexpected,
-                Err(e) => Outcome::Aborted(e),
-            }
-        };
-        self.exchange.rx_done()?;
-
-        match outcome {
-            Outcome::Ok => Ok(()),
-            Outcome::BadCounter => abort(&mut self.exchange, BdxStatus::BadBlockCounter).await,
-            Outcome::Unexpected => abort(&mut self.exchange, BdxStatus::UnexpectedMessage).await,
-            Outcome::Aborted(e) => Err(e),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1363,6 +620,16 @@ mod tests {
             .to_byte(),
             0x20
         );
+    }
+
+    #[test]
+    fn transfer_control_select_picks_one_drive() {
+        let sender = TransferControl::select(true);
+        assert!(sender.sender_drive && !sender.receiver_drive && !sender.async_mode);
+        assert_eq!(sender.version, BDX_VERSION);
+
+        let receiver = TransferControl::select(false);
+        assert!(receiver.receiver_drive && !receiver.sender_drive && !receiver.async_mode);
     }
 
     #[test]

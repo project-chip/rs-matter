@@ -299,3 +299,9 @@ impl core::error::Error for Error {
             .map(|e| e.as_ref() as &(dyn core::error::Error + 'static))
     }
 }
+
+impl embedded_io_async::Error for Error {
+    fn kind(&self) -> embedded_io_async::ErrorKind {
+        embedded_io_async::ErrorKind::Other
+    }
+}
