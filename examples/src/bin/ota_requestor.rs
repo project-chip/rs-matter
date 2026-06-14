@@ -15,31 +15,36 @@
  *    limitations under the License.
  */
 
-//! An example Matter device that acts as an OTA Software Update Requestor: it
-//! hosts the OTA Requestor cluster and runs a driver that, once a Commissioner
-//! has pointed it at an OTA Provider (via the `DefaultOTAProviders` attribute or
-//! the `AnnounceOTAProvider` command), queries the provider, downloads a newer
-//! image over BDX, and applies it.
+//! An example Matter device that acts as an OTA Software Update Requestor.
 //!
-//! The image handling is stubbed out here by `DummyOtaTarget`, which just counts
-//! the bytes it receives. A real device would write the image to a spare
-//! firmware slot and reboot into it from `apply`.
+//! It hosts the OTA Requestor cluster (so a Commissioner can populate its
+//! `DefaultOTAProviders` list or send `AnnounceOTAProvider`) and runs an
+//! application-defined update loop built from the cluster's building blocks:
+//! [`Providers::wait_changed`] to react to changes, [`Provider::query`] to ask a
+//! provider for an update, [`parse_bdx_url`] + [`Exchange::pull`] to download it
+//! over BDX, and [`OtaState`] to report progress.
+//!
+//! The image handling is stubbed out (the downloaded bytes are just counted). A
+//! real device would write them to a spare firmware slot and reboot into it.
 
 use core::pin::pin;
 
 use std::net::UdpSocket;
 
 use embassy_futures::select::{select, select4};
+use embassy_time::{Duration, Timer};
 
-use log::info;
+use log::{info, warn};
 
 use rand::RngCore;
 
+use rs_matter::bdx::BdxPull;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::SharedNetworks;
+use rs_matter::dm::clusters::ota_provider::{DownloadProtocolEnum, StatusEnum};
 use rs_matter::dm::clusters::ota_requestor::{
-    ClusterHandler as _, OtaRequestor, OtaRequestorHandler, OtaState, OtaTarget,
+    parse_bdx_url, ClusterHandler as _, OtaRequestorHandler, OtaState, Provider, Providers,
 };
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_OTA_REQUESTOR;
@@ -50,12 +55,13 @@ use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{Async, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, Node};
-use rs_matter::error::Error;
+use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
@@ -67,12 +73,17 @@ use static_cell::StaticCell;
 #[path = "../common/mdns.rs"]
 mod mdns;
 
-/// This device's vendor and product id (matched against `QueryImage`).
-const VENDOR_ID: u16 = TEST_DEV_DET.vid;
-const PRODUCT_ID: u16 = TEST_DEV_DET.pid;
-
-/// The currently running software version of this device.
+/// The currently running software version of this device. Only strictly newer
+/// images are downloaded.
 const SOFTWARE_VERSION: u32 = 1;
+
+/// How often the update loop polls its providers when otherwise idle (an hour).
+/// A `DefaultOTAProviders` write or an `AnnounceOTAProvider` command wakes it
+/// sooner via [`Providers::wait_changed`].
+const POLL_INTERVAL: Duration = Duration::from_secs(3600);
+
+/// The download protocols this requestor supports (BDX only, here).
+const PROTOCOLS: &[DownloadProtocolEnum] = &[DownloadProtocolEnum::BDXSynchronous];
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
@@ -96,18 +107,22 @@ fn main() -> Result<(), Error> {
     let mut kv = DirKvBlobStore::new_default();
     futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
 
+    // The OTA Requestor's persistent provider list, re-hydrated from storage.
+    let providers = Providers::new();
+    futures_lite::future::block_on(providers.load_persist(&mut kv, kv_buf))?;
+
+    // The OTA Requestor's transient, reported update state.
+    let ota_state = OtaState::new();
+
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
     let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
 
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
-    // A second crypto instance owned by the OTA driver (it initiates its own
-    // CASE exchanges to the provider).
+    // A second crypto instance owned by the OTA loop (it initiates its own CASE
+    // exchanges to the provider).
     let ota_crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
 
     let rand = crypto.rand()?;
-
-    // The state shared between the OTA Requestor cluster handler and the driver.
-    let ota_state = OtaState::new();
 
     let events = NoEvents::new();
 
@@ -117,7 +132,7 @@ fn main() -> Result<(), Error> {
         buffers,
         subscriptions,
         &events,
-        dm_handler(rand, &ota_state),
+        dm_handler(rand, &providers, &ota_state),
         SharedKvBlobStore::new(kv, kv_buf),
         SharedNetworks::new(EthNetwork::new_default()),
     );
@@ -131,17 +146,8 @@ fn main() -> Result<(), Error> {
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto));
     let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
-    // The OTA Requestor driver: polls the configured providers (and reacts to
-    // `AnnounceOTAProvider`), downloads any newer image, and applies it.
-    let mut ota = OtaRequestor::new(
-        matter,
-        &ota_state,
-        ota_crypto,
-        DummyOtaTarget::new(),
-        VENDOR_ID,
-        PRODUCT_ID,
-    );
-    let ota_job = pin!(ota.run());
+    // The application's OTA update loop, built from the cluster's building blocks.
+    let ota_job = pin!(run_ota(matter, ota_crypto, &providers, &ota_state));
 
     if !matter.is_commissioned() {
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
@@ -151,7 +157,7 @@ fn main() -> Result<(), Error> {
     }
 
     // Combine the Matter stack (transport, mDNS, responder, data model) with the
-    // OTA driver into a single task.
+    // OTA loop into a single task.
     let matter_job = select4(&mut transport, &mut mdns, &mut respond, &mut dm_job).coalesce();
     let all = select(matter_job, ota_job).coalesce();
 
@@ -174,6 +180,7 @@ const NODE: Node<'static> = Node {
 /// cluster (and its descriptor) on endpoint 1.
 fn dm_handler<'a>(
     mut rand: impl RngCore + Copy,
+    providers: &'a Providers,
     ota_state: &'a OtaState,
 ) -> impl DataModelHandler + 'a {
     (
@@ -187,41 +194,124 @@ fn dm_handler<'a>(
             )
             .chain(
                 EpClMatcher::new(Some(1), Some(OtaRequestorHandler::CLUSTER.id)),
-                Async(OtaRequestorHandler::new(Dataver::new_rand(&mut rand), ota_state).adapt()),
+                Async(
+                    OtaRequestorHandler::new(Dataver::new_rand(&mut rand), providers, ota_state)
+                        .adapt(),
+                ),
             ),
     )
 }
 
-/// A stub [`OtaTarget`] that just counts the bytes of the downloaded image. A
-/// real device would write them to a spare firmware slot and reboot from `apply`.
-struct DummyOtaTarget {
-    received: usize,
-}
+/// The application's OTA update loop: whenever the provider set changes (or
+/// periodically), try each known provider until one yields an applied update.
+async fn run_ota(
+    matter: &Matter<'_>,
+    crypto: impl Crypto,
+    providers: &Providers,
+    ota_state: &OtaState,
+) -> Result<(), Error> {
+    loop {
+        // React to provider-set changes (a `DefaultOTAProviders` write or an
+        // `AnnounceOTAProvider` command), or poll periodically.
+        select(providers.wait_changed(), Timer::after(POLL_INTERVAL)).await;
 
-impl DummyOtaTarget {
-    fn new() -> Self {
-        Self { received: 0 }
+        // Try the configured defaults first, then the transient announced ones.
+        let n_default = providers.len();
+        let n_announced = providers.announced_len();
+
+        for i in 0..(n_default + n_announced) {
+            let provider = if i < n_default {
+                providers.get(i)
+            } else {
+                providers.announced(i - n_default)
+            };
+            let Some(provider) = provider else { continue };
+
+            match try_update(matter, &crypto, &provider, ota_state).await {
+                Ok(true) => info!("OTA: update applied"),
+                Ok(false) => {}
+                Err(e) => warn!("OTA: provider 0x{:016x} failed: {e:?}", provider.node_id),
+            }
+        }
+
+        // Announced providers are one-shot hints; drop them after this pass.
+        providers.clear_announced();
     }
 }
 
-impl OtaTarget for DummyOtaTarget {
-    fn current_version(&self) -> u32 {
-        SOFTWARE_VERSION
+/// Query a single provider and, if it offers a newer image, download and "apply"
+/// it. Returns `Ok(true)` if an update was applied.
+async fn try_update(
+    matter: &Matter<'_>,
+    crypto: &impl Crypto,
+    provider: &Provider,
+    ota_state: &OtaState,
+) -> Result<bool, Error> {
+    // Report progress for the duration of this attempt; if we bail out (or error)
+    // the session reverts the reported state to `Idle` on drop.
+    let update = ota_state.initiate_update();
+    update.querying();
+
+    // Ask the provider. The closure inspects the response off the RX buffer and
+    // copies out just the image URI (the response is gone once `query` returns).
+    let mut uri_buf = [0u8; 256];
+    let found = provider
+        .query(matter, crypto, PROTOCOLS, Some(SOFTWARE_VERSION), |resp| {
+            let available = resp.status()? == StatusEnum::UpdateAvailable;
+            let Some(version) = resp.software_version()? else {
+                return Ok(None);
+            };
+            if !available || version <= SOFTWARE_VERSION {
+                return Ok(None);
+            }
+
+            let uri = resp.image_uri()?.ok_or(ErrorCode::InvalidData)?;
+            let bytes = uri.as_bytes();
+            uri_buf
+                .get_mut(..bytes.len())
+                .ok_or(ErrorCode::NoSpace)?
+                .copy_from_slice(bytes);
+
+            Ok(Some((version, bytes.len())))
+        })
+        .await?;
+
+    let Some((version, uri_len)) = found else {
+        return Ok(false);
+    };
+
+    let uri = core::str::from_utf8(&uri_buf[..uri_len]).map_err(|_| ErrorCode::InvalidData)?;
+    let (node_id, fd) = parse_bdx_url(uri)?;
+
+    info!("OTA: downloading version {version} from node 0x{node_id:016x} ({fd})");
+    update.downloading(Some(0));
+
+    // Download the image over BDX from the node named in the URL.
+    let exchange = Exchange::initiate(matter, crypto, provider.fab_idx, node_id).await?;
+    let mut reader = exchange.pull(fd.as_bytes()).await?;
+
+    let total = reader.len();
+    let mut received = 0u64;
+    let mut buf = [0u8; 1024];
+    loop {
+        let n = reader.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+
+        // A real device writes `&buf[..n]` to a spare firmware slot here.
+        received += n as u64;
+
+        if let Some(total) = total.filter(|t| *t > 0) {
+            update.downloading(Some((received.min(total) * 100 / total) as u8));
+        }
     }
 
-    async fn begin(&mut self, version: u32) -> Result<(), Error> {
-        info!("OTA: starting download of version {version}");
-        self.received = 0;
-        Ok(())
-    }
+    info!("OTA: downloaded {received} bytes; applying version {version}");
+    update.applying();
+    // A real device activates the new image and reboots here.
 
-    async fn write(&mut self, _offset: u64, data: &[u8]) -> Result<(), Error> {
-        self.received += data.len();
-        Ok(())
-    }
+    update.complete();
 
-    async fn apply(&mut self) -> Result<(), Error> {
-        info!("OTA: applying image ({} bytes received)", self.received);
-        Ok(())
-    }
+    Ok(true)
 }
