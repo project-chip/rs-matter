@@ -135,7 +135,7 @@ impl<'a> BdxReader<'a> {
         let meta = self.exchange.rx()?.meta();
         let outcome = {
             let payload = self.exchange.rx()?.payload();
-            match classify(&meta) {
+            match classify(&meta, payload) {
                 Ok(op) if matches!(op, OpCode::Block | OpCode::BlockEof) => {
                     let block = Block::parse(payload)?;
                     if block.block_counter != self.counter {

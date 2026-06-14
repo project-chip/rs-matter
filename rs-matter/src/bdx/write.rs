@@ -158,7 +158,7 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
         let meta = self.exchange.rx()?.meta();
         let outcome = {
             let payload = self.exchange.rx()?.payload();
-            match classify(&meta) {
+            match classify(&meta, payload) {
                 Ok(op) if op == expected => {
                     if BlockQuery::parse(payload)?.block_counter == expected_counter {
                         Outcome::Ok

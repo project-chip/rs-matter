@@ -22,10 +22,10 @@
 
 use super::*;
 
-/// Map the meta of a freshly received transfer message to a BDX opcode. A
-/// Secure Channel `StatusReport` means the peer aborted the transfer (mapped to
-/// an error); anything else is a protocol violation.
-pub(super) fn classify(meta: &MessageMeta) -> Result<OpCode, Error> {
+/// Map the meta + payload of a freshly received transfer message to a BDX
+/// opcode. A Secure Channel `StatusReport` means the peer aborted the transfer
+/// (mapped to an error); anything else is a protocol violation.
+pub(super) fn classify(meta: &MessageMeta, payload: &[u8]) -> Result<OpCode, Error> {
     if meta.proto_id == PROTO_ID_BDX {
         return opcode(meta).ok_or_else(|| ErrorCode::InvalidOpcode.into());
     }
@@ -33,7 +33,30 @@ pub(super) fn classify(meta: &MessageMeta) -> Result<OpCode, Error> {
     if meta.proto_id == sc::PROTO_ID_SECURE_CHANNEL
         && meta.proto_opcode == sc::OpCode::StatusReport as u8
     {
-        error!("BDX: peer aborted the transfer with a StatusReport");
+        // A `StatusReport` ends the transfer. Its message header is always
+        // Secure-Channel framed (Matter Core spec, Appendix D.2); a BDX-level
+        // abort additionally names the BDX protocol in the report *body* (per the
+        // BDX spec). Inspect the body for diagnostics - the outcome (abort) is the
+        // same regardless of what it carries.
+        let mut rb = ReadBuf::new(payload);
+        match StatusReport::read(&mut rb) {
+            Ok(report) if report.proto_id == PROTO_ID_BDX as u32 => {
+                error!(
+                    "BDX: peer aborted the transfer (BDX status 0x{:04x})",
+                    report.proto_code
+                );
+            }
+            Ok(report) => {
+                error!(
+                    "BDX: transfer ended by a non-BDX StatusReport (protocol 0x{:08x}, code 0x{:04x})",
+                    report.proto_id, report.proto_code
+                );
+            }
+            Err(_) => {
+                error!("BDX: peer aborted the transfer with a malformed StatusReport");
+            }
+        }
+
         return Err(ErrorCode::Invalid.into());
     }
 
@@ -154,7 +177,7 @@ pub(super) async fn recv_accept(
     let meta = exchange.rx()?.meta();
     let outcome = {
         let payload = exchange.rx()?.payload();
-        match classify(&meta) {
+        match classify(&meta, payload) {
             Ok(op) if op == expected => {
                 let accept = TransferAccept::parse(receive, payload)?;
                 let tc = accept.transfer_control;
@@ -199,7 +222,7 @@ pub(super) async fn recv_init_hold(
     let meta = exchange.rx()?.meta();
     let outcome = {
         let payload = exchange.rx()?.payload();
-        match classify(&meta) {
+        match classify(&meta, payload) {
             Ok(op) if op == expected => {
                 let init = TransferInit::parse(payload)?;
                 let length = (init.range_control.def_len && init.length > 0).then_some(init.length);
@@ -241,9 +264,10 @@ mod tests {
 
     #[test]
     fn classify_maps_bdx_opcodes() {
-        assert_eq!(classify(&OpCode::Block.meta()).unwrap(), OpCode::Block);
+        // BDX opcodes ignore the payload.
+        assert_eq!(classify(&OpCode::Block.meta(), &[]).unwrap(), OpCode::Block);
         assert_eq!(
-            classify(&OpCode::ReceiveInit.meta()).unwrap(),
+            classify(&OpCode::ReceiveInit.meta(), &[]).unwrap(),
             OpCode::ReceiveInit
         );
     }
@@ -256,16 +280,27 @@ mod tests {
             sc::OpCode::StatusReport as u8,
             true,
         );
-        assert!(classify(&meta).is_err());
+
+        // A well-formed BDX-scoped status report body.
+        let mut buf = [0u8; 16];
+        let mut wb = WriteBuf::new(&mut buf);
+        BdxStatus::TransferFailedUnknownError
+            .as_report()
+            .write(&mut wb)
+            .unwrap();
+        assert!(classify(&meta, wb.as_slice()).is_err());
+
+        // A malformed/empty body still aborts the transfer.
+        assert!(classify(&meta, &[]).is_err());
     }
 
     #[test]
     fn classify_rejects_other_protocols() {
-        assert!(classify(&MessageMeta::new(0x99, 0x01, true)).is_err());
+        assert!(classify(&MessageMeta::new(0x99, 0x01, true), &[]).is_err());
     }
 
     #[test]
     fn classify_rejects_unknown_bdx_opcode() {
-        assert!(classify(&MessageMeta::new(PROTO_ID_BDX, 0x7f, true)).is_err());
+        assert!(classify(&MessageMeta::new(PROTO_ID_BDX, 0x7f, true), &[]).is_err());
     }
 }
