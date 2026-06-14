@@ -124,12 +124,29 @@ impl OtaState {
         self.progress.set(progress);
     }
 
+    /// Whether `fab_idx` already has a provider entry.
+    fn has_provider(&self, fab_idx: u8) -> bool {
+        self.providers.borrow().iter().any(|p| p.fab_idx == fab_idx)
+    }
+
+    /// Drop the provider entry (if any) for `fab_idx`.
+    fn clear_provider(&self, fab_idx: u8) {
+        self.providers.borrow_mut().retain(|p| p.fab_idx != fab_idx);
+    }
+
+    /// Append a provider entry, failing with `ResourceExhausted` if the table is full.
+    fn add_provider(&self, provider: Provider) -> Result<(), Error> {
+        self.providers
+            .borrow_mut()
+            .push(provider)
+            .map_err(|_| ErrorCode::ResourceExhausted.into())
+    }
+
     /// Insert/replace the single provider for `fab_idx`.
     fn set_provider(&self, provider: Provider) {
-        let mut providers = self.providers.borrow_mut();
-        providers.retain(|p| p.fab_idx != provider.fab_idx);
+        self.clear_provider(provider.fab_idx);
         // Best-effort: drop the entry if the (per-fabric) table is somehow full.
-        let _ = providers.push(provider);
+        let _ = self.add_provider(provider);
     }
 }
 
@@ -234,23 +251,36 @@ impl ClusterHandler for OtaRequestorHandler<'_> {
         };
 
         match value {
+            // Fabric-scoped, at most one entry per fabric: a replacement list may
+            // carry zero or one entry; more than one is a `CONSTRAINT_ERROR`.
             ArrayAttributeWrite::Replace(list) => {
-                self.state
-                    .providers
-                    .borrow_mut()
-                    .retain(|p| p.fab_idx != fab_idx);
-                for loc in list.iter() {
-                    self.state.set_provider(to_provider(&loc?)?);
+                let mut iter = list.iter();
+                let first = iter.next().transpose()?;
+                if iter.next().is_some() {
+                    return Err(ErrorCode::ConstraintError.into());
+                }
+
+                // Parse before mutating, so a malformed entry leaves the existing
+                // default intact.
+                let parsed = first.map(|loc| to_provider(&loc)).transpose()?;
+
+                self.state.clear_provider(fab_idx);
+                if let Some(provider) = parsed {
+                    self.state.add_provider(provider)?;
                 }
             }
-            ArrayAttributeWrite::Add(loc) | ArrayAttributeWrite::Update(_, loc) => {
-                self.state.set_provider(to_provider(&loc)?);
+            // Adding a second entry for a fabric would exceed the one-per-fabric
+            // limit; reject it.
+            ArrayAttributeWrite::Add(loc) => {
+                if self.state.has_provider(fab_idx) {
+                    return Err(ErrorCode::ConstraintError.into());
+                }
+                self.state.add_provider(to_provider(&loc)?)?;
             }
-            ArrayAttributeWrite::Remove(_) => {
-                self.state
-                    .providers
-                    .borrow_mut()
-                    .retain(|p| p.fab_idx != fab_idx);
+            // Per-index update/remove on a fabric-scoped list are converted to
+            // `InvalidAction` by the framework; reject defensively.
+            ArrayAttributeWrite::Update(_, _) | ArrayAttributeWrite::Remove(_) => {
+                return Err(ErrorCode::InvalidAction.into());
             }
         }
 
