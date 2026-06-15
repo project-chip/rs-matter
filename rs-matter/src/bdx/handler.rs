@@ -149,7 +149,7 @@ where
 /// ```ignore
 /// use rs_matter::bdx::{Bdx, PROTO_ID_BDX};
 ///
-/// let bdx = Bdx::new(OtaBdxHandler::new(&images));
+/// let bdx = Bdx::new(OtaBdxHandler::new(&buffers, &images));
 /// let handler = im_and_sc_handler.chain(PROTO_ID_BDX, bdx);
 /// ```
 ///

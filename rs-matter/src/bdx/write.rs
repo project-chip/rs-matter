@@ -90,6 +90,31 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
         Ok(n)
     }
 
+    /// The largest block this writer will send (and the length of the buffer
+    /// returned by [`block_buf`](Self::block_buf)).
+    pub fn max_block_size(&self) -> usize {
+        self.max_block_size
+    }
+
+    /// The writer's own staging buffer (exactly [`max_block_size`](Self::max_block_size)
+    /// bytes), to be filled in place and then sent with [`commit`](Self::commit).
+    ///
+    /// This is the zero-extra-buffer alternative to [`write`](Self::write): a
+    /// caller streaming from another source (a flash region, a socket) can read
+    /// straight into this slice instead of into its own buffer and copying. Do not
+    /// interleave it with [`write`](Self::write), which stages into the same space.
+    pub fn block_buf(&mut self) -> &mut [u8] {
+        &mut self.buf[..self.max_block_size]
+    }
+
+    /// Send `len` bytes - previously written into [`block_buf`](Self::block_buf) -
+    /// as one block. `len` must not exceed [`max_block_size`](Self::max_block_size).
+    pub async fn commit(&mut self, len: usize) -> Result<(), Error> {
+        self.block_len = len.min(self.max_block_size);
+
+        self.send_block(false).await
+    }
+
     /// Flush the final (possibly empty) block and complete the transfer.
     pub async fn finish(mut self) -> Result<(), Error> {
         self.send_block(true).await?;

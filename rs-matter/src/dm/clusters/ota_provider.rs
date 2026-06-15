@@ -35,7 +35,17 @@ use crate::bdx::{BdxHandler, BdxResponder, BdxStatus};
 use crate::dm::{Cluster, Dataver, InvokeContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{Octets, TLVBuilderParent};
+use crate::transport::exchange::MAX_EXCHANGE_RX_BUF_SIZE;
+use crate::utils::storage::pooled::BufferAccess;
+use crate::utils::storage::Vec;
 use crate::with;
+
+/// The buffer an [`OtaBdxHandler`] stages each BDX block in. Same size as an
+/// Interaction Model exchange buffer, so a single [`PooledBuffers`] pool can be
+/// shared with the data model if desired.
+///
+/// [`PooledBuffers`]: crate::utils::storage::pooled::PooledBuffers
+pub type BdxBuffer = Vec<u8, MAX_EXCHANGE_RX_BUF_SIZE>;
 
 pub use crate::dm::clusters::decl::ota_software_update_provider::*;
 
@@ -43,9 +53,6 @@ pub use crate::dm::clusters::decl::ota_software_update_provider::*;
 /// CSA-IOT Distributed Compliance Ledger and a CDN, over a pluggable HTTPS client.
 #[cfg(feature = "ota-dcl")]
 pub mod dcl;
-
-/// The largest BDX block the server will send over a non-TCP transport.
-const MAX_BLOCK_SIZE: usize = 1024;
 
 /// The maximum supported BDX file designator length.
 const MAX_FILE_DESIGNATOR: usize = 128;
@@ -253,24 +260,62 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
 ///
 /// ```ignore
 /// use rs_matter::bdx::{Bdx, PROTO_ID_BDX};
+/// use rs_matter::dm::clusters::ota_provider::BdxBuffer;
 /// use rs_matter::respond::Responder;
+/// use rs_matter::utils::storage::pooled::PooledBuffers;
 ///
-/// let bdx = Bdx::new(OtaBdxHandler::new(&images));
+/// // One staging buffer per concurrent download (here: two).
+/// let buffers = PooledBuffers::<2, BdxBuffer>::new(0);
+/// let bdx = Bdx::new(OtaBdxHandler::new(&buffers, &images));
 /// let handler = im_and_sc_handler.chain(PROTO_ID_BDX, bdx);
 /// let responder = Responder::new("ota-provider", handler, matter, 0);
 /// ```
-pub struct OtaBdxHandler<I> {
+pub struct OtaBdxHandler<B, I> {
+    buffers: B,
     images: I,
 }
 
-impl<I> OtaBdxHandler<I> {
+impl<B, I> OtaBdxHandler<B, I> {
     /// Create a new BDX image handler backed by the given image data source.
-    pub const fn new(images: I) -> Self {
-        Self { images }
+    ///
+    /// `buffers` is a [`BufferAccess`] pool ([`BdxBuffer`]-sized): one buffer is
+    /// leased per in-flight download to stage the BDX blocks (the image bytes are
+    /// read straight into it), so the pool's size caps how many downloads run
+    /// concurrently. When the pool is exhausted, further downloads are rejected
+    /// with [`ResponderBusy`](BdxStatus::ResponderBusy).
+    pub const fn new(buffers: B, images: I) -> Self {
+        Self { buffers, images }
     }
 }
 
-impl<I: OtaImages> BdxHandler for OtaBdxHandler<I> {
+impl<B, I: OtaImages> OtaBdxHandler<B, I> {
+    /// Fill `buf` from the image `fd` starting at `offset`, looping until it is
+    /// full or the image ends, so that only the final block of a transfer is ever
+    /// short. Returns the number of bytes read (`< buf.len()` only at end-of-image).
+    async fn fill(&self, fd: &[u8], offset: u64, buf: &mut [u8]) -> Result<usize, Error> {
+        let mut filled = 0;
+
+        while filled < buf.len() {
+            let n = self
+                .images
+                .read(fd, offset + filled as u64, &mut buf[filled..])
+                .await?;
+            if n == 0 {
+                break;
+            }
+
+            filled += n;
+        }
+
+        Ok(filled)
+    }
+}
+
+impl<B, I> BdxHandler for OtaBdxHandler<B, I>
+where
+    B: BufferAccess<BdxBuffer>,
+    I: OtaImages,
+{
     async fn handles(&self, responder: &BdxResponder<'_>) -> bool {
         // We only serve downloads, and only of images we actually have.
         matches!(responder, BdxResponder::Download(_))
@@ -295,26 +340,29 @@ impl<I: OtaImages> BdxHandler for OtaBdxHandler<I> {
             return responder.reject(BdxStatus::FileDesignatorUnknown).await;
         };
 
-        // Accept (advertising the definite length) and stream the image. The
-        // writer stages each block in `wbuf`; `buf` holds the chunk read from the
-        // image source before it is handed to the writer.
-        let mut wbuf = [0u8; MAX_BLOCK_SIZE];
-        let mut writer = responder.reply(&mut wbuf, Some(size)).await?;
+        // Lease a staging buffer for the duration of this transfer; if the pool is
+        // exhausted, tell the peer we are busy so it can retry later.
+        let Some(mut buf) = self.buffers.get().await else {
+            return responder.reject(BdxStatus::ResponderBusy).await;
+        };
 
-        let mut buf = [0u8; MAX_BLOCK_SIZE];
+        // Expose the whole buffer as the writer's block-staging slice (its length
+        // caps the block size, which the BDX layer further clamps to the TX limit).
+        unwrap!(buf.resize_default(MAX_EXCHANGE_RX_BUF_SIZE));
+
+        // Hand it to the writer, which sends each block straight out of it - the
+        // image bytes are read directly into the writer's block buffer, no copy.
+        let mut writer = responder.reply(buf.as_mut_slice(), Some(size)).await?;
+
         let mut offset = 0u64;
 
         loop {
-            let n = self.images.read(&fd, offset, &mut buf).await?;
+            let n = self.fill(&fd, offset, writer.block_buf()).await?;
             if n == 0 {
                 break;
             }
 
-            let mut chunk = &buf[..n];
-            while !chunk.is_empty() {
-                let written = writer.write(chunk).await?;
-                chunk = &chunk[written..];
-            }
+            writer.commit(n).await?;
 
             offset += n as u64;
         }
