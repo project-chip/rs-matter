@@ -42,7 +42,7 @@ use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
 use crate::im::{AttrId, EndptId, NodeId};
 use crate::persist::{KvBlobStore, Persist, OTA_PROVIDERS_KEY};
-use crate::tlv::{FromTLV, Nullable, TLVArray, TLVBuilderParent, TLVElement, ToTLV};
+use crate::tlv::{FromTLV, Nullable, Octets, TLVArray, TLVBuilderParent, TLVElement, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -55,8 +55,10 @@ use crate::Matter;
 pub use crate::dm::clusters::decl::ota_software_update_requestor::*;
 
 use crate::dm::clusters::decl::ota_software_update_provider::{
-    DownloadProtocolEnum, OtaSoftwareUpdateProviderClient, QueryImageResponse,
+    ApplyUpdateActionEnum, DownloadProtocolEnum, OtaSoftwareUpdateProviderClient,
+    QueryImageResponse,
 };
+use crate::dm::clusters::ota_provider::OtaApplyOutcome;
 
 /// The number of transient providers (learned via `AnnounceOTAProvider`) cached
 /// at once. These are one-shot hints, deduplicated by `(fabric, node)`; the
@@ -80,6 +82,14 @@ impl Provider {
     /// (defaulting to this device's `sw_ver` from `BasicInfoConfig` when `None`)
     /// is available, advertising the given download `protocols`.
     ///
+    /// The request's `VendorID`, `ProductID`, `SoftwareVersion` and
+    /// `HardwareVersion` are taken from the node's [`BasicInfoConfig`], and
+    /// `Location` from the configured Basic Information settings - the spec
+    /// requires each to equal the corresponding Basic Information cluster
+    /// attribute. `requestor_can_consent` declares whether this requestor can
+    /// obtain user consent on its own (via built-in UI); pass `true` only if so,
+    /// as it lets the provider delegate consent (see [`OtaImagesRegistry`]).
+    ///
     /// Opens a CASE exchange to the provider, sends `QueryImage`, and invokes `f`
     /// with the [`QueryImageResponse`] *before* the exchange is released - so `f`
     /// reads `image_uri`/`software_version`/`update_token` straight off the RX
@@ -88,12 +98,16 @@ impl Provider {
     /// `query` does not interpret the response (it checks neither `status` nor the
     /// returned version); that is left to `f`. On a `bdx://` `image_uri`, use
     /// [`parse_bdx_url`] + [`Exchange::download`](crate::bdx::BdxDownloadInitiator::download) to fetch.
+    ///
+    /// [`BasicInfoConfig`]: crate::dm::clusters::basic_info::BasicInfoConfig
+    /// [`OtaImagesRegistry`]: crate::dm::clusters::ota_provider::OtaImagesRegistry
     pub async fn query<C, F, R>(
         &self,
         matter: &Matter<'_>,
         crypto: C,
         protocols: &[DownloadProtocolEnum],
         current_version: Option<u32>,
+        requestor_can_consent: bool,
         f: F,
     ) -> Result<R, Error>
     where
@@ -102,6 +116,12 @@ impl Provider {
     {
         let dev = matter.dev_det();
         let version = current_version.unwrap_or(dev.sw_ver);
+
+        // `Location`, per spec, mirrors the Basic Information cluster Location
+        // attribute (a 2-char region code) when one is configured. Copy it out so
+        // the state lock is not held across the exchange.
+        let location = matter.with_state(|state| state.basic_info_settings.location.clone());
+        let location = location.as_deref();
 
         let exchange = Exchange::initiate(matter, crypto, self.fab_idx, self.node_id).await?;
 
@@ -118,9 +138,9 @@ impl Provider {
                 }
                 protos
                     .end()?
-                    .hardware_version(None)?
-                    .location(None)?
-                    .requestor_can_consent(None)?
+                    .hardware_version(Some(dev.hw_ver))?
+                    .location(location)?
+                    .requestor_can_consent(Some(requestor_can_consent))?
                     .metadata_for_provider(None)?
                     .end()
             })
@@ -136,6 +156,80 @@ impl Provider {
         handle.complete().await?;
 
         result
+    }
+
+    /// Ask this provider how to apply the already-downloaded image identified by
+    /// `update_token` (the `UpdateToken` from the provider's
+    /// [`QueryImageResponse`]), which upgrades to `new_version`.
+    ///
+    /// Opens a CASE exchange and sends `ApplyUpdateRequest`. The returned
+    /// [`OtaApplyOutcome`] is the provider's decision: [`Proceed`] (apply, after
+    /// its delay), [`Await`] (wait the delay and call this again), or
+    /// [`Discontinue`] (discard the image).
+    ///
+    /// [`Proceed`]: OtaApplyOutcome::Proceed
+    /// [`Await`]: OtaApplyOutcome::Await
+    /// [`Discontinue`]: OtaApplyOutcome::Discontinue
+    pub async fn apply_update<C>(
+        &self,
+        matter: &Matter<'_>,
+        crypto: C,
+        update_token: &[u8],
+        new_version: u32,
+    ) -> Result<OtaApplyOutcome, Error>
+    where
+        C: Crypto,
+    {
+        let exchange = Exchange::initiate(matter, crypto, self.fab_idx, self.node_id).await?;
+
+        let handle = exchange
+            .ota_software_update_provider()
+            .apply_update_request(self.endpoint, |b| {
+                b.update_token(Octets(update_token))?
+                    .new_version(new_version)?
+                    .end()
+            })
+            .await?;
+
+        let outcome = {
+            let response = handle.response()?;
+            let delay_secs = response.delayed_action_time()?;
+
+            match response.action()? {
+                ApplyUpdateActionEnum::Proceed => OtaApplyOutcome::Proceed { delay_secs },
+                ApplyUpdateActionEnum::AwaitNextAction => OtaApplyOutcome::Await { delay_secs },
+                ApplyUpdateActionEnum::Discontinue => OtaApplyOutcome::Discontinue,
+            }
+        };
+
+        handle.complete().await?;
+
+        Ok(outcome)
+    }
+
+    /// Tell this provider that the image identified by `update_token` has been
+    /// applied, now running `software_version`. Opens a CASE exchange and sends
+    /// `NotifyUpdateApplied`; there is no response payload.
+    pub async fn notify_applied<C>(
+        &self,
+        matter: &Matter<'_>,
+        crypto: C,
+        update_token: &[u8],
+        software_version: u32,
+    ) -> Result<(), Error>
+    where
+        C: Crypto,
+    {
+        let exchange = Exchange::initiate(matter, crypto, self.fab_idx, self.node_id).await?;
+
+        exchange
+            .ota_software_update_provider()
+            .notify_update_applied(self.endpoint, |b| {
+                b.update_token(Octets(update_token))?
+                    .software_version(software_version)?
+                    .end()
+            })
+            .await
     }
 }
 

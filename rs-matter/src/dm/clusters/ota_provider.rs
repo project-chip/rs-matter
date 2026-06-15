@@ -27,6 +27,12 @@
 //! protocol. The two delegate to separate user-supplied sources - the cluster
 //! handler to an [`OtaImagesRegistry`] (which image to offer), the BDX handler to
 //! an [`OtaImages`] (the image bytes) - so either can be used on its own.
+//!
+//! Update *policy* - including whether a user must consent before an image is
+//! applied - lives in those user implementations, not here: the registry decides
+//! per query (see [`OtaImagesRegistry::query`] and
+//! [`OtaImageMeta::user_consent_needed`]), and consent can be layered onto an
+//! existing registry (e.g. the [`dcl`] sample) with a thin wrapping proxy.
 
 use core::fmt::Write as _;
 use core::num::NonZeroU8;
@@ -58,6 +64,8 @@ pub mod dcl;
 const MAX_FILE_DESIGNATOR: usize = 128;
 
 /// Metadata describing an OTA image that a provider is willing to offer.
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct OtaImageMeta<'a> {
     /// The version of the offered image. Must be newer than the requestor's.
     pub version: u32,
@@ -66,26 +74,115 @@ pub struct OtaImageMeta<'a> {
     /// The total image size in bytes, if known (enables a definite-length
     /// transfer and download-progress reporting on the requestor).
     pub size: Option<u64>,
+    /// Whether the requestor must obtain user consent before applying this image.
+    /// Surfaced to the requestor as `UserConsentNeeded` in the `QueryImage`
+    /// response. See [`OtaImagesRegistry::query`] for how this interacts with the
+    /// requestor's `requestor_can_consent` capability - consent *policy* is the
+    /// registry's to decide.
+    pub user_consent_needed: bool,
+}
+
+/// The outcome of an [`OtaImagesRegistry::query`] - the three `QueryImage`
+/// responses an OTA Requestor acts on (per the Matter spec).
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum OtaQueryOutcome<'a> {
+    /// An applicable image is available; offer it. Maps to `Status =
+    /// UpdateAvailable`.
+    Available(OtaImageMeta<'a>),
+    /// The provider may have an update but cannot answer definitively yet - e.g.
+    /// it is still determining availability, or awaiting user consent it obtains
+    /// itself. Maps to `Status = Busy`: the requestor retries the *same* provider
+    /// after at least `delay_secs` (never sooner than the spec's 120-second floor).
+    Busy {
+        /// Minimum seconds before the requestor re-queries (`DelayedActionTime`).
+        delay_secs: u32,
+    },
+    /// Definitely no update is available. Maps to `Status = NotAvailable`: the
+    /// requestor may instead try a different provider.
+    NotAvailable,
+}
+
+/// How the OTA Requestor should proceed with applying an already-downloaded
+/// image, returned from [`OtaImagesRegistry::apply`] in response to
+/// `ApplyUpdateRequest` (per the Matter spec).
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum OtaApplyOutcome {
+    /// Apply now, or after `delay_secs`. Maps to `Action = Proceed`.
+    Proceed {
+        /// Seconds to wait before applying (`DelayedActionTime`; `0` = at once).
+        delay_secs: u32,
+    },
+    /// Not yet: the requestor waits `delay_secs` and re-sends `ApplyUpdateRequest`
+    /// - e.g. provider-side user consent is still pending. Maps to `Action =
+    /// AwaitNextAction` (the requestor enforces a 120-second floor).
+    Await {
+        /// Seconds to wait before asking again (`DelayedActionTime`).
+        delay_secs: u32,
+    },
+    /// Rescind the image; the requestor should discard it. Maps to `Action =
+    /// Discontinue`.
+    Discontinue,
 }
 
 /// A device-specific registry of OTA images: it decides which image (if any) to
-/// offer a querying requestor. Used by [`OtaProviderHandler`].
+/// offer a querying requestor, and authorizes applying it. Used by
+/// [`OtaProviderHandler`].
+///
+/// # User consent
+///
+/// Update *policy*, including user consent, lives here, not in the cluster
+/// handler. The Matter spec lets a provider obtain consent before offering an
+/// image and/or before letting the requestor apply it; a registry expresses that
+/// at two points (no consent is ever gated during the BDX transfer itself):
+///
+/// - **Delegation** - when the requestor can prompt the user
+///   (`requestor_can_consent`), [`query`](Self::query) may offer the image with
+///   [`OtaImageMeta::user_consent_needed`] set, and the requestor prompts before
+///   downloading.
+/// - **Provider-side, at query** - while the provider obtains consent itself,
+///   [`query`](Self::query) returns [`OtaQueryOutcome::Busy`] so the requestor retries
+///   later (do *not* return [`OtaQueryOutcome::NotAvailable`] - that means "no update").
+/// - **Provider-side, at apply** - [`apply`](Self::apply) returns
+///   [`OtaApplyOutcome::Await`] until consent is granted, then [`OtaApplyOutcome::Proceed`].
+///
+/// A common way to add consent on top of an existing registry (e.g. the [`dcl`]
+/// sample) is a thin proxy that wraps it and overrides these decisions.
 pub trait OtaImagesRegistry {
-    /// Decide whether an image strictly newer than `current_version` is
-    /// available for the querying `(vendor_id, product_id)`, returning its
-    /// metadata if so.
+    /// Decide what to offer a requestor querying for an image newer than
+    /// `current_version` for `(vendor_id, product_id)`: [`OtaQueryOutcome::Available`]
+    /// with the image to offer, [`OtaQueryOutcome::Busy`] to retry later (e.g. consent
+    /// pending), or [`OtaQueryOutcome::NotAvailable`].
     ///
-    /// The returned [`OtaImageMeta::file_designator`] is written into (and borrows)
-    /// the caller-provided `designator_buf`, so a registry can mint a designator
-    /// computed at runtime (e.g. encoding the resolved version) rather than being
-    /// limited to `'static` strings.
+    /// `requestor_can_consent` reports whether the requestor can obtain user
+    /// consent itself; set [`OtaImageMeta::user_consent_needed`] to delegate
+    /// consent to it (only meaningful when it can). See the [trait
+    /// docs](OtaImagesRegistry#user-consent).
+    ///
+    /// The returned [`OtaImageMeta::file_designator`] is written into (and
+    /// borrows) `designator_buf`, so a registry can mint a designator computed at
+    /// runtime rather than being limited to `'static` strings.
     async fn query<'b>(
         &self,
         vendor_id: u16,
         product_id: u16,
         current_version: u32,
+        requestor_can_consent: bool,
         designator_buf: &'b mut [u8],
-    ) -> Option<OtaImageMeta<'b>>;
+    ) -> OtaQueryOutcome<'b>;
+
+    /// Authorize the requestor to apply the already-downloaded image identified by
+    /// `update_token` (the value returned as `UpdateToken` from
+    /// [`query`](Self::query) - in this crate's samples, the BDX file designator),
+    /// upgrading to `new_version`.
+    ///
+    /// The default authorizes an immediate apply. Override it to defer (e.g. until
+    /// provider-side consent is granted, with [`OtaApplyOutcome::Await`]) or to rescind a
+    /// previously offered image ([`OtaApplyOutcome::Discontinue`]).
+    async fn apply(&self, _update_token: &[u8], _new_version: u32) -> OtaApplyOutcome {
+        OtaApplyOutcome::Proceed { delay_secs: 0 }
+    }
 }
 
 impl<T> OtaImagesRegistry for &T
@@ -97,9 +194,22 @@ where
         vendor_id: u16,
         product_id: u16,
         current_version: u32,
+        requestor_can_consent: bool,
         designator_buf: &'b mut [u8],
-    ) -> Option<OtaImageMeta<'b>> {
-        T::query(self, vendor_id, product_id, current_version, designator_buf).await
+    ) -> OtaQueryOutcome<'b> {
+        T::query(
+            self,
+            vendor_id,
+            product_id,
+            current_version,
+            requestor_can_consent,
+            designator_buf,
+        )
+        .await
+    }
+
+    async fn apply(&self, update_token: &[u8], new_version: u32) -> OtaApplyOutcome {
+        T::apply(self, update_token, new_version).await
     }
 }
 
@@ -178,24 +288,49 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
         let vendor_id = request.vendor_id()?;
         let product_id = request.product_id()?;
         let current_version = request.software_version()?;
+        // Absent means the requestor cannot obtain user consent on its own.
+        let requestor_can_consent = request.requestor_can_consent()?.unwrap_or(false);
 
         let mut designator_buf = [0u8; MAX_FILE_DESIGNATOR];
-        let Some(image) = self
+        let image = match self
             .images
-            .query(vendor_id, product_id, current_version, &mut designator_buf)
+            .query(
+                vendor_id,
+                product_id,
+                current_version,
+                requestor_can_consent,
+                &mut designator_buf,
+            )
             .await
-        else {
+        {
+            OtaQueryOutcome::Available(image) => image,
+            // The provider may have an update but isn't ready (e.g. consent
+            // pending); tell the requestor to retry the same provider later.
+            OtaQueryOutcome::Busy { delay_secs } => {
+                return response
+                    .status(StatusEnum::Busy)?
+                    .delayed_action_time(Some(delay_secs))?
+                    .image_uri(None)?
+                    .software_version(None)?
+                    .software_version_string(None)?
+                    .update_token(None)?
+                    .user_consent_needed(None)?
+                    .metadata_for_requestor(None)?
+                    .end();
+            }
             // No applicable image (already up to date).
-            return response
-                .status(StatusEnum::NotAvailable)?
-                .delayed_action_time(None)?
-                .image_uri(None)?
-                .software_version(None)?
-                .software_version_string(None)?
-                .update_token(None)?
-                .user_consent_needed(None)?
-                .metadata_for_requestor(None)?
-                .end();
+            OtaQueryOutcome::NotAvailable => {
+                return response
+                    .status(StatusEnum::NotAvailable)?
+                    .delayed_action_time(None)?
+                    .image_uri(None)?
+                    .software_version(None)?
+                    .software_version_string(None)?
+                    .update_token(None)?
+                    .user_consent_needed(None)?
+                    .metadata_for_requestor(None)?
+                    .end();
+            }
         };
 
         // The download URI points at this node (on the accessing fabric) and
@@ -221,7 +356,8 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
             // The update token is opaque to the requestor; the file designator
             // (which the requestor sends back on the BDX transfer) suffices.
             .update_token(Some(Octets(image.file_designator.as_bytes())))?
-            .user_consent_needed(Some(false))?
+            // Consent policy is the registry's; forward its decision verbatim.
+            .user_consent_needed(Some(image.user_consent_needed))?
             .metadata_for_requestor(None)?
             .end()
     }
@@ -229,14 +365,22 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
     async fn handle_apply_update_request<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
-        _request: ApplyUpdateRequestRequest<'_>,
+        request: ApplyUpdateRequestRequest<'_>,
         response: ApplyUpdateResponseBuilder<P>,
     ) -> Result<P, Error> {
-        // Authorize the requestor to apply the update immediately.
-        response
-            .action(ApplyUpdateActionEnum::Proceed)?
-            .delayed_action_time(0)?
-            .end()
+        let update_token = request.update_token()?;
+        let new_version = request.new_version()?;
+
+        // The registry owns apply policy (e.g. deferring until consent is granted).
+        let (action, delay) = match self.images.apply(update_token.0, new_version).await {
+            OtaApplyOutcome::Proceed { delay_secs } => (ApplyUpdateActionEnum::Proceed, delay_secs),
+            OtaApplyOutcome::Await { delay_secs } => {
+                (ApplyUpdateActionEnum::AwaitNextAction, delay_secs)
+            }
+            OtaApplyOutcome::Discontinue => (ApplyUpdateActionEnum::Discontinue, 0),
+        };
+
+        response.action(action)?.delayed_action_time(delay)?.end()
     }
 
     async fn handle_notify_update_applied(

@@ -42,7 +42,7 @@ use rs_matter::bdx::BdxDownloadInitiator;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::SharedNetworks;
-use rs_matter::dm::clusters::ota_provider::{DownloadProtocolEnum, StatusEnum};
+use rs_matter::dm::clusters::ota_provider::{DownloadProtocolEnum, OtaApplyOutcome, StatusEnum};
 use rs_matter::dm::clusters::ota_requestor::{
     parse_bdx_url, ClusterHandler as _, OtaRequestorHandler, OtaState, Provider, Providers,
 };
@@ -260,30 +260,48 @@ async fn try_update(
     // Ask the provider. The closure inspects the response off the RX buffer and
     // copies out just the image URI (the response is gone once `query` returns).
     let mut uri_buf = [0u8; 256];
+    let mut token_buf = [0u8; 32];
+    // This headless example has no UI to prompt a user, so it cannot consent.
     let found = provider
-        .query(matter, crypto, PROTOCOLS, Some(SOFTWARE_VERSION), |resp| {
-            let available = resp.status()? == StatusEnum::UpdateAvailable;
-            let Some(version) = resp.software_version()? else {
-                return Ok(None);
-            };
-            if !available || version <= SOFTWARE_VERSION {
-                return Ok(None);
-            }
+        .query(
+            matter,
+            crypto,
+            PROTOCOLS,
+            Some(SOFTWARE_VERSION),
+            false,
+            |resp| {
+                let available = resp.status()? == StatusEnum::UpdateAvailable;
+                let Some(version) = resp.software_version()? else {
+                    return Ok(None);
+                };
+                if !available || version <= SOFTWARE_VERSION {
+                    return Ok(None);
+                }
 
-            let uri = resp.image_uri()?.ok_or(ErrorCode::InvalidData)?;
-            let bytes = uri.as_bytes();
-            uri_buf
-                .get_mut(..bytes.len())
-                .ok_or(ErrorCode::NoSpace)?
-                .copy_from_slice(bytes);
+                // Copy out the image URI and the update token (both borrow the RX
+                // buffer, which is gone once `query` returns). The token is opaque and
+                // must be echoed back on ApplyUpdateRequest / NotifyUpdateApplied.
+                let uri = resp.image_uri()?.ok_or(ErrorCode::InvalidData)?.as_bytes();
+                uri_buf
+                    .get_mut(..uri.len())
+                    .ok_or(ErrorCode::NoSpace)?
+                    .copy_from_slice(uri);
 
-            Ok(Some((version, bytes.len())))
-        })
+                let token = resp.update_token()?.ok_or(ErrorCode::InvalidData)?.0;
+                token_buf
+                    .get_mut(..token.len())
+                    .ok_or(ErrorCode::NoSpace)?
+                    .copy_from_slice(token);
+
+                Ok(Some((version, uri.len(), token.len())))
+            },
+        )
         .await?;
 
-    let Some((version, uri_len)) = found else {
+    let Some((version, uri_len, token_len)) = found else {
         return Ok(false);
     };
+    let update_token = &token_buf[..token_len];
 
     let uri = core::str::from_utf8(&uri_buf[..uri_len]).map_err(|_| ErrorCode::InvalidData)?;
     let (node_id, fd) = parse_bdx_url(uri)?;
@@ -312,9 +330,37 @@ async fn try_update(
         }
     }
 
-    info!("OTA: downloaded {received} bytes; applying version {version}");
+    info!("OTA: downloaded {received} bytes");
+
+    // Ask the provider for permission to apply (its consent / scheduling gate).
+    match provider
+        .apply_update(matter, crypto, update_token, version)
+        .await?
+    {
+        OtaApplyOutcome::Proceed { delay_secs } => {
+            if delay_secs > 0 {
+                info!("OTA: provider asked to wait {delay_secs}s before applying");
+                // A real device would wait `delay_secs` before applying.
+            }
+        }
+        OtaApplyOutcome::Await { delay_secs } => {
+            info!("OTA: apply deferred by provider ({delay_secs}s); will retry later");
+            return Ok(false);
+        }
+        OtaApplyOutcome::Discontinue => {
+            info!("OTA: provider rescinded the image; discarding");
+            return Ok(false);
+        }
+    }
+
+    info!("OTA: applying version {version}");
     update.applying();
     // A real device activates the new image and reboots here.
+
+    // Report completion to the provider.
+    provider
+        .notify_applied(matter, crypto, update_token, version)
+        .await?;
 
     update.complete();
 

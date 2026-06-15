@@ -40,7 +40,7 @@ use crate::error::{Error, ErrorCode};
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::IfMutex;
 
-use super::{OtaImageMeta, OtaImages, OtaImagesRegistry, MAX_FILE_DESIGNATOR};
+use super::{OtaImageMeta, OtaImages, OtaImagesRegistry, OtaQueryOutcome, MAX_FILE_DESIGNATOR};
 
 /// The CSA-IOT production DCL REST endpoint.
 pub const DCL_MAINNET: &str = "https://on.dcl.csa-iot.org";
@@ -173,21 +173,12 @@ impl<H: OtaHttp> DclImages<'_, H> {
         let fd = core::str::from_utf8(fd).ok()?;
         store(&mut locked.cache, fd, mv.ota_url, mv.ota_file_size)
     }
-}
 
-/// Replace the cache entry in-place (no large stack temporary).
-fn store(cache: &mut Cached, designator: &str, ota_url: &str, size: u64) -> Option<()> {
-    cache.designator.clear();
-    cache.designator.push_str(designator).ok()?;
-    cache.ota_url.clear();
-    cache.ota_url.push_str(ota_url).ok()?;
-    cache.size = size;
-
-    Some(())
-}
-
-impl<H: OtaHttp> OtaImagesRegistry for DclImages<'_, H> {
-    async fn query<'b>(
+    /// Resolve the best applicable image for the querying `(vendor_id,
+    /// product_id, current_version)`, or `None` if there is none. `None` maps to
+    /// [`OtaQueryOutcome::NotAvailable`]; the DCL has no notion of a deferred/`Busy`
+    /// answer.
+    async fn resolve_query<'b>(
         &self,
         vendor_id: u16,
         product_id: u16,
@@ -237,7 +228,43 @@ impl<H: OtaHttp> OtaImagesRegistry for DclImages<'_, H> {
             version: mv.software_version,
             file_designator: designator,
             size: Some(mv.ota_file_size),
+            user_consent_needed: false,
         })
+    }
+}
+
+/// Replace the cache entry in-place (no large stack temporary).
+fn store(cache: &mut Cached, designator: &str, ota_url: &str, size: u64) -> Option<()> {
+    cache.designator.clear();
+    cache.designator.push_str(designator).ok()?;
+    cache.ota_url.clear();
+    cache.ota_url.push_str(ota_url).ok()?;
+    cache.size = size;
+
+    Some(())
+}
+
+impl<H: OtaHttp> OtaImagesRegistry for DclImages<'_, H> {
+    // The DCL describes *what* images exist, not consent or readiness policy, so
+    // this offers every applicable image with `user_consent_needed = false`,
+    // ignores `requestor_can_consent`, and never returns `Busy`. To add consent,
+    // wrap this in a proxy that overrides the relevant decisions (see
+    // `OtaImagesRegistry`); `apply` uses the default (immediate `Proceed`).
+    async fn query<'b>(
+        &self,
+        vendor_id: u16,
+        product_id: u16,
+        current_version: u32,
+        _requestor_can_consent: bool,
+        designator_buf: &'b mut [u8],
+    ) -> OtaQueryOutcome<'b> {
+        match self
+            .resolve_query(vendor_id, product_id, current_version, designator_buf)
+            .await
+        {
+            Some(image) => OtaQueryOutcome::Available(image),
+            None => OtaQueryOutcome::NotAvailable,
+        }
     }
 }
 
@@ -523,10 +550,15 @@ mod tests {
         block_on(async {
             // Registry: a v1 requestor is offered v10.
             let mut fd_buf = [0u8; 64];
-            let meta = dcl.query(0x1234, 0x5678, 1, &mut fd_buf).await.unwrap();
+            let OtaQueryOutcome::Available(meta) =
+                dcl.query(0x1234, 0x5678, 1, false, &mut fd_buf).await
+            else {
+                panic!("expected an available image");
+            };
             assert_eq!(meta.version, 10);
             assert_eq!(meta.file_designator, "1234-5678-10");
             assert_eq!(meta.size, Some(2500));
+            assert!(!meta.user_consent_needed);
 
             // Data: the BDX server resolves that designator and streams the bytes.
             let fd = b"1234-5678-10";
@@ -547,7 +579,10 @@ mod tests {
 
             // An up-to-date requestor (already at v10) is offered nothing.
             let mut fd_buf = [0u8; 64];
-            assert!(dcl.query(0x1234, 0x5678, 10, &mut fd_buf).await.is_none());
+            assert!(matches!(
+                dcl.query(0x1234, 0x5678, 10, false, &mut fd_buf).await,
+                OtaQueryOutcome::NotAvailable
+            ));
         });
     }
 }
