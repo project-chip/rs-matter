@@ -54,7 +54,9 @@ use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::IMBuffer;
-use rs_matter::dm::{Async, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{
+    Async, AttrChangeNotifier, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, Node,
+};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -111,16 +113,15 @@ fn main() -> Result<(), Error> {
     let providers = Providers::new();
     futures_lite::future::block_on(providers.load_persist(&mut kv, kv_buf))?;
 
-    // The OTA Requestor's transient, reported update state.
-    let ota_state = OtaState::new();
+    // The OTA Requestor's transient, reported update state, for the cluster on
+    // endpoint 1 (see `NODE`). State changes are pushed to subscribers via the
+    // data model's change-notifier (the `DataModel`, passed to the OTA loop below).
+    let ota_state = OtaState::new(1);
 
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
     let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
 
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
-    // A second crypto instance owned by the OTA loop (it initiates its own CASE
-    // exchanges to the provider).
-    let ota_crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
 
     let rand = crypto.rand()?;
 
@@ -147,7 +148,9 @@ fn main() -> Result<(), Error> {
     let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
     // The application's OTA update loop, built from the cluster's building blocks.
-    let ota_job = pin!(run_ota(matter, ota_crypto, &providers, &ota_state));
+    // The OTA loop shares the same crypto by reference (`&T: Crypto`), initiating
+    // its own CASE exchanges to the provider.
+    let ota_job = pin!(run_ota(matter, &crypto, &providers, &ota_state, &dm));
 
     if !matter.is_commissioned() {
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
@@ -209,6 +212,7 @@ async fn run_ota(
     crypto: impl Crypto,
     providers: &Providers,
     ota_state: &OtaState,
+    notifier: &dyn AttrChangeNotifier,
 ) -> Result<(), Error> {
     loop {
         // React to provider-set changes (a `DefaultOTAProviders` write or an
@@ -227,7 +231,7 @@ async fn run_ota(
             };
             let Some(provider) = provider else { continue };
 
-            match try_update(matter, &crypto, &provider, ota_state).await {
+            match try_update(matter, &crypto, &provider, ota_state, notifier).await {
                 Ok(true) => info!("OTA: update applied"),
                 Ok(false) => {}
                 Err(e) => warn!("OTA: provider 0x{:016x} failed: {e:?}", provider.node_id),
@@ -246,10 +250,11 @@ async fn try_update(
     crypto: &impl Crypto,
     provider: &Provider,
     ota_state: &OtaState,
+    notifier: &dyn AttrChangeNotifier,
 ) -> Result<bool, Error> {
     // Report progress for the duration of this attempt; if we bail out (or error)
     // the session reverts the reported state to `Idle` on drop.
-    let update = ota_state.initiate_update();
+    let update = ota_state.initiate_update(notifier);
     update.querying();
 
     // Ask the provider. The closure inspects the response off the RX buffer and

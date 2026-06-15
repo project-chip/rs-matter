@@ -35,12 +35,12 @@ use core::num::NonZeroU8;
 
 use crate::crypto::Crypto;
 use crate::dm::{
-    ArrayAttributeRead, ArrayAttributeWrite, Cluster, Dataver, InvokeContext, ReadContext,
-    WriteContext,
+    ArrayAttributeRead, ArrayAttributeWrite, AttrChangeNotifier, Cluster, Dataver, InvokeContext,
+    ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
-use crate::im::{EndptId, NodeId};
+use crate::im::{AttrId, EndptId, NodeId};
 use crate::persist::{KvBlobStore, Persist, OTA_PROVIDERS_KEY};
 use crate::tlv::{FromTLV, Nullable, TLVArray, TLVBuilderParent, TLVElement, ToTLV};
 use crate::transport::exchange::Exchange;
@@ -379,7 +379,15 @@ impl Default for Providers {
 /// Held separately from [`Providers`] because it is transient runtime state, not
 /// configuration. The application reports progress through an [`OtaUpdate`]
 /// session obtained from [`initiate_update`](Self::initiate_update).
+///
+/// Because progress is reported from the application's own update loop (outside
+/// any cluster-handler `ctx`), the reporting calls take the data model's
+/// [`AttrChangeNotifier`] (typically the `DataModel`) so each change bumps the
+/// cluster's data version and wakes subscribers. It is passed in rather than
+/// stored because the `DataModel` is constructed *after* this state (it borrows
+/// it), so there is never a moment at which it could be stored here.
 pub struct OtaState {
+    endpoint_id: EndptId,
     reported: Mutex<RefCell<Reported>>,
 }
 
@@ -389,16 +397,13 @@ struct Reported {
     update_possible: bool,
 }
 
-impl Default for OtaState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl OtaState {
-    /// Create idle, update-possible state.
-    pub const fn new() -> Self {
+    /// Create idle, update-possible state for the endpoint hosting the OTA
+    /// Requestor cluster (the one whose [`OtaRequestorHandler`] reads this state),
+    /// so change notifications target the right cluster instance.
+    pub const fn new(endpoint_id: EndptId) -> Self {
         Self {
+            endpoint_id,
             reported: Mutex::new(RefCell::new(Reported {
                 update_state: UpdateStateEnum::Idle,
                 progress: None,
@@ -408,10 +413,12 @@ impl OtaState {
     }
 
     /// Set the `UpdatePossible` attribute (e.g. `false` when the battery is too
-    /// low to apply an update).
-    pub fn set_update_possible(&self, possible: bool) {
+    /// low to apply an update), notifying `notifier` of the change.
+    pub fn set_update_possible(&self, notifier: &dyn AttrChangeNotifier, possible: bool) {
         self.reported
             .lock(|cell| cell.borrow_mut().update_possible = possible);
+
+        self.notify(notifier, AttributeId::UpdatePossible as _);
     }
 
     fn update_state(&self) -> UpdateStateEnum {
@@ -426,12 +433,36 @@ impl OtaState {
         self.reported.lock(|cell| cell.borrow().update_possible)
     }
 
-    /// Begin an update session. The returned [`OtaUpdate`] reports progress; on
-    /// [`complete`](OtaUpdate::complete) - or if dropped without it - the reported
-    /// state returns to `Idle` (`UpdateStateEnum` has no dedicated failure value).
-    pub fn initiate_update(&self) -> OtaUpdate<'_> {
+    /// Update the reported `UpdateState`/`UpdateStateProgress` and notify.
+    fn report(
+        &self,
+        notifier: &dyn AttrChangeNotifier,
+        state: UpdateStateEnum,
+        progress: Option<u8>,
+    ) {
+        self.reported.lock(|cell| {
+            let mut reported = cell.borrow_mut();
+            reported.update_state = state;
+            reported.progress = progress;
+        });
+
+        self.notify(notifier, AttributeId::UpdateState as _);
+        self.notify(notifier, AttributeId::UpdateStateProgress as _);
+    }
+
+    /// Notify the data model that `attr_id` of this cluster instance changed.
+    fn notify(&self, notifier: &dyn AttrChangeNotifier, attr_id: AttrId) {
+        notifier.notify_attr_changed(self.endpoint_id, FULL_CLUSTER.id, attr_id);
+    }
+
+    /// Begin an update session, reporting changes through `notifier`. The returned
+    /// [`OtaUpdate`] reports progress; on [`complete`](OtaUpdate::complete) - or if
+    /// dropped without it - the reported state returns to `Idle` (`UpdateStateEnum`
+    /// has no dedicated failure value).
+    pub fn initiate_update<'a>(&'a self, notifier: &'a dyn AttrChangeNotifier) -> OtaUpdate<'a> {
         OtaUpdate {
             state: self,
+            notifier,
             done: false,
         }
     }
@@ -445,39 +476,38 @@ impl OtaState {
 /// stuck mid-transfer.
 pub struct OtaUpdate<'a> {
     state: &'a OtaState,
+    notifier: &'a dyn AttrChangeNotifier,
     done: bool,
 }
 
 impl OtaUpdate<'_> {
     /// Report `Querying`.
     pub fn querying(&self) {
-        self.report(UpdateStateEnum::Querying, None);
+        self.state
+            .report(self.notifier, UpdateStateEnum::Querying, None);
     }
 
     /// Report `Downloading` at the given percent (`None` if unknown).
     pub fn downloading(&self, percent: Option<u8>) {
-        self.report(UpdateStateEnum::Downloading, percent);
+        self.state
+            .report(self.notifier, UpdateStateEnum::Downloading, percent);
     }
 
     /// Report `Applying`.
     pub fn applying(&self) {
-        self.report(UpdateStateEnum::Applying, None);
+        self.state
+            .report(self.notifier, UpdateStateEnum::Applying, None);
     }
 
     /// Report an arbitrary `state` and `progress`.
     pub fn report(&self, state: UpdateStateEnum, progress: Option<u8>) {
-        self.state.reported.lock(|cell| {
-            let mut reported = cell.borrow_mut();
-            reported.update_state = state;
-            reported.progress = progress;
-        });
-        // TODO: notify subscribers of the attribute change. This needs a handle to
-        // the data model's change-notifier (the session has no handler `ctx`).
+        self.state.report(self.notifier, state, progress);
     }
 
     /// Finish the session, returning the reported state to `Idle`.
     pub fn complete(mut self) {
-        self.report(UpdateStateEnum::Idle, None);
+        self.state
+            .report(self.notifier, UpdateStateEnum::Idle, None);
         self.done = true;
     }
 }
@@ -486,7 +516,8 @@ impl Drop for OtaUpdate<'_> {
     fn drop(&mut self) {
         if !self.done {
             // Abandoned mid-update: revert to Idle.
-            self.report(UpdateStateEnum::Idle, None);
+            self.state
+                .report(self.notifier, UpdateStateEnum::Idle, None);
         }
     }
 }
