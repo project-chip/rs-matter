@@ -19,7 +19,7 @@
 //! transferring a multi-block image and asserting it arrives byte-for-byte:
 //!
 //! - the `serve`/`download` sink/source engine, and
-//! - the streaming `BdxReader`/`BdxWriter` (`pull`/`push` + `accept`).
+//! - the streaming `BdxReader`/`BdxWriter` (`download`/`upload` + `accept`).
 
 #![cfg(all(feature = "std", feature = "async-io"))]
 
@@ -33,8 +33,8 @@ use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
 
 use rs_matter::bdx::{
-    self, Bdx, BdxPull, BdxPullResponder, BdxPush, BdxPushResponder, BdxReader, BdxServer,
-    BdxWriter, ChainedBdxServer, EmptyBdxServer,
+    self, Bdx, BdxDownloadInitiator, BdxDownloadResponder, BdxReader, BdxServer,
+    BdxUploadInitiator, BdxUploadResponder, BdxWriter, ChainedBdxServer, EmptyBdxServer,
 };
 use rs_matter::error::Error;
 use rs_matter::respond::ExchangeHandler;
@@ -100,17 +100,17 @@ fn image_of(len: usize) -> Vec<u8> {
     (0..len).map(|i| (i % 251) as u8).collect()
 }
 
-/// Responder for the pull test: serves the next image (one per accepted
-/// exchange) via [`BdxPullResponder`], advertising a definite length.
-struct PullResponder<'a> {
+/// Responder for the download test: serves the next image (one per accepted
+/// exchange) via [`BdxDownloadResponder`], advertising a definite length.
+struct DownloadResponder<'a> {
     images: &'a [Vec<u8>],
     next: AtomicUsize,
 }
 
-impl ExchangeHandler for PullResponder<'_> {
+impl ExchangeHandler for DownloadResponder<'_> {
     async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
         let image = &self.images[self.next.fetch_add(1, Ordering::Relaxed)];
-        let responder = BdxPullResponder::accept(exchange).await?;
+        let responder = BdxDownloadResponder::accept(exchange).await?;
         assert_eq!(responder.fd(), FILE_DESIGNATOR);
         let mut wbuf = [0u8; 1024];
         let mut writer = responder.reply(&mut wbuf, Some(image.len() as u64)).await?;
@@ -119,17 +119,17 @@ impl ExchangeHandler for PullResponder<'_> {
     }
 }
 
-/// `pull`: the initiator drives as the Receiver (`BdxReader`), the responder
-/// follows as the Sender (`BdxPullResponder` -> `BdxWriter`). Exercises a driving
+/// `download`: the initiator drives as the Receiver (`BdxReader`), the responder
+/// follows as the Sender (`BdxDownloadResponder` -> `BdxWriter`). Exercises a driving
 /// reader and a following writer, across [`STREAM_SIZES`] back-to-back on one
 /// session.
 #[test]
-fn test_bdx_pull_streaming() {
+fn test_bdx_download_streaming() {
     init_env_logger();
 
     let runner = new_default_runner();
     let images: Vec<Vec<u8>> = STREAM_SIZES.iter().map(|&n| image_of(n)).collect();
-    let responder = PullResponder {
+    let responder = DownloadResponder {
         images: &images,
         next: AtomicUsize::new(0),
     };
@@ -138,9 +138,9 @@ fn test_bdx_pull_streaming() {
         select(runner.run_responder(responder), async {
             for image in &images {
                 let exchange = runner.initiate_exchange().await?;
-                let mut reader = exchange.pull(FILE_DESIGNATOR).await?;
+                let mut reader = exchange.download(FILE_DESIGNATOR).await?;
                 let received = with_timeout(read_all(&mut reader)).await?;
-                assert_eq!(&received, image, "pull size {}", image.len());
+                assert_eq!(&received, image, "download size {}", image.len());
             }
             Ok::<_, Error>(())
         })
@@ -150,36 +150,36 @@ fn test_bdx_pull_streaming() {
     });
 }
 
-/// Responder for the push test: reads the next image (one per accepted exchange)
-/// via [`BdxPushResponder`] and asserts it.
-struct PushResponder<'a> {
+/// Responder for the upload test: reads the next image (one per accepted exchange)
+/// via [`BdxUploadResponder`] and asserts it.
+struct UploadResponder<'a> {
     images: &'a [Vec<u8>],
     next: AtomicUsize,
 }
 
-impl ExchangeHandler for PushResponder<'_> {
+impl ExchangeHandler for UploadResponder<'_> {
     async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
         let image = &self.images[self.next.fetch_add(1, Ordering::Relaxed)];
-        let responder = BdxPushResponder::accept(exchange).await?;
+        let responder = BdxUploadResponder::accept(exchange).await?;
         assert_eq!(responder.fd(), FILE_DESIGNATOR);
         let mut reader = responder.reply().await?;
         let received = read_all(&mut reader).await?;
-        assert_eq!(&received, image, "push size {}", image.len());
+        assert_eq!(&received, image, "upload size {}", image.len());
         Ok(())
     }
 }
 
-/// `push`: the initiator drives as the Sender (`BdxWriter`), the responder
-/// follows as the Receiver (`BdxPushResponder` -> `BdxReader`). Exercises a
+/// `upload`: the initiator drives as the Sender (`BdxWriter`), the responder
+/// follows as the Receiver (`BdxUploadResponder` -> `BdxReader`). Exercises a
 /// driving writer and a following reader, across [`STREAM_SIZES`] back-to-back on
 /// one session.
 #[test]
-fn test_bdx_push_streaming() {
+fn test_bdx_upload_streaming() {
     init_env_logger();
 
     let runner = new_default_runner();
     let images: Vec<Vec<u8>> = STREAM_SIZES.iter().map(|&n| image_of(n)).collect();
-    let responder = PushResponder {
+    let responder = UploadResponder {
         images: &images,
         next: AtomicUsize::new(0),
     };
@@ -189,7 +189,7 @@ fn test_bdx_push_streaming() {
             for image in &images {
                 let exchange = runner.initiate_exchange().await?;
                 let mut wbuf = [0u8; 1024];
-                let mut writer = exchange.push(&mut wbuf, FILE_DESIGNATOR).await?;
+                let mut writer = exchange.upload(&mut wbuf, FILE_DESIGNATOR).await?;
                 with_timeout(async {
                     write_all(&mut writer, image).await?;
                     writer.finish().await
@@ -219,7 +219,7 @@ impl BdxServer for ImageServer {
         fd == SERVE_FD
     }
 
-    async fn serve(&self, responder: BdxPullResponder<'_>) -> Result<(), Error> {
+    async fn serve(&self, responder: BdxDownloadResponder<'_>) -> Result<(), Error> {
         let mut wbuf = [0u8; 512];
         let mut writer = responder
             .reply(&mut wbuf, Some(self.image.len() as u64))
@@ -240,7 +240,7 @@ impl BdxServer for LogSink {
         fd == PROCESS_FD
     }
 
-    async fn process(&self, responder: BdxPushResponder<'_>) -> Result<(), Error> {
+    async fn process(&self, responder: BdxUploadResponder<'_>) -> Result<(), Error> {
         let mut reader = responder.reply().await?;
         let received = read_all(&mut reader).await?;
         assert_eq!(received, self.expected, "processed upload mismatch");
@@ -279,14 +279,14 @@ fn test_bdx_server_routing() {
         select(runner.run_responder(bdx), async {
             // A download routes to the image server.
             let exchange = runner.initiate_exchange().await?;
-            let mut reader = exchange.pull(SERVE_FD).await?;
+            let mut reader = exchange.download(SERVE_FD).await?;
             let received = with_timeout(read_all(&mut reader)).await?;
             assert_eq!(received, download);
 
             // An upload routes to the log sink (which asserts the payload).
             let exchange = runner.initiate_exchange().await?;
             let mut wbuf = [0u8; 512];
-            let mut writer = exchange.push(&mut wbuf, PROCESS_FD).await?;
+            let mut writer = exchange.upload(&mut wbuf, PROCESS_FD).await?;
             with_timeout(async {
                 write_all(&mut writer, &upload).await?;
                 writer.finish().await
@@ -296,7 +296,7 @@ fn test_bdx_server_routing() {
             // An unknown designator is rejected by the chain terminator.
             let exchange = runner.initiate_exchange().await?;
             let result =
-                with_timeout(async { exchange.pull(b"unknown.bin").await.map(|_| ()) }).await;
+                with_timeout(async { exchange.download(b"unknown.bin").await.map(|_| ()) }).await;
             assert!(result.is_err(), "unknown file designator must be rejected");
 
             Ok::<_, Error>(())
@@ -332,10 +332,10 @@ impl ExchangeHandler for RejectInitHandler {
     }
 }
 
-/// `pull` must surface an error when the responder rejects the transfer with a
+/// `download` must surface an error when the responder rejects the transfer with a
 /// `StatusReport` during negotiation.
 #[test]
-fn test_bdx_pull_rejected_at_negotiation() {
+fn test_bdx_download_rejected_at_negotiation() {
     init_env_logger();
 
     let runner = new_default_runner();
@@ -344,8 +344,11 @@ fn test_bdx_pull_rejected_at_negotiation() {
         select(runner.run_responder(RejectInitHandler), async {
             let exchange = runner.initiate_exchange().await?;
             let result =
-                with_timeout(async { exchange.pull(FILE_DESIGNATOR).await.map(|_| ()) }).await;
-            assert!(result.is_err(), "pull must fail when the peer rejects it");
+                with_timeout(async { exchange.download(FILE_DESIGNATOR).await.map(|_| ()) }).await;
+            assert!(
+                result.is_err(),
+                "download must fail when the peer rejects it"
+            );
             Ok::<_, Error>(())
         })
         .coalesce()
@@ -354,7 +357,7 @@ fn test_bdx_pull_rejected_at_negotiation() {
     });
 }
 
-/// A responder that accepts a pull, sends one block, then aborts mid-stream with
+/// A responder that accepts a download, sends one block, then aborts mid-stream with
 /// a `StatusReport` instead of the next block.
 struct AbortMidStreamHandler;
 
@@ -413,7 +416,7 @@ fn test_bdx_read_aborted_mid_stream() {
     futures_lite::future::block_on(async {
         select(runner.run_responder(AbortMidStreamHandler), async {
             let exchange = runner.initiate_exchange().await?;
-            let mut reader = exchange.pull(FILE_DESIGNATOR).await?;
+            let mut reader = exchange.download(FILE_DESIGNATOR).await?;
 
             with_timeout(async {
                 let mut buf = [0u8; 64];

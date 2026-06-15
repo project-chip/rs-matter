@@ -29,7 +29,7 @@
 //! - [`OtaState`] holds the reported update state; [`OtaState::initiate_update`]
 //!   is an RAII session the app uses to report progress.
 //! - [`parse_bdx_url`] turns a `bdx://` image URI into a `(node, file-designator)`
-//!   pair for a BDX download via [`Exchange::pull`](crate::bdx::BdxPull::pull).
+//!   pair for a BDX download via [`Exchange::download`](crate::bdx::BdxDownloadInitiator::download).
 
 use core::num::NonZeroU8;
 
@@ -87,7 +87,7 @@ impl Provider {
     ///
     /// `query` does not interpret the response (it checks neither `status` nor the
     /// returned version); that is left to `f`. On a `bdx://` `image_uri`, use
-    /// [`parse_bdx_url`] + [`Exchange::pull`](crate::bdx::BdxPull::pull) to fetch.
+    /// [`parse_bdx_url`] + [`Exchange::download`](crate::bdx::BdxDownloadInitiator::download) to fetch.
     pub async fn query<C, F, R>(
         &self,
         matter: &Matter<'_>,

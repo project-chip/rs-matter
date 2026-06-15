@@ -16,16 +16,16 @@
  */
 
 //! The *send* side of the BDX streaming engine: the [`BdxWriter`] handle and the
-//! two ways to obtain one - [`BdxPush`] (initiate an upload) and
-//! [`BdxPullResponder`] (respond to a peer's download).
+//! two ways to obtain one - [`BdxUploadInitiator`] (initiate an upload) and
+//! [`BdxDownloadResponder`] (respond to a peer's download).
 
 use super::nego::*;
 use super::*;
 
 /// A writer over a BDX transfer - the Sender side.
 ///
-/// Obtained from [`Exchange::push`](BdxPush::push) on the initiating side, or
-/// from [`BdxPullResponder::reply`] on the responding side. [`write`](Self::write)
+/// Obtained from [`Exchange::upload`](BdxUploadInitiator::upload) on the initiating side, or
+/// from [`BdxDownloadResponder::reply`] on the responding side. [`write`](Self::write)
 /// stages and sends the data, driving the protocol as needed;
 /// [`finish`](Self::finish) flushes the final block and completes the transfer.
 /// It also implements [`embedded_io_async::Write`] (delegating to the inherent
@@ -201,21 +201,21 @@ impl embedded_io_async::Write for BdxWriter<'_, '_> {
     }
 }
 
-/// An extension trait for initiating a BDX *upload*: `push` makes this node the
+/// An extension trait for initiating a BDX *upload*: `upload` makes this node the
 /// (typically driving) Sender and returns a [`BdxWriter`].
-pub trait BdxPush<'a> {
+pub trait BdxUploadInitiator<'a> {
     /// Initiate a BDX upload of `file_designator`, negotiate the transfer, and
     /// return a writer ready to stream the data. `buf` is the (non-empty) staging
     /// buffer the writer assembles blocks in; its length bounds the block size.
-    async fn push<'b>(
+    async fn upload<'b>(
         self,
         buf: &'b mut [u8],
         file_designator: &[u8],
     ) -> Result<BdxWriter<'a, 'b>, Error>;
 }
 
-impl<'a> BdxPush<'a> for Exchange<'a> {
-    async fn push<'b>(
+impl<'a> BdxUploadInitiator<'a> for Exchange<'a> {
+    async fn upload<'b>(
         mut self,
         buf: &'b mut [u8],
         file_designator: &[u8],
@@ -239,17 +239,17 @@ impl<'a> BdxPush<'a> for Exchange<'a> {
     }
 }
 
-/// The responding side of a [`pull`](super::BdxPull::pull): a peer requested a
+/// The responding side of a [`download`](super::BdxDownloadInitiator::download): a peer requested a
 /// download (sent a `ReceiveInit`), so this node becomes the Sender. Inspect the
 /// request via [`fd`](Self::fd), then [`reply`](Self::reply) to obtain a
 /// [`BdxWriter`], or [`reject`](Self::reject) it.
-pub struct BdxPullResponder<'a> {
+pub struct BdxDownloadResponder<'a> {
     exchange: Exchange<'a>,
     transfer_control: TransferControl,
     max_block_size: u16,
 }
 
-impl<'a> BdxPullResponder<'a> {
+impl<'a> BdxDownloadResponder<'a> {
     /// Receive the incoming `ReceiveInit` on `exchange`, holding it until
     /// [`reply`](Self::reply)/[`reject`](Self::reject).
     pub async fn accept(mut exchange: Exchange<'a>) -> Result<Self, Error> {

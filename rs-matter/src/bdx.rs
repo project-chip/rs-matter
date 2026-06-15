@@ -25,8 +25,8 @@
 //! It provides the wire codec (the protocol id, opcodes, status codes, the
 //! `TransferControl`/`RangeControl` flag fields, and the message types with
 //! binary parse/encode) and a synchronous streaming engine on top of it: the
-//! [`BdxPull`]/[`BdxPush`] initiator traits and the
-//! [`BdxPullResponder`]/[`BdxPushResponder`] responders, which yield
+//! [`BdxDownloadInitiator`]/[`BdxUploadInitiator`] initiator traits and the
+//! [`BdxDownloadResponder`]/[`BdxUploadResponder`] responders, which yield
 //! [`BdxReader`]/[`BdxWriter`] byte-stream handles.
 //!
 //! All multi-byte integers are little-endian (as per the Matter Core spec).
@@ -534,8 +534,8 @@ pub(crate) fn opcode(meta: &MessageMeta) -> Option<OpCode> {
 // Shared streaming primitives (block size + drive mode) used by both the `read`
 // and `write` submodules. The negotiation/framing helpers live in `nego`, and
 // the byte-stream handles in `read`/`write`:
-// `BdxReader`/`BdxPull`/`BdxPushResponder` in `read`, and
-// `BdxWriter`/`BdxPush`/`BdxPullResponder` in `write`.
+// `BdxReader`/`BdxDownloadInitiator`/`BdxUploadResponder` in `read`, and
+// `BdxWriter`/`BdxUploadInitiator`/`BdxDownloadResponder` in `write`.
 // ===========================================================================
 
 /// The number of header bytes preceding a block's data (the 32-bit block counter).

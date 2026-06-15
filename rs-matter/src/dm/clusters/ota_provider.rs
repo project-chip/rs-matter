@@ -31,7 +31,7 @@
 use core::fmt::Write as _;
 use core::num::NonZeroU8;
 
-use crate::bdx::{BdxPullResponder, BdxServer, BdxStatus};
+use crate::bdx::{BdxDownloadResponder, BdxServer, BdxStatus};
 use crate::dm::{Cluster, Dataver, InvokeContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{Octets, TLVBuilderParent};
@@ -275,7 +275,7 @@ impl<I: OtaImages> BdxServer for OtaBdxServer<I> {
         self.images.size(fd).await.is_some()
     }
 
-    async fn serve(&self, responder: BdxPullResponder<'_>) -> Result<(), Error> {
+    async fn serve(&self, responder: BdxDownloadResponder<'_>) -> Result<(), Error> {
         // Copy the requested designator out (the held init is released by
         // `reply`/`reject`), and reject anything we don't have.
         let mut fd = heapless::Vec::<u8, MAX_FILE_DESIGNATOR>::new();

@@ -47,9 +47,9 @@ pub trait BdxServer {
 
     /// Serve a download: a peer sent a `ReceiveInit` for a designator this server
     /// [`serves`](Self::serves), so this node is the Sender. Use `responder` to
-    /// [`reply`](BdxPullResponder::reply) (then stream via the returned
-    /// [`BdxWriter`]) or [`reject`](BdxPullResponder::reject) it.
-    async fn serve(&self, responder: BdxPullResponder<'_>) -> Result<(), Error> {
+    /// [`reply`](BdxDownloadResponder::reply) (then stream via the returned
+    /// [`BdxWriter`]) or [`reject`](BdxDownloadResponder::reject) it.
+    async fn serve(&self, responder: BdxDownloadResponder<'_>) -> Result<(), Error> {
         responder.reject(BdxStatus::FileDesignatorUnknown).await
     }
 
@@ -61,9 +61,9 @@ pub trait BdxServer {
 
     /// Process an upload: a peer sent a `SendInit` for a designator this server
     /// [`processes`](Self::processes), so this node is the Receiver. Use
-    /// `responder` to [`reply`](BdxPushResponder::reply) (then drain the returned
-    /// [`BdxReader`]) or [`reject`](BdxPushResponder::reject) it.
-    async fn process(&self, responder: BdxPushResponder<'_>) -> Result<(), Error> {
+    /// `responder` to [`reply`](BdxUploadResponder::reply) (then drain the returned
+    /// [`BdxReader`]) or [`reject`](BdxUploadResponder::reject) it.
+    async fn process(&self, responder: BdxUploadResponder<'_>) -> Result<(), Error> {
         responder.reject(BdxStatus::FileDesignatorUnknown).await
     }
 }
@@ -79,7 +79,7 @@ where
         T::serves(self, fd).await
     }
 
-    async fn serve(&self, responder: BdxPullResponder<'_>) -> Result<(), Error> {
+    async fn serve(&self, responder: BdxDownloadResponder<'_>) -> Result<(), Error> {
         T::serve(self, responder).await
     }
 
@@ -87,7 +87,7 @@ where
         T::processes(self, fd).await
     }
 
-    async fn process(&self, responder: BdxPushResponder<'_>) -> Result<(), Error> {
+    async fn process(&self, responder: BdxUploadResponder<'_>) -> Result<(), Error> {
         T::process(self, responder).await
     }
 }
@@ -125,7 +125,7 @@ where
         self.handler.serves(fd).await || self.next.serves(fd).await
     }
 
-    async fn serve(&self, responder: BdxPullResponder<'_>) -> Result<(), Error> {
+    async fn serve(&self, responder: BdxDownloadResponder<'_>) -> Result<(), Error> {
         if self.handler.serves(responder.fd()).await {
             self.handler.serve(responder).await
         } else {
@@ -137,7 +137,7 @@ where
         self.handler.processes(fd).await || self.next.processes(fd).await
     }
 
-    async fn process(&self, responder: BdxPushResponder<'_>) -> Result<(), Error> {
+    async fn process(&self, responder: BdxUploadResponder<'_>) -> Result<(), Error> {
         if self.handler.processes(responder.fd()).await {
             self.handler.process(responder).await
         } else {
@@ -193,7 +193,7 @@ impl<T: BdxServer> ExchangeHandler for Bdx<T> {
         match opcode(&meta) {
             // A peer wants to download a file from us: we are the Sender.
             Some(OpCode::ReceiveInit) => {
-                let responder = BdxPullResponder::accept(exchange).await?;
+                let responder = BdxDownloadResponder::accept(exchange).await?;
 
                 if self.0.serves(responder.fd()).await {
                     self.0.serve(responder).await
@@ -203,7 +203,7 @@ impl<T: BdxServer> ExchangeHandler for Bdx<T> {
             }
             // A peer wants to upload a file to us: we are the Receiver.
             Some(OpCode::SendInit) => {
-                let responder = BdxPushResponder::accept(exchange).await?;
+                let responder = BdxUploadResponder::accept(exchange).await?;
 
                 if self.0.processes(responder.fd()).await {
                     self.0.process(responder).await

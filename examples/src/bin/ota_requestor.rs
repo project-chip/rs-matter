@@ -21,7 +21,7 @@
 //! `DefaultOTAProviders` list or send `AnnounceOTAProvider`) and runs an
 //! application-defined update loop built from the cluster's building blocks:
 //! [`Providers::wait_changed`] to react to changes, [`Provider::query`] to ask a
-//! provider for an update, [`parse_bdx_url`] + [`Exchange::pull`] to download it
+//! provider for an update, [`parse_bdx_url`] + [`Exchange::download`] to download it
 //! over BDX, and [`OtaState`] to report progress.
 //!
 //! The image handling is stubbed out (the downloaded bytes are just counted). A
@@ -38,7 +38,7 @@ use log::{info, warn};
 
 use rand::RngCore;
 
-use rs_matter::bdx::BdxPull;
+use rs_matter::bdx::BdxDownloadInitiator;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::SharedNetworks;
@@ -288,7 +288,7 @@ async fn try_update(
 
     // Download the image over BDX from the node named in the URL.
     let exchange = Exchange::initiate(matter, crypto, provider.fab_idx, node_id).await?;
-    let mut reader = exchange.pull(fd.as_bytes()).await?;
+    let mut reader = exchange.download(fd.as_bytes()).await?;
 
     let total = reader.len();
     let mut received = 0u64;

@@ -16,16 +16,16 @@
  */
 
 //! The *receive* side of the BDX streaming engine: the [`BdxReader`] handle and
-//! the two ways to obtain one - [`BdxPull`] (initiate a download) and
-//! [`BdxPushResponder`] (respond to a peer's upload).
+//! the two ways to obtain one - [`BdxDownloadInitiator`] (initiate a download) and
+//! [`BdxUploadResponder`] (respond to a peer's upload).
 
 use super::nego::*;
 use super::*;
 
 /// A reader over a BDX transfer - the Receiver side.
 ///
-/// Obtained from [`Exchange::pull`](BdxPull::pull) on the initiating side, or
-/// from [`BdxPushResponder::reply`] on the responding side. [`read`](Self::read)
+/// Obtained from [`Exchange::download`](BdxDownloadInitiator::download) on the initiating side, or
+/// from [`BdxUploadResponder::reply`] on the responding side. [`read`](Self::read)
 /// drives the protocol as needed and copies the next bytes of the transfer into
 /// the caller's buffer, returning `0` at the end of the transfer. It also
 /// implements [`embedded_io_async::Read`] (delegating to the inherent method).
@@ -222,16 +222,16 @@ impl embedded_io_async::Read for BdxReader<'_> {
     }
 }
 
-/// An extension trait for initiating a BDX *download*: `pull` makes this node the
+/// An extension trait for initiating a BDX *download*: `download` makes this node the
 /// (typically driving) Receiver and returns a [`BdxReader`].
-pub trait BdxPull<'a> {
+pub trait BdxDownloadInitiator<'a> {
     /// Initiate a BDX download of `file_designator`, negotiate the transfer, and
     /// return a reader positioned at the start of the data.
-    async fn pull(self, file_designator: &[u8]) -> Result<BdxReader<'a>, Error>;
+    async fn download(self, file_designator: &[u8]) -> Result<BdxReader<'a>, Error>;
 }
 
-impl<'a> BdxPull<'a> for Exchange<'a> {
-    async fn pull(mut self, file_designator: &[u8]) -> Result<BdxReader<'a>, Error> {
+impl<'a> BdxDownloadInitiator<'a> for Exchange<'a> {
+    async fn download(mut self, file_designator: &[u8]) -> Result<BdxReader<'a>, Error> {
         // We stream blocks straight out of the exchange RX buffer, so we propose
         // the largest block that buffer can hold.
         send_init(
@@ -257,18 +257,18 @@ impl<'a> BdxPull<'a> for Exchange<'a> {
     }
 }
 
-/// The responding side of a [`push`](super::BdxPush::push): a peer requested an
+/// The responding side of a [`upload`](super::BdxUploadInitiator::upload): a peer requested an
 /// upload (sent a `SendInit`), so this node becomes the Receiver. Inspect the
 /// request via [`fd`](Self::fd)/[`len`](Self::len), then [`reply`](Self::reply)
 /// to obtain a [`BdxReader`], or [`reject`](Self::reject) it.
-pub struct BdxPushResponder<'a> {
+pub struct BdxUploadResponder<'a> {
     exchange: Exchange<'a>,
     transfer_control: TransferControl,
     max_block_size: u16,
     length: Option<u64>,
 }
 
-impl<'a> BdxPushResponder<'a> {
+impl<'a> BdxUploadResponder<'a> {
     /// Receive the incoming `SendInit` on `exchange`, holding it until
     /// [`reply`](Self::reply)/[`reject`](Self::reject).
     pub async fn accept(mut exchange: Exchange<'a>) -> Result<Self, Error> {
