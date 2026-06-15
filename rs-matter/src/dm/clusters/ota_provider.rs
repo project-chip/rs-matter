@@ -15,23 +15,23 @@
  *    limitations under the License.
  */
 
-//! The OTA Software Update Provider cluster, plus a BDX server that streams the
+//! The OTA Software Update Provider cluster, plus a BDX handler that streams the
 //! offered image to requestors.
 //!
 //! The node hosts the OTA Provider cluster (server role): it answers
 //! `QueryImage` with the location of a newer image (a `bdx://` URI), authorizes
 //! the apply via `ApplyUpdateRequest`, and notes completion via
 //! `NotifyUpdateApplied`. The image bytes are served over BDX by
-//! [`OtaBdxServer`], a [`BdxServer`] that the application wraps in a
+//! [`OtaBdxHandler`], a [`BdxHandler`] that the application wraps in a
 //! [`Bdx`](crate::bdx::Bdx) handler and chains into its responder for the BDX
 //! protocol. The two delegate to separate user-supplied sources - the cluster
-//! handler to an [`OtaImagesRegistry`] (which image to offer), the BDX server to
+//! handler to an [`OtaImagesRegistry`] (which image to offer), the BDX handler to
 //! an [`OtaImages`] (the image bytes) - so either can be used on its own.
 
 use core::fmt::Write as _;
 use core::num::NonZeroU8;
 
-use crate::bdx::{BdxDownloadResponder, BdxServer, BdxStatus};
+use crate::bdx::{BdxHandler, BdxResponder, BdxStatus};
 use crate::dm::{Cluster, Dataver, InvokeContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{Octets, TLVBuilderParent};
@@ -97,7 +97,7 @@ where
 }
 
 /// The image bytes behind a BDX file designator: looked up and streamed during a
-/// download. Used by [`OtaBdxServer`].
+/// download. Used by [`OtaBdxHandler`].
 pub trait OtaImages {
     /// The total size of the image identified by `file_designator`. `None` means
     /// the designator is unknown and the BDX transfer is rejected
@@ -242,7 +242,7 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
     }
 }
 
-/// A [`BdxServer`] that serves OTA images. Wrap it in a [`Bdx`](crate::bdx::Bdx)
+/// A [`BdxHandler`] that serves OTA images. Wrap it in a [`Bdx`](crate::bdx::Bdx)
 /// handler and chain that into your responder for the BDX protocol, so requestors
 /// can download the image advertised by the OTA Provider cluster's `QueryImage`
 /// response.
@@ -255,27 +255,35 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
 /// use rs_matter::bdx::{Bdx, PROTO_ID_BDX};
 /// use rs_matter::respond::Responder;
 ///
-/// let bdx = Bdx::new(OtaBdxServer::new(&images));
+/// let bdx = Bdx::new(OtaBdxHandler::new(&images));
 /// let handler = im_and_sc_handler.chain(PROTO_ID_BDX, bdx);
 /// let responder = Responder::new("ota-provider", handler, matter, 0);
 /// ```
-pub struct OtaBdxServer<I> {
+pub struct OtaBdxHandler<I> {
     images: I,
 }
 
-impl<I> OtaBdxServer<I> {
-    /// Create a new BDX image server backed by the given image data source.
+impl<I> OtaBdxHandler<I> {
+    /// Create a new BDX image handler backed by the given image data source.
     pub const fn new(images: I) -> Self {
         Self { images }
     }
 }
 
-impl<I: OtaImages> BdxServer for OtaBdxServer<I> {
-    async fn serves(&self, fd: &[u8]) -> bool {
-        self.images.size(fd).await.is_some()
+impl<I: OtaImages> BdxHandler for OtaBdxHandler<I> {
+    async fn handles(&self, responder: &BdxResponder<'_>) -> bool {
+        // We only serve downloads, and only of images we actually have.
+        matches!(responder, BdxResponder::Download(_))
+            && self.images.size(responder.fd()).await.is_some()
     }
 
-    async fn serve(&self, responder: BdxDownloadResponder<'_>) -> Result<(), Error> {
+    async fn handle(&self, responder: BdxResponder<'_>) -> Result<(), Error> {
+        // We only handle downloads; anything else is rejected.
+        let responder = match responder {
+            BdxResponder::Download(responder) => responder,
+            other => return other.reject(BdxStatus::FileDesignatorUnknown).await,
+        };
+
         // Copy the requested designator out (the held init is released by
         // `reply`/`reject`), and reject anything we don't have.
         let mut fd = heapless::Vec::<u8, MAX_FILE_DESIGNATOR>::new();

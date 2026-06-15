@@ -40,13 +40,13 @@ use crate::transport::exchange::{Exchange, MessageMeta};
 use crate::transport::{MAX_RX_PAYLOAD_SIZE, MAX_TX_PAYLOAD_SIZE};
 use crate::utils::storage::{ReadBuf, WriteBuf};
 
+mod handler;
 mod nego;
 mod read;
-mod server;
 mod write;
 
+pub use handler::*;
 pub use read::*;
-pub use server::*;
 pub use write::*;
 
 /// The Matter protocol id for BDX.

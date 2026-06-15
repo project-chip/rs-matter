@@ -89,11 +89,11 @@ where
 /// A DCL-backed OTA image source, over a pluggable [`OtaHttp`] client.
 ///
 /// Implements both [`OtaImagesRegistry`] (for an [`OtaProviderHandler`]) and
-/// [`OtaImages`] (for an [`OtaBdxServer`]). All large working buffers are
+/// [`OtaImages`] (for an [`OtaBdxHandler`]). All large working buffers are
 /// caller-injected via [`new`](Self::new).
 ///
 /// [`OtaProviderHandler`]: super::OtaProviderHandler
-/// [`OtaBdxServer`]: super::OtaBdxServer
+/// [`OtaBdxHandler`]: super::OtaBdxHandler
 pub struct DclImages<'a, H> {
     http: H,
     base_url: &'a str,

@@ -33,8 +33,8 @@ use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
 
 use rs_matter::bdx::{
-    self, Bdx, BdxDownloadInitiator, BdxDownloadResponder, BdxReader, BdxServer,
-    BdxUploadInitiator, BdxUploadResponder, BdxWriter, ChainedBdxServer, EmptyBdxServer,
+    self, Bdx, BdxDownloadInitiator, BdxDownloadResponder, BdxHandler, BdxReader, BdxResponder,
+    BdxUploadInitiator, BdxUploadResponder, BdxWriter, ChainedBdxHandler, EmptyBdxHandler,
 };
 use rs_matter::error::Error;
 use rs_matter::respond::ExchangeHandler;
@@ -204,22 +204,27 @@ fn test_bdx_upload_streaming() {
     });
 }
 
-// ---- Server routing (`Bdx` / `BdxServer`) ----
+// ---- Handler routing (`Bdx` / `BdxHandler`) ----
 
 const SERVE_FD: &[u8] = b"download.img";
 const PROCESS_FD: &[u8] = b"upload.log";
 
-/// A [`BdxServer`] that *serves* (sends) a single image on [`SERVE_FD`].
+/// A [`BdxHandler`] that *serves* (sends) a single image on [`SERVE_FD`].
 struct ImageServer {
     image: Vec<u8>,
 }
 
-impl BdxServer for ImageServer {
-    async fn serves(&self, fd: &[u8]) -> bool {
-        fd == SERVE_FD
+impl BdxHandler for ImageServer {
+    async fn handles(&self, responder: &BdxResponder<'_>) -> bool {
+        matches!(responder, BdxResponder::Download(_)) && responder.fd() == SERVE_FD
     }
 
-    async fn serve(&self, responder: BdxDownloadResponder<'_>) -> Result<(), Error> {
+    async fn handle(&self, responder: BdxResponder<'_>) -> Result<(), Error> {
+        let responder = match responder {
+            BdxResponder::Download(responder) => responder,
+            other => return other.reject(bdx::BdxStatus::FileDesignatorUnknown).await,
+        };
+
         let mut wbuf = [0u8; 512];
         let mut writer = responder
             .reply(&mut wbuf, Some(self.image.len() as u64))
@@ -229,18 +234,23 @@ impl BdxServer for ImageServer {
     }
 }
 
-/// A [`BdxServer`] that *processes* (receives) a single upload on [`PROCESS_FD`],
+/// A [`BdxHandler`] that *processes* (receives) a single upload on [`PROCESS_FD`],
 /// asserting the bytes it receives.
 struct LogSink {
     expected: Vec<u8>,
 }
 
-impl BdxServer for LogSink {
-    async fn processes(&self, fd: &[u8]) -> bool {
-        fd == PROCESS_FD
+impl BdxHandler for LogSink {
+    async fn handles(&self, responder: &BdxResponder<'_>) -> bool {
+        matches!(responder, BdxResponder::Upload(_)) && responder.fd() == PROCESS_FD
     }
 
-    async fn process(&self, responder: BdxUploadResponder<'_>) -> Result<(), Error> {
+    async fn handle(&self, responder: BdxResponder<'_>) -> Result<(), Error> {
+        let responder = match responder {
+            BdxResponder::Upload(responder) => responder,
+            other => return other.reject(bdx::BdxStatus::FileDesignatorUnknown).await,
+        };
+
         let mut reader = responder.reply().await?;
         let received = read_all(&mut reader).await?;
         assert_eq!(received, self.expected, "processed upload mismatch");
@@ -262,18 +272,18 @@ fn test_bdx_server_routing() {
     let download = image_of(2500);
     let upload = image_of(1500);
 
-    let server = ChainedBdxServer::new(
+    let handler = ChainedBdxHandler::new(
         ImageServer {
             image: download.clone(),
         },
-        ChainedBdxServer::new(
+        ChainedBdxHandler::new(
             LogSink {
                 expected: upload.clone(),
             },
-            EmptyBdxServer,
+            EmptyBdxHandler,
         ),
     );
-    let bdx = Bdx::new(server);
+    let bdx = Bdx::new(handler);
 
     futures_lite::future::block_on(async {
         select(runner.run_responder(bdx), async {
