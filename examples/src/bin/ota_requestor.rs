@@ -311,7 +311,7 @@ async fn try_update(
 
     // Download the image over BDX from the node named in the URL.
     let exchange = Exchange::initiate(matter, crypto, provider.fab_idx, node_id).await?;
-    let mut reader = exchange.download(fd.as_bytes()).await?;
+    let mut reader = exchange.download(fd.as_bytes(), None).await?;
 
     let total = reader.len();
     let mut received = 0u64;

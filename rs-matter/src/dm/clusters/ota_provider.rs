@@ -484,6 +484,14 @@ where
             return responder.reject(BdxStatus::FileDesignatorUnknown).await;
         };
 
+        // Honor a requested resume offset: send from there, advertising only the
+        // remaining bytes. An offset past the end cannot be served.
+        let start_offset = responder.start_offset();
+        if start_offset > size {
+            return responder.reject(BdxStatus::StartOffsetNotSupported).await;
+        }
+        let remaining = size - start_offset;
+
         // Lease a staging buffer for the duration of this transfer; if the pool is
         // exhausted, tell the peer we are busy so it can retry later.
         let Some(mut buf) = self.buffers.get().await else {
@@ -496,9 +504,9 @@ where
 
         // Hand it to the writer, which sends each block straight out of it - the
         // image bytes are read directly into the writer's block buffer, no copy.
-        let mut writer = responder.reply(buf.as_mut_slice(), Some(size)).await?;
+        let mut writer = responder.reply(buf.as_mut_slice(), Some(remaining)).await?;
 
-        let mut offset = 0u64;
+        let mut offset = start_offset;
 
         loop {
             let n = self.fill(&fd, offset, writer.block_buf()).await?;

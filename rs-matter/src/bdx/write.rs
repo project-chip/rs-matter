@@ -232,10 +232,17 @@ pub trait BdxUploadInitiator<'a> {
     /// Initiate a BDX upload of `file_designator`, negotiate the transfer, and
     /// return a writer ready to stream the data. `buf` is the (non-empty) staging
     /// buffer the writer assembles blocks in; its length bounds the block size.
+    ///
+    /// `offset` (when `Some` and non-zero) declares that the data written to the
+    /// returned writer begins at that byte offset of the file - e.g. to resume an
+    /// interrupted upload. The receiver may refuse with
+    /// [`StartOffsetNotSupported`](BdxStatus::StartOffsetNotSupported); otherwise
+    /// the caller is responsible for feeding only the bytes from `offset` onward.
     async fn upload<'b>(
         self,
         buf: &'b mut [u8],
         file_designator: &[u8],
+        offset: Option<u64>,
     ) -> Result<BdxWriter<'a, 'b>, Error>;
 }
 
@@ -244,10 +251,11 @@ impl<'a> BdxUploadInitiator<'a> for Exchange<'a> {
         mut self,
         buf: &'b mut [u8],
         file_designator: &[u8],
+        offset: Option<u64>,
     ) -> Result<BdxWriter<'a, 'b>, Error> {
         // We can never send a block larger than our staging buffer or our TX buffer.
         let pmbs = buf.len().min(MAX_TX_BLOCK_SIZE as usize) as u16;
-        send_init(&mut self, OpCode::SendInit, pmbs, file_designator).await?;
+        send_init(&mut self, OpCode::SendInit, pmbs, offset, file_designator).await?;
 
         match recv_accept(&mut self, false).await? {
             // We are the sender: we drive iff sender-drive was selected.
@@ -272,25 +280,36 @@ pub struct BdxDownloadResponder<'a> {
     exchange: Exchange<'a>,
     transfer_control: TransferControl,
     max_block_size: u16,
+    start_offset: u64,
 }
 
 impl<'a> BdxDownloadResponder<'a> {
     /// Receive the incoming `ReceiveInit` on `exchange`, holding it until
     /// [`reply`](Self::reply)/[`reject`](Self::reject).
     pub async fn accept(mut exchange: Exchange<'a>) -> Result<Self, Error> {
-        let (transfer_control, max_block_size, _length) =
+        let (transfer_control, max_block_size, _length, start_offset) =
             recv_init_hold(&mut exchange, OpCode::ReceiveInit).await?;
 
         Ok(Self {
             exchange,
             transfer_control,
             max_block_size,
+            start_offset,
         })
     }
 
     /// The file designator the initiator requested (borrowed from the held init).
     pub fn fd(&self) -> &[u8] {
         held_fd(&self.exchange)
+    }
+
+    /// The byte offset of the file from which the initiator asked the transfer to
+    /// begin (`0` for a transfer from the start): the sender should start sending
+    /// from here, and advertise the *remaining* length in [`reply`](Self::reply).
+    /// Reject with [`StartOffsetNotSupported`](BdxStatus::StartOffsetNotSupported)
+    /// if the offset cannot be honored.
+    pub fn start_offset(&self) -> u64 {
+        self.start_offset
     }
 
     /// Accept the transfer and start sending, staging blocks in the (non-empty)

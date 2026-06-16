@@ -138,10 +138,102 @@ fn test_bdx_download_streaming() {
         select(runner.run_responder(responder), async {
             for image in &images {
                 let exchange = runner.initiate_exchange().await?;
-                let mut reader = exchange.download(FILE_DESIGNATOR).await?;
+                let mut reader = exchange.download(FILE_DESIGNATOR, None).await?;
                 let received = with_timeout(read_all(&mut reader)).await?;
                 assert_eq!(&received, image, "download size {}", image.len());
             }
+            Ok::<_, Error>(())
+        })
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+/// Responder that honors a requested start offset: serves `image[start_offset..]`,
+/// advertising only the remaining bytes.
+struct OffsetDownloadResponder<'a> {
+    image: &'a [u8],
+}
+
+impl ExchangeHandler for OffsetDownloadResponder<'_> {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let responder = BdxDownloadResponder::accept(exchange).await?;
+        let tail = &self.image[responder.start_offset() as usize..];
+        let mut wbuf = [0u8; 1024];
+        let mut writer = responder.reply(&mut wbuf, Some(tail.len() as u64)).await?;
+        write_all(&mut writer, tail).await?;
+        writer.finish().await
+    }
+}
+
+/// `download` with a non-zero start offset: the initiator asks to resume from a
+/// byte offset, the responder serves the tail and advertises the remaining length.
+#[test]
+fn test_bdx_download_with_offset() {
+    init_env_logger();
+
+    let runner = new_default_runner();
+    let image = image_of(5000);
+    let offset = 1234u64;
+    let responder = OffsetDownloadResponder { image: &image };
+
+    futures_lite::future::block_on(async {
+        select(runner.run_responder(responder), async {
+            let exchange = runner.initiate_exchange().await?;
+            let mut reader = exchange.download(FILE_DESIGNATOR, Some(offset)).await?;
+            // The advertised length is the remaining bytes from the offset.
+            assert_eq!(reader.len(), Some(image.len() as u64 - offset));
+            let received = with_timeout(read_all(&mut reader)).await?;
+            assert_eq!(&received, &image[offset as usize..]);
+            Ok::<_, Error>(())
+        })
+        .coalesce()
+        .await
+        .unwrap();
+    });
+}
+
+/// Responder that asserts the upload's declared start offset and reads the tail.
+struct OffsetUploadResponder<'a> {
+    image: &'a [u8],
+    offset: u64,
+}
+
+impl ExchangeHandler for OffsetUploadResponder<'_> {
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        let responder = BdxUploadResponder::accept(exchange).await?;
+        assert_eq!(responder.start_offset(), self.offset);
+        let mut reader = responder.reply().await?;
+        let received = read_all(&mut reader).await?;
+        assert_eq!(&received, &self.image[self.offset as usize..]);
+        Ok(())
+    }
+}
+
+/// `upload` with a non-zero start offset: the initiator declares it is resuming
+/// from a byte offset and streams the tail; the responder sees the offset.
+#[test]
+fn test_bdx_upload_with_offset() {
+    init_env_logger();
+
+    let runner = new_default_runner();
+    let image = image_of(5000);
+    let offset = 1234u64;
+    let responder = OffsetUploadResponder {
+        image: &image,
+        offset,
+    };
+
+    futures_lite::future::block_on(async {
+        select(runner.run_responder(responder), async {
+            let exchange = runner.initiate_exchange().await?;
+            let mut wbuf = [0u8; 1024];
+            let mut writer = exchange
+                .upload(&mut wbuf, FILE_DESIGNATOR, Some(offset))
+                .await?;
+            write_all(&mut writer, &image[offset as usize..]).await?;
+            writer.finish().await?;
             Ok::<_, Error>(())
         })
         .coalesce()
@@ -189,7 +281,7 @@ fn test_bdx_upload_streaming() {
             for image in &images {
                 let exchange = runner.initiate_exchange().await?;
                 let mut wbuf = [0u8; 1024];
-                let mut writer = exchange.upload(&mut wbuf, FILE_DESIGNATOR).await?;
+                let mut writer = exchange.upload(&mut wbuf, FILE_DESIGNATOR, None).await?;
                 with_timeout(async {
                     write_all(&mut writer, image).await?;
                     writer.finish().await
@@ -289,14 +381,14 @@ fn test_bdx_server_routing() {
         select(runner.run_responder(bdx), async {
             // A download routes to the image server.
             let exchange = runner.initiate_exchange().await?;
-            let mut reader = exchange.download(SERVE_FD).await?;
+            let mut reader = exchange.download(SERVE_FD, None).await?;
             let received = with_timeout(read_all(&mut reader)).await?;
             assert_eq!(received, download);
 
             // An upload routes to the log sink (which asserts the payload).
             let exchange = runner.initiate_exchange().await?;
             let mut wbuf = [0u8; 512];
-            let mut writer = exchange.upload(&mut wbuf, PROCESS_FD).await?;
+            let mut writer = exchange.upload(&mut wbuf, PROCESS_FD, None).await?;
             with_timeout(async {
                 write_all(&mut writer, &upload).await?;
                 writer.finish().await
@@ -306,7 +398,8 @@ fn test_bdx_server_routing() {
             // An unknown designator is rejected by the chain terminator.
             let exchange = runner.initiate_exchange().await?;
             let result =
-                with_timeout(async { exchange.download(b"unknown.bin").await.map(|_| ()) }).await;
+                with_timeout(async { exchange.download(b"unknown.bin", None).await.map(|_| ()) })
+                    .await;
             assert!(result.is_err(), "unknown file designator must be rejected");
 
             Ok::<_, Error>(())
@@ -354,7 +447,8 @@ fn test_bdx_download_rejected_at_negotiation() {
         select(runner.run_responder(RejectInitHandler), async {
             let exchange = runner.initiate_exchange().await?;
             let result =
-                with_timeout(async { exchange.download(FILE_DESIGNATOR).await.map(|_| ()) }).await;
+                with_timeout(async { exchange.download(FILE_DESIGNATOR, None).await.map(|_| ()) })
+                    .await;
             assert!(
                 result.is_err(),
                 "download must fail when the peer rejects it"
@@ -426,7 +520,7 @@ fn test_bdx_read_aborted_mid_stream() {
     futures_lite::future::block_on(async {
         select(runner.run_responder(AbortMidStreamHandler), async {
             let exchange = runner.initiate_exchange().await?;
-            let mut reader = exchange.download(FILE_DESIGNATOR).await?;
+            let mut reader = exchange.download(FILE_DESIGNATOR, None).await?;
 
             with_timeout(async {
                 let mut buf = [0u8; 64];

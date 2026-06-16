@@ -226,18 +226,33 @@ impl embedded_io_async::Read for BdxReader<'_> {
 /// (typically driving) Receiver and returns a [`BdxReader`].
 pub trait BdxDownloadInitiator<'a> {
     /// Initiate a BDX download of `file_designator`, negotiate the transfer, and
-    /// return a reader positioned at the start of the data.
-    async fn download(self, file_designator: &[u8]) -> Result<BdxReader<'a>, Error>;
+    /// return a reader positioned at the start of the requested data.
+    ///
+    /// `offset` (when `Some` and non-zero) requests the download to resume from
+    /// that byte offset of the file - e.g. to continue an interrupted download.
+    /// The sender may refuse with [`StartOffsetNotSupported`](BdxStatus::StartOffsetNotSupported);
+    /// the returned reader's [`len`](BdxReader::len), if known, is the number of
+    /// bytes *remaining* from the offset.
+    async fn download(
+        self,
+        file_designator: &[u8],
+        offset: Option<u64>,
+    ) -> Result<BdxReader<'a>, Error>;
 }
 
 impl<'a> BdxDownloadInitiator<'a> for Exchange<'a> {
-    async fn download(mut self, file_designator: &[u8]) -> Result<BdxReader<'a>, Error> {
+    async fn download(
+        mut self,
+        file_designator: &[u8],
+        offset: Option<u64>,
+    ) -> Result<BdxReader<'a>, Error> {
         // We stream blocks straight out of the exchange RX buffer, so we propose
         // the largest block that buffer can hold.
         send_init(
             &mut self,
             OpCode::ReceiveInit,
             MAX_RX_BLOCK_SIZE,
+            offset,
             file_designator,
         )
         .await?;
@@ -266,13 +281,14 @@ pub struct BdxUploadResponder<'a> {
     transfer_control: TransferControl,
     max_block_size: u16,
     length: Option<u64>,
+    start_offset: u64,
 }
 
 impl<'a> BdxUploadResponder<'a> {
     /// Receive the incoming `SendInit` on `exchange`, holding it until
     /// [`reply`](Self::reply)/[`reject`](Self::reject).
     pub async fn accept(mut exchange: Exchange<'a>) -> Result<Self, Error> {
-        let (transfer_control, max_block_size, length) =
+        let (transfer_control, max_block_size, length, start_offset) =
             recv_init_hold(&mut exchange, OpCode::SendInit).await?;
 
         Ok(Self {
@@ -280,6 +296,7 @@ impl<'a> BdxUploadResponder<'a> {
             transfer_control,
             max_block_size,
             length,
+            start_offset,
         })
     }
 
@@ -292,6 +309,14 @@ impl<'a> BdxUploadResponder<'a> {
     #[allow(clippy::len_without_is_empty)] // A transfer length, not a collection count.
     pub fn len(&self) -> Option<u64> {
         self.length
+    }
+
+    /// The byte offset of the file at which the initiator is sending: the bytes
+    /// streamed by the returned [`BdxReader`] correspond to the file starting at
+    /// this offset (`0` for a transfer from the start). The receiving application
+    /// decides what a non-zero offset means for its storage (resume/overwrite).
+    pub fn start_offset(&self) -> u64 {
+        self.start_offset
     }
 
     /// Accept the transfer and start receiving, returning a [`BdxReader`].

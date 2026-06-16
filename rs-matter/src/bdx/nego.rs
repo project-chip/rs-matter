@@ -88,12 +88,18 @@ pub(super) async fn abort<T>(exchange: &mut Exchange<'_>, status: BdxStatus) -> 
 
 /// Build the streaming `*Init` proposal (both drive modes, indefinite length).
 /// `max_block_size` is the largest block this node is willing to handle.
+/// `start_offset`, when non-zero, requests the transfer to begin at that byte
+/// offset of the file (the responder may reject it with `StartOffsetNotSupported`).
 pub(super) async fn send_init(
     exchange: &mut Exchange<'_>,
     opcode: OpCode,
     max_block_size: u16,
+    start_offset: Option<u64>,
     file_designator: &[u8],
 ) -> Result<(), Error> {
+    // Offset 0 is the implicit default, so it needs no range-control bit.
+    let start_offset = start_offset.filter(|&o| o > 0);
+
     let init = TransferInit {
         transfer_control: TransferControl {
             version: BDX_VERSION,
@@ -101,9 +107,13 @@ pub(super) async fn send_init(
             receiver_drive: true,
             async_mode: false,
         },
-        range_control: RangeControl::default(),
+        range_control: RangeControl {
+            def_len: false,
+            start_offset: start_offset.is_some(),
+            wide_range: start_offset.is_some_and(|o| o > u32::MAX as u64),
+        },
         max_block_size,
-        start_offset: 0,
+        start_offset: start_offset.unwrap_or(0),
         length: 0,
         file_designator,
         metadata: &[],
@@ -211,9 +221,9 @@ pub(super) async fn recv_accept(
 pub(super) async fn recv_init_hold(
     exchange: &mut Exchange<'_>,
     expected: OpCode,
-) -> Result<(TransferControl, u16, Option<u64>), Error> {
+) -> Result<(TransferControl, u16, Option<u64>, u64), Error> {
     enum Outcome {
-        Ok(TransferControl, u16, Option<u64>),
+        Ok(TransferControl, u16, Option<u64>, u64),
         Unexpected,
         Aborted(Error),
     }
@@ -226,7 +236,13 @@ pub(super) async fn recv_init_hold(
             Ok(op) if op == expected => {
                 let init = TransferInit::parse(payload)?;
                 let length = (init.range_control.def_len && init.length > 0).then_some(init.length);
-                Outcome::Ok(init.transfer_control, init.max_block_size, length)
+                // `start_offset` is already 0 when the range-control bit is unset.
+                Outcome::Ok(
+                    init.transfer_control,
+                    init.max_block_size,
+                    length,
+                    init.start_offset,
+                )
             }
             Ok(_) => Outcome::Unexpected,
             Err(e) => Outcome::Aborted(e),
@@ -235,7 +251,7 @@ pub(super) async fn recv_init_hold(
 
     match outcome {
         // Leave the `*Init` held in RX; `held_fd` borrows its file designator.
-        Outcome::Ok(tc, pmbs, length) => Ok((tc, pmbs, length)),
+        Outcome::Ok(tc, pmbs, length, start_offset) => Ok((tc, pmbs, length, start_offset)),
         Outcome::Unexpected => {
             exchange.rx_done()?;
             abort(exchange, BdxStatus::UnexpectedMessage).await
