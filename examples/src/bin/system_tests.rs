@@ -49,6 +49,9 @@ use rs_matter::dm::clusters::basic_info::{
 };
 use rs_matter::dm::clusters::binding::{self, BindingHandler, Bindings};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::diagnostic_logs::{
+    self, DiagnosticLogsHandler, DiagnosticLogsProvider, IntentEnum,
+};
 use rs_matter::dm::clusters::eth_diag::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::fixed_label::{self, FixedLabelEntry, FixedLabelHandler};
 use rs_matter::dm::clusters::gen_comm::{self, ClusterHandler as _};
@@ -127,6 +130,12 @@ static BINDINGS: StaticCell<Bindings<16>> = StaticCell::new();
 // and a small pool of BDX block-staging buffers.
 static OTA_IMAGES: StaticCell<OtaFileImages> = StaticCell::new();
 static BDX_BUFFERS: StaticCell<PooledBuffers<2, BdxBuffer>> = StaticCell::new();
+
+// Diagnostic Logs role (driven by `--end_user_support_log` / `--network_diagnostics_log`
+// / `--crash_log`): the file-backed log source, plus a small pool of BDX staging
+// buffers (one for an inline read, one for a concurrent BDX transfer).
+static LOG_PROVIDER: StaticCell<LogFileProvider> = StaticCell::new();
+static DLOG_BUFFERS: StaticCell<PooledBuffers<2, BdxBuffer>> = StaticCell::new();
 
 static SW_FAULT_NOTIFY: Notification<CriticalSectionRawMutex> = Notification::new();
 
@@ -253,6 +262,17 @@ fn main() -> Result<(), Error> {
     let ota_providers = Providers::new();
     let ota_state = OtaState::new(ROOT_ENDPOINT_ID);
 
+    // Diagnostic Logs role inputs: `TestDiagnosticLogs` (re)starts the DUT with a
+    // log-file path per intent. Always wired (the cluster is always present); when
+    // a path is absent or the file is missing, that intent reports `NoLogs`.
+    let log_provider: &LogFileProvider = LOG_PROVIDER.init(LogFileProvider::new(
+        args::parse_arg_opt_override("--end_user_support_log", |s| s.to_string()),
+        args::parse_arg_opt_override("--network_diagnostics_log", |s| s.to_string()),
+        args::parse_arg_opt_override("--crash_log", |s| s.to_string()),
+    ));
+    let dlog_buffers: &PooledBuffers<2, BdxBuffer> =
+        DLOG_BUFFERS.uninit().init_with(PooledBuffers::init(0));
+
     let app_pipe = parse_app_pipe_override();
     let node: &'static Node<'static> = if app_pipe.is_some() {
         &NODE_BINFO_CV_EXPOSED
@@ -292,6 +312,8 @@ fn main() -> Result<(), Error> {
             ota_images,
             &ota_providers,
             &ota_state,
+            dlog_buffers,
+            log_provider,
         ),
         SharedKvBlobStore::new(kv, kv_buf),
         SharedNetworks::new(EthNetwork::new_default()),
@@ -549,7 +571,11 @@ const NODE: Node<'static> = Node {
                 // them via `--filepath` / `--otaDownloadPath`. The OTA test's
                 // `AnnounceOTAProvider` targets endpoint 0, so they live here.
                 OTA_PROVIDER_CLUSTER,
-                OTA_REQUESTOR_CLUSTER
+                OTA_REQUESTOR_CLUSTER,
+                // Diagnostic Logs (0x0032) for the `TestDiagnosticLogs` itest.
+                // Always present; serves logs only when started with the log-file
+                // flags, otherwise answers `NoLogs`.
+                DIAGNOSTIC_LOGS_CLUSTER
             ),
             &[on_off::FULL_CLUSTER.id],
         ),
@@ -598,6 +624,14 @@ const OTA_PROVIDER_CLUSTER: Cluster<'static> =
 /// The OTA Software Update Requestor cluster metadata, as served by
 /// [`OtaRequestorHandler`].
 const OTA_REQUESTOR_CLUSTER: Cluster<'static> = OtaRequestorHandler::CLUSTER;
+
+/// The Diagnostic Logs cluster metadata, exactly as served by the
+/// [`DiagnosticLogsHandler`] wired in `dm_handler` (so `NODE`'s declaration
+/// matches the handler).
+const DIAGNOSTIC_LOGS_CLUSTER: Cluster<'static> = <DiagnosticLogsHandler<
+    &PooledBuffers<2, BdxBuffer>,
+    &LogFileProvider,
+> as diagnostic_logs::ClusterAsyncHandler>::CLUSTER;
 
 /// Download protocols this requestor advertises (BDX only).
 const OTA_PROTOCOLS: &[DownloadProtocolEnum] = &[DownloadProtocolEnum::BDXSynchronous];
@@ -655,6 +689,8 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
                 // OTA clusters present on every variant (see `NODE`).
                 OTA_PROVIDER_CLUSTER,
                 OTA_REQUESTOR_CLUSTER,
+                // Diagnostic Logs present on every variant (see `NODE`).
+                DIAGNOSTIC_LOGS_CLUSTER,
             ),
             &[on_off::FULL_CLUSTER.id],
         ),
@@ -714,6 +750,8 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     ota_images: &'a OtaFileImages,
     ota_providers: &'a Providers,
     ota_state: &'a OtaState,
+    dlog_buffers: &'a PooledBuffers<2, BdxBuffer>,
+    log_provider: &'a LogFileProvider,
 ) -> impl DataModelHandler + 'a {
     (
         node,
@@ -836,6 +874,17 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                     )
                     .adapt(),
                 ),
+            )
+            // Diagnostic Logs on the root endpoint. The handler's `run` hook (BDX
+            // streaming) is driven as part of this chain by `dm.run()`.
+            .chain(
+                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(DIAGNOSTIC_LOGS_CLUSTER.id)),
+                DiagnosticLogsHandler::new(
+                    Dataver::new_rand(&mut rand),
+                    dlog_buffers,
+                    log_provider,
+                )
+                .adapt(),
             ),
     )
 }
@@ -1092,6 +1141,63 @@ impl OtaImages for OtaFileImages {
         let Some(path) = &self.path else {
             return Err(rs_matter::error::ErrorCode::NotFound.into());
         };
+
+        let mut f = std::fs::File::open(path).map_err(|_| rs_matter::error::ErrorCode::NotFound)?;
+        f.seek(SeekFrom::Start(offset))
+            .map_err(|_| rs_matter::error::ErrorCode::Invalid)?;
+        let n = f
+            .read(buf)
+            .map_err(|_| rs_matter::error::ErrorCode::Invalid)?;
+
+        Ok(n)
+    }
+}
+
+/// A file-backed [`DiagnosticLogsProvider`] for the `TestDiagnosticLogs` itest:
+/// each [`IntentEnum`] maps to a log-file path (given via CLI), read fresh on
+/// every request so the test can rewrite a file between queries and have the
+/// next query observe the new size/content.
+struct LogFileProvider {
+    end_user_support: Option<String>,
+    network_diagnostics: Option<String>,
+    crash: Option<String>,
+}
+
+impl LogFileProvider {
+    fn new(
+        end_user_support: Option<String>,
+        network_diagnostics: Option<String>,
+        crash: Option<String>,
+    ) -> Self {
+        Self {
+            end_user_support,
+            network_diagnostics,
+            crash,
+        }
+    }
+
+    fn path(&self, intent: IntentEnum) -> Option<&str> {
+        match intent {
+            IntentEnum::EndUserSupport => self.end_user_support.as_deref(),
+            IntentEnum::NetworkDiag => self.network_diagnostics.as_deref(),
+            IntentEnum::CrashLogs => self.crash.as_deref(),
+        }
+    }
+}
+
+impl DiagnosticLogsProvider for LogFileProvider {
+    async fn size(&self, intent: IntentEnum) -> Option<u64> {
+        // Fresh `metadata` (not cached): the test rewrites files between queries.
+        let path = self.path(intent)?;
+        std::fs::metadata(path).ok().map(|m| m.len())
+    }
+
+    async fn read(&self, intent: IntentEnum, offset: u64, buf: &mut [u8]) -> Result<usize, Error> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let path = self
+            .path(intent)
+            .ok_or(rs_matter::error::ErrorCode::NotFound)?;
 
         let mut f = std::fs::File::open(path).map_err(|_| rs_matter::error::ErrorCode::NotFound)?;
         f.seek(SeekFrom::Start(offset))

@@ -59,7 +59,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestConstraints",
     "TestDelayCommands",
     // "TestDescriptorCluster", // TODO: Assumes a Power Source device type and expects a lot of clusters to be there
-    // "TestDiagnosticLogs", // TODO: Diagnostic Logs cluster not yet implemented
+    "TestDiagnosticLogs",
     "TestDiscovery",
     "TestEqualities",
     "TestEvents",

@@ -28,6 +28,7 @@ pub mod basic_info;
 pub mod binding;
 pub mod desc;
 pub mod dev_att;
+pub mod diagnostic_logs;
 pub mod eth_diag;
 pub mod fixed_label;
 pub mod gen_comm;
