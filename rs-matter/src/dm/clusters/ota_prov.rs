@@ -419,7 +419,7 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
 ///
 /// ```ignore
 /// use rs_matter::bdx::{Bdx, PROTO_ID_BDX};
-/// use rs_matter::dm::clusters::ota_provider::BdxBuffer;
+/// use rs_matter::dm::clusters::ota_prov::BdxBuffer;
 /// use rs_matter::respond::Responder;
 /// use rs_matter::utils::storage::pooled::PooledBuffers;
 ///

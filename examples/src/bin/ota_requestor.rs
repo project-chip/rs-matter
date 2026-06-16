@@ -42,8 +42,8 @@ use rs_matter::bdx::BdxDownloadInitiator;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::SharedNetworks;
-use rs_matter::dm::clusters::ota_provider::{DownloadProtocolEnum, OtaApplyOutcome, StatusEnum};
-use rs_matter::dm::clusters::ota_requestor::{
+use rs_matter::dm::clusters::ota_prov::{DownloadProtocolEnum, OtaApplyOutcome, StatusEnum};
+use rs_matter::dm::clusters::ota_req::{
     parse_bdx_url, ClusterHandler as _, OtaRequestorHandler, OtaState, Provider, Providers,
 };
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};

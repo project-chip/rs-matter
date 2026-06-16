@@ -49,7 +49,7 @@ use rs_matter::dm::clusters::basic_info::{
 };
 use rs_matter::dm::clusters::binding::{self, BindingHandler, Bindings};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::diagnostic_logs::{
+use rs_matter::dm::clusters::diag_logs::{
     self, DiagnosticLogsHandler, DiagnosticLogsProvider, IntentEnum,
 };
 use rs_matter::dm::clusters::eth_diag::{self, ClusterHandler as _};
@@ -61,11 +61,11 @@ use rs_matter::dm::clusters::grp_key_mgmt::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
 use rs_matter::dm::clusters::net_comm::{self, SharedNetworks};
 use rs_matter::dm::clusters::noc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::ota_provider::{
+use rs_matter::dm::clusters::ota_prov::{
     BdxBuffer, ClusterAsyncHandler, DownloadProtocolEnum, OtaBdxHandler, OtaImageMeta, OtaImages,
     OtaImagesRegistry, OtaProviderHandler, OtaQueryOutcome, StatusEnum,
 };
-use rs_matter::dm::clusters::ota_requestor::{
+use rs_matter::dm::clusters::ota_req::{
     parse_bdx_url, ClusterHandler as _, OtaRequestorHandler, OtaState, Provider, Providers,
 };
 use rs_matter::dm::clusters::sw_diag::SoftwareFault;
@@ -631,7 +631,7 @@ const OTA_REQUESTOR_CLUSTER: Cluster<'static> = OtaRequestorHandler::CLUSTER;
 const DIAGNOSTIC_LOGS_CLUSTER: Cluster<'static> = <DiagnosticLogsHandler<
     &PooledBuffers<2, BdxBuffer>,
     &LogFileProvider,
-> as diagnostic_logs::ClusterAsyncHandler>::CLUSTER;
+> as diag_logs::ClusterAsyncHandler>::CLUSTER;
 
 /// Download protocols this requestor advertises (BDX only).
 const OTA_PROTOCOLS: &[DownloadProtocolEnum] = &[DownloadProtocolEnum::BDXSynchronous];
