@@ -49,7 +49,7 @@ use rs_matter::dm::clusters::basic_info::{
 };
 use rs_matter::dm::clusters::binding::{self, BindingHandler, Bindings};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::diag_logs::{self, DiagLogsHandler, DiagLogsProvider, IntentEnum};
+use rs_matter::dm::clusters::diag_logs::{self, DiagLogs, DiagLogsHandler, IntentEnum};
 use rs_matter::dm::clusters::eth_diag::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::fixed_label::{self, FixedLabelEntry, FixedLabelHandler};
 use rs_matter::dm::clusters::gen_comm::{self, ClusterHandler as _};
@@ -1147,7 +1147,7 @@ impl OtaImages for OtaFileImages {
     }
 }
 
-/// A file-backed [`DiagLogsProvider`] for the `TestDiagnosticLogs` itest:
+/// A file-backed [`DiagLogs`] for the `TestDiagnosticLogs` itest:
 /// each [`IntentEnum`] maps to a log-file path (given via CLI), read fresh on
 /// every request so the test can rewrite a file between queries and have the
 /// next query observe the new size/content.
@@ -1179,7 +1179,7 @@ impl LogFileProvider {
     }
 }
 
-impl DiagLogsProvider for LogFileProvider {
+impl DiagLogs for LogFileProvider {
     async fn size(&self, intent: IntentEnum) -> Option<u64> {
         // Fresh `metadata` (not cached): the test rewrites files between queries.
         let path = self.path(intent)?;

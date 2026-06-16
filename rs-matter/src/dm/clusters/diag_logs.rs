@@ -40,7 +40,7 @@
 //! task (the same `run` hook the data model already polls). At most one BDX
 //! transfer is in flight at a time.
 //!
-//! The log bytes themselves come from a user-supplied [`DiagLogsProvider`]
+//! The log bytes themselves come from a user-supplied [`DiagLogs`]
 //! (one log per [`IntentEnum`]).
 //!
 //! # Client (controller) side
@@ -79,10 +79,12 @@ pub const MAX_INLINE_LOG: usize = 1024;
 /// The maximum supported BDX file designator length, per the Matter spec.
 const MAX_FILE_DESIGNATOR: usize = 32;
 
-/// The log bytes a [`DiagLogsHandler`] hands back, addressed by
-/// [`IntentEnum`]. The same source feeds both the inline response and the BDX
-/// stream, so a single implementation covers both delivery paths.
-pub trait DiagLogsProvider {
+/// The log bytes a [`DiagLogsHandler`] hands back, addressed by [`IntentEnum`]
+/// (`EndUserSupport`, `NetworkDiag`, `CrashLogs`). The same source feeds both the
+/// inline response and the BDX stream, so a single implementation covers every
+/// flavor and both delivery paths - e.g. return a stored crash core dump for
+/// [`IntentEnum::CrashLogs`].
+pub trait DiagLogs {
     /// The total size, in bytes, of the log for `intent`, or `None` if the node
     /// has no such log (the cluster answers `NoLogs`).
     ///
@@ -95,11 +97,21 @@ pub trait DiagLogsProvider {
     /// returning the number of bytes read (`0` marks the end of the log). Used
     /// for both the inline response and BDX streaming.
     async fn read(&self, intent: IntentEnum, offset: u64, buf: &mut [u8]) -> Result<usize, Error>;
+
+    /// Called once the `intent` log has been successfully delivered to the
+    /// requestor - the inline response built with the content, or the BDX transfer
+    /// completed and acknowledged. Override to release a one-shot log (e.g. delete
+    /// a crash core dump from flash); the default does nothing.
+    ///
+    /// It is **not** called when delivery did not happen (`NoLogs`/`Busy`/`Denied`,
+    /// or a BDX transfer the requestor aborted), so a log that was not handed over
+    /// is preserved for a later retry.
+    async fn retrieved(&self, _intent: IntentEnum) {}
 }
 
-impl<T> DiagLogsProvider for &T
+impl<T> DiagLogs for &T
 where
-    T: DiagLogsProvider,
+    T: DiagLogs,
 {
     async fn size(&self, intent: IntentEnum) -> Option<u64> {
         T::size(self, intent).await
@@ -107,6 +119,10 @@ where
 
     async fn read(&self, intent: IntentEnum, offset: u64, buf: &mut [u8]) -> Result<usize, Error> {
         T::read(self, intent, offset, buf).await
+    }
+
+    async fn retrieved(&self, intent: IntentEnum) {
+        T::retrieved(self, intent).await
     }
 }
 
@@ -135,7 +151,7 @@ enum Bdx {
 
 /// The server-side handler for the Diagnostic Logs cluster.
 ///
-/// It answers `RetrieveLogsRequest` from the [`DiagLogsProvider`] it is
+/// It answers `RetrieveLogsRequest` from the [`DiagLogs`] it is
 /// given, returning small logs inline and - when the requestor asks for `BDX` -
 /// streaming larger logs over a BDX transfer it initiates back to the requestor.
 ///
@@ -183,7 +199,7 @@ impl<B, P> DiagLogsHandler<B, P> {
 impl<B, P> DiagLogsHandler<B, P>
 where
     B: BufferAccess<BdxBuffer>,
-    P: DiagLogsProvider,
+    P: DiagLogs,
 {
     /// Fill `buf` from the `intent` log starting at `offset`, looping until it is
     /// full or the log ends, so only the final read of a transfer is ever short.
@@ -231,12 +247,18 @@ where
 
         let n = self.fill(intent, 0, buf.as_mut_slice()).await?;
 
-        response
+        let result = response
             .status(status)?
             .log_content(Octets(&buf[..n]))?
             .utc_time_stamp(None)?
             .time_since_boot(None)?
-            .end()
+            .end()?;
+
+        // The content is now copied into the response; the log has been delivered
+        // inline, so let the provider release it (e.g. drop a one-shot crash dump).
+        self.logs.retrieved(intent).await;
+
+        Ok(result)
     }
 
     /// Perform one background BDX transfer for `job`: open the exchange, do the
@@ -294,7 +316,7 @@ where
 impl<B, P> ClusterAsyncHandler for DiagLogsHandler<B, P>
 where
     B: BufferAccess<BdxBuffer>,
-    P: DiagLogsProvider,
+    P: DiagLogs,
 {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
 
@@ -437,7 +459,12 @@ where
             // "StatusReport Error" wording CHIP uses, with the concrete error
             // appended for diagnostics.
             match result {
-                Ok(()) => info!("Diagnostic logs transfer: Success"),
+                Ok(()) => {
+                    info!("Diagnostic logs transfer: Success");
+                    // Fully delivered and acknowledged: let the provider release
+                    // the log (e.g. delete a one-shot crash dump from flash).
+                    self.logs.retrieved(job.intent).await;
+                }
                 Err(e) => warn!("Diagnostic logs transfer: StatusReport Error: {:?}", e),
             }
         }
