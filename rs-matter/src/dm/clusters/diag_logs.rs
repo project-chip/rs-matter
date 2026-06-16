@@ -36,12 +36,20 @@
 //! the `SendInit`) while the blocks are still being streamed, and a *second*
 //! request arriving mid-transfer is told `Busy`. To honor that, the handshake is
 //! done inline (so the response can reflect it) but the block streaming runs in
-//! the background, driven by this handler's [`run`](DiagnosticLogsHandler::run)
+//! the background, driven by this handler's [`run`](DiagLogsHandler::run)
 //! task (the same `run` hook the data model already polls). At most one BDX
 //! transfer is in flight at a time.
 //!
-//! The log bytes themselves come from a user-supplied [`DiagnosticLogsProvider`]
+//! The log bytes themselves come from a user-supplied [`DiagLogsProvider`]
 //! (one log per [`IntentEnum`]).
+//!
+//! # Client (controller) side
+//!
+//! The cluster's *client* (the controller requesting logs) lives in the
+//! [`client`] submodule: it sends `RetrieveLogsRequest` via the generated
+//! `DiagnosticLogsClient` proxy and, for a BDX transfer, receives the pushed log
+//! with [`client::DiagLogsBdxHandler`] (the mirror of the server-side
+//! [`OtaBdxHandler`](crate::dm::clusters::ota_prov::OtaBdxHandler)).
 
 use core::num::NonZeroU8;
 
@@ -58,6 +66,10 @@ use crate::with;
 
 pub use crate::dm::clusters::decl::diagnostic_logs::*;
 
+/// The cluster *client* side (the controller fetching logs): receiving a log a
+/// device pushes over BDX.
+pub mod client;
+
 /// The maximum number of bytes a log may have to be returned *inline* (in the
 /// `RetrieveLogsResponse` `LogContent` field). A larger log is streamed over BDX
 /// (when requested) or truncated to this size (when an inline response is
@@ -67,10 +79,10 @@ pub const MAX_INLINE_LOG: usize = 1024;
 /// The maximum supported BDX file designator length, per the Matter spec.
 const MAX_FILE_DESIGNATOR: usize = 32;
 
-/// The log bytes a [`DiagnosticLogsHandler`] hands back, addressed by
+/// The log bytes a [`DiagLogsHandler`] hands back, addressed by
 /// [`IntentEnum`]. The same source feeds both the inline response and the BDX
 /// stream, so a single implementation covers both delivery paths.
-pub trait DiagnosticLogsProvider {
+pub trait DiagLogsProvider {
     /// The total size, in bytes, of the log for `intent`, or `None` if the node
     /// has no such log (the cluster answers `NoLogs`).
     ///
@@ -85,9 +97,9 @@ pub trait DiagnosticLogsProvider {
     async fn read(&self, intent: IntentEnum, offset: u64, buf: &mut [u8]) -> Result<usize, Error>;
 }
 
-impl<T> DiagnosticLogsProvider for &T
+impl<T> DiagLogsProvider for &T
 where
-    T: DiagnosticLogsProvider,
+    T: DiagLogsProvider,
 {
     async fn size(&self, intent: IntentEnum) -> Option<u64> {
         T::size(self, intent).await
@@ -99,7 +111,7 @@ where
 }
 
 /// A pending (or in-flight) BDX log upload, handed from the command handler to
-/// the background [`run`](DiagnosticLogsHandler::run) task.
+/// the background [`run`](DiagLogsHandler::run) task.
 struct Job {
     /// The accessing fabric, and the requestor node on it to upload to.
     fab_idx: NonZeroU8,
@@ -123,7 +135,7 @@ enum Bdx {
 
 /// The server-side handler for the Diagnostic Logs cluster.
 ///
-/// It answers `RetrieveLogsRequest` from the [`DiagnosticLogsProvider`] it is
+/// It answers `RetrieveLogsRequest` from the [`DiagLogsProvider`] it is
 /// given, returning small logs inline and - when the requestor asks for `BDX` -
 /// streaming larger logs over a BDX transfer it initiates back to the requestor.
 ///
@@ -135,7 +147,7 @@ enum Bdx {
 ///
 /// The handler's [`run`](Self::run) hook must be polled (the data model does this
 /// for the handler tree it is given) for BDX streaming to make progress.
-pub struct DiagnosticLogsHandler<B, P> {
+pub struct DiagLogsHandler<B, P> {
     dataver: Dataver,
     buffers: B,
     logs: P,
@@ -148,7 +160,7 @@ pub struct DiagnosticLogsHandler<B, P> {
     handshake: Signal<Option<bool>>,
 }
 
-impl<B, P> DiagnosticLogsHandler<B, P> {
+impl<B, P> DiagLogsHandler<B, P> {
     /// Create a new handler backed by the given staging-buffer pool and log
     /// provider.
     pub const fn new(dataver: Dataver, buffers: B, logs: P) -> Self {
@@ -168,10 +180,10 @@ impl<B, P> DiagnosticLogsHandler<B, P> {
     }
 }
 
-impl<B, P> DiagnosticLogsHandler<B, P>
+impl<B, P> DiagLogsHandler<B, P>
 where
     B: BufferAccess<BdxBuffer>,
-    P: DiagnosticLogsProvider,
+    P: DiagLogsProvider,
 {
     /// Fill `buf` from the `intent` log starting at `offset`, looping until it is
     /// full or the log ends, so only the final read of a transfer is ever short.
@@ -279,10 +291,10 @@ where
     }
 }
 
-impl<B, P> ClusterAsyncHandler for DiagnosticLogsHandler<B, P>
+impl<B, P> ClusterAsyncHandler for DiagLogsHandler<B, P>
 where
     B: BufferAccess<BdxBuffer>,
-    P: DiagnosticLogsProvider,
+    P: DiagLogsProvider,
 {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
 

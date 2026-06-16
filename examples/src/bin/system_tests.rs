@@ -49,9 +49,7 @@ use rs_matter::dm::clusters::basic_info::{
 };
 use rs_matter::dm::clusters::binding::{self, BindingHandler, Bindings};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::diag_logs::{
-    self, DiagnosticLogsHandler, DiagnosticLogsProvider, IntentEnum,
-};
+use rs_matter::dm::clusters::diag_logs::{self, DiagLogsHandler, DiagLogsProvider, IntentEnum};
 use rs_matter::dm::clusters::eth_diag::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::fixed_label::{self, FixedLabelEntry, FixedLabelHandler};
 use rs_matter::dm::clusters::gen_comm::{self, ClusterHandler as _};
@@ -626,9 +624,9 @@ const OTA_PROVIDER_CLUSTER: Cluster<'static> =
 const OTA_REQUESTOR_CLUSTER: Cluster<'static> = OtaRequestorHandler::CLUSTER;
 
 /// The Diagnostic Logs cluster metadata, exactly as served by the
-/// [`DiagnosticLogsHandler`] wired in `dm_handler` (so `NODE`'s declaration
+/// [`DiagLogsHandler`] wired in `dm_handler` (so `NODE`'s declaration
 /// matches the handler).
-const DIAGNOSTIC_LOGS_CLUSTER: Cluster<'static> = <DiagnosticLogsHandler<
+const DIAGNOSTIC_LOGS_CLUSTER: Cluster<'static> = <DiagLogsHandler<
     &PooledBuffers<2, BdxBuffer>,
     &LogFileProvider,
 > as diag_logs::ClusterAsyncHandler>::CLUSTER;
@@ -879,12 +877,8 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             // streaming) is driven as part of this chain by `dm.run()`.
             .chain(
                 EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(DIAGNOSTIC_LOGS_CLUSTER.id)),
-                DiagnosticLogsHandler::new(
-                    Dataver::new_rand(&mut rand),
-                    dlog_buffers,
-                    log_provider,
-                )
-                .adapt(),
+                DiagLogsHandler::new(Dataver::new_rand(&mut rand), dlog_buffers, log_provider)
+                    .adapt(),
             ),
     )
 }
@@ -1153,7 +1147,7 @@ impl OtaImages for OtaFileImages {
     }
 }
 
-/// A file-backed [`DiagnosticLogsProvider`] for the `TestDiagnosticLogs` itest:
+/// A file-backed [`DiagLogsProvider`] for the `TestDiagnosticLogs` itest:
 /// each [`IntentEnum`] maps to a log-file path (given via CLI), read fresh on
 /// every request so the test can rewrite a file between queries and have the
 /// next query observe the new size/content.
@@ -1185,7 +1179,7 @@ impl LogFileProvider {
     }
 }
 
-impl DiagnosticLogsProvider for LogFileProvider {
+impl DiagLogsProvider for LogFileProvider {
     async fn size(&self, intent: IntentEnum) -> Option<u64> {
         // Fresh `metadata` (not cached): the test rewrites files between queries.
         let path = self.path(intent)?;
