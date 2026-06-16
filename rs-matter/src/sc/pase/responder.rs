@@ -205,7 +205,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                 }
 
                 // Stash the initiator's MRP `session_parameters` (Matter
-                // Core spec §4.12.8) on both the unsecured session that
+                // Core spec) on both the unsecured session that
                 // currently carries the PASE handshake (so PASEPake2
                 // retransmits honour the peer's SAI) and on the reserved
                 // PASE session that takes over after PASEPake3.

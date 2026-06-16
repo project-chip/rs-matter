@@ -174,7 +174,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         )?;
 
         // Stash the initiator's advertised MRP `session_parameters`
-        // (Matter Core spec §4.12.8) so the responder uses the peer's
+        // (Matter Core spec) so the responder uses the peer's
         // SAI as the retransmission base interval for Sigma2 and any
         // post-handshake traffic. We apply them both to the unsecured
         // session that the handshake currently rides on (so Sigma2

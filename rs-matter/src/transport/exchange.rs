@@ -703,7 +703,7 @@ impl TxMessage<'_> {
             // time and overwritten once Sigma1 / Sigma2 / PBKDFParamRequest /
             // PBKDFParamResponse delivers a real peer value, so MRP
             // retransmission backoff to this peer reflects whichever is
-            // more accurate (Matter Core spec §4.12.8).
+            // more accurate (Matter Core spec).
             let (peer, retransmission) = session.pre_send(
                 Some(self.exchange_id.exchange_index()),
                 &mut self.packet.header,

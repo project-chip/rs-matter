@@ -170,7 +170,7 @@ async fn run(args: Args) -> Result<CommissionResult, Error> {
 /// type through the public API just to format two scalars.
 ///
 /// `fabric_index` is `NonZeroU8` because the device's `AddNOC` response
-/// (spec §11.18.6.10) reserves `0` for "no fabric" / PASE — a real
+/// reserves `0` for "no fabric" / PASE — a real
 /// commissioned fabric slot is always non-zero.
 #[derive(Debug, Clone, Copy)]
 struct CommissionResult {

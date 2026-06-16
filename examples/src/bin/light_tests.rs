@@ -47,7 +47,7 @@ use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::SharedNetworks;
-use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_EXTENDED_COLOR_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::events::Events;
@@ -65,16 +65,18 @@ use rs_matter::persist::SharedKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
-use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{clusters, devices, root_endpoint, with, Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, root_endpoint, with, Matter};
 
 use static_cell::StaticCell;
 
 #[path = "../common/mdns.rs"]
 mod mdns;
+
+#[path = "../common/args.rs"]
+mod args;
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
@@ -109,15 +111,15 @@ fn run() -> Result<(), Error> {
 
     let matter = MATTER.uninit().init_with(Matter::init(
         &TEST_DEV_DET,
-        TEST_DEV_COMM,
+        args::comm_overrides(),
         &TEST_DEV_ATT,
-        MATTER_PORT,
+        args::port_override(),
     ));
 
     let events = EVENTS.uninit().init_with(Events::init());
 
     let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
-    let mut kv = rs_matter::persist::FileKvBlobStore::new_default();
+    let mut kv = args::file_kv_store();
     futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
     futures_lite::future::block_on(events.load_persist(&mut kv, kv_buf))?;
 
@@ -183,7 +185,7 @@ fn run() -> Result<(), Error> {
     let mut respond = pin!(responder.run::<4, 4>());
     let mut dm_job = pin!(dm.run());
 
-    let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
+    let socket = async_io::Async::<UdpSocket>::bind(args::bind_addr())?;
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",

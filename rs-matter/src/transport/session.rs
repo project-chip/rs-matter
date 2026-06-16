@@ -738,7 +738,7 @@ impl<'a> ReservedSession<'a> {
     /// Record the peer's MRP `session_parameters` (Sigma1 / Sigma2 /
     /// PBKDFParamRequest / PBKDFParamResponse) on the reserved session so
     /// they are in place by the time it transitions to a full Session.
-    /// Per Matter Core spec §4.12.8, MRP retransmission backoff to this
+    /// Per Matter Core spec, MRP retransmission backoff to this
     /// peer should derive from the peer-advertised `sai` (and idle
     /// detection later from `sii`/`sat`).
     pub(crate) fn set_peer_session_params(

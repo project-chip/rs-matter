@@ -52,7 +52,7 @@ use rs_matter::dm::clusters::scenes::{ScenesHandler, ScenesState};
 use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
 };
-use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::events::Events;
@@ -70,17 +70,19 @@ use rs_matter::persist::SharedKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
-use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{clusters, devices, root_endpoint, with, Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, root_endpoint, with, Matter};
 
 use static_cell::StaticCell;
 
 #[path = "../common/mdns.rs"]
 mod mdns;
+
+#[path = "../common/args.rs"]
+mod args;
 
 // Statically allocate in BSS the bigger objects
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
@@ -133,9 +135,9 @@ fn run() -> Result<(), Error> {
 
     let matter = MATTER.uninit().init_with(Matter::init(
         &TEST_DEV_DET,
-        TEST_DEV_COMM,
+        args::comm_overrides(),
         &TEST_DEV_ATT,
-        MATTER_PORT,
+        args::port_override(),
     ));
 
     // Create the event queue
@@ -143,7 +145,7 @@ fn run() -> Result<(), Error> {
 
     // Persistence
     let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
-    let mut kv = rs_matter::persist::FileKvBlobStore::new_default();
+    let mut kv = args::file_kv_store();
     futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
     futures_lite::future::block_on(events.load_persist(&mut kv, kv_buf))?;
 
@@ -230,7 +232,7 @@ fn run() -> Result<(), Error> {
     // Run the background job of the data model
     let mut dm_job = pin!(dm.run());
 
-    let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
+    let socket = async_io::Async::<UdpSocket>::bind(args::bind_addr())?;
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",

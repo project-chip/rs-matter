@@ -71,7 +71,7 @@ use rs_matter::dm::clusters::decl::globals::WebRTCEndReasonEnum;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::SharedNetworks;
-use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::events::NoEvents;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
@@ -85,20 +85,22 @@ use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::FabricIndex;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{FileKvBlobStore, SharedKvBlobStore};
+use rs_matter::persist::SharedKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::{TLVArray, TLVBuilderParent};
-use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, root_endpoint, Matter};
 
 use static_cell::StaticCell;
 
 #[path = "../common/mdns.rs"]
 mod mdns;
+
+#[path = "../common/args.rs"]
+mod args;
 
 // ---------------------------------------------------------------------------
 // Device type
@@ -404,13 +406,13 @@ fn main() -> Result<(), Error> {
 
     let matter = MATTER.uninit().init_with(Matter::init(
         &BASIC_INFO,
-        TEST_DEV_COMM,
+        args::comm_overrides(),
         &TEST_DEV_ATT,
-        MATTER_PORT,
+        args::port_override(),
     ));
 
     let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
-    let mut kv = FileKvBlobStore::new_default();
+    let mut kv = args::file_kv_store();
     futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
 
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
@@ -589,8 +591,8 @@ fn main() -> Result<(), Error> {
     let mut respond = pin!(responder.run::<4, 4>());
     let mut dm_job = pin!(dm.run());
 
-    let udp_socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
-    let tcp_socket = async_io::Async::<TcpListener>::bind(MATTER_SOCKET_BIND_ADDR)?;
+    let udp_socket = async_io::Async::<UdpSocket>::bind(args::bind_addr())?;
+    let tcp_socket = async_io::Async::<TcpListener>::bind(args::bind_addr())?;
     let tcp = rs_matter::transport::network::tcp::TcpNetwork::<8>::new(tcp_socket);
     let (mut net_send, mut net_recv, mut net_multicast) = {
         use rs_matter::transport::network::{Address, ChainedNetwork};
