@@ -382,6 +382,54 @@ impl ChipBuilder {
         Ok(())
     }
 
+    /// Build the `chip-ota-provider-app` binary (the CHIP OTA Software Update
+    /// Provider example). Used as the counterpart node for OTA integration tests
+    /// where rs-matter plays the Requestor.
+    pub fn build_chip_ota_provider_app(
+        &self,
+        chip_gitref: Option<&str>,
+        force_rebuild: bool,
+    ) -> anyhow::Result<()> {
+        let chip_dir = self.chip_dir();
+
+        self.setup_chip(chip_dir, chip_gitref, force_rebuild)?;
+
+        let app_path = chip_dir.join("out/host/chip-ota-provider-app");
+        if !app_path.exists() || force_rebuild {
+            warn!("Building chip-ota-provider-app...");
+
+            self.build_example("examples/ota-provider-app/linux", "out/host")?;
+        } else {
+            info!("Using existing chip-ota-provider-app build");
+        }
+
+        Ok(())
+    }
+
+    /// Build the `chip-ota-requestor-app` binary (the CHIP OTA Software Update
+    /// Requestor example). Used as the counterpart node for OTA integration tests
+    /// where rs-matter plays the Provider.
+    pub fn build_chip_ota_requestor_app(
+        &self,
+        chip_gitref: Option<&str>,
+        force_rebuild: bool,
+    ) -> anyhow::Result<()> {
+        let chip_dir = self.chip_dir();
+
+        self.setup_chip(chip_dir, chip_gitref, force_rebuild)?;
+
+        let app_path = chip_dir.join("out/host/chip-ota-requestor-app");
+        if !app_path.exists() || force_rebuild {
+            warn!("Building chip-ota-requestor-app...");
+
+            self.build_example("examples/ota-requestor-app/linux", "out/host")?;
+        } else {
+            info!("Using existing chip-ota-requestor-app build");
+        }
+
+        Ok(())
+    }
+
     /// Setup the Chip environment
     ///
     /// In details:

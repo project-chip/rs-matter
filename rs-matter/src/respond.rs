@@ -41,15 +41,18 @@ use crate::Matter;
 const RESPOND_BUSY_MS: u32 = 500;
 
 /// A trait modeling a generic handler for an exchange.
+///
+/// The handler takes ownership of the exchange: once handling is done, the only
+/// thing left to do with the exchange is to drop it (which ends it).
 pub trait ExchangeHandler {
-    async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error>;
+    async fn handle(&self, exchange: Exchange<'_>) -> Result<(), Error>;
 }
 
 impl<T> ExchangeHandler for &T
 where
     T: ExchangeHandler,
 {
-    fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
+    fn handle(&self, exchange: Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
         (*self).handle(exchange)
     }
 }
@@ -94,14 +97,31 @@ where
     H: ExchangeHandler,
     T: ExchangeHandler,
 {
-    async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        let rx = exchange.recv_fetch().await?;
+    async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
+        // Peek the protocol id of the incoming message, then hand the exchange
+        // (by value) to the matching handler.
+        exchange.recv_fetch().await?;
+        let proto_id = exchange.rx()?.meta().proto_id;
 
-        if rx.meta().proto_id == self.handler_proto {
+        if proto_id == self.handler_proto {
             self.handler.handle(exchange).await
         } else {
             self.next.handle(exchange).await
         }
+    }
+}
+
+/// An [`ExchangeHandler`] that handles nothing - a convenient terminator for a
+/// [`ChainedExchangeHandler`].
+///
+/// By the time the chain reaches it, no handler matched the incoming protocol, so
+/// it simply drops the exchange (sending no reply); the peer will time out and
+/// retry as it would against any unsupported protocol.
+pub struct EmptyExchangeHandler;
+
+impl ExchangeHandler for EmptyExchangeHandler {
+    async fn handle(&self, _exchange: Exchange<'_>) -> Result<(), Error> {
+        Ok(())
     }
 }
 
@@ -186,32 +206,34 @@ where
     /// Useful in e.g. integration tests, where we know that we are expecting to respond to a single exchange within the run of the test.
     #[inline(always)]
     pub async fn respond_once(&self, handler_id: impl Display) -> Result<(), Error> {
-        let mut exchange = Exchange::accept_after(self.matter, self.respond_after_ms).await?;
+        let exchange = Exchange::accept_after(self.matter, self.respond_after_ms).await?;
+        // Capture the id up front: the handler takes the exchange by value.
+        let exchange_id = exchange.id();
 
         if self.log_warn() {
             warn!(
                 "{}: Handler {} / exchange {}: Starting",
                 self.name,
                 display2format!(&handler_id),
-                exchange.id()
+                exchange_id
             );
         } else {
             debug!(
                 "{}: Handler {} / exchange {}: Starting",
                 self.name,
                 display2format!(&handler_id),
-                exchange.id()
+                exchange_id
             );
         }
 
-        let result = self.handler.handle(&mut exchange).await;
+        let result = self.handler.handle(exchange).await;
 
         if let Err(err) = &result {
             error!(
                 "{}: Handler {} / exchange {}: Abandoned because of error {:?}",
                 self.name,
                 display2format!(&handler_id),
-                exchange.id(),
+                exchange_id,
                 err
             );
         } else if self.log_warn() {
@@ -219,14 +241,14 @@ where
                 "{}: Handler {} / exchange {}: Completed",
                 self.name,
                 display2format!(&handler_id),
-                exchange.id()
+                exchange_id
             );
         } else {
             debug!(
                 "{}: Handler {} / exchange {}: Completed",
                 self.name,
                 display2format!(&handler_id),
-                exchange.id()
+                exchange_id
             );
         }
 

@@ -69,6 +69,12 @@ pub const TRUSTED_TIME_SOURCE_KEY: u16 = LKG_UTC_KEY + 1;
 /// blob. Re-persisted on every successful mutation.
 pub const SCENES_KEY: u16 = TRUSTED_TIME_SOURCE_KEY + 1;
 
+/// The key used for storing the OTA Requestor's `DefaultOTAProviders` list
+/// (at most one entry per fabric) as a single TLV blob. Re-persisted on every
+/// successful write. Providers learned transiently via `AnnounceOTAProvider`
+/// are **not** persisted.
+pub const OTA_PROVIDERS_KEY: u16 = SCENES_KEY + 1;
+
 /// A trait representing a key-value BLOB storage.
 ///
 /// NOTE: For now, the trait is deliberately modeled as non-async, so that it can be used from

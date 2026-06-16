@@ -37,11 +37,11 @@ const MRP_JITTER_RAND_MAX: u8 = u8::MAX;
 const MRP_DEFAULT_IDLE_INTERVAL_MS: u32 = 5000;
 
 /// Fallback for `MRP_SESSION_ACTIVE_THRESHOLD` when the peer didn't
-/// advertise one. Matter Core spec §4.12 default.
+/// advertise one. Matter Core spec default.
 const MRP_DEFAULT_ACTIVE_THRESHOLD_MS: u16 = 4000;
 
 /// Resolve the default peer-MRP timing for a freshly-created [`Session`]
-/// from our own [`BasicInfoConfig`] (Matter Core spec §4.12.8): a peer
+/// from our own [`BasicInfoConfig`] (Matter Core spec): a peer
 /// that never advertises `session_parameters` will be addressed using
 /// our own SAI / SII as a reasonable approximation. Returns
 /// `(active_interval_ms, idle_interval_ms, active_threshold_ms)`.

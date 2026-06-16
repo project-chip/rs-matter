@@ -390,7 +390,7 @@ where
     T: Iterator<Item = (&'a str, &'a str)> + Clone,
 {
     /// Parse the peer's MRP/session parameters from this answer's TXT records
-    /// (Matter Core spec §4.3.4), returned as `(SII, SAI, SAT)` in milliseconds
+    /// (Matter Core spec), returned as `(SII, SAI, SAT)` in milliseconds
     /// (session idle interval / active interval / active threshold).
     pub fn session_params(&self) -> (Option<u32>, Option<u32>, Option<u16>) {
         let (mut sii, mut sai, mut sat) = (None, None, None);

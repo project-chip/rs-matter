@@ -529,6 +529,21 @@ pub(crate) const SCENES_TESTS: &[&str] = &[
     "TestScenesMaxCapacity",
 ];
 
+/// OTA Software Update tests — run against the `system_tests` example, which
+/// plays the rs-matter OTA *role* (Provider or Requestor) while the counterpart
+/// node is a CHIP `chip-ota-{provider,requestor}-app`. Only the CI-automatable
+/// `OTA_SuccessfulTransfer` YAML exists upstream (the `TC_SU_*`/`TC_BDX_*`
+/// certification suites are all manual). Role selection is by which slot
+/// `system_tests` occupies — see [`ITests::yaml_test_command`].
+pub(crate) const OTA_TESTS: &[&str] = &[
+    // rs-matter as the Provider; CHIP `chip-ota-requestor-app` is the DUT that
+    // downloads the image over BDX and prints "OTA image downloaded".
+    "OTA_SuccessfulTransfer",
+    // rs-matter as the Requestor (DUT); CHIP `chip-ota-provider-app` serves. The
+    // `@requestor` suffix selects the role and is stripped before the YAML runs.
+    "OTA_SuccessfulTransfer@requestor",
+];
+
 /// A pre-canned test suite. Selects a default test list, the example
 /// binary they run against, the cargo features it must be built with,
 /// and a per-test timeout suitable for that suite.
@@ -553,6 +568,9 @@ pub(crate) enum TestSuite {
     Light,
     /// Scenes Management cluster — runs against the `scenes_tests` example.
     Scenes,
+    /// OTA Software Update — `system_tests` plays an rs-matter OTA role against a
+    /// CHIP `chip-ota-{provider,requestor}-app` counterpart.
+    Ota,
     /// **Inverted** suite — rs-matter as the **commissioner** driving
     /// upstream `chip-all-clusters-app` (the device under test). Builds
     /// both binaries, spawns the CHIP app on `[::1]:<port>` with known
@@ -583,6 +601,7 @@ impl TestSuite {
             Self::Camera => CAMERA_TESTS.to_vec(),
             Self::Light => LIGHT_TESTS.to_vec(),
             Self::Scenes => SCENES_TESTS.to_vec(),
+            Self::Ota => OTA_TESTS.to_vec(),
             // One synthetic case — the dispatch in `ITests::run` picks
             // this up and routes to `run_commissioner_suite`, which
             // ignores the test list (there's nothing to parameterise yet).
@@ -597,6 +616,8 @@ impl TestSuite {
             Self::Camera => "camera_tests",
             Self::Light => "light_tests",
             Self::Scenes => "scenes_tests",
+            // rs-matter plays its OTA role from the `system_tests` binary.
+            Self::Ota => "system_tests",
             Self::Commissioner => "commissioner_tests",
         }
     }
@@ -610,6 +631,7 @@ impl TestSuite {
             | Self::Camera
             | Self::Light
             | Self::Scenes
+            | Self::Ota
             | Self::Commissioner => &[],
         }
     }
@@ -623,6 +645,9 @@ impl TestSuite {
             // Scenes tests include some long composite YAML suites
             // (multi-fabric/max-capacity); match `Light`'s budget.
             Self::Scenes => 500,
+            // A full OTA flow commissions two nodes and transfers an image over
+            // BDX; give it headroom.
+            Self::Ota => 300,
             Self::Commissioner => 120,
         }
     }
@@ -776,6 +801,16 @@ impl ITests {
         // case. Cached on disk after the first build.
         if tests.iter().any(|t| Self::needs_chip_all_clusters_app(t)) {
             self.chip_builder.build_chip_all_clusters_app(None, false)?;
+        }
+
+        // OTA tests need a CHIP OTA app as the counterpart node. Provider-role
+        // configs (rs-matter is the Provider) use `chip-ota-requestor-app` as the
+        // requestor DUT; requestor-role configs would use the provider app.
+        // Build both lazily (cached) so either role works.
+        if tests.iter().any(|t| t.starts_with("OTA_")) {
+            self.chip_builder
+                .build_chip_ota_requestor_app(None, false)?;
+            self.chip_builder.build_chip_ota_provider_app(None, false)?;
         }
 
         // Run each test
@@ -1070,13 +1105,44 @@ impl ITests {
         let test_exe_path = self.test_exe_path(profile, target);
         let test_pics_path = self.test_pics_path(target);
 
+        // OTA tests (`OTA_*`) run as a 3-party flow: the YAML commissions both an
+        // OTA provider and an OTA requestor. We slot the rs-matter `system_tests`
+        // binary into one role and a CHIP `chip-ota-{provider,requestor}-app` into
+        // the other. A `@requestor` suffix on the test name selects the role
+        // (rs-matter as the requestor DUT); default is rs-matter as the provider.
+        // The suffix is stripped before the YAML name is handed to the runner.
+        let (real_name, rs_is_requestor) = match test_name.strip_suffix("@requestor") {
+            Some(name) => (name, true),
+            None => (test_name, false),
+        };
+        let ota_app_clause = if real_name.starts_with("OTA_") {
+            let chip_requestor = chip_dir.join("out/host/chip-ota-requestor-app");
+            let chip_provider = chip_dir.join("out/host/chip-ota-provider-app");
+            if rs_is_requestor {
+                format!(
+                    " --ota-requestor-app '{}' --ota-provider-app '{}'",
+                    test_exe_path.display(),
+                    chip_provider.display(),
+                )
+            } else {
+                format!(
+                    " --ota-provider-app '{}' --ota-requestor-app '{}'",
+                    test_exe_path.display(),
+                    chip_requestor.display(),
+                )
+            }
+        } else {
+            String::new()
+        };
+
         format!(
-            "{} --log-level warn --target {} --runner chip_tool_python --chip-tool {} run --iterations 1 --test-timeout-seconds {} --all-clusters-app '{}' --pics-file {}",
+            "{} --log-level warn --target {} --runner chip_tool_python --chip-tool {} run --iterations 1 --test-timeout-seconds {} --all-clusters-app '{}'{} --pics-file {}",
             test_suite_path.display(),
-            test_name,
+            real_name,
             chip_tool_path.display(),
             timeout_secs,
             test_exe_path.display(),
+            ota_app_clause,
             test_pics_path.display(),
         )
     }

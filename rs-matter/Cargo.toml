@@ -124,6 +124,7 @@ backtrace = []
 alloc = ["defmt?/alloc"]
 openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
 mbedtls = ["alloc", "dep:mbedtls-rs-sys"]
+ota-dcl = ["dep:serde", "dep:serde-json-core", "heapless/serde"]
 sync-mutex = []
 rustcrypto = ["alloc", "digest", "cipher", "ccm", "elliptic-curve", "primeorder", "ecdsa", "sec1", "signature", "hmac", "hkdf", "pbkdf2", "crypto-bigint", "sha1", "sha2", "aes", "p256", "x509-cert"]
 defmt = ["dep:defmt", "heapless/defmt", "embassy-time/defmt", "mbedtls-rs-sys?/defmt"]
@@ -135,6 +136,7 @@ large-buffers = [] # TCP support
 rs-matter-macros = { version = "0.1", path = "../rs-matter-macros" }
 cfg-if = "1"
 bitflags = { version =  "2.5", default-features = false }
+embedded-io-async = "0.7"
 heapless = "0.9"
 num = { version = "0.4", default-features = false }
 num-derive = "0.4"
@@ -192,6 +194,7 @@ async-compat = { version = "0.2", optional = true, default-features = false }
 # OS
 zbus = { version = "5.8", optional = true }
 serde = { version = "1", optional = true, default-features = false, features = ["derive"] }
+serde-json-core = { version = "0.6", optional = true }
 async-channel = { version = "2", optional = true }
 uuid = { version = "1", optional = true, features = ["v4"] }
 libc = { version = "0.2", optional = true }

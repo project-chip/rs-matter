@@ -2078,7 +2078,7 @@ mod tests {
         let mut inner = ScenesStateInner::<8>::new();
         push(&mut inner, entry(fab(1), 1, 10, 5, 100));
         // Stamp "current scene" at (99, 99) — disjoint from the
-        // copy's target (20, 7). Per Matter spec §1.4.6.5,
+        // copy's target (20, 7). Per Matter spec,
         // `SceneValid` must be preserved when the copy doesn't touch
         // the currently-recalled scene.
         ScenesHandler::<8>::remember_current(&mut inner, fab(1), 1, 99, 99);
@@ -2312,7 +2312,7 @@ mod tests {
 
     #[test]
     fn upsert_invalidates_current_scene_when_upsert_targets_it() {
-        // Per Matter App Cluster spec §1.4.6.5, `SceneValid` is only
+        // Per Matter App Cluster spec, `SceneValid` is only
         // invalidated when the upsert (`AddScene` / `StoreScene`)
         // overwrites the currently-recalled scene. Stamp the current
         // scene at the same `(group, scene)` the upsert targets and

@@ -26,7 +26,7 @@ use std::net::UdpSocket;
 
 use async_signal::{Signal, Signals};
 
-use embassy_futures::select::select4;
+use embassy_futures::select::{select, select4};
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
@@ -36,6 +36,7 @@ use log::{info, warn};
 
 use rand::RngCore;
 
+use rs_matter::bdx::{Bdx, BdxDownloadInitiator, PROTO_ID_BDX};
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::acl::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::adm_comm::{self, ClusterHandler as _};
@@ -57,12 +58,19 @@ use rs_matter::dm::clusters::grp_key_mgmt::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
 use rs_matter::dm::clusters::net_comm::{self, SharedNetworks};
 use rs_matter::dm::clusters::noc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::ota_provider::{
+    BdxBuffer, ClusterAsyncHandler, DownloadProtocolEnum, OtaBdxHandler, OtaImageMeta, OtaImages,
+    OtaImagesRegistry, OtaProviderHandler, OtaQueryOutcome, StatusEnum,
+};
+use rs_matter::dm::clusters::ota_requestor::{
+    parse_bdx_url, ClusterHandler as _, OtaRequestorHandler, OtaState, Provider, Providers,
+};
 use rs_matter::dm::clusters::sw_diag::SoftwareFault;
 use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
 };
 use rs_matter::dm::clusters::user_label::{self, UserLabelHandler, UserLabels};
-use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
+use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
 use rs_matter::dm::events::Events;
@@ -70,27 +78,32 @@ use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
-    Async, Cluster, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, Node,
+    Async, AttrChangeNotifier, Cluster, DataModel, DataModelHandler, Dataver, Endpoint,
+    EpClMatcher, Node,
 };
-use rs_matter::error::Error;
+use rs_matter::error::{Error, ErrorCode};
+use rs_matter::im::PROTO_ID_INTERACTION_MODEL;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{FileKvBlobStore, SharedKvBlobStore};
-use rs_matter::respond::DefaultResponder;
+use rs_matter::persist::SharedKvBlobStore;
+use rs_matter::respond::{ChainedExchangeHandler, Responder};
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter::sc::pase::{Spake2pVerifierPassword, Spake2pVerifierPasswordRef};
+use rs_matter::sc::SecureChannel;
+use rs_matter::transport::exchange::Exchange;
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::sync::Notification;
-use rs_matter::BasicCommData;
-use rs_matter::{clusters, devices, Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, Matter};
 
 use static_cell::StaticCell;
 
 #[path = "../common/mdns.rs"]
 mod mdns;
+
+#[path = "../common/args.rs"]
+mod args;
 
 // Statically allocate in BSS the bigger objects
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
@@ -110,6 +123,10 @@ static USER_LABELS: StaticCell<UserLabels<1, 4>> = StaticCell::new();
 // that step pass. Two fabrics × ~8 entries per fabric is comfortably
 // above what the YAML's per-fabric scenarios actually exercise.
 static BINDINGS: StaticCell<Bindings<16>> = StaticCell::new();
+// OTA Provider role (gated behind `--filepath`): the file-backed image source
+// and a small pool of BDX block-staging buffers.
+static OTA_IMAGES: StaticCell<OtaFileImages> = StaticCell::new();
+static BDX_BUFFERS: StaticCell<PooledBuffers<2, BdxBuffer>> = StaticCell::new();
 
 static SW_FAULT_NOTIFY: Notification<CriticalSectionRawMutex> = Notification::new();
 
@@ -139,14 +156,14 @@ fn main() -> Result<(), Error> {
     // Optional `--discriminator <u16>` / `--passcode <u32>` overrides for the
     // hardcoded `TEST_DEV_COMM` defaults. Used by tests like TC-SC-7.1 that
     // assert the device is *not* using the spec-default `3840`/`20202021`.
-    let comm_data = parse_comm_overrides();
+    let comm_data = args::comm_overrides();
     let passcode = u32::from_le_bytes(*comm_data.password.access());
     // Optional `--port <u16>` override for the default Matter UDP/TCP port.
     // Used by tests that spawn a *second* CHIP Matter app under the test
     // framework's control (e.g. TC-SC-3.5, where `chip-all-clusters-app`
     // takes the default 5540 as TH_SERVER and the rs-matter DUT must move
     // out of the way).
-    let port = parse_port_override();
+    let port = args::port_override();
     info!(
         "Commissioning data: discriminator={}, passcode={}, port={}",
         comm_data.discriminator, passcode, port,
@@ -162,7 +179,7 @@ fn main() -> Result<(), Error> {
 
     // Persistence
     let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
-    let mut kv = FileKvBlobStore::new_default();
+    let mut kv = args::file_kv_store();
     futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
     futures_lite::future::block_on(events.load_persist(&mut kv, kv_buf))?;
 
@@ -206,7 +223,7 @@ fn main() -> Result<(), Error> {
 
     // Binding registry — same `StaticCell` + in-place-init pattern as
     // UserLabels. Loaded from KV before the data model accepts traffic
-    // so bindings written pre-reboot survive (spec §9.6.6.1, N quality).
+    // so bindings written pre-reboot survive.
     let bindings = BINDINGS.uninit().init_with(Bindings::init());
     futures_lite::future::block_on(bindings.load_persist(&mut kv, kv_buf))?;
 
@@ -225,6 +242,17 @@ fn main() -> Result<(), Error> {
     // attribute, while leaving the default system_tests build (used by
     // `TestBasicInformation` and everything else) on the upstream-1.5
     // attribute set.
+    // OTA role inputs: the `OTA_SuccessfulTransfer` integration test starts the
+    // provider with `--filepath <ota image>` and the requestor with
+    // `--otaDownloadPath <dst>`. The OTA clusters are always present in `NODE`
+    // now, so these only configure behavior (the image to serve / where to write
+    // the download); they don't change the device composition.
+    let ota_filepath = args::parse_arg_opt_override("--filepath", |s| s.to_string());
+    let ota_download_path = args::parse_arg_opt_override("--otaDownloadPath", |s| s.to_string());
+    let ota_images: &OtaFileImages = OTA_IMAGES.init(OtaFileImages::new(ota_filepath));
+    let ota_providers = Providers::new();
+    let ota_state = OtaState::new(ROOT_ENDPOINT_ID);
+
     let app_pipe = parse_app_pipe_override();
     let node: &'static Node<'static> = if app_pipe.is_some() {
         &NODE_BINFO_CV_EXPOSED
@@ -261,27 +289,44 @@ fn main() -> Result<(), Error> {
             &user_label_handler,
             &binding_handler_ep0,
             &binding_handler_ep1,
+            ota_images,
+            &ota_providers,
+            &ota_state,
         ),
         SharedKvBlobStore::new(kv, kv_buf),
         SharedNetworks::new(EthNetwork::new_default()),
     );
 
-    // Create a default responder capable of handling up to 3 subscriptions
-    // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(&dm);
-    info!(
-        "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
-        core::mem::size_of_val(&responder),
-        core::mem::size_of_val(&responder.run::<16, 4>())
+    // Responder = the default IM + Secure Channel handler chain, plus a BDX
+    // protocol handler for the OTA Provider role. BDX is inert without OTA
+    // traffic, so this is equivalent to `DefaultResponder` for every non-OTA
+    // test. We can't use `DefaultResponder` directly because it builds its
+    // handler chain internally with no way to inject BDX.
+    let bdx_buffers: &PooledBuffers<2, BdxBuffer> =
+        BDX_BUFFERS.uninit().init_with(PooledBuffers::init(0));
+    let main_handler = ChainedExchangeHandler::new(
+        PROTO_ID_INTERACTION_MODEL,
+        &dm,
+        SecureChannel::new(dm.crypto(), &dm),
+    )
+    .chain(
+        PROTO_ID_BDX,
+        Bdx::new(OtaBdxHandler::new(bdx_buffers, ota_images)),
     );
+    let main_responder = Responder::new("Responder", main_handler, matter, 0);
+    // Busy responder (matches `DefaultResponder`'s 500ms busy pool) so a flood of
+    // exchanges gets "try again later" rather than being dropped. 16 / 4 chosen to
+    // match `max-sessions-32`: TC_SC_3_6 establishes 15 subscriptions back-to-back
+    // and the initial-report exchanges overlap with the next handshake, overflowing
+    // a smaller pool with IM BUSY (status 0x9c).
+    let busy_responder = Responder::new_busy(matter, 500);
 
-    // Run the responder with up to 16 handlers (i.e. 16 exchanges can be handled simultaneously).
-    // Clients trying to open more exchanges than the ones currently running will get
-    // "I'm busy, please try again later" from the busy-responder pool (4 handlers).
-    // 16 / 4 chosen to match `max-sessions-32`: TC_SC_3_6 establishes 15 subscriptions
-    // back-to-back and the initial-report exchanges overlap with the next handshake,
-    // overflowing the smaller pool with IM BUSY (status 0x9c).
-    let mut respond = pin!(responder.run::<16, 4>());
+    let mut respond = pin!(async {
+        let mut actual = pin!(main_responder.run::<16>());
+        let mut busy = pin!(busy_responder.run::<4>());
+
+        select(&mut actual, &mut busy).coalesce().await
+    });
 
     // Run the background job of the data model
     let mut dm_job = pin!(dm.run());
@@ -379,12 +424,29 @@ fn main() -> Result<(), Error> {
 
     let mut sw_fault_emitter = pin!(emit_software_fault_on_trigger(&dm));
 
+    // OTA Requestor role loop (active only with `--otaDownloadPath`): reacts to
+    // `AnnounceOTAProvider` by downloading the image from the announced provider.
+    let mut ota_job = pin!(run_ota_requestor(
+        matter,
+        &crypto,
+        &ota_providers,
+        &ota_state,
+        &dm,
+        ota_download_path,
+    ));
+
     // Combine all async tasks in a single one
     let all = select4(
         &mut transport,
         &mut mdns,
         &mut app_pipe_actions,
-        select4(&mut respond, &mut dm_job, &mut sw_fault_emitter, &mut term).coalesce(),
+        select4(
+            &mut respond,
+            &mut dm_job,
+            &mut sw_fault_emitter,
+            select(&mut term, &mut ota_job).coalesce(),
+        )
+        .coalesce(),
     );
 
     // Run with a simple `block_on`. Any local executor would do.
@@ -414,18 +476,18 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 /// The Node meta-data describing our Matter device.
 ///
 /// EP0 uses `clusters!(eth;)` for the Root Node system cluster set
-/// (Matter Core spec §9.11 / Device Library §2.1.5: Root Node device
+/// (Matter Core spec / Device Library: Root Node device
 /// type 0x0016 does not list Groups). Groups is then *manually
 /// re-added* at EP0 because the YAML test `TestGroupMessaging`
 /// exercises group-addressed writes against root-endpoint attributes
 /// like `BasicInformation::NodeLabel`, which require the device's
 /// Root Node endpoint to be a member of a multicast group — and the
 /// only way to achieve that is per-endpoint Groups membership (App
-/// Cluster spec §1.3). The matching runtime handler binding for
+/// Cluster spec). The matching runtime handler binding for
 /// Groups at `ROOT_ENDPOINT_ID` is wired in `with_eth_sys` below; the
 /// library-level `with_*_sys` chain no longer adds it.
 ///
-/// Spec note: Matter Core §7.16.4 says extra clusters MAY be present
+/// Spec note: Matter Core Spec says extra clusters MAY be present
 /// on an endpoint and clients MAY ignore them — i.e. having Groups on
 /// EP0 is permitted but does mean a strict device-type-conformance
 /// run (`TC_DeviceConformance::test_TC_IDM_10_5`) would flag it as an
@@ -440,11 +502,11 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 /// it isn't part of the Root Node device type — the
 /// `TestUserLabelClusterConstraints` YAML test targets `endpoint: 0`
 /// and exercises the `LabelList` length-constraint behaviour. Same
-/// rationale as Groups: Matter Core §7.16.4 permits extras, our
+/// rationale as Groups: Matter Core Spec permits extras, our
 /// device-type-conformance test is already on the skip list.
 /// Static fixed-label data exposed by EP1's `FixedLabel` cluster.
 /// `TC_FLABEL_2_1` step 2 asserts every entry's `label`/`value` is a
-/// string ≤ 16 bytes (Matter Application Cluster spec §9.6.4); both
+/// string ≤ 16 bytes (Matter Application Cluster Spec); both
 /// pairs below satisfy that constraint.
 const FIXED_LABELS_EP1: &[FixedLabelEntry<'static>] = &[
     FixedLabelEntry {
@@ -472,15 +534,22 @@ const NODE: Node<'static> = Node {
             devices!(DEV_TYPE_ROOT_NODE),
             clusters!(
                 eth,
-                // Claim `TimeSynchronization.TIME_SYNC_CLIENT` (Matter Core
-                // spec §11.17.13) so the device advertises the
+                // Claim `TimeSynchronization.TIME_SYNC_CLIENT`
+                // (Matter Core Spec) so the device advertises the
                 // `TrustedTimeSource` attribute + `SetTrustedTimeSource`
                 // command — exercised by `TC_TIMESYNC_2_13` and
                 // consumed by [`time_sync::client::TimeSyncClient`].
                 time_sync(time_sync_client);
                 groups::GroupsHandler::CLUSTER,
                 user_label::CLUSTER,
-                binding::CLUSTER
+                binding::CLUSTER,
+                // OTA Software Update Provider (0x0029) + Requestor (0x002A) for
+                // the `OTA_*` itests. Always present (matter permits extra
+                // clusters on an endpoint); inert unless the OTA harness drives
+                // them via `--filepath` / `--otaDownloadPath`. The OTA test's
+                // `AnnounceOTAProvider` targets endpoint 0, so they live here.
+                OTA_PROVIDER_CLUSTER,
+                OTA_REQUESTOR_CLUSTER
             ),
             &[on_off::FULL_CLUSTER.id],
         ),
@@ -520,6 +589,18 @@ const NODE: Node<'static> = Node {
         ),
     ],
 };
+
+/// The OTA Software Update Provider cluster metadata, exactly as served by
+/// [`OtaProviderHandler`] (so `NODE`'s declaration matches the handler).
+const OTA_PROVIDER_CLUSTER: Cluster<'static> =
+    <OtaProviderHandler<&OtaFileImages> as ClusterAsyncHandler>::CLUSTER;
+
+/// The OTA Software Update Requestor cluster metadata, as served by
+/// [`OtaRequestorHandler`].
+const OTA_REQUESTOR_CLUSTER: Cluster<'static> = OtaRequestorHandler::CLUSTER;
+
+/// Download protocols this requestor advertises (BDX only).
+const OTA_PROTOCOLS: &[DownloadProtocolEnum] = &[DownloadProtocolEnum::BDXSynchronous];
 
 /// `BasicInformation` cluster metadata that exposes the provisional
 /// `ConfigurationVersion` attribute (only `Reachable` is excluded). Used by
@@ -571,6 +652,9 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
                 binding::CLUSTER,
                 net_comm::NetworkType::Ethernet.cluster(),
                 eth_diag::EthDiagHandler::CLUSTER,
+                // OTA clusters present on every variant (see `NODE`).
+                OTA_PROVIDER_CLUSTER,
+                OTA_REQUESTOR_CLUSTER,
             ),
             &[on_off::FULL_CLUSTER.id],
         ),
@@ -627,6 +711,9 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     user_label_handler: &'a UserLabelHandler<'a, 1, 4>,
     binding_handler_ep0: &'a BindingHandler<'a, 16>,
     binding_handler_ep1: &'a BindingHandler<'a, 16>,
+    ota_images: &'a OtaFileImages,
+    ota_providers: &'a Providers,
+    ota_state: &'a OtaState,
 ) -> impl DataModelHandler + 'a {
     (
         node,
@@ -638,13 +725,13 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             // `with_*_sys()` chain in `rs-matter/src/dm/endpoints.rs`
             // intentionally does *not* bind Groups at root anymore —
             // Groups is not part of the Root Node device type
-            // (Matter Device Library §2.1.5). We re-add it here
+            // (Matter Device Library). We re-add it here
             // because the `TestGroupMessaging` YAML test exercises
             // group-addressed writes against root-endpoint
             // attributes (e.g. `BasicInformation::NodeLabel`), which
             // requires this endpoint to be a member of the target
             // multicast group via per-endpoint Groups membership
-            // (App Cluster spec §1.3). The matching metadata entry
+            // (App Cluster Spec). The matching metadata entry
             // is in `NODE` and `NODE_BINFO_CV_EXPOSED` above.
             .chain(
                 EpClMatcher::new(
@@ -695,7 +782,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             )
             // Binding handler at EP1 — same registry as EP0,
             // separate facade so the per-cluster-instance Dataver
-            // stays granular per Matter Core §7.13.2.1.
+            // stays granular per Matter Core Spec.
             .chain(
                 EpClMatcher::new(Some(1), Some(binding::CLUSTER.id)),
                 Async(binding::HandlerAdaptor(binding_handler_ep1)),
@@ -727,60 +814,44 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             .chain(
                 EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
                 on_off::HandlerAsyncAdaptor(on_off_2),
+            )
+            // OTA Software Update Provider on the root endpoint (OTA role). The
+            // handler is always present but only matched when `NODE` declares
+            // the cluster (gated behind `--filepath`), so it is inert otherwise.
+            .chain(
+                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(OTA_PROVIDER_CLUSTER.id)),
+                OtaProviderHandler::new(Dataver::new_rand(&mut rand), ota_images).adapt(),
+            )
+            // OTA Software Update Requestor on the root endpoint (OTA role).
+            // Inert unless an and an
+            // `AnnounceOTAProvider` arrives; the actual download is driven by
+            // `run_ota_requestor` in `main`.
+            .chain(
+                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(OTA_REQUESTOR_CLUSTER.id)),
+                Async(
+                    OtaRequestorHandler::new(
+                        Dataver::new_rand(&mut rand),
+                        ota_providers,
+                        ota_state,
+                    )
+                    .adapt(),
+                ),
             ),
     )
-}
-
-/// Parse optional `--discriminator <u16>` / `--passcode <u32>` CLI overrides
-/// and return a `BasicCommData` based on those (or the spec defaults when not
-/// provided).
-///
-/// Used by tests such as TC-SC-7.1 that assert the device is *not* using the
-/// spec-default discriminator (3840) and passcode (20202021).
-fn parse_comm_overrides() -> BasicCommData {
-    let mut data = TEST_DEV_COMM;
-
-    if let Some(discriminator) =
-        parse_arg_opt_override("--discriminator", |s| s.parse::<u16>().ok()).flatten()
-    {
-        data.discriminator = discriminator;
-    }
-
-    if let Some(passcode) =
-        parse_arg_opt_override("--passcode", |s| s.parse::<u32>().ok()).flatten()
-    {
-        data.password = Spake2pVerifierPassword::new_from_ref(Spake2pVerifierPasswordRef::new(
-            &passcode.to_le_bytes(),
-        ));
-    }
-
-    data
-}
-
-/// Parse an optional `--port <u16>` CLI override and return the Matter UDP/TCP
-/// port to bind on. Defaults to `MATTER_PORT` (5540) when not provided.
-///
-/// Used by tests like TC-SC-3.5 that spawn a *second* CHIP Matter app
-/// (`chip-all-clusters-app`) under the test framework's control. That app
-/// hard-codes 5540 as TH_SERVER, so the rs-matter DUT must move out of the
-/// way to avoid a `bind: Address already in use`.
-fn parse_port_override() -> u16 {
-    parse_arg_opt_override("--port", |s| s.parse::<u16>().unwrap_or(MATTER_PORT))
-        .unwrap_or(MATTER_PORT)
 }
 
 /// Parse an optional `--app-pipe <path>` CLI override. When present, the CHIP
 /// Python test framework writes JSON command lines to that path; we spin up
 /// an OS-thread reader to act on them.
 fn parse_app_pipe_override() -> Option<String> {
-    parse_arg_opt_override("--app-pipe", |s| s.to_string())
+    args::parse_arg_opt_override("--app-pipe", |s| s.to_string())
 }
 
 /// Parse an optional `--enable-key <hex>` CLI override. The argument is a
 /// 32-character hex string (16 bytes) that the device will accept as the
 /// `TestEventTrigger` enable-key. Used by `TC_TestEventTrigger`.
 fn parse_enable_key_override() -> Option<[u8; 16]> {
-    parse_arg_opt_override("--enable-key", |s| s.to_string()).and_then(|hex| {
+    args::parse_arg_opt_override("--enable-key", |s| s.to_string()).and_then(|hex| {
         if hex.len() != 32 {
             return None;
         }
@@ -794,7 +865,7 @@ fn parse_enable_key_override() -> Option<[u8; 16]> {
 
 /// `GenDiag` implementation that ties `TestEventTriggersEnabled` and
 /// `TestEventTrigger` to a configured 16-byte enable key. Uptime falls back
-/// to the library default impl on `()`. Per Matter Core spec §11.12.7.1, the
+/// to the library default impl on `()`. Per Matter Core Spec, the
 /// command must:
 ///
 /// - reject an all-zero `enableKey` with `ConstraintError`,
@@ -830,8 +901,8 @@ impl GenDiag for TestEventTriggerDiag {
         // Mirror CHIP's `SampleTestEventTriggerDelegate`: the canonical CHIP
         // test trigger code is accepted by `TC_TestEventTrigger`.
         const TC_TEST_EVENT_TRIGGER: u64 = 0xFFFF_FFFF_FFF1_0000;
-        // SoftwareDiagnostics `SoftwareFault` test trigger (Matter Core spec
-        // §11.13.7). `TC_DGSW_2_2` invokes this trigger and then waits for a
+        // SoftwareDiagnostics `SoftwareFault` test trigger (Matter Core Spec).
+        // `TC_DGSW_2_2` invokes this trigger and then waits for a
         // `SoftwareFault` event. We signal `SW_FAULT_NOTIFY` so the
         // top-level async task can emit the event (the trait method
         // itself is sync and has no event-emitter context).
@@ -877,21 +948,6 @@ where
             ),
         }
     }
-}
-
-fn parse_arg_opt_override<T>(opt: &str, conv: impl FnOnce(&str) -> T) -> Option<T> {
-    let args: Vec<String> = std::env::args().collect();
-
-    let mut i = 1;
-    while i < args.len() {
-        if args[i] == opt && i + 1 < args.len() {
-            return Some(conv(&args[i + 1]));
-        }
-
-        i += 1;
-    }
-
-    None
 }
 
 /// Read JSON command lines from the named pipe at `path` and dispatch them to
@@ -955,4 +1011,219 @@ async fn run_app_pipe_actions(
             }
         }
     }
+}
+
+/// The BDX file designator for the single OTA image we serve (also reused as the
+/// `UpdateToken`, which it fits at 19 bytes within the spec's 8..=32 bound).
+const OTA_FILE_DESIGNATOR: &[u8] = b"rs-matter-ota-image";
+
+/// The software version we offer. Must match the `-vn 2` that the OTA test
+/// harness passes to `ota_image_tool create`, so the CHIP requestor accepts the
+/// offered image (its version must be strictly newer than the requestor's).
+const OTA_OFFERED_VERSION: u32 = 2;
+
+/// A file-backed [`OtaImagesRegistry`] + [`OtaImages`] for the OTA Provider role:
+/// it offers, and serves over BDX, the single Matter OTA image file given via
+/// `--filepath`. Active only when a path is supplied (the OTA gate); otherwise
+/// `query`/`size` report nothing so the provider is inert.
+struct OtaFileImages {
+    path: Option<String>,
+    size: u64,
+}
+
+impl OtaFileImages {
+    fn new(path: Option<String>) -> Self {
+        let size = path
+            .as_ref()
+            .and_then(|p| std::fs::metadata(p).ok())
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        Self { path, size }
+    }
+}
+
+impl OtaImagesRegistry for OtaFileImages {
+    async fn query<'b>(
+        &self,
+        _vendor_id: u16,
+        _product_id: u16,
+        _current_version: u32,
+        _requestor_can_consent: bool,
+        designator_buf: &'b mut [u8],
+    ) -> OtaQueryOutcome<'b> {
+        if self.path.is_none() {
+            return OtaQueryOutcome::NotAvailable;
+        }
+
+        let Some(slot) = designator_buf.get_mut(..OTA_FILE_DESIGNATOR.len()) else {
+            return OtaQueryOutcome::NotAvailable;
+        };
+        slot.copy_from_slice(OTA_FILE_DESIGNATOR);
+        // `OTA_FILE_DESIGNATOR` is ASCII, so this is always valid UTF-8.
+        let file_designator = core::str::from_utf8(slot).unwrap();
+
+        OtaQueryOutcome::Available(OtaImageMeta {
+            version: OTA_OFFERED_VERSION,
+            file_designator,
+            update_token: OTA_FILE_DESIGNATOR,
+            size: Some(self.size),
+            user_consent_needed: false,
+        })
+    }
+}
+
+impl OtaImages for OtaFileImages {
+    async fn size(&self, file_designator: &[u8]) -> Option<u64> {
+        (self.path.is_some() && file_designator == OTA_FILE_DESIGNATOR).then_some(self.size)
+    }
+
+    async fn read(
+        &self,
+        file_designator: &[u8],
+        offset: u64,
+        buf: &mut [u8],
+    ) -> Result<usize, Error> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        if file_designator != OTA_FILE_DESIGNATOR {
+            return Err(rs_matter::error::ErrorCode::NotFound.into());
+        }
+        let Some(path) = &self.path else {
+            return Err(rs_matter::error::ErrorCode::NotFound.into());
+        };
+
+        let mut f = std::fs::File::open(path).map_err(|_| rs_matter::error::ErrorCode::NotFound)?;
+        f.seek(SeekFrom::Start(offset))
+            .map_err(|_| rs_matter::error::ErrorCode::Invalid)?;
+        let n = f
+            .read(buf)
+            .map_err(|_| rs_matter::error::ErrorCode::Invalid)?;
+
+        Ok(n)
+    }
+}
+
+/// OTA Requestor role (active only when `--otaDownloadPath` is given): on each
+/// `AnnounceOTAProvider`, query the announced provider, download its image over
+/// BDX, strip the Matter OTA header, write the raw payload to the download path,
+/// and print "OTA image downloaded" (the line the test harness waits for).
+async fn run_ota_requestor(
+    matter: &Matter<'_>,
+    crypto: impl Crypto,
+    providers: &Providers,
+    ota_state: &OtaState,
+    notifier: &dyn AttrChangeNotifier,
+    download_path: Option<String>,
+) -> Result<(), Error> {
+    let Some(download_path) = download_path else {
+        // Not the requestor role — idle forever so the `select` never picks us.
+        core::future::pending::<()>().await;
+        unreachable!()
+    };
+
+    loop {
+        // Wake on an `AnnounceOTAProvider` (or any provider-set change).
+        providers.wait_changed().await;
+
+        // Drain the announced set up front so a provider announced while a download
+        // is in progress is processed on the next pass rather than lost to a clear.
+        for provider in providers.take_announced() {
+            if let Err(e) = download_image(
+                matter,
+                &crypto,
+                &provider,
+                ota_state,
+                notifier,
+                &download_path,
+            )
+            .await
+            {
+                warn!(
+                    "OTA: download from 0x{:016x} failed: {:?}",
+                    provider.node_id, e
+                );
+            }
+        }
+    }
+}
+
+/// Query `provider`, download the offered image over BDX, strip the OTA header,
+/// and write the raw payload to `download_path`.
+async fn download_image(
+    matter: &Matter<'_>,
+    crypto: &impl Crypto,
+    provider: &Provider,
+    ota_state: &OtaState,
+    notifier: &dyn AttrChangeNotifier,
+    download_path: &str,
+) -> Result<(), Error> {
+    let update = ota_state.initiate_update(notifier);
+    update.querying();
+
+    // Copy out the `bdx://` image URI before the response buffer is released.
+    let mut uri_buf = [0u8; 256];
+    let found = provider
+        .query(matter, crypto, OTA_PROTOCOLS, None, false, |resp| {
+            if resp.status()? != StatusEnum::UpdateAvailable {
+                return Ok(None);
+            }
+            let uri = resp.image_uri()?.ok_or(ErrorCode::InvalidData)?.as_bytes();
+            uri_buf
+                .get_mut(..uri.len())
+                .ok_or(ErrorCode::NoSpace)?
+                .copy_from_slice(uri);
+
+            Ok(Some(uri.len()))
+        })
+        .await?;
+
+    let Some(uri_len) = found else {
+        return Ok(());
+    };
+    let uri = core::str::from_utf8(&uri_buf[..uri_len]).map_err(|_| ErrorCode::InvalidData)?;
+    let (node_id, fd) = parse_bdx_url(uri)?;
+
+    update.downloading(Some(0));
+
+    // Download the whole (small, test) OTA image over BDX into memory.
+    let exchange = Exchange::initiate(matter, crypto, provider.fab_idx, node_id).await?;
+    let mut reader = exchange.download(fd.as_bytes(), None).await?;
+    let mut image: std::vec::Vec<u8> = std::vec::Vec::new();
+    let mut buf = [0u8; 1024];
+    loop {
+        let n = reader.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        image.extend_from_slice(&buf[..n]);
+    }
+
+    // Strip the Matter OTA header and write the raw payload; a real device would
+    // instead stream blocks to a firmware slot and verify as it goes.
+    let payload = strip_ota_header(&image)?;
+    std::fs::write(download_path, payload).map_err(|_| ErrorCode::Invalid)?;
+
+    update.applying();
+    // The exact substring the harness's `WaitForMessage` blocks on.
+    info!("OTA image downloaded");
+    update.complete();
+
+    Ok(())
+}
+
+/// Strip the Matter OTA image fixed header (`<u32 magic><u64 totalSize><u32
+/// headerSize>` followed by `headerSize` TLV bytes), returning the raw payload.
+fn strip_ota_header(image: &[u8]) -> Result<&[u8], Error> {
+    const MAGIC: u32 = 0x1BEE_F11E;
+    const FIXED: usize = 16; // u32 magic + u64 total size + u32 header size
+
+    if image.len() < FIXED || u32::from_le_bytes(image[0..4].try_into().unwrap()) != MAGIC {
+        return Err(ErrorCode::InvalidData.into());
+    }
+    let header_size = u32::from_le_bytes(image[12..16].try_into().unwrap()) as usize;
+
+    image
+        .get(FIXED + header_size..)
+        .ok_or_else(|| ErrorCode::InvalidData.into())
 }
