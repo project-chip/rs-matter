@@ -71,6 +71,14 @@ pub struct OtaImageMeta<'a> {
     pub version: u32,
     /// The BDX file designator that identifies this image when downloaded.
     pub file_designator: &'a str,
+    /// The opaque `UpdateToken` (8..=32 bytes) the provider assigns to this offer.
+    /// The requestor echoes it verbatim on `ApplyUpdateRequest` /
+    /// `NotifyUpdateApplied`, where it is handed back to
+    /// [`OtaImagesRegistry::apply`] - so a registry can use it to correlate the
+    /// apply/notify phase with this query (e.g. an image id, or a key into its own
+    /// per-flow state). It is *not* used for the download (that's the
+    /// [`file_designator`](Self::file_designator) carried in the `bdx://` URL).
+    pub update_token: &'a [u8],
     /// The total image size in bytes, if known (enables a definite-length
     /// transfer and download-progress reporting on the requestor).
     pub size: Option<u64>,
@@ -172,10 +180,10 @@ pub trait OtaImagesRegistry {
         designator_buf: &'b mut [u8],
     ) -> OtaQueryOutcome<'b>;
 
-    /// Authorize the requestor to apply the already-downloaded image identified by
-    /// `update_token` (the value returned as `UpdateToken` from
-    /// [`query`](Self::query) - in this crate's samples, the BDX file designator),
-    /// upgrading to `new_version`.
+    /// Authorize the requestor to apply the already-downloaded image, upgrading to
+    /// `new_version`. `update_token` is the exact [`OtaImageMeta::update_token`]
+    /// this registry assigned in [`query`](Self::query) and the requestor echoed
+    /// back, so the registry can correlate this call with that offer.
     ///
     /// The default authorizes an immediate apply. Override it to defer (e.g. until
     /// provider-side consent is granted, with [`OtaApplyOutcome::Await`]) or to rescind a
@@ -249,6 +257,9 @@ where
         T::read(self, file_designator, offset, buf).await
     }
 }
+
+/// The valid `UpdateToken` length range, per the Matter spec.
+const UPDATE_TOKEN_LEN: core::ops::RangeInclusive<usize> = 8..=32;
 
 /// The server-side handler for the OTA Software Update Provider cluster.
 pub struct OtaProviderHandler<I> {
@@ -347,15 +358,18 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
         let mut version_str = heapless::String::<16>::new();
         write!(version_str, "{}", image.version).map_err(|_| ErrorCode::NoSpace)?;
 
+        // The registry owns the (opaque) update token; enforce the spec's bound.
+        if !UPDATE_TOKEN_LEN.contains(&image.update_token.len()) {
+            return Err(ErrorCode::ConstraintError.into());
+        }
+
         response
             .status(StatusEnum::UpdateAvailable)?
             .delayed_action_time(None)?
             .image_uri(Some(uri.as_str()))?
             .software_version(Some(image.version))?
             .software_version_string(Some(version_str.as_str()))?
-            // The update token is opaque to the requestor; the file designator
-            // (which the requestor sends back on the BDX transfer) suffices.
-            .update_token(Some(Octets(image.file_designator.as_bytes())))?
+            .update_token(Some(Octets(image.update_token)))?
             // Consent policy is the registry's; forward its decision verbatim.
             .user_consent_needed(Some(image.user_consent_needed))?
             .metadata_for_requestor(None)?

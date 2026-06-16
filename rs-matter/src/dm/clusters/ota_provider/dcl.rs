@@ -227,6 +227,9 @@ impl<H: OtaHttp> DclImages<'_, H> {
         Some(OtaImageMeta {
             version: mv.software_version,
             file_designator: designator,
+            // The designator (`<vid>-<pid>-<version>`) is well under 32 bytes, so
+            // it doubles as the update token - identifying the image at apply time.
+            update_token: designator.as_bytes(),
             size: Some(mv.ota_file_size),
             user_consent_needed: false,
         })
@@ -557,6 +560,7 @@ mod tests {
             };
             assert_eq!(meta.version, 10);
             assert_eq!(meta.file_designator, "1234-5678-10");
+            assert_eq!(meta.update_token, b"1234-5678-10");
             assert_eq!(meta.size, Some(2500));
             assert!(!meta.user_consent_needed);
 
