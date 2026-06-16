@@ -110,7 +110,12 @@ impl<'a, 'b> BdxWriter<'a, 'b> {
     /// Send `len` bytes - previously written into [`block_buf`](Self::block_buf) -
     /// as one block. `len` must not exceed [`max_block_size`](Self::max_block_size).
     pub async fn commit(&mut self, len: usize) -> Result<(), Error> {
-        self.block_len = len.min(self.max_block_size);
+        if len > self.max_block_size {
+            // Truncating here would silently drop the tail of the caller's block;
+            // surface the contract violation instead.
+            return Err(ErrorCode::Invalid.into());
+        }
+        self.block_len = len;
 
         self.send_block(false).await
     }
@@ -253,6 +258,12 @@ impl<'a> BdxUploadInitiator<'a> for Exchange<'a> {
         file_designator: &[u8],
         offset: Option<u64>,
     ) -> Result<BdxWriter<'a, 'b>, Error> {
+        if buf.is_empty() {
+            // An empty staging buffer would propose a max block size of 0 and yield
+            // a writer that can never make progress; reject it up front.
+            return Err(ErrorCode::Invalid.into());
+        }
+
         // We can never send a block larger than our staging buffer or our TX buffer.
         let pmbs = buf.len().min(MAX_TX_BLOCK_SIZE as usize) as u16;
         send_init(&mut self, OpCode::SendInit, pmbs, offset, file_designator).await?;
@@ -321,6 +332,13 @@ impl<'a> BdxDownloadResponder<'a> {
         buf: &'b mut [u8],
         length: Option<u64>,
     ) -> Result<BdxWriter<'a, 'b>, Error> {
+        if buf.is_empty() {
+            // Our staging buffer is unusable, so we can never serve a block. Reject
+            // the peer gracefully rather than panicking on the block-size clamp below.
+            self.exchange.rx_done()?;
+            return abort(&mut self.exchange, BdxStatus::TransferFailedUnknownError).await;
+        }
+
         // Prefer to let the initiating receiver drive (its `BdxReader` is the
         // "driving receiver"); otherwise drive ourselves.
         let tc = self.transfer_control;

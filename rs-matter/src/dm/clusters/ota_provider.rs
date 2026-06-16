@@ -454,12 +454,23 @@ impl<B, I: OtaImages> OtaBdxHandler<B, I> {
         let mut filled = 0;
 
         while filled < buf.len() {
+            // `checked_add`: a buggy `OtaImages::size` could let a peer's
+            // start offset sit near `u64::MAX`, where `offset + filled` overflows.
+            let read_offset = offset
+                .checked_add(filled as u64)
+                .ok_or(ErrorCode::Invalid)?;
             let n = self
                 .images
-                .read(fd, offset + filled as u64, &mut buf[filled..])
+                .read(fd, read_offset, &mut buf[filled..])
                 .await?;
             if n == 0 {
                 break;
+            }
+            // Guard a misbehaving `OtaImages::read` that reports reading more than
+            // the slice it was handed - otherwise `filled` overruns `buf` and the
+            // next `&mut buf[filled..]` panics.
+            if n > buf.len() - filled {
+                return Err(ErrorCode::Invalid.into());
             }
 
             filled += n;

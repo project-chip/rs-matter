@@ -220,26 +220,20 @@ async fn run_ota(
         select(providers.wait_changed(), Timer::after(POLL_INTERVAL)).await;
 
         // Try the configured defaults first, then the transient announced ones.
+        // Drain the announced set up front (one-shot hints): anything announced
+        // while this pass is busy is preserved for the next pass, not lost to a
+        // trailing clear.
         let n_default = providers.len();
-        let n_announced = providers.announced_len();
+        let announced = providers.take_announced();
 
-        for i in 0..(n_default + n_announced) {
-            let provider = if i < n_default {
-                providers.get(i)
-            } else {
-                providers.announced(i - n_default)
-            };
-            let Some(provider) = provider else { continue };
-
+        let defaults = (0..n_default).filter_map(|i| providers.get(i));
+        for provider in defaults.chain(announced.iter().copied()) {
             match try_update(matter, &crypto, &provider, ota_state, notifier).await {
                 Ok(true) => info!("OTA: update applied"),
                 Ok(false) => {}
                 Err(e) => warn!("OTA: provider 0x{:016x} failed: {e:?}", provider.node_id),
             }
         }
-
-        // Announced providers are one-shot hints; drop them after this pass.
-        providers.clear_announced();
     }
 }
 
@@ -326,7 +320,10 @@ async fn try_update(
         received += n as u64;
 
         if let Some(total) = total.filter(|t| *t > 0) {
-            update.downloading(Some((received.min(total) * 100 / total) as u8));
+            // `u128` so an absurd provider-advertised `total` can't overflow.
+            update.downloading(Some(
+                (received.min(total) as u128 * 100 / total as u128) as u8,
+            ));
         }
     }
 

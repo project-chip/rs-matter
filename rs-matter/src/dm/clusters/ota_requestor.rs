@@ -347,6 +347,22 @@ impl Providers {
         self.state.lock(|cell| cell.borrow_mut().announced.clear());
     }
 
+    /// Atomically remove and return all cached announced providers.
+    ///
+    /// Prefer this to iterating [`announced`](Self::announced) and then calling
+    /// [`clear_announced`](Self::clear_announced) in an update loop: providers
+    /// learned via `AnnounceOTAProvider` *while the loop is busy* processing this
+    /// batch land in a fresh `announced` set (and re-arm [`wait_changed`](Self::wait_changed))
+    /// instead of being discarded unprocessed by a trailing clear.
+    pub fn take_announced(&self) -> Vec<Provider, ANNOUNCED_PROVIDERS> {
+        self.state.lock(|cell| {
+            let mut state = cell.borrow_mut();
+            let taken = state.announced.clone();
+            state.announced.clear();
+            taken
+        })
+    }
+
     /// Wait until the provider set changes (a `DefaultOTAProviders` write or an
     /// `AnnounceOTAProvider` command).
     pub async fn wait_changed(&self) {
@@ -540,8 +556,10 @@ impl OtaState {
             reported.progress = progress;
         });
 
-        self.notify(notifier, AttributeId::UpdateState as _);
-        self.notify(notifier, AttributeId::UpdateStateProgress as _);
+        // Both `UpdateState` and `UpdateStateProgress` changed; a single
+        // cluster-level notification bumps the data version once and re-reports
+        // any subscriber interested in either attribute.
+        notifier.notify_cluster_changed(self.endpoint_id, FULL_CLUSTER.id);
     }
 
     /// Notify the data model that `attr_id` of this cluster instance changed.
@@ -759,6 +777,10 @@ impl ClusterHandler for OtaRequestorHandler<'_> {
 pub fn parse_bdx_url(url: &str) -> Result<(NodeId, &str), Error> {
     let rest = url.strip_prefix("bdx://").ok_or(ErrorCode::InvalidData)?;
     let (node, fd) = rest.split_once('/').ok_or(ErrorCode::InvalidData)?;
+    if fd.is_empty() {
+        // A BDX transfer needs a non-empty file designator to identify the file.
+        return Err(ErrorCode::InvalidData.into());
+    }
     let node_id = u64::from_str_radix(node, 16).map_err(|_| ErrorCode::InvalidData)?;
 
     Ok((node_id, fd))

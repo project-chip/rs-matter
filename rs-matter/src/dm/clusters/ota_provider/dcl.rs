@@ -128,6 +128,14 @@ impl<'a, H> DclImages<'a, H> {
     /// parsing; a couple of KiB is recommended (it must be larger than
     /// [`MAX_URL`]).
     pub const fn new(http: H, base_url: &'a str, scratch: &'a mut [u8]) -> Self {
+        // `carve` splits off `MAX_URL` bytes for the URL and leaves the rest for
+        // the JSON response; a buffer this small would make every query/read
+        // silently fail. Fail loudly at construction instead.
+        assert!(
+            scratch.len() > MAX_URL,
+            "DclImages scratch buffer must be larger than MAX_URL"
+        );
+
         Self {
             http,
             base_url,

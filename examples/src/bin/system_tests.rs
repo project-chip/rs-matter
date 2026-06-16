@@ -1126,11 +1126,9 @@ async fn run_ota_requestor(
         // Wake on an `AnnounceOTAProvider` (or any provider-set change).
         providers.wait_changed().await;
 
-        for i in 0..providers.announced_len() {
-            let Some(provider) = providers.announced(i) else {
-                continue;
-            };
-
+        // Drain the announced set up front so a provider announced while a download
+        // is in progress is processed on the next pass rather than lost to a clear.
+        for provider in providers.take_announced() {
             if let Err(e) = download_image(
                 matter,
                 &crypto,
@@ -1147,8 +1145,6 @@ async fn run_ota_requestor(
                 );
             }
         }
-
-        providers.clear_announced();
     }
 }
 
