@@ -24,11 +24,9 @@ use embassy_sync::zerocopy_channel::{Channel, Receiver, Sender};
 
 use rs_matter::acl::{AclEntry, AuthMode};
 use rs_matter::crypto::{test_only_crypto, Crypto};
-use rs_matter::dm::clusters::net_comm::DummyNetworkAccess;
+use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
-use rs_matter::dm::events::Events;
-use rs_matter::dm::subscriptions::Subscriptions;
-use rs_matter::dm::{DataModel, DataModelHandler, IMBuffer, Privilege};
+use rs_matter::dm::{DataModel, DataModelHandler, DataModelState, IMBuffer, Privilege};
 use rs_matter::error::Error;
 use rs_matter::persist::DummyKvBlobStoreAccess;
 use rs_matter::respond::{ExchangeHandler, Responder};
@@ -78,8 +76,7 @@ pub struct E2eRunner<C> {
     matter_client: Matter<'static>,
     crypto: C,
     buffers: PooledBuffers<10, IMBuffer>,
-    pub subscriptions: Subscriptions<3>,
-    pub events: Events<E2E_EVENTS_BUF_SIZE>,
+    pub state: DataModelState<DummyNetworks, 3, E2E_EVENTS_BUF_SIZE>,
     cat_ids: NocCatIds,
 }
 
@@ -99,8 +96,7 @@ impl<C: Crypto> E2eRunner<C> {
             matter_client: Self::new_matter(),
             crypto,
             buffers: PooledBuffers::new(0),
-            subscriptions: Subscriptions::new(),
-            events: Events::new(),
+            state: DataModelState::new(DummyNetworks),
             cat_ids,
         }
     }
@@ -184,11 +180,9 @@ impl<C: Crypto> E2eRunner<C> {
             &self.matter,
             &self.crypto,
             &self.buffers,
-            &self.subscriptions,
-            &self.events,
             handler,
             DummyKvBlobStoreAccess,
-            DummyNetworkAccess,
+            &self.state,
         );
 
         let responder = Responder::new_default(&dm);

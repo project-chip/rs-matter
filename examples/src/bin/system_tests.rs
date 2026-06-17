@@ -57,7 +57,7 @@ use rs_matter::dm::clusters::gen_diag::{self, ClusterHandler as _, GenDiag};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::grp_key_mgmt::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
-use rs_matter::dm::clusters::net_comm::{self, SharedNetworks};
+use rs_matter::dm::clusters::net_comm;
 use rs_matter::dm::clusters::noc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::ota_prov::{
     BdxBuffer, ClusterAsyncHandler, DownloadProtocolEnum, OtaBdxHandler, OtaImageMeta, OtaImages,
@@ -74,13 +74,11 @@ use rs_matter::dm::clusters::user_label::{self, UserLabelHandler, UserLabels};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
-use rs_matter::dm::events::Events;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
     Async, AttrChangeNotifier, Cluster, DataModel, DataModelHandler, Dataver, Endpoint,
-    EpClMatcher, Node,
+    EpClMatcher, EthDataModelState, Node,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::PROTO_ID_INTERACTION_MODEL;
@@ -111,8 +109,6 @@ mod args;
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<20, rs_matter::dm::IMBuffer>> = StaticCell::new();
-static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
-static EVENTS: StaticCell<Events> = StaticCell::new();
 static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 static GEN_DIAG: StaticCell<TestEventTriggerDiag> = StaticCell::new();
@@ -153,13 +149,6 @@ fn main() -> Result<(), Error> {
         .filter_level(::log::LevelFilter::Debug)
         .init();
 
-    info!(
-        "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
-        core::mem::size_of::<Matter>(),
-        core::mem::size_of::<PooledBuffers<20, rs_matter::dm::IMBuffer>>(),
-        core::mem::size_of::<Subscriptions>()
-    );
-
     // Optional `--discriminator <u16>` / `--passcode <u32>` overrides for the
     // hardcoded `TEST_DEV_COMM` defaults. Used by tests like TC-SC-7.1 that
     // assert the device is *not* using the spec-default `3840`/`20202021`.
@@ -181,20 +170,18 @@ fn main() -> Result<(), Error> {
             .uninit()
             .init_with(Matter::init(&BASIC_INFO, comm_data, &TEST_DEV_ATT, port));
 
-    // Create the event queue
-    let events = EVENTS.uninit().init_with(Events::init());
-
     // Persistence
     let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
     let mut kv = args::file_kv_store();
     futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
-    futures_lite::future::block_on(events.load_persist(&mut kv, kv_buf))?;
 
     // Create the transport buffers
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
 
-    // Create the subscriptions
-    let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
+    // Create the data model state (subscriptions, events, network store) and load
+    // the persisted event counter.
+    let mut state: EthDataModelState = EthDataModelState::new(EthNetwork::new_default());
+    futures_lite::future::block_on(state.load_persist(&mut kv, kv_buf))?;
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
@@ -295,8 +282,6 @@ fn main() -> Result<(), Error> {
         matter,
         &crypto,
         buffers,
-        subscriptions,
-        events,
         dm_handler(
             node,
             gen_diag,
@@ -314,7 +299,7 @@ fn main() -> Result<(), Error> {
             log_provider,
         ),
         SharedKvBlobStore::new(kv, kv_buf),
-        SharedNetworks::new(EthNetwork::new_default()),
+        &state,
     );
 
     // Responder = the default IM + Secure Channel handler chain, plus a BDX
@@ -387,17 +372,6 @@ fn main() -> Result<(), Error> {
 
         (net_send, net_recv, net_multicast)
     };
-
-    info!(
-        "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(
-            &crypto,
-            &mut net_send,
-            &mut net_recv,
-            &mut net_multicast
-        )),
-        core::mem::size_of_val(&mdns::run_mdns(matter, &crypto))
-    );
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto));

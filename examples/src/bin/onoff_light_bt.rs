@@ -45,16 +45,17 @@ use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, SharedNetworks};
+use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus};
 use rs_matter::dm::clusters::wifi_diag::WifiDiag;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
-use rs_matter::dm::events::Events;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, WifiNetworks};
-use rs_matter::dm::subscriptions::Subscriptions;
-use rs_matter::dm::{Async, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{
+    Async, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, Node,
+    WirelessDataModelState,
+};
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -121,26 +122,23 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     // Create the Matter object
     let mut matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
-    // A storage for the Wifi networks
+    // A storage for the Wifi networks, re-hydrated from persistence.
     let mut networks = WifiNetworks::<3>::new();
-
-    // Create the event queue
-    let mut events: Events = Events::new();
 
     // Persistence
     let mut kv_buf = [0; 4096];
     let mut kv = DirKvBlobStore::new_default();
     futures_lite::future::block_on(matter.load_persist(&mut kv, &mut kv_buf))?;
     futures_lite::future::block_on(networks.load_persist(&mut kv, &mut kv_buf))?;
-    futures_lite::future::block_on(events.load_persist(&mut kv, &mut kv_buf))?;
-
-    let networks = SharedNetworks::new(networks);
 
     // Create the transport buffers
     let buffers = PooledBuffers::<10, _>::new(0);
 
-    // Create the subscriptions
-    let subscriptions: Subscriptions = Subscriptions::new();
+    // Create the data model state (subscriptions, events, the Wifi network store)
+    // and load the persisted event counter. The (raw) network store was loaded
+    // above, before being moved into the state.
+    let mut state: WirelessDataModelState<WifiNetworks<3>> = WirelessDataModelState::new(networks);
+    futures_lite::future::block_on(state.load_persist(&mut kv, &mut kv_buf))?;
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
@@ -164,11 +162,9 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         &matter,
         &crypto,
         &buffers,
-        &subscriptions,
-        &events,
         dm_handler(rand, &on_off_handler, &net_ctl, &net_ctl),
         SharedKvBlobStore::new(kv, kv_buf.as_mut_slice()),
-        &networks,
+        &state,
     );
 
     // Create a default responder capable of handling up to 3 subscriptions

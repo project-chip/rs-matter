@@ -104,17 +104,14 @@ use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
 use rs_matter::dm::clusters::decl::globals::{ICECandidateStruct, WebRTCEndReasonEnum};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::endpoints;
-use rs_matter::dm::events::NoEvents;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::DataModel;
 use rs_matter::dm::DeviceType;
 use rs_matter::dm::IMBuffer;
-use rs_matter::dm::{DataModelHandler, Dataver, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState, Node};
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -1104,7 +1101,7 @@ impl WebRtcHooks for Str0mHooks {
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
-static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
+static STATE: StaticCell<EthDataModelState> = StaticCell::new();
 static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 static WEBRTC: StaticCell<WebRtc> = StaticCell::new();
 static CAM_AV: StaticCell<CameraAvStreamHandler<'static, Str0mCamHooks, CAM_AV_NV>> =
@@ -1154,14 +1151,6 @@ fn main() -> Result<(), Error> {
         .with_ansi(false)
         .init();
 
-    info!(
-        "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B, WebRtc (BSS)={}B",
-        core::mem::size_of::<Matter>(),
-        core::mem::size_of::<PooledBuffers<10, IMBuffer>>(),
-        core::mem::size_of::<Subscriptions>(),
-        core::mem::size_of::<WebRtc>(),
-    );
-
     let matter = MATTER.uninit().init_with(Matter::init(
         &BASIC_INFO,
         TEST_DEV_COMM,
@@ -1174,7 +1163,11 @@ fn main() -> Result<(), Error> {
     futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
 
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
-    let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
+
+    // Create the data model state (subscriptions, events, network store) and load
+    // the persisted event counter.
+    let state = STATE.init(EthDataModelState::new(EthNetwork::new_default()));
+    futures_lite::future::block_on(state.load_persist(&mut kv, kv_buf))?;
 
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
     let mut rand = crypto.rand()?;
@@ -1300,16 +1293,13 @@ fn main() -> Result<(), Error> {
         DemoZoneHooks,
     ));
 
-    let events = NoEvents::new();
     let dm = DataModel::new(
         matter,
         &crypto,
         buffers,
-        subscriptions,
-        &events,
         dm_handler(rand, webrtc, cam_av, cam_av_settings, zone_mgmt),
         SharedKvBlobStore::new(kv, kv_buf),
-        SharedNetworks::new(EthNetwork::new_default()),
+        state,
     );
 
     let responder = DefaultResponder::new(&dm);

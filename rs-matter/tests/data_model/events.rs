@@ -276,7 +276,8 @@ fn test_subscribe_events() {
                             Some(&0x42u8)
                         )],
                     );
-                    im.subscriptions
+                    im.state
+                        .subscriptions()
                         .notify_event_emitted(0, echo_cluster::ID, 2);
                     Ok(())
                 },
@@ -365,7 +366,8 @@ where
     C: rs_matter::crypto::Crypto,
 {
     for ev in events {
-        im.events
+        im.state
+            .events()
             .push(
                 ev.path.endpoint.unwrap(),
                 ev.path.cluster.unwrap(),

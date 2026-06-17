@@ -57,14 +57,14 @@ use rs_matter::crypto::{
 use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::DummyNetworkAccess;
+use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::dm::events::NoEvents;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::subscriptions::Subscriptions;
+use rs_matter::dm::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use rs_matter::dm::{
-    endpoints, Async, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, IMBuffer, Node,
+    endpoints, Async, DataModel, DataModelHandler, DataModelState, Dataver, Endpoint, EpClMatcher,
+    IMBuffer, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::im::IMStatusCode;
@@ -97,15 +97,19 @@ const TEST_PASSCODE: u32 = 20202021;
 
 const IM_TIMEOUT_SECS: u64 = 10;
 
+/// The device's data model state: a dummy (no-op) network store, default
+/// subscription count, no events.
+type DeviceDmState = DataModelState<DummyNetworks, DEFAULT_MAX_SUBSCRIPTIONS, 0>;
+
 static DEVICE_MATTER: StaticCell<Matter> = StaticCell::new();
 static DEVICE_BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
-static DEVICE_SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
+static DEVICE_STATE: StaticCell<DeviceDmState> = StaticCell::new();
 static CTRL_MATTER: StaticCell<Matter> = StaticCell::new();
 
 // Separate statics for the TCP variant (StaticCell is one-shot)
 static TCP_DEVICE_MATTER: StaticCell<Matter> = StaticCell::new();
 static TCP_DEVICE_BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
-static TCP_DEVICE_SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
+static TCP_DEVICE_STATE: StaticCell<DeviceDmState> = StaticCell::new();
 static TCP_CTRL_MATTER: StaticCell<Matter> = StaticCell::new();
 
 // ============================================================================
@@ -184,7 +188,7 @@ macro_rules! commissioning_test {
             let mut rand = device_crypto.rand()?;
 
             let device_buffers = $dev_buffers.uninit().init_with(PooledBuffers::init(0));
-            let device_subscriptions = $dev_subs.uninit().init_with(Subscriptions::init());
+            let device_state = $dev_subs.init(DataModelState::new(DummyNetworks));
 
             let on_off_handler = on_off::OnOffHandler::new_standalone(
                 Dataver::new_rand(&mut rand),
@@ -192,17 +196,13 @@ macro_rules! commissioning_test {
                 TestOnOffDeviceLogic::new(false),
             );
 
-            let events = NoEvents::new();
-
             let dm = DataModel::new(
                 device_matter,
                 &device_crypto,
                 device_buffers,
-                device_subscriptions,
-                &events,
                 dm_handler(rand, &on_off_handler),
                 DummyKvBlobStoreAccess,
-                DummyNetworkAccess,
+                device_state,
             );
 
             // Open commissioning window before starting the mDNS responder so the
@@ -263,7 +263,7 @@ commissioning_test! {
     run_name: run_test_udp,
     device_matter: DEVICE_MATTER,
     device_buffers: DEVICE_BUFFERS,
-    device_subscriptions: DEVICE_SUBSCRIPTIONS,
+    device_subscriptions: DEVICE_STATE,
     ctrl_matter: CTRL_MATTER,
     use_tcp: false,
     device_transport: async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?,
@@ -275,7 +275,7 @@ commissioning_test! {
     run_name: run_test_tcp,
     device_matter: TCP_DEVICE_MATTER,
     device_buffers: TCP_DEVICE_BUFFERS,
-    device_subscriptions: TCP_DEVICE_SUBSCRIPTIONS,
+    device_subscriptions: TCP_DEVICE_STATE,
     ctrl_matter: TCP_CTRL_MATTER,
     use_tcp: true,
     device_transport: TcpNetwork::<8>::new(

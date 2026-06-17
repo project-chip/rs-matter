@@ -23,8 +23,9 @@ use embassy_time::{Instant, Timer};
 
 use crate::acl::Accessor;
 use crate::crypto::Crypto;
-use crate::dm::clusters::net_comm::NetworksAccess;
+use crate::dm::clusters::net_comm::{Networks, NetworksAccess, SharedNetworks};
 use crate::dm::events::EventTLVWrite;
+use crate::dm::networks::eth::EthNetwork;
 use crate::dm::subscriptions::SubscriptionsBuffers;
 use crate::error::{Error, ErrorCode};
 use crate::im::{
@@ -32,7 +33,7 @@ use crate::im::{
     ReadReq, ReportDataReq, ReportDataRespTag, StatusResp, SubscribeReq, SubscribeResp, TimedReq,
     WriteReq, WriteRespTag, IM_REVISION, PROTO_ID_INTERACTION_MODEL,
 };
-use crate::persist::KvBlobStoreAccess;
+use crate::persist::{KvBlobStore, KvBlobStoreAccess};
 use crate::respond::ExchangeHandler;
 use crate::tlv::{get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::exchange::{
@@ -43,8 +44,10 @@ use crate::utils::storage::pooled::BufferAccess;
 use crate::utils::storage::WriteBuf;
 use crate::Matter;
 
-use events::Events;
-use subscriptions::{ReportContext, Subscriptions};
+use crate::utils::init::{init, Init};
+
+use events::{Events, DEFAULT_MAX_EVENTS_BUF_SIZE};
+use subscriptions::{ReportContext, Subscriptions, DEFAULT_MAX_SUBSCRIPTIONS};
 
 pub use types::*;
 
@@ -60,6 +63,79 @@ mod types;
 pub type IMBuffer = crate::utils::storage::Vec<u8, MAX_EXCHANGE_RX_BUF_SIZE>;
 
 /// An `ExchangeHandler` implementation capable of handling responder exchanges for the Interaction Model protocol.
+/// The mutable, owned-together state a [`DataModel`] operates on: the
+/// subscriptions table, the events queue and the network store.
+///
+/// Allocating these as a single value (rather than three separate locals wired
+/// up by hand at every call site) is the whole point: construct one
+/// `DataModelState`, then hand a reference to it to [`DataModel::new`]. Each of
+/// the three pieces keeps its own lock internally (the proven multi-lock model);
+/// folding them behind a single mutex is a possible later refinement.
+///
+/// `N` is the (raw) [`Networks`] implementation — e.g.
+/// [`EthNetwork`](crate::dm::networks::eth::EthNetwork) or
+/// [`WirelessNetworks`](crate::dm::networks::wireless::WirelessNetworks); it is
+/// wrapped internally in a [`SharedNetworks`] so the data model and (later) the
+/// wireless manager can share it. `NS`/`NE` bound the subscription table and the
+/// event-buffer size and default to [`DEFAULT_MAX_SUBSCRIPTIONS`] /
+/// [`DEFAULT_MAX_EVENTS_BUF_SIZE`].
+pub struct DataModelState<
+    N,
+    const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
+    const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
+> {
+    subscriptions: Subscriptions<NS>,
+    events: Events<NE>,
+    networks: SharedNetworks<N>,
+}
+
+impl<N, const NS: usize, const NE: usize> DataModelState<N, NS, NE> {
+    /// Create a new state instance backed by the given (raw) [`Networks`] store.
+    pub const fn new(networks: N) -> Self {
+        Self {
+            subscriptions: Subscriptions::new(),
+            events: Events::new(),
+            networks: SharedNetworks::new(networks),
+        }
+    }
+
+    /// Return an in-place initializer for the state (for large `NE`, to avoid a
+    /// big temporary on the stack).
+    pub fn init(networks: impl Init<N>) -> impl Init<Self> {
+        init!(Self {
+            subscriptions <- Subscriptions::init(),
+            events <- Events::init(),
+            networks <- SharedNetworks::init(networks),
+        })
+    }
+
+    /// Re-hydrate the events queue's persisted state (the event-number epoch) so
+    /// event numbers are not reused across reboots. Call once at startup, before
+    /// the state is shared with a [`DataModel`]. The (raw) network store is loaded
+    /// separately, before this state is constructed.
+    pub async fn load_persist<S>(&mut self, kv: S, buf: &mut [u8]) -> Result<(), Error>
+    where
+        S: KvBlobStore,
+    {
+        self.events.load_persist(kv, buf).await
+    }
+
+    /// The subscriptions table.
+    pub const fn subscriptions(&self) -> &Subscriptions<NS> {
+        &self.subscriptions
+    }
+
+    /// The events queue.
+    pub const fn events(&self) -> &Events<NE> {
+        &self.events
+    }
+
+    /// The network store (wrapped for shared, change-notifying access).
+    pub const fn networks(&self) -> &SharedNetworks<N> {
+        &self.networks
+    }
+}
+
 /// The implementation needs a `DataModelHandler` instance to interact with the underlying clusters of the data model.
 pub struct DataModel<'a, const NS: usize, const NE: usize, C, B, T, S, N>
 where
@@ -69,12 +145,37 @@ where
     crypto: C,
     buffers: &'a B,
     kv: S,
-    subscriptions: &'a Subscriptions<NS>,
     subscriptions_buffers: SubscriptionsBuffers<'a, B, NS>,
-    events: &'a Events<NE>,
-    networks: N,
+    state: &'a DataModelState<N, NS, NE>,
     handler: T,
 }
+
+/// A [`DataModelState`] for an Ethernet device: its network store is a fixed
+/// [`EthNetwork`], so call sites need only the (defaulted) subscription/event
+/// sizes. Pairs with [`EthDataModel`].
+pub type EthDataModelState<
+    const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
+    const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
+> = DataModelState<EthNetwork<'static>, NS, NE>;
+
+/// A [`DataModel`] for an Ethernet device (network store fixed to [`EthNetwork`]),
+/// so the `N` generic disappears from call sites. Pairs with [`EthDataModelState`].
+pub type EthDataModel<'a, const NS: usize, const NE: usize, C, B, T, S> =
+    DataModel<'a, NS, NE, C, B, T, S, EthNetwork<'static>>;
+
+/// A [`DataModelState`] for a wireless device, parameterized by the concrete
+/// wireless network store `N` (e.g. `WifiNetworks<3>` or a Thread store). Pairs
+/// with [`WirelessDataModel`].
+pub type WirelessDataModelState<
+    N,
+    const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
+    const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
+> = DataModelState<N, NS, NE>;
+
+/// A [`DataModel`] for a wireless device (network store `N`). Pairs with
+/// [`WirelessDataModelState`].
+pub type WirelessDataModel<'a, const NS: usize, const NE: usize, C, B, T, S, N> =
+    DataModel<'a, NS, NE, C, B, T, S, N>;
 
 impl<'a, const NS: usize, const NE: usize, C, B, T, S, N> DataModel<'a, NS, NE, C, B, T, S, N>
 where
@@ -82,45 +183,39 @@ where
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStoreAccess,
-    N: NetworksAccess,
+    N: Networks,
 {
     /// Create the data model.
     ///
     /// # Arguments
     /// - `matter` - a reference to the `Matter` instance
     /// - `buffers` - a reference to an implementation of `BufferAccess<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
-    /// - `subscriptions` - a reference to a `Subscriptions<N>` struct which is used for managing subscriptions. `N` designates the maximum
-    ///   number of subscriptions that can be managed by this handler.
-    /// - `events` - a reference to an `Events<N>` struct which is used for managing events in the data model. `N` designates the maximum number of events that can be buffered in the event management system.
     /// - `handler` - an instance of type `T` which implements the `DataModelHandler` trait. This instance is used for interacting with the underlying
     ///   clusters of the data model. Note that the expectations is for the user to provide a handler that handles the Matter system clusters
     ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods
     /// - `kv` - an instance of type `S` which implements the `KvBlobStoreAccess` trait. This instance is used for interacting with the key-value blob store.
-    /// - `networks` - an instance of type `N` which implements the `NetworksAccess` trait. This instance is used for interacting with the network management cluster.
+    /// - `state` - a reference to the [`DataModelState`] holding the subscriptions table, the
+    ///   events queue and the network store (the latter parameterized by the `Networks`
+    ///   implementation `N`).
     #[inline(always)]
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         matter: &'a Matter<'a>,
         crypto: C,
         buffers: &'a B,
-        subscriptions: &'a Subscriptions<NS>,
-        events: &'a Events<NE>,
         handler: T,
         kv: S,
-        networks: N,
+        state: &'a DataModelState<N, NS, NE>,
     ) -> Self {
-        subscriptions.clear();
+        state.subscriptions.clear();
 
         Self {
             matter,
             crypto,
             buffers,
-            subscriptions,
-            subscriptions_buffers: SubscriptionsBuffers::new(),
-            events,
-            handler,
             kv,
-            networks,
+            subscriptions_buffers: SubscriptionsBuffers::new(),
+            state,
+            handler,
         }
     }
 
@@ -228,7 +323,7 @@ where
             state.failsafe.check_failsafe_timeout(
                 &mut state.fabrics,
                 &mut state.sessions,
-                &self.networks,
+                &self.state.networks,
                 &self.kv,
                 expire_sess_id,
                 &mut notify_mdns,
@@ -337,7 +432,7 @@ where
             None,
             HandlerInvoker::new(exchange, self),
             EventReader::new(0, u64::MAX, fabric_filtered),
-            self.events,
+            &self.state.events,
         );
 
         resp.respond(&mut wb, true, true, &self.handler, |_, _, _| true)
@@ -511,7 +606,8 @@ where
         })?;
 
         if !req.keep_subs()? {
-            self.subscriptions
+            self.state
+                .subscriptions
                 .remove(&self.subscriptions_buffers, |sub| {
                     (sub.ids().fab_idx == fab_idx && sub.ids().peer_node_id == peer_node_id)
                         .then_some("new subscription request")
@@ -523,14 +619,14 @@ where
 
         let now = Instant::now();
 
-        let Some(mut rctx) = self.subscriptions.add(
+        let Some(mut rctx) = self.state.subscriptions.add(
             now,
             fab_idx,
             peer_node_id,
             exchange.id().session_id(),
             min_int_secs,
             max_int_secs,
-            self.events.watermark(),
+            self.state.events.watermark(),
             rx,
             &self.subscriptions_buffers,
         ) else {
@@ -555,7 +651,7 @@ where
             // runs on `Drop`) and then wake the reporter so it can account for
             // the new subscription's deadline.
             drop(rctx);
-            self.subscriptions.notification.notify();
+            self.state.subscriptions.notification.notify();
         }
 
         Ok(())
@@ -626,15 +722,16 @@ where
             // down session, or a newly accepted subscription (the accept path
             // notifies) all wake the loop early. With no subscription there is
             // no deadline, so just wait to be notified.
-            let mut notification = pin!(self.subscriptions.notification.wait());
+            let mut notification = pin!(self.state.subscriptions.notification.wait());
             let mut session_removed = pin!(matter.transport().wait_session_removed());
 
             // With no subscription (or none primed) the deadline is `Instant::MAX`,
             // so the timer effectively never fires and the loop just waits to be
             // notified.
             let deadline = self
+                .state
                 .subscriptions
-                .next_report_at(self.events.watermark(), &self.subscriptions_buffers);
+                .next_report_at(self.state.events.watermark(), &self.subscriptions_buffers);
             let mut timeout = pin!(Timer::at(deadline));
 
             select3(&mut notification, &mut timeout, &mut session_removed).await;
@@ -644,33 +741,34 @@ where
             // First remove all expired or no-longer valid subscriptions
 
             loop {
-                let removed_any = self
-                    .subscriptions
-                    .remove(&self.subscriptions_buffers, |sub| {
-                        if sub.is_expired(now) {
-                            return Some("expired");
-                        }
-
-                        matter.with_state(|state| {
-                            if state.fabrics.get(sub.ids().fab_idx).is_none() {
-                                return Some("fabric removed");
+                let removed_any =
+                    self.state
+                        .subscriptions
+                        .remove(&self.subscriptions_buffers, |sub| {
+                            if sub.is_expired(now) {
+                                return Some("expired");
                             }
 
-                            // The session the subscription was accepted on was
-                            // torn down (eviction, explicit close, peer-side
-                            // CASE re-handshake, ...). Per Matter spec
-                            // subscriptions are scoped to the session they
-                            // were established on, and the publisher can no
-                            // longer route reports to the subscriber. Drop
-                            // immediately rather than waiting for `max_int`
-                            // to expire and time-out the send.
-                            if state.sessions.get(sub.session_id()).is_none() {
-                                return Some("session removed");
-                            }
+                            matter.with_state(|state| {
+                                if state.fabrics.get(sub.ids().fab_idx).is_none() {
+                                    return Some("fabric removed");
+                                }
 
-                            None
-                        })
-                    });
+                                // The session the subscription was accepted on was
+                                // torn down (eviction, explicit close, peer-side
+                                // CASE re-handshake, ...). Per Matter spec
+                                // subscriptions are scoped to the session they
+                                // were established on, and the publisher can no
+                                // longer route reports to the subscriber. Drop
+                                // immediately rather than waiting for `max_int`
+                                // to expire and time-out the send.
+                                if state.sessions.get(sub.session_id()).is_none() {
+                                    return Some("session removed");
+                                }
+
+                                None
+                            })
+                        });
 
                 if !removed_any {
                     break;
@@ -679,10 +777,10 @@ where
 
             // Now report while there are subscriptions which are due for reporting
 
-            let event_numbers_watermark = self.events.watermark();
+            let event_numbers_watermark = self.state.events.watermark();
 
             loop {
-                let Some(mut rctx) = self.subscriptions.report(
+                let Some(mut rctx) = self.state.subscriptions.report(
                     now,
                     event_numbers_watermark,
                     &self.subscriptions_buffers,
@@ -705,7 +803,7 @@ where
 
             // Periodically trim changed-attr entries that have been reported by every
             // subscription, so the table does not accumulate stale promoted wildcards.
-            self.subscriptions.purge_reported_changes();
+            self.state.subscriptions.purge_reported_changes();
         }
     }
 
@@ -836,7 +934,7 @@ where
                 rctx.next_max_seen_event_number(),
                 fabric_filtered,
             ),
-            self.events,
+            &self.state.events,
         );
 
         let sub_valid = resp
@@ -973,7 +1071,7 @@ where
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStoreAccess,
-    N: NetworksAccess,
+    N: Networks,
 {
     async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
         DataModel::handle(self, &mut exchange).await
@@ -987,7 +1085,7 @@ where
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStoreAccess,
-    N: NetworksAccess,
+    N: Networks,
 {
     fn matter(&self) -> &Matter<'_> {
         self.matter
@@ -1002,7 +1100,7 @@ where
     }
 
     fn networks(&self) -> impl NetworksAccess + '_ {
-        &self.networks
+        &self.state.networks
     }
 
     fn metadata(&self) -> impl Metadata + '_ {
@@ -1025,14 +1123,15 @@ where
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStoreAccess,
-    N: NetworksAccess,
+    N: Networks,
 {
     fn notify_attr_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId, attr_id: AttrId) {
         self.handler.bump_dataver(MatchContextInstance::new(
             Some(endpoint_id),
             Some(cluster_id),
         ));
-        self.subscriptions
+        self.state
+            .subscriptions
             .notify_attr_changed(endpoint_id, cluster_id, attr_id);
     }
 
@@ -1041,20 +1140,23 @@ where
             Some(endpoint_id),
             Some(cluster_id),
         ));
-        self.subscriptions
+        self.state
+            .subscriptions
             .notify_cluster_changed(endpoint_id, cluster_id);
     }
 
     fn notify_endpoint_changed(&self, endpoint_id: EndptId) {
         self.handler
             .bump_dataver(MatchContextInstance::new(Some(endpoint_id), None));
-        self.subscriptions.notify_endpoint_changed(endpoint_id)
+        self.state
+            .subscriptions
+            .notify_endpoint_changed(endpoint_id)
     }
 
     fn notify_all_changed(&self) {
         self.handler
             .bump_dataver(MatchContextInstance::new(None, None));
-        self.subscriptions.notify_all_changed()
+        self.state.subscriptions.notify_all_changed()
     }
 }
 
@@ -1065,7 +1167,7 @@ where
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStoreAccess,
-    N: NetworksAccess,
+    N: Networks,
 {
     fn emit_event<F>(
         &self,
@@ -1079,10 +1181,12 @@ where
         F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
     {
         let event_number =
-            self.events
+            self.state
+                .events
                 .push(endpoint_id, cluster_id, event_id, priority, &self.kv, f)?;
 
-        self.subscriptions
+        self.state
+            .subscriptions
             .notify_event_emitted(endpoint_id, cluster_id, event_id);
 
         Ok(event_number)

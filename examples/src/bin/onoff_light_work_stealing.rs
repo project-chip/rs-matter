@@ -23,8 +23,6 @@
 
 use std::net::UdpSocket;
 
-use log::info;
-
 use rand::{CryptoRng, RngCore};
 
 use rs_matter::crypto::backend::rustcrypto::RustCrypto;
@@ -32,16 +30,13 @@ use rs_matter::crypto::Crypto;
 use rs_matter::dm::clusters::app::on_off::NoLevelControl;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
-use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::{self, EthSysHandler};
-use rs_matter::dm::events::Events;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::IMBuffer;
-use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, EpClMatcher, EthDataModelState, Node};
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -69,21 +64,13 @@ type AppDmHandler<'a> = handler_chain_type!(
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
-static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
-static EVENTS: StaticCell<Events> = StaticCell::new();
+static STATE: StaticCell<EthDataModelState> = StaticCell::new();
 static CRYPTO: StaticCell<RustCrypto<'static, FakeRng>> = StaticCell::new();
 static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     env_logger::init_from_env(
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
-    );
-
-    info!(
-        "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
-        core::mem::size_of::<Matter>(),
-        core::mem::size_of::<PooledBuffers<10, IMBuffer>>(),
-        core::mem::size_of::<Subscriptions>()
     );
 
     let matter = MATTER.uninit().init_with(Matter::init(
@@ -93,20 +80,18 @@ fn main() -> Result<(), Error> {
         MATTER_PORT,
     ));
 
-    // Create the events
-    let events = EVENTS.uninit().init_with(Events::init());
-
     // Persistence
     let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
     let mut kv = DirKvBlobStore::new_default();
     futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
-    futures_lite::future::block_on(events.load_persist(&mut kv, kv_buf))?;
 
     // Create the transport buffers
     let buffers = &*BUFFERS.uninit().init_with(PooledBuffers::init(0));
 
-    // Create the subscriptions
-    let subscriptions = &*SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
+    // Create the data model state (subscriptions, events, network store) and load
+    // the persisted event counter.
+    let state = STATE.init(EthDataModelState::new(EthNetwork::new_default()));
+    futures_lite::future::block_on(state.load_persist(&mut kv, kv_buf))?;
 
     // Create the crypto instance
     let crypto = &*CRYPTO.init(RustCrypto::new(FakeRng, DAC_PRIVKEY));
@@ -125,21 +110,14 @@ fn main() -> Result<(), Error> {
         matter,
         crypto,
         buffers,
-        subscriptions,
-        events,
         (NODE, dm_handler(rand, on_off_handler)),
         SharedKvBlobStore::new(kv, kv_buf),
-        SharedNetworks::new(EthNetwork::new_default()),
+        state,
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
     let responder = DefaultResponder::new(&dm);
-    info!(
-        "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
-        core::mem::size_of_val(&responder),
-        core::mem::size_of_val(&responder.run::<4, 4>())
-    );
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
@@ -152,12 +130,6 @@ fn main() -> Result<(), Error> {
 
     // Create, load and run the persister
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
-
-    info!(
-        "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(crypto, &socket, &socket, &socket)),
-        core::mem::size_of_val(&mdns::run_mdns(matter, crypto))
-    );
 
     // Run the Matter and mDNS transports
     #[allow(unused)]

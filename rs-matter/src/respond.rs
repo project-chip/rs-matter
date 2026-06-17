@@ -277,7 +277,7 @@ where
         C: Crypto,
         T: DataModelHandler,
         S: KvBlobStoreAccess,
-        N: net_comm::NetworksAccess,
+        N: net_comm::Networks,
     {
         Self::new(
             "Responder",
@@ -333,7 +333,7 @@ where
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStoreAccess,
-    N: net_comm::NetworksAccess,
+    N: net_comm::Networks,
 {
     /// Creates the responder composition.
     #[inline(always)]

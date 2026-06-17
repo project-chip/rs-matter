@@ -69,14 +69,16 @@ use rs_matter::dm::clusters::wifi_diag::{
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::WifiSysHandler;
-use rs_matter::dm::events::{Events, DEFAULT_MAX_EVENTS_BUF_SIZE};
+use rs_matter::dm::events::DEFAULT_MAX_EVENTS_BUF_SIZE;
 use rs_matter::dm::networks::wireless::{
     NetCtlState, NetCtlStateMutex, NetCtlWithStatusImpl, WifiNetworks, WirelessMgr, MAX_CREDS_SIZE,
 };
 use rs_matter::dm::networks::NetChangeNotif;
-use rs_matter::dm::subscriptions::{Subscriptions, DEFAULT_MAX_SUBSCRIPTIONS};
+use rs_matter::dm::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use rs_matter::dm::{endpoints, IMBuffer};
-use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{
+    Async, DataModel, Dataver, Endpoint, EpClMatcher, Node, WirelessDataModelState,
+};
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -155,9 +157,9 @@ macro_rules! unwrap {
 struct MatterStack<'a> {
     matter: Matter<'a>,
     buffers: PooledBuffers<10, IMBuffer>,
-    subscriptions: Subscriptions,
-    events: Events,
-    networks: SharedNetworks<WifiNetworks<3>>,
+    // The data model's consolidated state: subscriptions table, events queue and
+    // the (Wifi) network store, all behind `DataModelState`.
+    state: WirelessDataModelState<WifiNetworks<3>>,
     net_ctl_state: NetCtlStateMutex,
     btp: Btp,
     wireless_mgr_buffer: MaybeUninit<[u8; MAX_CREDS_SIZE]>,
@@ -176,9 +178,7 @@ impl<'a> MatterStack<'a> {
                 MATTER_PORT,
             ),
             buffers <- PooledBuffers::init(0),
-            subscriptions <- Subscriptions::init(),
-            events <- Events::init(),
-            networks <- SharedNetworks::init(WifiNetworks::init()),
+            state <- WirelessDataModelState::init(WifiNetworks::init()),
             net_ctl_state <- NetCtlState::init_with_mutex(),
             btp <- Btp::init(),
             wireless_mgr_buffer: MaybeUninit::zeroed(),
@@ -208,7 +208,7 @@ type AppDataModel<'a> = DataModel<
     PooledBuffers<10, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
     SharedKvBlobStore<DummyKvBlobStore, &'static mut [u8]>,
-    &'a AppNetworks,
+    WifiNetworks<3>,
 >;
 type AppResponder<'d, 'a> = DefaultResponder<
     'd,
@@ -219,7 +219,7 @@ type AppResponder<'d, 'a> = DefaultResponder<
     PooledBuffers<10, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
     SharedKvBlobStore<DummyKvBlobStore, &'static mut [u8]>,
-    &'a AppNetworks,
+    WifiNetworks<3>,
 >;
 
 #[cfg_attr(target_os = "none", main)]
@@ -272,11 +272,15 @@ fn main() -> ! {
     report_size("Buffers", size_of_val(&stack.buffers), &mut stack_total);
     report_size(
         "Subscriptions",
-        size_of_val(&stack.subscriptions),
+        size_of_val(stack.state.subscriptions()),
         &mut stack_total,
     );
-    report_size("Events", size_of_val(&stack.events), &mut stack_total);
-    report_size("Networks", size_of_val(&stack.networks), &mut stack_total);
+    report_size("Events", size_of_val(stack.state.events()), &mut stack_total);
+    report_size(
+        "Networks",
+        size_of_val(stack.state.networks()),
+        &mut stack_total,
+    );
     report_size(
         "NetCtl state",
         size_of_val(&stack.net_ctl_state),
@@ -313,7 +317,7 @@ fn main() -> ! {
     // Wifi network manager (cycle registered networks, auto-reconnect)
     let wifi_mgr = mk_static!(
         AppWirelessMgr,
-        WirelessMgr::new(&stack.networks, net_ctl, unsafe {
+        WirelessMgr::new(stack.state.networks(), net_ctl, unsafe {
             stack.wireless_mgr_buffer.assume_init_mut()
         },)
     );
@@ -354,11 +358,9 @@ fn main() -> ! {
             &stack.matter,
             crypto,
             &stack.buffers,
-            &stack.subscriptions,
-            &stack.events,
             (NODE, handler),
             kv,
-            &stack.networks,
+            &stack.state,
         )
     );
 

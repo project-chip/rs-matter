@@ -35,8 +35,6 @@ use embassy_futures::select::select3;
 
 use futures_lite::StreamExt;
 
-use log::info;
-
 use rand::RngCore;
 
 use rs_matter::crypto::{default_crypto, Crypto};
@@ -70,16 +68,13 @@ use rs_matter::dm::clusters::decl::globals::ICECandidateStruct;
 use rs_matter::dm::clusters::decl::globals::WebRTCEndReasonEnum;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
-use rs_matter::dm::events::NoEvents;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{endpoints, DataModel};
 use rs_matter::dm::{
     ArrayAttributeRead, Async, DataModelHandler, Dataver, DeviceType, Endpoint, EpClMatcher,
-    InvokeContext, Node, ReadContext, WriteContext,
+    EthDataModelState, InvokeContext, Node, ReadContext, WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::FabricIndex;
@@ -376,7 +371,6 @@ type WebRtc = WebRtcProvHandler<StubWebRtcHooks, N_SESSIONS, SDP_LEN, OUT_LEN, C
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, rs_matter::dm::IMBuffer>> = StaticCell::new();
-static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
 static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 static WEBRTC: StaticCell<WebRtc> = StaticCell::new();
 static CAM_AV: StaticCell<CamAv> = StaticCell::new();
@@ -416,7 +410,11 @@ fn main() -> Result<(), Error> {
     futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
 
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
-    let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
+
+    // Create the data model state (subscriptions, events, network store) and load
+    // the persisted event counter.
+    let mut state: EthDataModelState = EthDataModelState::new(EthNetwork::new_default());
+    futures_lite::future::block_on(state.load_persist(&mut kv, kv_buf))?;
 
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
     let mut rand = crypto.rand()?;
@@ -561,19 +559,10 @@ fn main() -> Result<(), Error> {
 
     let chime = ChimeHandler::new(Dataver::new_rand(&mut rand));
 
-    info!(
-        "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B",
-        core::mem::size_of::<Matter>(),
-        core::mem::size_of::<PooledBuffers<10, rs_matter::dm::IMBuffer>>(),
-    );
-
-    let events = NoEvents::new();
     let dm = DataModel::new(
         matter,
         &crypto,
         buffers,
-        subscriptions,
-        &events,
         dm_handler(
             rand,
             webrtc,
@@ -584,7 +573,7 @@ fn main() -> Result<(), Error> {
             chime,
         ),
         SharedKvBlobStore::new(kv, kv_buf),
-        SharedNetworks::new(EthNetwork::new_default()),
+        &state,
     );
 
     let responder = DefaultResponder::new(&dm);
