@@ -61,7 +61,7 @@ use rs_matter::dm::clusters::app::on_off::NoLevelControl;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::clusters::net_comm::{
-    NetCtl, NetCtlError, NetworkScanInfo, NetworkType, SharedNetworks, WirelessCreds,
+    NetCtl, NetCtlError, NetworkScanInfo, NetworkType, WirelessCreds,
 };
 use rs_matter::dm::clusters::wifi_diag::{
     SecurityTypeEnum, WiFiVersionEnum, WifiDiag, WirelessDiag,
@@ -71,7 +71,7 @@ use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::WifiSysHandler;
 use rs_matter::dm::events::DEFAULT_MAX_EVENTS_BUF_SIZE;
 use rs_matter::dm::networks::wireless::{
-    NetCtlState, NetCtlStateMutex, NetCtlWithStatusImpl, WifiNetworks, WirelessMgr, MAX_CREDS_SIZE,
+    NetCtlState, NetCtlStateMutex, NetCtlWithStatusImpl, WifiNetworks,
 };
 use rs_matter::dm::networks::NetChangeNotif;
 use rs_matter::dm::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
@@ -162,7 +162,6 @@ struct MatterStack<'a> {
     state: WirelessDataModelState<WifiNetworks<3>>,
     net_ctl_state: NetCtlStateMutex,
     btp: Btp,
-    wireless_mgr_buffer: MaybeUninit<[u8; MAX_CREDS_SIZE]>,
     // We don't run a persistence task, but emulate its typical memory consumnption
     psm_buffer: MaybeUninit<[u8; 4096]>,
 }
@@ -181,7 +180,6 @@ impl<'a> MatterStack<'a> {
             state <- WirelessDataModelState::init(WifiNetworks::init()),
             net_ctl_state <- NetCtlState::init_with_mutex(),
             btp <- Btp::init(),
-            wireless_mgr_buffer: MaybeUninit::zeroed(),
             psm_buffer: MaybeUninit::zeroed(),
         })
     }
@@ -190,9 +188,7 @@ impl<'a> MatterStack<'a> {
 // Fully spelled-out types for everything which is passed down as arguments to `embassy-executor` tasks
 // Necessary, because `embassy-executor` doesn't grok generics
 
-type AppNetworks = SharedNetworks<WifiNetworks<3>>;
 type AppNetCtl<'a> = NetCtlWithStatusImpl<'a, FakeWifi>;
-type AppWirelessMgr<'a> = WirelessMgr<'a, &'a AppNetworks, &'a AppNetCtl<'a>>;
 type AppTransport<'a> = ChainedNetwork<FakeUdp, &'a Btp, fn(&Address) -> bool>;
 type AppDmHandler<'a> = handler_chain_type!(
     EpClMatcher => on_off::HandlerAsyncAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>,
@@ -209,6 +205,7 @@ type AppDataModel<'a> = DataModel<
     (Node<'a>, &'a AppDmHandler<'a>),
     SharedKvBlobStore<DummyKvBlobStore, &'static mut [u8]>,
     WifiNetworks<3>,
+    &'a AppNetCtl<'a>,
 >;
 type AppResponder<'d, 'a> = DefaultResponder<
     'd,
@@ -220,6 +217,7 @@ type AppResponder<'d, 'a> = DefaultResponder<
     (Node<'a>, &'a AppDmHandler<'a>),
     SharedKvBlobStore<DummyKvBlobStore, &'static mut [u8]>,
     WifiNetworks<3>,
+    &'a AppNetCtl<'a>,
 >;
 
 #[cfg_attr(target_os = "none", main)]
@@ -275,7 +273,11 @@ fn main() -> ! {
         size_of_val(stack.state.subscriptions()),
         &mut stack_total,
     );
-    report_size("Events", size_of_val(stack.state.events()), &mut stack_total);
+    report_size(
+        "Events",
+        size_of_val(stack.state.events()),
+        &mut stack_total,
+    );
     report_size(
         "Networks",
         size_of_val(stack.state.networks()),
@@ -287,11 +289,6 @@ fn main() -> ! {
         &mut stack_total,
     );
     report_size("BTP", size_of_val(&stack.btp), &mut stack_total);
-    report_size(
-        "Wireless mgr buffer",
-        size_of_val(&stack.wireless_mgr_buffer),
-        &mut stack_total,
-    );
     report_size(
         "Persister buffer",
         size_of_val(&stack.psm_buffer),
@@ -314,15 +311,9 @@ fn main() -> ! {
 
     report_size("Network controller", size_of_val(net_ctl), &mut aux_total);
 
-    // Wifi network manager (cycle registered networks, auto-reconnect)
-    let wifi_mgr = mk_static!(
-        AppWirelessMgr,
-        WirelessMgr::new(stack.state.networks(), net_ctl, unsafe {
-            stack.wireless_mgr_buffer.assume_init_mut()
-        },)
-    );
-
-    report_size("Wireless manager", size_of_val(&*wifi_mgr), &mut aux_total);
+    // The operational Wifi connection manager is now driven from inside
+    // `DataModel::run` (no separate task); its footprint shows up under the data
+    // model future below.
 
     let crypto = &*mk_static!(
         AppCrypto,
@@ -351,15 +342,17 @@ fn main() -> ! {
 
     report_size("DM Handler size", size_of_val(&*handler), &mut aux_total);
 
-    // Data Model
+    // Data Model. `net_ctl` is wired in so the data model's `run` drives the
+    // operational Wifi connection manager itself (no separate manager task).
     let dm = &*mk_static!(
         AppDataModel,
-        DataModel::new(
+        DataModel::new_with_net_ctl(
             &stack.matter,
             crypto,
             &stack.buffers,
             (NODE, handler),
             kv,
+            net_ctl,
             &stack.state,
         )
     );
@@ -432,11 +425,6 @@ fn main() -> ! {
         &mut fut_total,
     );
     report_size(
-        "Wifi task",
-        size_of_val(&wifi_task_fut(wifi_mgr)),
-        &mut fut_total,
-    );
-    report_size(
         "Transport task",
         size_of_val(&transport_task_fut(
             &stack.matter,
@@ -479,7 +467,6 @@ fn main() -> ! {
         spawner.spawn(unwrap!(dm_task(dm)));
         spawner.spawn(unwrap!(mdns_task(mdns, &stack.matter, crypto)));
         spawner.spawn(unwrap!(btp_task(&stack.btp)));
-        spawner.spawn(unwrap!(wifi_task(wifi_mgr)));
         spawner.spawn(unwrap!(transport_task(
             &stack.matter,
             crypto,
@@ -568,19 +555,6 @@ fn btp_task_fut<'a>(_btp: &'a Btp) -> impl Future<Output = Result<(), Error>> + 
 async fn btp_task(btp: &'static Btp) {
     info!("Starting BTP task...");
     unwrap!(btp_task_fut(btp).await);
-}
-
-#[inline(always)]
-fn wifi_task_fut<'a>(
-    wifi_mgr: &'a mut AppWirelessMgr<'static>,
-) -> impl Future<Output = Result<(), Error>> + 'a {
-    wifi_mgr.run()
-}
-
-#[embassy_executor::task]
-async fn wifi_task(wifi_mgr: &'static mut AppWirelessMgr<'static>) {
-    info!("Starting Wifi task...");
-    unwrap!(wifi_task_fut(wifi_mgr).await);
 }
 
 #[inline(always)]

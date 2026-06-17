@@ -52,6 +52,7 @@ use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, WifiNetworks};
+use rs_matter::dm::networks::NetChangeNotif;
 use rs_matter::dm::{
     Async, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, Node,
     WirelessDataModelState,
@@ -118,7 +119,10 @@ fn main() -> Result<(), Error> {
     }
 }
 
-fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), Error> {
+fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
+    connection: &Connection,
+    net_ctl: N,
+) -> Result<(), Error> {
     // Create the Matter object
     let mut matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
@@ -157,13 +161,16 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
 
     let net_ctl = NetCtlWithStatusImpl::new(&net_ctl_state, net_ctl);
 
-    // Create the Data Model instance
-    let dm = DataModel::new(
+    // Create the Data Model instance. The same `net_ctl` is wired both into the
+    // `NetworkCommissioning` handler (above) and into the data model, which drives
+    // the operational Wifi connection manager from `DataModel::run`.
+    let dm = DataModel::new_with_net_ctl(
         &matter,
         &crypto,
         &buffers,
         dm_handler(rand, &on_off_handler, &net_ctl, &net_ctl),
         SharedKvBlobStore::new(kv, kv_buf.as_mut_slice()),
+        &net_ctl,
         &state,
     );
 

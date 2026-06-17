@@ -18,14 +18,19 @@
 use core::num::NonZeroU8;
 use core::pin::pin;
 
-use embassy_futures::select::select3;
+use embassy_futures::select::{select3, select4};
 use embassy_time::{Instant, Timer};
 
 use crate::acl::Accessor;
 use crate::crypto::Crypto;
-use crate::dm::clusters::net_comm::{Networks, NetworksAccess, SharedNetworks};
+use crate::dm::clusters::net_comm::{
+    NetCtl, NetworkType, Networks, NetworksAccess, SharedNetworks,
+};
+use crate::dm::clusters::wifi_diag::WirelessDiag;
 use crate::dm::events::EventTLVWrite;
 use crate::dm::networks::eth::EthNetwork;
+use crate::dm::networks::wireless::{NoopWirelessNetCtl, WirelessMgr, MAX_CREDS_SIZE};
+use crate::dm::networks::NetChangeNotif;
 use crate::dm::subscriptions::SubscriptionsBuffers;
 use crate::error::{Error, ErrorCode};
 use crate::im::{
@@ -137,7 +142,13 @@ impl<N, const NS: usize, const NE: usize> DataModelState<N, NS, NE> {
 }
 
 /// The implementation needs a `DataModelHandler` instance to interact with the underlying clusters of the data model.
-pub struct DataModel<'a, const NS: usize, const NE: usize, C, B, T, S, N>
+///
+/// `NC` is the network controller type driving the (optional) wireless connection
+/// manager from [`DataModel::run`]. It defaults to [`NoopWirelessNetCtl`], which is
+/// the right choice for Ethernet (and what the convenience [`DataModel::new`]
+/// constructor wires up); wireless devices pass a real controller via
+/// [`DataModel::new_with_net_ctl`].
+pub struct DataModel<'a, const NS: usize, const NE: usize, C, B, T, S, N, NC = NoopWirelessNetCtl>
 where
     B: BufferAccess<IMBuffer>,
 {
@@ -145,6 +156,7 @@ where
     crypto: C,
     buffers: &'a B,
     kv: S,
+    net_ctl: NC,
     subscriptions_buffers: SubscriptionsBuffers<'a, B, NS>,
     state: &'a DataModelState<N, NS, NE>,
     handler: T,
@@ -172,10 +184,10 @@ pub type WirelessDataModelState<
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
 > = DataModelState<N, NS, NE>;
 
-/// A [`DataModel`] for a wireless device (network store `N`). Pairs with
-/// [`WirelessDataModelState`].
-pub type WirelessDataModel<'a, const NS: usize, const NE: usize, C, B, T, S, N> =
-    DataModel<'a, NS, NE, C, B, T, S, N>;
+/// A [`DataModel`] for a wireless device (network store `N`, network controller
+/// `NC`). Pairs with [`WirelessDataModelState`].
+pub type WirelessDataModel<'a, const NS: usize, const NE: usize, C, B, T, S, N, NC> =
+    DataModel<'a, NS, NE, C, B, T, S, N, NC>;
 
 impl<'a, const NS: usize, const NE: usize, C, B, T, S, N> DataModel<'a, NS, NE, C, B, T, S, N>
 where
@@ -185,7 +197,12 @@ where
     S: KvBlobStoreAccess,
     N: Networks,
 {
-    /// Create the data model.
+    /// Create the data model for a device that does not need an operational
+    /// wireless connection manager (typically an Ethernet device).
+    ///
+    /// This is a convenience wrapper around [`DataModel::new_with_net_ctl`] that
+    /// fixes the network controller to an inert [`NoopWirelessNetCtl`], so
+    /// [`DataModel::run`]'s connection-management branch stays dormant.
     ///
     /// # Arguments
     /// - `matter` - a reference to the `Matter` instance
@@ -206,6 +223,56 @@ where
         kv: S,
         state: &'a DataModelState<N, NS, NE>,
     ) -> Self {
+        Self::new_with_net_ctl(
+            matter,
+            crypto,
+            buffers,
+            handler,
+            kv,
+            NoopWirelessNetCtl::new(NetworkType::Ethernet),
+            state,
+        )
+    }
+}
+
+impl<'a, const NS: usize, const NE: usize, C, B, T, S, N, NC>
+    DataModel<'a, NS, NE, C, B, T, S, N, NC>
+where
+    C: Crypto,
+    B: BufferAccess<IMBuffer>,
+    T: DataModelHandler,
+    S: KvBlobStoreAccess,
+    N: Networks,
+{
+    /// Create the data model with an explicit network controller `net_ctl`.
+    ///
+    /// Use this for wireless devices: `net_ctl` drives the operational connection
+    /// manager run from [`DataModel::run`] (and is typically the same controller
+    /// instance also wired into the `NetworkCommissioning` cluster handler). For
+    /// Ethernet devices prefer the [`DataModel::new`] convenience constructor.
+    ///
+    /// # Arguments
+    /// - `matter` - a reference to the `Matter` instance
+    /// - `buffers` - a reference to an implementation of `BufferAccess<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
+    /// - `handler` - an instance of type `T` which implements the `DataModelHandler` trait. This instance is used for interacting with the underlying
+    ///   clusters of the data model. Note that the expectations is for the user to provide a handler that handles the Matter system clusters
+    ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods
+    /// - `kv` - an instance of type `S` which implements the `KvBlobStoreAccess` trait. This instance is used for interacting with the key-value blob store.
+    /// - `net_ctl` - the network controller (`NetCtl` + `WirelessDiag` + `NetChangeNotif`) used by
+    ///   the operational wireless connection manager driven from [`DataModel::run`].
+    /// - `state` - a reference to the [`DataModelState`] holding the subscriptions table, the
+    ///   events queue and the network store (the latter parameterized by the `Networks`
+    ///   implementation `N`).
+    #[inline(always)]
+    pub fn new_with_net_ctl(
+        matter: &'a Matter<'a>,
+        crypto: C,
+        buffers: &'a B,
+        handler: T,
+        kv: S,
+        net_ctl: NC,
+        state: &'a DataModelState<N, NS, NE>,
+    ) -> Self {
         state.subscriptions.clear();
 
         Self {
@@ -213,6 +280,7 @@ where
             crypto,
             buffers,
             kv,
+            net_ctl,
             subscriptions_buffers: SubscriptionsBuffers::new(),
             state,
             handler,
@@ -286,14 +354,44 @@ where
     }
 
     /// Run the Data Model instance.
-    pub async fn run(&self) -> Result<(), Error> {
+    ///
+    /// This drives the IM timeout checks, the data-model handler's own background
+    /// job, the subscriptions reporting loop, and - for wireless devices - the
+    /// operational connection manager (inert for Ethernet, where `net_ctl` is a
+    /// [`NoopWirelessNetCtl`]).
+    pub async fn run(&self) -> Result<(), Error>
+    where
+        NC: NetCtl + WirelessDiag + NetChangeNotif,
+    {
         let mut timeouts = pin!(self.run_timeout_checks());
         let mut handler = pin!(self.handler.run(self));
         let mut subs = pin!(self.process_subscriptions(self.matter));
+        let mut net = pin!(self.run_net_mgr());
 
-        select3(&mut timeouts, &mut handler, &mut subs)
+        select4(&mut timeouts, &mut handler, &mut subs, &mut net)
             .coalesce()
             .await
+    }
+
+    /// Drive the operational wireless connection manager.
+    ///
+    /// For Ethernet devices (`net_ctl.net_type() == NetworkType::Ethernet`) there
+    /// is nothing to manage, so this future simply pends forever. For wireless
+    /// devices it runs a [`WirelessMgr`] over the network store, cycling through
+    /// the registered networks and (re)connecting as needed once commissioned.
+    async fn run_net_mgr(&self) -> Result<(), Error>
+    where
+        NC: NetCtl + WirelessDiag + NetChangeNotif,
+    {
+        if self.net_ctl.net_type() == NetworkType::Ethernet {
+            // Nothing to manage for a wired device - just pend forever.
+            return core::future::pending().await;
+        }
+
+        let mut buf = [0u8; MAX_CREDS_SIZE];
+        let mut mgr = WirelessMgr::new(self.state.networks(), &self.net_ctl, &mut buf);
+
+        mgr.run().await
     }
 
     async fn run_timeout_checks(&self) -> Result<(), Error> {
@@ -1064,8 +1162,8 @@ where
     }
 }
 
-impl<const NS: usize, const NE: usize, C, B, T, S, N> ExchangeHandler
-    for DataModel<'_, NS, NE, C, B, T, S, N>
+impl<const NS: usize, const NE: usize, C, B, T, S, N, NC> ExchangeHandler
+    for DataModel<'_, NS, NE, C, B, T, S, N, NC>
 where
     C: Crypto,
     B: BufferAccess<IMBuffer>,
@@ -1078,8 +1176,8 @@ where
     }
 }
 
-impl<const NS: usize, const NE: usize, C, B, T, S, N> HandlerContext
-    for DataModel<'_, NS, NE, C, B, T, S, N>
+impl<const NS: usize, const NE: usize, C, B, T, S, N, NC> HandlerContext
+    for DataModel<'_, NS, NE, C, B, T, S, N, NC>
 where
     C: Crypto,
     B: BufferAccess<IMBuffer>,
@@ -1116,8 +1214,8 @@ where
     }
 }
 
-impl<const NS: usize, const NE: usize, C, B, T, S, N> AttrChangeNotifier
-    for DataModel<'_, NS, NE, C, B, T, S, N>
+impl<const NS: usize, const NE: usize, C, B, T, S, N, NC> AttrChangeNotifier
+    for DataModel<'_, NS, NE, C, B, T, S, N, NC>
 where
     C: Crypto,
     B: BufferAccess<IMBuffer>,
@@ -1160,8 +1258,8 @@ where
     }
 }
 
-impl<const NS: usize, const NE: usize, C, B, T, S, N> EventEmitter
-    for DataModel<'_, NS, NE, C, B, T, S, N>
+impl<const NS: usize, const NE: usize, C, B, T, S, N, NC> EventEmitter
+    for DataModel<'_, NS, NE, C, B, T, S, N, NC>
 where
     C: Crypto,
     B: BufferAccess<IMBuffer>,
