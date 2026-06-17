@@ -36,9 +36,9 @@ use num_derive::FromPrimitive;
 
 use crate::error::{Error, ErrorCode};
 use crate::sc::{self, GeneralCode, StatusReport};
-use crate::transport::exchange::{Exchange, MessageMeta};
+use crate::transport::exchange::{Exchange, MessageMeta, MAX_EXCHANGE_RX_BUF_SIZE};
 use crate::transport::{MAX_RX_PAYLOAD_SIZE, MAX_TX_PAYLOAD_SIZE};
-use crate::utils::storage::{ReadBuf, WriteBuf};
+use crate::utils::storage::{ReadBuf, Vec, WriteBuf};
 
 mod handler;
 mod nego;
@@ -48,6 +48,13 @@ mod write;
 pub use handler::*;
 pub use read::*;
 pub use write::*;
+
+/// The buffer a BDX transfer stages each block in. Same size as an Interaction
+/// Model exchange buffer, so a single [`PooledBuffers`] pool can be shared with
+/// the data model if desired.
+///
+/// [`PooledBuffers`]: crate::utils::storage::pooled::PooledBuffers
+pub type BdxBuffer = Vec<u8, MAX_EXCHANGE_RX_BUF_SIZE>;
 
 /// The Matter protocol id for BDX.
 pub const PROTO_ID_BDX: u16 = 0x0002;

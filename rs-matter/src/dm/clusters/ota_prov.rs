@@ -43,15 +43,16 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::{Octets, TLVBuilderParent};
 use crate::transport::exchange::MAX_EXCHANGE_RX_BUF_SIZE;
 use crate::utils::storage::pooled::BufferAccess;
-use crate::utils::storage::Vec;
 use crate::with;
 
-/// The buffer an [`OtaBdxHandler`] stages each BDX block in. Same size as an
-/// Interaction Model exchange buffer, so a single [`PooledBuffers`] pool can be
-/// shared with the data model if desired.
+/// The buffer an [`OtaBdxHandler`] stages each BDX block in.
+///
+/// Re-exported from the [`bdx`](crate::bdx) module, where it now lives, so an
+/// application can size a [`PooledBuffers`] pool for the OTA BDX handler without
+/// reaching into the BDX module directly.
 ///
 /// [`PooledBuffers`]: crate::utils::storage::pooled::PooledBuffers
-pub type BdxBuffer = Vec<u8, MAX_EXCHANGE_RX_BUF_SIZE>;
+pub use crate::bdx::BdxBuffer;
 
 pub use crate::dm::clusters::decl::ota_software_update_provider::*;
 
@@ -418,7 +419,7 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
 ///
 /// ```ignore
 /// use rs_matter::bdx::{Bdx, PROTO_ID_BDX};
-/// use rs_matter::dm::clusters::ota_provider::BdxBuffer;
+/// use rs_matter::dm::clusters::ota_prov::BdxBuffer;
 /// use rs_matter::respond::Responder;
 /// use rs_matter::utils::storage::pooled::PooledBuffers;
 ///

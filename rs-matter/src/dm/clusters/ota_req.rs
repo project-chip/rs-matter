@@ -58,7 +58,7 @@ use crate::dm::clusters::decl::ota_software_update_provider::{
     ApplyUpdateActionEnum, DownloadProtocolEnum, OtaSoftwareUpdateProviderClient,
     QueryImageResponse,
 };
-use crate::dm::clusters::ota_provider::OtaApplyOutcome;
+use crate::dm::clusters::ota_prov::OtaApplyOutcome;
 
 /// The number of transient providers (learned via `AnnounceOTAProvider`) cached
 /// at once. These are one-shot hints, deduplicated by `(fabric, node)`; the
@@ -100,7 +100,7 @@ impl Provider {
     /// [`parse_bdx_url`] + [`Exchange::download`](crate::bdx::BdxDownloadInitiator::download) to fetch.
     ///
     /// [`BasicInfoConfig`]: crate::dm::clusters::basic_info::BasicInfoConfig
-    /// [`OtaImagesRegistry`]: crate::dm::clusters::ota_provider::OtaImagesRegistry
+    /// [`OtaImagesRegistry`]: crate::dm::clusters::ota_prov::OtaImagesRegistry
     pub async fn query<C, F, R>(
         &self,
         matter: &Matter<'_>,
