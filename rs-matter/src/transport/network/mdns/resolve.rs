@@ -202,14 +202,18 @@ impl ResolveMdns {
         txt_data: &[Vec<u8>],
     ) {
         for (_p, _w, port, _host, addresses, _ch) in srv_data {
-            if let Some(ip) = first_address(addresses) {
+            // Deposit *all* resolved addresses; the transport picks the most
+            // preferred one (IPv6 link-local → ULA → global → IPv4) via
+            // `score_ip_address`.
+            let ips = all_addresses(addresses);
+            if !ips.is_empty() {
                 let txt = txt_iter(txt_data);
                 matter
                     .transport()
                     .try_deposit_mdns_browse(&MdnsRemoteService {
                         instance_name: DottedName(instance_name),
                         port: Some(*port),
-                        addrs: core::iter::once(ip),
+                        addrs: ips.iter().copied(),
                         txt: txt.iter().copied(),
                     });
             }
@@ -225,14 +229,16 @@ impl ResolveMdns {
         txt_data: &[Vec<u8>],
     ) {
         for (_p, _w, port, _host, addresses, _ch) in srv_data {
-            if let Some(ip) = first_address(addresses) {
+            // Deposit *all* resolved addresses (see `deposit_browse`).
+            let ips = all_addresses(addresses);
+            if !ips.is_empty() {
                 let txt = txt_iter(txt_data);
                 matter
                     .transport()
                     .try_deposit_mdns_resolve(&MdnsRemoteService {
                         instance_name: DottedName(instance_name),
                         port: Some(*port),
-                        addrs: core::iter::once(ip),
+                        addrs: ips.iter().copied(),
                         txt: txt.iter().copied(),
                     });
             }
@@ -321,12 +327,14 @@ impl ResolveMdns {
     }
 }
 
-/// The first parseable IP address from a systemd-resolved address list
-/// (`(ifindex, family, bytes)` triples), best-effort.
-fn first_address(addresses: &[(i32, i32, Vec<u8>)]) -> Option<IpAddr> {
+/// All parseable IP addresses from a systemd-resolved address list
+/// (`(ifindex, family, bytes)` triples), best-effort. The caller deposits these
+/// and lets `score_ip_address` pick the most preferred (IPv6 first).
+fn all_addresses(addresses: &[(i32, i32, Vec<u8>)]) -> Vec<IpAddr> {
     addresses
         .iter()
-        .find_map(|(_ifindex, family, bytes)| parse_ip_address(*family, bytes))
+        .filter_map(|(_ifindex, family, bytes)| parse_ip_address(*family, bytes))
+        .collect()
 }
 
 /// Borrowed `(key, value)` view over systemd-resolved TXT records (each a

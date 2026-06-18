@@ -357,8 +357,8 @@ impl Transport {
 
         let (sii, sai, sat) = answer.session_params();
 
-        self.mdns_resolve.modify(|state| {
-            if let MdnsResolveState::InFlight { service } = state {
+        self.mdns_resolve.modify(|state| match state {
+            MdnsResolveState::InFlight { service } => {
                 if service.matches_instance(&answer.instance_name) {
                     *state = MdnsResolveState::Resolved {
                         ip,
@@ -367,10 +367,28 @@ impl Transport {
                         sai,
                         sat,
                     };
-                    return (true, ());
+                    (true, ())
+                } else {
+                    (false, ())
                 }
             }
-            (false, ())
+            // Already resolved (same in-flight target — the rendezvous is
+            // single-slot) but not yet consumed: keep the better-scoring address
+            // so a later IPv6 deposit can upgrade an earlier IPv4 one (e.g.
+            // zeroconf surfaces one address per family at a time).
+            MdnsResolveState::Resolved { ip: cur_ip, .. }
+                if score_ip_address(&ip) > score_ip_address(cur_ip) =>
+            {
+                *state = MdnsResolveState::Resolved {
+                    ip,
+                    port,
+                    sii,
+                    sai,
+                    sat,
+                };
+                (true, ())
+            }
+            _ => (false, ()),
         });
     }
 
@@ -513,14 +531,29 @@ impl Transport {
             return;
         };
 
-        self.mdns_browse.modify(|state| {
-            if let MdnsBrowseState::InFlight { filter, exclude } = state {
+        self.mdns_browse.modify(|state| match state {
+            MdnsBrowseState::InFlight { filter, exclude } => {
                 if !exclude.contains(&id) && filter.matches(answer) {
                     *state = MdnsBrowseState::Found { ip, port, id };
-                    return (true, ());
+                    (true, ())
+                } else {
+                    (false, ())
                 }
             }
-            (false, ())
+            // Already matched this same instance but not yet consumed: keep the
+            // better-scoring address. Backends that surface one address per
+            // family at a time (e.g. zeroconf fires a callback per A/AAAA record)
+            // can thus still yield the preferred IPv6 address even if the IPv4
+            // one was deposited first.
+            MdnsBrowseState::Found {
+                ip: cur_ip,
+                id: cur_id,
+                ..
+            } if *cur_id == id && score_ip_address(&ip) > score_ip_address(cur_ip) => {
+                *state = MdnsBrowseState::Found { ip, port, id };
+                (true, ())
+            }
+            _ => (false, ()),
         });
     }
 

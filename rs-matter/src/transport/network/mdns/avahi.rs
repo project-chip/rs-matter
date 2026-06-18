@@ -45,6 +45,14 @@ use crate::Matter;
 const AVAHI_IF_UNSPEC: i32 = -1;
 /// Avahi constant for "any protocol" (IPv4 or IPv6)
 const AVAHI_PROTO_UNSPEC: i32 = -1;
+/// Avahi address-family constants. `ResolveService` returns a single address in
+/// the requested family, so to gather both (and let the transport prefer IPv6 —
+/// see `score_ip_address`) we resolve once per family.
+const AVAHI_PROTO_INET: i32 = 0;
+const AVAHI_PROTO_INET6: i32 = 1;
+/// Resolve in IPv6-then-IPv4 order so that, on a single-address consumer, the
+/// preferred family is tried first.
+const AVAHI_RESOLVE_PROTOS: [i32; 2] = [AVAHI_PROTO_INET6, AVAHI_PROTO_INET];
 
 /// Interval (ms) at which a running browse re-checks whether it is still in
 /// flight (first match consumed, or caller timed out / dropped).
@@ -127,53 +135,22 @@ impl AvahiMdns {
             let avahi = Server2Proxy::new(connection).await?;
 
             while matter.transport().mdns_resolve_in_flight() {
-                match avahi
-                    .resolve_service(
-                        AVAHI_IF_UNSPEC,
-                        AVAHI_PROTO_UNSPEC,
-                        &label,
-                        service_type,
-                        "local",
-                        AVAHI_PROTO_UNSPEC,
-                        0,
-                    )
-                    .await
-                {
-                    Ok((
-                        _if,
-                        _proto,
-                        _name,
-                        _type,
-                        _domain,
-                        _host,
-                        _ap,
-                        address,
-                        port,
-                        txt,
-                        _fl,
-                    )) => {
-                        if let Ok(ip) = address.parse::<IpAddr>() {
-                            let mut txt_pairs: Vec<(&str, &str)> = Vec::new();
-                            for entry in &txt {
-                                if let Ok(s) = core::str::from_utf8(entry) {
-                                    match s.find('=') {
-                                        Some(eq) => txt_pairs.push((&s[..eq], &s[eq + 1..])),
-                                        None => txt_pairs.push((s, "")),
-                                    }
-                                }
-                            }
-                            // Match is by the full instance name we requested.
-                            matter
-                                .transport()
-                                .try_deposit_mdns_resolve(&MdnsRemoteService {
-                                    instance_name: DottedName(name_buf.as_str()),
-                                    port: Some(port),
-                                    addrs: core::iter::once(ip),
-                                    txt: txt_pairs.iter().copied(),
-                                });
-                        }
-                    }
-                    Err(e) => debug!("Avahi resolve of {} failed: {:?}", label, e),
+                // Resolve both address families (Avahi returns one address per
+                // call) and deposit them together; the transport prefers IPv6
+                // (link-local → ULA → global → IPv4) via `score_ip_address`.
+                let (ips, port, txt) =
+                    resolve_all_families(&avahi, AVAHI_IF_UNSPEC, &label, service_type).await;
+                if !ips.is_empty() {
+                    let txt_pairs = txt_pairs(&txt);
+                    // Match is by the full instance name we requested.
+                    matter
+                        .transport()
+                        .try_deposit_mdns_resolve(&MdnsRemoteService {
+                            instance_name: DottedName(name_buf.as_str()),
+                            port: Some(port),
+                            addrs: ips.iter().copied(),
+                            txt: txt_pairs.iter().copied(),
+                        });
                 }
 
                 Timer::after(Duration::from_millis(BROWSE_POLL_INTERVAL_MS)).await;
@@ -218,51 +195,27 @@ impl AvahiMdns {
 
                 let Ok(args) = signal.args() else { continue };
 
-                if let Ok((
-                    _if,
-                    _proto,
-                    name,
-                    _type,
-                    _domain,
-                    _host,
-                    _ap,
-                    address,
-                    port,
-                    txt,
-                    _fl,
-                )) = avahi
-                    .resolve_service(
-                        args.interface,
-                        args.protocol,
-                        args.name,
-                        args.type_,
-                        args.domain,
-                        AVAHI_PROTO_UNSPEC,
-                        0,
-                    )
-                    .await
-                {
-                    let Ok(ip) = address.parse::<IpAddr>() else {
-                        warn!("Could not parse IP address: {}", address);
-                        continue;
-                    };
+                // Resolve both families for this browsed instance and deposit all
+                // addresses together (transport prefers IPv6 via
+                // `score_ip_address`).
+                let (name, ips, port, txt) = resolve_browsed_all_families(
+                    &avahi,
+                    args.interface,
+                    args.protocol,
+                    args.name,
+                    args.type_,
+                    args.domain,
+                )
+                .await;
 
-                    let mut txt_pairs: Vec<(&str, &str)> = Vec::new();
-                    for entry in &txt {
-                        if let Ok(s) = core::str::from_utf8(entry) {
-                            match s.find('=') {
-                                Some(eq) => txt_pairs.push((&s[..eq], &s[eq + 1..])),
-                                None => txt_pairs.push((s, "")),
-                            }
-                        }
-                    }
-
+                if !ips.is_empty() {
+                    let txt_pairs = txt_pairs(&txt);
                     matter
                         .transport()
                         .try_deposit_mdns_browse(&MdnsRemoteService {
                             instance_name: DottedName(&name),
                             port: Some(port),
-                            addrs: core::iter::once(ip),
+                            addrs: ips.iter().copied(),
                             txt: txt_pairs.iter().copied(),
                         });
                 }
@@ -400,4 +353,108 @@ impl AvahiMdns {
 
         Ok(())
     }
+}
+
+/// Parse Avahi TXT entries (`key=value` / bare `key` byte strings) into borrowed
+/// `(key, value)` pairs.
+fn txt_pairs(txt: &[Vec<u8>]) -> Vec<(&str, &str)> {
+    let mut pairs: Vec<(&str, &str)> = Vec::new();
+    for entry in txt {
+        if let Ok(s) = core::str::from_utf8(entry) {
+            match s.find('=') {
+                Some(eq) => pairs.push((&s[..eq], &s[eq + 1..])),
+                None => pairs.push((s, "")),
+            }
+        }
+    }
+    pairs
+}
+
+/// Resolve an instance (`label`.`service_type`.local) across both address
+/// families, returning all resolved IPs plus the port and TXT (from the first
+/// successful family). Avahi's `ResolveService` returns a single address per
+/// call, so we call it once per family — see [`AVAHI_RESOLVE_PROTOS`].
+async fn resolve_all_families(
+    avahi: &Server2Proxy<'_>,
+    interface: i32,
+    label: &str,
+    service_type: &str,
+) -> (Vec<IpAddr>, u16, Vec<Vec<u8>>) {
+    let mut ips: Vec<IpAddr> = Vec::new();
+    let mut port = 0u16;
+    let mut txt: Vec<Vec<u8>> = Vec::new();
+
+    for aproto in AVAHI_RESOLVE_PROTOS {
+        match avahi
+            .resolve_service(
+                interface,
+                AVAHI_PROTO_UNSPEC,
+                label,
+                service_type,
+                "local",
+                aproto,
+                0,
+            )
+            .await
+        {
+            Ok((_if, _proto, _name, _type, _domain, _host, _ap, address, p, t, _fl)) => {
+                if let Ok(ip) = address.parse::<IpAddr>() {
+                    if !ips.contains(&ip) {
+                        ips.push(ip);
+                    }
+                    port = p;
+                    if txt.is_empty() {
+                        txt = t;
+                    }
+                }
+            }
+            Err(e) => debug!("Avahi resolve of {label} (aproto {aproto}) failed: {e:?}"),
+        }
+    }
+
+    (ips, port, txt)
+}
+
+/// Like [`resolve_all_families`] but for a *browsed* instance (identified by the
+/// browser's `name`/`type_`/`domain`), also returning the resolved instance
+/// name. The browser's own `protocol` is passed through for interface/family
+/// scoping; the per-call `aprotocol` still varies to gather both families.
+#[allow(clippy::type_complexity)]
+async fn resolve_browsed_all_families(
+    avahi: &Server2Proxy<'_>,
+    interface: i32,
+    protocol: i32,
+    name: &str,
+    type_: &str,
+    domain: &str,
+) -> (String, Vec<IpAddr>, u16, Vec<Vec<u8>>) {
+    let mut instance_name = String::new();
+    let mut ips: Vec<IpAddr> = Vec::new();
+    let mut port = 0u16;
+    let mut txt: Vec<Vec<u8>> = Vec::new();
+
+    for aproto in AVAHI_RESOLVE_PROTOS {
+        match avahi
+            .resolve_service(interface, protocol, name, type_, domain, aproto, 0)
+            .await
+        {
+            Ok((_if, _proto, rname, _type, _domain, _host, _ap, address, p, t, _fl)) => {
+                if let Ok(ip) = address.parse::<IpAddr>() {
+                    if !ips.contains(&ip) {
+                        ips.push(ip);
+                    }
+                    instance_name = rname;
+                    port = p;
+                    if txt.is_empty() {
+                        txt = t;
+                    }
+                } else {
+                    warn!("Could not parse IP address: {address}");
+                }
+            }
+            Err(e) => debug!("Avahi resolve (browsed, aproto {aproto}) failed: {e:?}"),
+        }
+    }
+
+    (instance_name, ips, port, txt)
 }

@@ -27,7 +27,7 @@ use embassy_time::Timer;
 use crate::utils::select::Coalesce;
 
 use std::collections::{HashMap, HashSet};
-use std::net::ToSocketAddrs;
+use std::net::{IpAddr, ToSocketAddrs};
 use std::time::Duration;
 
 use crate::error::{Error, ErrorCode};
@@ -121,14 +121,15 @@ impl AstroMdns {
             while matter.transport().mdns_resolve_in_flight() {
                 match browser.recv_timeout(Duration::ZERO) {
                     Ok(svc) if svc.name == label => {
+                        // Collect *all* resolved addresses; the transport picks
+                        // the most preferred (IPv6 first) via `score_ip_address`.
                         let host_with_port = format!("{}:{}", svc.hostname, svc.port);
-                        let ip = host_with_port
+                        let ips: Vec<IpAddr> = host_with_port
                             .to_socket_addrs()
-                            .ok()
-                            .and_then(|mut addrs| addrs.next())
-                            .map(|addr| addr.ip());
+                            .map(|addrs| addrs.map(|addr| addr.ip()).collect())
+                            .unwrap_or_default();
 
-                        if let Some(ip) = ip {
+                        if !ips.is_empty() {
                             let mut txt: Vec<(&str, &str)> = Vec::new();
                             if let Some(ref txt_record) = svc.txt_record {
                                 for (key, value) in txt_record {
@@ -141,7 +142,7 @@ impl AstroMdns {
                                 .try_deposit_mdns_resolve(&MdnsRemoteService {
                                     instance_name: DottedName(name_buf.as_str()),
                                     port: Some(svc.port),
-                                    addrs: core::iter::once(ip),
+                                    addrs: ips.iter().copied(),
                                     txt: txt.iter().copied(),
                                 });
                         }
@@ -179,14 +180,15 @@ impl AstroMdns {
                     // happen inside the deposit. `to_socket_addrs` is a brief
                     // blocking lookup, acceptable on the commissioning-browse path.
                     Ok(service) => {
+                        // Collect *all* resolved addresses (see the resolve path);
+                        // the transport prefers IPv6 via `score_ip_address`.
                         let host_with_port = format!("{}:{}", service.hostname, service.port);
-                        let ip = host_with_port
+                        let ips: Vec<IpAddr> = host_with_port
                             .to_socket_addrs()
-                            .ok()
-                            .and_then(|mut addrs| addrs.next())
-                            .map(|addr| addr.ip());
+                            .map(|addrs| addrs.map(|addr| addr.ip()).collect())
+                            .unwrap_or_default();
 
-                        if let Some(ip) = ip {
+                        if !ips.is_empty() {
                             let mut txt: Vec<(&str, &str)> = Vec::new();
                             if let Some(ref txt_record) = service.txt_record {
                                 for (key, value) in txt_record {
@@ -199,7 +201,7 @@ impl AstroMdns {
                                 .try_deposit_mdns_browse(&MdnsRemoteService {
                                     instance_name: DottedName(service.name.as_str()),
                                     port: Some(service.port),
-                                    addrs: core::iter::once(ip),
+                                    addrs: ips.iter().copied(),
                                     txt: txt.iter().copied(),
                                 });
                         } else {
