@@ -35,7 +35,6 @@ use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::{self, EthSysHandler};
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, EpClMatcher, EthDataModelState, Node};
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -43,9 +42,9 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, handler_chain_type, root_endpoint, Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
@@ -63,7 +62,7 @@ type AppDmHandler<'a> = handler_chain_type!(
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
-static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
+static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
 static STATE: StaticCell<EthDataModelState> = StaticCell::new();
 static CRYPTO: StaticCell<RustCrypto<'static, FakeRng>> = StaticCell::new();
 
@@ -83,7 +82,7 @@ fn main() -> Result<(), Error> {
     let mut kv = DirKvBlobStore::new_default();
 
     // Create the transport buffers
-    let buffers = &*BUFFERS.uninit().init_with(PooledBuffers::init(0));
+    let buffers = &*BUFFERS.uninit().init_with(MatterBuffers::init());
 
     // Create the data model state (subscriptions, events, network store). It owns
     // the KV scratch buffer, which the startup loads below reuse rather than

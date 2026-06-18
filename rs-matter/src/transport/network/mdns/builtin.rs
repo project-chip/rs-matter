@@ -41,7 +41,7 @@ use crate::transport::network::{
 };
 use crate::utils::init::{init, Init};
 use crate::utils::select::Coalesce;
-use crate::utils::storage::pooled::BufferAccess;
+use crate::utils::storage::pooled::Buffers;
 use crate::utils::storage::Vec;
 use crate::utils::sync::IfMutex;
 use crate::Matter;

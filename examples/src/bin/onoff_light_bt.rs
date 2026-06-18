@@ -63,6 +63,7 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::transport::exchange::MatterBuffers;
 #[cfg(target_os = "linux")]
 use rs_matter::transport::network::btp::bluez;
 use rs_matter::transport::network::btp::{AdvData, Btp};
@@ -71,7 +72,6 @@ use rs_matter::transport::network::wifi::wpa_supp::unix::DhClientCtl;
 use rs_matter::transport::network::wifi::wpa_supp::WpaSuppCtl;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::zbus::Connection;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
@@ -130,7 +130,7 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
     let mut kv = DirKvBlobStore::new_default();
 
     // Create the transport buffers
-    let buffers = PooledBuffers::<10, _>::new(0);
+    let buffers: MatterBuffers = MatterBuffers::new();
 
     // Create the data model state (subscriptions, events, the Wifi network store).
     // It owns the KV scratch buffer, so the one-time startup loads below reuse it

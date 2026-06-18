@@ -43,12 +43,10 @@ use crate::persist::{
 };
 use crate::respond::ExchangeHandler;
 use crate::tlv::{get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV};
-use crate::transport::exchange::{
-    Exchange, ExchangeId, MAX_EXCHANGE_RX_BUF_SIZE, MAX_EXCHANGE_TX_BUF_SIZE,
-};
+use crate::transport::exchange::{Exchange, ExchangeId, MAX_EXCHANGE_TX_BUF_SIZE};
 use crate::utils::cell::RefCell;
 use crate::utils::select::Coalesce;
-use crate::utils::storage::pooled::BufferAccess;
+use crate::utils::storage::pooled::Buffers;
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
 use crate::Matter;
@@ -69,7 +67,9 @@ pub mod subscriptions;
 
 mod types;
 
-pub type IMBuffer = crate::utils::storage::Vec<u8, MAX_EXCHANGE_RX_BUF_SIZE>;
+/// The buffer type used by the Interaction Model for RX/TX payloads. Aliases the
+/// central [`Buffer`](crate::transport::exchange::Buffer).
+pub type IMBuffer = crate::transport::exchange::Buffer;
 
 /// An `ExchangeHandler` implementation capable of handling responder exchanges for the Interaction Model protocol.
 /// The mutable, owned-together state a [`DataModel`] operates on: the
@@ -230,7 +230,7 @@ pub struct DataModel<
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
     const KB: usize = DEFAULT_KV_BUF_SIZE,
 > where
-    B: BufferAccess<IMBuffer>,
+    B: Buffers<IMBuffer>,
 {
     matter: &'a Matter<'a>,
     crypto: C,
@@ -294,7 +294,7 @@ impl<'a, C, B, T, S, N, const NS: usize, const NE: usize, const KB: usize>
     DataModel<'a, C, B, T, S, N, NoopWirelessNetCtl, NS, NE, KB>
 where
     C: Crypto,
-    B: BufferAccess<IMBuffer>,
+    B: Buffers<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStore,
     N: Networks,
@@ -308,7 +308,7 @@ where
     ///
     /// # Arguments
     /// - `matter` - a reference to the `Matter` instance
-    /// - `buffers` - a reference to an implementation of `BufferAccess<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
+    /// - `buffers` - a reference to an implementation of `Buffers<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
     /// - `handler` - an instance of type `T` which implements the `DataModelHandler` trait. This instance is used for interacting with the underlying
     ///   clusters of the data model. Note that the expectations is for the user to provide a handler that handles the Matter system clusters
     ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods
@@ -341,7 +341,7 @@ impl<'a, C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize>
     DataModel<'a, C, B, T, S, N, NC, NS, NE, KB>
 where
     C: Crypto,
-    B: BufferAccess<IMBuffer>,
+    B: Buffers<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStore,
     N: Networks,
@@ -355,7 +355,7 @@ where
     ///
     /// # Arguments
     /// - `matter` - a reference to the `Matter` instance
-    /// - `buffers` - a reference to an implementation of `BufferAccess<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
+    /// - `buffers` - a reference to an implementation of `Buffers<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
     /// - `handler` - an instance of type `T` which implements the `DataModelHandler` trait. This instance is used for interacting with the underlying
     ///   clusters of the data model. Note that the expectations is for the user to provide a handler that handles the Matter system clusters
     ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods
@@ -1280,7 +1280,7 @@ impl<C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize> Excha
     for DataModel<'_, C, B, T, S, N, NC, NS, NE, KB>
 where
     C: Crypto,
-    B: BufferAccess<IMBuffer>,
+    B: Buffers<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStore,
     N: Networks,
@@ -1294,7 +1294,7 @@ impl<C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize> Handl
     for DataModel<'_, C, B, T, S, N, NC, NS, NE, KB>
 where
     C: Crypto,
-    B: BufferAccess<IMBuffer>,
+    B: Buffers<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStore,
     N: Networks,
@@ -1323,7 +1323,7 @@ where
         &self.handler
     }
 
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+    fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
         self.buffers
     }
 }
@@ -1332,7 +1332,7 @@ impl<C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize> AttrC
     for DataModel<'_, C, B, T, S, N, NC, NS, NE, KB>
 where
     C: Crypto,
-    B: BufferAccess<IMBuffer>,
+    B: Buffers<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStore,
     N: Networks,
@@ -1376,7 +1376,7 @@ impl<C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize> Event
     for DataModel<'_, C, B, T, S, N, NC, NS, NE, KB>
 where
     C: Crypto,
-    B: BufferAccess<IMBuffer>,
+    B: Buffers<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStore,
     N: Networks,

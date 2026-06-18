@@ -36,7 +36,7 @@ use crate::sc::busy::BusySecureChannel;
 use crate::sc::SecureChannel;
 use crate::transport::exchange::Exchange;
 use crate::utils::select::Coalesce;
-use crate::utils::storage::pooled::BufferAccess;
+use crate::utils::storage::pooled::Buffers;
 use crate::Matter;
 
 /// Send a busy response if - after that many ms - the exchange
@@ -284,7 +284,7 @@ pub type DefaultExchangeHandler<
 impl<'d, 'a, C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize>
     Responder<'a, DefaultExchangeHandler<'d, 'a, C, B, T, S, N, NC, NS, NE, KB>>
 where
-    B: BufferAccess<IMBuffer>,
+    B: Buffers<IMBuffer>,
 {
     /// Creates a "default" responder. This is a responder that composes and uses the `rs-matter`-provided `ExchangeHandler` implementations
     /// (`SecureChannel` and `DataModel`) for handling the Secure Channel protocol and the Interaction Model protocol.
@@ -348,7 +348,7 @@ pub struct DefaultResponder<
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
     const KB: usize = DEFAULT_KV_BUF_SIZE,
 > where
-    B: BufferAccess<IMBuffer>,
+    B: Buffers<IMBuffer>,
 {
     responder: Responder<'a, DefaultExchangeHandler<'d, 'a, C, B, T, S, N, NC, NS, NE, KB>>,
     busy_responder: Responder<'a, BusyExchangeHandler>,
@@ -358,7 +358,7 @@ impl<'d, 'a, C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usiz
     DefaultResponder<'d, 'a, C, B, T, S, N, NC, NS, NE, KB>
 where
     C: Crypto,
-    B: BufferAccess<IMBuffer>,
+    B: Buffers<IMBuffer>,
     T: DataModelHandler,
     S: KvBlobStore,
     N: net_comm::Networks,

@@ -23,7 +23,7 @@ use crate::dm::{AttrId, ClusterId, EndptId, EventId, EventNumber, IMBuffer, Node
 use crate::fabric::MAX_FABRICS;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
-use crate::utils::storage::pooled::BufferAccess;
+use crate::utils::storage::pooled::Buffers;
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{DynBase, Notification};
@@ -52,14 +52,14 @@ pub const MAX_CHANGED_ATTRS: usize = 16;
 // which is why `remove` / `report` / `add` all grew a second ref parameter.
 pub struct SubscriptionsBuffers<'a, B, const N: usize = DEFAULT_MAX_SUBSCRIPTIONS>
 where
-    B: BufferAccess<IMBuffer> + 'a,
+    B: Buffers<IMBuffer> + 'a,
 {
     buffers: Mutex<RefCell<SubscriptionsBuffersInner<'a, B, N>>>,
 }
 
 impl<'a, B, const N: usize> SubscriptionsBuffers<'a, B, N>
 where
-    B: BufferAccess<IMBuffer> + 'a,
+    B: Buffers<IMBuffer> + 'a,
 {
     /// Create the instance.
     pub const fn new() -> Self {
@@ -85,7 +85,7 @@ where
 
 impl<'a, B, const N: usize> Default for SubscriptionsBuffers<'a, B, N>
 where
-    B: BufferAccess<IMBuffer> + 'a,
+    B: Buffers<IMBuffer> + 'a,
 {
     fn default() -> Self {
         Self::new()
@@ -94,7 +94,7 @@ where
 
 /// A type alias for the inner buffer vector of `SubscriptionsBuffers`.
 type SubscriptionsBuffersInner<'a, B, const N: usize> =
-    Vec<<B as BufferAccess<IMBuffer>>::Buffer<'a>, N>;
+    Vec<<B as Buffers<IMBuffer>>::Buffer<'a>, N>;
 
 /// A type for tracking subscriptions accepted by the data model.
 ///
@@ -232,7 +232,7 @@ impl<const N: usize> Subscriptions<N> {
         buffers: &'s SubscriptionsBuffers<'a, B, N>,
     ) -> Option<ReportContext<'a, 's, B, N>>
     where
-        B: BufferAccess<IMBuffer> + 'a,
+        B: Buffers<IMBuffer> + 'a,
     {
         let (sub, buf, next_max_seen_attr_change_id) = self.with(buffers, |state, buffers| {
             let (sub, buf) = state.add::<B>(
@@ -278,7 +278,7 @@ impl<const N: usize> Subscriptions<N> {
     /// later — never both for the same subscription.
     pub(crate) fn remove<B, F>(&self, buffers: &SubscriptionsBuffers<'_, B, N>, mut f: F) -> bool
     where
-        B: BufferAccess<IMBuffer>,
+        B: Buffers<IMBuffer>,
         F: FnMut(&Subscription) -> Option<&'static str>,
     {
         let removed = self.with(buffers, |state, buffers| {
@@ -347,7 +347,7 @@ impl<const N: usize> Subscriptions<N> {
         buffers: &'s SubscriptionsBuffers<'a, B, N>,
     ) -> Option<ReportContext<'a, 's, B, N>>
     where
-        B: BufferAccess<IMBuffer> + 'a,
+        B: Buffers<IMBuffer> + 'a,
     {
         let (sub, buf, next_max_seen_attr_change_id) = self.with(buffers, |state, buffers| {
             let (sub, buf) = state.report::<B>(now, event_numbers_watermark, buffers)?;
@@ -381,7 +381,7 @@ impl<const N: usize> Subscriptions<N> {
         buffers: &SubscriptionsBuffers<'a, B, N>,
     ) -> Instant
     where
-        B: BufferAccess<IMBuffer> + 'a,
+        B: Buffers<IMBuffer> + 'a,
     {
         self.with(buffers, |state, buffers| {
             state.next_report_at::<B>(event_numbers_watermark, buffers)
@@ -398,7 +398,7 @@ impl<const N: usize> Subscriptions<N> {
     /// and re-inserting it into the table if the `keep` flag is set on the context.
     fn report_complete<'a, B>(&self, report: &mut ReportContext<'a, '_, B, N>)
     where
-        B: BufferAccess<IMBuffer> + 'a,
+        B: Buffers<IMBuffer> + 'a,
     {
         let mut sub = unwrap!(report.subscription.take());
         let buf = unwrap!(report.subscription_buffer.take());
@@ -416,7 +416,7 @@ impl<const N: usize> Subscriptions<N> {
 
     fn with<'a, B, F, R>(&self, buffers: &SubscriptionsBuffers<'a, B, N>, f: F) -> R
     where
-        B: BufferAccess<IMBuffer> + 'a,
+        B: Buffers<IMBuffer> + 'a,
         F: FnOnce(&mut SubscriptionsInner<N>, &mut SubscriptionsBuffersInner<'a, B, N>) -> R,
     {
         self.state.lock(|state| {
@@ -521,7 +521,7 @@ impl<const N: usize> SubscriptionsInner<N> {
         _buffers: &mut SubscriptionsBuffersInner<'a, B, N>,
     ) -> Option<(Subscription, B::Buffer<'a>)>
     where
-        B: BufferAccess<IMBuffer> + 'a,
+        B: Buffers<IMBuffer> + 'a,
     {
         if self.subscriptions_count >= N {
             return None;
@@ -577,7 +577,7 @@ impl<const N: usize> SubscriptionsInner<N> {
         buffers: &mut SubscriptionsBuffersInner<'a, B, N>,
     ) -> Option<(Subscription, B::Buffer<'a>)>
     where
-        B: BufferAccess<IMBuffer> + 'a,
+        B: Buffers<IMBuffer> + 'a,
     {
         // `reporting` must be vacant: callers only start a new report after
         // the previous `ReportContext` has been dropped (which clears the
@@ -609,7 +609,7 @@ impl<const N: usize> SubscriptionsInner<N> {
         buffers: &mut SubscriptionsBuffersInner<'a, B, N>,
         keep: bool,
     ) where
-        B: BufferAccess<IMBuffer> + 'a,
+        B: Buffers<IMBuffer> + 'a,
     {
         // Always clear the reporting slot; it was populated in `report()`.
         self.reporting = None;
@@ -640,7 +640,7 @@ impl<const N: usize> SubscriptionsInner<N> {
         buffers: &SubscriptionsBuffersInner<'a, B, N>,
     ) -> Option<usize>
     where
-        B: BufferAccess<IMBuffer> + 'a,
+        B: Buffers<IMBuffer> + 'a,
     {
         self.subscriptions
             .iter()
@@ -674,7 +674,7 @@ impl<const N: usize> SubscriptionsInner<N> {
         buffers: &SubscriptionsBuffersInner<'a, B, N>,
     ) -> Instant
     where
-        B: BufferAccess<IMBuffer> + 'a,
+        B: Buffers<IMBuffer> + 'a,
     {
         self.subscriptions
             .iter()
@@ -1244,7 +1244,7 @@ impl ChangedAttr {
 /// Per-subscription context for an in-progress report.
 pub struct ReportContext<'a, 's, B, const N: usize>
 where
-    B: BufferAccess<IMBuffer> + 'a,
+    B: Buffers<IMBuffer> + 'a,
 {
     /// A reference to the global subscriptions table, used to return the subscription on
     /// successful completion of the report
@@ -1281,7 +1281,7 @@ where
 
 impl<'a, 's, B, const N: usize> ReportContext<'a, 's, B, N>
 where
-    B: BufferAccess<IMBuffer> + 'a,
+    B: Buffers<IMBuffer> + 'a,
 {
     /// Return a reference to the subscription being reported on.
     pub fn subscription(&self) -> &Subscription {
@@ -1350,7 +1350,7 @@ where
 
 impl<'a, 's, B, const N: usize> Drop for ReportContext<'a, 's, B, N>
 where
-    B: BufferAccess<IMBuffer> + 'a,
+    B: Buffers<IMBuffer> + 'a,
 {
     fn drop(&mut self) {
         self.subscriptions.report_complete(self);
@@ -1365,7 +1365,7 @@ mod tests {
 
     use embassy_time::Duration;
 
-    type TestPool<const N: usize> = PooledBuffers<N, IMBuffer>;
+    type TestPool<const N: usize> = PooledBuffers<IMBuffer, N>;
 
     // ---------- ChangedAttributes ----------
 
@@ -1942,7 +1942,7 @@ mod tests {
     #[test]
     fn add_returns_monotonic_ids_and_rejects_when_full() {
         let subs: Subscriptions<2> = Subscriptions::new();
-        let pool = TestPool::<3>::new(0);
+        let pool = TestPool::<3>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
 
         let now = Instant::now();
@@ -1995,7 +1995,7 @@ mod tests {
     #[test]
     fn begin_report_snapshots_watermark_and_pending() {
         let subs: Subscriptions<2> = Subscriptions::new();
-        let pool = TestPool::<3>::new(0);
+        let pool = TestPool::<3>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
 
         let now = Instant::now();
@@ -2091,7 +2091,7 @@ mod tests {
         // unconditionally) and, when dropped with `set_keep`, must survive in
         // the subscription table for subsequent incremental reports.
         let subs: Subscriptions<1> = Subscriptions::new();
-        let pool = TestPool::<2>::new(0);
+        let pool = TestPool::<2>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
 
         let now = Instant::now();
@@ -2113,7 +2113,7 @@ mod tests {
         // subscription from the table (and free its buffer), so a new
         // subscription can take its place up to the `N` capacity.
         let subs: Subscriptions<1> = Subscriptions::new();
-        let pool = TestPool::<2>::new(0);
+        let pool = TestPool::<2>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
 
         let now = Instant::now();
@@ -2133,7 +2133,7 @@ mod tests {
         // After a "kept" report, the subscription must not be picked up again
         // at the same instant unless new changes arrive.
         let subs: Subscriptions<1> = Subscriptions::new();
-        let pool = TestPool::<2>::new(0);
+        let pool = TestPool::<2>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
 
         let now = Instant::now();
@@ -2173,7 +2173,7 @@ mod tests {
         // A bump in `event_numbers_watermark` (i.e. a newly emitted event)
         // makes the subscription reportable even without attribute changes.
         let subs: Subscriptions<1> = Subscriptions::new();
-        let pool = TestPool::<2>::new(0);
+        let pool = TestPool::<2>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
 
         let now = Instant::now();
@@ -2219,7 +2219,7 @@ mod tests {
         // it enters the "liveness" window (within half of `max_int` of the
         // deadline).
         let subs: Subscriptions<1> = Subscriptions::new();
-        let pool = TestPool::<2>::new(0);
+        let pool = TestPool::<2>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
 
         let now = Instant::now();
@@ -2256,7 +2256,7 @@ mod tests {
         // No pending data → wake at the liveness point
         // `reported_at + max_int - max_int/2` (when `is_report_due` flips).
         let subs: Subscriptions<1> = Subscriptions::new();
-        let pool = TestPool::<2>::new(0);
+        let pool = TestPool::<2>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
 
         let now = Instant::now();
@@ -2278,7 +2278,7 @@ mod tests {
         // the end of that period (`reported_at + min_int`), not the far-off
         // liveness point.
         let subs: Subscriptions<1> = Subscriptions::new();
-        let pool = TestPool::<2>::new(0);
+        let pool = TestPool::<2>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
 
         let now = Instant::now();
@@ -2304,7 +2304,7 @@ mod tests {
         // Same as above, driven by a new event (watermark past the sub's
         // max_seen = 0) rather than an attribute change.
         let subs: Subscriptions<1> = Subscriptions::new();
-        let pool = TestPool::<2>::new(0);
+        let pool = TestPool::<2>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
 
         let now = Instant::now();
@@ -2327,7 +2327,7 @@ mod tests {
         // be clamped to the gate; otherwise the reporter wakes early, finds the
         // sub still gated, re-arms the same past deadline, and spins.
         let subs: Subscriptions<1> = Subscriptions::new();
-        let pool = TestPool::<2>::new(0);
+        let pool = TestPool::<2>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
 
         let now = Instant::now();
@@ -2356,7 +2356,7 @@ mod tests {
     fn next_report_at_returns_earliest_across_subs() {
         // The reporter must wake for whichever subscription is due first.
         let subs: Subscriptions<2> = Subscriptions::new();
-        let pool = TestPool::<3>::new(0);
+        let pool = TestPool::<3>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
 
         let now = Instant::now();
@@ -2383,7 +2383,7 @@ mod tests {
         use embassy_futures::select::{select, Either};
 
         let subs: Subscriptions<2> = Subscriptions::new();
-        let pool = TestPool::<3>::new(0);
+        let pool = TestPool::<3>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
 
         let now = Instant::now();
@@ -2424,7 +2424,7 @@ mod tests {
         // `Subscription::is_expired` returns true once `max_int` has elapsed
         // since the last reported_at.
         let subs: Subscriptions<1> = Subscriptions::new();
-        let pool = TestPool::<2>::new(0);
+        let pool = TestPool::<2>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
 
         let base = Instant::now();
@@ -2452,7 +2452,7 @@ mod tests {
         // returns whether anything was removed, and frees the slots so that
         // subsequent `add` calls succeed up to the capacity `N`.
         let subs: Subscriptions<3> = Subscriptions::new();
-        let pool = TestPool::<4>::new(0);
+        let pool = TestPool::<4>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<4>, 3> = SubscriptionsBuffers::new();
 
         let now = Instant::now();
@@ -2531,7 +2531,7 @@ mod tests {
         // it must cause `report_complete` to drop the subscription on Drop
         // rather than re-inserting it, even when `set_keep` was called.
         let subs: Subscriptions<2> = Subscriptions::new();
-        let pool = TestPool::<3>::new(0);
+        let pool = TestPool::<3>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
 
         let now = Instant::now();
@@ -2587,7 +2587,7 @@ mod tests {
         // nor anything in the table, the in-flight subscription must still
         // be re-inserted on `ReportContext::drop` when `set_keep` is called.
         let subs: Subscriptions<2> = Subscriptions::new();
-        let pool = TestPool::<3>::new(0);
+        let pool = TestPool::<3>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
 
         let now = Instant::now();
@@ -2622,7 +2622,7 @@ mod tests {
         // subscription has already reported on: the slowest subscriber's
         // `max_seen_attr_change_id` acts as a floor.
         let subs: Subscriptions<2> = Subscriptions::new();
-        let pool = TestPool::<3>::new(0);
+        let pool = TestPool::<3>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
 
         let base = Instant::now();
@@ -2679,7 +2679,7 @@ mod tests {
         // subscriptions that are not interested in events but receive an
         // event-triggered report.
         let subs: Subscriptions<1> = Subscriptions::new();
-        let pool = TestPool::<2>::new(0);
+        let pool = TestPool::<2>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<2>, 1> = SubscriptionsBuffers::new();
 
         let now = Instant::now();

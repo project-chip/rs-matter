@@ -48,9 +48,9 @@ use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::{TLVBuilderParent, Utf8StrBuilder};
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, root_endpoint, with, Matter, MATTER_PORT};
 
 pub use rs_matter::dm::clusters::decl::bridged_device_basic_information::{
@@ -72,7 +72,7 @@ fn main() -> Result<(), Error> {
     let mut kv = DirKvBlobStore::new_default();
 
     // Create the transport buffers
-    let buffers = PooledBuffers::<10, _>::new(0);
+    let buffers: MatterBuffers = MatterBuffers::new();
 
     // Create the data model state (subscriptions, events, network store). It owns
     // the KV scratch buffer, which the startup loads below reuse rather than

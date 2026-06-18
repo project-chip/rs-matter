@@ -84,9 +84,9 @@ use rs_matter::persist::SharedKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::{TLVArray, TLVBuilderParent};
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, root_endpoint, Matter};
 
 use static_cell::StaticCell;
@@ -370,7 +370,7 @@ type WebRtc = WebRtcProvHandler<StubWebRtcHooks, N_SESSIONS, SDP_LEN, OUT_LEN, C
 // ---------------------------------------------------------------------------
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
-static BUFFERS: StaticCell<PooledBuffers<10, rs_matter::dm::IMBuffer>> = StaticCell::new();
+static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
 static WEBRTC: StaticCell<WebRtc> = StaticCell::new();
 static CAM_AV: StaticCell<CamAv> = StaticCell::new();
 static CAM_AV_SETTINGS: StaticCell<
@@ -406,7 +406,7 @@ fn main() -> Result<(), Error> {
 
     let mut kv = args::file_kv_store();
 
-    let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
+    let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
 
     // Create the data model state (subscriptions, events, network store). It owns
     // the KV scratch buffer, which the startup loads below reuse rather than

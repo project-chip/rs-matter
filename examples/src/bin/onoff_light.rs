@@ -35,7 +35,6 @@ use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{
     Async, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState, Node,
 };
@@ -45,9 +44,9 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
 #[path = "../common/mdns.rs"]
@@ -64,7 +63,7 @@ fn main() -> Result<(), Error> {
     let mut kv = DirKvBlobStore::new_default();
 
     // Create the transport buffers
-    let buffers = PooledBuffers::<10, IMBuffer>::new(0);
+    let buffers: MatterBuffers = MatterBuffers::new();
 
     // Create the data model state (subscriptions table, events queue, network
     // store). It owns the KV scratch buffer, which we reuse for the startup load

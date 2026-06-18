@@ -64,7 +64,7 @@ use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use rs_matter::dm::{
     endpoints, Async, DataModel, DataModelHandler, DataModelState, Dataver, Endpoint, EpClMatcher,
-    IMBuffer, Node,
+    Node,
 };
 use rs_matter::error::Error;
 use rs_matter::im::IMStatusCode;
@@ -75,12 +75,12 @@ use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::Exchange;
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::network::tcp::TcpNetwork;
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
 use socket2::{Domain, Protocol, Socket, Type};
@@ -102,13 +102,13 @@ const IM_TIMEOUT_SECS: u64 = 10;
 type DeviceDmState = DataModelState<DummyNetworks, DEFAULT_MAX_SUBSCRIPTIONS, 0>;
 
 static DEVICE_MATTER: StaticCell<Matter> = StaticCell::new();
-static DEVICE_BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
+static DEVICE_BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
 static DEVICE_STATE: StaticCell<DeviceDmState> = StaticCell::new();
 static CTRL_MATTER: StaticCell<Matter> = StaticCell::new();
 
 // Separate statics for the TCP variant (StaticCell is one-shot)
 static TCP_DEVICE_MATTER: StaticCell<Matter> = StaticCell::new();
-static TCP_DEVICE_BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
+static TCP_DEVICE_BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
 static TCP_DEVICE_STATE: StaticCell<DeviceDmState> = StaticCell::new();
 static TCP_CTRL_MATTER: StaticCell<Matter> = StaticCell::new();
 
@@ -187,7 +187,7 @@ macro_rules! commissioning_test {
             let device_crypto = test_only_crypto();
             let mut rand = device_crypto.rand()?;
 
-            let device_buffers = $dev_buffers.uninit().init_with(PooledBuffers::init(0));
+            let device_buffers = $dev_buffers.uninit().init_with(MatterBuffers::init());
             let device_state = $dev_subs.init(DataModelState::new(DummyNetworks));
 
             let on_off_handler = on_off::OnOffHandler::new_standalone(

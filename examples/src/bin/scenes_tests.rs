@@ -56,7 +56,6 @@ use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{
     Async, Cluster, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState,
     Node,
@@ -68,10 +67,10 @@ use rs_matter::persist::SharedKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, root_endpoint, with, Matter};
 
 use static_cell::StaticCell;
@@ -86,7 +85,7 @@ mod args;
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
-static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
+static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
 static STATE: StaticCell<EthDataModelState> = StaticCell::new();
 
 const SCENES_CAPACITY: usize = 16;
@@ -133,7 +132,7 @@ fn run() -> Result<(), Error> {
     let mut kv = args::file_kv_store();
 
     // Create the transport buffers
-    let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
+    let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
 
     // Create the data model state (subscriptions, events, network store). It owns
     // the KV scratch buffer, which the startup loads (here and the scenes load

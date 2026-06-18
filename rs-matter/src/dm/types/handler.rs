@@ -30,7 +30,7 @@ use crate::persist::KvBlobStoreAccess;
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
 use crate::utils::select::Coalesce;
-use crate::utils::storage::pooled::BufferAccess;
+use crate::utils::storage::pooled::Buffers;
 use crate::utils::sync::DynBase;
 use crate::Matter;
 
@@ -277,7 +277,7 @@ pub trait HandlerContext: AttrChangeNotifier + EventEmitter {
     ///
     /// Useful in case e.g. a concrete cluster handler needs to invoke read/write/invoke operations on
     /// other clusters, and the TLV input/output data for those operations is non-trivial in size.
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_;
+    fn buffers(&self) -> impl Buffers<IMBuffer> + '_;
 }
 
 impl<T> HandlerContext for &T
@@ -308,7 +308,7 @@ where
         (**self).handler()
     }
 
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+    fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
         (**self).buffers()
     }
 }
@@ -497,7 +497,7 @@ where
         self.context.handler()
     }
 
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+    fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
         self.context.buffers()
     }
 }
@@ -673,7 +673,7 @@ where
         self.context.handler()
     }
 
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+    fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
         self.context.buffers()
     }
 }
@@ -853,7 +853,7 @@ where
         self.context.handler()
     }
 
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+    fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
         self.context.buffers()
     }
 }

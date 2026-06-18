@@ -70,12 +70,12 @@ use rs_matter::dm::clusters::wifi_diag::{
 };
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
+use rs_matter::dm::endpoints;
 use rs_matter::dm::endpoints::WifiSysHandler;
 use rs_matter::dm::networks::wireless::{
     NetCtlState, NetCtlStateMutex, NetCtlWithStatusImpl, WifiNetworks,
 };
 use rs_matter::dm::networks::NetChangeNotif;
-use rs_matter::dm::{endpoints, IMBuffer};
 use rs_matter::dm::{
     Async, DataModel, Dataver, Endpoint, EpClMatcher, Node, WirelessDataModelState,
 };
@@ -86,13 +86,13 @@ use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore, DEFAULT_KV_BUF_SIZ
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::network::btp::Btp;
 use rs_matter::transport::network::mdns::builtin::{BuiltinMdns, Host};
 use rs_matter::transport::network::{
     Address, ChainedNetwork, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend, NoNetwork,
 };
 use rs_matter::utils::init::{init, Init, InitMaybeUninit};
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::sync::DynBase;
 use rs_matter::{clusters, devices, handler_chain_type, root_endpoint, Matter, MATTER_PORT};
 
@@ -156,7 +156,7 @@ macro_rules! unwrap {
 /// One large struct holding the entire Matter stack state
 struct MatterStack<'a> {
     matter: Matter<'a>,
-    buffers: PooledBuffers<10, IMBuffer>,
+    buffers: MatterBuffers,
     // The data model's consolidated state: subscriptions table, events queue and
     // the (Wifi) network store, all behind `DataModelState`.
     state: WirelessDataModelState<WifiNetworks<3>>,
@@ -174,7 +174,7 @@ impl<'a> MatterStack<'a> {
                 &TEST_DEV_ATT,
                 MATTER_PORT,
             ),
-            buffers <- PooledBuffers::init(0),
+            buffers <- MatterBuffers::init(),
             state <- WirelessDataModelState::init(WifiNetworks::init()),
             net_ctl_state <- NetCtlState::init_with_mutex(),
             btp <- Btp::init(),
@@ -196,7 +196,7 @@ type AppCrypto = RustCrypto<'static, WeakTestOnlyRand>;
 type AppDataModel<'a> = DataModel<
     'a,
     &'a AppCrypto,
-    PooledBuffers<10, IMBuffer>,
+    MatterBuffers,
     (Node<'a>, &'a AppDmHandler<'a>),
     DummyKvBlobStore,
     WifiNetworks<3>,
@@ -206,7 +206,7 @@ type AppResponder<'d, 'a> = DefaultResponder<
     'd,
     'a,
     &'a AppCrypto,
-    PooledBuffers<10, IMBuffer>,
+    MatterBuffers,
     (Node<'a>, &'a AppDmHandler<'a>),
     DummyKvBlobStore,
     WifiNetworks<3>,

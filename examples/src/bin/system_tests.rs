@@ -60,7 +60,7 @@ use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
 use rs_matter::dm::clusters::net_comm;
 use rs_matter::dm::clusters::noc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::ota_prov::{
-    BdxBuffer, ClusterAsyncHandler, DownloadProtocolEnum, OtaBdxHandler, OtaImageMeta, OtaImages,
+    ClusterAsyncHandler, DownloadProtocolEnum, OtaBdxHandler, OtaImageMeta, OtaImages,
     OtaImagesRegistry, OtaProviderHandler, OtaQueryOutcome, StatusEnum,
 };
 use rs_matter::dm::clusters::ota_req::{
@@ -89,10 +89,10 @@ use rs_matter::respond::{ChainedExchangeHandler, Responder};
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::sc::SecureChannel;
 use rs_matter::transport::exchange::Exchange;
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::sync::Notification;
 use rs_matter::{clusters, devices, Matter};
 
@@ -108,7 +108,7 @@ mod args;
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
-static BUFFERS: StaticCell<PooledBuffers<20, rs_matter::dm::IMBuffer>> = StaticCell::new();
+static BUFFERS: StaticCell<MatterBuffers<20>> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 static GEN_DIAG: StaticCell<TestEventTriggerDiag> = StaticCell::new();
 // UserLabel registry — host endpoints and labels-per-endpoint counts
@@ -122,13 +122,13 @@ static BINDINGS: StaticCell<Bindings<16>> = StaticCell::new();
 // OTA Provider role (gated behind `--filepath`): the file-backed image source
 // and a small pool of BDX block-staging buffers.
 static OTA_IMAGES: StaticCell<OtaFileImages> = StaticCell::new();
-static BDX_BUFFERS: StaticCell<PooledBuffers<2, BdxBuffer>> = StaticCell::new();
+static BDX_BUFFERS: StaticCell<MatterBuffers<2>> = StaticCell::new();
 
 // Diagnostic Logs role (driven by `--end_user_support_log` / `--network_diagnostics_log`
 // / `--crash_log`): the file-backed log source, plus a small pool of BDX staging
 // buffers (one for an inline read, one for a concurrent BDX transfer).
 static LOG_PROVIDER: StaticCell<LogFileProvider> = StaticCell::new();
-static DLOG_BUFFERS: StaticCell<PooledBuffers<2, BdxBuffer>> = StaticCell::new();
+static DLOG_BUFFERS: StaticCell<MatterBuffers<2>> = StaticCell::new();
 
 static SW_FAULT_NOTIFY: Notification<CriticalSectionRawMutex> = Notification::new();
 
@@ -173,7 +173,7 @@ fn main() -> Result<(), Error> {
     let mut kv = args::file_kv_store();
 
     // Create the transport buffers
-    let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
+    let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
 
     // Create the data model state (subscriptions, events, network store). It owns
     // the KV scratch buffer, which all the startup loads (here and the user-label
@@ -257,8 +257,7 @@ fn main() -> Result<(), Error> {
         args::parse_arg_opt_override("--network_diagnostics_log", |s| s.to_string()),
         args::parse_arg_opt_override("--crash_log", |s| s.to_string()),
     ));
-    let dlog_buffers: &PooledBuffers<2, BdxBuffer> =
-        DLOG_BUFFERS.uninit().init_with(PooledBuffers::init(0));
+    let dlog_buffers: &MatterBuffers<2> = DLOG_BUFFERS.uninit().init_with(MatterBuffers::init());
 
     let app_pipe = parse_app_pipe_override();
     let node: &'static Node<'static> = if app_pipe.is_some() {
@@ -309,8 +308,7 @@ fn main() -> Result<(), Error> {
     // traffic, so this is equivalent to `DefaultResponder` for every non-OTA
     // test. We can't use `DefaultResponder` directly because it builds its
     // handler chain internally with no way to inject BDX.
-    let bdx_buffers: &PooledBuffers<2, BdxBuffer> =
-        BDX_BUFFERS.uninit().init_with(PooledBuffers::init(0));
+    let bdx_buffers: &MatterBuffers<2> = BDX_BUFFERS.uninit().init_with(MatterBuffers::init());
     let main_handler = ChainedExchangeHandler::new(
         PROTO_ID_INTERACTION_MODEL,
         &dm,
@@ -603,7 +601,7 @@ const OTA_REQUESTOR_CLUSTER: Cluster<'static> = OtaRequestorHandler::CLUSTER;
 /// [`DiagLogsHandler`] wired in `dm_handler` (so `NODE`'s declaration
 /// matches the handler).
 const DIAGNOSTIC_LOGS_CLUSTER: Cluster<'static> = <DiagLogsHandler<
-    &PooledBuffers<2, BdxBuffer>,
+    &MatterBuffers<2>,
     &LogFileProvider,
 > as diag_logs::ClusterAsyncHandler>::CLUSTER;
 
@@ -724,7 +722,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     ota_images: &'a OtaFileImages,
     ota_providers: &'a Providers,
     ota_state: &'a OtaState,
-    dlog_buffers: &'a PooledBuffers<2, BdxBuffer>,
+    dlog_buffers: &'a MatterBuffers<2>,
     log_provider: &'a LogFileProvider,
 ) -> impl DataModelHandler + 'a {
     (

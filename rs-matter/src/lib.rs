@@ -55,7 +55,7 @@ use crate::transport::{
 };
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
-use crate::utils::storage::pooled::BufferAccess;
+use crate::utils::storage::pooled::Buffers;
 use crate::utils::sync::blocking::Mutex;
 
 use rand_core::RngCore;

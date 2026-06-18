@@ -49,7 +49,7 @@ use crate::utils::init::{init, Init};
 use crate::utils::ipv6::compute_group_multicast_addr;
 use crate::utils::select::Coalesce;
 use crate::utils::storage::Vec;
-use crate::utils::storage::{pooled::BufferAccess, ParseBuf, WriteBuf};
+use crate::utils::storage::{pooled::Buffers, ParseBuf, WriteBuf};
 use crate::utils::sync::{IfMutex, IfMutexGuard, Notification, Signal};
 use crate::{Matter, MATTER_PORT};
 
@@ -2223,7 +2223,7 @@ impl<const N: usize> Display for PacketAccess<'_, N> {
 // Used by the builtin mDNS responder, as well as by the QR code generator
 pub struct PacketBufferExternalAccess<'a, const N: usize>(pub(crate) &'a IfMutex<Packet<N>>);
 
-impl<const N: usize> BufferAccess<[u8]> for PacketBufferExternalAccess<'_, N> {
+impl<const N: usize> Buffers<[u8]> for PacketBufferExternalAccess<'_, N> {
     type Buffer<'b>
         = ExternalPacketBuffer<'b, N>
     where

@@ -32,6 +32,7 @@ use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
 use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
 use crate::transport::session::Sessions;
 use crate::transport::TxPayloadState;
+use crate::utils::storage::pooled::{PooledBuffers, DEFAULT_BUFFER_POOL_SIZE};
 use crate::utils::storage::WriteBuf;
 use crate::{Matter, MatterState};
 
@@ -62,6 +63,20 @@ pub const MAX_EXCHANGE_TX_BUF_SIZE: usize =
 #[cfg(not(feature = "large-buffers"))]
 pub const MAX_EXCHANGE_TX_BUF_SIZE: usize =
     network::MAX_TX_PACKET_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAIL_RESERVE;
+
+/// A protocol payload buffer, sized to hold a full exchange RX message
+/// ([`MAX_EXCHANGE_RX_BUF_SIZE`]).
+///
+/// This is the central buffer type that both [`IMBuffer`](crate::dm::IMBuffer)
+/// and [`BdxBuffer`](crate::bdx::BdxBuffer) alias, so a single
+/// [`PooledBuffers`](crate::utils::storage::pooled::PooledBuffers) pool can be
+/// shared across the data model and BDX.
+pub type Buffer = crate::utils::storage::Vec<u8, MAX_EXCHANGE_RX_BUF_SIZE>;
+
+/// A [`PooledBuffers`] pool pre-configured with Matter defaults: it holds
+/// [`Buffer`]s (the central exchange-sized buffer) and [`DEFAULT_BUFFER_POOL_SIZE`]
+/// of them, behind the default Matter raw mutex.
+pub type MatterBuffers<const N: usize = DEFAULT_BUFFER_POOL_SIZE> = PooledBuffers<Buffer, N>;
 
 /// An exchange identifier, uniquely identifying a session and an exchange within that session for a given Matter stack.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

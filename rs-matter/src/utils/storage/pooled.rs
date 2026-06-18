@@ -29,7 +29,7 @@ use crate::utils::sync::blocking::raw::MatterRawMutex;
 use crate::utils::sync::Signal;
 
 /// A trait for getting access to a `&mut T` buffer, potentially awaiting until a buffer becomes available.
-pub trait BufferAccess<T>
+pub trait Buffers<T>
 where
     T: ?Sized,
 {
@@ -50,9 +50,9 @@ where
     fn get_immediate(&self) -> Option<Self::Buffer<'_>>;
 }
 
-impl<B, T> BufferAccess<T> for &B
+impl<B, T> Buffers<T> for &B
 where
-    B: BufferAccess<T>,
+    B: Buffers<T>,
     T: ?Sized,
 {
     type Buffer<'a>
@@ -69,24 +69,34 @@ where
     }
 }
 
-/// A concrete implementation of `BufferAccess` utilizing an internal pool of buffers.
+/// The default number of buffers held by a [`PooledBuffers`] pool.
+pub const DEFAULT_BUFFER_POOL_SIZE: usize = 10;
+
+/// A concrete implementation of `Buffers` utilizing an internal pool of buffers.
 /// Accessing a buffer would fail when all buffers are still used elsewhere after a wait timeout expires.
-pub struct PooledBuffers<const N: usize, T, M = MatterRawMutex> {
+pub struct PooledBuffers<T, const N: usize = DEFAULT_BUFFER_POOL_SIZE, M = MatterRawMutex> {
     available: Signal<[bool; N], M>, // TODO XXX FIXME: Needs multiple wakers for work-stealing executors
     pool: UnsafeCell<crate::utils::storage::Vec<T, N>>,
     wait_timeout_ms: u32,
 }
 
-impl<const N: usize, T, M> PooledBuffers<N, T, M>
+impl<T, const N: usize, M> PooledBuffers<T, N, M>
 where
     M: RawMutex,
 {
+    /// Create a new instance of `PooledBuffers` with the default (zero) wait
+    /// timeout, i.e. buffer access is denied immediately when none is free.
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self::new_with_timeout(0)
+    }
+
     /// Create a new instance of `PooledBuffers`.
     ///
-    /// `wait_timneout_ms` is the maximum time to wait for a buffer to become available
+    /// `wait_timeout_ms` is the maximum time to wait for a buffer to become available
     /// before returning `None`.
     #[inline(always)]
-    pub const fn new(wait_timeout_ms: u32) -> Self {
+    pub const fn new_with_timeout(wait_timeout_ms: u32) -> Self {
         Self {
             available: Signal::new([true; N]),
             pool: UnsafeCell::new(crate::utils::storage::Vec::new()),
@@ -94,11 +104,17 @@ where
         }
     }
 
+    /// Create an in-place initializer for `PooledBuffers` with the default (zero)
+    /// wait timeout, i.e. buffer access is denied immediately when none is free.
+    pub fn init() -> impl Init<Self> {
+        Self::init_with_timeout(0)
+    }
+
     /// Create an in-place initializer for `PooledBuffers`.
     ///
-    /// `wait_timneout_ms` is the maximum time to wait for a buffer to become available
+    /// `wait_timeout_ms` is the maximum time to wait for a buffer to become available
     /// before returning `None`.
-    pub fn init(wait_timeout_ms: u32) -> impl Init<Self> {
+    pub fn init_with_timeout(wait_timeout_ms: u32) -> impl Init<Self> {
         init!(Self {
             available: Signal::new([true; N]),
             pool <- UnsafeCell::init(crate::utils::storage::Vec::init()),
@@ -121,27 +137,36 @@ where
     }
 }
 
-unsafe impl<const N: usize, T, M> Send for PooledBuffers<N, T, M>
+impl<T, const N: usize, M> Default for PooledBuffers<T, N, M>
+where
+    M: RawMutex,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+unsafe impl<T, const N: usize, M> Send for PooledBuffers<T, N, M>
 where
     T: Send,
     M: RawMutex + Send,
 {
 }
 
-unsafe impl<const N: usize, T, M> Sync for PooledBuffers<N, T, M>
+unsafe impl<T, const N: usize, M> Sync for PooledBuffers<T, N, M>
 where
     T: Send,
     M: RawMutex + Send + Sync,
 {
 }
 
-impl<const N: usize, T, M> BufferAccess<T> for PooledBuffers<N, T, M>
+impl<T, const N: usize, M> Buffers<T> for PooledBuffers<T, N, M>
 where
     T: InitDefault,
     M: RawMutex,
 {
     type Buffer<'b>
-        = PooledBuffer<'b, N, T, M>
+        = PooledBuffer<'b, T, N, M>
     where
         Self: 'b;
 
@@ -209,16 +234,16 @@ where
     }
 }
 
-pub struct PooledBuffer<'a, const N: usize, T, M = MatterRawMutex>
+pub struct PooledBuffer<'a, T, const N: usize, M = MatterRawMutex>
 where
     M: RawMutex,
 {
     index: usize,
     buffer: &'a mut T,
-    access: &'a PooledBuffers<N, T, M>,
+    access: &'a PooledBuffers<T, N, M>,
 }
 
-impl<const N: usize, T, M> Drop for PooledBuffer<'_, N, T, M>
+impl<T, const N: usize, M> Drop for PooledBuffer<'_, T, N, M>
 where
     M: RawMutex,
 {
@@ -230,7 +255,7 @@ where
     }
 }
 
-impl<const N: usize, T, M> Deref for PooledBuffer<'_, N, T, M>
+impl<T, const N: usize, M> Deref for PooledBuffer<'_, T, N, M>
 where
     M: RawMutex,
 {
@@ -241,7 +266,7 @@ where
     }
 }
 
-impl<const N: usize, T, M> DerefMut for PooledBuffer<'_, N, T, M>
+impl<T, const N: usize, M> DerefMut for PooledBuffer<'_, T, N, M>
 where
     M: RawMutex,
 {

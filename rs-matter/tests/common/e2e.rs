@@ -26,17 +26,17 @@ use rs_matter::acl::{AclEntry, AuthMode};
 use rs_matter::crypto::{test_only_crypto, Crypto};
 use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
-use rs_matter::dm::{DataModel, DataModelHandler, DataModelState, IMBuffer, Privilege};
+use rs_matter::dm::{DataModel, DataModelHandler, DataModelState, Privilege};
 use rs_matter::error::Error;
 use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::{ExchangeHandler, Responder};
 use rs_matter::transport::exchange::Exchange;
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::network::{
     Address, NetworkReceive, NetworkSend, NoNetwork, MAX_RX_PACKET_SIZE, MAX_TX_PACKET_SIZE,
 };
 use rs_matter::transport::session::{NocCatIds, ReservedSession, SessionMode};
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::sync::blocking::raw::MatterRawMutex;
 use rs_matter::{Matter, MATTER_PORT};
 
@@ -75,7 +75,7 @@ pub struct E2eRunner<C> {
     pub matter: Matter<'static>,
     matter_client: Matter<'static>,
     crypto: C,
-    buffers: PooledBuffers<10, IMBuffer>,
+    buffers: MatterBuffers,
     pub state: DataModelState<DummyNetworks, 3, E2E_EVENTS_BUF_SIZE>,
     cat_ids: NocCatIds,
 }
@@ -95,7 +95,7 @@ impl<C: Crypto> E2eRunner<C> {
             matter: Self::new_matter(),
             matter_client: Self::new_matter(),
             crypto,
-            buffers: PooledBuffers::new(0),
+            buffers: MatterBuffers::new(),
             state: DataModelState::new(DummyNetworks),
             cat_ids,
         }

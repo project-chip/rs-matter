@@ -42,7 +42,7 @@ use crate::dm::{Cluster, Dataver, InvokeContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{Octets, TLVBuilderParent};
 use crate::transport::exchange::MAX_EXCHANGE_RX_BUF_SIZE;
-use crate::utils::storage::pooled::BufferAccess;
+use crate::utils::storage::pooled::Buffers;
 use crate::with;
 
 /// The buffer an [`OtaBdxHandler`] stages each BDX block in.
@@ -424,7 +424,7 @@ impl<I: OtaImagesRegistry> ClusterAsyncHandler for OtaProviderHandler<I> {
 /// use rs_matter::utils::storage::pooled::PooledBuffers;
 ///
 /// // One staging buffer per concurrent download (here: two).
-/// let buffers = PooledBuffers::<2, BdxBuffer>::new(0);
+/// let buffers = PooledBuffers::<BdxBuffer, 2>::new();
 /// let bdx = Bdx::new(OtaBdxHandler::new(&buffers, &images));
 /// let handler = im_and_sc_handler.chain(PROTO_ID_BDX, bdx);
 /// let responder = Responder::new("ota-provider", handler, matter, 0);
@@ -437,7 +437,7 @@ pub struct OtaBdxHandler<B, I> {
 impl<B, I> OtaBdxHandler<B, I> {
     /// Create a new BDX image handler backed by the given image data source.
     ///
-    /// `buffers` is a [`BufferAccess`] pool ([`BdxBuffer`]-sized): one buffer is
+    /// `buffers` is a [`Buffers`] pool ([`BdxBuffer`]-sized): one buffer is
     /// leased per in-flight download to stage the BDX blocks (the image bytes are
     /// read straight into it), so the pool's size caps how many downloads run
     /// concurrently. When the pool is exhausted, further downloads are rejected
@@ -483,7 +483,7 @@ impl<B, I: OtaImages> OtaBdxHandler<B, I> {
 
 impl<B, I> BdxHandler for OtaBdxHandler<B, I>
 where
-    B: BufferAccess<BdxBuffer>,
+    B: Buffers<BdxBuffer>,
     I: OtaImages,
 {
     async fn handles(&self, responder: &BdxResponder<'_>) -> bool {

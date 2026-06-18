@@ -110,7 +110,6 @@ use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::DataModel;
 use rs_matter::dm::DeviceType;
-use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState, Node};
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -119,10 +118,10 @@ use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::TLVArray;
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
@@ -1100,7 +1099,7 @@ impl WebRtcHooks for Str0mHooks {
 // ---------------------------------------------------------------------------
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
-static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
+static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
 static STATE: StaticCell<EthDataModelState> = StaticCell::new();
 static WEBRTC: StaticCell<WebRtc> = StaticCell::new();
 static CAM_AV: StaticCell<CameraAvStreamHandler<'static, Str0mCamHooks, CAM_AV_NV>> =
@@ -1159,7 +1158,7 @@ fn main() -> Result<(), Error> {
 
     let mut kv = DirKvBlobStore::new_default();
 
-    let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
+    let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
 
     // Create the data model state (subscriptions, events, network store). It owns
     // the KV scratch buffer, which the startup loads below reuse rather than
