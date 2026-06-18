@@ -376,15 +376,25 @@ impl Transport {
             // single-slot) but not yet consumed: keep the better-scoring address
             // so a later IPv6 deposit can upgrade an earlier IPv4 one (e.g.
             // zeroconf surfaces one address per family at a time).
-            MdnsResolveState::Resolved { ip: cur_ip, .. }
-                if score_ip_address(&ip) > score_ip_address(cur_ip) =>
-            {
+            //
+            // Preserve any session params already resolved: a per-address deposit
+            // may carry no TXT (e.g. zeroconf's `ServiceDiscovery.txt` is
+            // optional and can arrive only on a different callback than the
+            // address), in which case `sii`/`sai`/`sat` are `None` here and would
+            // otherwise clobber the good values from the earlier deposit.
+            MdnsResolveState::Resolved {
+                ip: cur_ip,
+                sii: cur_sii,
+                sai: cur_sai,
+                sat: cur_sat,
+                ..
+            } if score_ip_address(&ip) > score_ip_address(cur_ip) => {
                 *state = MdnsResolveState::Resolved {
                     ip,
                     port,
-                    sii,
-                    sai,
-                    sat,
+                    sii: sii.or(*cur_sii),
+                    sai: sai.or(*cur_sai),
+                    sat: sat.or(*cur_sat),
                 };
                 (true, ())
             }
