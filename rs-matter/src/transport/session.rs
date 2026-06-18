@@ -347,7 +347,7 @@ impl Session {
     /// several PASE sessions (to different devices) in flight at once.
     pub(crate) fn is_pase_for_addr(&self, peer_addr: &Address) -> bool {
         matches!(self.mode, SessionMode::Pase { .. })
-            && self.peer_addr == *peer_addr
+            && self.peer_addr.canonical() == peer_addr.canonical()
             && !self.reserved
     }
 
@@ -367,7 +367,13 @@ impl Session {
         nodeid_matches
             && dest_nodeid_matches
             && self.local_sess_id == rx_plain.sess_id
-            && self.peer_addr == *rx_peer
+            // Compare canonically: a dual-stack socket may report a peer as
+            // `::ffff:a.b.c.d` on receive while the session stored the plain
+            // `V4` address it was created with (or vice versa). Canonicalizing
+            // only the *comparison* (not the stored address) lets the two match
+            // without disturbing the address used for reply routing. See
+            // `Address::canonical`.
+            && self.peer_addr.canonical() == rx_peer.canonical()
             && self.is_encrypted() == rx_plain.is_encrypted()
             && !self.reserved
     }

@@ -159,6 +159,30 @@ impl Address {
         matches!(self, Self::Btp(_))
     }
 
+    /// Return this address with its IP canonicalized: an IPv4-mapped IPv6
+    /// address (`::ffff:a.b.c.d`) is rewritten to its true IPv4 form, leaving
+    /// genuine IPv4 / IPv6 / BTP addresses unchanged.
+    ///
+    /// This matters because a dual-stack IPv6 socket reports an IPv4 peer's
+    /// packets to `recv_from` in IPv4-mapped form, whereas the same peer is
+    /// usually *sent to* (and stored on the session) as a plain `V4` address.
+    /// `Address` derives `PartialEq`/`Eq` over the `SocketAddr` (family
+    /// included), so without canonicalization `V4(x)` and `V6(::ffff:x)` would
+    /// compare unequal and session lookup by peer address would fail (PASE then
+    /// reports "PAKE session not found").
+    ///
+    /// This is used only when *comparing* a session's peer address against a
+    /// received one (see `Session::is_for_rx` / `is_pase_for_addr`); the address
+    /// stored on the session is left untouched so it still routes replies to the
+    /// exact address the peer was reached at.
+    pub fn canonical(self) -> Self {
+        match self {
+            Self::Udp(addr) => Self::Udp(canonical_sockaddr(addr)),
+            Self::Tcp(addr) => Self::Tcp(canonical_sockaddr(addr)),
+            other => other,
+        }
+    }
+
     pub const fn udp(self) -> Option<SocketAddr> {
         match self {
             Self::Udp(addr) => Some(addr),
@@ -178,6 +202,21 @@ impl Address {
             Self::Btp(addr) => Some(addr),
             _ => None,
         }
+    }
+}
+
+/// Canonicalize a [`SocketAddr`]: an IPv4-mapped IPv6 address
+/// (`::ffff:a.b.c.d`) is rewritten to its true IPv4 form (preserving port),
+/// everything else is returned unchanged. See [`Address::canonical`].
+fn canonical_sockaddr(addr: SocketAddr) -> SocketAddr {
+    match addr {
+        SocketAddr::V6(v6) => match v6.ip().to_canonical() {
+            // `IpAddr::to_canonical` (stable since Rust 1.75) maps
+            // `::ffff:a.b.c.d` to `a.b.c.d` and leaves true IPv6 untouched.
+            IpAddr::V4(v4) => SocketAddr::new(IpAddr::V4(v4), v6.port()),
+            IpAddr::V6(_) => addr,
+        },
+        SocketAddr::V4(_) => addr,
     }
 }
 
