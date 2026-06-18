@@ -17,8 +17,6 @@
 
 //! This module provides the key-value BLOB store traits used throughout `rs-matter` for persistence, as well as some implementations for those.
 
-use core::borrow::BorrowMut;
-
 use crate::error::Error;
 use crate::tlv::{TLVTag, ToTLV};
 use crate::utils::cell::RefCell;
@@ -27,6 +25,12 @@ use crate::utils::sync::blocking::Mutex;
 
 #[cfg(feature = "std")]
 pub use fileio::*;
+
+/// The default size (in bytes) of the scratch buffer used by the key-value
+/// persistence machinery for (de)serializing BLOBs. This is the buffer that
+/// [`DataModelState`](crate::dm::DataModelState) owns and the data model
+/// recombines with the (store-only) [`SharedKvBlobStore`] at runtime.
+pub const DEFAULT_KV_BUF_SIZE: usize = 4096;
 
 /// The first key available for the vendor-specific data.
 pub const VENDOR_KEYS_START: u16 = 0x1000;
@@ -186,7 +190,10 @@ where
     }
 }
 
-/// A noop implementation of the `KvBlobStoreAccess` trait.
+/// A noop implementation of the `KvBlobStoreAccess` trait (uses an empty buffer).
+///
+/// Useful for tests and for exercising persistence-consuming APIs without a real
+/// store.
 pub struct DummyKvBlobStoreAccess;
 
 impl KvBlobStoreAccess for DummyKvBlobStoreAccess {
@@ -198,35 +205,37 @@ impl KvBlobStoreAccess for DummyKvBlobStoreAccess {
     }
 }
 
-/// An implementation of the `KvBlobStoreAccess` trait that provides access
-/// to a shared `KvBlobStore` instance and a shared buffer using async mutex.
-pub struct SharedKvBlobStore<S, T>(Mutex<RefCell<(S, T)>>);
+/// A store-only wrapper around a shared `KvBlobStore` instance behind a blocking
+/// mutex.
+///
+/// The scratch buffer used for (de)serialization is not owned here; it is owned
+/// by [`DataModelState`](crate::dm::DataModelState) and recombined with this
+/// store by the data model into a full [`KvBlobStoreAccess`].
+pub struct SharedKvBlobStore<S>(Mutex<RefCell<S>>);
 
-impl<S, T> SharedKvBlobStore<S, T> {
+impl<S> SharedKvBlobStore<S> {
     /// Create a new `SharedKvBlobStore` instance.
     ///
     /// # Arguments
     /// - `store` - the wrapped `KvBlobStore` instance
-    /// - `buf` - the wrapped buffer
-    pub const fn new(store: S, buf: T) -> Self {
-        Self(Mutex::new(RefCell::new((store, buf))))
+    pub const fn new(store: S) -> Self {
+        Self(Mutex::new(RefCell::new(store)))
     }
-}
 
-impl<S, T> KvBlobStoreAccess for SharedKvBlobStore<S, T>
-where
-    S: KvBlobStore,
-    T: BorrowMut<[u8]>,
-{
-    fn access<F, R>(&self, f: F) -> R
+    /// Get exclusive (locked) access to the wrapped `KvBlobStore`.
+    ///
+    /// The data model uses this to recombine the store with the scratch buffer
+    /// owned by [`DataModelState`](crate::dm::DataModelState) into a full
+    /// [`KvBlobStoreAccess`].
+    pub fn with_store<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&mut dyn KvBlobStore, &mut [u8]) -> R,
+        S: KvBlobStore,
+        F: FnOnce(&mut dyn KvBlobStore) -> R,
     {
         self.0.lock(|cell| {
-            let mut kvb = cell.borrow_mut();
-            let kvb = &mut *kvb;
+            let mut store = cell.borrow_mut();
 
-            f(&mut kvb.0, kvb.1.borrow_mut())
+            f(&mut *store)
         })
     }
 }

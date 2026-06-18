@@ -28,7 +28,7 @@ use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::{DataModel, DataModelHandler, DataModelState, IMBuffer, Privilege};
 use rs_matter::error::Error;
-use rs_matter::persist::DummyKvBlobStoreAccess;
+use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::{ExchangeHandler, Responder};
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{
@@ -181,7 +181,7 @@ impl<C: Crypto> E2eRunner<C> {
             &self.crypto,
             &self.buffers,
             handler,
-            DummyKvBlobStoreAccess,
+            SharedKvBlobStore::new(DummyKvBlobStore),
             &self.state,
         );
 

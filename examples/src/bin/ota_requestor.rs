@@ -90,13 +90,7 @@ fn main() -> Result<(), Error> {
     let mut matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
     // Persistence
-    let mut kv_buf = [0u8; 4096];
     let mut kv = DirKvBlobStore::new_default();
-    futures_lite::future::block_on(matter.load_persist(&mut kv, &mut kv_buf))?;
-
-    // The OTA Requestor's persistent provider list, re-hydrated from storage.
-    let providers = Providers::new();
-    futures_lite::future::block_on(providers.load_persist(&mut kv, &mut kv_buf))?;
 
     // The OTA Requestor's transient, reported update state, for the cluster on
     // endpoint 1 (see `NODE`). State changes are pushed to subscribers via the
@@ -105,10 +99,18 @@ fn main() -> Result<(), Error> {
 
     let buffers = PooledBuffers::<10, IMBuffer>::new(0);
 
-    // Create the data model state (subscriptions, events, network store) and load
-    // the persisted event counter.
+    // Create the data model state (subscriptions, events, network store). It owns
+    // the KV scratch buffer, which all the startup loads below reuse rather than
+    // allocating a separate one.
     let mut state: EthDataModelState = EthDataModelState::new(EthNetwork::new_default());
-    futures_lite::future::block_on(state.load_persist(&mut kv, &mut kv_buf))?;
+
+    // The OTA Requestor's persistent provider list, re-hydrated from storage.
+    let providers = Providers::new();
+
+    // Re-hydrate persisted state using the state's own scratch buffer.
+    futures_lite::future::block_on(matter.load_persist(&mut kv, state.kv_buf_mut()))?;
+    futures_lite::future::block_on(providers.load_persist(&mut kv, state.kv_buf_mut()))?;
+    futures_lite::future::block_on(state.load_persist(&mut kv))?;
 
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
 
@@ -119,7 +121,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         &buffers,
         dm_handler(rand, &providers, &ota_state),
-        SharedKvBlobStore::new(kv, kv_buf),
+        SharedKvBlobStore::new(kv),
         &state,
     );
 

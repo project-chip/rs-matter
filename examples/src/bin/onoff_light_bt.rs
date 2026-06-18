@@ -126,23 +126,22 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
     // Create the Matter object
     let mut matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
-    // A storage for the Wifi networks, re-hydrated from persistence.
-    let mut networks = WifiNetworks::<3>::new();
-
     // Persistence
-    let mut kv_buf = [0; 4096];
     let mut kv = DirKvBlobStore::new_default();
-    futures_lite::future::block_on(matter.load_persist(&mut kv, &mut kv_buf))?;
-    futures_lite::future::block_on(networks.load_persist(&mut kv, &mut kv_buf))?;
 
     // Create the transport buffers
     let buffers = PooledBuffers::<10, _>::new(0);
 
-    // Create the data model state (subscriptions, events, the Wifi network store)
-    // and load the persisted event counter. The (raw) network store was loaded
-    // above, before being moved into the state.
-    let mut state: WirelessDataModelState<WifiNetworks<3>> = WirelessDataModelState::new(networks);
-    futures_lite::future::block_on(state.load_persist(&mut kv, &mut kv_buf))?;
+    // Create the data model state (subscriptions, events, the Wifi network store).
+    // It owns the KV scratch buffer, so the one-time startup loads below reuse it
+    // (`state.kv_buf_mut()`) rather than allocating a separate buffer.
+    let mut state: WirelessDataModelState<WifiNetworks<3>> =
+        WirelessDataModelState::new(WifiNetworks::new());
+
+    // Re-hydrate persisted state: the `Matter` instance (fabrics, ACLs, basic
+    // info) and the data model state itself (event-number epoch + Wifi networks).
+    futures_lite::future::block_on(matter.load_persist(&mut kv, state.kv_buf_mut()))?;
+    futures_lite::future::block_on(state.load_persist(&mut kv))?;
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
@@ -169,7 +168,7 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
         &crypto,
         &buffers,
         dm_handler(rand, &on_off_handler, &net_ctl, &net_ctl),
-        SharedKvBlobStore::new(kv, kv_buf.as_mut_slice()),
+        SharedKvBlobStore::new(kv),
         &net_ctl,
         &state,
     );

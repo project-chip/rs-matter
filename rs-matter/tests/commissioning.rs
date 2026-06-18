@@ -71,7 +71,7 @@ use rs_matter::im::IMStatusCode;
 use rs_matter::onboard::cac::{IcacGenerator, RcacGenerator};
 use rs_matter::onboard::noc::NocGenerator;
 use rs_matter::onboard::{CommissionOptions, Commissioner};
-use rs_matter::persist::DummyKvBlobStoreAccess;
+use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::Exchange;
@@ -201,7 +201,7 @@ macro_rules! commissioning_test {
                 &device_crypto,
                 device_buffers,
                 dm_handler(rand, &on_off_handler),
-                DummyKvBlobStoreAccess,
+                SharedKvBlobStore::new(DummyKvBlobStore),
                 device_state,
             );
 

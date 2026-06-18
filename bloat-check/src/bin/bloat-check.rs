@@ -41,7 +41,9 @@
 #![recursion_limit = "256"]
 
 use core::future::Future;
-use core::mem::{size_of_val, MaybeUninit};
+use core::mem::size_of_val;
+#[cfg(target_os = "none")]
+use core::mem::MaybeUninit;
 
 // Logging - `defmt` for embedded targets, `log` for others
 #[cfg(target_os = "none")]
@@ -69,12 +71,10 @@ use rs_matter::dm::clusters::wifi_diag::{
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::WifiSysHandler;
-use rs_matter::dm::events::DEFAULT_MAX_EVENTS_BUF_SIZE;
 use rs_matter::dm::networks::wireless::{
     NetCtlState, NetCtlStateMutex, NetCtlWithStatusImpl, WifiNetworks,
 };
 use rs_matter::dm::networks::NetChangeNotif;
-use rs_matter::dm::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use rs_matter::dm::{endpoints, IMBuffer};
 use rs_matter::dm::{
     Async, DataModel, Dataver, Endpoint, EpClMatcher, Node, WirelessDataModelState,
@@ -82,7 +82,7 @@ use rs_matter::dm::{
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore};
+use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore, DEFAULT_KV_BUF_SIZE};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
@@ -162,8 +162,6 @@ struct MatterStack<'a> {
     state: WirelessDataModelState<WifiNetworks<3>>,
     net_ctl_state: NetCtlStateMutex,
     btp: Btp,
-    // We don't run a persistence task, but emulate its typical memory consumnption
-    psm_buffer: MaybeUninit<[u8; 4096]>,
 }
 
 impl<'a> MatterStack<'a> {
@@ -180,7 +178,6 @@ impl<'a> MatterStack<'a> {
             state <- WirelessDataModelState::init(WifiNetworks::init()),
             net_ctl_state <- NetCtlState::init_with_mutex(),
             btp <- Btp::init(),
-            psm_buffer: MaybeUninit::zeroed(),
         })
     }
 }
@@ -198,24 +195,20 @@ type AppDmHandler<'a> = handler_chain_type!(
 type AppCrypto = RustCrypto<'static, WeakTestOnlyRand>;
 type AppDataModel<'a> = DataModel<
     'a,
-    DEFAULT_MAX_SUBSCRIPTIONS,
-    DEFAULT_MAX_EVENTS_BUF_SIZE,
     &'a AppCrypto,
     PooledBuffers<10, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
-    SharedKvBlobStore<DummyKvBlobStore, &'static mut [u8]>,
+    DummyKvBlobStore,
     WifiNetworks<3>,
     &'a AppNetCtl<'a>,
 >;
 type AppResponder<'d, 'a> = DefaultResponder<
     'd,
     'a,
-    DEFAULT_MAX_SUBSCRIPTIONS,
-    DEFAULT_MAX_EVENTS_BUF_SIZE,
     &'a AppCrypto,
     PooledBuffers<10, IMBuffer>,
     (Node<'a>, &'a AppDmHandler<'a>),
-    SharedKvBlobStore<DummyKvBlobStore, &'static mut [u8]>,
+    DummyKvBlobStore,
     WifiNetworks<3>,
     &'a AppNetCtl<'a>,
 >;
@@ -289,11 +282,10 @@ fn main() -> ! {
         &mut stack_total,
     );
     report_size("BTP", size_of_val(&stack.btp), &mut stack_total);
-    report_size(
-        "Persister buffer",
-        size_of_val(&stack.psm_buffer),
-        &mut stack_total,
-    );
+    // The KV/persister scratch buffer now lives inside `DataModelState` (behind a
+    // blocking mutex) rather than in the `SharedKvBlobStore`. It is not visible
+    // through the per-component accessors above, so account for it explicitly.
+    report_size("KV scratch buffer", DEFAULT_KV_BUF_SIZE, &mut stack_total);
 
     report_subtotal_size("TOTAL MATTER STACK ", stack_total);
 
@@ -322,8 +314,9 @@ fn main() -> ! {
 
     let mut rand = unwrap!(crypto.weak_rand());
 
-    let kv_buf = unsafe { stack.psm_buffer.assume_init_mut() }.as_mut_slice();
-    let kv = SharedKvBlobStore::new(DummyKvBlobStore, kv_buf);
+    // The KV scratch buffer now lives inside `DataModelState` (see the "KV scratch
+    // buffer" line in the memory report); the store itself is buffer-less.
+    let kv = SharedKvBlobStore::new(DummyKvBlobStore);
 
     // A Wireless handler with a sample app cluster (on-off)
     let handler = mk_static!(

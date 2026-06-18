@@ -101,22 +101,24 @@ fn main() -> Result<(), Error> {
     let mut matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
     // Persistence
-    let mut kv_buf = [0u8; 4096];
     let mut kv = DirKvBlobStore::new_default();
-    futures_lite::future::block_on(matter.load_persist(&mut kv, &mut kv_buf))?;
-
-    // The Binding registry (the switch's address book), loaded from persistence.
-    let bindings = Bindings::<MAX_BINDINGS>::new();
-    futures_lite::future::block_on(bindings.load_persist(&mut kv, &mut kv_buf))?;
 
     let buffers = PooledBuffers::<10, IMBuffer>::new(0);
 
     // Create the data model state. This device EMITS events (the Generic Switch
     // press events), so - unlike the examples that use `NoEvents` - the default
     // state carries a real (non-zero) event queue that holds them until
-    // subscribers read them.
+    // subscribers read them. It also owns the KV scratch buffer, which all the
+    // startup loads below reuse rather than allocating a separate one.
     let mut state: EthDataModelState = EthDataModelState::new(EthNetwork::new_default());
-    futures_lite::future::block_on(state.load_persist(&mut kv, &mut kv_buf))?;
+
+    // The Binding registry (the switch's address book), loaded from persistence.
+    let bindings = Bindings::<MAX_BINDINGS>::new();
+
+    // Re-hydrate persisted state using the state's own scratch buffer.
+    futures_lite::future::block_on(matter.load_persist(&mut kv, state.kv_buf_mut()))?;
+    futures_lite::future::block_on(bindings.load_persist(&mut kv, state.kv_buf_mut()))?;
+    futures_lite::future::block_on(state.load_persist(&mut kv))?;
 
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
     let rand = crypto.rand()?;
@@ -126,7 +128,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         &buffers,
         dm_handler(rand, &bindings),
-        SharedKvBlobStore::new(kv, kv_buf),
+        SharedKvBlobStore::new(kv),
         &state,
     );
 

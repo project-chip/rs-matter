@@ -38,15 +38,19 @@ use crate::im::{
     ReadReq, ReportDataReq, ReportDataRespTag, StatusResp, SubscribeReq, SubscribeResp, TimedReq,
     WriteReq, WriteRespTag, IM_REVISION, PROTO_ID_INTERACTION_MODEL,
 };
-use crate::persist::{KvBlobStore, KvBlobStoreAccess};
+use crate::persist::{
+    KvBlobStore, KvBlobStoreAccess, SharedKvBlobStore, DEFAULT_KV_BUF_SIZE, NETWORKS_KEY,
+};
 use crate::respond::ExchangeHandler;
 use crate::tlv::{get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::exchange::{
     Exchange, ExchangeId, MAX_EXCHANGE_RX_BUF_SIZE, MAX_EXCHANGE_TX_BUF_SIZE,
 };
+use crate::utils::cell::RefCell;
 use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::BufferAccess;
 use crate::utils::storage::WriteBuf;
+use crate::utils::sync::blocking::Mutex;
 use crate::Matter;
 
 use crate::utils::init::{init, Init};
@@ -88,41 +92,80 @@ pub struct DataModelState<
     N,
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
+    const KB: usize = DEFAULT_KV_BUF_SIZE,
 > {
     subscriptions: Subscriptions<NS>,
     events: Events<NE>,
     networks: SharedNetworks<N>,
+    /// The scratch buffer used by the key-value persistence machinery at runtime.
+    /// Behind a blocking mutex so the data model can recombine it with the
+    /// (store-only) [`SharedKvBlobStore`](crate::persist::SharedKvBlobStore).
+    kv_buf: Mutex<RefCell<[u8; KB]>>,
 }
 
-impl<N, const NS: usize, const NE: usize> DataModelState<N, NS, NE> {
+impl<N, const NS: usize, const NE: usize, const KB: usize> DataModelState<N, NS, NE, KB> {
     /// Create a new state instance backed by the given (raw) [`Networks`] store.
     pub const fn new(networks: N) -> Self {
         Self {
             subscriptions: Subscriptions::new(),
             events: Events::new(),
             networks: SharedNetworks::new(networks),
+            kv_buf: Mutex::new(RefCell::new([0; KB])),
         }
     }
 
-    /// Return an in-place initializer for the state (for large `NE`, to avoid a
-    /// big temporary on the stack).
+    /// Return an in-place initializer for the state (for large `NE`/`KB`, to
+    /// avoid a big temporary on the stack).
     pub fn init(networks: impl Init<N>) -> impl Init<Self> {
         init!(Self {
             subscriptions <- Subscriptions::init(),
             events <- Events::init(),
             networks <- SharedNetworks::init(networks),
+            kv_buf <- Mutex::init(RefCell::init(crate::utils::init::zeroed())),
         })
     }
 
-    /// Re-hydrate the events queue's persisted state (the event-number epoch) so
-    /// event numbers are not reused across reboots. Call once at startup, before
-    /// the state is shared with a [`DataModel`]. The (raw) network store is loaded
-    /// separately, before this state is constructed.
-    pub async fn load_persist<S>(&mut self, kv: S, buf: &mut [u8]) -> Result<(), Error>
+    /// Re-hydrate this state's persisted contents - the events-queue epoch (so
+    /// event numbers are not reused across reboots) and the network store - using
+    /// this state's own (owned) scratch buffer. Call once at startup, before the
+    /// state is shared with a [`DataModel`].
+    pub async fn load_persist<S>(&mut self, mut kv: S) -> Result<(), Error>
     where
         S: KvBlobStore,
+        N: Networks,
     {
-        self.events.load_persist(kv, buf).await
+        // We hold `&mut self`, so borrow the scratch buffer directly - no locking
+        // (the mutex is only needed for shared, runtime access).
+        let Self {
+            events,
+            networks,
+            kv_buf,
+            ..
+        } = self;
+
+        let buf = &mut kv_buf.get_mut().get_mut()[..];
+
+        // The event-number epoch.
+        events.load_persist(&mut kv, buf).await?;
+
+        // The network store.
+        let networks = networks.get_mut().get_mut();
+        networks.reset()?;
+        if let Some(data) = kv.load(NETWORKS_KEY, buf)? {
+            networks.load(data)?;
+        }
+
+        Ok(())
+    }
+
+    /// Borrow this state's owned scratch buffer for one-time startup loads (e.g.
+    /// [`Matter::load_persist`] or a cluster's `load_persist`), so callers need
+    /// not allocate a separate buffer.
+    ///
+    /// Available only with exclusive (`&mut`) access - i.e. before the state is
+    /// shared with a [`DataModel`].
+    pub fn kv_buf_mut(&mut self) -> &mut [u8] {
+        &mut self.kv_buf.get_mut().get_mut()[..]
     }
 
     /// The subscriptions table.
@@ -141,6 +184,33 @@ impl<N, const NS: usize, const NE: usize> DataModelState<N, NS, NE> {
     }
 }
 
+/// Recombines a store-only [`SharedKvBlobStore`] with the scratch buffer owned by
+/// a [`DataModelState`] to present a full [`KvBlobStoreAccess`].
+///
+/// The buffer lock is always taken first, then the store lock, so the two-lock
+/// order is consistent across all persistence paths (and single-threaded
+/// executors never actually block on either).
+struct StateKvBlobStore<'a, S, const KB: usize> {
+    store: &'a SharedKvBlobStore<S>,
+    buf: &'a Mutex<RefCell<[u8; KB]>>,
+}
+
+impl<S, const KB: usize> KvBlobStoreAccess for StateKvBlobStore<'_, S, KB>
+where
+    S: KvBlobStore,
+{
+    fn access<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut dyn KvBlobStore, &mut [u8]) -> R,
+    {
+        self.buf.lock(|cell| {
+            let mut buf = cell.borrow_mut();
+
+            self.store.with_store(|store| f(store, &mut buf[..]))
+        })
+    }
+}
+
 /// The implementation needs a `DataModelHandler` instance to interact with the underlying clusters of the data model.
 ///
 /// `NC` is the network controller type driving the (optional) wireless connection
@@ -148,17 +218,27 @@ impl<N, const NS: usize, const NE: usize> DataModelState<N, NS, NE> {
 /// the right choice for Ethernet (and what the convenience [`DataModel::new`]
 /// constructor wires up); wireless devices pass a real controller via
 /// [`DataModel::new_with_net_ctl`].
-pub struct DataModel<'a, const NS: usize, const NE: usize, C, B, T, S, N, NC = NoopWirelessNetCtl>
-where
+pub struct DataModel<
+    'a,
+    C,
+    B,
+    T,
+    S,
+    N,
+    NC = NoopWirelessNetCtl,
+    const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
+    const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
+    const KB: usize = DEFAULT_KV_BUF_SIZE,
+> where
     B: BufferAccess<IMBuffer>,
 {
     matter: &'a Matter<'a>,
     crypto: C,
     buffers: &'a B,
-    kv: S,
+    kv: SharedKvBlobStore<S>,
     net_ctl: NC,
     subscriptions_buffers: SubscriptionsBuffers<'a, B, NS>,
-    state: &'a DataModelState<N, NS, NE>,
+    state: &'a DataModelState<N, NS, NE, KB>,
     handler: T,
 }
 
@@ -168,12 +248,22 @@ where
 pub type EthDataModelState<
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
-> = DataModelState<EthNetwork<'static>, NS, NE>;
+    const KB: usize = DEFAULT_KV_BUF_SIZE,
+> = DataModelState<EthNetwork<'static>, NS, NE, KB>;
 
 /// A [`DataModel`] for an Ethernet device (network store fixed to [`EthNetwork`]),
 /// so the `N` generic disappears from call sites. Pairs with [`EthDataModelState`].
-pub type EthDataModel<'a, const NS: usize, const NE: usize, C, B, T, S> =
-    DataModel<'a, NS, NE, C, B, T, S, EthNetwork<'static>>;
+pub type EthDataModel<
+    'a,
+    C,
+    B,
+    T,
+    S,
+    NC = NoopWirelessNetCtl,
+    const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
+    const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
+    const KB: usize = DEFAULT_KV_BUF_SIZE,
+> = DataModel<'a, C, B, T, S, EthNetwork<'static>, NC, NS, NE, KB>;
 
 /// A [`DataModelState`] for a wireless device, parameterized by the concrete
 /// wireless network store `N` (e.g. `WifiNetworks<3>` or a Thread store). Pairs
@@ -182,19 +272,31 @@ pub type WirelessDataModelState<
     N,
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
-> = DataModelState<N, NS, NE>;
+    const KB: usize = DEFAULT_KV_BUF_SIZE,
+> = DataModelState<N, NS, NE, KB>;
 
 /// A [`DataModel`] for a wireless device (network store `N`, network controller
 /// `NC`). Pairs with [`WirelessDataModelState`].
-pub type WirelessDataModel<'a, const NS: usize, const NE: usize, C, B, T, S, N, NC> =
-    DataModel<'a, NS, NE, C, B, T, S, N, NC>;
+pub type WirelessDataModel<
+    'a,
+    C,
+    B,
+    T,
+    S,
+    N,
+    NC,
+    const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
+    const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
+    const KB: usize = DEFAULT_KV_BUF_SIZE,
+> = DataModel<'a, C, B, T, S, N, NC, NS, NE, KB>;
 
-impl<'a, const NS: usize, const NE: usize, C, B, T, S, N> DataModel<'a, NS, NE, C, B, T, S, N>
+impl<'a, C, B, T, S, N, const NS: usize, const NE: usize, const KB: usize>
+    DataModel<'a, C, B, T, S, N, NoopWirelessNetCtl, NS, NE, KB>
 where
     C: Crypto,
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
-    S: KvBlobStoreAccess,
+    S: KvBlobStore,
     N: Networks,
 {
     /// Create the data model for a device that does not need an operational
@@ -220,8 +322,8 @@ where
         crypto: C,
         buffers: &'a B,
         handler: T,
-        kv: S,
-        state: &'a DataModelState<N, NS, NE>,
+        kv: SharedKvBlobStore<S>,
+        state: &'a DataModelState<N, NS, NE, KB>,
     ) -> Self {
         Self::new_with_net_ctl(
             matter,
@@ -235,13 +337,13 @@ where
     }
 }
 
-impl<'a, const NS: usize, const NE: usize, C, B, T, S, N, NC>
-    DataModel<'a, NS, NE, C, B, T, S, N, NC>
+impl<'a, C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize>
+    DataModel<'a, C, B, T, S, N, NC, NS, NE, KB>
 where
     C: Crypto,
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
-    S: KvBlobStoreAccess,
+    S: KvBlobStore,
     N: Networks,
 {
     /// Create the data model with an explicit network controller `net_ctl`.
@@ -269,9 +371,9 @@ where
         crypto: C,
         buffers: &'a B,
         handler: T,
-        kv: S,
+        kv: SharedKvBlobStore<S>,
         net_ctl: NC,
-        state: &'a DataModelState<N, NS, NE>,
+        state: &'a DataModelState<N, NS, NE, KB>,
     ) -> Self {
         state.subscriptions.clear();
 
@@ -296,9 +398,20 @@ where
         &self.crypto
     }
 
-    /// Return a reference to the `KvBlobStoreAccess` instance used by this data model for interacting with the key-value blob store.
-    pub const fn kv(&self) -> &S {
-        &self.kv
+    /// Return a [`KvBlobStoreAccess`] for interacting with the key-value blob
+    /// store. This recombines the store-only `S` held by the data model with the
+    /// scratch buffer owned by the [`DataModelState`].
+    pub fn kv(&self) -> impl KvBlobStoreAccess + '_ {
+        self.kv_access()
+    }
+
+    /// Recombine the store-only KV (`self.kv`) with the scratch buffer owned by
+    /// [`DataModelState`] into a full [`KvBlobStoreAccess`].
+    fn kv_access(&self) -> StateKvBlobStore<'_, S, KB> {
+        StateKvBlobStore {
+            store: &self.kv,
+            buf: &self.state.kv_buf,
+        }
     }
 
     /// Open the basic commissioning window.
@@ -350,7 +463,8 @@ where
         // `AttrChangeNotifier` so the cluster's `Dataver` is bumped
         // too (the `Matter`-level call by itself only routes
         // subscribers and persists).
-        self.matter.bump_configuration_version(&self.kv, self)
+        self.matter
+            .bump_configuration_version(self.kv_access(), self)
     }
 
     /// Run the Data Model instance.
@@ -422,7 +536,7 @@ where
                 &mut state.fabrics,
                 &mut state.sessions,
                 &self.state.networks,
-                &self.kv,
+                self.kv_access(),
                 expire_sess_id,
                 &mut notify_mdns,
                 &mut notify_change,
@@ -1162,13 +1276,13 @@ where
     }
 }
 
-impl<const NS: usize, const NE: usize, C, B, T, S, N, NC> ExchangeHandler
-    for DataModel<'_, NS, NE, C, B, T, S, N, NC>
+impl<C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize> ExchangeHandler
+    for DataModel<'_, C, B, T, S, N, NC, NS, NE, KB>
 where
     C: Crypto,
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
-    S: KvBlobStoreAccess,
+    S: KvBlobStore,
     N: Networks,
 {
     async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
@@ -1176,13 +1290,13 @@ where
     }
 }
 
-impl<const NS: usize, const NE: usize, C, B, T, S, N, NC> HandlerContext
-    for DataModel<'_, NS, NE, C, B, T, S, N, NC>
+impl<C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize> HandlerContext
+    for DataModel<'_, C, B, T, S, N, NC, NS, NE, KB>
 where
     C: Crypto,
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
-    S: KvBlobStoreAccess,
+    S: KvBlobStore,
     N: Networks,
 {
     fn matter(&self) -> &Matter<'_> {
@@ -1194,7 +1308,7 @@ where
     }
 
     fn kv(&self) -> impl KvBlobStoreAccess + '_ {
-        &self.kv
+        self.kv_access()
     }
 
     fn networks(&self) -> impl NetworksAccess + '_ {
@@ -1214,13 +1328,13 @@ where
     }
 }
 
-impl<const NS: usize, const NE: usize, C, B, T, S, N, NC> AttrChangeNotifier
-    for DataModel<'_, NS, NE, C, B, T, S, N, NC>
+impl<C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize> AttrChangeNotifier
+    for DataModel<'_, C, B, T, S, N, NC, NS, NE, KB>
 where
     C: Crypto,
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
-    S: KvBlobStoreAccess,
+    S: KvBlobStore,
     N: Networks,
 {
     fn notify_attr_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId, attr_id: AttrId) {
@@ -1258,13 +1372,13 @@ where
     }
 }
 
-impl<const NS: usize, const NE: usize, C, B, T, S, N, NC> EventEmitter
-    for DataModel<'_, NS, NE, C, B, T, S, N, NC>
+impl<C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize> EventEmitter
+    for DataModel<'_, C, B, T, S, N, NC, NS, NE, KB>
 where
     C: Crypto,
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
-    S: KvBlobStoreAccess,
+    S: KvBlobStore,
     N: Networks,
 {
     fn emit_event<F>(
@@ -1278,10 +1392,14 @@ where
     where
         F: FnOnce(EventTLVWrite<'_>) -> Result<(), Error>,
     {
-        let event_number =
-            self.state
-                .events
-                .push(endpoint_id, cluster_id, event_id, priority, &self.kv, f)?;
+        let event_number = self.state.events.push(
+            endpoint_id,
+            cluster_id,
+            event_id,
+            priority,
+            self.kv_access(),
+            f,
+        )?;
 
         self.state
             .subscriptions

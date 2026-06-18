@@ -371,7 +371,6 @@ type WebRtc = WebRtcProvHandler<StubWebRtcHooks, N_SESSIONS, SDP_LEN, OUT_LEN, C
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, rs_matter::dm::IMBuffer>> = StaticCell::new();
-static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 static WEBRTC: StaticCell<WebRtc> = StaticCell::new();
 static CAM_AV: StaticCell<CamAv> = StaticCell::new();
 static CAM_AV_SETTINGS: StaticCell<
@@ -405,16 +404,19 @@ fn main() -> Result<(), Error> {
         args::port_override(),
     ));
 
-    let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
     let mut kv = args::file_kv_store();
-    futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
 
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
 
-    // Create the data model state (subscriptions, events, network store) and load
-    // the persisted event counter.
+    // Create the data model state (subscriptions, events, network store). It owns
+    // the KV scratch buffer, which the startup loads below reuse rather than
+    // allocating a separate one.
     let mut state: EthDataModelState = EthDataModelState::new(EthNetwork::new_default());
-    futures_lite::future::block_on(state.load_persist(&mut kv, kv_buf))?;
+
+    // Re-hydrate the `Matter` instance and the data model state (event-number
+    // epoch) using the state's own scratch buffer.
+    futures_lite::future::block_on(matter.load_persist(&mut kv, state.kv_buf_mut()))?;
+    futures_lite::future::block_on(state.load_persist(&mut kv))?;
 
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
     let mut rand = crypto.rand()?;
@@ -572,7 +574,7 @@ fn main() -> Result<(), Error> {
             push_av,
             chime,
         ),
-        SharedKvBlobStore::new(kv, kv_buf),
+        SharedKvBlobStore::new(kv),
         &state,
     );
 

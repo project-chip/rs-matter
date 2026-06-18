@@ -109,7 +109,6 @@ mod args;
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<20, rs_matter::dm::IMBuffer>> = StaticCell::new();
-static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 static GEN_DIAG: StaticCell<TestEventTriggerDiag> = StaticCell::new();
 // UserLabel registry — host endpoints and labels-per-endpoint counts
@@ -171,17 +170,20 @@ fn main() -> Result<(), Error> {
             .init_with(Matter::init(&BASIC_INFO, comm_data, &TEST_DEV_ATT, port));
 
     // Persistence
-    let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
     let mut kv = args::file_kv_store();
-    futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
 
     // Create the transport buffers
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
 
-    // Create the data model state (subscriptions, events, network store) and load
-    // the persisted event counter.
+    // Create the data model state (subscriptions, events, network store). It owns
+    // the KV scratch buffer, which all the startup loads (here and the user-label
+    // / binding loads below) reuse rather than allocating a separate one.
     let mut state: EthDataModelState = EthDataModelState::new(EthNetwork::new_default());
-    futures_lite::future::block_on(state.load_persist(&mut kv, kv_buf))?;
+
+    // Re-hydrate the `Matter` instance and the data model state (event-number
+    // epoch) using the state's own scratch buffer.
+    futures_lite::future::block_on(matter.load_persist(&mut kv, state.kv_buf_mut()))?;
+    futures_lite::future::block_on(state.load_persist(&mut kv))?;
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
@@ -210,7 +212,7 @@ fn main() -> Result<(), Error> {
     // `TestUserLabelCluster` YAML test sees the labels the previous
     // boot wrote.
     let user_labels = USER_LABELS.uninit().init_with(UserLabels::init());
-    futures_lite::future::block_on(user_labels.load_persist(&mut kv, kv_buf))?;
+    futures_lite::future::block_on(user_labels.load_persist(&mut kv, state.kv_buf_mut()))?;
 
     let user_label_handler =
         UserLabelHandler::new(Dataver::new_rand(&mut rand), ROOT_ENDPOINT_ID, user_labels);
@@ -219,7 +221,7 @@ fn main() -> Result<(), Error> {
     // UserLabels. Loaded from KV before the data model accepts traffic
     // so bindings written pre-reboot survive.
     let bindings = BINDINGS.uninit().init_with(Bindings::init());
-    futures_lite::future::block_on(bindings.load_persist(&mut kv, kv_buf))?;
+    futures_lite::future::block_on(bindings.load_persist(&mut kv, state.kv_buf_mut()))?;
 
     let binding_handler_ep0 =
         BindingHandler::new(Dataver::new_rand(&mut rand), ROOT_ENDPOINT_ID, bindings);
@@ -298,7 +300,7 @@ fn main() -> Result<(), Error> {
             dlog_buffers,
             log_provider,
         ),
-        SharedKvBlobStore::new(kv, kv_buf),
+        SharedKvBlobStore::new(kv),
         &state,
     );
 

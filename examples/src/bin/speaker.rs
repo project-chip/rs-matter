@@ -66,17 +66,20 @@ fn main() -> Result<(), Error> {
     let mut matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
     // Persistence
-    let mut kv_buf = [0; 4096];
     let mut kv = DirKvBlobStore::new_default();
-    futures_lite::future::block_on(matter.load_persist(&mut kv, &mut kv_buf))?;
 
     // Create the transport buffers
     let buffers = PooledBuffers::<10, _>::new(0);
 
-    // Create the data model state (subscriptions, events, network store) and load
-    // the persisted event counter.
+    // Create the data model state (subscriptions, events, network store). It owns
+    // the KV scratch buffer, which the startup loads below reuse rather than
+    // allocating a separate one.
     let mut state: EthDataModelState = EthDataModelState::new(EthNetwork::new_default());
-    futures_lite::future::block_on(state.load_persist(&mut kv, &mut kv_buf))?;
+
+    // Re-hydrate the `Matter` instance and the data model state (event-number
+    // epoch) using the state's own scratch buffer.
+    futures_lite::future::block_on(matter.load_persist(&mut kv, state.kv_buf_mut()))?;
+    futures_lite::future::block_on(state.load_persist(&mut kv))?;
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
@@ -115,7 +118,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         &buffers,
         dm_handler(rand, &on_off_handler, &level_control_handler),
-        SharedKvBlobStore::new(kv, kv_buf.as_mut_slice()),
+        SharedKvBlobStore::new(kv),
         &state,
     );
 

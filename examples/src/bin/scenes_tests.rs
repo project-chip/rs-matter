@@ -88,7 +88,6 @@ mod args;
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
 static STATE: StaticCell<EthDataModelState> = StaticCell::new();
-static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 
 const SCENES_CAPACITY: usize = 16;
 static SCENES_STATE: StaticCell<ScenesState<SCENES_CAPACITY>> = StaticCell::new();
@@ -131,17 +130,20 @@ fn run() -> Result<(), Error> {
     ));
 
     // Persistence
-    let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
     let mut kv = args::file_kv_store();
-    futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
 
     // Create the transport buffers
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
 
-    // Create the data model state (subscriptions, events, network store) and load
-    // the persisted event counter.
+    // Create the data model state (subscriptions, events, network store). It owns
+    // the KV scratch buffer, which the startup loads (here and the scenes load
+    // below) reuse rather than allocating a separate one.
     let state = STATE.init(EthDataModelState::new(EthNetwork::new_default()));
-    futures_lite::future::block_on(state.load_persist(&mut kv, kv_buf))?;
+
+    // Re-hydrate the `Matter` instance and the data model state (event-number
+    // epoch) using the state's own scratch buffer.
+    futures_lite::future::block_on(matter.load_persist(&mut kv, state.kv_buf_mut()))?;
+    futures_lite::future::block_on(state.load_persist(&mut kv))?;
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
@@ -155,7 +157,7 @@ fn run() -> Result<(), Error> {
         .init_with(RefCell::init(UnitTestingHandlerData::init()));
 
     let scenes_state = SCENES_STATE.uninit().init_with(ScenesState::init());
-    futures_lite::future::block_on(scenes_state.load_persist(&mut kv, kv_buf))?;
+    futures_lite::future::block_on(scenes_state.load_persist(&mut kv, state.kv_buf_mut()))?;
 
     // OnOff cluster setup
     let on_off_handler =
@@ -198,7 +200,7 @@ fn run() -> Result<(), Error> {
             scenes_handler,
             unit_testing_data,
         ),
-        SharedKvBlobStore::new(kv, kv_buf),
+        SharedKvBlobStore::new(kv),
         state,
     );
 
