@@ -63,8 +63,8 @@ use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use rs_matter::dm::{
-    endpoints, Async, DataModel, DataModelState, Dataver, Endpoint, EpClMatcher, InteractionModel,
-    Node,
+    endpoints, Async, DataModel, Dataver, Endpoint, EpClMatcher, InteractionModel,
+    InteractionModelState, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::im::IMStatusCode;
@@ -99,7 +99,7 @@ const IM_TIMEOUT_SECS: u64 = 10;
 
 /// The device's data model state: a dummy (no-op) network store, default
 /// subscription count, no events.
-type DeviceDmState = DataModelState<DummyNetworks, DEFAULT_MAX_SUBSCRIPTIONS, 0>;
+type DeviceDmState = InteractionModelState<DummyNetworks, DEFAULT_MAX_SUBSCRIPTIONS, 0>;
 
 static DEVICE_MATTER: StaticCell<Matter> = StaticCell::new();
 static DEVICE_BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
@@ -188,7 +188,7 @@ macro_rules! commissioning_test {
             let mut rand = device_crypto.rand()?;
 
             let device_buffers = $dev_buffers.uninit().init_with(MatterBuffers::init());
-            let device_state = $dev_subs.init(DataModelState::new(DummyNetworks));
+            let device_state = $dev_subs.init(InteractionModelState::new(DummyNetworks));
 
             let on_off_handler = on_off::OnOffHandler::new_standalone(
                 Dataver::new_rand(&mut rand),

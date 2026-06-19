@@ -55,7 +55,7 @@ use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, WifiN
 use rs_matter::dm::networks::NetChangeNotif;
 use rs_matter::dm::{
     Async, DataModel, Dataver, Endpoint, EpClMatcher, InteractionModel, Node,
-    WirelessDataModelState,
+    WirelessInteractionModelState,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -135,8 +135,8 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
     // Create the data model state (subscriptions, events, the Wifi network store).
     // It owns the KV scratch buffer, so the one-time startup loads below reuse it
     // (`state.kv_buf_mut()`) rather than allocating a separate buffer.
-    let mut state: WirelessDataModelState<WifiNetworks<3>> =
-        WirelessDataModelState::new(WifiNetworks::new());
+    let mut state: WirelessInteractionModelState<WifiNetworks<3>> =
+        WirelessInteractionModelState::new(WifiNetworks::new());
 
     // Re-hydrate persisted state: the `Matter` instance (fabrics, ACLs, basic
     // info) and the data model state itself (event-number epoch + Wifi networks).

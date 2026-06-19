@@ -77,7 +77,7 @@ use rs_matter::dm::networks::wireless::{
 };
 use rs_matter::dm::networks::NetChangeNotif;
 use rs_matter::dm::{
-    Async, Dataver, Endpoint, EpClMatcher, InteractionModel, Node, WirelessDataModelState,
+    Async, Dataver, Endpoint, EpClMatcher, InteractionModel, Node, WirelessInteractionModelState,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -158,8 +158,8 @@ struct MatterStack<'a> {
     matter: Matter<'a>,
     buffers: MatterBuffers,
     // The data model's consolidated state: subscriptions table, events queue and
-    // the (Wifi) network store, all behind `DataModelState`.
-    state: WirelessDataModelState<WifiNetworks<3>>,
+    // the (Wifi) network store, all behind `InteractionModelState`.
+    state: WirelessInteractionModelState<WifiNetworks<3>>,
     net_ctl_state: NetCtlStateMutex,
     btp: Btp,
 }
@@ -175,7 +175,7 @@ impl<'a> MatterStack<'a> {
                 MATTER_PORT,
             ),
             buffers <- MatterBuffers::init(),
-            state <- WirelessDataModelState::init(WifiNetworks::init()),
+            state <- WirelessInteractionModelState::init(WifiNetworks::init()),
             net_ctl_state <- NetCtlState::init_with_mutex(),
             btp <- Btp::init(),
         })
@@ -282,7 +282,7 @@ fn main() -> ! {
         &mut stack_total,
     );
     report_size("BTP", size_of_val(&stack.btp), &mut stack_total);
-    // The KV/persister scratch buffer now lives inside `DataModelState` (behind a
+    // The KV/persister scratch buffer now lives inside `InteractionModelState` (behind a
     // blocking mutex) rather than in the `SharedKvBlobStore`. It is not visible
     // through the per-component accessors above, so account for it explicitly.
     report_size("KV scratch buffer", DEFAULT_KV_BUF_SIZE, &mut stack_total);
@@ -314,7 +314,7 @@ fn main() -> ! {
 
     let mut rand = unwrap!(crypto.weak_rand());
 
-    // The KV scratch buffer now lives inside `DataModelState` (see the "KV scratch
+    // The KV scratch buffer now lives inside `InteractionModelState` (see the "KV scratch
     // buffer" line in the memory report); the store itself is buffer-less.
     let kv = SharedKvBlobStore::new(DummyKvBlobStore);
 

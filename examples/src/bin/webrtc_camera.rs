@@ -110,7 +110,7 @@ use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::DeviceType;
 use rs_matter::dm::InteractionModel;
-use rs_matter::dm::{DataModel, Dataver, Endpoint, EpClMatcher, EthDataModelState, Node};
+use rs_matter::dm::{DataModel, Dataver, Endpoint, EpClMatcher, EthInteractionModelState, Node};
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -1100,7 +1100,7 @@ impl WebRtcHooks for Str0mHooks {
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
-static STATE: StaticCell<EthDataModelState> = StaticCell::new();
+static STATE: StaticCell<EthInteractionModelState> = StaticCell::new();
 static WEBRTC: StaticCell<WebRtc> = StaticCell::new();
 static CAM_AV: StaticCell<CameraAvStreamHandler<'static, Str0mCamHooks, CAM_AV_NV>> =
     StaticCell::new();
@@ -1163,7 +1163,7 @@ fn main() -> Result<(), Error> {
     // Create the data model state (subscriptions, events, network store). It owns
     // the KV scratch buffer, which the startup loads below reuse rather than
     // allocating a separate one.
-    let state = STATE.init(EthDataModelState::new(EthNetwork::new_default()));
+    let state = STATE.init(EthInteractionModelState::new(EthNetwork::new_default()));
 
     // Re-hydrate the `Matter` instance and the data model state (event-number
     // epoch) using the state's own scratch buffer.

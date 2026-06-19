@@ -36,7 +36,7 @@ use rs_matter::dm::endpoints::{self, EthSysHandler};
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, Dataver, Endpoint, EpClMatcher, EthDataModelState, InteractionModel, Node,
+    Async, Dataver, Endpoint, EpClMatcher, EthInteractionModelState, InteractionModel, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -65,7 +65,7 @@ type AppDmHandler<'a> = handler_chain_type!(
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
-static STATE: StaticCell<EthDataModelState> = StaticCell::new();
+static STATE: StaticCell<EthInteractionModelState> = StaticCell::new();
 static CRYPTO: StaticCell<RustCrypto<'static, FakeRng>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
@@ -89,7 +89,7 @@ fn main() -> Result<(), Error> {
     // Create the data model state (subscriptions, events, network store). It owns
     // the KV scratch buffer, which the startup loads below reuse rather than
     // allocating a separate one.
-    let state = STATE.init(EthDataModelState::new(EthNetwork::new_default()));
+    let state = STATE.init(EthInteractionModelState::new(EthNetwork::new_default()));
 
     // Re-hydrate the `Matter` instance and the data model state (event-number
     // epoch) using the state's own scratch buffer.

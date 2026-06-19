@@ -36,7 +36,8 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, DataModel, Dataver, Endpoint, EpClMatcher, EthDataModelState, InteractionModel, Node,
+    Async, DataModel, Dataver, Endpoint, EpClMatcher, EthInteractionModelState, InteractionModel,
+    Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -68,7 +69,8 @@ fn main() -> Result<(), Error> {
     // Create the data model state (subscriptions table, events queue, network
     // store). It owns the KV scratch buffer, which we reuse for the startup load
     // below rather than allocating a separate one.
-    let mut state: EthDataModelState = EthDataModelState::new(EthNetwork::new_default());
+    let mut state: EthInteractionModelState =
+        EthInteractionModelState::new(EthNetwork::new_default());
 
     // Re-hydrate the `Matter` instance (fabrics, ACLs, basic info) using the
     // state's own scratch buffer.

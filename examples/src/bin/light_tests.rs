@@ -52,8 +52,8 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, EthDataModelState, InteractionModel,
-    Node,
+    Async, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, EthInteractionModelState,
+    InteractionModel, Node,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::qr::QrTextType;
@@ -77,7 +77,7 @@ mod args;
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
-static STATE: StaticCell<EthDataModelState> = StaticCell::new();
+static STATE: StaticCell<EthInteractionModelState> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
@@ -111,7 +111,7 @@ fn run() -> Result<(), Error> {
     // Create the data model state (subscriptions, events, network store). It owns
     // the KV scratch buffer, which the startup loads below reuse rather than
     // allocating a separate one.
-    let state = STATE.init(EthDataModelState::new(EthNetwork::new_default()));
+    let state = STATE.init(EthInteractionModelState::new(EthNetwork::new_default()));
 
     // Re-hydrate the `Matter` instance and the data model state (event-number
     // epoch) using the state's own scratch buffer.

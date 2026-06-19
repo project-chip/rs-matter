@@ -77,7 +77,7 @@ pub type IMBuffer = crate::transport::exchange::Buffer;
 ///
 /// Allocating these as a single value (rather than three separate locals wired
 /// up by hand at every call site) is the whole point: construct one
-/// `DataModelState`, then hand a reference to it to [`InteractionModel::new`]. Each of
+/// `InteractionModelState`, then hand a reference to it to [`InteractionModel::new`]. Each of
 /// the three pieces keeps its own lock internally (the proven multi-lock model);
 /// folding them behind a single mutex is a possible later refinement.
 ///
@@ -88,7 +88,7 @@ pub type IMBuffer = crate::transport::exchange::Buffer;
 /// wireless manager can share it. `NS`/`NE` bound the subscription table and the
 /// event-buffer size and default to [`DEFAULT_MAX_SUBSCRIPTIONS`] /
 /// [`DEFAULT_MAX_EVENTS_BUF_SIZE`].
-pub struct DataModelState<
+pub struct InteractionModelState<
     N,
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
@@ -103,7 +103,7 @@ pub struct DataModelState<
     kv_buf: Mutex<RefCell<[u8; KB]>>,
 }
 
-impl<N, const NS: usize, const NE: usize, const KB: usize> DataModelState<N, NS, NE, KB> {
+impl<N, const NS: usize, const NE: usize, const KB: usize> InteractionModelState<N, NS, NE, KB> {
     /// Create a new state instance backed by the given (raw) [`Networks`] store.
     pub const fn new(networks: N) -> Self {
         Self {
@@ -185,7 +185,7 @@ impl<N, const NS: usize, const NE: usize, const KB: usize> DataModelState<N, NS,
 }
 
 /// Recombines a store-only [`SharedKvBlobStore`] with the scratch buffer owned by
-/// a [`DataModelState`] to present a full [`KvBlobStoreAccess`].
+/// a [`InteractionModelState`] to present a full [`KvBlobStoreAccess`].
 ///
 /// The buffer lock is always taken first, then the store lock, so the two-lock
 /// order is consistent across all persistence paths (and single-threaded
@@ -238,21 +238,21 @@ pub struct InteractionModel<
     kv: SharedKvBlobStore<S>,
     net_ctl: NC,
     subscriptions_buffers: SubscriptionsBuffers<'a, B, NS>,
-    state: &'a DataModelState<N, NS, NE, KB>,
+    state: &'a InteractionModelState<N, NS, NE, KB>,
     handler: T,
 }
 
-/// A [`DataModelState`] for an Ethernet device: its network store is a fixed
+/// A [`InteractionModelState`] for an Ethernet device: its network store is a fixed
 /// [`EthNetwork`], so call sites need only the (defaulted) subscription/event
 /// sizes. Pairs with [`EthInteractionModel`].
-pub type EthDataModelState<
+pub type EthInteractionModelState<
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
     const KB: usize = DEFAULT_KV_BUF_SIZE,
-> = DataModelState<EthNetwork<'static>, NS, NE, KB>;
+> = InteractionModelState<EthNetwork<'static>, NS, NE, KB>;
 
 /// A [`InteractionModel`] for an Ethernet device (network store fixed to [`EthNetwork`]),
-/// so the `N` generic disappears from call sites. Pairs with [`EthDataModelState`].
+/// so the `N` generic disappears from call sites. Pairs with [`EthInteractionModelState`].
 pub type EthInteractionModel<
     'a,
     C,
@@ -265,18 +265,18 @@ pub type EthInteractionModel<
     const KB: usize = DEFAULT_KV_BUF_SIZE,
 > = InteractionModel<'a, C, B, T, S, EthNetwork<'static>, NC, NS, NE, KB>;
 
-/// A [`DataModelState`] for a wireless device, parameterized by the concrete
+/// A [`InteractionModelState`] for a wireless device, parameterized by the concrete
 /// wireless network store `N` (e.g. `WifiNetworks<3>` or a Thread store). Pairs
 /// with [`WirelessInteractionModel`].
-pub type WirelessDataModelState<
+pub type WirelessInteractionModelState<
     N,
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
     const KB: usize = DEFAULT_KV_BUF_SIZE,
-> = DataModelState<N, NS, NE, KB>;
+> = InteractionModelState<N, NS, NE, KB>;
 
 /// A [`InteractionModel`] for a wireless device (network store `N`, network controller
-/// `NC`). Pairs with [`WirelessDataModelState`].
+/// `NC`). Pairs with [`WirelessInteractionModelState`].
 pub type WirelessInteractionModel<
     'a,
     C,
@@ -313,7 +313,7 @@ where
     ///   clusters of the data model. Note that the expectations is for the user to provide a handler that handles the Matter system clusters
     ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods
     /// - `kv` - an instance of type `S` which implements the `KvBlobStoreAccess` trait. This instance is used for interacting with the key-value blob store.
-    /// - `state` - a reference to the [`DataModelState`] holding the subscriptions table, the
+    /// - `state` - a reference to the [`InteractionModelState`] holding the subscriptions table, the
     ///   events queue and the network store (the latter parameterized by the `Networks`
     ///   implementation `N`).
     #[inline(always)]
@@ -323,7 +323,7 @@ where
         buffers: &'a B,
         handler: T,
         kv: SharedKvBlobStore<S>,
-        state: &'a DataModelState<N, NS, NE, KB>,
+        state: &'a InteractionModelState<N, NS, NE, KB>,
     ) -> Self {
         Self::new_with_net_ctl(
             matter,
@@ -362,7 +362,7 @@ where
     /// - `kv` - an instance of type `S` which implements the `KvBlobStoreAccess` trait. This instance is used for interacting with the key-value blob store.
     /// - `net_ctl` - the network controller (`NetCtl` + `WirelessDiag` + `NetChangeNotif`) used by
     ///   the operational wireless connection manager driven from [`InteractionModel::run`].
-    /// - `state` - a reference to the [`DataModelState`] holding the subscriptions table, the
+    /// - `state` - a reference to the [`InteractionModelState`] holding the subscriptions table, the
     ///   events queue and the network store (the latter parameterized by the `Networks`
     ///   implementation `N`).
     #[inline(always)]
@@ -373,7 +373,7 @@ where
         handler: T,
         kv: SharedKvBlobStore<S>,
         net_ctl: NC,
-        state: &'a DataModelState<N, NS, NE, KB>,
+        state: &'a InteractionModelState<N, NS, NE, KB>,
     ) -> Self {
         state.subscriptions.clear();
 
@@ -400,13 +400,13 @@ where
 
     /// Return a [`KvBlobStoreAccess`] for interacting with the key-value blob
     /// store. This recombines the store-only `S` held by the data model with the
-    /// scratch buffer owned by the [`DataModelState`].
+    /// scratch buffer owned by the [`InteractionModelState`].
     pub fn kv(&self) -> impl KvBlobStoreAccess + '_ {
         self.kv_access()
     }
 
     /// Recombine the store-only KV (`self.kv`) with the scratch buffer owned by
-    /// [`DataModelState`] into a full [`KvBlobStoreAccess`].
+    /// [`InteractionModelState`] into a full [`KvBlobStoreAccess`].
     fn kv_access(&self) -> StateKvBlobStore<'_, S, KB> {
         StateKvBlobStore {
             store: &self.kv,

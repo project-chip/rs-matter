@@ -60,7 +60,7 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, DataModel, Dataver, Endpoint, EpClMatcher, EthDataModelState, EventEmitter,
+    Async, DataModel, Dataver, Endpoint, EpClMatcher, EthInteractionModelState, EventEmitter,
     InteractionModel, Node,
 };
 use rs_matter::error::Error;
@@ -109,7 +109,8 @@ fn main() -> Result<(), Error> {
     // state carries a real (non-zero) event queue that holds them until
     // subscribers read them. It also owns the KV scratch buffer, which all the
     // startup loads below reuse rather than allocating a separate one.
-    let mut state: EthDataModelState = EthDataModelState::new(EthNetwork::new_default());
+    let mut state: EthInteractionModelState =
+        EthInteractionModelState::new(EthNetwork::new_default());
 
     // The Binding registry (the switch's address book), loaded from persistence.
     let bindings = Bindings::<MAX_BINDINGS>::new();
