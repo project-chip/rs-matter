@@ -1354,7 +1354,7 @@ mod asynch {
     /// Handlers are typically implemented by user-defined clusters, but there is no 1:1 correspondence between
     /// a handler and a cluster, as a single handler can handle multiple clusters and even multiple endpoints.
     ///
-    /// Moreover, the `DataModel` implementation expects a single `AsyncHandler` instance, so the expectation
+    /// Moreover, the `InteractionModel` implementation expects a single `AsyncHandler` instance, so the expectation
     /// is that the user will compose multiple handlers into a single `AsyncHandler` instance, using `ChainedHandler`
     /// or other means.
     pub trait AsyncHandler {

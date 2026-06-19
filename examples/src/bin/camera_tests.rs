@@ -71,7 +71,7 @@ use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::{endpoints, DataModel};
+use rs_matter::dm::{endpoints, InteractionModel};
 use rs_matter::dm::{
     ArrayAttributeRead, Async, DataModelHandler, Dataver, DeviceType, Endpoint, EpClMatcher,
     EthDataModelState, InvokeContext, Node, ReadContext, WriteContext,
@@ -561,7 +561,7 @@ fn main() -> Result<(), Error> {
 
     let chime = ChimeHandler::new(Dataver::new_rand(&mut rand));
 
-    let dm = DataModel::new(
+    let im = InteractionModel::new(
         matter,
         &crypto,
         buffers,
@@ -578,9 +578,9 @@ fn main() -> Result<(), Error> {
         &state,
     );
 
-    let responder = DefaultResponder::new(&dm);
+    let responder = DefaultResponder::new(&im);
     let mut respond = pin!(responder.run::<4, 4>());
-    let mut dm_job = pin!(dm.run());
+    let mut im_job = pin!(im.run());
 
     let udp_socket = async_io::Async::<UdpSocket>::bind(args::bind_addr())?;
     let tcp_socket = async_io::Async::<TcpListener>::bind(args::bind_addr())?;
@@ -614,7 +614,7 @@ fn main() -> Result<(), Error> {
     let all = select3(
         &mut transport,
         &mut mdns,
-        select3(&mut respond, &mut dm_job, &mut term).coalesce(),
+        select3(&mut respond, &mut im_job, &mut term).coalesce(),
     );
 
     futures_lite::future::block_on(all.coalesce())

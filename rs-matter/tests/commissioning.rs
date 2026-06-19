@@ -18,7 +18,7 @@
 //! Full in-process commissioning integration test.
 //!
 //! Exercises the complete flow:
-//! 1. Device (in-process) starts with a full DataModel + mDNS responder
+//! 1. Device (in-process) starts with a full InteractionModel + mDNS responder
 //! 2. Controller discovers the device via mDNS
 //! 3. PASE session established over UDP
 //! 4. IM read on OnOff attribute (ep 1) — assert initial value is `false`
@@ -63,8 +63,8 @@ use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use rs_matter::dm::{
-    endpoints, Async, DataModel, DataModelHandler, DataModelState, Dataver, Endpoint, EpClMatcher,
-    Node,
+    endpoints, Async, DataModelHandler, DataModelState, Dataver, Endpoint, EpClMatcher,
+    InteractionModel, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::im::IMStatusCode;
@@ -196,7 +196,7 @@ macro_rules! commissioning_test {
                 TestOnOffDeviceLogic::new(false),
             );
 
-            let dm = DataModel::new(
+            let dm = InteractionModel::new(
                 device_matter,
                 &device_crypto,
                 device_buffers,

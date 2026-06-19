@@ -27,7 +27,7 @@ use crate::dm::events::DEFAULT_MAX_EVENTS_BUF_SIZE;
 use crate::dm::networks::wireless::NoopWirelessNetCtl;
 use crate::dm::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use crate::dm::DataModelHandler;
-use crate::dm::{DataModel, IMBuffer};
+use crate::dm::{IMBuffer, InteractionModel};
 use crate::error::Error;
 use crate::im::busy::BusyInteractionModel;
 use crate::im::PROTO_ID_INTERACTION_MODEL;
@@ -263,7 +263,7 @@ where
     }
 }
 
-/// A type alias for the "default" responder handler, which is a chained handler of the `DataModel` and `SecureChannel` handlers.
+/// A type alias for the "default" responder handler, which is a chained handler of the `InteractionModel` and `SecureChannel` handlers.
 pub type DefaultExchangeHandler<
     'd,
     'a,
@@ -277,7 +277,7 @@ pub type DefaultExchangeHandler<
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
     const KB: usize = DEFAULT_KV_BUF_SIZE,
 > = ChainedExchangeHandler<
-    &'d DataModel<'a, C, B, T, S, N, NC, NS, NE, KB>,
+    &'d InteractionModel<'a, C, B, T, S, N, NC, NS, NE, KB>,
     SecureChannel<'d, &'d C>,
 >;
 
@@ -287,9 +287,11 @@ where
     B: Buffers<IMBuffer>,
 {
     /// Creates a "default" responder. This is a responder that composes and uses the `rs-matter`-provided `ExchangeHandler` implementations
-    /// (`SecureChannel` and `DataModel`) for handling the Secure Channel protocol and the Interaction Model protocol.
+    /// (`SecureChannel` and `InteractionModel`) for handling the Secure Channel protocol and the Interaction Model protocol.
     #[inline(always)]
-    pub const fn new_default(data_model: &'d DataModel<'a, C, B, T, S, N, NC, NS, NE, KB>) -> Self
+    pub const fn new_default(
+        data_model: &'d InteractionModel<'a, C, B, T, S, N, NC, NS, NE, KB>,
+    ) -> Self
     where
         C: Crypto,
         T: DataModelHandler,
@@ -365,7 +367,7 @@ where
 {
     /// Creates the responder composition.
     #[inline(always)]
-    pub const fn new(data_model: &'d DataModel<'a, C, B, T, S, N, NC, NS, NE, KB>) -> Self {
+    pub const fn new(data_model: &'d InteractionModel<'a, C, B, T, S, N, NC, NS, NE, KB>) -> Self {
         Self {
             responder: Responder::new_default(data_model),
             busy_responder: Responder::new_busy(data_model.matter(), RESPOND_BUSY_MS),
@@ -389,7 +391,7 @@ where
     ) -> &Responder<
         'a,
         ChainedExchangeHandler<
-            &'d DataModel<'a, C, B, T, S, N, NC, NS, NE, KB>,
+            &'d InteractionModel<'a, C, B, T, S, N, NC, NS, NE, KB>,
             SecureChannel<'d, &'d C>,
         >,
     > {

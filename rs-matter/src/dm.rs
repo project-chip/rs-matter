@@ -72,12 +72,12 @@ mod types;
 pub type IMBuffer = crate::transport::exchange::Buffer;
 
 /// An `ExchangeHandler` implementation capable of handling responder exchanges for the Interaction Model protocol.
-/// The mutable, owned-together state a [`DataModel`] operates on: the
+/// The mutable, owned-together state a [`InteractionModel`] operates on: the
 /// subscriptions table, the events queue and the network store.
 ///
 /// Allocating these as a single value (rather than three separate locals wired
 /// up by hand at every call site) is the whole point: construct one
-/// `DataModelState`, then hand a reference to it to [`DataModel::new`]. Each of
+/// `DataModelState`, then hand a reference to it to [`InteractionModel::new`]. Each of
 /// the three pieces keeps its own lock internally (the proven multi-lock model);
 /// folding them behind a single mutex is a possible later refinement.
 ///
@@ -128,7 +128,7 @@ impl<N, const NS: usize, const NE: usize, const KB: usize> DataModelState<N, NS,
     /// Re-hydrate this state's persisted contents - the events-queue epoch (so
     /// event numbers are not reused across reboots) and the network store - using
     /// this state's own (owned) scratch buffer. Call once at startup, before the
-    /// state is shared with a [`DataModel`].
+    /// state is shared with a [`InteractionModel`].
     pub async fn load_persist<S>(&mut self, mut kv: S) -> Result<(), Error>
     where
         S: KvBlobStore,
@@ -163,7 +163,7 @@ impl<N, const NS: usize, const NE: usize, const KB: usize> DataModelState<N, NS,
     /// not allocate a separate buffer.
     ///
     /// Available only with exclusive (`&mut`) access - i.e. before the state is
-    /// shared with a [`DataModel`].
+    /// shared with a [`InteractionModel`].
     pub fn kv_buf_mut(&mut self) -> &mut [u8] {
         &mut self.kv_buf.get_mut().get_mut()[..]
     }
@@ -214,11 +214,11 @@ where
 /// The implementation needs a `DataModelHandler` instance to interact with the underlying clusters of the data model.
 ///
 /// `NC` is the network controller type driving the (optional) wireless connection
-/// manager from [`DataModel::run`]. It defaults to [`NoopWirelessNetCtl`], which is
-/// the right choice for Ethernet (and what the convenience [`DataModel::new`]
+/// manager from [`InteractionModel::run`]. It defaults to [`NoopWirelessNetCtl`], which is
+/// the right choice for Ethernet (and what the convenience [`InteractionModel::new`]
 /// constructor wires up); wireless devices pass a real controller via
-/// [`DataModel::new_with_net_ctl`].
-pub struct DataModel<
+/// [`InteractionModel::new_with_net_ctl`].
+pub struct InteractionModel<
     'a,
     C,
     B,
@@ -244,16 +244,16 @@ pub struct DataModel<
 
 /// A [`DataModelState`] for an Ethernet device: its network store is a fixed
 /// [`EthNetwork`], so call sites need only the (defaulted) subscription/event
-/// sizes. Pairs with [`EthDataModel`].
+/// sizes. Pairs with [`EthInteractionModel`].
 pub type EthDataModelState<
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
     const KB: usize = DEFAULT_KV_BUF_SIZE,
 > = DataModelState<EthNetwork<'static>, NS, NE, KB>;
 
-/// A [`DataModel`] for an Ethernet device (network store fixed to [`EthNetwork`]),
+/// A [`InteractionModel`] for an Ethernet device (network store fixed to [`EthNetwork`]),
 /// so the `N` generic disappears from call sites. Pairs with [`EthDataModelState`].
-pub type EthDataModel<
+pub type EthInteractionModel<
     'a,
     C,
     B,
@@ -263,11 +263,11 @@ pub type EthDataModel<
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
     const KB: usize = DEFAULT_KV_BUF_SIZE,
-> = DataModel<'a, C, B, T, S, EthNetwork<'static>, NC, NS, NE, KB>;
+> = InteractionModel<'a, C, B, T, S, EthNetwork<'static>, NC, NS, NE, KB>;
 
 /// A [`DataModelState`] for a wireless device, parameterized by the concrete
 /// wireless network store `N` (e.g. `WifiNetworks<3>` or a Thread store). Pairs
-/// with [`WirelessDataModel`].
+/// with [`WirelessInteractionModel`].
 pub type WirelessDataModelState<
     N,
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
@@ -275,9 +275,9 @@ pub type WirelessDataModelState<
     const KB: usize = DEFAULT_KV_BUF_SIZE,
 > = DataModelState<N, NS, NE, KB>;
 
-/// A [`DataModel`] for a wireless device (network store `N`, network controller
+/// A [`InteractionModel`] for a wireless device (network store `N`, network controller
 /// `NC`). Pairs with [`WirelessDataModelState`].
-pub type WirelessDataModel<
+pub type WirelessInteractionModel<
     'a,
     C,
     B,
@@ -288,10 +288,10 @@ pub type WirelessDataModel<
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
     const KB: usize = DEFAULT_KV_BUF_SIZE,
-> = DataModel<'a, C, B, T, S, N, NC, NS, NE, KB>;
+> = InteractionModel<'a, C, B, T, S, N, NC, NS, NE, KB>;
 
 impl<'a, C, B, T, S, N, const NS: usize, const NE: usize, const KB: usize>
-    DataModel<'a, C, B, T, S, N, NoopWirelessNetCtl, NS, NE, KB>
+    InteractionModel<'a, C, B, T, S, N, NoopWirelessNetCtl, NS, NE, KB>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
@@ -302,9 +302,9 @@ where
     /// Create the data model for a device that does not need an operational
     /// wireless connection manager (typically an Ethernet device).
     ///
-    /// This is a convenience wrapper around [`DataModel::new_with_net_ctl`] that
+    /// This is a convenience wrapper around [`InteractionModel::new_with_net_ctl`] that
     /// fixes the network controller to an inert [`NoopWirelessNetCtl`], so
-    /// [`DataModel::run`]'s connection-management branch stays dormant.
+    /// [`InteractionModel::run`]'s connection-management branch stays dormant.
     ///
     /// # Arguments
     /// - `matter` - a reference to the `Matter` instance
@@ -338,7 +338,7 @@ where
 }
 
 impl<'a, C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize>
-    DataModel<'a, C, B, T, S, N, NC, NS, NE, KB>
+    InteractionModel<'a, C, B, T, S, N, NC, NS, NE, KB>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
@@ -349,9 +349,9 @@ where
     /// Create the data model with an explicit network controller `net_ctl`.
     ///
     /// Use this for wireless devices: `net_ctl` drives the operational connection
-    /// manager run from [`DataModel::run`] (and is typically the same controller
+    /// manager run from [`InteractionModel::run`] (and is typically the same controller
     /// instance also wired into the `NetworkCommissioning` cluster handler). For
-    /// Ethernet devices prefer the [`DataModel::new`] convenience constructor.
+    /// Ethernet devices prefer the [`InteractionModel::new`] convenience constructor.
     ///
     /// # Arguments
     /// - `matter` - a reference to the `Matter` instance
@@ -361,7 +361,7 @@ where
     ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods
     /// - `kv` - an instance of type `S` which implements the `KvBlobStoreAccess` trait. This instance is used for interacting with the key-value blob store.
     /// - `net_ctl` - the network controller (`NetCtl` + `WirelessDiag` + `NetChangeNotif`) used by
-    ///   the operational wireless connection manager driven from [`DataModel::run`].
+    ///   the operational wireless connection manager driven from [`InteractionModel::run`].
     /// - `state` - a reference to the [`DataModelState`] holding the subscriptions table, the
     ///   events queue and the network store (the latter parameterized by the `Networks`
     ///   implementation `N`).
@@ -419,11 +419,11 @@ where
     /// Equivalent to [`Matter::open_basic_comm_window`] but additionally
     /// bumps the data version of the `AdministratorCommissioning`
     /// cluster on the root endpoint and routes the change to
-    /// subscribers — both happen automatically because this `DataModel`
+    /// subscribers — both happen automatically because this `InteractionModel`
     /// is itself the [`AttrChangeNotifier`] passed down.
     ///
     /// Prefer this entry point over the `Matter` one for any code path
-    /// that has a `DataModel` available; `Matter::open_basic_comm_window`
+    /// that has a `InteractionModel` available; `Matter::open_basic_comm_window`
     /// is the building block we delegate to and does not bump dataver
     /// (see its docs).
     pub fn open_basic_comm_window(&self, timeout_secs: u16) -> Result<(), Error> {
@@ -435,7 +435,7 @@ where
     ///
     /// Equivalent to [`Matter::close_comm_window`] but additionally
     /// bumps the `AdministratorCommissioning` dataver and routes
-    /// subscribers via this `DataModel`'s [`AttrChangeNotifier`]. See
+    /// subscribers via this `InteractionModel`'s [`AttrChangeNotifier`]. See
     /// `open_basic_comm_window` for the rationale.
     pub fn close_comm_window(&self) -> Result<bool, Error> {
         self.matter.close_comm_window(self)
@@ -443,7 +443,7 @@ where
 
     /// Bump `BasicInformation::ConfigurationVersion` by one, persist
     /// the new value, and notify subscribers (which also bumps the
-    /// `BasicInformation` cluster's dataver via this `DataModel`'s
+    /// `BasicInformation` cluster's dataver via this `InteractionModel`'s
     /// [`AttrChangeNotifier`]).
     ///
     /// Per Matter Core Spec, callers MUST invoke this
@@ -1277,7 +1277,7 @@ where
 }
 
 impl<C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize> ExchangeHandler
-    for DataModel<'_, C, B, T, S, N, NC, NS, NE, KB>
+    for InteractionModel<'_, C, B, T, S, N, NC, NS, NE, KB>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
@@ -1286,12 +1286,12 @@ where
     N: Networks,
 {
     async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
-        DataModel::handle(self, &mut exchange).await
+        InteractionModel::handle(self, &mut exchange).await
     }
 }
 
 impl<C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize> HandlerContext
-    for DataModel<'_, C, B, T, S, N, NC, NS, NE, KB>
+    for InteractionModel<'_, C, B, T, S, N, NC, NS, NE, KB>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
@@ -1329,7 +1329,7 @@ where
 }
 
 impl<C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize> AttrChangeNotifier
-    for DataModel<'_, C, B, T, S, N, NC, NS, NE, KB>
+    for InteractionModel<'_, C, B, T, S, N, NC, NS, NE, KB>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
@@ -1373,7 +1373,7 @@ where
 }
 
 impl<C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize> EventEmitter
-    for DataModel<'_, C, B, T, S, N, NC, NS, NE, KB>
+    for InteractionModel<'_, C, B, T, S, N, NC, NS, NE, KB>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,

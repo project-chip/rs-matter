@@ -77,7 +77,7 @@ use rs_matter::dm::networks::wireless::{
 };
 use rs_matter::dm::networks::NetChangeNotif;
 use rs_matter::dm::{
-    Async, DataModel, Dataver, Endpoint, EpClMatcher, Node, WirelessDataModelState,
+    Async, Dataver, Endpoint, EpClMatcher, InteractionModel, Node, WirelessDataModelState,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -193,7 +193,7 @@ type AppDmHandler<'a> = handler_chain_type!(
     | WifiSysHandler<'a, &'a AppNetCtl<'a>>
 );
 type AppCrypto = RustCrypto<'static, WeakTestOnlyRand>;
-type AppDataModel<'a> = DataModel<
+type AppDataModel<'a> = InteractionModel<
     'a,
     &'a AppCrypto,
     MatterBuffers,
@@ -304,7 +304,7 @@ fn main() -> ! {
     report_size("Network controller", size_of_val(net_ctl), &mut aux_total);
 
     // The operational Wifi connection manager is now driven from inside
-    // `DataModel::run` (no separate task); its footprint shows up under the data
+    // `InteractionModel::run` (no separate task); its footprint shows up under the data
     // model future below.
 
     let crypto = &*mk_static!(
@@ -339,7 +339,7 @@ fn main() -> ! {
     // operational Wifi connection manager itself (no separate manager task).
     let dm = &*mk_static!(
         AppDataModel,
-        DataModel::new_with_net_ctl(
+        InteractionModel::new_with_net_ctl(
             &stack.matter,
             crypto,
             &stack.buffers,

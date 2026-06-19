@@ -51,8 +51,8 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, AttrChangeNotifier, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher,
-    EthDataModelState, Node,
+    Async, AttrChangeNotifier, DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState,
+    InteractionModel, Node,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::qr::QrTextType;
@@ -93,7 +93,7 @@ fn main() -> Result<(), Error> {
 
     // The OTA Requestor's transient, reported update state, for the cluster on
     // endpoint 1 (see `NODE`). State changes are pushed to subscribers via the
-    // data model's change-notifier (the `DataModel`, passed to the OTA loop below).
+    // data model's change-notifier (the `InteractionModel`, passed to the OTA loop below).
     let ota_state = OtaState::new(1);
 
     let buffers: MatterBuffers = MatterBuffers::new();
@@ -115,7 +115,7 @@ fn main() -> Result<(), Error> {
 
     let rand = crypto.rand()?;
 
-    let dm = DataModel::new(
+    let im = InteractionModel::new(
         &matter,
         &crypto,
         &buffers,
@@ -124,9 +124,9 @@ fn main() -> Result<(), Error> {
         &state,
     );
 
-    let responder = DefaultResponder::new(&dm);
+    let responder = DefaultResponder::new(&im);
     let mut respond = pin!(responder.run::<4, 4>());
-    let mut dm_job = pin!(dm.run());
+    let mut im_job = pin!(im.run());
 
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
@@ -136,7 +136,7 @@ fn main() -> Result<(), Error> {
     // The application's OTA update loop, built from the cluster's building blocks.
     // The OTA loop shares the same crypto by reference (`&T: Crypto`), initiating
     // its own CASE exchanges to the provider.
-    let ota_job = pin!(run_ota(&matter, &crypto, &providers, &ota_state, &dm));
+    let ota_job = pin!(run_ota(&matter, &crypto, &providers, &ota_state, &im));
 
     if !matter.is_commissioned() {
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
@@ -147,7 +147,7 @@ fn main() -> Result<(), Error> {
 
     // Combine the Matter stack (transport, mDNS, responder, data model) with the
     // OTA loop into a single task.
-    let matter_job = select4(&mut transport, &mut mdns, &mut respond, &mut dm_job).coalesce();
+    let matter_job = select4(&mut transport, &mut mdns, &mut respond, &mut im_job).coalesce();
     let all = select(matter_job, ota_job).coalesce();
 
     futures_lite::future::block_on(all)

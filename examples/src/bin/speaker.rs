@@ -40,7 +40,8 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState, Node,
+    Async, DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState, InteractionModel,
+    Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -113,7 +114,7 @@ fn main() -> Result<(), Error> {
     level_control_handler.init(Some(&on_off_handler));
 
     // Create the Data Model instance
-    let dm = DataModel::new(
+    let im = InteractionModel::new(
         &matter,
         &crypto,
         &buffers,
@@ -124,14 +125,14 @@ fn main() -> Result<(), Error> {
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(&dm);
+    let responder = DefaultResponder::new(&im);
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
 
     // Run the background job of the data model
-    let mut dm_job = pin!(dm.run());
+    let mut im_job = pin!(im.run());
 
     // Create the Matter UDP socket
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
@@ -151,7 +152,7 @@ fn main() -> Result<(), Error> {
     }
 
     // Combine all async tasks in a single one
-    let all = select4(&mut transport, &mut mdns, &mut respond, &mut dm_job).coalesce();
+    let all = select4(&mut transport, &mut mdns, &mut respond, &mut im_job).coalesce();
 
     // Run with a simple `block_on`. Any local executor would do.
     futures_lite::future::block_on(all)

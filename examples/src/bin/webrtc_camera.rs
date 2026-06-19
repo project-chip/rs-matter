@@ -36,7 +36,7 @@
 //!   │   matter.run  ──┐                                                      │
 //!   │   mdns        ──┤                                                      │
 //!   │   responder   ──┼── select5 ──► futures_lite::future::block_on         │
-//!   │   dm.run      ──┤                                                      │
+//!   │   im.run      ──┤                                                      │
 //!   │   drive       ──┘                                                      │
 //!   │     │                                                                  │
 //!   │     ▼     LocalExecutor                                                │
@@ -108,8 +108,8 @@ use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TES
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::DataModel;
 use rs_matter::dm::DeviceType;
+use rs_matter::dm::InteractionModel;
 use rs_matter::dm::{DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState, Node};
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -1294,7 +1294,7 @@ fn main() -> Result<(), Error> {
         DemoZoneHooks,
     ));
 
-    let dm = DataModel::new(
+    let im = InteractionModel::new(
         matter,
         &crypto,
         buffers,
@@ -1303,9 +1303,9 @@ fn main() -> Result<(), Error> {
         state,
     );
 
-    let responder = DefaultResponder::new(&dm);
+    let responder = DefaultResponder::new(&im);
     let mut respond = pin!(responder.run::<4, 4>());
-    let mut dm_job = pin!(dm.run());
+    let mut im_job = pin!(im.run());
 
     let udp_socket = Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
@@ -1339,7 +1339,7 @@ fn main() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &())?;
     }
 
-    let matter_core = select4(&mut transport, &mut mdns, &mut respond, &mut dm_job).coalesce();
+    let matter_core = select4(&mut transport, &mut mdns, &mut respond, &mut im_job).coalesce();
     let all = select(matter_core, &mut driver).coalesce();
     futures_lite::future::block_on(all)
 }

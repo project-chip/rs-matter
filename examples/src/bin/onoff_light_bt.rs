@@ -54,7 +54,7 @@ use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, WifiNetworks};
 use rs_matter::dm::networks::NetChangeNotif;
 use rs_matter::dm::{
-    Async, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, Node,
+    Async, DataModelHandler, Dataver, Endpoint, EpClMatcher, InteractionModel, Node,
     WirelessDataModelState,
 };
 use rs_matter::error::Error;
@@ -162,8 +162,8 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
 
     // Create the Data Model instance. The same `net_ctl` is wired both into the
     // `NetworkCommissioning` handler (above) and into the data model, which drives
-    // the operational Wifi connection manager from `DataModel::run`.
-    let dm = DataModel::new_with_net_ctl(
+    // the operational Wifi connection manager from `InteractionModel::run`.
+    let im = InteractionModel::new_with_net_ctl(
         &matter,
         &crypto,
         &buffers,
@@ -175,14 +175,14 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(&dm);
+    let responder = DefaultResponder::new(&im);
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
 
     // Run the background job of the data model
-    let mut dm_job = pin!(dm.run());
+    let mut im_job = pin!(im.run());
 
     // Create and run the mDNS responder
     let mut mdns = pin!(mdns::run_mdns(&matter, &crypto));
@@ -230,7 +230,7 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
                 &mut transport,
                 &mut bluetooth,
                 &mut wifi_prov_task,
-                select(&mut respond, &mut dm_job).coalesce(),
+                select(&mut respond, &mut im_job).coalesce(),
             );
 
             // Run with a simple `block_on`. Any local executor would do.
@@ -247,7 +247,7 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
     let mut transport = pin!(matter.run(&crypto, &udp, &udp, &udp));
 
     // Combine all async tasks in a single one
-    let all = select4(&mut transport, &mut mdns, &mut respond, &mut dm_job).coalesce();
+    let all = select4(&mut transport, &mut mdns, &mut respond, &mut im_job).coalesce();
 
     // Run with a simple `block_on`. Any local executor would do.
     futures_lite::future::block_on(all)

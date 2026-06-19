@@ -52,8 +52,8 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, Cluster, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState,
-    Node,
+    Async, Cluster, DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState,
+    InteractionModel, Node,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::qr::QrTextType;
@@ -151,7 +151,7 @@ fn run() -> Result<(), Error> {
     );
     color_control_handler.init(Some(&on_off_handler));
 
-    let dm = DataModel::new(
+    let im = InteractionModel::new(
         matter,
         &crypto,
         buffers,
@@ -165,10 +165,10 @@ fn run() -> Result<(), Error> {
         state,
     );
 
-    let responder = DefaultResponder::new(&dm);
+    let responder = DefaultResponder::new(&im);
 
     let mut respond = pin!(responder.run::<4, 4>());
-    let mut dm_job = pin!(dm.run());
+    let mut im_job = pin!(im.run());
 
     let socket = async_io::Async::<UdpSocket>::bind(args::bind_addr())?;
 
@@ -194,7 +194,7 @@ fn run() -> Result<(), Error> {
     let all = select3(
         &mut transport,
         &mut mdns,
-        select3(&mut respond, &mut dm_job, &mut term).coalesce(),
+        select3(&mut respond, &mut im_job, &mut term).coalesce(),
     );
 
     futures_lite::future::block_on(all.coalesce())

@@ -319,7 +319,7 @@ pub struct BasicInfoSettings {
     /// `BasicInformation::ConfigurationVersion` (Matter Core Spec).
     /// Non-volatile, monotonically increasing, minimum 1.
     /// Bumped by application code via
-    /// `DataModel::bump_configuration_version` whenever the node's
+    /// `InteractionModel::bump_configuration_version` whenever the node's
     /// fixed-quality surface (Server/Parts list, device types, software
     /// version, …) changes — see Matter Core Spec.
     pub configuration_version: u32,
@@ -369,7 +369,7 @@ impl BasicInfoSettings {
     ///
     /// This routine only mutates the in-memory value. Persistence and
     /// subscriber notification are the caller's responsibility — use
-    /// `DataModel::bump_configuration_version` for the full
+    /// `InteractionModel::bump_configuration_version` for the full
     /// "bump + persist + notify + dataver-bump" pass.
     pub fn bump_configuration_version(&mut self) -> u32 {
         self.configuration_version = self.configuration_version.saturating_add(1);
@@ -481,7 +481,7 @@ impl ClusterHandler for BasicInfoHandler {
         // `BasicInformation`'s `AttributeList`. The
         // `BasicInformation`/`BasicInfoSettings` plumbing for it stays in
         // place — read handler, persisted settings field, and the
-        // `Matter::bump_configuration_version` / `DataModel::bump_configuration_version`
+        // `Matter::bump_configuration_version` / `InteractionModel::bump_configuration_version`
         // entry points — so a user that supplies their own cluster metadata
         // (i.e. one that drops `ConfigurationVersion` from `except!`) gets a
         // working implementation out of the box.
@@ -629,7 +629,7 @@ impl ClusterHandler for BasicInfoHandler {
 
     fn configuration_version(&self, ctx: impl ReadContext) -> Result<u32, Error> {
         // Non-volatile, runtime-mutable. Lives in `BasicInfoSettings`,
-        // bumped via `DataModel::bump_configuration_version`.
+        // bumped via `InteractionModel::bump_configuration_version`.
         Self::with_settings(
             ctx.exchange(),
             |settings| Ok(settings.configuration_version),

@@ -35,7 +35,9 @@ use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::{self, EthSysHandler};
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, EpClMatcher, EthDataModelState, Node};
+use rs_matter::dm::{
+    Async, Dataver, Endpoint, EpClMatcher, EthDataModelState, InteractionModel, Node,
+};
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -107,7 +109,7 @@ fn main() -> Result<(), Error> {
     );
 
     // Create the Data Model instance
-    let dm = DataModel::new(
+    let im = InteractionModel::new(
         matter,
         crypto,
         buffers,
@@ -118,7 +120,7 @@ fn main() -> Result<(), Error> {
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(&dm);
+    let responder = DefaultResponder::new(&im);
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
@@ -127,7 +129,7 @@ fn main() -> Result<(), Error> {
 
     // Run the background job of the data model
     #[allow(unused)]
-    let dm_job = dm.run();
+    let im_job = im.run();
 
     // Create, load and run the persister
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
@@ -154,7 +156,7 @@ fn main() -> Result<(), Error> {
     // executor.spawn(mdns).detach();
 
     // NOTE: Commented out because compiling this line blocks forever
-    //executor.spawn(dm_job).detach();
+    //executor.spawn(im_job).detach();
 
     // NOTE: Commented out because compiling this line spits out the following errors:
     // (Likely, we are experiencing https://github.com/rust-lang/rust/issues/64552)
@@ -183,8 +185,8 @@ fn main() -> Result<(), Error> {
     // 229 |     executor.spawn(respond).detach();
     //     |     ^^^^^^^^^^^^^^^^^^^^^^^ implementation of `Send` is not general enough
     //     |
-    //     = note: `Send` would have to be implemented for the type `&Responder<'_, ChainedExchangeHandler<&DataModel<'_, 15, 0, &RustCrypto<'_, FakeRng>, PooledBuffers<10, heapless::vec::Vec<u8, 1583>>, (Node<'_>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::net_comm::HandlerAsyncAdaptor<NetCommHandler<'_, EthNetCtl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::eth_diag::HandlerAdaptor<EthDiagHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_diag::HandlerAdaptor<GenDiagHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::basic_info::HandlerAdaptor<BasicInfoHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_comm::HandlerAdaptor<GenCommHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::adm_comm::HandlerAdaptor<AdminCommHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::noc::HandlerAdaptor<NocHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::acl::HandlerAdaptor<AclHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::app::on_off::HandlerAsyncAdaptor<OnOffHandler<'_, TestOnOffDeviceLogic, NoLevelControl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, EmptyHandler>>>>>>>>>>>>)>, SecureChannel<'_, &&RustCrypto<'_, FakeRng>>>>`
-    //     = note: ...but `Send` is actually implemented for the type `&'0 Responder<'_, ChainedExchangeHandler<&DataModel<'_, 15, 0, &RustCrypto<'_, FakeRng>, PooledBuffers<10, heapless::vec::Vec<u8, 1583>>, (Node<'_>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::net_comm::HandlerAsyncAdaptor<NetCommHandler<'_, EthNetCtl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::eth_diag::HandlerAdaptor<EthDiagHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_diag::HandlerAdaptor<GenDiagHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::basic_info::HandlerAdaptor<BasicInfoHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_comm::HandlerAdaptor<GenCommHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::adm_comm::HandlerAdaptor<AdminCommHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::noc::HandlerAdaptor<NocHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::acl::HandlerAdaptor<AclHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::app::on_off::HandlerAsyncAdaptor<OnOffHandler<'_, TestOnOffDeviceLogic, NoLevelControl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, EmptyHandler>>>>>>>>>>>>)>, SecureChannel<'_, &&RustCrypto<'_, FakeRng>>>>`, for some specific lifetime `'0`
+    //     = note: `Send` would have to be implemented for the type `&Responder<'_, ChainedExchangeHandler<&InteractionModel<'_, 15, 0, &RustCrypto<'_, FakeRng>, PooledBuffers<10, heapless::vec::Vec<u8, 1583>>, (Node<'_>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::net_comm::HandlerAsyncAdaptor<NetCommHandler<'_, EthNetCtl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::eth_diag::HandlerAdaptor<EthDiagHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_diag::HandlerAdaptor<GenDiagHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::basic_info::HandlerAdaptor<BasicInfoHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_comm::HandlerAdaptor<GenCommHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::adm_comm::HandlerAdaptor<AdminCommHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::noc::HandlerAdaptor<NocHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::acl::HandlerAdaptor<AclHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::app::on_off::HandlerAsyncAdaptor<OnOffHandler<'_, TestOnOffDeviceLogic, NoLevelControl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, EmptyHandler>>>>>>>>>>>>)>, SecureChannel<'_, &&RustCrypto<'_, FakeRng>>>>`
+    //     = note: ...but `Send` is actually implemented for the type `&'0 Responder<'_, ChainedExchangeHandler<&InteractionModel<'_, 15, 0, &RustCrypto<'_, FakeRng>, PooledBuffers<10, heapless::vec::Vec<u8, 1583>>, (Node<'_>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::net_comm::HandlerAsyncAdaptor<NetCommHandler<'_, EthNetCtl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::eth_diag::HandlerAdaptor<EthDiagHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_diag::HandlerAdaptor<GenDiagHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::basic_info::HandlerAdaptor<BasicInfoHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_comm::HandlerAdaptor<GenCommHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::adm_comm::HandlerAdaptor<AdminCommHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::noc::HandlerAdaptor<NocHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::acl::HandlerAdaptor<AclHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::app::on_off::HandlerAsyncAdaptor<OnOffHandler<'_, TestOnOffDeviceLogic, NoLevelControl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, EmptyHandler>>>>>>>>>>>>)>, SecureChannel<'_, &&RustCrypto<'_, FakeRng>>>>`, for some specific lifetime `'0`
     //```
     //executor.spawn(respond).detach();
 

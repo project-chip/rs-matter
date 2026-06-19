@@ -60,8 +60,8 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState,
-    EventEmitter, Node,
+    Async, DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState, EventEmitter,
+    InteractionModel, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -122,7 +122,7 @@ fn main() -> Result<(), Error> {
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
     let rand = crypto.rand()?;
 
-    let dm = DataModel::new(
+    let im = InteractionModel::new(
         &matter,
         &crypto,
         &buffers,
@@ -131,10 +131,10 @@ fn main() -> Result<(), Error> {
         &state,
     );
 
-    let responder = rs_matter::respond::DefaultResponder::new(&dm);
+    let responder = rs_matter::respond::DefaultResponder::new(&im);
     let mut respond = pin!(responder.run::<4, 4>());
 
-    let mut dm_job = pin!(dm.run());
+    let mut im_job = pin!(im.run());
 
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
@@ -148,12 +148,12 @@ fn main() -> Result<(), Error> {
     }
 
     // The switch task: on each Enter, emit Generic Switch press events and
-    // toggle every bound light. `&dm` is the `EventEmitter` used to publish the
+    // toggle every bound light. `&im` is the `EventEmitter` used to publish the
     // Generic Switch events.
-    let mut switch = pin!(run_switch(&matter, &crypto, &bindings, &dm));
+    let mut switch = pin!(run_switch(&matter, &crypto, &bindings, &im));
 
     // Combine the core Matter tasks, then add the switch task alongside.
-    let mut core = pin!(select4(&mut transport, &mut mdns, &mut respond, &mut dm_job,).coalesce());
+    let mut core = pin!(select4(&mut transport, &mut mdns, &mut respond, &mut im_job,).coalesce());
 
     let all = select(&mut core, &mut switch).coalesce();
 

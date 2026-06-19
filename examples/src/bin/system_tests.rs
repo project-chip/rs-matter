@@ -77,8 +77,8 @@ use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, AttrChangeNotifier, Cluster, DataModel, DataModelHandler, Dataver, Endpoint,
-    EpClMatcher, EthDataModelState, Node,
+    Async, AttrChangeNotifier, Cluster, DataModelHandler, Dataver, Endpoint, EpClMatcher,
+    EthDataModelState, InteractionModel, Node,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::PROTO_ID_INTERACTION_MODEL;
@@ -279,7 +279,7 @@ fn main() -> Result<(), Error> {
     };
 
     // Create the Data Model instance
-    let dm = DataModel::new(
+    let im = InteractionModel::new(
         matter,
         &crypto,
         buffers,
@@ -311,8 +311,8 @@ fn main() -> Result<(), Error> {
     let bdx_buffers: &MatterBuffers<2> = BDX_BUFFERS.uninit().init_with(MatterBuffers::init());
     let main_handler = ChainedExchangeHandler::new(
         PROTO_ID_INTERACTION_MODEL,
-        &dm,
-        SecureChannel::new(dm.crypto(), &dm),
+        &im,
+        SecureChannel::new(im.crypto(), &im),
     )
     .chain(
         PROTO_ID_BDX,
@@ -334,7 +334,7 @@ fn main() -> Result<(), Error> {
     });
 
     // Run the background job of the data model
-    let mut dm_job = pin!(dm.run());
+    let mut im_job = pin!(im.run());
 
     // Bind the UDP socket. When `--port` is overridden we have to bind to
     // the same port instead of the default `MATTER_SOCKET_BIND_ADDR` (which
@@ -396,7 +396,7 @@ fn main() -> Result<(), Error> {
     // commands to the DUT through a named pipe at the given path.
     let mut app_pipe_actions = pin!(run_app_pipe_actions(app_pipe, |action| {
         if action.contains("SimulateConfigurationVersionChange") {
-            dm.bump_configuration_version()?;
+            im.bump_configuration_version()?;
 
             Ok(true)
         } else {
@@ -416,7 +416,7 @@ fn main() -> Result<(), Error> {
         Ok(())
     });
 
-    let mut sw_fault_emitter = pin!(emit_software_fault_on_trigger(&dm));
+    let mut sw_fault_emitter = pin!(emit_software_fault_on_trigger(&im));
 
     // OTA Requestor role loop (active only with `--otaDownloadPath`): reacts to
     // `AnnounceOTAProvider` by downloading the image from the announced provider.
@@ -425,7 +425,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         &ota_providers,
         &ota_state,
-        &dm,
+        &im,
         ota_download_path,
     ));
 
@@ -436,7 +436,7 @@ fn main() -> Result<(), Error> {
         &mut app_pipe_actions,
         select4(
             &mut respond,
-            &mut dm_job,
+            &mut im_job,
             &mut sw_fault_emitter,
             select(&mut term, &mut ota_job).coalesce(),
         )
@@ -848,7 +848,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 ),
             )
             // Diagnostic Logs on the root endpoint. The handler's `run` hook (BDX
-            // streaming) is driven as part of this chain by `dm.run()`.
+            // streaming) is driven as part of this chain by `im.run()`.
             .chain(
                 EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(DIAGNOSTIC_LOGS_CLUSTER.id)),
                 DiagLogsHandler::new(Dataver::new_rand(&mut rand), dlog_buffers, log_provider)
@@ -939,7 +939,7 @@ impl GenDiag for TestEventTriggerDiag {
 /// `SoftwareDiagnostics::SoftwareFault` event each time it fires. Bridges
 /// the sync `GenDiag::test_event_trigger` trait method (which can't carry
 /// an event-emitter context) to the async event-emission path on
-/// `DataModel`. The emitted event's fields (`id`, `name`,
+/// `InteractionModel`. The emitted event's fields (`id`, `name`,
 /// `faultRecording`) are vendor-defined; we ship plausible stub values
 /// that satisfy `TC_DGSW_2_2`'s `validate_soft_fault_event_data` shape
 /// checks (uint64 / Utf8 / OctetStr).
@@ -969,7 +969,7 @@ where
 
 /// Read JSON command lines from the named pipe at `path` and dispatch them to
 /// `bump` on the calling task — which is the main thread, so it's free to
-/// touch `&Matter` / `&DataModel` directly (neither is `Sync`).
+/// touch `&Matter` / `&InteractionModel` directly (neither is `Sync`).
 async fn run_app_pipe_actions(
     path: Option<String>,
     mut action: impl FnMut(String) -> Result<bool, Error>,
