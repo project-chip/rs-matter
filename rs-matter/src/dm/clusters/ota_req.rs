@@ -38,9 +38,9 @@ use crate::dm::{
     ArrayAttributeRead, ArrayAttributeWrite, AttrChangeNotifier, Cluster, Dataver, InvokeContext,
     ReadContext, WriteContext,
 };
+use crate::dm::{AttrId, EndptId, NodeId};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
-use crate::im::{AttrId, EndptId, NodeId};
 use crate::persist::{KvBlobStore, Persist, OTA_PROVIDERS_KEY};
 use crate::tlv::{FromTLV, Nullable, Octets, TLVArray, TLVBuilderParent, TLVElement, ToTLV};
 use crate::transport::exchange::Exchange;

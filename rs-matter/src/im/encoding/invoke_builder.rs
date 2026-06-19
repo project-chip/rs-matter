@@ -18,7 +18,7 @@
 //! Streaming TLV builders for `InvokeRequestMessage` and its
 //! sub-structures.
 //!
-//! This is the analog of [`crate::im::attr::write_builder`] for
+//! This is the analog of [`crate::im::encoding::attr::write_builder`] for
 //! command invokes — and the genuine MCU win for client clusters: a
 //! switch wanting to send `OnOff::Toggle` to a bound bulb constructs
 //! the command-request payload directly into the TX `WriteBuf` via

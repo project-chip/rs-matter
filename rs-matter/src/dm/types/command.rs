@@ -18,7 +18,7 @@
 use core::cell::Cell;
 use core::fmt;
 
-use crate::im::{CmdPath, CmdStatus, IMStatusCode};
+use crate::im::encoding::{CmdPath, CmdStatus, IMStatusCode};
 
 use super::{Access, ClusterId, CmdId, EndptId};
 

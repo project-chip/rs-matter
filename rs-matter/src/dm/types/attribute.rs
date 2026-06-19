@@ -24,7 +24,7 @@ use strum::FromRepr;
 use crate::attribute_enum;
 use crate::dm::Metadata;
 use crate::error::{Error, ErrorCode};
-use crate::im::{AttrPath, AttrStatus, IMStatusCode};
+use crate::im::encoding::{AttrPath, AttrStatus, IMStatusCode};
 use crate::tlv::{AsNullable, FromTLV, Nullable, TLVBuilder, TLVBuilderParent, TLVElement, TLVTag};
 use crate::utils::maybe::Maybe;
 

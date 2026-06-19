@@ -21,15 +21,15 @@ use core::fmt;
 use crate::acl::Accessor;
 use crate::dm::{Cluster, Endpoint, Metadata, Quality};
 use crate::error::Error;
-use crate::im::{
+use crate::im::encoding::{
     AttrData, AttrPath, AttrStatus, CmdData, CmdStatus, DataVersionFilter, EventPath, GenericPath,
-    IMStatusCode, InvReq, NodeId, ReportDataReq, WriteReq,
+    IMStatusCode, InvReq, ReportDataReq, WriteReq,
 };
 use crate::tlv::{TLVArray, TLVElement};
 use crate::utils::init::{init, Init};
 use crate::utils::storage::Vec;
 
-use super::{AttrDetails, ClusterId, CmdDetails, EndptId};
+use super::{AttrDetails, ClusterId, CmdDetails, EndptId, NodeId};
 
 /// The main Matter metadata type describing a Matter Node.
 ///
@@ -1025,8 +1025,7 @@ mod test {
         Access, Attribute, Cluster, ClusterId, Command, DeviceType, Endpoint, EndptId, Quality,
     };
     use crate::error::{Error, ErrorCode};
-    use crate::im::GenericPath;
-    use crate::im::IMStatusCode;
+    use crate::im::encoding::{GenericPath, IMStatusCode};
     use crate::test::test_matter;
 
     use super::{Node, Operation, PathExpanderIterator, PathExpansionItem};

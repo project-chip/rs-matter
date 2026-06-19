@@ -22,7 +22,7 @@ use core::num::NonZeroU8;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricPersist;
-use crate::im::IMStatusCode;
+use crate::im::encoding::IMStatusCode;
 use crate::tlv::{Nullable, TLVBuilderParent};
 use crate::{with, MatterState};
 

@@ -18,7 +18,7 @@
 //! Streaming TLV builders for `ReadRequestMessage` and its sub-structures.
 //!
 //! Compare with `WriteReqBuilder` in
-//! [`crate::im::attr::write_builder`]: same typestate-machine shape,
+//! [`crate::im::encoding::attr::write_builder`]: same typestate-machine shape,
 //! same implicit-skip convention (optional fields are omitted by not
 //! calling their setter; later-field setters are available on
 //! earlier states so the user can write a minimal request in one

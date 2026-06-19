@@ -20,8 +20,7 @@ use core::fmt::{self, Debug};
 use crate::acl::{AccessReq, Accessor};
 use crate::dm::*;
 use crate::error::{Error, ErrorCode};
-use crate::im::GenericPath;
-use crate::im::IMStatusCode;
+use crate::im::encoding::{GenericPath, IMStatusCode};
 use crate::tlv::{TLVTag, TLVWrite};
 
 /// A type alias for the attribute matching function

@@ -41,7 +41,7 @@ mod node;
 mod privilege;
 mod reply;
 
-pub use crate::im::types::*;
+pub use crate::im::encoding::types::*;
 
 #[derive(Debug, ToTLV, Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

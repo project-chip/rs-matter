@@ -18,7 +18,7 @@
 use crate::acl::Accessor;
 use crate::dm::{AsyncHandler, GlobalElements, HandlerContext, Node};
 use crate::error::{Error, ErrorCode};
-use crate::im::{
+use crate::im::encoding::{
     AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
     CmdRespTag, CmdStatus, EventData, EventFilter, EventPath, EventResp, IMStatusCode,
 };
