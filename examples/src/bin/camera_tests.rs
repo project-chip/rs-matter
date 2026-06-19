@@ -69,15 +69,17 @@ use rs_matter::dm::clusters::decl::globals::WebRTCEndReasonEnum;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
+use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::{endpoints, InteractionModel};
 use rs_matter::dm::{
     ArrayAttributeRead, Async, DataModel, Dataver, DeviceType, Endpoint, EpClMatcher,
-    EthInteractionModelState, InvokeContext, Node, ReadContext, WriteContext,
+    InvokeContext, Node, ReadContext, WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
+use rs_matter::im::EthInteractionModelState;
 use rs_matter::im::FabricIndex;
+use rs_matter::im::InteractionModel;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::SharedKvBlobStore;

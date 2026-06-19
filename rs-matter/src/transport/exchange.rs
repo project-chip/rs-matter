@@ -67,7 +67,7 @@ pub const MAX_EXCHANGE_TX_BUF_SIZE: usize =
 /// A protocol payload buffer, sized to hold a full exchange RX message
 /// ([`MAX_EXCHANGE_RX_BUF_SIZE`]).
 ///
-/// This is the central buffer type that both [`IMBuffer`](crate::dm::IMBuffer)
+/// This is the central buffer type that both [`IMBuffer`](crate::im::IMBuffer)
 /// and [`BdxBuffer`](crate::bdx::BdxBuffer) alias, so a single
 /// [`PooledBuffers`](crate::utils::storage::pooled::PooledBuffers) pool can be
 /// shared across the data model and BDX.

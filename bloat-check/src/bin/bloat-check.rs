@@ -76,10 +76,9 @@ use rs_matter::dm::networks::wireless::{
     NetCtlState, NetCtlStateMutex, NetCtlWithStatusImpl, WifiNetworks,
 };
 use rs_matter::dm::networks::NetChangeNotif;
-use rs_matter::dm::{
-    Async, Dataver, Endpoint, EpClMatcher, InteractionModel, Node, WirelessInteractionModelState,
-};
+use rs_matter::dm::{Async, Dataver, Endpoint, EpClMatcher, Node};
 use rs_matter::error::Error;
+use rs_matter::im::{InteractionModel, WirelessInteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore, DEFAULT_KV_BUF_SIZE};

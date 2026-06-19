@@ -19,8 +19,8 @@ use core::num::NonZeroU8;
 
 use embassy_time::Instant;
 
-use crate::dm::{AttrId, ClusterId, EndptId, EventId, EventNumber, IMBuffer, NodeId};
 use crate::fabric::MAX_FABRICS;
+use crate::im::{AttrId, ClusterId, EndptId, EventId, EventNumber, IMBuffer, NodeId};
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::pooled::Buffers;

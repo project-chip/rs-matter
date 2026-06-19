@@ -23,14 +23,13 @@ use embassy_futures::select::{select, select_slice};
 
 use crate::crypto::Crypto;
 use crate::dm::clusters::net_comm;
-use crate::dm::events::DEFAULT_MAX_EVENTS_BUF_SIZE;
 use crate::dm::networks::wireless::NoopWirelessNetCtl;
-use crate::dm::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use crate::dm::DataModel;
-use crate::dm::{IMBuffer, InteractionModel};
 use crate::error::Error;
 use crate::im::busy::BusyInteractionModel;
-use crate::im::PROTO_ID_INTERACTION_MODEL;
+use crate::im::events::DEFAULT_MAX_EVENTS_BUF_SIZE;
+use crate::im::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
+use crate::im::{IMBuffer, InteractionModel, PROTO_ID_INTERACTION_MODEL};
 use crate::persist::{KvBlobStore, DEFAULT_KV_BUF_SIZE};
 use crate::sc::busy::BusySecureChannel;
 use crate::sc::SecureChannel;

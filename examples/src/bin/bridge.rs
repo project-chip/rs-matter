@@ -38,10 +38,10 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, EthInteractionModelState,
-    InteractionModel, InvokeContext, Node, ReadContext,
+    Async, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, InvokeContext, Node, ReadContext,
 };
 use rs_matter::error::Error;
+use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};

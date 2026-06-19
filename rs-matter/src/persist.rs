@@ -28,7 +28,7 @@ pub use fileio::*;
 
 /// The default size (in bytes) of the scratch buffer used by the key-value
 /// persistence machinery for (de)serializing BLOBs. This is the buffer that
-/// [`InteractionModelState`](crate::dm::InteractionModelState) owns and the data model
+/// [`InteractionModelState`](crate::im::InteractionModelState) owns and the data model
 /// recombines with the (store-only) [`SharedKvBlobStore`] at runtime.
 pub const DEFAULT_KV_BUF_SIZE: usize = 4096;
 
@@ -209,7 +209,7 @@ impl KvBlobStoreAccess for DummyKvBlobStoreAccess {
 /// mutex.
 ///
 /// The scratch buffer used for (de)serialization is not owned here; it is owned
-/// by [`InteractionModelState`](crate::dm::InteractionModelState) and recombined with this
+/// by [`InteractionModelState`](crate::im::InteractionModelState) and recombined with this
 /// store by the data model into a full [`KvBlobStoreAccess`].
 pub struct SharedKvBlobStore<S>(Mutex<RefCell<S>>);
 
@@ -225,7 +225,7 @@ impl<S> SharedKvBlobStore<S> {
     /// Get exclusive (locked) access to the wrapped `KvBlobStore`.
     ///
     /// The data model uses this to recombine the store with the scratch buffer
-    /// owned by [`InteractionModelState`](crate::dm::InteractionModelState) into a full
+    /// owned by [`InteractionModelState`](crate::im::InteractionModelState) into a full
     /// [`KvBlobStoreAccess`].
     pub fn with_store<F, R>(&self, f: F) -> R
     where

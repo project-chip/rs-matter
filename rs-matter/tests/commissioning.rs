@@ -61,13 +61,11 @@ use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
-use rs_matter::dm::{
-    endpoints, Async, DataModel, Dataver, Endpoint, EpClMatcher, InteractionModel,
-    InteractionModelState, Node,
-};
+use rs_matter::dm::{endpoints, Async, DataModel, Dataver, Endpoint, EpClMatcher, Node};
 use rs_matter::error::Error;
+use rs_matter::im::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use rs_matter::im::IMStatusCode;
+use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::onboard::cac::{IcacGenerator, RcacGenerator};
 use rs_matter::onboard::noc::NocGenerator;
 use rs_matter::onboard::{CommissionOptions, Commissioner};

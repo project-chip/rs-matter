@@ -77,11 +77,11 @@ use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, AttrChangeNotifier, Cluster, DataModel, Dataver, Endpoint, EpClMatcher,
-    EthInteractionModelState, InteractionModel, Node,
+    Async, AttrChangeNotifier, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, Node,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::PROTO_ID_INTERACTION_MODEL;
+use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::SharedKvBlobStore;

@@ -22,10 +22,10 @@ use embassy_futures::select::select;
 
 use crate::crypto::Crypto;
 use crate::dm::clusters::net_comm::NetworksAccess;
-use crate::dm::events::EventTLVWrite;
-use crate::dm::{EventId, IMBuffer, Metadata};
+use crate::dm::{EventId, Metadata};
 use crate::error::{Error, ErrorCode};
-use crate::im::{EventNumber, EventPriority};
+use crate::im::events::EventTLVWrite;
+use crate::im::{EventNumber, EventPriority, IMBuffer};
 use crate::persist::KvBlobStoreAccess;
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;

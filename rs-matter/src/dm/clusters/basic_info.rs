@@ -19,10 +19,10 @@
 
 use core::str::FromStr;
 
-use crate::dm::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
+use crate::im::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use crate::persist::{KvBlobStore, Persist, BASIC_INFO_KEY};
 use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, ToTLV, Utf8StrBuilder};
 use crate::transport::exchange::Exchange;

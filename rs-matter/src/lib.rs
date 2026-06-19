@@ -365,7 +365,7 @@ impl<'a> Matter<'a> {
     /// `AdministratorCommissioning` — a subsequent dataver-filtered
     /// read could therefore cache-hit and miss the change. Application
     /// code that holds a `InteractionModel` should prefer
-    /// [`crate::dm::InteractionModel::open_basic_comm_window`], which delegates
+    /// [`crate::im::InteractionModel::open_basic_comm_window`], which delegates
     /// here and additionally bumps dataver via its
     /// [`AttrChangeNotifier`] impl.
     pub fn open_basic_comm_window<C: Crypto>(
@@ -405,7 +405,7 @@ impl<'a> Matter<'a> {
     /// **Note:** As with [`Matter::open_basic_comm_window`], this does
     /// not bump the per-cluster `Dataver` of
     /// `AdministratorCommissioning`. Prefer
-    /// [`crate::dm::InteractionModel::close_comm_window`] when a `InteractionModel`
+    /// [`crate::im::InteractionModel::close_comm_window`] when a `InteractionModel`
     /// is available.
     pub fn close_comm_window(&self, notify: &dyn AttrChangeNotifier) -> Result<bool, Error> {
         let notify_mdns = || self.transport().notify_mdns_changed();
@@ -430,7 +430,7 @@ impl<'a> Matter<'a> {
     /// `BasicInformation`. A subsequent dataver-filtered read could
     /// therefore cache-hit and miss the change. Application code that
     /// holds a `InteractionModel` should prefer
-    /// [`crate::dm::InteractionModel::bump_configuration_version`], which
+    /// [`crate::im::InteractionModel::bump_configuration_version`], which
     /// delegates here and additionally bumps dataver via its
     /// [`AttrChangeNotifier`] impl.
     ///
