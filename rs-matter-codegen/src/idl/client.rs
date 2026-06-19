@@ -64,7 +64,7 @@ use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
 use super::cluster::NO_RESPONSE;
-use super::field::{field_type_builder, BuilderPolicy};
+use super::field::{field_type_builder, field_type_lt, BuilderPolicy};
 use super::id::{ident, idl_field_name_to_rs_name, idl_field_name_to_rs_type_name};
 use super::parser::{Cluster, EntityContext};
 use super::IdlGenerateContext;
@@ -658,12 +658,17 @@ fn cmd_responses_trait(cluster: &Cluster, context: &IdlGenerateContext) -> Token
 /// per-entry semantics — `Ok(T)` for data, `Err(_)` for status —
 /// match [`rs_matter::im::ReportDataResp::attrs`].
 ///
-/// **Scope:** emits one method per *scalar* attribute (same constraint
-/// as `client_trait`'s read methods — `BuilderPolicy::NonCopyAndStrings`
-/// with `is_builder == false`). Non-scalar attribute types
-/// (struct, list, string) require their own FromTLV-able value type;
-/// callers can use `ReportDataResp::attrs::<T>(cluster, attr)` with
-/// the codegen-emitted struct type for those.
+/// **Scope:** emits one method per attribute — *all* attribute types,
+/// not just scalars. Unlike `client_trait`'s single-shot read methods
+/// (which return the value *by value* and therefore can't return a
+/// borrowed `&str`/struct), these view methods return an
+/// `impl Iterator` whose items *borrow* the `ReportDataResp` over its
+/// lifetime `'a`. Every codegen-emitted attribute value type is
+/// `FromTLV<'a>` and returnable by borrow: scalars (`u16`, …), strings
+/// (`Utf8Str<'a>`/`OctetStr<'a>`), struct wrappers (`Foo<'a>`, which
+/// are just `TLVElement<'a>` newtypes with lazy field accessors) and
+/// lists (`TLVArray<'a, T>`). So no attribute needs the
+/// `ReportDataResp::attrs::<T>(cluster, attr)` fallback.
 fn attr_responses_trait(
     cluster: &Cluster,
     entities: &EntityContext,
@@ -678,34 +683,38 @@ fn attr_responses_trait(
     let entry_method = ident(&format!("{cluster_snake}_read_resp"));
     let cluster_code = Literal::u32_unsuffixed(cluster.code as u32);
 
-    let attr_methods = cluster.attributes.iter().filter_map(|attr| {
-        let parent_dummy = quote!(());
-        let (value_ty, is_builder) = field_type_builder(
+    let attr_methods = cluster.attributes.iter().map(|attr| {
+        // The value type borrows from the `ReportDataResp<'a>`, so it must
+        // carry the named `'a` (not `'_`): a string yields `Utf8Str<'a>`,
+        // a struct yields `Foo<'a>`, a list yields `TLVArray<'a, _>` — all
+        // `FromTLV<'a>` and valid `impl Iterator` item types here.
+        // `is_optional` is not forwarded: in a `ReportDataResp`, an
+        // unsupported optional attribute appears as `AttrResp::Status`,
+        // surfaced through `attrs::`' `Err` arm — never as a `None` `Data`.
+        // So `Option<T>`-for-optional would be dead. (`is_nullable` *is*
+        // forwarded — a nullable attribute may carry a TLV-null value.)
+        let value_ty = field_type_lt(
             &attr.field.field.data_type,
             attr.field.is_nullable,
-            attr.field.is_optional,
-            BuilderPolicy::NonCopyAndStrings,
-            parent_dummy,
+            false,
+            quote!('a),
             entities,
             &krate,
         );
-        if is_builder {
-            return None;
-        }
 
         let method_name = ident(&view_attr_method_name(&attr.field.field.id));
         let attr_code = Literal::u32_unsuffixed(attr.field.field.code as u32);
 
-        Some(quote!(
+        quote!(
             pub fn #method_name(
                 &self,
             ) -> impl Iterator<Item = (
                 #krate::dm::EndptId,
                 Result<#value_ty, #krate::error::Error>,
-            )> + '_ {
+            )> + use<'_, 'a, 'r> {
                 self.resp.attrs::<#value_ty>(#cluster_code, #attr_code)
             }
-        ))
+        )
     });
 
     let trait_doc = Literal::string(&format!(
@@ -714,10 +723,12 @@ fn attr_responses_trait(
          [`{krate}::im::ReportDataResp`]. `use` this trait to call \
          `.{cluster_snake}_read_resp()` on a `ReportDataResp`; the \
          returned [`{cluster_camel}AttrResponsesView`] exposes one \
-         iterator method per scalar attribute, each yielding \
-         `(EndptId, Result<T, Error>)`. Non-scalar attributes (struct, \
-         list, string) require `ReportDataResp::attrs::<T>(cluster, \
-         attr)` directly with the right FromTLV-able type.",
+         iterator method per attribute (scalar, string, struct and \
+         list alike), each yielding `(EndptId, Result<T, Error>)`. The \
+         item type borrows the response, so string/struct/list \
+         attributes come back as `Utf8Str<'a>`/`OctetStr<'a>`, the \
+         codegen struct wrapper `Foo<'a>`, or `TLVArray<'a, _>` \
+         respectively.",
         cluster_id = cluster.id,
     ));
     let view_doc = Literal::string(&format!(
@@ -1132,13 +1143,25 @@ fn client_trait(
         )
     });
 
-    // ---- Attribute-read methods (scalar attrs only) ---------------------
-    let attr_read_methods = cluster.attributes.iter().filter_map(|attr| {
-        // Skip non-scalar attributes — the user can fall back to
-        // `read_with` + the per-cluster `AttrReads` extension trait
-        // for those.
+    // ---- Attribute-read methods -----------------------------------------
+    //
+    // Two flavours, by attribute value type:
+    //
+    // - **Scalar** (`Copy`, small): `<attr>_read(endpoint)` returns
+    //   `Result<T, Error>` by value, draining the chunk loop internally.
+    //
+    // - **Non-scalar** (string, octet string, struct, list): the value
+    //   *borrows* the RX buffer (`Utf8Str<'_>`, `Foo<'_>`, …) and so
+    //   cannot be returned by value. Instead `<attr>_read_with(endpoint, f)`
+    //   takes a closure: it reads, decodes the value, and calls
+    //   `f(Result<Value, Error>)` *while the borrow is live*, returning
+    //   whatever owned `R` the closure produces — then drains the chunk
+    //   loop (sending the trailing `StatusResponse`). A non-served optional
+    //   attribute (or any peer-side failure) surfaces as the `Err` arm
+    //   passed to `f`.
+    let attr_read_methods = cluster.attributes.iter().map(|attr| {
         let parent_dummy = quote!(());
-        let (value_ty, is_builder) = field_type_builder(
+        let (_, is_non_scalar) = field_type_builder(
             &attr.field.field.data_type,
             attr.field.is_nullable,
             attr.field.is_optional,
@@ -1147,71 +1170,139 @@ fn client_trait(
             entities,
             &krate,
         );
-        if is_builder {
-            return None;
-        }
 
         // `attr_method` is the renamed view method (collision-safe
-        // via `view_attr_method_name`); `method_name` is the
-        // high-level ClientView method, which keeps the raw
-        // snake_case + `_read` suffix.
+        // via `view_attr_method_name`).
         let attr_method = ident(&view_attr_method_name(&attr.field.field.id));
-        let method_name = ident(&format!(
-            "{}_read",
-            idl_field_name_to_rs_name(&attr.field.field.id)
-        ));
+        let snake = idl_field_name_to_rs_name(&attr.field.field.id);
 
-        Some(quote!(
-            pub async fn #method_name(
-                self,
-                endpoint: #krate::dm::EndptId,
-            ) -> Result<#value_ty, #krate::error::Error> {
-                use #krate::im::client::ImClient as _ImClient;
-                use self::#attr_reads_trait_name as _Reads;
+        let read_request = quote!(
+            use #krate::im::client::ImClient as _ImClient;
+            use self::#attr_reads_trait_name as _Reads;
 
-                let mut chunk = _ImClient::read_with(self.exchange, |msg| {
-                    msg.attr_requests()?
-                        .#attr_reads_entry()
-                        .#attr_method(endpoint)?
-                        .end()?
-                        .fabric_filtered(true)?
-                        .end()
-                })
-                .await?;
+            let mut chunk = _ImClient::read_with(self.exchange, |msg| {
+                msg.attr_requests()?
+                    .#attr_reads_entry()
+                    .#attr_method(endpoint)?
+                    .end()?
+                    .fabric_filtered(true)?
+                    .end()
+            })
+            .await?;
+        );
 
-                let value = {
-                    let resp = chunk.response()?;
-                    let attr_reports = resp
-                        .attr_reports
-                        .as_ref()
-                        .ok_or(#krate::error::ErrorCode::InvalidData)?;
-                    let attr_resp = attr_reports
-                        .iter()
-                        .next()
-                        .ok_or(#krate::error::ErrorCode::InvalidData)?
-                        .map_err(|_| #krate::error::ErrorCode::InvalidData)?;
-                    match attr_resp {
-                        #krate::im::AttrResp::Data(data) => {
-                            #krate::tlv::FromTLV::from_tlv(&data.data)?
-                        }
-                        #krate::im::AttrResp::Status(status) => {
-                            return Err(status
-                                .status
-                                .status
-                                .to_error_code()
-                                .unwrap_or(#krate::error::ErrorCode::Failure)
-                                .into());
-                        }
+        // Decode the single attribute report from the current `chunk` into
+        // `value` (`Result<value_ty, Error>`); `AttrResp::Status` → `Err`.
+        // Shared between both flavours.
+        let decode_value = |value_ty: &TokenStream| {
+            quote!(
+                let resp = chunk.response()?;
+                let attr_reports = resp
+                    .attr_reports
+                    .as_ref()
+                    .ok_or(#krate::error::ErrorCode::InvalidData)?;
+                let attr_resp = attr_reports
+                    .iter()
+                    .next()
+                    .ok_or(#krate::error::ErrorCode::InvalidData)?
+                    .map_err(|_| #krate::error::ErrorCode::InvalidData)?;
+                let value: Result<#value_ty, #krate::error::Error> = match attr_resp {
+                    #krate::im::AttrResp::Data(data) => {
+                        #krate::tlv::FromTLV::from_tlv(&data.data)
+                    }
+                    #krate::im::AttrResp::Status(status) => {
+                        Err(status
+                            .status
+                            .status
+                            .to_error_code()
+                            .unwrap_or(#krate::error::ErrorCode::Failure)
+                            .into())
                     }
                 };
+            )
+        };
 
-                // Drain any remaining chunks (sends trailing StatusResponse).
-                while let Some(next) = chunk.complete().await? {
-                    chunk = next;
+        if is_non_scalar {
+            let method_name = ident(&format!("{snake}_read_with"));
+            // The decoded value borrows the chunk for the closure call only,
+            // so it is spelled with the anonymous `'_` lifetime here.
+            //
+            // `is_optional` is deliberately NOT forwarded: a single-shot read
+            // of an *optional* attribute that the peer doesn't serve comes
+            // back as `AttrResp::Status(Unsupported)` → the `Err` arm, never
+            // as an absent/`None` `Data`. So `Option<T>`-for-optional would be
+            // dead here. (`is_nullable` *is* forwarded — a nullable attribute
+            // can legitimately carry a TLV-null value.)
+            let value_ty = field_type_lt(
+                &attr.field.field.data_type,
+                attr.field.is_nullable,
+                false,
+                quote!('_),
+                entities,
+                &krate,
+            );
+            let decode = decode_value(&value_ty);
+
+            quote!(
+                #[doc = "Read a non-scalar attribute (string, octet string, struct or list) \
+                         whose value *borrows* the response buffer. Decodes the value and \
+                         passes `Result<Value, Error>` to `f` while the borrow is live, \
+                         returning the owned `R` that `f` produces (copy out what you need, \
+                         e.g. `|v| v.map(|s| s.to_string())`). A non-served optional \
+                         attribute surfaces as `Err` to `f`."]
+                pub async fn #method_name<R>(
+                    self,
+                    endpoint: #krate::dm::EndptId,
+                    f: impl FnOnce(Result<#value_ty, #krate::error::Error>) -> R,
+                ) -> Result<R, #krate::error::Error> {
+                    #read_request
+
+                    let out = {
+                        #decode
+                        f(value)
+                    };
+
+                    // Drain any remaining chunks (sends trailing StatusResponse).
+                    while let Some(next) = chunk.complete().await? {
+                        chunk = next;
+                    }
+                    Ok(out)
                 }
-                Ok(value)
-            }
-        ))
+            )
+        } else {
+            let method_name = ident(&format!("{snake}_read"));
+            // See the non-scalar branch: `is_optional` is not forwarded
+            // (unsupported optional ⇒ `Err`, never `None`); `is_nullable` is.
+            let value_ty = field_type_lt(
+                &attr.field.field.data_type,
+                attr.field.is_nullable,
+                false,
+                quote!('_),
+                entities,
+                &krate,
+            );
+            let decode = decode_value(&value_ty);
+
+            quote!(
+                pub async fn #method_name(
+                    self,
+                    endpoint: #krate::dm::EndptId,
+                ) -> Result<#value_ty, #krate::error::Error> {
+                    #read_request
+
+                    let value = {
+                        #decode
+                        value?
+                    };
+
+                    // Drain any remaining chunks (sends trailing StatusResponse).
+                    while let Some(next) = chunk.complete().await? {
+                        chunk = next;
+                    }
+                    Ok(value)
+                }
+            )
+        }
     });
 
     // ---- Attribute-write methods (scalar attrs only) --------------------
@@ -1287,8 +1378,12 @@ fn client_trait(
         "Single-shot IM-client convenience trait for the `{cluster_id}` cluster. \
          `use` this trait to call `.{snake}()` on an \
          [`{krate}::transport::exchange::Exchange`]; the returned \
-         [`{view}`] exposes one method per command and per scalar \
-         attribute (read / write). The cluster ID, command/attribute \
+         [`{view}`] exposes one method per command and per attribute. \
+         Scalar attributes get a by-value `<attr>_read(endpoint)`; \
+         non-scalar ones (string/octet/struct/list, whose value borrows \
+         the response) get `<attr>_read_with(endpoint, |v| …)`, which \
+         hands the borrowed value to the closure and returns its owned \
+         result. The cluster ID, command/attribute \
          ID, request opcode, retransmit loop, response-chunk iteration, \
          and status-only handling are all baked in. DefaultSuccess \
          commands return `Result<(), Error>` and drain the response \
