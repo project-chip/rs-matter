@@ -358,19 +358,17 @@ impl Transport {
         let (sii, sai, sat) = answer.session_params();
 
         self.mdns_resolve.modify(|state| match state {
-            MdnsResolveState::InFlight { service } => {
-                if service.matches_instance(&answer.instance_name) {
-                    *state = MdnsResolveState::Resolved {
-                        ip,
-                        port,
-                        sii,
-                        sai,
-                        sat,
-                    };
-                    (true, ())
-                } else {
-                    (false, ())
-                }
+            MdnsResolveState::InFlight { service }
+                if service.matches_instance(&answer.instance_name) =>
+            {
+                *state = MdnsResolveState::Resolved {
+                    ip,
+                    port,
+                    sii,
+                    sai,
+                    sat,
+                };
+                (true, ())
             }
             // Already resolved (same in-flight target — the rendezvous is
             // single-slot) but not yet consumed: keep the better-scoring address
@@ -542,13 +540,11 @@ impl Transport {
         };
 
         self.mdns_browse.modify(|state| match state {
-            MdnsBrowseState::InFlight { filter, exclude } => {
-                if !exclude.contains(&id) && filter.matches(answer) {
-                    *state = MdnsBrowseState::Found { ip, port, id };
-                    (true, ())
-                } else {
-                    (false, ())
-                }
+            MdnsBrowseState::InFlight { filter, exclude }
+                if !exclude.contains(&id) && filter.matches(answer) =>
+            {
+                *state = MdnsBrowseState::Found { ip, port, id };
+                (true, ())
             }
             // Already matched this same instance but not yet consumed: keep the
             // better-scoring address. Backends that surface one address per
