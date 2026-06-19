@@ -23,7 +23,9 @@ use super::id::ident;
 use super::parser::{DataType, EntityContext};
 
 /// Return a stream representing the Rust type that corresponds to the given
-/// IDL type.
+/// IDL type, using the anonymous (`'_`) lifetime for borrowing types.
+///
+/// See [`field_type_lt`] for the lifetime-parameterized variant.
 ///
 /// # Arguments
 /// - `f`: The IDL type.
@@ -38,19 +40,46 @@ pub fn field_type(
     entities: &EntityContext,
     krate: &Ident,
 ) -> TokenStream {
-    let mut field_type = field_type_builtin(f, krate, true).unwrap_or_else(|| {
+    field_type_lt(f, nullable, optional, quote!('_), entities, krate)
+}
+
+/// Like [`field_type`], but emits the provided `lifetime` for borrowing types
+/// (strings, octet strings, struct wrappers and lists) instead of the anonymous
+/// `'_`.
+///
+/// This is needed when the returned type must outlive the immediate expression
+/// — e.g. when it is the `Item` of an `impl Iterator` that borrows from a
+/// response buffer with a named lifetime (the attribute-response views), rather
+/// than a plain `Result<T, _>` return where `'_` elision suffices.
+///
+/// # Arguments
+/// - `f`: The IDL type.
+/// - `nullable`: Whether the type is nullable.
+/// - `optional`: Whether the type is optional (applicable only for struct members and attributes).
+/// - `lifetime`: The lifetime token to use for borrowing types (e.g. `quote!('a)`).
+/// - `entities`: The context of entities to which the type belongs.
+/// - `krate`: The crate name.
+pub fn field_type_lt(
+    f: &DataType,
+    nullable: bool,
+    optional: bool,
+    lifetime: TokenStream,
+    entities: &EntityContext,
+    krate: &Ident,
+) -> TokenStream {
+    let mut field_type = field_type_builtin_lt(f, krate, &lifetime).unwrap_or_else(|| {
         let ident = ident(f.name.as_str());
 
         let structure = entities.structs().any(|s| s.id == f.name);
         if structure {
-            quote!(#ident<'_>)
+            quote!(#ident<#lifetime>)
         } else {
             quote!(#ident)
         }
     });
 
     if f.is_list {
-        field_type = quote!(#krate::tlv::TLVArray<'_, #field_type>);
+        field_type = quote!(#krate::tlv::TLVArray<#lifetime, #field_type>);
     }
 
     if nullable {
@@ -197,19 +226,35 @@ fn field_type_copy(f: &DataType, entities: &EntityContext, krate: &Ident) -> Opt
 }
 
 /// Return a stream representing the Rust type that corresponds to the given
+/// IDL built-in type, using an anonymous (`'_`) lifetime for borrowing types
+/// when `anon_lifetime` is `true`, or a named `'a` lifetime otherwise.
+///
+/// Thin convenience wrapper over [`field_type_builtin_lt`].
+fn field_type_builtin(f: &DataType, krate: &Ident, anon_lifetime: bool) -> Option<TokenStream> {
+    let lifetime = if anon_lifetime {
+        quote!('_)
+    } else {
+        quote!('a)
+    };
+    field_type_builtin_lt(f, krate, &lifetime)
+}
+
+/// Return a stream representing the Rust type that corresponds to the given
 /// IDL built-in type.
 ///
 /// # Arguments
 /// - `f`: The IDL type.
 /// - `krate`: The crate name.
-/// - `anon_lifetime`: Whether to use an anonymous (`'_`) lifetime for the returned Rust type or
-///   a regular one (`'a`)
-///   Only relevant when the built-in type is a Utf string or octet string.
+/// - `lifetime`: The lifetime token to use for borrowing types (Utf8/octet strings).
 ///
 /// # Returns
 /// `Some` stream representing the Rust type that corresponds to the given IDL built-in type,
 /// or `None` if the IDL type is not a built-in type.
-fn field_type_builtin(f: &DataType, krate: &Ident, anon_lifetime: bool) -> Option<TokenStream> {
+fn field_type_builtin_lt(
+    f: &DataType,
+    krate: &Ident,
+    lifetime: &TokenStream,
+) -> Option<TokenStream> {
     // NOTE: f.max_length is not used (i.e. we do not limit or check string length limit)
 
     Some(match f.name.to_ascii_lowercase().as_str() {
@@ -270,18 +315,10 @@ fn field_type_builtin(f: &DataType, krate: &Ident, anon_lifetime: bool) -> Optio
         // Items with lifetime. If updating this, remember to add things to
         // [needs_lifetime]
         "char_string" | "long_char_string" => {
-            if anon_lifetime {
-                quote!(#krate::tlv::Utf8Str<'_>)
-            } else {
-                quote!(#krate::tlv::Utf8Str<'a>)
-            }
+            quote!(#krate::tlv::Utf8Str<#lifetime>)
         }
         "octet_string" | "long_octet_string" => {
-            if anon_lifetime {
-                quote!(#krate::tlv::OctetStr<'_>)
-            } else {
-                quote!(#krate::tlv::OctetStr<'a>)
-            }
+            quote!(#krate::tlv::OctetStr<#lifetime>)
         }
 
         // Unsupported bits.

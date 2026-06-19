@@ -500,6 +500,14 @@ async fn test_onoff_cluster(
     );
     info!("Toggle verified: {initial_value} -> {final_value}");
 
+    info!("Step 3d: Reading a string attribute (BasicInformation::VendorName)...");
+    let vendor_name = read_vendor_name_with_timeout(matter, fab_idx, peer_node_id).await?;
+    info!("VendorName: {vendor_name}");
+    assert_eq!(
+        vendor_name, TEST_DEV_DET.vendor_name,
+        "Expected VendorName to match the served BasicInfoConfig"
+    );
+
     Ok(())
 }
 
@@ -531,6 +539,42 @@ async fn read_onoff(exchange: Exchange<'_>) -> Result<bool, Error> {
     // and chunk drain (trailing StatusResponse) are all baked into
     // the codegen-emitted `on_off_on_off_read`.
     exchange.on_off().on_off_read(1).await
+}
+
+async fn read_vendor_name_with_timeout(
+    matter: &Matter<'_>,
+    fab_idx: core::num::NonZeroU8,
+    peer_node_id: u64,
+) -> Result<String, Error> {
+    let exchange = Exchange::initiate(matter, test_only_crypto(), fab_idx, peer_node_id).await?;
+    debug!("VendorName read exchange initiated: {}", exchange.id());
+
+    let mut read_fut = pin!(read_vendor_name(exchange));
+    let mut timeout = pin!(Timer::after(Duration::from_secs(IM_TIMEOUT_SECS)));
+
+    match select(&mut read_fut, &mut timeout).await {
+        Either::First(result) => result,
+        Either::Second(_) => {
+            warn!("Read operation timed out");
+            Err(rs_matter::error::ErrorCode::RxTimeout.into())
+        }
+    }
+}
+
+async fn read_vendor_name(exchange: Exchange<'_>) -> Result<String, Error> {
+    use rs_matter::dm::clusters::decl::basic_information::BasicInformationClient;
+
+    // `VendorName` is a *string* attribute, so its value (`Utf8Str<'_>`)
+    // borrows the response buffer and can't be returned by value. The
+    // codegen emits `<attr>_read_with(endpoint, f)` for non-scalar
+    // attributes: it reads, hands the borrowed `Result<Utf8Str, Error>`
+    // to `f` while the buffer is live, and returns the owned value `f`
+    // produces — here, an owned `String`. (Scalar attributes like OnOff
+    // use the by-value `<attr>_read` instead.)
+    exchange
+        .basic_information()
+        .vendor_name_read_with(0, |v| v.map(String::from))
+        .await?
 }
 
 async fn invoke_toggle_with_timeout(
