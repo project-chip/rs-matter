@@ -158,6 +158,37 @@ impl<N, const NS: usize, const NE: usize, const KB: usize> InteractionModelState
         Ok(())
     }
 
+    /// Reset this state's persisted contents to factory defaults - the
+    /// events-queue epoch and the network store - removing both from `kv` using
+    /// this state's own scratch buffer. Call once during a factory reset, with
+    /// exclusive (`&mut`) access (i.e. before the state is shared with a
+    /// [`InteractionModel`]).
+    pub async fn reset_persist<S>(&mut self, mut kv: S) -> Result<(), Error>
+    where
+        S: KvBlobStore,
+        N: Networks,
+    {
+        // We hold `&mut self`, so borrow the scratch buffer directly - no locking.
+        let Self {
+            events,
+            networks,
+            kv_buf,
+            ..
+        } = self;
+
+        let buf = &mut kv_buf.get_mut().get_mut()[..];
+
+        // The event-number epoch.
+        events.reset_persist(&mut kv, buf).await?;
+
+        // The network store.
+        let networks = networks.get_mut().get_mut();
+        networks.reset()?;
+        kv.remove(NETWORKS_KEY, buf)?;
+
+        Ok(())
+    }
+
     /// Borrow this state's owned scratch buffer for one-time startup loads (e.g.
     /// [`Matter::load_persist`] or a cluster's `load_persist`), so callers need
     /// not allocate a separate buffer.
@@ -506,6 +537,26 @@ where
         let mut mgr = WirelessMgr::new(self.state.networks(), &self.net_ctl, &mut buf);
 
         mgr.run().await
+    }
+
+    /// Perform a single, one-shot connect to the wireless network with the given
+    /// ID, immediately and regardless of the commissioning status.
+    ///
+    /// This drives the same [`WirelessMgr`] used by [`InteractionModel::run`]
+    /// (over this model's network controller and the network store owned by its
+    /// [`InteractionModelState`]), but calls [`WirelessMgr::connect_once`] rather
+    /// than the operational loop. It exists so a stack performing **non-concurrent**
+    /// (BLE-only) commissioning can replay the deferred `ConnectNetwork` once the
+    /// operational radio is up but before commissioning completes - without having
+    /// to own a `WirelessMgr` (or the networks) itself.
+    pub async fn connect_once(&self, network_id: &[u8]) -> Result<(), Error>
+    where
+        NC: NetCtl + WirelessDiag + NetChangeNotif,
+    {
+        let mut buf = [0u8; MAX_CREDS_SIZE];
+        let mut mgr = WirelessMgr::new(self.state.networks(), &self.net_ctl, &mut buf);
+
+        mgr.connect_once(network_id).await
     }
 
     async fn run_timeout_checks(&self) -> Result<(), Error> {
