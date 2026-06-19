@@ -52,8 +52,8 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, Cluster, DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState,
-    InteractionModel, Node,
+    Async, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, EthDataModelState, InteractionModel,
+    Node,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::qr::QrTextType;
@@ -155,7 +155,7 @@ fn run() -> Result<(), Error> {
         matter,
         &crypto,
         buffers,
-        dm_handler(
+        data_model(
             rand,
             &on_off_handler,
             &level_control_handler,
@@ -217,12 +217,12 @@ const NODE: Node<'static> = Node {
     ],
 };
 
-fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks, CH: ColorControlHooks>(
+fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks, CH: ColorControlHooks>(
     mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
     color_control: &'a color_control::ColorControlHandler<'a, CH, OH, LH>,
-) -> impl DataModelHandler + 'a {
+) -> impl DataModel + 'a {
     (
         NODE,
         endpoints::EthSysHandlerBuilder::new()

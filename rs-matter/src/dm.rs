@@ -211,7 +211,7 @@ where
     }
 }
 
-/// The implementation needs a `DataModelHandler` instance to interact with the underlying clusters of the data model.
+/// The implementation needs a `DataModel` instance to interact with the underlying clusters of the data model.
 ///
 /// `NC` is the network controller type driving the (optional) wireless connection
 /// manager from [`InteractionModel::run`]. It defaults to [`NoopWirelessNetCtl`], which is
@@ -295,7 +295,7 @@ impl<'a, C, B, T, S, N, const NS: usize, const NE: usize, const KB: usize>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
-    T: DataModelHandler,
+    T: DataModel,
     S: KvBlobStore,
     N: Networks,
 {
@@ -309,7 +309,7 @@ where
     /// # Arguments
     /// - `matter` - a reference to the `Matter` instance
     /// - `buffers` - a reference to an implementation of `Buffers<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
-    /// - `handler` - an instance of type `T` which implements the `DataModelHandler` trait. This instance is used for interacting with the underlying
+    /// - `handler` - an instance of type `T` which implements the `DataModel` trait. This instance is used for interacting with the underlying
     ///   clusters of the data model. Note that the expectations is for the user to provide a handler that handles the Matter system clusters
     ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods
     /// - `kv` - an instance of type `S` which implements the `KvBlobStoreAccess` trait. This instance is used for interacting with the key-value blob store.
@@ -342,7 +342,7 @@ impl<'a, C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
-    T: DataModelHandler,
+    T: DataModel,
     S: KvBlobStore,
     N: Networks,
 {
@@ -356,7 +356,7 @@ where
     /// # Arguments
     /// - `matter` - a reference to the `Matter` instance
     /// - `buffers` - a reference to an implementation of `Buffers<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
-    /// - `handler` - an instance of type `T` which implements the `DataModelHandler` trait. This instance is used for interacting with the underlying
+    /// - `handler` - an instance of type `T` which implements the `DataModel` trait. This instance is used for interacting with the underlying
     ///   clusters of the data model. Note that the expectations is for the user to provide a handler that handles the Matter system clusters
     ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods
     /// - `kv` - an instance of type `S` which implements the `KvBlobStoreAccess` trait. This instance is used for interacting with the key-value blob store.
@@ -551,7 +551,7 @@ where
         })
     }
 
-    /// Answer a responding exchange using the `DataModelHandler` instance wrapped by this exchange handler.
+    /// Answer a responding exchange using the `DataModel` instance wrapped by this exchange handler.
     pub async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
         let fetch_meta = |exchange: &mut Exchange| {
             let meta = exchange.rx()?.meta();
@@ -1121,7 +1121,7 @@ where
         with_dataver: bool,
     ) -> Result<bool, Error>
     where
-        T: DataModelHandler,
+        T: DataModel,
     {
         let mut wb = WriteBuf::new(tx);
 
@@ -1281,7 +1281,7 @@ impl<C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize> Excha
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
-    T: DataModelHandler,
+    T: DataModel,
     S: KvBlobStore,
     N: Networks,
 {
@@ -1295,7 +1295,7 @@ impl<C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize> Handl
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
-    T: DataModelHandler,
+    T: DataModel,
     S: KvBlobStore,
     N: Networks,
 {
@@ -1333,7 +1333,7 @@ impl<C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize> AttrC
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
-    T: DataModelHandler,
+    T: DataModel,
     S: KvBlobStore,
     N: Networks,
 {
@@ -1377,7 +1377,7 @@ impl<C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usize> Event
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
-    T: DataModelHandler,
+    T: DataModel,
     S: KvBlobStore,
     N: Networks,
 {

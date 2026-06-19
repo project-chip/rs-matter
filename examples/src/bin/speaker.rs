@@ -40,8 +40,7 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState, InteractionModel,
-    Node,
+    Async, DataModel, Dataver, Endpoint, EpClMatcher, EthDataModelState, InteractionModel, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -118,7 +117,7 @@ fn main() -> Result<(), Error> {
         &matter,
         &crypto,
         &buffers,
-        dm_handler(rand, &on_off_handler, &level_control_handler),
+        data_model(rand, &on_off_handler, &level_control_handler),
         SharedKvBlobStore::new(kv),
         &state,
     );
@@ -176,11 +175,11 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the Speaker handler.
-fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
+fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks>(
     mut rand: impl RngCore + Copy,
     on_off: &'a OnOffHandler<'a, OH, LH>,
     level_control: &'a LevelControlHandler<'a, LH, OH>,
-) -> impl DataModelHandler + 'a {
+) -> impl DataModel + 'a {
     (
         NODE,
         endpoints::EthSysHandlerBuilder::new()

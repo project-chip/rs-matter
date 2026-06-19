@@ -73,7 +73,7 @@ use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{endpoints, InteractionModel};
 use rs_matter::dm::{
-    ArrayAttributeRead, Async, DataModelHandler, Dataver, DeviceType, Endpoint, EpClMatcher,
+    ArrayAttributeRead, Async, DataModel, Dataver, DeviceType, Endpoint, EpClMatcher,
     EthDataModelState, InvokeContext, Node, ReadContext, WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
@@ -565,7 +565,7 @@ fn main() -> Result<(), Error> {
         matter,
         &crypto,
         buffers,
-        dm_handler(
+        data_model(
             rand,
             webrtc,
             cam_av,
@@ -663,7 +663,7 @@ const NODE: Node<'static> = Node {
 // Handler wiring
 // ---------------------------------------------------------------------------
 
-fn dm_handler<'a>(
+fn data_model<'a>(
     mut rand: impl RngCore + Copy,
     webrtc: &'a WebRtc,
     cam_av: &'a CamAv,
@@ -675,7 +675,7 @@ fn dm_handler<'a>(
     zone_mgmt: &'a ZoneMgmtHandler<StubZoneHooks, ZONE_NZ, ZONE_NV, ZONE_NT>,
     push_av: &'a PushAvStreamHandler<'static, StubPushHooks, PUSH_NC>,
     chime: ChimeHandler,
-) -> impl DataModelHandler + 'a {
+) -> impl DataModel + 'a {
     (
         NODE,
         endpoints::EthSysHandlerBuilder::new()

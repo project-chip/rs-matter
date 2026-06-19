@@ -110,7 +110,7 @@ use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::DeviceType;
 use rs_matter::dm::InteractionModel;
-use rs_matter::dm::{DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState, Node};
+use rs_matter::dm::{DataModel, Dataver, Endpoint, EpClMatcher, EthDataModelState, Node};
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -1298,7 +1298,7 @@ fn main() -> Result<(), Error> {
         matter,
         &crypto,
         buffers,
-        dm_handler(rand, webrtc, cam_av, cam_av_settings, zone_mgmt),
+        data_model(rand, webrtc, cam_av, cam_av_settings, zone_mgmt),
         SharedKvBlobStore::new(kv),
         state,
     );
@@ -1375,7 +1375,7 @@ const NODE: Node<'static> = Node {
     ],
 };
 
-fn dm_handler<'a>(
+fn data_model<'a>(
     mut rand: impl RngCore + Copy,
     webrtc: &'a WebRtc,
     cam_av: &'a CameraAvStreamHandler<'static, Str0mCamHooks, CAM_AV_NV>,
@@ -1385,7 +1385,7 @@ fn dm_handler<'a>(
         CAM_AV_SETTINGS_NS,
     >,
     zone_mgmt: &'a ZoneMgmtHandler<DemoZoneHooks, ZONE_NZ, ZONE_NV, ZONE_NT>,
-) -> impl DataModelHandler + 'a {
+) -> impl DataModel + 'a {
     (
         NODE,
         endpoints::EthSysHandlerBuilder::new()

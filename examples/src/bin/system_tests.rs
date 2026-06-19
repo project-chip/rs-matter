@@ -77,7 +77,7 @@ use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, AttrChangeNotifier, Cluster, DataModelHandler, Dataver, Endpoint, EpClMatcher,
+    Async, AttrChangeNotifier, Cluster, DataModel, Dataver, Endpoint, EpClMatcher,
     EthDataModelState, InteractionModel, Node,
 };
 use rs_matter::error::{Error, ErrorCode};
@@ -112,7 +112,7 @@ static BUFFERS: StaticCell<MatterBuffers<20>> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 static GEN_DIAG: StaticCell<TestEventTriggerDiag> = StaticCell::new();
 // UserLabel registry — host endpoints and labels-per-endpoint counts
-// match `dm_handler`'s `UserLabelHandler<'_, E, N>` parameterisation.
+// match `data_model`'s `UserLabelHandler<'_, E, N>` parameterisation.
 static USER_LABELS: StaticCell<UserLabels<1, 4>> = StaticCell::new();
 // Binding registry. Capacity 16 — `TestBinding` writes a 17-entry
 // table and expects `RESOURCE_EXHAUSTED`, so this bound is what makes
@@ -283,7 +283,7 @@ fn main() -> Result<(), Error> {
         matter,
         &crypto,
         buffers,
-        dm_handler(
+        data_model(
             node,
             gen_diag,
             rand,
@@ -598,7 +598,7 @@ const OTA_PROVIDER_CLUSTER: Cluster<'static> =
 const OTA_REQUESTOR_CLUSTER: Cluster<'static> = OtaRequestorHandler::CLUSTER;
 
 /// The Diagnostic Logs cluster metadata, exactly as served by the
-/// [`DiagLogsHandler`] wired in `dm_handler` (so `NODE`'s declaration
+/// [`DiagLogsHandler`] wired in `data_model` (so `NODE`'s declaration
 /// matches the handler).
 const DIAGNOSTIC_LOGS_CLUSTER: Cluster<'static> = <DiagLogsHandler<
     &MatterBuffers<2>,
@@ -709,7 +709,7 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
 // composition root — every additional cluster handler we wire grows
 // the parameter list. Suppressing here is cleaner than abstracting.
 #[allow(clippy::too_many_arguments)]
-fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
+fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     node: &'static Node<'static>,
     gen_diag: &'a dyn GenDiag,
     mut rand: impl RngCore + Copy,
@@ -724,7 +724,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     ota_state: &'a OtaState,
     dlog_buffers: &'a MatterBuffers<2>,
     log_provider: &'a LogFileProvider,
-) -> impl DataModelHandler + 'a {
+) -> impl DataModel + 'a {
     (
         node,
         endpoints::EthSysHandlerBuilder::new()

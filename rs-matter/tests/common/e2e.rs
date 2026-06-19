@@ -26,7 +26,7 @@ use rs_matter::acl::{AclEntry, AuthMode};
 use rs_matter::crypto::{test_only_crypto, Crypto};
 use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
-use rs_matter::dm::{DataModelHandler, DataModelState, InteractionModel, Privilege};
+use rs_matter::dm::{DataModel, DataModelState, InteractionModel, Privilege};
 use rs_matter::error::Error;
 use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::{ExchangeHandler, Responder};
@@ -161,7 +161,7 @@ impl<C: Crypto> E2eRunner<C> {
     /// drive the tests (i.e. it does not have any server clusters and such).
     pub async fn run<H>(&self, handler: H) -> Result<(), Error>
     where
-        H: DataModelHandler,
+        H: DataModel,
     {
         self.init()?;
 

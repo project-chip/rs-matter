@@ -975,8 +975,8 @@ where
     }
 }
 
-pub trait DataModelHandler: Metadata + AsyncHandler {}
-impl<T> DataModelHandler for T where T: Metadata + AsyncHandler {}
+pub trait DataModel: Metadata + AsyncHandler {}
+impl<T> DataModel for T where T: Metadata + AsyncHandler {}
 
 /// A version of the `AsyncHandler` trait that never awaits any operation.
 ///

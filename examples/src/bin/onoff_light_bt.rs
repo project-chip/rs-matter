@@ -54,7 +54,7 @@ use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, WifiNetworks};
 use rs_matter::dm::networks::NetChangeNotif;
 use rs_matter::dm::{
-    Async, DataModelHandler, Dataver, Endpoint, EpClMatcher, InteractionModel, Node,
+    Async, DataModel, Dataver, Endpoint, EpClMatcher, InteractionModel, Node,
     WirelessDataModelState,
 };
 use rs_matter::error::Error;
@@ -167,7 +167,7 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
         &matter,
         &crypto,
         &buffers,
-        dm_handler(rand, &on_off_handler, &net_ctl, &net_ctl),
+        data_model(rand, &on_off_handler, &net_ctl, &net_ctl),
         SharedKvBlobStore::new(kv),
         &net_ctl,
         &state,
@@ -271,12 +271,12 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
+fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
     mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     wifi_diag: &'a dyn WifiDiag,
     net_ctl: T,
-) -> impl DataModelHandler + 'a
+) -> impl DataModel + 'a
 where
     T: NetCtl + NetCtlStatus + 'a,
 {

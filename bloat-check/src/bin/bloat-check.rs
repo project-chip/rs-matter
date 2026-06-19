@@ -193,7 +193,7 @@ type AppDmHandler<'a> = handler_chain_type!(
     | WifiSysHandler<'a, &'a AppNetCtl<'a>>
 );
 type AppCrypto = RustCrypto<'static, WeakTestOnlyRand>;
-type AppDataModel<'a> = InteractionModel<
+type AppInteractionModel<'a> = InteractionModel<
     'a,
     &'a AppCrypto,
     MatterBuffers,
@@ -321,7 +321,7 @@ fn main() -> ! {
     // A Wireless handler with a sample app cluster (on-off)
     let handler = mk_static!(
         AppDmHandler,
-        dm_handler(
+        data_model(
             rand,
             on_off::OnOffHandler::new_standalone(
                 Dataver::new_rand(&mut rand),
@@ -337,8 +337,8 @@ fn main() -> ! {
 
     // Data Model. `net_ctl` is wired in so the data model's `run` drives the
     // operational Wifi connection manager itself (no separate manager task).
-    let dm = &*mk_static!(
-        AppDataModel,
+    let im = &*mk_static!(
+        AppInteractionModel,
         InteractionModel::new_with_net_ctl(
             &stack.matter,
             crypto,
@@ -350,7 +350,7 @@ fn main() -> ! {
         )
     );
 
-    report_size("Data Model", size_of_val(dm), &mut aux_total);
+    report_size("Interaction Model", size_of_val(im), &mut aux_total);
 
     let mdns = mk_static!(BuiltinMdns, BuiltinMdns::new());
 
@@ -379,7 +379,7 @@ fn main() -> ! {
     );
 
     // A default responder
-    let responder = mk_static!(AppResponder, DefaultResponder::new(dm));
+    let responder = mk_static!(AppResponder, DefaultResponder::new(im));
 
     report_size("Responder", size_of_val(&*responder), &mut aux_total);
 
@@ -406,7 +406,7 @@ fn main() -> ! {
         size_of_val(&respond_busy_task_fut(responder, 0)) * 2,
         &mut fut_total,
     );
-    report_size("DM task", size_of_val(&dm_task_fut(dm)), &mut fut_total);
+    report_size("IM task", size_of_val(&im_task_fut(im)), &mut fut_total);
     report_size(
         "mDNS task",
         size_of_val(&mdns_task_fut(mdns, &stack.matter, crypto)),
@@ -457,7 +457,7 @@ fn main() -> ! {
         spawner.spawn(unwrap!(respond_task(responder, 2)));
         spawner.spawn(unwrap!(respond_task(responder, 1)));
         spawner.spawn(unwrap!(respond_task(responder, 0)));
-        spawner.spawn(unwrap!(dm_task(dm)));
+        spawner.spawn(unwrap!(im_task(im)));
         spawner.spawn(unwrap!(mdns_task(mdns, &stack.matter, crypto)));
         spawner.spawn(unwrap!(btp_task(&stack.btp)));
         spawner.spawn(unwrap!(transport_task(
@@ -498,14 +498,16 @@ async fn respond_busy_task(responder: &'static AppResponder<'static, 'static>, h
 }
 
 #[inline(always)]
-fn dm_task_fut<'a>(dm: &'a AppDataModel<'a>) -> impl Future<Output = Result<(), Error>> + 'a {
-    dm.run()
+fn im_task_fut<'a>(
+    im: &'a AppInteractionModel<'a>,
+) -> impl Future<Output = Result<(), Error>> + 'a {
+    im.run()
 }
 
 #[embassy_executor::task]
-async fn dm_task(dm: &'static AppDataModel<'static>) {
+async fn im_task(im: &'static AppInteractionModel<'static>) {
     info!("Starting DM task...");
-    unwrap!(dm_task_fut(dm).await);
+    unwrap!(im_task_fut(im).await);
 }
 
 #[inline(always)]
@@ -614,7 +616,7 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a>(
+fn data_model<'a>(
     mut rand: impl RngCore + Copy,
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
     wifi_diag: &'a dyn WifiDiag,

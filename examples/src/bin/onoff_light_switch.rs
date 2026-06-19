@@ -60,7 +60,7 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState, EventEmitter,
+    Async, DataModel, Dataver, Endpoint, EpClMatcher, EthDataModelState, EventEmitter,
     InteractionModel, Node,
 };
 use rs_matter::error::Error;
@@ -126,7 +126,7 @@ fn main() -> Result<(), Error> {
         &matter,
         &crypto,
         &buffers,
-        dm_handler(rand, &bindings),
+        data_model(rand, &bindings),
         SharedKvBlobStore::new(kv),
         &state,
     );
@@ -348,10 +348,10 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler: root endpoint 0 + the Descriptor and Binding handlers
 /// on the switch endpoint.
-fn dm_handler<'a, const N: usize>(
+fn data_model<'a, const N: usize>(
     mut rand: impl RngCore + Copy,
     bindings: &'a Bindings<N>,
-) -> impl DataModelHandler + 'a {
+) -> impl DataModel + 'a {
     (
         NODE,
         endpoints::EthSysHandlerBuilder::new()

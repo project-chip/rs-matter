@@ -26,7 +26,7 @@ use crate::dm::clusters::net_comm;
 use crate::dm::events::DEFAULT_MAX_EVENTS_BUF_SIZE;
 use crate::dm::networks::wireless::NoopWirelessNetCtl;
 use crate::dm::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
-use crate::dm::DataModelHandler;
+use crate::dm::DataModel;
 use crate::dm::{IMBuffer, InteractionModel};
 use crate::error::Error;
 use crate::im::busy::BusyInteractionModel;
@@ -294,7 +294,7 @@ where
     ) -> Self
     where
         C: Crypto,
-        T: DataModelHandler,
+        T: DataModel,
         S: KvBlobStore,
         N: net_comm::Networks,
     {
@@ -361,7 +361,7 @@ impl<'d, 'a, C, B, T, S, N, NC, const NS: usize, const NE: usize, const KB: usiz
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
-    T: DataModelHandler,
+    T: DataModel,
     S: KvBlobStore,
     N: net_comm::Networks,
 {

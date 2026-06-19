@@ -113,7 +113,7 @@ fn main() -> Result<(), Error> {
         matter,
         crypto,
         buffers,
-        (NODE, dm_handler(rand, on_off_handler)),
+        (NODE, data_model(rand, on_off_handler)),
         SharedKvBlobStore::new(kv),
         state,
     );
@@ -209,7 +209,7 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a>(
+fn data_model<'a>(
     mut rand: impl RngCore + Copy,
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
 ) -> AppDmHandler<'a> {

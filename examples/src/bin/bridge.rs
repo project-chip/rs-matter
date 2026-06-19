@@ -38,8 +38,8 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, Cluster, DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState,
-    InteractionModel, InvokeContext, Node, ReadContext,
+    Async, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, EthDataModelState, InteractionModel,
+    InvokeContext, Node, ReadContext,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -106,7 +106,7 @@ fn main() -> Result<(), Error> {
         &matter,
         &crypto,
         &buffers,
-        dm_handler(rand, &on_off_handler_ep2, &on_off_handler_ep3),
+        data_model(rand, &on_off_handler_ep2, &on_off_handler_ep3),
         SharedKvBlobStore::new(kv),
         &state,
     );
@@ -197,11 +197,11 @@ const NODE: Node<'static> = Node {
 };
 
 /// The Data Model handler + meta-data for our Matter Bridge.
-fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
+fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     mut rand: impl RngCore + Copy,
     on_off_ep2: &'a on_off::OnOffHandler<'a, OH, LH>,
     on_off_ep3: &'a on_off::OnOffHandler<'a, OH, LH>,
-) -> impl DataModelHandler + 'a {
+) -> impl DataModel + 'a {
     (
         NODE,
         endpoints::EthSysHandlerBuilder::new()

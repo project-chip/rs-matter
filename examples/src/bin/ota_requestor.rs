@@ -51,7 +51,7 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
-    Async, AttrChangeNotifier, DataModelHandler, Dataver, Endpoint, EpClMatcher, EthDataModelState,
+    Async, AttrChangeNotifier, DataModel, Dataver, Endpoint, EpClMatcher, EthDataModelState,
     InteractionModel, Node,
 };
 use rs_matter::error::{Error, ErrorCode};
@@ -119,7 +119,7 @@ fn main() -> Result<(), Error> {
         &matter,
         &crypto,
         &buffers,
-        dm_handler(rand, &providers, &ota_state),
+        data_model(rand, &providers, &ota_state),
         SharedKvBlobStore::new(kv),
         &state,
     );
@@ -167,11 +167,11 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler: the root endpoint 0 handler plus the OTA Requestor
 /// cluster (and its descriptor) on endpoint 1.
-fn dm_handler<'a>(
+fn data_model<'a>(
     mut rand: impl RngCore + Copy,
     providers: &'a Providers,
     ota_state: &'a OtaState,
-) -> impl DataModelHandler + 'a {
+) -> impl DataModel + 'a {
     (
         NODE,
         endpoints::EthSysHandlerBuilder::new()

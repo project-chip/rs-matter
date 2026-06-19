@@ -63,8 +63,8 @@ use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use rs_matter::dm::{
-    endpoints, Async, DataModelHandler, DataModelState, Dataver, Endpoint, EpClMatcher,
-    InteractionModel, Node,
+    endpoints, Async, DataModel, DataModelState, Dataver, Endpoint, EpClMatcher, InteractionModel,
+    Node,
 };
 use rs_matter::error::Error;
 use rs_matter::im::IMStatusCode;
@@ -127,10 +127,10 @@ const NODE: Node<'static> = Node {
     ],
 };
 
-fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
+fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
-) -> impl DataModelHandler + 'a {
+) -> impl DataModel + 'a {
     (
         NODE,
         endpoints::EthSysHandlerBuilder::new()
@@ -200,7 +200,7 @@ macro_rules! commissioning_test {
                 device_matter,
                 &device_crypto,
                 device_buffers,
-                dm_handler(rand, &on_off_handler),
+                data_model(rand, &on_off_handler),
                 SharedKvBlobStore::new(DummyKvBlobStore),
                 device_state,
             );
