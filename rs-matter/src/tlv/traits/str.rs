@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2024-2025 Project CHIP Authors
+ *    Copyright (c) 2024-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -69,6 +69,24 @@ impl<'a, const N: usize> FromTLV<'a> for String<N> {
 }
 
 impl<const N: usize> ToTLV for String<N> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        tw.utf8(tag, self)
+    }
+
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+        TLV::utf8(tag, self.as_str()).into_tlv_iter()
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<'a> FromTLV<'a> for alloc::string::String {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<alloc::string::String, Error> {
+        element.utf8().map(alloc::string::String::from)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl ToTLV for alloc::string::String {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
         tw.utf8(tag, self)
     }

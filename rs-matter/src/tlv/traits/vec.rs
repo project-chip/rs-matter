@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2024-2025 Project CHIP Authors
+ *    Copyright (c) 2024-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -63,6 +63,38 @@ where
 }
 
 impl<T, const N: usize> ToTLV for Vec<T, N>
+where
+    T: ToTLV,
+{
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+        self.as_slice().to_tlv(tag, tw)
+    }
+
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+        tlv_array_iter(tag, self.iter())
+    }
+}
+
+/// TLV support for the heap-allocated `alloc::vec::Vec<T>` (unbounded, no `N`).
+/// Serialized/deserialized as a TLV array, like the bounded `Vec<T, N>` above.
+#[cfg(feature = "alloc")]
+impl<'a, T> FromTLV<'a> for alloc::vec::Vec<T>
+where
+    T: FromTLV<'a> + 'a,
+{
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+        let mut vec = alloc::vec::Vec::new();
+
+        for item in TLVArray::new(element.clone())? {
+            vec.push(item?);
+        }
+
+        Ok(vec)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<T> ToTLV for alloc::vec::Vec<T>
 where
     T: ToTLV,
 {

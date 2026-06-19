@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2024-2025 Project CHIP Authors
+ *    Copyright (c) 2024-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -17,9 +17,11 @@
 
 //! TLV support for octet strings (i.e. byte arrays).
 //!
-//! Support is provided via two dedicated newtypes:
+//! Support is provided via dedicated newtypes:
 //! - `Octets<'a>` newtype which wraps an ordinary `&[u8]` - for borrowed byte arrays
 //! - `OctetsOwned<const N>` newtype which wraps a `Vec<u8, N>` for owned byte arrays of fixed length N
+//! - `OctetsVec` newtype which wraps an `alloc::vec::Vec<u8>` for owned, unbounded byte
+//!   arrays (requires the `alloc` feature)
 //!
 //! Newtype wrapping is necessary because naked Rust slices, arrays and the naked `Vec` type
 //! serialize and deserialize as TLV arrays, rather than as octet strings.
@@ -162,6 +164,85 @@ impl<'a, const N: usize> FromTLV<'a> for OctetsOwned<N> {
 }
 
 impl<const N: usize> ToTLV for OctetsOwned<N> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        tw.str(tag, &self.vec)
+    }
+
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+        TLV::str(tag, self.vec.as_slice()).into_tlv_iter()
+    }
+}
+
+/// Newtype for owned, **unbounded** (heap-allocated) byte arrays, backed by
+/// `alloc::vec::Vec<u8>`.
+///
+/// The `alloc` analog of [`OctetsOwned`]: use it for owned octet strings whose
+/// length is not known at compile time (e.g. certificate chains). Like the other
+/// octet newtypes, it serializes as a TLV octet string — *not* as a TLV array of
+/// `u8` (which is what a naked `Vec<u8>` would do).
+#[cfg(feature = "alloc")]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Default)]
+#[repr(transparent)]
+pub struct OctetsVec {
+    pub vec: alloc::vec::Vec<u8>,
+}
+
+#[cfg(feature = "alloc")]
+impl OctetsVec {
+    /// Create a new empty `OctetsVec` instance.
+    pub const fn new() -> Self {
+        Self {
+            vec: alloc::vec::Vec::new(),
+        }
+    }
+
+    /// Wrap an existing `Vec<u8>`.
+    pub const fn from_vec(vec: alloc::vec::Vec<u8>) -> Self {
+        Self { vec }
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl Borrow<[u8]> for OctetsVec {
+    fn borrow(&self) -> &[u8] {
+        &self.vec
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl BorrowMut<[u8]> for OctetsVec {
+    fn borrow_mut(&mut self) -> &mut [u8] {
+        &mut self.vec
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl Deref for OctetsVec {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.vec
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl DerefMut for OctetsVec {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.vec
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<'a> FromTLV<'a> for OctetsVec {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+        Ok(Self {
+            vec: element.str()?.into(),
+        })
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl ToTLV for OctetsVec {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
         tw.str(tag, &self.vec)
     }
