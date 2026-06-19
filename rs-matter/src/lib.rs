@@ -720,6 +720,20 @@ impl<'a> Matter<'a> {
         removed
     }
 
+    /// Access the mutable basic information settings (`NodeLabel`, location, …)
+    /// by invoking a closure with a mutable reference to them.
+    ///
+    /// Intended for the application to seed defaults (e.g. an initial
+    /// `NodeLabel`) after [`Self::startup`]. Note that mutations performed
+    /// here are in-memory only; persist explicitly via [`crate::persist::Persist`]
+    /// if the change must survive a restart.
+    pub fn with_basic_info_settings<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut BasicInfoSettings) -> R,
+    {
+        self.with_state(|state| f(&mut state.basic_info_settings))
+    }
+
     /// Reset the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
     /// NOTE: User should be careful _not_ to call this method while the transport layer and/or the built-in mDNS is running.
     pub fn reset_transport(&self) -> Result<(), Error> {
