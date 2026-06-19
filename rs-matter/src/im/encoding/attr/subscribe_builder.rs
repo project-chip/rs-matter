@@ -69,7 +69,6 @@
 //! }).await
 //! ```
 
-use crate::dm::GlobalElements;
 use crate::error::Error;
 use crate::im::{
     AttrPath, AttrPathArrayBuilder, DataVersionFilter, EventFilter, EventPath, SubscribeReqTag,
@@ -413,7 +412,7 @@ where
         value: u8,
     ) -> Result<SubscribeReqBuilder<P, 9>, Error> {
         self.p.writer().u8(
-            &TLVTag::Context(GlobalElements::InteractionModelRevision as u8),
+            &TLVTag::Context(crate::im::encoding::IM_REVISION_TAG),
             value,
         )?;
         Ok(SubscribeReqBuilder { p: self.p })

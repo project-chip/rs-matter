@@ -41,8 +41,8 @@ use crate::dm::networks::wireless::{NoopWirelessNetCtl, WirelessMgr, MAX_CREDS_S
 use crate::dm::networks::NetChangeNotif;
 use crate::dm::{
     expand_invoke, expand_read, expand_write, AsyncHandler, AttrChangeNotifier, AttrDetails,
-    Attribute, DataModel, EventEmitter, EventReader, GlobalElements, HandlerContext,
-    HandlerInvoker, MatchContextInstance, Metadata,
+    Attribute, DataModel, EventEmitter, EventReader, HandlerContext, HandlerInvoker,
+    MatchContextInstance, Metadata,
 };
 use crate::error::{Error, ErrorCode};
 use crate::im::events::{EventTLVWrite, Events, DEFAULT_MAX_EVENTS_BUF_SIZE};
@@ -1863,7 +1863,7 @@ where
         // strictly and refuses to commission devices that omit it; the
         // reference chip-tool happens to tolerate the absence.
         wb.u8(
-            &TLVTag::Context(GlobalElements::InteractionModelRevision as u8),
+            &TLVTag::Context(crate::im::encoding::IM_REVISION_TAG),
             IM_REVISION,
         )?;
 
@@ -1939,7 +1939,7 @@ where
         // Mandatory `interactionModelRevision` (tag 0xFF); see note in
         // the ReportData emitter above.
         wb.u8(
-            &TLVTag::Context(GlobalElements::InteractionModelRevision as u8),
+            &TLVTag::Context(crate::im::encoding::IM_REVISION_TAG),
             IM_REVISION,
         )?;
         wb.end_container()?;
@@ -2020,7 +2020,7 @@ where
         // every IM message — see the matching note in the ReportData
         // emitter above.
         wb.u8(
-            &TLVTag::Context(GlobalElements::InteractionModelRevision as u8),
+            &TLVTag::Context(crate::im::encoding::IM_REVISION_TAG),
             IM_REVISION,
         )?;
         wb.end_container()?;

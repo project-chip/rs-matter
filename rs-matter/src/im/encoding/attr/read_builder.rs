@@ -63,8 +63,8 @@
 
 use core::marker::PhantomData;
 
-use crate::dm::{AttrId, ClusterId, EndptId, GlobalElements};
 use crate::error::Error;
+use crate::im::encoding::{AttrId, ClusterId, EndptId};
 use crate::im::{
     AttrPath, AttrPathTag, DataVersionFilter, EventFilter, EventPath, NodeId, ReadReqTag,
     IM_REVISION,
@@ -344,7 +344,7 @@ where
     /// older revision).
     pub fn interaction_model_revision(mut self, value: u8) -> Result<ReadReqBuilder<P, 6>, Error> {
         self.p.writer().u8(
-            &TLVTag::Context(GlobalElements::InteractionModelRevision as u8),
+            &TLVTag::Context(crate::im::encoding::IM_REVISION_TAG),
             value,
         )?;
         Ok(ReadReqBuilder { p: self.p })

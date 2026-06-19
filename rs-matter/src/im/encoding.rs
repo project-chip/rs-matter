@@ -57,16 +57,22 @@ pub const PROTO_ID_INTERACTION_MODEL: u16 = 0x01;
 /// `interactionModelRevision` value emitted on every outgoing IM message
 /// rs-matter sends — both responder-side (ReportData / WriteResponse /
 /// InvokeResponse / StatusResponse / SubscribeResponse, in [`crate::dm`]
-/// and [`crate::im::status`] / [`crate::im::attr::subscribe`]) and
-/// requestor-side (the client builders in [`crate::im::client`] and
-/// [`crate::im::TimedReq`]).
+/// and [`status`] / [`attr::subscribe`]) and requestor-side (the client
+/// builders in [`crate::im::client`] and [`TimedReq`]).
 ///
-/// The TLV context tag is [`GlobalElements::InteractionModelRevision`]
-/// (= `0xFF`).
+/// The TLV context tag it is emitted under is [`IM_REVISION_TAG`] (= `0xFF`).
 ///
 /// `13` has been the spec-mandated value since Matter 1.3; see the
 /// "Revision History" of the Matter Core Specification.
 pub const IM_REVISION: u8 = 13;
+
+/// TLV context tag for the trailing `interactionModelRevision` field present on
+/// every IM message (carries [`IM_REVISION`]). A Matter global element tag.
+pub const IM_REVISION_TAG: u8 = 0xFF;
+
+/// TLV context tag for the `fabricIndex` field of fabric-scoped structs.
+/// A Matter global element tag.
+pub const FABRIC_INDEX_TAG: u8 = 0xFE;
 
 /// An enumeration of all possible error codes that can be returned by the Interaction Model.
 #[derive(FromPrimitive, Debug, Clone, Copy, PartialEq, Eq, Hash)]

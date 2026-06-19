@@ -22,7 +22,6 @@ use core::str::FromStr;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
-use crate::im::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use crate::persist::{KvBlobStore, Persist, BASIC_INFO_KEY};
 use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, ToTLV, Utf8StrBuilder};
 use crate::transport::exchange::Exchange;
@@ -264,13 +263,20 @@ pub struct CapabilityMinima {
     pub subscriptions_per_fabric: u16,
 }
 
+/// The Matter spec mandates `CapabilityMinima.SubscriptionsPerFabric >= 3`.
+/// rs-matter sizes its default subscription table as `MAX_FABRICS * 3` (see
+/// [`DEFAULT_MAX_SUBSCRIPTIONS`](crate::im::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS)),
+/// so this per-fabric minimum is what the device guarantees.
+const SUBSCRIPTIONS_PER_FABRIC: u16 = 3;
+
 impl CapabilityMinima {
-    /// Create a default instance of `CapabilityMinima`,
-    /// with actual CASE sessions per fabric and subscriptions per fabric based on `DEFAULT_MAX_SUBSCRIPTIONS`.
+    /// Create a default instance of `CapabilityMinima`, with CASE sessions per
+    /// fabric derived from the session table and the spec-minimum subscriptions
+    /// per fabric.
     pub const fn new() -> Self {
         Self {
             case_sessions_per_fabric: (MAX_SESSIONS / MAX_FABRICS) as _,
-            subscriptions_per_fabric: (DEFAULT_MAX_SUBSCRIPTIONS / MAX_FABRICS) as _,
+            subscriptions_per_fabric: SUBSCRIPTIONS_PER_FABRIC,
         }
     }
 }

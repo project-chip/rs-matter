@@ -16,7 +16,7 @@
  */
 
 use crate::acl::Accessor;
-use crate::dm::{AsyncHandler, GlobalElements, HandlerContext, Node};
+use crate::dm::{AsyncHandler, HandlerContext, Node};
 use crate::error::{Error, ErrorCode};
 use crate::im::encoding::{
     AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
@@ -400,7 +400,7 @@ impl EventReader {
             return true;
         };
 
-        let Ok(elem) = payload.find_ctx(GlobalElements::FabricIndex as u8) else {
+        let Ok(elem) = payload.find_ctx(crate::im::encoding::FABRIC_INDEX_TAG) else {
             // No `FabricIndex` field — non-fabric-sensitive, allow.
             return true;
         };

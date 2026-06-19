@@ -101,8 +101,8 @@
 
 use core::marker::PhantomData;
 
-use crate::dm::{AttrId, ClusterId, EndptId, GlobalElements};
 use crate::error::Error;
+use crate::im::encoding::{AttrId, ClusterId, EndptId};
 use crate::im::{AttrDataTag, AttrPathTag, WriteReqTag, IM_REVISION};
 use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite};
 
@@ -296,7 +296,7 @@ where
     /// omit and `end()` injects [`IM_REVISION`] automatically.
     pub fn interaction_model_revision(mut self, value: u8) -> Result<WriteReqBuilder<P, 5>, Error> {
         self.p.writer().u8(
-            &TLVTag::Context(GlobalElements::InteractionModelRevision as u8),
+            &TLVTag::Context(crate::im::encoding::IM_REVISION_TAG),
             value,
         )?;
         Ok(WriteReqBuilder { p: self.p })
