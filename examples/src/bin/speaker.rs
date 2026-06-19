@@ -44,7 +44,7 @@ use rs_matter::error::Error;
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
+use rs_matter::persist::DirKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
@@ -62,24 +62,24 @@ fn main() -> Result<(), Error> {
     );
 
     // Create the Matter object
-    let mut matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
     // Persistence
-    let mut kv = DirKvBlobStore::new_default();
+    let store = DirKvBlobStore::new_default();
 
     // Create the transport buffers
     let buffers: MatterBuffers = MatterBuffers::new();
 
-    // Create the data model state (subscriptions, events, network store). It owns
-    // the KV scratch buffer, which the startup loads below reuse rather than
-    // allocating a separate one.
+    // Create the data model state (subscriptions, events, network store).
     let mut state: EthInteractionModelState =
         EthInteractionModelState::new(EthNetwork::new_default());
 
-    // Re-hydrate the `Matter` instance and the data model state (event-number
-    // epoch) using the state's own scratch buffer.
-    futures_lite::future::block_on(matter.load_persist(&mut kv, state.kv_buf_mut()))?;
-    futures_lite::future::block_on(state.load_persist(&mut kv))?;
+    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
+    let kv = matter.kv(store);
+
+    // Re-hydrate the `Matter` instance and the data model state (event-number epoch).
+    futures_lite::future::block_on(matter.load_persist(&kv))?;
+    futures_lite::future::block_on(state.load_persist(&kv))?;
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
@@ -118,7 +118,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         &buffers,
         data_model(rand, &on_off_handler, &level_control_handler),
-        SharedKvBlobStore::new(kv),
+        &kv,
         &state,
     );
 

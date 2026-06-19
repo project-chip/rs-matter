@@ -28,6 +28,15 @@ max-fabrics-3 = [] # default
 max-fabrics-2 = []
 max-fabrics-1 = []
 
+# Size (in bytes) of the key-value persistence scratch buffer owned by `Matter`
+kv-blob-store-65536 = []
+kv-blob-store-32768 = []
+kv-blob-store-16384 = []
+kv-blob-store-8192 = []
+kv-blob-store-4096 = [] # default
+kv-blob-store-2048 = []
+kv-blob-store-1024 = []
+
 # Number of groups per fabrics
 max-groups-per-fabric-32 = []
 max-groups-per-fabric-16 = []

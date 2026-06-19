@@ -17,6 +17,8 @@
 
 //! This module provides the key-value BLOB store traits used throughout `rs-matter` for persistence, as well as some implementations for those.
 
+use cfg_if::cfg_if;
+
 use crate::error::Error;
 use crate::tlv::{TLVTag, ToTLV};
 use crate::utils::cell::RefCell;
@@ -26,11 +28,40 @@ use crate::utils::sync::blocking::Mutex;
 #[cfg(feature = "std")]
 pub use fileio::*;
 
-/// The default size (in bytes) of the scratch buffer used by the key-value
-/// persistence machinery for (de)serializing BLOBs. This is the buffer that
-/// [`InteractionModelState`](crate::im::InteractionModelState) owns and the data model
-/// recombines with the (store-only) [`SharedKvBlobStore`] at runtime.
-pub const DEFAULT_KV_BUF_SIZE: usize = 4096;
+cfg_if! {
+    if #[cfg(feature = "kv-blob-store-65536")] {
+        /// The size (in bytes) of the scratch buffer used by the key-value
+        /// persistence machinery for (de)serializing BLOBs. This is the buffer
+        /// owned by [`Matter`](crate::Matter) and recombined with the user's
+        /// raw [`KvBlobStore`] by [`Matter::kv`](crate::Matter::kv) into a full
+        /// [`KvBlobStoreAccess`].
+        pub const KV_BUF_SIZE: usize = 65536;
+    } else if #[cfg(feature = "kv-blob-store-32768")] {
+        /// The size (in bytes) of the scratch buffer used by the key-value
+        /// persistence machinery for (de)serializing BLOBs.
+        pub const KV_BUF_SIZE: usize = 32768;
+    } else if #[cfg(feature = "kv-blob-store-16384")] {
+        /// The size (in bytes) of the scratch buffer used by the key-value
+        /// persistence machinery for (de)serializing BLOBs.
+        pub const KV_BUF_SIZE: usize = 16384;
+    } else if #[cfg(feature = "kv-blob-store-8192")] {
+        /// The size (in bytes) of the scratch buffer used by the key-value
+        /// persistence machinery for (de)serializing BLOBs.
+        pub const KV_BUF_SIZE: usize = 8192;
+    } else if #[cfg(feature = "kv-blob-store-2048")] {
+        /// The size (in bytes) of the scratch buffer used by the key-value
+        /// persistence machinery for (de)serializing BLOBs.
+        pub const KV_BUF_SIZE: usize = 2048;
+    } else if #[cfg(feature = "kv-blob-store-1024")] {
+        /// The size (in bytes) of the scratch buffer used by the key-value
+        /// persistence machinery for (de)serializing BLOBs.
+        pub const KV_BUF_SIZE: usize = 1024;
+    } else { // Default (`kv-blob-store-4096`)
+        /// The size (in bytes) of the scratch buffer used by the key-value
+        /// persistence machinery for (de)serializing BLOBs.
+        pub const KV_BUF_SIZE: usize = 4096;
+    }
+}
 
 /// The first key available for the vendor-specific data.
 pub const VENDOR_KEYS_START: u16 = 0x1000;
@@ -190,52 +221,47 @@ where
     }
 }
 
-/// A noop implementation of the `KvBlobStoreAccess` trait (uses an empty buffer).
+/// Combines a (store-only) raw [`KvBlobStore`] with a scratch buffer to present a
+/// full [`KvBlobStoreAccess`].
 ///
-/// Useful for tests and for exercising persistence-consuming APIs without a real
-/// store.
-pub struct DummyKvBlobStoreAccess;
+/// This is the concrete type returned by [`Matter::kv`](crate::Matter::kv), where
+/// the buffer is owned by [`Matter`](crate::Matter). It owns the user's raw store
+/// (behind a blocking mutex for interior mutability) and borrows the buffer. The
+/// buffer lock is always taken first, then the store lock, so the two-lock order
+/// is consistent across all persistence paths (and single-threaded executors never
+/// actually block on either).
+///
+/// It can also be constructed directly (e.g. in tests, or to exercise a
+/// persistence-consuming API without a real store) by pairing a
+/// [`DummyKvBlobStore`] with a caller-owned buffer.
+pub struct SharedKvBlobStore<'a, S, const KB: usize> {
+    store: Mutex<RefCell<S>>,
+    buf: &'a Mutex<RefCell<[u8; KB]>>,
+}
 
-impl KvBlobStoreAccess for DummyKvBlobStoreAccess {
+impl<'a, S, const KB: usize> SharedKvBlobStore<'a, S, KB> {
+    /// Create a new access object owning `store` and borrowing `buf`.
+    pub const fn new(store: S, buf: &'a Mutex<RefCell<[u8; KB]>>) -> Self {
+        Self {
+            store: Mutex::new(RefCell::new(store)),
+            buf,
+        }
+    }
+}
+
+impl<S, const KB: usize> KvBlobStoreAccess for SharedKvBlobStore<'_, S, KB>
+where
+    S: KvBlobStore,
+{
     fn access<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut dyn KvBlobStore, &mut [u8]) -> R,
     {
-        f(&mut DummyKvBlobStore, &mut [])
-    }
-}
+        self.buf.lock(|cell| {
+            let mut buf = cell.borrow_mut();
 
-/// A store-only wrapper around a shared `KvBlobStore` instance behind a blocking
-/// mutex.
-///
-/// The scratch buffer used for (de)serialization is not owned here; it is owned
-/// by [`InteractionModelState`](crate::im::InteractionModelState) and recombined with this
-/// store by the data model into a full [`KvBlobStoreAccess`].
-pub struct SharedKvBlobStore<S>(Mutex<RefCell<S>>);
-
-impl<S> SharedKvBlobStore<S> {
-    /// Create a new `SharedKvBlobStore` instance.
-    ///
-    /// # Arguments
-    /// - `store` - the wrapped `KvBlobStore` instance
-    pub const fn new(store: S) -> Self {
-        Self(Mutex::new(RefCell::new(store)))
-    }
-
-    /// Get exclusive (locked) access to the wrapped `KvBlobStore`.
-    ///
-    /// The data model uses this to recombine the store with the scratch buffer
-    /// owned by [`InteractionModelState`](crate::im::InteractionModelState) into a full
-    /// [`KvBlobStoreAccess`].
-    pub fn with_store<F, R>(&self, f: F) -> R
-    where
-        S: KvBlobStore,
-        F: FnOnce(&mut dyn KvBlobStore) -> R,
-    {
-        self.0.lock(|cell| {
-            let mut store = cell.borrow_mut();
-
-            f(&mut *store)
+            self.store
+                .lock(|store| f(&mut *store.borrow_mut(), &mut *buf))
         })
     }
 }
@@ -262,7 +288,7 @@ where
     ) -> Result<(), Error> {
         self.kvb.access(|kvb, buf| {
             if !buf.is_empty() {
-                // DummyKvBlobStoreAccess uses an empty buffer
+                // A no-op access (e.g. a dummy store with an empty buffer) skips persistence
                 if let Some(len) = f(buf)? {
                     let (data, buf) = buf.split_at_mut(len);
                     kvb.store(key, data, buf)?;
@@ -288,7 +314,7 @@ where
     pub fn remove(&mut self, key: u16) -> Result<(), Error> {
         self.kvb.access(|kvb, buf| {
             if !buf.is_empty() {
-                // DummyKvBlobStoreAccess uses an empty buffer
+                // A no-op access (e.g. a dummy store with an empty buffer) skips persistence
                 kvb.remove(key, buf)?;
             }
 

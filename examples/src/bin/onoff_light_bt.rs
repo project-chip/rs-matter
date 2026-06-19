@@ -58,7 +58,7 @@ use rs_matter::error::Error;
 use rs_matter::im::{InteractionModel, WirelessInteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
+use rs_matter::persist::DirKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::MatterBuffers;
@@ -122,24 +122,25 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
     net_ctl: N,
 ) -> Result<(), Error> {
     // Create the Matter object
-    let mut matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
     // Persistence
-    let mut kv = DirKvBlobStore::new_default();
+    let store = DirKvBlobStore::new_default();
 
     // Create the transport buffers
     let buffers: MatterBuffers = MatterBuffers::new();
 
     // Create the data model state (subscriptions, events, the Wifi network store).
-    // It owns the KV scratch buffer, so the one-time startup loads below reuse it
-    // (`state.kv_buf_mut()`) rather than allocating a separate buffer.
     let mut state: WirelessInteractionModelState<WifiNetworks<3>> =
         WirelessInteractionModelState::new(WifiNetworks::new());
 
+    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
+    let kv = matter.kv(store);
+
     // Re-hydrate persisted state: the `Matter` instance (fabrics, ACLs, basic
     // info) and the data model state itself (event-number epoch + Wifi networks).
-    futures_lite::future::block_on(matter.load_persist(&mut kv, state.kv_buf_mut()))?;
-    futures_lite::future::block_on(state.load_persist(&mut kv))?;
+    futures_lite::future::block_on(matter.load_persist(&kv))?;
+    futures_lite::future::block_on(state.load_persist(&kv))?;
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
@@ -166,7 +167,7 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
         &crypto,
         &buffers,
         data_model(rand, &on_off_handler, &net_ctl, &net_ctl),
-        SharedKvBlobStore::new(kv),
+        &kv,
         &net_ctl,
         &state,
     );

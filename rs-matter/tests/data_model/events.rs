@@ -24,9 +24,11 @@ use rs_matter::im::GenericPath;
 use rs_matter::im::IMStatusCode;
 use rs_matter::im::StatusResp;
 use rs_matter::im::SubscribeResp;
-use rs_matter::persist::DummyKvBlobStoreAccess;
+use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore};
 use rs_matter::tlv::{TLVTag, TLVWrite};
+use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::storage::WriteBuf;
+use rs_matter::utils::sync::blocking::Mutex;
 
 use crate::common::e2e::im::echo_cluster;
 use crate::common::e2e::im::events::TestEventData;
@@ -365,6 +367,10 @@ fn push_events<C>(im: &crate::common::e2e::E2eRunner<C>, events: &[TestEventData
 where
     C: rs_matter::crypto::Crypto,
 {
+    // A no-op KV access (empty buffer + dummy store) — these tests don't persist.
+    let kv_buf = Mutex::new(RefCell::new([0u8; 0]));
+    let kv = SharedKvBlobStore::new(DummyKvBlobStore, &kv_buf);
+
     for ev in events {
         im.state
             .events()
@@ -373,7 +379,7 @@ where
                 ev.path.cluster.unwrap(),
                 ev.path.event.unwrap(),
                 ev.priority,
-                DummyKvBlobStoreAccess,
+                &kv,
                 |mut tw| -> Result<(), Error> {
                     if let Some(data) = ev.data {
                         let mut buf = [0u8; 2048];

@@ -64,7 +64,7 @@ use rs_matter::error::Error;
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
+use rs_matter::persist::{DirKvBlobStore, KvBlobStoreAccess};
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::exchange::MatterBuffers;
@@ -95,28 +95,30 @@ fn main() -> Result<(), Error> {
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
     );
 
-    let mut matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
     // Persistence
-    let mut kv = DirKvBlobStore::new_default();
+    let store = DirKvBlobStore::new_default();
 
     let buffers: MatterBuffers = MatterBuffers::new();
 
     // Create the data model state. This device EMITS events (the Generic Switch
     // press events), so - unlike the examples that use `NoEvents` - the default
     // state carries a real (non-zero) event queue that holds them until
-    // subscribers read them. It also owns the KV scratch buffer, which all the
-    // startup loads below reuse rather than allocating a separate one.
+    // subscribers read them.
     let mut state: EthInteractionModelState =
         EthInteractionModelState::new(EthNetwork::new_default());
 
     // The Binding registry (the switch's address book), loaded from persistence.
     let bindings = Bindings::<MAX_BINDINGS>::new();
 
-    // Re-hydrate persisted state using the state's own scratch buffer.
-    futures_lite::future::block_on(matter.load_persist(&mut kv, state.kv_buf_mut()))?;
-    futures_lite::future::block_on(bindings.load_persist(&mut kv, state.kv_buf_mut()))?;
-    futures_lite::future::block_on(state.load_persist(&mut kv))?;
+    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
+    let kv = matter.kv(store);
+
+    // Re-hydrate persisted state.
+    futures_lite::future::block_on(matter.load_persist(&kv))?;
+    kv.access(|store, buf| futures_lite::future::block_on(bindings.load_persist(store, buf)))?;
+    futures_lite::future::block_on(state.load_persist(&kv))?;
 
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
     let rand = crypto.rand()?;
@@ -126,7 +128,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         &buffers,
         data_model(rand, &bindings),
-        SharedKvBlobStore::new(kv),
+        &kv,
         &state,
     );
 

@@ -81,7 +81,7 @@ use rs_matter::error::Error;
 use rs_matter::im::{InteractionModel, WirelessInteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore, DEFAULT_KV_BUF_SIZE};
+use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
@@ -91,7 +91,9 @@ use rs_matter::transport::network::mdns::builtin::{BuiltinMdns, Host};
 use rs_matter::transport::network::{
     Address, ChainedNetwork, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend, NoNetwork,
 };
+use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::{init, Init, InitMaybeUninit};
+use rs_matter::utils::sync::blocking::Mutex;
 use rs_matter::utils::sync::DynBase;
 use rs_matter::{clusters, devices, handler_chain_type, root_endpoint, Matter, MATTER_PORT};
 
@@ -192,12 +194,18 @@ type AppDmHandler<'a> = handler_chain_type!(
     | WifiSysHandler<'a, &'a AppNetCtl<'a>>
 );
 type AppCrypto = RustCrypto<'static, WeakTestOnlyRand>;
+// A nameable no-op `KvBlobStoreAccess` for the static `#[task]` aliases below: a
+// `SharedKvBlobStore` over a `DummyKvBlobStore` with an empty (`KB = 0`) scratch buffer.
+// The real per-app buffer lives inside `Matter` (counted in the "Matter" line above), so
+// `KB = 0` here keeps this probe from double-counting it.
+type AppKvBuf = Mutex<RefCell<[u8; 0]>>;
+type AppKv = SharedKvBlobStore<'static, DummyKvBlobStore, 0>;
 type AppInteractionModel<'a> = InteractionModel<
     'a,
     &'a AppCrypto,
     MatterBuffers,
     (Node<'a>, &'a AppDmHandler<'a>),
-    DummyKvBlobStore,
+    &'static AppKv,
     WifiNetworks<3>,
     &'a AppNetCtl<'a>,
 >;
@@ -207,7 +215,7 @@ type AppResponder<'d, 'a> = DefaultResponder<
     &'a AppCrypto,
     MatterBuffers,
     (Node<'a>, &'a AppDmHandler<'a>),
-    DummyKvBlobStore,
+    &'static AppKv,
     WifiNetworks<3>,
     &'a AppNetCtl<'a>,
 >;
@@ -281,10 +289,8 @@ fn main() -> ! {
         &mut stack_total,
     );
     report_size("BTP", size_of_val(&stack.btp), &mut stack_total);
-    // The KV/persister scratch buffer now lives inside `InteractionModelState` (behind a
-    // blocking mutex) rather than in the `SharedKvBlobStore`. It is not visible
-    // through the per-component accessors above, so account for it explicitly.
-    report_size("KV scratch buffer", DEFAULT_KV_BUF_SIZE, &mut stack_total);
+    // The KV/persister scratch buffer now lives inside `Matter` (feature-sized via the
+    // `kv-blob-store-NNNN` features), so it is already included in the "Matter" line above.
 
     report_subtotal_size("TOTAL MATTER STACK ", stack_total);
 
@@ -313,9 +319,12 @@ fn main() -> ! {
 
     let mut rand = unwrap!(crypto.weak_rand());
 
-    // The KV scratch buffer now lives inside `InteractionModelState` (see the "KV scratch
-    // buffer" line in the memory report); the store itself is buffer-less.
-    let kv = SharedKvBlobStore::new(DummyKvBlobStore);
+    // A real app gets its `KvBlobStoreAccess` from `Matter::kv(store)`, but that returns an
+    // unnameable `impl KvBlobStoreAccess`, which the static `#[task]` aliases above can't
+    // name. This bloat probe fakes persistence anyway, so build a nameable `SharedKvBlobStore`
+    // over a `DummyKvBlobStore` with an empty buffer; the data model holds it as `&'a K`.
+    let kv_buf = mk_static!(AppKvBuf, Mutex::new(RefCell::new([0u8; 0])));
+    let kv = &*mk_static!(AppKv, SharedKvBlobStore::new(DummyKvBlobStore, kv_buf));
 
     // A Wireless handler with a sample app cluster (on-off)
     let handler = mk_static!(

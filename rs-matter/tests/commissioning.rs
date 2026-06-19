@@ -69,7 +69,7 @@ use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::onboard::cac::{IcacGenerator, RcacGenerator};
 use rs_matter::onboard::noc::NocGenerator;
 use rs_matter::onboard::{CommissionOptions, Commissioner};
-use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore};
+use rs_matter::persist::DummyKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::Exchange;
@@ -194,12 +194,14 @@ macro_rules! commissioning_test {
                 TestOnOffDeviceLogic::new(false),
             );
 
+            let device_kv = device_matter.kv(DummyKvBlobStore);
+
             let dm = InteractionModel::new(
                 device_matter,
                 &device_crypto,
                 device_buffers,
                 data_model(rand, &on_off_handler),
-                SharedKvBlobStore::new(DummyKvBlobStore),
+                &device_kv,
                 device_state,
             );
 

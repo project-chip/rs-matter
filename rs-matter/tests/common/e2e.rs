@@ -29,7 +29,7 @@ use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::{DataModel, Privilege};
 use rs_matter::error::Error;
 use rs_matter::im::{InteractionModel, InteractionModelState};
-use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore};
+use rs_matter::persist::DummyKvBlobStore;
 use rs_matter::respond::{ExchangeHandler, Responder};
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::exchange::MatterBuffers;
@@ -177,12 +177,14 @@ impl<C: Crypto> E2eRunner<C> {
 
         let matter_client = &self.matter_client;
 
+        let kv = self.matter.kv(DummyKvBlobStore);
+
         let dm = InteractionModel::new(
             &self.matter,
             &self.crypto,
             &self.buffers,
             handler,
-            SharedKvBlobStore::new(DummyKvBlobStore),
+            &kv,
             &self.state,
         );
 

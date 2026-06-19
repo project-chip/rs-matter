@@ -40,7 +40,7 @@ use rs_matter::error::Error;
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
+use rs_matter::persist::DirKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::MatterBuffers;
@@ -56,23 +56,23 @@ fn main() -> Result<(), Error> {
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
     );
 
-    let mut matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
     // Persistence
-    let mut kv = DirKvBlobStore::new_default();
+    let store = DirKvBlobStore::new_default();
 
     // Create the transport buffers
     let buffers: MatterBuffers = MatterBuffers::new();
 
     // Create the data model state (subscriptions table, events queue, network
-    // store). It owns the KV scratch buffer, which we reuse for the startup load
-    // below rather than allocating a separate one.
-    let mut state: EthInteractionModelState =
-        EthInteractionModelState::new(EthNetwork::new_default());
+    // store).
+    let state: EthInteractionModelState = EthInteractionModelState::new(EthNetwork::new_default());
 
-    // Re-hydrate the `Matter` instance (fabrics, ACLs, basic info) using the
-    // state's own scratch buffer.
-    futures_lite::future::block_on(matter.load_persist(&mut kv, state.kv_buf_mut()))?;
+    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
+    let kv = matter.kv(store);
+
+    // Re-hydrate the `Matter` instance (fabrics, ACLs, basic info).
+    futures_lite::future::block_on(matter.load_persist(&kv))?;
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
@@ -92,7 +92,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         &buffers,
         data_model(rand, &on_off_handler),
-        SharedKvBlobStore::new(kv),
+        &kv,
         &state,
     );
 

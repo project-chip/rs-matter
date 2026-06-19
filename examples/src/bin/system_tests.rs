@@ -84,7 +84,7 @@ use rs_matter::im::PROTO_ID_INTERACTION_MODEL;
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::SharedKvBlobStore;
+use rs_matter::persist::KvBlobStoreAccess;
 use rs_matter::respond::{ChainedExchangeHandler, Responder};
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::sc::SecureChannel;
@@ -170,21 +170,21 @@ fn main() -> Result<(), Error> {
             .init_with(Matter::init(&BASIC_INFO, comm_data, &TEST_DEV_ATT, port));
 
     // Persistence
-    let mut kv = args::file_kv_store();
+    let store = args::file_kv_store();
 
     // Create the transport buffers
     let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
 
-    // Create the data model state (subscriptions, events, network store). It owns
-    // the KV scratch buffer, which all the startup loads (here and the user-label
-    // / binding loads below) reuse rather than allocating a separate one.
+    // Create the data model state (subscriptions, events, network store).
     let mut state: EthInteractionModelState =
         EthInteractionModelState::new(EthNetwork::new_default());
 
-    // Re-hydrate the `Matter` instance and the data model state (event-number
-    // epoch) using the state's own scratch buffer.
-    futures_lite::future::block_on(matter.load_persist(&mut kv, state.kv_buf_mut()))?;
-    futures_lite::future::block_on(state.load_persist(&mut kv))?;
+    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
+    let kv = matter.kv(store);
+
+    // Re-hydrate the `Matter` instance and the data model state (event-number epoch).
+    futures_lite::future::block_on(matter.load_persist(&kv))?;
+    futures_lite::future::block_on(state.load_persist(&kv))?;
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
@@ -213,7 +213,7 @@ fn main() -> Result<(), Error> {
     // `TestUserLabelCluster` YAML test sees the labels the previous
     // boot wrote.
     let user_labels = USER_LABELS.uninit().init_with(UserLabels::init());
-    futures_lite::future::block_on(user_labels.load_persist(&mut kv, state.kv_buf_mut()))?;
+    kv.access(|store, buf| futures_lite::future::block_on(user_labels.load_persist(store, buf)))?;
 
     let user_label_handler =
         UserLabelHandler::new(Dataver::new_rand(&mut rand), ROOT_ENDPOINT_ID, user_labels);
@@ -222,7 +222,7 @@ fn main() -> Result<(), Error> {
     // UserLabels. Loaded from KV before the data model accepts traffic
     // so bindings written pre-reboot survive.
     let bindings = BINDINGS.uninit().init_with(Bindings::init());
-    futures_lite::future::block_on(bindings.load_persist(&mut kv, state.kv_buf_mut()))?;
+    kv.access(|store, buf| futures_lite::future::block_on(bindings.load_persist(store, buf)))?;
 
     let binding_handler_ep0 =
         BindingHandler::new(Dataver::new_rand(&mut rand), ROOT_ENDPOINT_ID, bindings);
@@ -300,7 +300,7 @@ fn main() -> Result<(), Error> {
             dlog_buffers,
             log_provider,
         ),
-        SharedKvBlobStore::new(kv),
+        &kv,
         &state,
     );
 

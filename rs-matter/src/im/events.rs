@@ -79,28 +79,13 @@ impl<const N: usize> Events<N> {
         self.inner.get_mut().borrow_mut().reset();
     }
 
-    /// Remove persisted state from the given key-value store.
-    pub async fn reset_persist<S>(&mut self, kv: S, buf: &mut [u8]) -> Result<(), Error>
-    where
-        S: KvBlobStore,
-    {
-        self.inner
-            .get_mut()
-            .borrow_mut()
-            .reset_persist(kv, buf)
-            .await
-    }
-
-    /// Load persisted state from the given key-value store, so that we can continue emitting events without reusing event numbers.
-    pub async fn load_persist<S>(&mut self, kv: S, buf: &mut [u8]) -> Result<(), Error>
-    where
-        S: KvBlobStore,
-    {
-        self.inner
-            .get_mut()
-            .borrow_mut()
-            .load_persist(kv, buf)
-            .await
+    /// Borrow the inner events state mutably.
+    ///
+    /// Available only with exclusive (`&mut`) access - used by
+    /// [`InteractionModelState`](crate::im::InteractionModelState) at startup to
+    /// drive the (sync) persistence helpers without locking.
+    pub(crate) fn inner_mut(&mut self) -> &mut EventsInner<N> {
+        self.inner.get_mut().get_mut()
     }
 
     pub(crate) fn fetch<F, R>(&self, f: F) -> R
@@ -203,7 +188,7 @@ impl<const N: usize> Default for Events<N> {
 /// Instead we opted to replicate the approach used in the C++ impl, which we believe is reasonable but also seemingly in violation of the spec.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct EventsInner<const N: usize> {
+pub(crate) struct EventsInner<const N: usize> {
     // TODO(events): Allow per-ring const generics, so the rings can be sized independently
     buf_debug: EventsBuf<N>,
     buf_info: EventsBuf<N>,
@@ -240,10 +225,11 @@ impl<const N: usize> EventsInner<N> {
     }
 
     /// Remove persisted state from the given key-value store.
-    async fn reset_persist<S>(&mut self, mut kv: S, buf: &mut [u8]) -> Result<(), Error>
-    where
-        S: KvBlobStore,
-    {
+    pub(crate) fn reset_persist(
+        &mut self,
+        kv: &mut dyn KvBlobStore,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
         self.reset();
 
         kv.remove(EVENT_EPOCH_KEY, buf)?;
@@ -254,10 +240,11 @@ impl<const N: usize> EventsInner<N> {
     }
 
     /// Load persisted state from the given key-value store, so that we can continue emitting events without reusing event numbers.
-    async fn load_persist<S>(&mut self, mut kv: S, buf: &mut [u8]) -> Result<(), Error>
-    where
-        S: KvBlobStore,
-    {
+    pub(crate) fn load_persist(
+        &mut self,
+        kv: &mut dyn KvBlobStore,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
         self.reset();
 
         if let Some(data) = kv.load(EVENT_EPOCH_KEY, buf)? {

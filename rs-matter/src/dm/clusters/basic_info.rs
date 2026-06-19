@@ -395,7 +395,7 @@ impl BasicInfoSettings {
     /// # Arguments
     /// - `store`: the BLOB store to remove the settings from
     /// - `buf`: a temporary buffer to use for removing the settings
-    pub async fn reset_persist<S: KvBlobStore>(
+    pub fn reset_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
         buf: &mut [u8],
@@ -427,7 +427,7 @@ impl BasicInfoSettings {
     /// # Arguments
     /// - `store`: the BLOB store to load the fabrics from
     /// - `buf`: a temporary buffer to use for loading the fabrics
-    pub async fn load_persist<S: KvBlobStore>(
+    pub fn load_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
         buf: &mut [u8],
