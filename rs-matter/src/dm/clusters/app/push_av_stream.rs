@@ -66,9 +66,9 @@
 
 use core::cell::{Cell, RefCell};
 
+use crate::dm::FabricIndex;
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, EndptId, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
-use crate::im::FabricIndex;
 use crate::tlv::{TLVBuilderParent, TLVElement, TLVTag, ToTLV};
 use crate::utils::storage::{Vec, WriteBuf};
 use crate::utils::sync::blocking::Mutex;

@@ -17,8 +17,8 @@
 
 use core::fmt;
 
-use crate::dm::{AttrId, ClusterId, EndptId, GlobalElements};
 use crate::error::{Error, ErrorCode};
+use crate::im::encoding::{AttrId, ClusterId, EndptId};
 use crate::im::{AttrData, AttrStatus};
 use crate::tlv::{FromTLV, TLVArray, TLVElement, ToTLV};
 
@@ -121,7 +121,7 @@ pub struct WriteResp<'a> {
     /// `interactionModelRevision` (TLV context tag `0xFF`). Mandatory in
     /// every IM message we send; modelled as `Option<u8>` so we tolerate
     /// peers that omit it (the C++ SDK is tolerant in practice).
-    #[tagval(GlobalElements::InteractionModelRevision as u8)]
+    #[tagval(crate::im::encoding::IM_REVISION_TAG)]
     pub interaction_model_revision: Option<u8>,
 }
 

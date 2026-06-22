@@ -18,7 +18,7 @@
 //! Full in-process commissioning integration test.
 //!
 //! Exercises the complete flow:
-//! 1. Device (in-process) starts with a full DataModel + mDNS responder
+//! 1. Device (in-process) starts with a full InteractionModel + mDNS responder
 //! 2. Controller discovers the device via mDNS
 //! 3. PASE session established over UDP
 //! 4. IM read on OnOff attribute (ep 1) — assert initial value is `false`
@@ -57,30 +57,28 @@ use rs_matter::crypto::{
 use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::DummyNetworkAccess;
+use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::dm::events::NoEvents;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::subscriptions::Subscriptions;
-use rs_matter::dm::{
-    endpoints, Async, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, IMBuffer, Node,
-};
+use rs_matter::dm::{endpoints, Async, DataModel, Dataver, Endpoint, EpClMatcher, Node};
 use rs_matter::error::Error;
+use rs_matter::im::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use rs_matter::im::IMStatusCode;
+use rs_matter::im::{InteractionModel, InteractionModelState};
 use rs_matter::onboard::cac::{IcacGenerator, RcacGenerator};
 use rs_matter::onboard::noc::NocGenerator;
 use rs_matter::onboard::{CommissionOptions, Commissioner};
-use rs_matter::persist::DummyKvBlobStoreAccess;
+use rs_matter::persist::DummyKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::Exchange;
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::network::tcp::TcpNetwork;
 use rs_matter::transport::network::{Address, NoNetwork, SocketAddr, SocketAddrV6};
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
 use socket2::{Domain, Protocol, Socket, Type};
@@ -97,15 +95,19 @@ const TEST_PASSCODE: u32 = 20202021;
 
 const IM_TIMEOUT_SECS: u64 = 10;
 
+/// The device's data model state: a dummy (no-op) network store, default
+/// subscription count, no events.
+type DeviceDmState = InteractionModelState<DummyNetworks, DEFAULT_MAX_SUBSCRIPTIONS, 0>;
+
 static DEVICE_MATTER: StaticCell<Matter> = StaticCell::new();
-static DEVICE_BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
-static DEVICE_SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
+static DEVICE_BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
+static DEVICE_STATE: StaticCell<DeviceDmState> = StaticCell::new();
 static CTRL_MATTER: StaticCell<Matter> = StaticCell::new();
 
 // Separate statics for the TCP variant (StaticCell is one-shot)
 static TCP_DEVICE_MATTER: StaticCell<Matter> = StaticCell::new();
-static TCP_DEVICE_BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
-static TCP_DEVICE_SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
+static TCP_DEVICE_BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
+static TCP_DEVICE_STATE: StaticCell<DeviceDmState> = StaticCell::new();
 static TCP_CTRL_MATTER: StaticCell<Matter> = StaticCell::new();
 
 // ============================================================================
@@ -123,10 +125,10 @@ const NODE: Node<'static> = Node {
     ],
 };
 
-fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
+fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
-) -> impl DataModelHandler + 'a {
+) -> impl DataModel + 'a {
     (
         NODE,
         endpoints::EthSysHandlerBuilder::new()
@@ -183,8 +185,8 @@ macro_rules! commissioning_test {
             let device_crypto = test_only_crypto();
             let mut rand = device_crypto.rand()?;
 
-            let device_buffers = $dev_buffers.uninit().init_with(PooledBuffers::init(0));
-            let device_subscriptions = $dev_subs.uninit().init_with(Subscriptions::init());
+            let device_buffers = $dev_buffers.uninit().init_with(MatterBuffers::init());
+            let device_state = $dev_subs.init(InteractionModelState::new(DummyNetworks));
 
             let on_off_handler = on_off::OnOffHandler::new_standalone(
                 Dataver::new_rand(&mut rand),
@@ -192,17 +194,15 @@ macro_rules! commissioning_test {
                 TestOnOffDeviceLogic::new(false),
             );
 
-            let events = NoEvents::new();
+            let device_kv = device_matter.kv(DummyKvBlobStore);
 
-            let dm = DataModel::new(
+            let dm = InteractionModel::new(
                 device_matter,
                 &device_crypto,
                 device_buffers,
-                device_subscriptions,
-                &events,
-                dm_handler(rand, &on_off_handler),
-                DummyKvBlobStoreAccess,
-                DummyNetworkAccess,
+                data_model(rand, &on_off_handler),
+                &device_kv,
+                device_state,
             );
 
             // Open commissioning window before starting the mDNS responder so the
@@ -263,7 +263,7 @@ commissioning_test! {
     run_name: run_test_udp,
     device_matter: DEVICE_MATTER,
     device_buffers: DEVICE_BUFFERS,
-    device_subscriptions: DEVICE_SUBSCRIPTIONS,
+    device_subscriptions: DEVICE_STATE,
     ctrl_matter: CTRL_MATTER,
     use_tcp: false,
     device_transport: async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?,
@@ -275,7 +275,7 @@ commissioning_test! {
     run_name: run_test_tcp,
     device_matter: TCP_DEVICE_MATTER,
     device_buffers: TCP_DEVICE_BUFFERS,
-    device_subscriptions: TCP_DEVICE_SUBSCRIPTIONS,
+    device_subscriptions: TCP_DEVICE_STATE,
     ctrl_matter: TCP_CTRL_MATTER,
     use_tcp: true,
     device_transport: TcpNetwork::<8>::new(

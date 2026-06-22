@@ -18,7 +18,7 @@
 //! Streaming TLV builders for `InvokeRequestMessage` and its
 //! sub-structures.
 //!
-//! This is the analog of [`crate::im::attr::write_builder`] for
+//! This is the analog of [`crate::im::encoding::attr::write_builder`] for
 //! command invokes — and the genuine MCU win for client clusters: a
 //! switch wanting to send `OnOff::Toggle` to a bound bulb constructs
 //! the command-request payload directly into the TX `WriteBuf` via
@@ -83,8 +83,8 @@
 
 use core::marker::PhantomData;
 
-use crate::dm::{ClusterId, CmdId, EndptId, GlobalElements};
 use crate::error::Error;
+use crate::im::encoding::{ClusterId, CmdId, EndptId};
 use crate::im::{CmdDataTag, CmdPathTag, InvReqTag, IM_REVISION};
 use crate::tlv::{TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite, ToTLV};
 
@@ -250,7 +250,7 @@ where
     /// omit and `end()` injects [`IM_REVISION`] automatically.
     pub fn interaction_model_revision(mut self, value: u8) -> Result<InvReqBuilder<P, 4>, Error> {
         self.p.writer().u8(
-            &TLVTag::Context(GlobalElements::InteractionModelRevision as u8),
+            &TLVTag::Context(crate::im::encoding::IM_REVISION_TAG),
             value,
         )?;
         Ok(InvReqBuilder { p: self.p })

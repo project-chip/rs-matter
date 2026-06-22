@@ -62,7 +62,7 @@ fn event(e: &Event, entities: &EntityContext, context: &IdlGenerateContext) -> T
 
             pub fn emit_for<F>(emitter: impl #krate::dm::EventEmitter, endpoint_id: #krate::dm::EndptId, f: F) -> Result<#krate::dm::EventNumber, #krate::error::Error>
             where
-                F: FnOnce(#name_builder<#krate::dm::events::EventTLVWrite<'_>>) -> Result<#krate::dm::events::EventTLVWrite<'_>, #krate::error::Error>,
+                F: FnOnce(#name_builder<#krate::im::events::EventTLVWrite<'_>>) -> Result<#krate::im::events::EventTLVWrite<'_>, #krate::error::Error>,
             {
                 emitter.emit_event(
                     endpoint_id,
@@ -70,7 +70,7 @@ fn event(e: &Event, entities: &EntityContext, context: &IdlGenerateContext) -> T
                     EventId::#name as _,
                     Self::PRIORITY,
                     |tw| {
-                        f(#name_builder::new(tw, &#krate::dm::events::EVENT_DATA_TAG)?)?;
+                        f(#name_builder::new(tw, &#krate::im::events::EVENT_DATA_TAG)?)?;
 
                         Ok(())
                     },
@@ -79,13 +79,13 @@ fn event(e: &Event, entities: &EntityContext, context: &IdlGenerateContext) -> T
 
             pub fn emit<F>(emitter: impl #krate::dm::OwnEventEmitter, f: F) -> Result<#krate::dm::EventNumber, #krate::error::Error>
             where
-                F: FnOnce(#name_builder<#krate::dm::events::EventTLVWrite<'_>>) -> Result<#krate::dm::events::EventTLVWrite<'_>, #krate::error::Error>,
+                F: FnOnce(#name_builder<#krate::im::events::EventTLVWrite<'_>>) -> Result<#krate::im::events::EventTLVWrite<'_>, #krate::error::Error>,
             {
                 emitter.emit_own_event(
                     EventId::#name as _,
                     Self::PRIORITY,
                     |tw| {
-                        f(#name_builder::new(tw, &#krate::dm::events::EVENT_DATA_TAG)?)?;
+                        f(#name_builder::new(tw, &#krate::im::events::EVENT_DATA_TAG)?)?;
 
                         Ok(())
                     },

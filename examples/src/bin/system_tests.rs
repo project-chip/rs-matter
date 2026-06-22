@@ -57,10 +57,10 @@ use rs_matter::dm::clusters::gen_diag::{self, ClusterHandler as _, GenDiag};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::grp_key_mgmt::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
-use rs_matter::dm::clusters::net_comm::{self, SharedNetworks};
+use rs_matter::dm::clusters::net_comm;
 use rs_matter::dm::clusters::noc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::ota_prov::{
-    BdxBuffer, ClusterAsyncHandler, DownloadProtocolEnum, OtaBdxHandler, OtaImageMeta, OtaImages,
+    ClusterAsyncHandler, DownloadProtocolEnum, OtaBdxHandler, OtaImageMeta, OtaImages,
     OtaImagesRegistry, OtaProviderHandler, OtaQueryOutcome, StatusEnum,
 };
 use rs_matter::dm::clusters::ota_req::{
@@ -74,27 +74,25 @@ use rs_matter::dm::clusters::user_label::{self, UserLabelHandler, UserLabels};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
-use rs_matter::dm::events::Events;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
-    Async, AttrChangeNotifier, Cluster, DataModel, DataModelHandler, Dataver, Endpoint,
-    EpClMatcher, Node,
+    Async, AttrChangeNotifier, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, Node,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::PROTO_ID_INTERACTION_MODEL;
+use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::SharedKvBlobStore;
+use rs_matter::persist::KvBlobStoreAccess;
 use rs_matter::respond::{ChainedExchangeHandler, Responder};
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::sc::SecureChannel;
 use rs_matter::transport::exchange::Exchange;
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::sync::Notification;
 use rs_matter::{clusters, devices, Matter};
 
@@ -110,14 +108,11 @@ mod args;
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
-static BUFFERS: StaticCell<PooledBuffers<20, rs_matter::dm::IMBuffer>> = StaticCell::new();
-static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
-static EVENTS: StaticCell<Events> = StaticCell::new();
-static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
+static BUFFERS: StaticCell<MatterBuffers<20>> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 static GEN_DIAG: StaticCell<TestEventTriggerDiag> = StaticCell::new();
 // UserLabel registry — host endpoints and labels-per-endpoint counts
-// match `dm_handler`'s `UserLabelHandler<'_, E, N>` parameterisation.
+// match `data_model`'s `UserLabelHandler<'_, E, N>` parameterisation.
 static USER_LABELS: StaticCell<UserLabels<1, 4>> = StaticCell::new();
 // Binding registry. Capacity 16 — `TestBinding` writes a 17-entry
 // table and expects `RESOURCE_EXHAUSTED`, so this bound is what makes
@@ -127,13 +122,13 @@ static BINDINGS: StaticCell<Bindings<16>> = StaticCell::new();
 // OTA Provider role (gated behind `--filepath`): the file-backed image source
 // and a small pool of BDX block-staging buffers.
 static OTA_IMAGES: StaticCell<OtaFileImages> = StaticCell::new();
-static BDX_BUFFERS: StaticCell<PooledBuffers<2, BdxBuffer>> = StaticCell::new();
+static BDX_BUFFERS: StaticCell<MatterBuffers<2>> = StaticCell::new();
 
 // Diagnostic Logs role (driven by `--end_user_support_log` / `--network_diagnostics_log`
 // / `--crash_log`): the file-backed log source, plus a small pool of BDX staging
 // buffers (one for an inline read, one for a concurrent BDX transfer).
 static LOG_PROVIDER: StaticCell<LogFileProvider> = StaticCell::new();
-static DLOG_BUFFERS: StaticCell<PooledBuffers<2, BdxBuffer>> = StaticCell::new();
+static DLOG_BUFFERS: StaticCell<MatterBuffers<2>> = StaticCell::new();
 
 static SW_FAULT_NOTIFY: Notification<CriticalSectionRawMutex> = Notification::new();
 
@@ -152,13 +147,6 @@ fn main() -> Result<(), Error> {
         .target(env_logger::Target::Stdout)
         .filter_level(::log::LevelFilter::Debug)
         .init();
-
-    info!(
-        "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
-        core::mem::size_of::<Matter>(),
-        core::mem::size_of::<PooledBuffers<20, rs_matter::dm::IMBuffer>>(),
-        core::mem::size_of::<Subscriptions>()
-    );
 
     // Optional `--discriminator <u16>` / `--passcode <u32>` overrides for the
     // hardcoded `TEST_DEV_COMM` defaults. Used by tests like TC-SC-7.1 that
@@ -181,20 +169,22 @@ fn main() -> Result<(), Error> {
             .uninit()
             .init_with(Matter::init(&BASIC_INFO, comm_data, &TEST_DEV_ATT, port));
 
-    // Create the event queue
-    let events = EVENTS.uninit().init_with(Events::init());
-
     // Persistence
-    let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
-    let mut kv = args::file_kv_store();
-    futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
-    futures_lite::future::block_on(events.load_persist(&mut kv, kv_buf))?;
+    let store = args::file_kv_store();
 
     // Create the transport buffers
-    let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
+    let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
 
-    // Create the subscriptions
-    let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
+    // Create the data model state (subscriptions, events, network store).
+    let mut state: EthInteractionModelState =
+        EthInteractionModelState::new(EthNetwork::new_default());
+
+    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
+    let kv = matter.kv(store);
+
+    // Re-hydrate the `Matter` instance and the data model state (event-number epoch).
+    futures_lite::future::block_on(matter.load_persist(&kv))?;
+    futures_lite::future::block_on(state.load_persist(&kv))?;
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
@@ -223,7 +213,7 @@ fn main() -> Result<(), Error> {
     // `TestUserLabelCluster` YAML test sees the labels the previous
     // boot wrote.
     let user_labels = USER_LABELS.uninit().init_with(UserLabels::init());
-    futures_lite::future::block_on(user_labels.load_persist(&mut kv, kv_buf))?;
+    kv.access(|store, buf| futures_lite::future::block_on(user_labels.load_persist(store, buf)))?;
 
     let user_label_handler =
         UserLabelHandler::new(Dataver::new_rand(&mut rand), ROOT_ENDPOINT_ID, user_labels);
@@ -232,7 +222,7 @@ fn main() -> Result<(), Error> {
     // UserLabels. Loaded from KV before the data model accepts traffic
     // so bindings written pre-reboot survive.
     let bindings = BINDINGS.uninit().init_with(Bindings::init());
-    futures_lite::future::block_on(bindings.load_persist(&mut kv, kv_buf))?;
+    kv.access(|store, buf| futures_lite::future::block_on(bindings.load_persist(store, buf)))?;
 
     let binding_handler_ep0 =
         BindingHandler::new(Dataver::new_rand(&mut rand), ROOT_ENDPOINT_ID, bindings);
@@ -268,8 +258,7 @@ fn main() -> Result<(), Error> {
         args::parse_arg_opt_override("--network_diagnostics_log", |s| s.to_string()),
         args::parse_arg_opt_override("--crash_log", |s| s.to_string()),
     ));
-    let dlog_buffers: &PooledBuffers<2, BdxBuffer> =
-        DLOG_BUFFERS.uninit().init_with(PooledBuffers::init(0));
+    let dlog_buffers: &MatterBuffers<2> = DLOG_BUFFERS.uninit().init_with(MatterBuffers::init());
 
     let app_pipe = parse_app_pipe_override();
     let node: &'static Node<'static> = if app_pipe.is_some() {
@@ -291,13 +280,11 @@ fn main() -> Result<(), Error> {
     };
 
     // Create the Data Model instance
-    let dm = DataModel::new(
+    let im = InteractionModel::new(
         matter,
         &crypto,
         buffers,
-        subscriptions,
-        events,
-        dm_handler(
+        data_model(
             node,
             gen_diag,
             rand,
@@ -313,8 +300,8 @@ fn main() -> Result<(), Error> {
             dlog_buffers,
             log_provider,
         ),
-        SharedKvBlobStore::new(kv, kv_buf),
-        SharedNetworks::new(EthNetwork::new_default()),
+        &kv,
+        &state,
     );
 
     // Responder = the default IM + Secure Channel handler chain, plus a BDX
@@ -322,12 +309,11 @@ fn main() -> Result<(), Error> {
     // traffic, so this is equivalent to `DefaultResponder` for every non-OTA
     // test. We can't use `DefaultResponder` directly because it builds its
     // handler chain internally with no way to inject BDX.
-    let bdx_buffers: &PooledBuffers<2, BdxBuffer> =
-        BDX_BUFFERS.uninit().init_with(PooledBuffers::init(0));
+    let bdx_buffers: &MatterBuffers<2> = BDX_BUFFERS.uninit().init_with(MatterBuffers::init());
     let main_handler = ChainedExchangeHandler::new(
         PROTO_ID_INTERACTION_MODEL,
-        &dm,
-        SecureChannel::new(dm.crypto(), &dm),
+        &im,
+        SecureChannel::new(im.crypto(), &im),
     )
     .chain(
         PROTO_ID_BDX,
@@ -349,7 +335,7 @@ fn main() -> Result<(), Error> {
     });
 
     // Run the background job of the data model
-    let mut dm_job = pin!(dm.run());
+    let mut im_job = pin!(im.run());
 
     // Bind the UDP socket. When `--port` is overridden we have to bind to
     // the same port instead of the default `MATTER_SOCKET_BIND_ADDR` (which
@@ -388,17 +374,6 @@ fn main() -> Result<(), Error> {
         (net_send, net_recv, net_multicast)
     };
 
-    info!(
-        "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(
-            &crypto,
-            &mut net_send,
-            &mut net_recv,
-            &mut net_multicast
-        )),
-        core::mem::size_of_val(&mdns::run_mdns(matter, &crypto))
-    );
-
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter, &crypto));
     let mut transport = pin!(matter.run(&crypto, &mut net_send, &mut net_recv, &mut net_multicast));
@@ -422,7 +397,7 @@ fn main() -> Result<(), Error> {
     // commands to the DUT through a named pipe at the given path.
     let mut app_pipe_actions = pin!(run_app_pipe_actions(app_pipe, |action| {
         if action.contains("SimulateConfigurationVersionChange") {
-            dm.bump_configuration_version()?;
+            im.bump_configuration_version()?;
 
             Ok(true)
         } else {
@@ -442,7 +417,7 @@ fn main() -> Result<(), Error> {
         Ok(())
     });
 
-    let mut sw_fault_emitter = pin!(emit_software_fault_on_trigger(&dm));
+    let mut sw_fault_emitter = pin!(emit_software_fault_on_trigger(&im));
 
     // OTA Requestor role loop (active only with `--otaDownloadPath`): reacts to
     // `AnnounceOTAProvider` by downloading the image from the announced provider.
@@ -451,7 +426,7 @@ fn main() -> Result<(), Error> {
         &crypto,
         &ota_providers,
         &ota_state,
-        &dm,
+        &im,
         ota_download_path,
     ));
 
@@ -462,7 +437,7 @@ fn main() -> Result<(), Error> {
         &mut app_pipe_actions,
         select4(
             &mut respond,
-            &mut dm_job,
+            &mut im_job,
             &mut sw_fault_emitter,
             select(&mut term, &mut ota_job).coalesce(),
         )
@@ -624,10 +599,10 @@ const OTA_PROVIDER_CLUSTER: Cluster<'static> =
 const OTA_REQUESTOR_CLUSTER: Cluster<'static> = OtaRequestorHandler::CLUSTER;
 
 /// The Diagnostic Logs cluster metadata, exactly as served by the
-/// [`DiagLogsHandler`] wired in `dm_handler` (so `NODE`'s declaration
+/// [`DiagLogsHandler`] wired in `data_model` (so `NODE`'s declaration
 /// matches the handler).
 const DIAGNOSTIC_LOGS_CLUSTER: Cluster<'static> = <DiagLogsHandler<
-    &PooledBuffers<2, BdxBuffer>,
+    &MatterBuffers<2>,
     &LogFileProvider,
 > as diag_logs::ClusterAsyncHandler>::CLUSTER;
 
@@ -735,7 +710,7 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
 // composition root — every additional cluster handler we wire grows
 // the parameter list. Suppressing here is cleaner than abstracting.
 #[allow(clippy::too_many_arguments)]
-fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
+fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     node: &'static Node<'static>,
     gen_diag: &'a dyn GenDiag,
     mut rand: impl RngCore + Copy,
@@ -748,9 +723,9 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     ota_images: &'a OtaFileImages,
     ota_providers: &'a Providers,
     ota_state: &'a OtaState,
-    dlog_buffers: &'a PooledBuffers<2, BdxBuffer>,
+    dlog_buffers: &'a MatterBuffers<2>,
     log_provider: &'a LogFileProvider,
-) -> impl DataModelHandler + 'a {
+) -> impl DataModel + 'a {
     (
         node,
         endpoints::EthSysHandlerBuilder::new()
@@ -874,7 +849,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 ),
             )
             // Diagnostic Logs on the root endpoint. The handler's `run` hook (BDX
-            // streaming) is driven as part of this chain by `dm.run()`.
+            // streaming) is driven as part of this chain by `im.run()`.
             .chain(
                 EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(DIAGNOSTIC_LOGS_CLUSTER.id)),
                 DiagLogsHandler::new(Dataver::new_rand(&mut rand), dlog_buffers, log_provider)
@@ -965,7 +940,7 @@ impl GenDiag for TestEventTriggerDiag {
 /// `SoftwareDiagnostics::SoftwareFault` event each time it fires. Bridges
 /// the sync `GenDiag::test_event_trigger` trait method (which can't carry
 /// an event-emitter context) to the async event-emission path on
-/// `DataModel`. The emitted event's fields (`id`, `name`,
+/// `InteractionModel`. The emitted event's fields (`id`, `name`,
 /// `faultRecording`) are vendor-defined; we ship plausible stub values
 /// that satisfy `TC_DGSW_2_2`'s `validate_soft_fault_event_data` shape
 /// checks (uint64 / Utf8 / OctetStr).
@@ -995,7 +970,7 @@ where
 
 /// Read JSON command lines from the named pipe at `path` and dispatch them to
 /// `bump` on the calling task — which is the main thread, so it's free to
-/// touch `&Matter` / `&DataModel` directly (neither is `Sync`).
+/// touch `&Matter` / `&InteractionModel` directly (neither is `Sync`).
 async fn run_app_pipe_actions(
     path: Option<String>,
     mut action: impl FnMut(String) -> Result<bool, Error>,

@@ -18,7 +18,7 @@
 //! Streaming TLV builder for `SubscribeRequestMessage`.
 //!
 //! Same typestate-machine + implicit-skip convention as
-//! [`crate::im::attr::read_builder::ReadReqBuilder`]: mandatory
+//! [`crate::im::encoding::attr::read_builder::ReadReqBuilder`]: mandatory
 //! fields must be written in order (`keep_subs`, `min_int_floor`,
 //! `max_int_ceil`, `fabric_filtered`); optional intermediate fields
 //! (`AttributeRequests`, `EventRequests`, `EventFilters`,
@@ -26,7 +26,7 @@
 //! setter — later-field setters are available on earlier states so
 //! the user can write a minimal request in one straight chain. The
 //! `AttrPath` array sub-builder is re-used from
-//! [`crate::im::attr::read_builder`] since the wire shape is
+//! [`crate::im::encoding::attr::read_builder`] since the wire shape is
 //! identical to the read variant.
 //!
 //! # Layout
@@ -69,7 +69,6 @@
 //! }).await
 //! ```
 
-use crate::dm::GlobalElements;
 use crate::error::Error;
 use crate::im::{
     AttrPath, AttrPathArrayBuilder, DataVersionFilter, EventFilter, EventPath, SubscribeReqTag,
@@ -413,7 +412,7 @@ where
         value: u8,
     ) -> Result<SubscribeReqBuilder<P, 9>, Error> {
         self.p.writer().u8(
-            &TLVTag::Context(GlobalElements::InteractionModelRevision as u8),
+            &TLVTag::Context(crate::im::encoding::IM_REVISION_TAG),
             value,
         )?;
         Ok(SubscribeReqBuilder { p: self.p })

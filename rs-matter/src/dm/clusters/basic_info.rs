@@ -19,7 +19,6 @@
 
 use core::str::FromStr;
 
-use crate::dm::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
@@ -264,13 +263,20 @@ pub struct CapabilityMinima {
     pub subscriptions_per_fabric: u16,
 }
 
+/// The Matter spec mandates `CapabilityMinima.SubscriptionsPerFabric >= 3`.
+/// rs-matter sizes its default subscription table as `MAX_FABRICS * 3` (see
+/// [`DEFAULT_MAX_SUBSCRIPTIONS`](crate::im::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS)),
+/// so this per-fabric minimum is what the device guarantees.
+const SUBSCRIPTIONS_PER_FABRIC: u16 = 3;
+
 impl CapabilityMinima {
-    /// Create a default instance of `CapabilityMinima`,
-    /// with actual CASE sessions per fabric and subscriptions per fabric based on `DEFAULT_MAX_SUBSCRIPTIONS`.
+    /// Create a default instance of `CapabilityMinima`, with CASE sessions per
+    /// fabric derived from the session table and the spec-minimum subscriptions
+    /// per fabric.
     pub const fn new() -> Self {
         Self {
             case_sessions_per_fabric: (MAX_SESSIONS / MAX_FABRICS) as _,
-            subscriptions_per_fabric: (DEFAULT_MAX_SUBSCRIPTIONS / MAX_FABRICS) as _,
+            subscriptions_per_fabric: SUBSCRIPTIONS_PER_FABRIC,
         }
     }
 }
@@ -319,7 +325,7 @@ pub struct BasicInfoSettings {
     /// `BasicInformation::ConfigurationVersion` (Matter Core Spec).
     /// Non-volatile, monotonically increasing, minimum 1.
     /// Bumped by application code via
-    /// `DataModel::bump_configuration_version` whenever the node's
+    /// `InteractionModel::bump_configuration_version` whenever the node's
     /// fixed-quality surface (Server/Parts list, device types, software
     /// version, …) changes — see Matter Core Spec.
     pub configuration_version: u32,
@@ -369,7 +375,7 @@ impl BasicInfoSettings {
     ///
     /// This routine only mutates the in-memory value. Persistence and
     /// subscriber notification are the caller's responsibility — use
-    /// `DataModel::bump_configuration_version` for the full
+    /// `InteractionModel::bump_configuration_version` for the full
     /// "bump + persist + notify + dataver-bump" pass.
     pub fn bump_configuration_version(&mut self) -> u32 {
         self.configuration_version = self.configuration_version.saturating_add(1);
@@ -389,7 +395,7 @@ impl BasicInfoSettings {
     /// # Arguments
     /// - `store`: the BLOB store to remove the settings from
     /// - `buf`: a temporary buffer to use for removing the settings
-    pub async fn reset_persist<S: KvBlobStore>(
+    pub fn reset_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
         buf: &mut [u8],
@@ -421,7 +427,7 @@ impl BasicInfoSettings {
     /// # Arguments
     /// - `store`: the BLOB store to load the fabrics from
     /// - `buf`: a temporary buffer to use for loading the fabrics
-    pub async fn load_persist<S: KvBlobStore>(
+    pub fn load_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
         buf: &mut [u8],
@@ -481,7 +487,7 @@ impl ClusterHandler for BasicInfoHandler {
         // `BasicInformation`'s `AttributeList`. The
         // `BasicInformation`/`BasicInfoSettings` plumbing for it stays in
         // place — read handler, persisted settings field, and the
-        // `Matter::bump_configuration_version` / `DataModel::bump_configuration_version`
+        // `Matter::bump_configuration_version` / `InteractionModel::bump_configuration_version`
         // entry points — so a user that supplies their own cluster metadata
         // (i.e. one that drops `ConfigurationVersion` from `except!`) gets a
         // working implementation out of the box.
@@ -629,7 +635,7 @@ impl ClusterHandler for BasicInfoHandler {
 
     fn configuration_version(&self, ctx: impl ReadContext) -> Result<u32, Error> {
         // Non-volatile, runtime-mutable. Lives in `BasicInfoSettings`,
-        // bumped via `DataModel::bump_configuration_version`.
+        // bumped via `InteractionModel::bump_configuration_version`.
         Self::with_settings(
             ctx.exchange(),
             |settings| Ok(settings.configuration_version),

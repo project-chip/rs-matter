@@ -41,7 +41,6 @@ use rand::RngCore;
 use rs_matter::bdx::BdxDownloadInitiator;
 use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::clusters::ota_prov::{DownloadProtocolEnum, OtaApplyOutcome, StatusEnum};
 use rs_matter::dm::clusters::ota_req::{
     parse_bdx_url, ClusterHandler as _, OtaRequestorHandler, OtaState, Provider, Providers,
@@ -49,28 +48,21 @@ use rs_matter::dm::clusters::ota_req::{
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_OTA_REQUESTOR;
 use rs_matter::dm::endpoints;
-use rs_matter::dm::events::NoEvents;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::subscriptions::Subscriptions;
-use rs_matter::dm::IMBuffer;
-use rs_matter::dm::{
-    Async, AttrChangeNotifier, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, Node,
-};
+use rs_matter::dm::{Async, AttrChangeNotifier, DataModel, Dataver, Endpoint, EpClMatcher, Node};
 use rs_matter::error::{Error, ErrorCode};
+use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
+use rs_matter::persist::{DirKvBlobStore, KvBlobStoreAccess};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::Exchange;
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
-use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
-
-use static_cell::StaticCell;
 
 #[path = "../common/mdns.rs"]
 mod mdns;
@@ -87,70 +79,64 @@ const POLL_INTERVAL: Duration = Duration::from_secs(3600);
 /// The download protocols this requestor supports (BDX only, here).
 const PROTOCOLS: &[DownloadProtocolEnum] = &[DownloadProtocolEnum::BDXSynchronous];
 
-static MATTER: StaticCell<Matter> = StaticCell::new();
-static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
-static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
-static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
-
 fn main() -> Result<(), Error> {
     env_logger::init_from_env(
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "debug"),
     );
 
-    let matter = MATTER.uninit().init_with(Matter::init(
-        &TEST_DEV_DET,
-        TEST_DEV_COMM,
-        &TEST_DEV_ATT,
-        MATTER_PORT,
-    ));
+    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
     // Persistence
-    let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
-    let mut kv = DirKvBlobStore::new_default();
-    futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
-
-    // The OTA Requestor's persistent provider list, re-hydrated from storage.
-    let providers = Providers::new();
-    futures_lite::future::block_on(providers.load_persist(&mut kv, kv_buf))?;
+    let store = DirKvBlobStore::new_default();
 
     // The OTA Requestor's transient, reported update state, for the cluster on
     // endpoint 1 (see `NODE`). State changes are pushed to subscribers via the
-    // data model's change-notifier (the `DataModel`, passed to the OTA loop below).
+    // data model's change-notifier (the `InteractionModel`, passed to the OTA loop below).
     let ota_state = OtaState::new(1);
 
-    let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
-    let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
+    let buffers: MatterBuffers = MatterBuffers::new();
+
+    // Create the data model state (subscriptions, events, network store).
+    let mut state: EthInteractionModelState =
+        EthInteractionModelState::new(EthNetwork::new_default());
+
+    // The OTA Requestor's persistent provider list, re-hydrated from storage.
+    let providers = Providers::new();
+
+    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
+    let kv = matter.kv(store);
+
+    // Re-hydrate persisted state.
+    futures_lite::future::block_on(matter.load_persist(&kv))?;
+    kv.access(|store, buf| futures_lite::future::block_on(providers.load_persist(store, buf)))?;
+    futures_lite::future::block_on(state.load_persist(&kv))?;
 
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
 
     let rand = crypto.rand()?;
 
-    let events = NoEvents::new();
-
-    let dm = DataModel::new(
-        matter,
+    let im = InteractionModel::new(
+        &matter,
         &crypto,
-        buffers,
-        subscriptions,
-        &events,
-        dm_handler(rand, &providers, &ota_state),
-        SharedKvBlobStore::new(kv, kv_buf),
-        SharedNetworks::new(EthNetwork::new_default()),
+        &buffers,
+        data_model(rand, &providers, &ota_state),
+        &kv,
+        &state,
     );
 
-    let responder = DefaultResponder::new(&dm);
+    let responder = DefaultResponder::new(&im);
     let mut respond = pin!(responder.run::<4, 4>());
-    let mut dm_job = pin!(dm.run());
+    let mut im_job = pin!(im.run());
 
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
-    let mut mdns = pin!(mdns::run_mdns(matter, &crypto));
+    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto));
     let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
     // The application's OTA update loop, built from the cluster's building blocks.
     // The OTA loop shares the same crypto by reference (`&T: Crypto`), initiating
     // its own CASE exchanges to the provider.
-    let ota_job = pin!(run_ota(matter, &crypto, &providers, &ota_state, &dm));
+    let ota_job = pin!(run_ota(&matter, &crypto, &providers, &ota_state, &im));
 
     if !matter.is_commissioned() {
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
@@ -161,7 +147,7 @@ fn main() -> Result<(), Error> {
 
     // Combine the Matter stack (transport, mDNS, responder, data model) with the
     // OTA loop into a single task.
-    let matter_job = select4(&mut transport, &mut mdns, &mut respond, &mut dm_job).coalesce();
+    let matter_job = select4(&mut transport, &mut mdns, &mut respond, &mut im_job).coalesce();
     let all = select(matter_job, ota_job).coalesce();
 
     futures_lite::future::block_on(all)
@@ -181,11 +167,11 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler: the root endpoint 0 handler plus the OTA Requestor
 /// cluster (and its descriptor) on endpoint 1.
-fn dm_handler<'a>(
+fn data_model<'a>(
     mut rand: impl RngCore + Copy,
     providers: &'a Providers,
     ota_state: &'a OtaState,
-) -> impl DataModelHandler + 'a {
+) -> impl DataModel + 'a {
     (
         NODE,
         endpoints::EthSysHandlerBuilder::new()

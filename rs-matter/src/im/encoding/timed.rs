@@ -19,7 +19,6 @@
 
 use embassy_time::{Duration, Instant};
 
-use crate::dm::GlobalElements;
 use crate::im::IM_REVISION;
 use crate::tlv::{FromTLV, ToTLV};
 
@@ -34,7 +33,7 @@ pub struct TimedReq {
     /// `interactionModelRevision` — mandatory in every IM message we send;
     /// modelled as `Option<u8>` so we tolerate peers that omit it (the C++
     /// SDK is tolerant in practice).
-    #[tagval(GlobalElements::InteractionModelRevision as u8)]
+    #[tagval(crate::im::encoding::IM_REVISION_TAG)]
     pub interaction_model_revision: Option<u8>,
 }
 

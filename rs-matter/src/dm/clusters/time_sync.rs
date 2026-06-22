@@ -195,7 +195,7 @@ impl Rtc {
         self.trusted_time_source = None;
     }
 
-    pub async fn reset_persist<S: KvBlobStore>(
+    pub fn reset_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
         buf: &mut [u8],
@@ -207,11 +207,7 @@ impl Rtc {
         Ok(())
     }
 
-    pub async fn load_persist<S: KvBlobStore>(
-        &mut self,
-        mut kv: S,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
+    pub fn load_persist<S: KvBlobStore>(&mut self, mut kv: S, buf: &mut [u8]) -> Result<(), Error> {
         self.reset();
 
         // Load the persisted Last-Known-Good UTC Time, if any.

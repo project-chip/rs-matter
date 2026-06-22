@@ -59,7 +59,7 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::{Octets, TLVBuilderParent};
 use crate::transport::exchange::{Exchange, MAX_EXCHANGE_RX_BUF_SIZE};
 use crate::utils::cell::RefCell;
-use crate::utils::storage::pooled::BufferAccess;
+use crate::utils::storage::pooled::Buffers;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{Notification, Signal};
 use crate::with;
@@ -155,7 +155,7 @@ enum Bdx {
 /// given, returning small logs inline and - when the requestor asks for `BDX` -
 /// streaming larger logs over a BDX transfer it initiates back to the requestor.
 ///
-/// `buffers` is a [`BufferAccess`] pool ([`BdxBuffer`]-sized): one buffer is
+/// `buffers` is a [`Buffers`] pool ([`BdxBuffer`]-sized): one buffer is
 /// leased to stage the inline read, and one for the duration of a BDX transfer,
 /// so the pool needs at least two buffers to serve an inline request while a BDX
 /// transfer is in flight. When no buffer is free, the request is answered with
@@ -198,7 +198,7 @@ impl<B, P> DiagLogsHandler<B, P> {
 
 impl<B, P> DiagLogsHandler<B, P>
 where
-    B: BufferAccess<BdxBuffer>,
+    B: Buffers<BdxBuffer>,
     P: DiagLogs,
 {
     /// Fill `buf` from the `intent` log starting at `offset`, looping until it is
@@ -315,7 +315,7 @@ where
 
 impl<B, P> ClusterAsyncHandler for DiagLogsHandler<B, P>
 where
-    B: BufferAccess<BdxBuffer>,
+    B: Buffers<BdxBuffer>,
     P: DiagLogs,
 {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));

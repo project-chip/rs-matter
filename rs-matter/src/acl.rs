@@ -29,7 +29,7 @@ use crate::dm::clusters::acl::{
     AccessControlAuxiliaryTypeEnum, AccessControlEntryAuthModeEnum,
     AccessControlEntryPrivilegeEnum, AccessControlEntryStruct, AccessControlEntryStructBuilder,
 };
-use crate::dm::{Access, ClusterId, DeviceType, EndptId, GlobalElements, NodeId, Privilege};
+use crate::dm::{Access, ClusterId, DeviceType, EndptId, NodeId, Privilege};
 use crate::error::{Error, ErrorCode};
 use crate::im::GenericPath;
 use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
@@ -578,7 +578,7 @@ pub struct AclEntry {
     auxiliary_type: Option<AccessControlAuxiliaryTypeEnum>,
     // Note that this field will always be `Some(NN)` when the entry is persisted in storage,
     // however, it will be `None` when the entry is coming from the other peer.
-    #[tagval(GlobalElements::FabricIndex as u8)]
+    #[tagval(crate::im::encoding::FABRIC_INDEX_TAG)]
     pub fab_idx: Option<NonZeroU8>,
 }
 

@@ -36,7 +36,7 @@
 //!   │   matter.run  ──┐                                                      │
 //!   │   mdns        ──┤                                                      │
 //!   │   responder   ──┼── select5 ──► futures_lite::future::block_on         │
-//!   │   dm.run      ──┤                                                      │
+//!   │   im.run      ──┤                                                      │
 //!   │   drive       ──┘                                                      │
 //!   │     │                                                                  │
 //!   │     ▼     LocalExecutor                                                │
@@ -104,28 +104,24 @@ use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
 use rs_matter::dm::clusters::decl::globals::{ICECandidateStruct, WebRTCEndReasonEnum};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::endpoints;
-use rs_matter::dm::events::NoEvents;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::subscriptions::Subscriptions;
-use rs_matter::dm::DataModel;
 use rs_matter::dm::DeviceType;
-use rs_matter::dm::IMBuffer;
-use rs_matter::dm::{DataModelHandler, Dataver, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{DataModel, Dataver, Endpoint, EpClMatcher, Node};
 use rs_matter::error::Error;
+use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
+use rs_matter::persist::DirKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::TLVArray;
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
@@ -1103,9 +1099,8 @@ impl WebRtcHooks for Str0mHooks {
 // ---------------------------------------------------------------------------
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
-static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
-static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
-static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
+static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
+static STATE: StaticCell<EthInteractionModelState> = StaticCell::new();
 static WEBRTC: StaticCell<WebRtc> = StaticCell::new();
 static CAM_AV: StaticCell<CameraAvStreamHandler<'static, Str0mCamHooks, CAM_AV_NV>> =
     StaticCell::new();
@@ -1154,14 +1149,6 @@ fn main() -> Result<(), Error> {
         .with_ansi(false)
         .init();
 
-    info!(
-        "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B, WebRtc (BSS)={}B",
-        core::mem::size_of::<Matter>(),
-        core::mem::size_of::<PooledBuffers<10, IMBuffer>>(),
-        core::mem::size_of::<Subscriptions>(),
-        core::mem::size_of::<WebRtc>(),
-    );
-
     let matter = MATTER.uninit().init_with(Matter::init(
         &BASIC_INFO,
         TEST_DEV_COMM,
@@ -1169,12 +1156,19 @@ fn main() -> Result<(), Error> {
         MATTER_PORT,
     ));
 
-    let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
-    let mut kv = DirKvBlobStore::new_default();
-    futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
+    let store = DirKvBlobStore::new_default();
 
-    let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
-    let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
+    let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
+
+    // Create the data model state (subscriptions, events, network store).
+    let state = STATE.init(EthInteractionModelState::new(EthNetwork::new_default()));
+
+    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
+    let kv = matter.kv(store);
+
+    // Re-hydrate the `Matter` instance and the data model state (event-number epoch).
+    futures_lite::future::block_on(matter.load_persist(&kv))?;
+    futures_lite::future::block_on(state.load_persist(&kv))?;
 
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
     let mut rand = crypto.rand()?;
@@ -1300,21 +1294,18 @@ fn main() -> Result<(), Error> {
         DemoZoneHooks,
     ));
 
-    let events = NoEvents::new();
-    let dm = DataModel::new(
+    let im = InteractionModel::new(
         matter,
         &crypto,
         buffers,
-        subscriptions,
-        &events,
-        dm_handler(rand, webrtc, cam_av, cam_av_settings, zone_mgmt),
-        SharedKvBlobStore::new(kv, kv_buf),
-        SharedNetworks::new(EthNetwork::new_default()),
+        data_model(rand, webrtc, cam_av, cam_av_settings, zone_mgmt),
+        &kv,
+        state,
     );
 
-    let responder = DefaultResponder::new(&dm);
+    let responder = DefaultResponder::new(&im);
     let mut respond = pin!(responder.run::<4, 4>());
-    let mut dm_job = pin!(dm.run());
+    let mut im_job = pin!(im.run());
 
     let udp_socket = Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
@@ -1348,7 +1339,7 @@ fn main() -> Result<(), Error> {
         matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS, &crypto, &())?;
     }
 
-    let matter_core = select4(&mut transport, &mut mdns, &mut respond, &mut dm_job).coalesce();
+    let matter_core = select4(&mut transport, &mut mdns, &mut respond, &mut im_job).coalesce();
     let all = select(matter_core, &mut driver).coalesce();
     futures_lite::future::block_on(all)
 }
@@ -1384,7 +1375,7 @@ const NODE: Node<'static> = Node {
     ],
 };
 
-fn dm_handler<'a>(
+fn data_model<'a>(
     mut rand: impl RngCore + Copy,
     webrtc: &'a WebRtc,
     cam_av: &'a CameraAvStreamHandler<'static, Str0mCamHooks, CAM_AV_NV>,
@@ -1394,7 +1385,7 @@ fn dm_handler<'a>(
         CAM_AV_SETTINGS_NS,
     >,
     zone_mgmt: &'a ZoneMgmtHandler<DemoZoneHooks, ZONE_NZ, ZONE_NV, ZONE_NT>,
-) -> impl DataModelHandler + 'a {
+) -> impl DataModel + 'a {
     (
         NODE,
         endpoints::EthSysHandlerBuilder::new()

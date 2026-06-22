@@ -54,7 +54,7 @@ use crate::Matter;
 ///
 /// Holds a borrow of the [`Matter`] instance for its lifetime; the
 /// `run` / `refresh_once` methods take the KV-store handle and the
-/// attribute-change notifier (typically your `DataModel`) by reference
+/// attribute-change notifier (typically your `InteractionModel`) by reference
 /// so the same client struct can be re-used across refresh cycles.
 pub struct TimeSyncClient<'a, C> {
     matter: &'a Matter<'a>,

@@ -41,7 +41,9 @@
 #![recursion_limit = "256"]
 
 use core::future::Future;
-use core::mem::{size_of_val, MaybeUninit};
+use core::mem::size_of_val;
+#[cfg(target_os = "none")]
+use core::mem::MaybeUninit;
 
 // Logging - `defmt` for embedded targets, `log` for others
 #[cfg(target_os = "none")]
@@ -61,36 +63,37 @@ use rs_matter::dm::clusters::app::on_off::NoLevelControl;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::clusters::net_comm::{
-    NetCtl, NetCtlError, NetworkScanInfo, NetworkType, SharedNetworks, WirelessCreds,
+    NetCtl, NetCtlError, NetworkScanInfo, NetworkType, WirelessCreds,
 };
 use rs_matter::dm::clusters::wifi_diag::{
     SecurityTypeEnum, WiFiVersionEnum, WifiDiag, WirelessDiag,
 };
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
+use rs_matter::dm::endpoints;
 use rs_matter::dm::endpoints::WifiSysHandler;
-use rs_matter::dm::events::{Events, DEFAULT_MAX_EVENTS_BUF_SIZE};
 use rs_matter::dm::networks::wireless::{
-    NetCtlState, NetCtlStateMutex, NetCtlWithStatusImpl, WifiNetworks, WirelessMgr, MAX_CREDS_SIZE,
+    NetCtlState, NetCtlStateMutex, NetCtlWithStatusImpl, WifiNetworks,
 };
 use rs_matter::dm::networks::NetChangeNotif;
-use rs_matter::dm::subscriptions::{Subscriptions, DEFAULT_MAX_SUBSCRIPTIONS};
-use rs_matter::dm::{endpoints, IMBuffer};
-use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{Async, Dataver, Endpoint, EpClMatcher, Node};
 use rs_matter::error::Error;
+use rs_matter::im::{InteractionModel, WirelessInteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{DummyKvBlobStore, SharedKvBlobStore};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::network::btp::Btp;
 use rs_matter::transport::network::mdns::builtin::{BuiltinMdns, Host};
 use rs_matter::transport::network::{
     Address, ChainedNetwork, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend, NoNetwork,
 };
+use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::{init, Init, InitMaybeUninit};
-use rs_matter::utils::storage::pooled::PooledBuffers;
+use rs_matter::utils::sync::blocking::Mutex;
 use rs_matter::utils::sync::DynBase;
 use rs_matter::{clusters, devices, handler_chain_type, root_endpoint, Matter, MATTER_PORT};
 
@@ -154,15 +157,12 @@ macro_rules! unwrap {
 /// One large struct holding the entire Matter stack state
 struct MatterStack<'a> {
     matter: Matter<'a>,
-    buffers: PooledBuffers<10, IMBuffer>,
-    subscriptions: Subscriptions,
-    events: Events,
-    networks: SharedNetworks<WifiNetworks<3>>,
+    buffers: MatterBuffers,
+    // The data model's consolidated state: subscriptions table, events queue and
+    // the (Wifi) network store, all behind `InteractionModelState`.
+    state: WirelessInteractionModelState<WifiNetworks<3>>,
     net_ctl_state: NetCtlStateMutex,
     btp: Btp,
-    wireless_mgr_buffer: MaybeUninit<[u8; MAX_CREDS_SIZE]>,
-    // We don't run a persistence task, but emulate its typical memory consumnption
-    psm_buffer: MaybeUninit<[u8; 4096]>,
 }
 
 impl<'a> MatterStack<'a> {
@@ -175,14 +175,10 @@ impl<'a> MatterStack<'a> {
                 &TEST_DEV_ATT,
                 MATTER_PORT,
             ),
-            buffers <- PooledBuffers::init(0),
-            subscriptions <- Subscriptions::init(),
-            events <- Events::init(),
-            networks <- SharedNetworks::init(WifiNetworks::init()),
+            buffers <- MatterBuffers::init(),
+            state <- WirelessInteractionModelState::init(WifiNetworks::init()),
             net_ctl_state <- NetCtlState::init_with_mutex(),
             btp <- Btp::init(),
-            wireless_mgr_buffer: MaybeUninit::zeroed(),
-            psm_buffer: MaybeUninit::zeroed(),
         })
     }
 }
@@ -190,9 +186,7 @@ impl<'a> MatterStack<'a> {
 // Fully spelled-out types for everything which is passed down as arguments to `embassy-executor` tasks
 // Necessary, because `embassy-executor` doesn't grok generics
 
-type AppNetworks = SharedNetworks<WifiNetworks<3>>;
 type AppNetCtl<'a> = NetCtlWithStatusImpl<'a, FakeWifi>;
-type AppWirelessMgr<'a> = WirelessMgr<'a, &'a AppNetworks, &'a AppNetCtl<'a>>;
 type AppTransport<'a> = ChainedNetwork<FakeUdp, &'a Btp, fn(&Address) -> bool>;
 type AppDmHandler<'a> = handler_chain_type!(
     EpClMatcher => on_off::HandlerAsyncAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>,
@@ -200,26 +194,30 @@ type AppDmHandler<'a> = handler_chain_type!(
     | WifiSysHandler<'a, &'a AppNetCtl<'a>>
 );
 type AppCrypto = RustCrypto<'static, WeakTestOnlyRand>;
-type AppDataModel<'a> = DataModel<
+// A nameable no-op `KvBlobStoreAccess` for the static `#[task]` aliases below: a
+// `SharedKvBlobStore` over a `DummyKvBlobStore` with an empty (`KB = 0`) scratch buffer.
+// The real per-app buffer lives inside `Matter` (counted in the "Matter" line above), so
+// `KB = 0` here keeps this probe from double-counting it.
+type AppKvBuf = Mutex<RefCell<[u8; 0]>>;
+type AppKv = SharedKvBlobStore<'static, DummyKvBlobStore, 0>;
+type AppInteractionModel<'a> = InteractionModel<
     'a,
-    DEFAULT_MAX_SUBSCRIPTIONS,
-    DEFAULT_MAX_EVENTS_BUF_SIZE,
     &'a AppCrypto,
-    PooledBuffers<10, IMBuffer>,
+    MatterBuffers,
     (Node<'a>, &'a AppDmHandler<'a>),
-    SharedKvBlobStore<DummyKvBlobStore, &'static mut [u8]>,
-    &'a AppNetworks,
+    &'static AppKv,
+    WifiNetworks<3>,
+    &'a AppNetCtl<'a>,
 >;
 type AppResponder<'d, 'a> = DefaultResponder<
     'd,
     'a,
-    DEFAULT_MAX_SUBSCRIPTIONS,
-    DEFAULT_MAX_EVENTS_BUF_SIZE,
     &'a AppCrypto,
-    PooledBuffers<10, IMBuffer>,
+    MatterBuffers,
     (Node<'a>, &'a AppDmHandler<'a>),
-    SharedKvBlobStore<DummyKvBlobStore, &'static mut [u8]>,
-    &'a AppNetworks,
+    &'static AppKv,
+    WifiNetworks<3>,
+    &'a AppNetCtl<'a>,
 >;
 
 #[cfg_attr(target_os = "none", main)]
@@ -272,27 +270,27 @@ fn main() -> ! {
     report_size("Buffers", size_of_val(&stack.buffers), &mut stack_total);
     report_size(
         "Subscriptions",
-        size_of_val(&stack.subscriptions),
+        size_of_val(stack.state.subscriptions()),
         &mut stack_total,
     );
-    report_size("Events", size_of_val(&stack.events), &mut stack_total);
-    report_size("Networks", size_of_val(&stack.networks), &mut stack_total);
+    report_size(
+        "Events",
+        size_of_val(stack.state.events()),
+        &mut stack_total,
+    );
+    report_size(
+        "Networks",
+        size_of_val(stack.state.networks()),
+        &mut stack_total,
+    );
     report_size(
         "NetCtl state",
         size_of_val(&stack.net_ctl_state),
         &mut stack_total,
     );
     report_size("BTP", size_of_val(&stack.btp), &mut stack_total);
-    report_size(
-        "Wireless mgr buffer",
-        size_of_val(&stack.wireless_mgr_buffer),
-        &mut stack_total,
-    );
-    report_size(
-        "Persister buffer",
-        size_of_val(&stack.psm_buffer),
-        &mut stack_total,
-    );
+    // The KV/persister scratch buffer now lives inside `Matter` (feature-sized via the
+    // `kv-blob-store-NNNN` features), so it is already included in the "Matter" line above.
 
     report_subtotal_size("TOTAL MATTER STACK ", stack_total);
 
@@ -310,15 +308,9 @@ fn main() -> ! {
 
     report_size("Network controller", size_of_val(net_ctl), &mut aux_total);
 
-    // Wifi network manager (cycle registered networks, auto-reconnect)
-    let wifi_mgr = mk_static!(
-        AppWirelessMgr,
-        WirelessMgr::new(&stack.networks, net_ctl, unsafe {
-            stack.wireless_mgr_buffer.assume_init_mut()
-        },)
-    );
-
-    report_size("Wireless manager", size_of_val(&*wifi_mgr), &mut aux_total);
+    // The operational Wifi connection manager is now driven from inside
+    // `InteractionModel::run` (no separate task); its footprint shows up under the data
+    // model future below.
 
     let crypto = &*mk_static!(
         AppCrypto,
@@ -327,13 +319,17 @@ fn main() -> ! {
 
     let mut rand = unwrap!(crypto.weak_rand());
 
-    let kv_buf = unsafe { stack.psm_buffer.assume_init_mut() }.as_mut_slice();
-    let kv = SharedKvBlobStore::new(DummyKvBlobStore, kv_buf);
+    // A real app gets its `KvBlobStoreAccess` from `Matter::kv(store)`, but that returns an
+    // unnameable `impl KvBlobStoreAccess`, which the static `#[task]` aliases above can't
+    // name. This bloat probe fakes persistence anyway, so build a nameable `SharedKvBlobStore`
+    // over a `DummyKvBlobStore` with an empty buffer; the data model holds it as `&'a K`.
+    let kv_buf = mk_static!(AppKvBuf, Mutex::new(RefCell::new([0u8; 0])));
+    let kv = &*mk_static!(AppKv, SharedKvBlobStore::new(DummyKvBlobStore, kv_buf));
 
     // A Wireless handler with a sample app cluster (on-off)
     let handler = mk_static!(
         AppDmHandler,
-        dm_handler(
+        data_model(
             rand,
             on_off::OnOffHandler::new_standalone(
                 Dataver::new_rand(&mut rand),
@@ -347,22 +343,22 @@ fn main() -> ! {
 
     report_size("DM Handler size", size_of_val(&*handler), &mut aux_total);
 
-    // Data Model
-    let dm = &*mk_static!(
-        AppDataModel,
-        DataModel::new(
+    // Data Model. `net_ctl` is wired in so the data model's `run` drives the
+    // operational Wifi connection manager itself (no separate manager task).
+    let im = &*mk_static!(
+        AppInteractionModel,
+        InteractionModel::new_with_net_ctl(
             &stack.matter,
             crypto,
             &stack.buffers,
-            &stack.subscriptions,
-            &stack.events,
             (NODE, handler),
             kv,
-            &stack.networks,
+            net_ctl,
+            &stack.state,
         )
     );
 
-    report_size("Data Model", size_of_val(dm), &mut aux_total);
+    report_size("Interaction Model", size_of_val(im), &mut aux_total);
 
     let mdns = mk_static!(BuiltinMdns, BuiltinMdns::new());
 
@@ -391,7 +387,7 @@ fn main() -> ! {
     );
 
     // A default responder
-    let responder = mk_static!(AppResponder, DefaultResponder::new(dm));
+    let responder = mk_static!(AppResponder, DefaultResponder::new(im));
 
     report_size("Responder", size_of_val(&*responder), &mut aux_total);
 
@@ -418,7 +414,7 @@ fn main() -> ! {
         size_of_val(&respond_busy_task_fut(responder, 0)) * 2,
         &mut fut_total,
     );
-    report_size("DM task", size_of_val(&dm_task_fut(dm)), &mut fut_total);
+    report_size("IM task", size_of_val(&im_task_fut(im)), &mut fut_total);
     report_size(
         "mDNS task",
         size_of_val(&mdns_task_fut(mdns, &stack.matter, crypto)),
@@ -427,11 +423,6 @@ fn main() -> ! {
     report_size(
         "BTP task",
         size_of_val(&btp_task_fut(&stack.btp)),
-        &mut fut_total,
-    );
-    report_size(
-        "Wifi task",
-        size_of_val(&wifi_task_fut(wifi_mgr)),
         &mut fut_total,
     );
     report_size(
@@ -474,10 +465,9 @@ fn main() -> ! {
         spawner.spawn(unwrap!(respond_task(responder, 2)));
         spawner.spawn(unwrap!(respond_task(responder, 1)));
         spawner.spawn(unwrap!(respond_task(responder, 0)));
-        spawner.spawn(unwrap!(dm_task(dm)));
+        spawner.spawn(unwrap!(im_task(im)));
         spawner.spawn(unwrap!(mdns_task(mdns, &stack.matter, crypto)));
         spawner.spawn(unwrap!(btp_task(&stack.btp)));
-        spawner.spawn(unwrap!(wifi_task(wifi_mgr)));
         spawner.spawn(unwrap!(transport_task(
             &stack.matter,
             crypto,
@@ -516,14 +506,16 @@ async fn respond_busy_task(responder: &'static AppResponder<'static, 'static>, h
 }
 
 #[inline(always)]
-fn dm_task_fut<'a>(dm: &'a AppDataModel<'a>) -> impl Future<Output = Result<(), Error>> + 'a {
-    dm.run()
+fn im_task_fut<'a>(
+    im: &'a AppInteractionModel<'a>,
+) -> impl Future<Output = Result<(), Error>> + 'a {
+    im.run()
 }
 
 #[embassy_executor::task]
-async fn dm_task(dm: &'static AppDataModel<'static>) {
+async fn im_task(im: &'static AppInteractionModel<'static>) {
     info!("Starting DM task...");
-    unwrap!(dm_task_fut(dm).await);
+    unwrap!(im_task_fut(im).await);
 }
 
 #[inline(always)]
@@ -566,19 +558,6 @@ fn btp_task_fut<'a>(_btp: &'a Btp) -> impl Future<Output = Result<(), Error>> + 
 async fn btp_task(btp: &'static Btp) {
     info!("Starting BTP task...");
     unwrap!(btp_task_fut(btp).await);
-}
-
-#[inline(always)]
-fn wifi_task_fut<'a>(
-    wifi_mgr: &'a mut AppWirelessMgr<'static>,
-) -> impl Future<Output = Result<(), Error>> + 'a {
-    wifi_mgr.run()
-}
-
-#[embassy_executor::task]
-async fn wifi_task(wifi_mgr: &'static mut AppWirelessMgr<'static>) {
-    info!("Starting Wifi task...");
-    unwrap!(wifi_task_fut(wifi_mgr).await);
 }
 
 #[inline(always)]
@@ -645,7 +624,7 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a>(
+fn data_model<'a>(
     mut rand: impl RngCore + Copy,
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
     wifi_diag: &'a dyn WifiDiag,

@@ -17,7 +17,6 @@
 
 //! This module defines the `Status` and `StatusResp` structures used in the Interaction Model.
 
-use crate::dm::GlobalElements;
 use crate::error::Error;
 use crate::tlv::{FromTLV, TagType, ToTLV};
 use crate::utils::storage::WriteBuf;
@@ -56,7 +55,7 @@ pub struct StatusResp {
     /// `interactionModelRevision` — mandatory in every IM message we send;
     /// modelled as `Option<u8>` so we tolerate peers that omit it (the C++
     /// SDK is tolerant in practice).
-    #[tagval(GlobalElements::InteractionModelRevision as u8)]
+    #[tagval(crate::im::encoding::IM_REVISION_TAG)]
     pub interaction_model_revision: Option<u8>,
 }
 

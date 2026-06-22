@@ -54,34 +54,26 @@ use rs_matter::dm::clusters::decl::switch::{
     self, ClusterHandler as _, Feature as SwitchFeature, InitialPress, ShortRelease,
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_GENERIC_SWITCH, DEV_TYPE_ON_OFF_LIGHT_SWITCH};
 use rs_matter::dm::endpoints;
-use rs_matter::dm::events::Events;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::subscriptions::Subscriptions;
-use rs_matter::dm::IMBuffer;
-use rs_matter::dm::{
-    Async, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, EventEmitter, Node,
-};
+use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, EpClMatcher, EventEmitter, Node};
 use rs_matter::error::Error;
+use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
+use rs_matter::persist::{DirKvBlobStore, KvBlobStoreAccess};
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::Exchange;
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
-use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
 // `OnOffClient` brings the `.on_off()` IM-client method into scope on `Exchange`.
 use rs_matter::dm::clusters::app::on_off::OnOffClient as _;
-
-use static_cell::StaticCell;
 
 #[path = "../common/mdns.rs"]
 mod mdns;
@@ -98,63 +90,56 @@ const GENERIC_SWITCH_ENDPOINT: u16 = 2;
 /// How many binding entries the device can hold (across all fabrics/endpoints).
 const MAX_BINDINGS: usize = 16;
 
-static MATTER: StaticCell<Matter> = StaticCell::new();
-static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
-static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
-static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
-static BINDINGS: StaticCell<Bindings<MAX_BINDINGS>> = StaticCell::new();
-
 fn main() -> Result<(), Error> {
     env_logger::init_from_env(
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
     );
 
-    let matter = MATTER.uninit().init_with(Matter::init(
-        &TEST_DEV_DET,
-        TEST_DEV_COMM,
-        &TEST_DEV_ATT,
-        MATTER_PORT,
-    ));
+    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
     // Persistence
-    let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
-    let mut kv = DirKvBlobStore::new_default();
-    futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
+    let store = DirKvBlobStore::new_default();
+
+    let buffers: MatterBuffers = MatterBuffers::new();
+
+    // Create the data model state. This device EMITS events (the Generic Switch
+    // press events), so - unlike the examples that use `NoEvents` - the default
+    // state carries a real (non-zero) event queue that holds them until
+    // subscribers read them.
+    let mut state: EthInteractionModelState =
+        EthInteractionModelState::new(EthNetwork::new_default());
 
     // The Binding registry (the switch's address book), loaded from persistence.
-    let bindings = BINDINGS.uninit().init_with(Bindings::init());
-    futures_lite::future::block_on(bindings.load_persist(&mut kv, kv_buf))?;
+    let bindings = Bindings::<MAX_BINDINGS>::new();
 
-    let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
-    let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
+    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
+    let kv = matter.kv(store);
+
+    // Re-hydrate persisted state.
+    futures_lite::future::block_on(matter.load_persist(&kv))?;
+    kv.access(|store, buf| futures_lite::future::block_on(bindings.load_persist(store, buf)))?;
+    futures_lite::future::block_on(state.load_persist(&kv))?;
 
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
     let rand = crypto.rand()?;
 
-    // A real (non-zero) event queue: this device EMITS events (the Generic
-    // Switch press events), so - unlike the other examples that use `NoEvents` -
-    // we need actual buffers to hold them until subscribers read them.
-    let events = Events::<256>::new();
-
-    let dm = DataModel::new(
-        matter,
+    let im = InteractionModel::new(
+        &matter,
         &crypto,
-        buffers,
-        subscriptions,
-        &events,
-        dm_handler(rand, bindings),
-        SharedKvBlobStore::new(kv, kv_buf),
-        SharedNetworks::new(EthNetwork::new_default()),
+        &buffers,
+        data_model(rand, &bindings),
+        &kv,
+        &state,
     );
 
-    let responder = rs_matter::respond::DefaultResponder::new(&dm);
+    let responder = rs_matter::respond::DefaultResponder::new(&im);
     let mut respond = pin!(responder.run::<4, 4>());
 
-    let mut dm_job = pin!(dm.run());
+    let mut im_job = pin!(im.run());
 
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
-    let mut mdns = pin!(mdns::run_mdns(matter, &crypto));
+    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto));
     let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
     if !matter.is_commissioned() {
@@ -164,12 +149,12 @@ fn main() -> Result<(), Error> {
     }
 
     // The switch task: on each Enter, emit Generic Switch press events and
-    // toggle every bound light. `&dm` is the `EventEmitter` used to publish the
+    // toggle every bound light. `&im` is the `EventEmitter` used to publish the
     // Generic Switch events.
-    let mut switch = pin!(run_switch(matter, &crypto, bindings, &dm));
+    let mut switch = pin!(run_switch(&matter, &crypto, &bindings, &im));
 
     // Combine the core Matter tasks, then add the switch task alongside.
-    let mut core = pin!(select4(&mut transport, &mut mdns, &mut respond, &mut dm_job,).coalesce());
+    let mut core = pin!(select4(&mut transport, &mut mdns, &mut respond, &mut im_job,).coalesce());
 
     let all = select(&mut core, &mut switch).coalesce();
 
@@ -364,10 +349,10 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler: root endpoint 0 + the Descriptor and Binding handlers
 /// on the switch endpoint.
-fn dm_handler<'a, const N: usize>(
+fn data_model<'a, const N: usize>(
     mut rand: impl RngCore + Copy,
     bindings: &'a Bindings<N>,
-) -> impl DataModelHandler + 'a {
+) -> impl DataModel + 'a {
     (
         NODE,
         endpoints::EthSysHandlerBuilder::new()

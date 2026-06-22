@@ -45,22 +45,23 @@ use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, SharedNetworks};
+use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus};
 use rs_matter::dm::clusters::wifi_diag::WifiDiag;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
-use rs_matter::dm::events::Events;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, WifiNetworks};
-use rs_matter::dm::subscriptions::Subscriptions;
-use rs_matter::dm::{Async, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::networks::NetChangeNotif;
+use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, EpClMatcher, Node};
 use rs_matter::error::Error;
+use rs_matter::im::{InteractionModel, WirelessInteractionModelState};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
+use rs_matter::persist::DirKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::transport::exchange::MatterBuffers;
 #[cfg(target_os = "linux")]
 use rs_matter::transport::network::btp::bluez;
 use rs_matter::transport::network::btp::{AdvData, Btp};
@@ -69,7 +70,6 @@ use rs_matter::transport::network::wifi::wpa_supp::unix::DhClientCtl;
 use rs_matter::transport::network::wifi::wpa_supp::WpaSuppCtl;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::zbus::Connection;
 use rs_matter::{clusters, devices, root_endpoint, Matter, MATTER_PORT};
 
@@ -117,30 +117,30 @@ fn main() -> Result<(), Error> {
     }
 }
 
-fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), Error> {
+fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
+    connection: &Connection,
+    net_ctl: N,
+) -> Result<(), Error> {
     // Create the Matter object
-    let mut matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
-
-    // A storage for the Wifi networks
-    let mut networks = WifiNetworks::<3>::new();
-
-    // Create the event queue
-    let mut events: Events = Events::new();
+    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
     // Persistence
-    let mut kv_buf = [0; 4096];
-    let mut kv = DirKvBlobStore::new_default();
-    futures_lite::future::block_on(matter.load_persist(&mut kv, &mut kv_buf))?;
-    futures_lite::future::block_on(networks.load_persist(&mut kv, &mut kv_buf))?;
-    futures_lite::future::block_on(events.load_persist(&mut kv, &mut kv_buf))?;
-
-    let networks = SharedNetworks::new(networks);
+    let store = DirKvBlobStore::new_default();
 
     // Create the transport buffers
-    let buffers = PooledBuffers::<10, _>::new(0);
+    let buffers: MatterBuffers = MatterBuffers::new();
 
-    // Create the subscriptions
-    let subscriptions: Subscriptions = Subscriptions::new();
+    // Create the data model state (subscriptions, events, the Wifi network store).
+    let mut state: WirelessInteractionModelState<WifiNetworks<3>> =
+        WirelessInteractionModelState::new(WifiNetworks::new());
+
+    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
+    let kv = matter.kv(store);
+
+    // Re-hydrate persisted state: the `Matter` instance (fabrics, ACLs, basic
+    // info) and the data model state itself (event-number epoch + Wifi networks).
+    futures_lite::future::block_on(matter.load_persist(&kv))?;
+    futures_lite::future::block_on(state.load_persist(&kv))?;
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
@@ -159,28 +159,29 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
 
     let net_ctl = NetCtlWithStatusImpl::new(&net_ctl_state, net_ctl);
 
-    // Create the Data Model instance
-    let dm = DataModel::new(
+    // Create the Data Model instance. The same `net_ctl` is wired both into the
+    // `NetworkCommissioning` handler (above) and into the data model, which drives
+    // the operational Wifi connection manager from `InteractionModel::run`.
+    let im = InteractionModel::new_with_net_ctl(
         &matter,
         &crypto,
         &buffers,
-        &subscriptions,
-        &events,
-        dm_handler(rand, &on_off_handler, &net_ctl, &net_ctl),
-        SharedKvBlobStore::new(kv, kv_buf.as_mut_slice()),
-        &networks,
+        data_model(rand, &on_off_handler, &net_ctl, &net_ctl),
+        &kv,
+        &net_ctl,
+        &state,
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(&dm);
+    let responder = DefaultResponder::new(&im);
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
 
     // Run the background job of the data model
-    let mut dm_job = pin!(dm.run());
+    let mut im_job = pin!(im.run());
 
     // Create and run the mDNS responder
     let mut mdns = pin!(mdns::run_mdns(&matter, &crypto));
@@ -228,7 +229,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
                 &mut transport,
                 &mut bluetooth,
                 &mut wifi_prov_task,
-                select(&mut respond, &mut dm_job).coalesce(),
+                select(&mut respond, &mut im_job).coalesce(),
             );
 
             // Run with a simple `block_on`. Any local executor would do.
@@ -245,7 +246,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     let mut transport = pin!(matter.run(&crypto, &udp, &udp, &udp));
 
     // Combine all async tasks in a single one
-    let all = select4(&mut transport, &mut mdns, &mut respond, &mut dm_job).coalesce();
+    let all = select4(&mut transport, &mut mdns, &mut respond, &mut im_job).coalesce();
 
     // Run with a simple `block_on`. Any local executor would do.
     futures_lite::future::block_on(all)
@@ -269,12 +270,12 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
+fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks, T>(
     mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     wifi_diag: &'a dyn WifiDiag,
     net_ctl: T,
-) -> impl DataModelHandler + 'a
+) -> impl DataModel + 'a
 where
     T: NetCtl + NetCtlStatus + 'a,
 {

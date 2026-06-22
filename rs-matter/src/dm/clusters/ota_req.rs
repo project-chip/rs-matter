@@ -38,9 +38,9 @@ use crate::dm::{
     ArrayAttributeRead, ArrayAttributeWrite, AttrChangeNotifier, Cluster, Dataver, InvokeContext,
     ReadContext, WriteContext,
 };
+use crate::dm::{AttrId, EndptId, NodeId};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
-use crate::im::{AttrId, EndptId, NodeId};
 use crate::persist::{KvBlobStore, Persist, OTA_PROVIDERS_KEY};
 use crate::tlv::{FromTLV, Nullable, Octets, TLVArray, TLVBuilderParent, TLVElement, ToTLV};
 use crate::transport::exchange::Exchange;
@@ -492,9 +492,9 @@ impl Default for Providers {
 ///
 /// Because progress is reported from the application's own update loop (outside
 /// any cluster-handler `ctx`), the reporting calls take the data model's
-/// [`AttrChangeNotifier`] (typically the `DataModel`) so each change bumps the
+/// [`AttrChangeNotifier`] (typically the `InteractionModel`) so each change bumps the
 /// cluster's data version and wakes subscribers. It is passed in rather than
-/// stored because the `DataModel` is constructed *after* this state (it borrows
+/// stored because the `InteractionModel` is constructed *after* this state (it borrows
 /// it), so there is never a moment at which it could be stored here.
 pub struct OtaState {
     endpoint_id: EndptId,

@@ -22,15 +22,15 @@ use embassy_futures::select::select;
 
 use crate::crypto::Crypto;
 use crate::dm::clusters::net_comm::NetworksAccess;
-use crate::dm::events::EventTLVWrite;
-use crate::dm::{EventId, IMBuffer, Metadata};
+use crate::dm::{EventId, EventNumber, Metadata};
 use crate::error::{Error, ErrorCode};
-use crate::im::{EventNumber, EventPriority};
+use crate::im::encoding::{EventPriority, IMBuffer};
+use crate::im::events::EventTLVWrite;
 use crate::persist::KvBlobStoreAccess;
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
 use crate::utils::select::Coalesce;
-use crate::utils::storage::pooled::BufferAccess;
+use crate::utils::storage::pooled::Buffers;
 use crate::utils::sync::DynBase;
 use crate::Matter;
 
@@ -277,7 +277,7 @@ pub trait HandlerContext: AttrChangeNotifier + EventEmitter {
     ///
     /// Useful in case e.g. a concrete cluster handler needs to invoke read/write/invoke operations on
     /// other clusters, and the TLV input/output data for those operations is non-trivial in size.
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_;
+    fn buffers(&self) -> impl Buffers<IMBuffer> + '_;
 }
 
 impl<T> HandlerContext for &T
@@ -308,7 +308,7 @@ where
         (**self).handler()
     }
 
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+    fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
         (**self).buffers()
     }
 }
@@ -497,7 +497,7 @@ where
         self.context.handler()
     }
 
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+    fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
         self.context.buffers()
     }
 }
@@ -673,7 +673,7 @@ where
         self.context.handler()
     }
 
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+    fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
         self.context.buffers()
     }
 }
@@ -853,7 +853,7 @@ where
         self.context.handler()
     }
 
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+    fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
         self.context.buffers()
     }
 }
@@ -975,8 +975,8 @@ where
     }
 }
 
-pub trait DataModelHandler: Metadata + AsyncHandler {}
-impl<T> DataModelHandler for T where T: Metadata + AsyncHandler {}
+pub trait DataModel: Metadata + AsyncHandler {}
+impl<T> DataModel for T where T: Metadata + AsyncHandler {}
 
 /// A version of the `AsyncHandler` trait that never awaits any operation.
 ///
@@ -1354,7 +1354,7 @@ mod asynch {
     /// Handlers are typically implemented by user-defined clusters, but there is no 1:1 correspondence between
     /// a handler and a cluster, as a single handler can handle multiple clusters and even multiple endpoints.
     ///
-    /// Moreover, the `DataModel` implementation expects a single `AsyncHandler` instance, so the expectation
+    /// Moreover, the `InteractionModel` implementation expects a single `AsyncHandler` instance, so the expectation
     /// is that the user will compose multiple handlers into a single `AsyncHandler` instance, using `ChainedHandler`
     /// or other means.
     pub trait AsyncHandler {

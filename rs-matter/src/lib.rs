@@ -55,7 +55,7 @@ use crate::transport::{
 };
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
-use crate::utils::storage::pooled::BufferAccess;
+use crate::utils::storage::pooled::Buffers;
 use crate::utils::sync::blocking::Mutex;
 
 use rand_core::RngCore;
@@ -142,6 +142,13 @@ pub struct Matter<'a> {
     dev_att: &'a dyn DeviceAttestation,
     /// The port number on which the Matter stack will listen for incoming connections
     port: u16,
+    /// The scratch buffer used by the key-value persistence machinery for
+    /// (de)serializing BLOBs. Behind a blocking mutex so [`Matter::kv`] can
+    /// recombine it with the user's raw [`KvBlobStore`](crate::persist::KvBlobStore)
+    /// into a full [`KvBlobStoreAccess`](crate::persist::KvBlobStoreAccess). Its
+    /// size is set by the `kv-blob-store-*` Cargo features (see
+    /// [`KV_BUF_SIZE`](crate::persist::KV_BUF_SIZE)).
+    kv_buf: Mutex<RefCell<[u8; crate::persist::KV_BUF_SIZE]>>,
 }
 
 impl<'a> Matter<'a> {
@@ -169,6 +176,7 @@ impl<'a> Matter<'a> {
             dev_comm,
             dev_att,
             port,
+            kv_buf: Mutex::new(RefCell::new([0; crate::persist::KV_BUF_SIZE])),
         }
     }
 
@@ -196,6 +204,7 @@ impl<'a> Matter<'a> {
                 dev_comm,
                 dev_att,
                 port,
+                kv_buf <- Mutex::init(RefCell::init(crate::utils::init::zeroed())),
             }
         )
     }
@@ -214,6 +223,23 @@ impl<'a> Matter<'a> {
 
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    /// Combine a user-provided raw [`KvBlobStore`] with the scratch buffer owned
+    /// by this `Matter` object to obtain a full [`KvBlobStoreAccess`].
+    ///
+    /// This is the single entry point for persistence: the application passes its
+    /// raw store (sync `load`/`store`/`remove`) and gets back an access object
+    /// that recombines it with `Matter`'s feature-sized scratch buffer (see
+    /// [`KV_BUF_SIZE`](crate::persist::KV_BUF_SIZE)). The returned value is then
+    /// lent (by `&`) to [`Matter::load_persist`], [`Matter::reset_persist`],
+    /// [`InteractionModelState::load_persist`](crate::im::InteractionModelState::load_persist)
+    /// and [`InteractionModel::new`](crate::im::InteractionModel::new).
+    ///
+    /// # Arguments
+    /// - `store` - the raw [`KvBlobStore`] implementation to wrap
+    pub fn kv<'s, S: KvBlobStore + 's>(&'s self, store: S) -> impl KvBlobStoreAccess + 's {
+        crate::persist::SharedKvBlobStore::new(store, &self.kv_buf)
     }
 
     /// Get a reference to the transport state of this Matter object.
@@ -364,8 +390,8 @@ impl<'a> Matter<'a> {
     /// via `notify`, but does **not** bump the per-cluster `Dataver` of
     /// `AdministratorCommissioning` — a subsequent dataver-filtered
     /// read could therefore cache-hit and miss the change. Application
-    /// code that holds a `DataModel` should prefer
-    /// [`crate::dm::DataModel::open_basic_comm_window`], which delegates
+    /// code that holds a `InteractionModel` should prefer
+    /// [`crate::im::InteractionModel::open_basic_comm_window`], which delegates
     /// here and additionally bumps dataver via its
     /// [`AttrChangeNotifier`] impl.
     pub fn open_basic_comm_window<C: Crypto>(
@@ -405,7 +431,7 @@ impl<'a> Matter<'a> {
     /// **Note:** As with [`Matter::open_basic_comm_window`], this does
     /// not bump the per-cluster `Dataver` of
     /// `AdministratorCommissioning`. Prefer
-    /// [`crate::dm::DataModel::close_comm_window`] when a `DataModel`
+    /// [`crate::im::InteractionModel::close_comm_window`] when a `InteractionModel`
     /// is available.
     pub fn close_comm_window(&self, notify: &dyn AttrChangeNotifier) -> Result<bool, Error> {
         let notify_mdns = || self.transport().notify_mdns_changed();
@@ -429,8 +455,8 @@ impl<'a> Matter<'a> {
     /// does **not** bump the per-cluster `Dataver` of
     /// `BasicInformation`. A subsequent dataver-filtered read could
     /// therefore cache-hit and miss the change. Application code that
-    /// holds a `DataModel` should prefer
-    /// [`crate::dm::DataModel::bump_configuration_version`], which
+    /// holds a `InteractionModel` should prefer
+    /// [`crate::im::InteractionModel::bump_configuration_version`], which
     /// delegates here and additionally bumps dataver via its
     /// [`AttrChangeNotifier`] impl.
     ///
@@ -524,24 +550,19 @@ impl<'a> Matter<'a> {
     /// Reset the Matter persistable state by removing all fabrics and resetting basic info settings
     ///
     /// Arguments:
-    /// - `kv`: The key-value store to load the fabrics and basic info settings from
-    /// - `buf`: A buffer to use for loading the fabrics and basic info settings
-    pub async fn reset_persist<S: KvBlobStore>(
-        &mut self,
-        mut kv: S,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
-        {
-            let state = self.state.get_mut();
-            let mut state = state.borrow_mut();
+    /// - `kv`: The key-value store access (obtained via [`Matter::kv`]) to remove the fabrics
+    ///   and basic info settings from. Provides both the store and the scratch buffer.
+    pub async fn reset_persist<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
+        self.with_state(|state| {
+            // The KV ops are sync, so do them all inside a single `access` closure.
+            kv.access(|mut store, buf| {
+                state.fabrics.reset_persist(&mut store, buf)?;
+                state.basic_info_settings.reset_persist(&mut store, buf)?;
+                state.rtc.reset_persist(&mut store, buf)?;
 
-            state.fabrics.reset_persist(&mut kv, buf).await?;
-            state
-                .basic_info_settings
-                .reset_persist(&mut kv, buf)
-                .await?;
-            state.rtc.reset_persist(&mut kv, buf).await?;
-        }
+                Ok::<_, Error>(())
+            })
+        })?;
 
         self.transport().notify_mdns_changed();
 
@@ -551,21 +572,19 @@ impl<'a> Matter<'a> {
     /// Load fabrics from the given data
     ///
     /// Arguments:
-    /// - `kv`: The key-value store to load the fabrics and basic info settings from
-    /// - `buf`: A buffer to use for loading the fabrics and basic info settings
-    pub async fn load_persist<S: KvBlobStore>(
-        &mut self,
-        mut kv: S,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
-        {
-            let state = self.state.get_mut();
-            let mut state = state.borrow_mut();
+    /// - `kv`: The key-value store access (obtained via [`Matter::kv`]) to load the fabrics
+    ///   and basic info settings from. Provides both the store and the scratch buffer.
+    pub async fn load_persist<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
+        self.with_state(|state| {
+            // The KV ops are sync, so do them all inside a single `access` closure.
+            kv.access(|mut store, buf| {
+                state.fabrics.load_persist(&mut store, buf)?;
+                state.basic_info_settings.load_persist(&mut store, buf)?;
+                state.rtc.load_persist(&mut store, buf)?;
 
-            state.fabrics.load_persist(&mut kv, buf).await?;
-            state.basic_info_settings.load_persist(&mut kv, buf).await?;
-            state.rtc.load_persist(&mut kv, buf).await?;
-        }
+                Ok::<_, Error>(())
+            })
+        })?;
 
         self.transport().notify_mdns_changed();
 

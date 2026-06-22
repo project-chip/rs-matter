@@ -43,78 +43,50 @@ use rs_matter::dm::clusters::decl::level_control::{
 use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::endpoints;
-use rs_matter::dm::events::Events;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::subscriptions::Subscriptions;
-use rs_matter::dm::IMBuffer;
-use rs_matter::dm::{
-    Async, Cluster, DataModel, DataModelHandler, Dataver, Endpoint, EpClMatcher, Node,
-};
+use rs_matter::dm::{Async, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, Node};
 use rs_matter::error::{Error, ErrorCode};
+use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::SharedKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
-use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, root_endpoint, with, Matter, MATTER_PORT};
-
-use static_cell::StaticCell;
 
 #[path = "../common/mdns.rs"]
 mod mdns;
-
-// Statically allocate in BSS the bigger objects
-// `rs-matter` supports efficient initialization of BSS objects (with `init`)
-// as well as just allocating the objects on-stack or on the heap.
-static MATTER: StaticCell<Matter> = StaticCell::new();
-static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
-static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
-static EVENTS: StaticCell<Events> = StaticCell::new();
-static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     env_logger::init_from_env(
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
     );
 
-    info!(
-        "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
-        core::mem::size_of::<Matter>(),
-        core::mem::size_of::<PooledBuffers<10, IMBuffer>>(),
-        core::mem::size_of::<Subscriptions>()
-    );
-
-    let matter = MATTER.uninit().init_with(Matter::init(
-        &TEST_DEV_DET,
-        TEST_DEV_COMM,
-        &TEST_DEV_ATT,
-        MATTER_PORT,
-    ));
-
-    // Create the event queue
-    let events = EVENTS.uninit().init_with(Events::init());
+    let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
     // Persistence
-    let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
-    let mut kv = rs_matter::persist::DirKvBlobStore::new_default();
-    futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
-    futures_lite::future::block_on(events.load_persist(&mut kv, kv_buf))?;
+    let store = rs_matter::persist::DirKvBlobStore::new_default();
 
     // Create the transport buffers
-    let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
+    let buffers: MatterBuffers = MatterBuffers::new();
 
-    // Create the subscriptions
-    let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
+    // Create the data model state (subscriptions, events, network store).
+    let mut state: EthInteractionModelState =
+        EthInteractionModelState::new(EthNetwork::new_default());
+
+    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
+    let kv = matter.kv(store);
+
+    // Re-hydrate the `Matter` instance and the data model state (event-number epoch).
+    futures_lite::future::block_on(matter.load_persist(&kv))?;
+    futures_lite::future::block_on(state.load_persist(&kv))?;
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
@@ -142,43 +114,30 @@ fn main() -> Result<(), Error> {
     level_control_handler.init(Some(&on_off_handler));
 
     // Create the Data Model instance
-    let dm = DataModel::new(
-        matter,
+    let im = InteractionModel::new(
+        &matter,
         &crypto,
-        buffers,
-        subscriptions,
-        events,
-        dm_handler(rand, &on_off_handler, &level_control_handler),
-        SharedKvBlobStore::new(kv, kv_buf),
-        SharedNetworks::new(EthNetwork::new_default()),
+        &buffers,
+        data_model(rand, &on_off_handler, &level_control_handler),
+        &kv,
+        &state,
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(&dm);
-    info!(
-        "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
-        core::mem::size_of_val(&responder),
-        core::mem::size_of_val(&responder.run::<4, 4>())
-    );
+    let responder = DefaultResponder::new(&im);
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
 
     // Run the background job of the data model
-    let mut dm_job = pin!(dm.run());
+    let mut im_job = pin!(im.run());
 
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
-    info!(
-        "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket, &socket)),
-        core::mem::size_of_val(&mdns::run_mdns(matter, &crypto))
-    );
-
     // Run the Matter and mDNS transports
-    let mut mdns = pin!(mdns::run_mdns(matter, &crypto));
+    let mut mdns = pin!(mdns::run_mdns(&matter, &crypto));
     let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
     // We need to always print the QR text, because the test runner expects it to be printed
@@ -210,7 +169,7 @@ fn main() -> Result<(), Error> {
     let all = select3(
         &mut transport,
         &mut mdns,
-        select3(&mut respond, &mut dm_job, &mut term).coalesce(),
+        select3(&mut respond, &mut im_job, &mut term).coalesce(),
     );
 
     // Run with a simple `block_on`. Any local executor would do.
@@ -236,11 +195,11 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
+fn data_model<'a, LH: LevelControlHooks, OH: OnOffHooks>(
     mut rand: impl RngCore + Copy,
     on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
-) -> impl DataModelHandler + 'a {
+) -> impl DataModel + 'a {
     (
         NODE,
         endpoints::EthSysHandlerBuilder::new()

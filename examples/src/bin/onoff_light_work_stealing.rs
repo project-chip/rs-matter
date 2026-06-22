@@ -23,8 +23,6 @@
 
 use std::net::UdpSocket;
 
-use log::info;
-
 use rand::{CryptoRng, RngCore};
 
 use rs_matter::crypto::backend::rustcrypto::RustCrypto;
@@ -32,25 +30,22 @@ use rs_matter::crypto::Crypto;
 use rs_matter::dm::clusters::app::on_off::NoLevelControl;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
-use rs_matter::dm::clusters::net_comm::SharedNetworks;
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints::{self, EthSysHandler};
-use rs_matter::dm::events::Events;
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
-use rs_matter::dm::subscriptions::Subscriptions;
-use rs_matter::dm::IMBuffer;
-use rs_matter::dm::{Async, DataModel, Dataver, Endpoint, EpClMatcher, Node};
+use rs_matter::dm::{Async, Dataver, Endpoint, EpClMatcher, Node};
 use rs_matter::error::Error;
+use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{DirKvBlobStore, SharedKvBlobStore};
+use rs_matter::persist::DirKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
-use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, handler_chain_type, root_endpoint, Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
@@ -68,22 +63,13 @@ type AppDmHandler<'a> = handler_chain_type!(
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
-static BUFFERS: StaticCell<PooledBuffers<10, IMBuffer>> = StaticCell::new();
-static SUBSCRIPTIONS: StaticCell<Subscriptions> = StaticCell::new();
-static EVENTS: StaticCell<Events> = StaticCell::new();
+static BUFFERS: StaticCell<MatterBuffers> = StaticCell::new();
+static STATE: StaticCell<EthInteractionModelState> = StaticCell::new();
 static CRYPTO: StaticCell<RustCrypto<'static, FakeRng>> = StaticCell::new();
-static KV_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     env_logger::init_from_env(
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
-    );
-
-    info!(
-        "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
-        core::mem::size_of::<Matter>(),
-        core::mem::size_of::<PooledBuffers<10, IMBuffer>>(),
-        core::mem::size_of::<Subscriptions>()
     );
 
     let matter = MATTER.uninit().init_with(Matter::init(
@@ -93,20 +79,21 @@ fn main() -> Result<(), Error> {
         MATTER_PORT,
     ));
 
-    // Create the events
-    let events = EVENTS.uninit().init_with(Events::init());
-
     // Persistence
-    let kv_buf = KV_BUF.uninit().init_zeroed().as_mut_slice();
-    let mut kv = DirKvBlobStore::new_default();
-    futures_lite::future::block_on(matter.load_persist(&mut kv, kv_buf))?;
-    futures_lite::future::block_on(events.load_persist(&mut kv, kv_buf))?;
+    let store = DirKvBlobStore::new_default();
 
     // Create the transport buffers
-    let buffers = &*BUFFERS.uninit().init_with(PooledBuffers::init(0));
+    let buffers = &*BUFFERS.uninit().init_with(MatterBuffers::init());
 
-    // Create the subscriptions
-    let subscriptions = &*SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
+    // Create the data model state (subscriptions, events, network store).
+    let state = STATE.init(EthInteractionModelState::new(EthNetwork::new_default()));
+
+    // Bind the KV access object (the KV scratch buffer lives in `Matter`).
+    let kv = matter.kv(store);
+
+    // Re-hydrate the `Matter` instance and the data model state (event-number epoch).
+    futures_lite::future::block_on(matter.load_persist(&kv))?;
+    futures_lite::future::block_on(state.load_persist(&kv))?;
 
     // Create the crypto instance
     let crypto = &*CRYPTO.init(RustCrypto::new(FakeRng, DAC_PRIVKEY));
@@ -121,25 +108,18 @@ fn main() -> Result<(), Error> {
     );
 
     // Create the Data Model instance
-    let dm = DataModel::new(
+    let im = InteractionModel::new(
         matter,
         crypto,
         buffers,
-        subscriptions,
-        events,
-        (NODE, dm_handler(rand, on_off_handler)),
-        SharedKvBlobStore::new(kv, kv_buf),
-        SharedNetworks::new(EthNetwork::new_default()),
+        (NODE, data_model(rand, on_off_handler)),
+        &kv,
+        state,
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(&dm);
-    info!(
-        "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
-        core::mem::size_of_val(&responder),
-        core::mem::size_of_val(&responder.run::<4, 4>())
-    );
+    let responder = DefaultResponder::new(&im);
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
@@ -148,16 +128,10 @@ fn main() -> Result<(), Error> {
 
     // Run the background job of the data model
     #[allow(unused)]
-    let dm_job = dm.run();
+    let im_job = im.run();
 
     // Create, load and run the persister
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
-
-    info!(
-        "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(crypto, &socket, &socket, &socket)),
-        core::mem::size_of_val(&mdns::run_mdns(matter, crypto))
-    );
 
     // Run the Matter and mDNS transports
     #[allow(unused)]
@@ -181,7 +155,7 @@ fn main() -> Result<(), Error> {
     // executor.spawn(mdns).detach();
 
     // NOTE: Commented out because compiling this line blocks forever
-    //executor.spawn(dm_job).detach();
+    //executor.spawn(im_job).detach();
 
     // NOTE: Commented out because compiling this line spits out the following errors:
     // (Likely, we are experiencing https://github.com/rust-lang/rust/issues/64552)
@@ -210,8 +184,8 @@ fn main() -> Result<(), Error> {
     // 229 |     executor.spawn(respond).detach();
     //     |     ^^^^^^^^^^^^^^^^^^^^^^^ implementation of `Send` is not general enough
     //     |
-    //     = note: `Send` would have to be implemented for the type `&Responder<'_, ChainedExchangeHandler<&DataModel<'_, 15, 0, &RustCrypto<'_, FakeRng>, PooledBuffers<10, heapless::vec::Vec<u8, 1583>>, (Node<'_>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::net_comm::HandlerAsyncAdaptor<NetCommHandler<'_, EthNetCtl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::eth_diag::HandlerAdaptor<EthDiagHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_diag::HandlerAdaptor<GenDiagHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::basic_info::HandlerAdaptor<BasicInfoHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_comm::HandlerAdaptor<GenCommHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::adm_comm::HandlerAdaptor<AdminCommHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::noc::HandlerAdaptor<NocHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::acl::HandlerAdaptor<AclHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::app::on_off::HandlerAsyncAdaptor<OnOffHandler<'_, TestOnOffDeviceLogic, NoLevelControl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, EmptyHandler>>>>>>>>>>>>)>, SecureChannel<'_, &&RustCrypto<'_, FakeRng>>>>`
-    //     = note: ...but `Send` is actually implemented for the type `&'0 Responder<'_, ChainedExchangeHandler<&DataModel<'_, 15, 0, &RustCrypto<'_, FakeRng>, PooledBuffers<10, heapless::vec::Vec<u8, 1583>>, (Node<'_>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::net_comm::HandlerAsyncAdaptor<NetCommHandler<'_, EthNetCtl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::eth_diag::HandlerAdaptor<EthDiagHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_diag::HandlerAdaptor<GenDiagHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::basic_info::HandlerAdaptor<BasicInfoHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_comm::HandlerAdaptor<GenCommHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::adm_comm::HandlerAdaptor<AdminCommHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::noc::HandlerAdaptor<NocHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::acl::HandlerAdaptor<AclHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::app::on_off::HandlerAsyncAdaptor<OnOffHandler<'_, TestOnOffDeviceLogic, NoLevelControl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, EmptyHandler>>>>>>>>>>>>)>, SecureChannel<'_, &&RustCrypto<'_, FakeRng>>>>`, for some specific lifetime `'0`
+    //     = note: `Send` would have to be implemented for the type `&Responder<'_, ChainedExchangeHandler<&InteractionModel<'_, 15, 0, &RustCrypto<'_, FakeRng>, PooledBuffers<10, heapless::vec::Vec<u8, 1583>>, (Node<'_>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::net_comm::HandlerAsyncAdaptor<NetCommHandler<'_, EthNetCtl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::eth_diag::HandlerAdaptor<EthDiagHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_diag::HandlerAdaptor<GenDiagHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::basic_info::HandlerAdaptor<BasicInfoHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_comm::HandlerAdaptor<GenCommHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::adm_comm::HandlerAdaptor<AdminCommHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::noc::HandlerAdaptor<NocHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::acl::HandlerAdaptor<AclHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::app::on_off::HandlerAsyncAdaptor<OnOffHandler<'_, TestOnOffDeviceLogic, NoLevelControl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, EmptyHandler>>>>>>>>>>>>)>, SecureChannel<'_, &&RustCrypto<'_, FakeRng>>>>`
+    //     = note: ...but `Send` is actually implemented for the type `&'0 Responder<'_, ChainedExchangeHandler<&InteractionModel<'_, 15, 0, &RustCrypto<'_, FakeRng>, PooledBuffers<10, heapless::vec::Vec<u8, 1583>>, (Node<'_>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::net_comm::HandlerAsyncAdaptor<NetCommHandler<'_, EthNetCtl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::eth_diag::HandlerAdaptor<EthDiagHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_diag::HandlerAdaptor<GenDiagHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::basic_info::HandlerAdaptor<BasicInfoHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::gen_comm::HandlerAdaptor<GenCommHandler<'_>>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::adm_comm::HandlerAdaptor<AdminCommHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::noc::HandlerAdaptor<NocHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::acl::HandlerAdaptor<AclHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>, ChainedHandler<EpClMatcher, rs_matter::dm::clusters::app::on_off::HandlerAsyncAdaptor<OnOffHandler<'_, TestOnOffDeviceLogic, NoLevelControl>>, ChainedHandler<EpClMatcher, rs_matter::dm::Async<rs_matter::dm::clusters::desc::HandlerAdaptor<DescHandler<'_>>>, EmptyHandler>>>>>>>>>>>>)>, SecureChannel<'_, &&RustCrypto<'_, FakeRng>>>>`, for some specific lifetime `'0`
     //```
     //executor.spawn(respond).detach();
 
@@ -234,7 +208,7 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a>(
+fn data_model<'a>(
     mut rand: impl RngCore + Copy,
     on_off: on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>,
 ) -> AppDmHandler<'a> {
