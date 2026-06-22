@@ -19,18 +19,21 @@ use core::fmt::Debug;
 
 use embassy_time::Instant;
 
-use crate::dm::{ClusterId, EndptId, EventId};
+use crate::acl::Accessor;
+use crate::dm::{ClusterId, EndptId, EventId, Node};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
-    EventData, EventDataTag, EventDataTimestamp, EventNumber, EventPath, EventPriority,
-    EventRespTag,
+    EventData, EventDataTag, EventDataTimestamp, EventFilter, EventNumber, EventPath,
+    EventPriority, EventResp, EventRespTag,
 };
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, EVENT_EPOCH_KEY};
 use crate::tlv::{
-    FromTLV, TLVBuilderParent, TLVElement, TLVSequence, TLVSequenceIter, TLVTag, TLVWrite,
+    FromTLV, TLVArray, TLVBuilderParent, TLVElement, TLVSequence, TLVSequenceIter, TLVTag,
+    TLVWrite, TagType, ToTLV,
 };
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
+use crate::utils::storage::WriteBuf;
 use crate::utils::sync::blocking::Mutex;
 
 /// The default size of each event buffer in bytes.
@@ -686,6 +689,192 @@ impl<const N: usize> EventsBuf<N> {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct OverflowError;
+
+pub struct EventReader {
+    max_seen_event_number: u64,
+    next_max_seen_event_number: u64,
+    /// Whether the originating Read/Subscribe request had `fabricFiltered=true`.
+    /// When set, fabric-sensitive events (those whose payload carries a
+    /// `FabricIndex` context-tag 254) are dropped if their fabric index does
+    /// not match the accessor's. See Matter Core spec.
+    fabric_filtered: bool,
+}
+
+impl EventReader {
+    pub const fn new(
+        max_seen_event_number: u64,
+        next_max_seen_event_number: u64,
+        fabric_filtered: bool,
+    ) -> Self {
+        Self {
+            max_seen_event_number,
+            next_max_seen_event_number,
+            fabric_filtered,
+        }
+    }
+
+    pub fn process_read(
+        &mut self,
+        event: EventData<'_>,
+        paths: &TLVArray<'_, EventPath>,
+        event_filters: &Option<TLVArray<'_, EventFilter>>,
+        node: &Node<'_>,
+        accessor: &Accessor<'_>,
+        tw: &mut WriteBuf<'_>,
+    ) -> Result<bool, Error> {
+        let event_number = event.event_number;
+        if !(event_number > self.max_seen_event_number
+            && event_number <= self.next_max_seen_event_number)
+        {
+            // This event is outside the range of interest, skip
+            return Ok(false);
+        }
+
+        let tail = tw.get_tail();
+
+        let result = self.do_process_read(event, paths, event_filters, node, accessor, &mut *tw);
+
+        if result.is_err() {
+            // If there was an error, rewind to the tail so we don't write any data
+            // and leave `max_seen_event_number` untouched so this event will be
+            // retried on the next chunk.
+            tw.rewind_to(tail);
+        } else {
+            // The event was considered (whether or not it actually matched the
+            // path/filter/access checks). Advance the local watermark so that
+            // chunked reads do not re-consider the same event again on
+            // continuation, and so that the iteration converges.
+            self.max_seen_event_number = event_number;
+        }
+
+        result
+    }
+
+    fn do_process_read(
+        &mut self,
+        event: EventData<'_>,
+        paths: &TLVArray<'_, EventPath>,
+        event_filters: &Option<TLVArray<'_, EventFilter>>,
+        node: &Node<'_>,
+        accessor: &Accessor<'_>,
+        tw: &mut WriteBuf<'_>,
+    ) -> Result<bool, Error> {
+        if self.fabric_filtered && !Self::matches_fabric(&event, accessor) {
+            return Ok(false);
+        }
+
+        if Self::matches_paths(&event, paths, node, accessor)?
+            && Self::matches_filters(&event, event_filters)?
+            && Self::matches_access(&event, node, accessor)?
+        {
+            EventResp::Data(event).to_tlv(&TagType::Anonymous, &mut *tw)?;
+
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Per Matter Core spec (Fabric-Sensitive Reporting):
+    /// When `fabricFiltered=true`, fabric-sensitive events (those whose payload
+    /// carries a `FabricIndex` field at context tag 254) SHALL only be reported
+    /// to the requesting fabric.
+    ///
+    /// Events without a `FabricIndex` field are not fabric-sensitive and pass
+    /// through unfiltered. Events with a `FabricIndex` field that matches the
+    /// accessor's fabric are reported as well.
+    fn matches_fabric(event: &EventData<'_>, accessor: &Accessor<'_>) -> bool {
+        // Inspect the event payload struct for context tag 254 (FabricIndex).
+        let Ok(payload) = event.data.structure() else {
+            // Not a struct payload — treat as non-fabric-sensitive.
+            return true;
+        };
+
+        let Ok(elem) = payload.find_ctx(crate::im::encoding::FABRIC_INDEX_TAG) else {
+            // No `FabricIndex` field — non-fabric-sensitive, allow.
+            return true;
+        };
+
+        match elem.non_empty().and_then(|e| e.u8().ok()) {
+            Some(fab_idx) => fab_idx == accessor.fab_idx,
+            // Field present but unreadable / null — be conservative and allow.
+            None => true,
+        }
+    }
+
+    fn matches_paths(
+        event: &EventData<'_>,
+        paths: &TLVArray<'_, EventPath>,
+        node: &Node<'_>,
+        accessor: &Accessor<'_>,
+    ) -> Result<bool, Error> {
+        for path in paths {
+            let path = path?;
+
+            if Self::matches_path(event, path, node, accessor) {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn matches_path(
+        event: &EventData<'_>,
+        path: EventPath,
+        node: &Node<'_>,
+        accessor: &Accessor<'_>,
+    ) -> bool {
+        if node.validate_event_path(&path, accessor).is_err() {
+            return false;
+        }
+
+        let epath = &event.path;
+
+        epath
+            .node
+            .is_none_or(|node| path.node.is_none_or(|expected_node| expected_node == node))
+            && epath.endpoint.is_none_or(|endpoint| {
+                path.endpoint
+                    .is_none_or(|expected_endpoint| expected_endpoint == endpoint)
+            })
+            && epath.cluster.is_none_or(|cluster| {
+                path.cluster
+                    .is_none_or(|expected_cluster| expected_cluster == cluster)
+            })
+            && epath.event.is_none_or(|event| {
+                path.event
+                    .is_none_or(|expected_event| expected_event == event)
+            })
+    }
+
+    fn matches_filters(
+        event: &EventData<'_>,
+        event_filters: &Option<TLVArray<'_, EventFilter>>,
+    ) -> Result<bool, Error> {
+        if let Some(filters) = &event_filters {
+            // Check if the event passes the filters. If it doesn't pass any of them, skip it.
+            // We assume the 99% case is that there is a single filter, on event-no, so just brute force filtering
+            for filter in filters {
+                if let Some(event_min) = filter?.event_min {
+                    if event.event_number < event_min {
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+
+        Ok(true)
+    }
+
+    fn matches_access(
+        event: &EventData<'_>,
+        node: &Node<'_>,
+        accessor: &Accessor<'_>,
+    ) -> Result<bool, Error> {
+        Ok(node.validate_event_path(&event.path, accessor).is_ok())
+    }
+}
 
 #[cfg(test)]
 mod tests {

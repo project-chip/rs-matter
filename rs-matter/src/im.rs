@@ -40,12 +40,12 @@ use crate::dm::networks::eth::EthNetwork;
 use crate::dm::networks::wireless::{NoopWirelessNetCtl, WirelessMgr, MAX_CREDS_SIZE};
 use crate::dm::networks::NetChangeNotif;
 use crate::dm::{
-    expand_invoke, expand_read, expand_write, AsyncHandler, AttrChangeNotifier, AttrDetails,
-    Attribute, DataModel, EventEmitter, EventReader, HandlerContext, HandlerInvoker,
-    MatchContextInstance, Metadata,
+    AsyncHandler, AttrChangeNotifier, AttrDetails, Attribute, DataModel, EventEmitter,
+    HandlerContext, MatchContextInstance, Metadata,
 };
 use crate::error::{Error, ErrorCode};
-use crate::im::events::{EventTLVWrite, Events, DEFAULT_MAX_EVENTS_BUF_SIZE};
+use crate::im::events::{EventReader, EventTLVWrite, Events, DEFAULT_MAX_EVENTS_BUF_SIZE};
+use crate::im::invoker::HandlerInvoker;
 use crate::im::subscriptions::{
     ReportContext, Subscriptions, SubscriptionsBuffers, DEFAULT_MAX_SUBSCRIPTIONS,
 };
@@ -60,11 +60,14 @@ use crate::utils::storage::WriteBuf;
 use crate::Matter;
 
 pub use encoding::*;
+pub use expand::{expand_invoke, expand_read, expand_write};
 
 pub mod busy;
 pub mod client;
 pub mod encoding;
 pub mod events;
+pub mod expand;
+pub mod invoker;
 pub mod subscriptions;
 
 /// An `ExchangeHandler` implementation capable of handling responder exchanges for the Interaction Model protocol.

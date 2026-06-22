@@ -63,7 +63,7 @@ pub struct AttrPath {
     ///     widely expected to be removed rather than implemented.
     ///
     /// If/when that landscape changes, real inheritance semantics
-    /// would slot into `PathExpanderIterator` in `dm/types/node.rs`.
+    /// would slot into `PathExpanderIterator` in the `im::expand` module.
     pub tag_compression: Option<bool>,
     pub node: Option<NodeId>,
     pub endpoint: Option<EndptId>,
