@@ -1,8 +1,16 @@
 [package]
 name = "rs-matter-bloat-check"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-license = "MIT OR Apache-2.0"
+authors = ["Kedar Sovani <kedars@gmail.com>", "Ivan Markov", "Project CHIP Authors"]
+description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - bloat check"
+repository = "https://github.com/project-chip/rs-matter"
+readme = "README.md"
+keywords = ["matter", "smart", "smart-home", "IoT"]
+categories = ["embedded", "network-programming"]
+license = "Apache-2.0"
+rust-version = "1.87"
+publish = false
 
 [[bin]]
 name = "bloat-check"

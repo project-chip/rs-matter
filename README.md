@@ -18,16 +18,16 @@ Users are free to consume all of the APIs, including the provided system cluster
 * ... custom mDNS provider;
 * ... custom IP network implementation and BLE GATT device implementation;
 * ... flexible polling of the `rs-matter` futures as e.g. separate tasks in their async executor of choice;
-* ... or just using the shrink-wrapped [`rs-matter-stack`](https://github.com/ivmarkov/rs-matter-stack) arrangement and its down-stream crates;
+* ... or just using the shrink-wrapped [`rs-matter-stack`](https://github.com/sysgrok/rs-matter-stack) arrangement and its down-stream crates;
 * ... and so on.
 
 ## I just want to run Matter on my MCU!
 
-* To run `rs-matter` on baremetal MCUs with [Embassy](https://github.com/embassy-rs/embassy), look at [`rs-matter-embassy`](https://github.com/ivmarkov/rs-matter-embassy). Currently supported MCUs:
+* To run `rs-matter` on baremetal MCUs with [Embassy](https://github.com/embassy-rs/embassy), look at [`rs-matter-embassy`](https://github.com/sysgrok/rs-matter-embassy). Currently supported MCUs:
   *  Espressif ESP32XX
   *  Nordic NRF52840
   *  RP2040 Pico and RP2040 Pico W
-* To run `rs-matter` on top of the [ESP-IDF](https://github.com/esp-rs/esp-idf-svc) with Espressif MCUs, look at [`esp-idf-matter`](https://github.com/ivmarkov/esp-idf-matter)
+* To run `rs-matter` on top of the [ESP-IDF](https://github.com/esp-rs/esp-idf-svc) with Espressif MCUs, look at [`esp-idf-matter`](https://github.com/sysgrok/esp-idf-matter)
 
 ## Documentation
 
