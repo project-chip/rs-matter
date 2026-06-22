@@ -1,15 +1,15 @@
 [package]
 name = "rs-matter"
-version = "0.1.1"
-edition = "2021"
-authors = ["Kedar Sovani <kedars@gmail.com>", "Ivan Markov", "Project CHIP Authors"]
-description = "Native Rust implementation of the Matter (Smart-Home) ecosystem"
-repository = "https://github.com/project-chip/matter-rs"
-readme = "README.md"
-keywords = ["matter", "smart", "smart-home", "IoT"]
-categories = ["embedded", "network-programming"]
-license = "Apache-2.0"
-rust-version = "1.87"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+rust-version.workspace = true
 
 [features]
 default = ["os", "rustcrypto", "log"]
@@ -142,7 +142,7 @@ debug-tlv-payload = []
 large-buffers = [] # TCP support
 
 [dependencies]
-rs-matter-macros = { version = "0.1", path = "../rs-matter-macros" }
+rs-matter-macros = { path = "../rs-matter-macros" }
 cfg-if = "1"
 bitflags = { version =  "2.5", default-features = false }
 embedded-io-async = "0.7"
@@ -222,7 +222,7 @@ tokio = { version = "1", features = ["sync"] }
 tokio-stream = { version = "0.1" }
 
 [build-dependencies]
-rs-matter-codegen = { version = "0.1", path = "../rs-matter-codegen" }
+rs-matter-codegen = { path = "../rs-matter-codegen" }
 
 [dev-dependencies]
 log = "0.4"

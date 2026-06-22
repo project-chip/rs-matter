@@ -1,18 +1,15 @@
 [package]
 name = "rs-matter-codegen"
-version = "0.1.0"
-edition = "2021"
-authors = [
-        "Kedar Sovani <kedars@gmail.com>",
-        "Ivan Markov",
-        "Project CHIP Authors",
-]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - IDL parser and code generation"
-repository = "https://github.com/project-chip/matter-rs"
+repository.workspace = true
 readme = "README.md"
-keywords = ["matter", "smart", "smart-home", "IoT", "ESP32"]
-categories = ["embedded", "network-programming"]
-license = "Apache-2.0"
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 quote = "1"

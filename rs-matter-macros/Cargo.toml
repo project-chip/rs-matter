@@ -1,18 +1,15 @@
 [package]
 name = "rs-matter-macros"
-version = "0.1.0"
-edition = "2021"
-authors = [
-        "Kedar Sovani <kedars@gmail.com>",
-        "Ivan Markov",
-        "Project CHIP Authors",
-]
-description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - Proc-macros"
-repository = "https://github.com/project-chip/matter-rs"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - proc-macros"
+repository.workspace = true
 readme = "README.md"
-keywords = ["matter", "smart", "smart-home", "IoT", "ESP32"]
-categories = ["embedded", "network-programming"]
-license = "Apache-2.0"
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+rust-version.workspace = true
 
 [lib]
 proc-macro = true
@@ -24,5 +21,5 @@ proc-macro2 = "1"
 proc-macro-crate = "3"
 
 [dev-dependencies]
-assert-tokenstreams-eq = "0.1.0"
+assert-tokenstreams-eq = "0.1"
 rstest = "0.18.2"

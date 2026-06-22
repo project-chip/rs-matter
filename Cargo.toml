@@ -7,7 +7,19 @@ members = [
         "examples",
 ]
 
-exclude = ["tools/tlv", "xtask"]
+exclude = ["bloat-check", "xtask"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+authors = ["Kedar Sovani <kedars@gmail.com>", "Ivan Markov", "Project CHIP Authors"]
+description = "Native Rust implementation of the Matter (Smart-Home) ecosystem"
+repository = "https://github.com/project-chip/rs-matter"
+readme = "README.md"
+keywords = ["matter", "smart", "smart-home", "IoT"]
+categories = ["embedded", "network-programming"]
+license = "Apache-2.0"
+rust-version = "1.87"
 
 [profile.dev]
 debug = true
