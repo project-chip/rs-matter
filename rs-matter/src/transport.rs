@@ -272,12 +272,13 @@ impl Transport {
             MdnsResolveState::Resolved {
                 ip,
                 port,
+                scope_id,
                 sii,
                 sai,
                 sat,
             } => {
                 let node = ResolvedNode {
-                    addr: SocketAddr::new(*ip, *port),
+                    addr: Self::scoped_socket_addr(*ip, *port, *scope_id),
                     sii: *sii,
                     sai: *sai,
                     sat: *sat,
@@ -354,6 +355,7 @@ impl Transport {
         let Some(port) = answer.port else {
             return;
         };
+        let scope_id = answer.scope_id;
 
         let (sii, sai, sat) = answer.session_params();
 
@@ -364,6 +366,7 @@ impl Transport {
                 *state = MdnsResolveState::Resolved {
                     ip,
                     port,
+                    scope_id,
                     sii,
                     sai,
                     sat,
@@ -390,6 +393,7 @@ impl Transport {
                 *state = MdnsResolveState::Resolved {
                     ip,
                     port,
+                    scope_id,
                     sii: sii.or(*cur_sii),
                     sai: sai.or(*cur_sai),
                     sat: sat.or(*cur_sat),
@@ -460,8 +464,16 @@ impl Transport {
 
         // 3. Wait for the first matching, non-excluded commissionable node, or time out.
         let mut wait = pin!(self.mdns_browse.wait(|state| match state {
-            MdnsBrowseState::Found { ip, port, id } => {
-                let found = (Address::Udp(SocketAddr::new(*ip, *port)), *id);
+            MdnsBrowseState::Found {
+                ip,
+                port,
+                scope_id,
+                id,
+            } => {
+                let found = (
+                    Address::Udp(Self::scoped_socket_addr(*ip, *port, *scope_id)),
+                    *id,
+                );
                 *state = MdnsBrowseState::Idle;
                 Some(found)
             }
@@ -538,12 +550,18 @@ impl Transport {
         let Some(port) = answer.port else {
             return;
         };
+        let scope_id = answer.scope_id;
 
         self.mdns_browse.modify(|state| match state {
             MdnsBrowseState::InFlight { filter, exclude }
                 if !exclude.contains(&id) && filter.matches(answer) =>
             {
-                *state = MdnsBrowseState::Found { ip, port, id };
+                *state = MdnsBrowseState::Found {
+                    ip,
+                    port,
+                    scope_id,
+                    id,
+                };
                 (true, ())
             }
             // Already matched this same instance but not yet consumed: keep the
@@ -556,7 +574,12 @@ impl Transport {
                 id: cur_id,
                 ..
             } if *cur_id == id && score_ip_address(&ip) > score_ip_address(cur_ip) => {
-                *state = MdnsBrowseState::Found { ip, port, id };
+                *state = MdnsBrowseState::Found {
+                    ip,
+                    port,
+                    scope_id,
+                    id,
+                };
                 (true, ())
             }
             _ => (false, ()),
@@ -884,6 +907,22 @@ impl Transport {
         F: Fn(&Packet<N>) -> bool,
     {
         PacketAccess(packet_mutex.lock_if(f).await, false)
+    }
+
+    /// Build a `SocketAddr` from a resolved `(ip, port)`, attaching the IPv6
+    /// `scope_id` (interface zone) so a **link-local** destination (`fe80::/10`)
+    /// is routable.
+    ///
+    /// The scope is only meaningful — and only applied — for link-local IPv6;
+    /// for any other address it is irrelevant and `SocketAddr::new` is used
+    /// as-is.
+    fn scoped_socket_addr(ip: IpAddr, port: u16, scope_id: u32) -> SocketAddr {
+        match ip {
+            IpAddr::V6(v6) if v6.is_unicast_link_local() => {
+                SocketAddr::V6(SocketAddrV6::new(v6, port, 0, scope_id))
+            }
+            _ => SocketAddr::new(ip, port),
+        }
     }
 }
 
@@ -2368,6 +2407,7 @@ mod resolve_tests {
                     port: Some(1234),
                     addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5))].into_iter(),
                     txt: [("SII", "300"), ("SAI", "4000"), ("SAT", "5000")].into_iter(),
+                    scope_id: 0,
                 };
 
                 matter.transport().try_deposit_mdns_resolve(&answer);
@@ -2414,6 +2454,7 @@ mod resolve_tests {
             port: Some(1234),
             addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 9))].into_iter(),
             txt: core::iter::empty::<(&str, &str)>(),
+            scope_id: 0,
         };
         matter.transport().try_deposit_mdns_resolve(&answer);
 
@@ -2461,6 +2502,7 @@ mod browse_tests {
                     port: Some(5540),
                     addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))].into_iter(),
                     txt: [("D", "2650"), ("VP", "9999+1"), ("CM", "1")].into_iter(),
+                    scope_id: 0,
                 };
                 matter.transport().try_deposit_mdns_browse(&other);
 
@@ -2470,6 +2512,7 @@ mod browse_tests {
                     port: Some(5541),
                     addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7))].into_iter(),
                     txt: [("D", "2650"), ("VP", "65521+42"), ("CM", "1")].into_iter(),
+                    scope_id: 0,
                 };
                 matter.transport().try_deposit_mdns_browse(&answer);
             };
@@ -2533,6 +2576,7 @@ mod browse_tests {
                     port: Some(5540),
                     addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))].into_iter(),
                     txt: [("D", "2578"), ("CM", "1")].into_iter(), // 0xA12, short 0xA
+                    scope_id: 0,
                 };
                 // Excluded id -> ignored.
                 matter.transport().try_deposit_mdns_browse(&node_a);
@@ -2542,6 +2586,7 @@ mod browse_tests {
                     port: Some(5541),
                     addrs: [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2))].into_iter(),
                     txt: [("D", "2815"), ("CM", "1")].into_iter(), // 0xAFF, short 0xA
+                    scope_id: 0,
                 };
                 matter.transport().try_deposit_mdns_browse(&node_b);
             };

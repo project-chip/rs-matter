@@ -383,6 +383,12 @@ pub struct MdnsRemoteService<I, A, T> {
     pub addrs: A,
     /// The raw TXT key/value pairs.
     pub txt: T,
+    /// The IPv6 scope (zone) id — the interface index the service was discovered
+    /// on. Required to make a **link-local** (`fe80::/10`) address routable: the
+    /// kernel cannot pick an egress interface for a link-local destination
+    /// without it. `0` (the kernel's own "unscoped" sentinel) when the backend
+    /// can't supply it; only relevant for link-local IPv6 results.
+    pub scope_id: u32,
 }
 
 impl<'a, I, A, T> MdnsRemoteService<I, A, T>
@@ -675,6 +681,9 @@ pub(crate) enum MdnsResolveState {
     Resolved {
         ip: IpAddr,
         port: u16,
+        /// IPv6 scope (zone) id for a link-local `ip`; 0 otherwise. See
+        /// [`MdnsRemoteService::scope_id`].
+        scope_id: u32,
         sii: Option<u32>,
         sai: Option<u32>,
         sat: Option<u16>,
@@ -714,7 +723,14 @@ pub(crate) enum MdnsBrowseState {
         exclude: BrowseExclude,
     },
     /// The responder deposited the first matching, non-excluded commissionable node.
-    Found { ip: IpAddr, port: u16, id: u64 },
+    Found {
+        ip: IpAddr,
+        port: u16,
+        /// IPv6 scope (zone) id for a link-local `ip`; 0 otherwise. See
+        /// [`MdnsRemoteService::scope_id`].
+        scope_id: u32,
+        id: u64,
+    },
 }
 
 /// Score an IP address for prioritization.

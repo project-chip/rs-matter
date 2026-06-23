@@ -144,6 +144,12 @@ impl ZeroconfMdns {
                                 port: Some(*svc.port()),
                                 addrs: core::iter::once(ip),
                                 txt: pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+                                // The `zeroconf` crate's `ServiceDiscovery`
+                                // exposes no interface index, so this backend
+                                // can't supply an IPv6 scope id: link-local
+                                // (`fe80::`) results are unscoped here. Other
+                                // backends (avahi, resolve, astro) thread it.
+                                scope_id: 0,
                             });
                     }
                 });
@@ -174,6 +180,12 @@ impl ZeroconfMdns {
                                 port: Some(*svc.port()),
                                 addrs: core::iter::once(ip),
                                 txt: pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+                                // The `zeroconf` crate's `ServiceDiscovery`
+                                // exposes no interface index, so this backend
+                                // can't supply an IPv6 scope id: link-local
+                                // (`fe80::`) results are unscoped here. Other
+                                // backends (avahi, resolve, astro) thread it.
+                                scope_id: 0,
                             });
                     }
                 });

@@ -138,7 +138,7 @@ impl AvahiMdns {
                 // Resolve both address families (Avahi returns one address per
                 // call) and deposit them together; the transport prefers IPv6
                 // (link-local → ULA → global → IPv4) via `score_ip_address`.
-                let (ips, port, txt) =
+                let (ips, port, txt, scope_id) =
                     resolve_all_families(&avahi, AVAHI_IF_UNSPEC, &label, service_type).await;
                 if !ips.is_empty() {
                     let txt_pairs = txt_pairs(&txt);
@@ -150,6 +150,7 @@ impl AvahiMdns {
                             port: Some(port),
                             addrs: ips.iter().copied(),
                             txt: txt_pairs.iter().copied(),
+                            scope_id,
                         });
                 }
 
@@ -198,7 +199,7 @@ impl AvahiMdns {
                 // Resolve both families for this browsed instance and deposit all
                 // addresses together (transport prefers IPv6 via
                 // `score_ip_address`).
-                let (name, ips, port, txt) = resolve_browsed_all_families(
+                let (name, ips, port, txt, scope_id) = resolve_browsed_all_families(
                     &avahi,
                     args.interface,
                     args.protocol,
@@ -217,6 +218,7 @@ impl AvahiMdns {
                             port: Some(port),
                             addrs: ips.iter().copied(),
                             txt: txt_pairs.iter().copied(),
+                            scope_id,
                         });
                 }
             }
@@ -379,10 +381,14 @@ async fn resolve_all_families(
     interface: i32,
     label: &str,
     service_type: &str,
-) -> (Vec<IpAddr>, u16, Vec<Vec<u8>>) {
+) -> (Vec<IpAddr>, u16, Vec<Vec<u8>>, u32) {
     let mut ips: Vec<IpAddr> = Vec::new();
     let mut port = 0u16;
     let mut txt: Vec<Vec<u8>> = Vec::new();
+    // The interface index of the link-local result, used as the IPv6 scope id so
+    // a `fe80::` address is routable. Avahi returns the interface per resolve;
+    // only link-local needs it.
+    let mut scope_id = 0u32;
 
     for aproto in AVAHI_RESOLVE_PROTOS {
         match avahi
@@ -397,8 +403,11 @@ async fn resolve_all_families(
             )
             .await
         {
-            Ok((_if, _proto, _name, _type, _domain, _host, _ap, address, p, t, _fl)) => {
+            Ok((iface, _proto, _name, _type, _domain, _host, _ap, address, p, t, _fl)) => {
                 if let Ok(ip) = address.parse::<IpAddr>() {
+                    if is_link_local_v6(&ip) && iface > 0 {
+                        scope_id = iface as u32;
+                    }
                     if !ips.contains(&ip) {
                         ips.push(ip);
                     }
@@ -412,7 +421,7 @@ async fn resolve_all_families(
         }
     }
 
-    (ips, port, txt)
+    (ips, port, txt, scope_id)
 }
 
 /// Like [`resolve_all_families`] but for a *browsed* instance (identified by the
@@ -427,19 +436,25 @@ async fn resolve_browsed_all_families(
     name: &str,
     type_: &str,
     domain: &str,
-) -> (String, Vec<IpAddr>, u16, Vec<Vec<u8>>) {
+) -> (String, Vec<IpAddr>, u16, Vec<Vec<u8>>, u32) {
     let mut instance_name = String::new();
     let mut ips: Vec<IpAddr> = Vec::new();
     let mut port = 0u16;
     let mut txt: Vec<Vec<u8>> = Vec::new();
+    // Interface index of the link-local result → IPv6 scope id (see
+    // `resolve_all_families`).
+    let mut scope_id = 0u32;
 
     for aproto in AVAHI_RESOLVE_PROTOS {
         match avahi
             .resolve_service(interface, protocol, name, type_, domain, aproto, 0)
             .await
         {
-            Ok((_if, _proto, rname, _type, _domain, _host, _ap, address, p, t, _fl)) => {
+            Ok((iface, _proto, rname, _type, _domain, _host, _ap, address, p, t, _fl)) => {
                 if let Ok(ip) = address.parse::<IpAddr>() {
+                    if is_link_local_v6(&ip) && iface > 0 {
+                        scope_id = iface as u32;
+                    }
                     if !ips.contains(&ip) {
                         ips.push(ip);
                     }
@@ -456,5 +471,11 @@ async fn resolve_browsed_all_families(
         }
     }
 
-    (instance_name, ips, port, txt)
+    (instance_name, ips, port, txt, scope_id)
+}
+
+/// `true` for a unicast link-local IPv6 address (`fe80::/10`) — the only kind
+/// that needs an interface scope id to be routable.
+fn is_link_local_v6(ip: &IpAddr) -> bool {
+    matches!(ip, IpAddr::V6(v6) if v6.is_unicast_link_local())
 }
