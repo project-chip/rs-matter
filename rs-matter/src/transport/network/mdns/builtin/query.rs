@@ -188,9 +188,17 @@ impl<'a> Iterator for MdnsTxt<'a> {
 /// `addrs`/`txt` walk the records on demand (see [`MdnsAddrs`] / [`MdnsTxt`]).
 /// Records split across multiple packets are not merged - see
 /// [`MdnsRemoteService`] for the rationale.
+///
+/// `ipv6_scope` is the interface index the builtin backend listens on (its
+/// configured `ipv6_interface`); it is stamped onto the result as the IPv6
+/// scope id so a link-local (`fe80::`) AAAA record becomes routable. It is the
+/// only interface the builtin mDNS sends/receives on, so any link-local result
+/// is necessarily reachable through it. `None` (no specific interface) maps to
+/// the unscoped sentinel `0`.
 #[allow(clippy::type_complexity)]
 pub fn parse_into_answer(
     data: &[u8],
+    ipv6_scope: Option<u32>,
 ) -> Result<Option<MdnsRemoteService<ParsedName<&[u8]>, MdnsAddrs<'_>, MdnsTxt<'_>>>, Error> {
     let msg = Message::from_octets(data)?;
 
@@ -262,6 +270,10 @@ pub fn parse_into_answer(
             yielded: 0,
         },
         txt,
+        // The builtin backend listens on a single configured interface, so a
+        // link-local AAAA result is reachable through it: stamp that interface
+        // index as the IPv6 scope id (`0` = unscoped, when none was configured).
+        scope_id: ipv6_scope.unwrap_or(0),
     }))
 }
 
@@ -330,7 +342,7 @@ mod tests {
         let len =
             build_browse_query(NameSlice::new(["_matterc", "_udp", "local"]), &mut buf).unwrap();
 
-        assert!(parse_into_answer(&buf[..len]).unwrap().is_none());
+        assert!(parse_into_answer(&buf[..len], None).unwrap().is_none());
     }
 
     #[test]
@@ -338,7 +350,9 @@ mod tests {
         let mut buf = [0u8; 1024];
         let len = commissionable_response(&mut buf, &["_L1234", "_S3", "_CM"]);
 
-        let answer = parse_into_answer(&buf[..len]).unwrap().unwrap();
+        // A configured IPv6 interface index is threaded through as the scope id.
+        let answer = parse_into_answer(&buf[..len], Some(7)).unwrap().unwrap();
+        assert_eq!(answer.scope_id, 7);
 
         assert_eq!(
             name_str(answer.instance_name).as_str(),
@@ -379,9 +393,11 @@ mod tests {
         // "no usable TXT" path we assert the parsed pairs are empty instead.
         let len = host().broadcast(&service, &mut buf, 60, 60).unwrap();
 
-        let answer = parse_into_answer(&buf[..len]).unwrap().unwrap();
+        // No interface configured → unscoped (scope id 0).
+        let answer = parse_into_answer(&buf[..len], None).unwrap().unwrap();
 
         assert_eq!(answer.port, Some(5540));
+        assert_eq!(answer.scope_id, 0);
         assert_eq!(answer.txt.count(), 0);
     }
 }

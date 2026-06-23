@@ -144,6 +144,9 @@ impl AstroMdns {
                                     port: Some(svc.port),
                                     addrs: ips.iter().copied(),
                                     txt: txt.iter().copied(),
+                                    // DNS-SD reports the interface index; use it
+                                    // as the scope id for a link-local result.
+                                    scope_id: link_local_scope_id(&ips, svc.interface_index),
                                 });
                         }
                     }
@@ -203,6 +206,9 @@ impl AstroMdns {
                                     port: Some(service.port),
                                     addrs: ips.iter().copied(),
                                     txt: txt.iter().copied(),
+                                    // DNS-SD reports the interface index; use it
+                                    // as the scope id for a link-local result.
+                                    scope_id: link_local_scope_id(&ips, service.interface_index),
                                 });
                         } else {
                             warn!("Could not resolve hostname: {}", service.hostname);
@@ -281,5 +287,20 @@ impl AstroMdns {
         let svc = builder.register().map_err(|_| ErrorCode::MdnsError)?;
 
         Ok(svc)
+    }
+}
+
+/// The IPv6 scope id (interface index) to attach to a resolved result, or `0`
+/// (the unscoped sentinel) when not applicable. The scope only matters for a
+/// link-local (`fe80::`) IPv6 address, so it is taken from the DNS-SD service's
+/// reported `interface_index` only when one of the resolved `ips` is link-local.
+fn link_local_scope_id(ips: &[IpAddr], interface_index: Option<u32>) -> u32 {
+    let has_link_local = ips
+        .iter()
+        .any(|ip| matches!(ip, IpAddr::V6(v6) if v6.is_unicast_link_local()));
+
+    match interface_index {
+        Some(idx) if has_link_local && idx > 0 => idx,
+        _ => 0,
     }
 }

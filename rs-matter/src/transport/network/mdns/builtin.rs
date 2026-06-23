@@ -463,7 +463,7 @@ impl BuiltinMdns {
                 if is_response {
                     // Deposit any answer that matches an in-flight resolve or
                     // browse request.
-                    match parse_into_answer(packet) {
+                    match parse_into_answer(packet, ipv6_interface) {
                         Ok(Some(answer)) => {
                             matter.transport().try_deposit_mdns_resolve(&answer);
                             matter.transport().try_deposit_mdns_browse(&answer);

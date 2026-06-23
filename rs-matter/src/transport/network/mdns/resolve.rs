@@ -215,6 +215,10 @@ impl ResolveMdns {
                         port: Some(*port),
                         addrs: ips.iter().copied(),
                         txt: txt.iter().copied(),
+                        // systemd-resolved reports the interface index per
+                        // address; use the link-local IPv6 one as the scope id
+                        // so a `fe80::` result is routable.
+                        scope_id: link_local_scope_id(addresses),
                     });
             }
         }
@@ -240,6 +244,10 @@ impl ResolveMdns {
                         port: Some(*port),
                         addrs: ips.iter().copied(),
                         txt: txt.iter().copied(),
+                        // systemd-resolved reports the interface index per
+                        // address; use the link-local IPv6 one as the scope id
+                        // so a `fe80::` result is routable.
+                        scope_id: link_local_scope_id(addresses),
                     });
             }
         }
@@ -335,6 +343,24 @@ fn all_addresses(addresses: &[(i32, i32, Vec<u8>)]) -> Vec<IpAddr> {
         .iter()
         .filter_map(|(_ifindex, family, bytes)| parse_ip_address(*family, bytes))
         .collect()
+}
+
+/// The IPv6 scope id (interface index) for a link-local result, or `0` (the
+/// unscoped sentinel) if there is no link-local IPv6 address. systemd-resolved
+/// reports the interface index per address; for a `fe80::` address that index
+/// is the scope needed to make it routable. Returns the first link-local hit.
+fn link_local_scope_id(addresses: &[(i32, i32, Vec<u8>)]) -> u32 {
+    addresses
+        .iter()
+        .find_map(
+            |(ifindex, family, bytes)| match parse_ip_address(*family, bytes) {
+                Some(IpAddr::V6(v6)) if v6.is_unicast_link_local() && *ifindex > 0 => {
+                    Some(*ifindex as u32)
+                }
+                _ => None,
+            },
+        )
+        .unwrap_or(0)
 }
 
 /// Borrowed `(key, value)` view over systemd-resolved TXT records (each a
