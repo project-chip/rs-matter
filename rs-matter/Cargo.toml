@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 description.workspace = true
 repository.workspace = true
-readme.workspace = true
+readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
 license.workspace = true
@@ -142,7 +142,7 @@ debug-tlv-payload = []
 large-buffers = [] # TCP support
 
 [dependencies]
-rs-matter-macros = { path = "../rs-matter-macros" }
+rs-matter-macros = { path = "../rs-matter-macros", version = "0.2.0" }
 cfg-if = "1"
 bitflags = { version =  "2.5", default-features = false }
 embedded-io-async = "0.7"
@@ -171,7 +171,7 @@ pinned-init = { version = "0.0.8", default-features = false }
 # crypto
 openssl = { version = "0.10", optional = true }
 foreign-types = { version = "0.3", optional = true }
-mbedtls-rs-sys = { git = "https://github.com/esp-rs/mbedtls-rs", default-features = false, features = ["matter"], optional = true }
+mbedtls-rs-sys = { version = "0.1", git = "https://github.com/esp-rs/mbedtls-rs", default-features = false, features = ["matter"], optional = true }
 
 # rust-crypto
 # Generic traits and traitified structures
@@ -222,7 +222,7 @@ tokio = { version = "1", features = ["sync"] }
 tokio-stream = { version = "0.1" }
 
 [build-dependencies]
-rs-matter-codegen = { path = "../rs-matter-codegen" }
+rs-matter-codegen = { path = "../rs-matter-codegen", version = "0.2.0" }
 
 [dev-dependencies]
 log = "0.4"
