@@ -1,0 +1,42 @@
+name: PublishCrateDryRun
+
+on:
+  workflow_dispatch:
+    inputs:
+      crate:
+        required: true
+        type: choice
+        description: Crate to publish
+        options:
+        - rs-matter-codegen
+        - rs-matter-macros
+        - rs-matter
+
+env:
+  rust_toolchain: stable
+
+jobs:
+  publishdryrun:
+    name: Publish Dry Run
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup | Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Setup | Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.rust_toolchain }}
+          components: rust-src
+      - name: Build | Publish Dry Run
+        run: cd "${{ github.event.inputs.crate }}"; cargo publish --dry-run
+      - name: Get the crate version from cargo
+        run: |
+          version=$(cargo metadata --format-version=1 --no-deps | jq -r ".packages[] | select(.name == \"${{github.event.inputs.crate}}\") | .version")
+          echo "crate_version=$version" >> $GITHUB_ENV
+          echo "${{github.event.inputs.crate}} version: $version"
+      - name: Tag the new release (dry run)
+        run: |
+          echo "Would create tag: ${{github.event.inputs.crate}}-v${{env.crate_version}}"
+          echo "Would use message: Release ${{github.event.inputs.crate}} v${{env.crate_version}}"
