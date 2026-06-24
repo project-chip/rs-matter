@@ -495,6 +495,36 @@ mod tests {
     }
 
     #[test]
+    pub fn test_decrypt_auth_fail_returns_err() {
+        // Same captured frame as `test_decrypt_success`, but with the AEAD tag
+        // corrupted so AES-CCM authentication fails. A received frame failing auth
+        // is a normal runtime condition (replay / corruption / wrong key), so
+        // decrypt must RETURN an error, not panic. Regression test for the mbedtls
+        // backend, which previously panicked (`merr_check!`) on this.
+        let recvd_ctr = 15287282;
+        let mut input_buf: [u8; 71] = [
+            0x0, 0x2, 0x0, 0x0, 0xf2, 0x43, 0xe9, 0x0, 0x31, 0xb5, 0x66, 0xec, 0x8b, 0x5b, 0xf4,
+            0x17, 0xe4, 0x80, 0xf3, 0xd5, 0x11, 0x59, 0x19, 0xb5, 0x23, 0x91, 0x35, 0x37, 0xb,
+            0xf9, 0xbf, 0x69, 0x55, 0x11, 0x75, 0x87, 0x77, 0x19, 0xfc, 0xf3, 0x5d, 0x4b, 0x47,
+            0x1f, 0xb0, 0x5e, 0xbe, 0xb5, 0x10, 0xad, 0xc6, 0x78, 0x94, 0x50, 0xe5, 0xd2, 0xe0,
+            0x80, 0xef, 0xa8, 0x3a, 0xf0, 0xa6, 0xaf, 0x1b, 0x2, 0x35, 0xa7, 0xd1, 0xc6, 0x32,
+        ];
+        input_buf[70] ^= 0xff; // corrupt the AEAD tag -> CCM auth must fail
+
+        const KEY: CanonAeadKeyRef = CanonAeadKeyRef::new(&[
+            0x66, 0x63, 0x31, 0x97, 0x43, 0x9c, 0x17, 0xb9, 0x7e, 0x10, 0xee, 0x47, 0xc8, 0x8,
+            0x80, 0x4a,
+        ]);
+
+        let mut parsebuf = ParseBuf::new(&mut input_buf);
+        // 8 bytes already parsed as AAD (see `test_decrypt_success`)
+        parsebuf.le_u32().unwrap();
+        parsebuf.le_u32().unwrap();
+
+        assert!(decrypt_in_place(test_only_crypto(), KEY, 0, recvd_ctr, 0, &mut parsebuf).is_err());
+    }
+
+    #[test]
     pub fn test_encrypt_success() {
         // These values are captured from an execution run of the chip-tool binary
         let send_ctr = 41;

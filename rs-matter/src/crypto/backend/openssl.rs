@@ -587,8 +587,16 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
 
         openssl_check!(ctx.cipher_update(aad, None))?;
 
-        let mut decrypted_data_len = openssl_check!(ctx.cipher_update_inplace(data, data.len()))?;
-        decrypted_data_len += openssl_check!(ctx.cipher_final(&mut data[decrypted_data_len..]))?;
+        // CCM verifies the tag during the update/final step. All length/init
+        // programming errors are already ruled out above via `openssl_check!`,
+        // so a failure here means invalid/untrusted input (bad tag or
+        // ciphertext) -> return it rather than panic.
+        let mut decrypted_data_len = ctx
+            .cipher_update_inplace(data, data.len())
+            .map_err(|_| ErrorCode::InvalidData)?;
+        decrypted_data_len += ctx
+            .cipher_final(&mut data[decrypted_data_len..])
+            .map_err(|_| ErrorCode::InvalidData)?;
 
         Ok(&data[..decrypted_data_len])
     }
