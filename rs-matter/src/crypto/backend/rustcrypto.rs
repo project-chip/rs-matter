@@ -458,7 +458,9 @@ where
         let mut buffer = SliceBuffer::new(data, data.len());
         cipher
             .decrypt_in_place(GenericArray::from_slice(nonce.access()), aad, &mut buffer)
-            .map_err(|_| ErrorCode::BufferTooSmall)?;
+            // `aead::Error` is opaque and only ever means invalid input here (bad tag
+            // / malformed ciphertext), not a programming error -> `InvalidData`.
+            .map_err(|_| ErrorCode::InvalidData)?;
 
         let len = buffer.len();
 

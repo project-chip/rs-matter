@@ -724,7 +724,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
             )
         })?;
 
-        merr_check!(unsafe {
+        let ret = unsafe {
             mbedtls_rs_sys::mbedtls_ccm_auth_decrypt(
                 &mut ctx,
                 data.len() - TAG_LEN,
@@ -737,11 +737,19 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
                 data.as_mut_ptr().add(data.len() - TAG_LEN),
                 TAG_LEN,
             )
-        })?;
+        };
 
         unsafe {
             mbedtls_rs_sys::mbedtls_ccm_free(&mut ctx);
         }
+
+        // A failed auth tag is normal (replayed/corrupted/wrong-key received frame)
+        // -> return it. Any other code (e.g. MBEDTLS_ERR_CCM_BAD_INPUT) is a
+        // programming error and still panics via `merr_check!`.
+        if ret == mbedtls_rs_sys::MBEDTLS_ERR_CCM_AUTH_FAILED {
+            return Err(ErrorCode::InvalidData.into());
+        }
+        merr_check!(ret)?;
 
         Ok(&data[..data.len() - TAG_LEN])
     }
