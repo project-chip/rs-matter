@@ -31,12 +31,3 @@ jobs:
           components: rust-src
       - name: Build | Publish Dry Run
         run: cd "${{ github.event.inputs.crate }}"; cargo publish --dry-run
-      - name: Get the crate version from cargo
-        run: |
-          version=$(cargo metadata --format-version=1 --no-deps | jq -r ".packages[] | select(.name == \"${{github.event.inputs.crate}}\") | .version")
-          echo "crate_version=$version" >> $GITHUB_ENV
-          echo "${{github.event.inputs.crate}} version: $version"
-      - name: Tag the new release (dry run)
-        run: |
-          echo "Would create tag: ${{github.event.inputs.crate}}-v${{env.crate_version}}"
-          echo "Would use message: Release ${{github.event.inputs.crate}} v${{env.crate_version}}"
