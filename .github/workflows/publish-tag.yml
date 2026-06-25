@@ -1,0 +1,40 @@
+name: PublishTag
+
+# Pushes a single `v<version>` repository tag for an rs-matter release.
+#
+# `rs-matter`, `rs-matter-macros` and `rs-matter-codegen` share one workspace
+# version and are released in lock-step, so a release gets ONE project tag — not
+# a per-crate tag. The `PublishCrate` workflow publishes the three crates
+# individually (codegen -> macros -> rs-matter, re-runnable per crate if one
+# fails); run THIS workflow once, after all three have been published to
+# crates.io, to tag the release.
+on:
+  workflow_dispatch
+
+env:
+  # The three crates share the workspace version; the main crate is the natural
+  # source of the release version.
+  CRATE_NAME: rs-matter
+
+jobs:
+  tag:
+    name: Tag the release
+    runs-on: ubuntu-latest
+    # `contents: write` is required so the tag step can push the git tag. The
+    # default GITHUB_TOKEN is read-only for repos/orgs whose default workflow
+    # permissions are "read".
+    permissions:
+      contents: write
+    steps:
+      - name: Setup | Checkout
+        uses: actions/checkout@v4
+      - name: Get the release version from cargo
+        run: |
+          version=$(cargo metadata --format-version=1 --no-deps | jq -r ".packages[] | select(.name == \"${{env.CRATE_NAME}}\") | .version")
+          echo "crate_version=$version" >> $GITHUB_ENV
+          echo "release version: $version"
+      - name: Tag the new release
+        uses: rickstaa/action-create-tag@v1
+        with:
+          tag: v${{env.crate_version}}
+          message: "Release v${{env.crate_version}}"

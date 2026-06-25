@@ -1,0 +1,26 @@
+name: PublishTagDryRun
+
+# Dry run of `PublishTag`: prints the `v<version>` tag that would be created,
+# without pushing anything.
+on:
+  workflow_dispatch
+
+env:
+  CRATE_NAME: rs-matter
+
+jobs:
+  tagdryrun:
+    name: Tag the release (dry run)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup | Checkout
+        uses: actions/checkout@v4
+      - name: Get the release version from cargo
+        run: |
+          version=$(cargo metadata --format-version=1 --no-deps | jq -r ".packages[] | select(.name == \"${{env.CRATE_NAME}}\") | .version")
+          echo "crate_version=$version" >> $GITHUB_ENV
+          echo "release version: $version"
+      - name: Tag the new release (dry run)
+        run: |
+          echo "Would create tag: v${{env.crate_version}}"
+          echo "Would use message: Release v${{env.crate_version}}"

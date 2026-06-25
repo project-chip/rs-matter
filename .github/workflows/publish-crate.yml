@@ -19,11 +19,6 @@ jobs:
   publish:
     name: Publish
     runs-on: ubuntu-latest
-    # `contents: write` is required so the "Tag the new release" step can push
-    # the git tag. The default GITHUB_TOKEN is read-only for repos/orgs whose
-    # default workflow permissions are "read", which is why tagging fails today.
-    permissions:
-      contents: write
     steps:
       - name: Setup | Checkout
         uses: actions/checkout@v4
@@ -38,13 +33,3 @@ jobs:
         run: cargo login ${{ secrets.crates_io_token }}
       - name: Build | Publish
         run: cd "${{ github.event.inputs.crate }}"; cargo publish
-      - name: Get the crate version from cargo
-        run: |
-          version=$(cargo metadata --format-version=1 --no-deps | jq -r ".packages[] | select(.name == \"${{github.event.inputs.crate}}\") | .version")
-          echo "crate_version=$version" >> $GITHUB_ENV
-          echo "${{github.event.inputs.crate}} version: $version"
-      - name: Tag the new release
-        uses: rickstaa/action-create-tag@v1
-        with:
-          tag: ${{github.event.inputs.crate}}-v${{env.crate_version}}
-          message: "Release ${{github.event.inputs.crate}} v${{env.crate_version}}"
