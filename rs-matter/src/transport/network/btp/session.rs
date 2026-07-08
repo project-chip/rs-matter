@@ -568,7 +568,9 @@ impl Session {
         let version = req.versions().min().unwrap_or(4);
 
         let mtu = if req.mtu == 0 {
-            gatt_mtu.map(|g| g.clamp(MIN_MTU, MAX_MTU)).unwrap_or(MIN_MTU)
+            gatt_mtu
+                .map(|g| g.clamp(MIN_MTU, MAX_MTU))
+                .unwrap_or(MIN_MTU)
         } else if gatt_mtu.map(|gatt_mtu| gatt_mtu != req.mtu).unwrap_or(true) {
             let mtu = if self.relaxed_mtu_nego {
                 // In the relaxed MTU negotiation mode, if the GATT MTU is not what the peer reports,
