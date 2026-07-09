@@ -35,6 +35,7 @@ use pase::PaseResponder;
 
 pub mod busy;
 pub mod case;
+pub mod mcsp;
 pub mod pase;
 
 /* Interaction Model ID as per the Matter Spec */
@@ -250,14 +251,26 @@ impl<'a, C: Crypto> SecureChannel<'a, C> {
             OpCode::PBKDFParamRequest => {
                 let mut pase = MaybeUninit::uninit(); // TODO LARGE BUFFER
                 pase.init_with(PaseResponder::init(&self.crypto, self.notify))
-                    .handle(&mut exchange)
+                    .handle(exchange)
                     .await
             }
             OpCode::CASESigma1 => {
                 let mut case = MaybeUninit::uninit(); // TODO LARGE BUFFER
                 case.init_with(CaseResponder::init(&self.crypto))
-                    .handle(&mut exchange)
+                    .handle(exchange)
                     .await
+            }
+            OpCode::MsgCounterSyncReq => {
+                // The receive path has already checked this landed on a
+                // group session with a destination matching one of our
+                // fabric node ids.
+                mcsp::respond(&self.crypto, exchange).await
+            }
+            OpCode::MsgCounterSyncResp => {
+                // We never initiate MCSP, so any incoming response is
+                // unsolicited and must be silently dropped.
+                warn!("MCSP: Unsolicited MsgCounterSyncResp received; dropping");
+                Ok(())
             }
             opcode => {
                 error!("Invalid opcode: {:?}", opcode);

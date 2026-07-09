@@ -66,12 +66,12 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
         })
     }
 
-    /// Handle a PASE PAKE exchange, where the other peer is the exchange initiator
+    /// Handle a PASE PAKE exchange, where the other peer is the exchange initiator.
     ///
-    /// # Arguments
-    /// - `exchange` - The exchange
-    pub async fn handle(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        let result = self.handle_inner(exchange).await;
+    /// Consumes the exchange: on return the PAKE handshake has either
+    /// completed, been rejected, or aborted, and the exchange is dropped.
+    pub async fn handle(&mut self, mut exchange: Exchange<'_>) -> Result<(), Error> {
+        let result = self.handle_inner(&mut exchange).await;
 
         // Per Matter Core spec, every unsuccessful PAKE
         // handshake within the open commissioning window must be counted; the

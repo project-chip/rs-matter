@@ -159,6 +159,18 @@ impl Address {
         matches!(self, Self::Btp(_))
     }
 
+    /// Whether this address' IP is a multicast address. BTP has no
+    /// concept of multicast and always returns `false`.
+    pub fn is_multicast(&self) -> bool {
+        match self {
+            Self::Udp(SocketAddr::V4(a)) => a.ip().is_multicast(),
+            Self::Udp(SocketAddr::V6(a)) => a.ip().is_multicast(),
+            Self::Tcp(SocketAddr::V4(a)) => a.ip().is_multicast(),
+            Self::Tcp(SocketAddr::V6(a)) => a.ip().is_multicast(),
+            Self::Btp(_) => false,
+        }
+    }
+
     /// Return this address with its IP canonicalized: an IPv4-mapped IPv6
     /// address (`::ffff:a.b.c.d`) is rewritten to its true IPv4 form, leaving
     /// genuine IPv4 / IPv6 / BTP addresses unchanged.

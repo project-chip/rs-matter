@@ -587,6 +587,17 @@ impl MessageMeta {
         // Don't create new exchanges for standalone ACKs and for SC status codes
         !self.is_standalone_ack() && !self.is_sc_status()
     }
+
+    /// Whether this message is a *control* message. Control messages
+    /// travel on a separate counter space (the "control message
+    /// counter") and set the `C` bit in the plain-header Security
+    /// Flags. Today only the MCSP opcodes qualify; the transport
+    /// layer flips the `C` bit on the outgoing packet based on this.
+    pub fn is_control_msg(&self) -> bool {
+        self.proto_id == PROTO_ID_SECURE_CHANNEL
+            && (self.proto_opcode == sc::OpCode::MsgCounterSyncReq as u8
+                || self.proto_opcode == sc::OpCode::MsgCounterSyncResp as u8)
+    }
 }
 
 impl Display for MessageMeta {

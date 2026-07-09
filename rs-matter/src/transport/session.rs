@@ -471,19 +471,52 @@ impl Session {
 
         let retransmission = ctr.is_some();
 
+        let is_group = matches!(self.mode, SessionMode::Group { .. });
+
+        // For a group session, `local_sess_id == peer_sess_id` — both
+        // hold the same Group Session Id derived from the operational
+        // group key (see `get_or_create_for_group_rx`) — so this line
+        // works uniformly for unicast replies and group control messages.
         tx_header.plain.sess_id = self.get_peer_sess_id();
         tx_header.plain.ctr = ctr.unwrap_or_else(|| self.get_msg_ctr());
-        // For unsecured initiator sessions, set Source Node ID to our ephemeral
-        // initiator node ID (spec: "enclosed by initiator as Source Node ID").
-        // Encrypted sessions and responder unsecured sessions (local_nodeid=0) send no Source.
+
+        // Include the Source Node ID for:
+        // - Unsecured initiator sessions (spec).
+        // - Every outbound message on a group session, so receivers can
+        //   look up the sender's Group Peer State.
+        // CASE/PASE responder-side messages omit it.
         tx_header.plain.set_src_nodeid(
-            (!self.is_encrypted() && self.local_nodeid != 0).then_some(self.local_nodeid),
+            ((!self.is_encrypted() || is_group) && self.local_nodeid != 0)
+                .then_some(self.local_nodeid),
         );
-        tx_header.plain.set_dst_unicast_nodeid(
-            (self.mode == SessionMode::PlainText)
-                .then_some(self.peer_nodeid)
-                .flatten(),
-        );
+
+        // Destination Node ID (DSIZ):
+        // - Plaintext: echo `peer_nodeid` back to the initiator.
+        // - Group session with a unicast peer (e.g. MCSP reply):
+        //   `DSIZ = 1`, destination = peer's Node ID.
+        // - Group session with a multicast peer (future group-data
+        //   send): destination = groupcast Node ID; set on the packet
+        //   header by the caller, not here.
+        // - CASE/PASE: no DSIZ field.
+        let mcsp_reply = is_group && !self.peer_addr.is_multicast();
+        let want_dst_unicast = self.mode == SessionMode::PlainText || mcsp_reply;
+        tx_header.plain.set_dst_unicast_nodeid(if want_dst_unicast {
+            self.peer_nodeid
+        } else {
+            None
+        });
+
+        // Group sessions must always carry GROUP_SESSION; control
+        // messages must additionally carry CONTROL_MSG. Today the only
+        // control-plane opcodes we emit are MCSP responses; the flag is
+        // driven off the outgoing meta so future group-data sends stay
+        // correct without touching this code.
+        if is_group {
+            use super::plain_hdr::SecFlags;
+            tx_header.plain.sec_flags |= SecFlags::GROUP_SESSION;
+            let is_control = MessageMeta::from(&tx_header.proto).is_control_msg();
+            tx_header.plain.set_control_msg(is_control);
+        }
 
         tx_header.proto.adjust_reliability(false, &self.peer_addr);
 
@@ -847,6 +880,20 @@ pub struct Sessions {
     next_exch_id: u16,
     sessions: Vec<Session, MAX_SESSIONS>,
     group_ctr_store: GroupCtrStore,
+    /// The current Global Group Encrypted Data Message Counter reported
+    /// to peers as the "Synchronized Counter" in `MsgCounterSyncRsp` and
+    /// (once group-data sending is implemented) used to encode outgoing
+    /// group data messages.
+    ///
+    /// `0` means "not yet initialized"; use
+    /// [`Sessions::get_or_init_global_group_data_ctr`] to obtain a valid
+    /// non-zero value.
+    ///
+    /// Not persisted — the counter is re-randomized on each process
+    /// start. Peers will observe a fresh trust-first sync on their next
+    /// MCSP exchange after we restart, which matches the fallback for
+    /// any lost-sync-state scenario.
+    global_group_data_ctr: u32,
 }
 
 impl Sessions {
@@ -859,6 +906,7 @@ impl Sessions {
             next_sess_unique_id: 0,
             next_sess_id: 1,
             next_exch_id: 1,
+            global_group_data_ctr: 0,
         }
     }
 
@@ -870,6 +918,7 @@ impl Sessions {
             next_sess_unique_id: 0,
             next_sess_id: 1,
             next_exch_id: 1,
+            global_group_data_ctr: 0,
         })
     }
 
@@ -878,17 +927,52 @@ impl Sessions {
         self.group_ctr_store = GroupCtrStore::new();
         self.next_sess_id = 1;
         self.next_exch_id = 1;
+        // Deliberately keep `global_group_data_ctr`: a `reset` isn't a
+        // factory reset, and rolling it back would break peers that
+        // just learned it via MCSP.
     }
 
-    /// Attempt to decrypt and accept a group (multicast) message.
+    /// Return the current Global Group Encrypted Data Message Counter,
+    /// lazily initialized to a random value in `[1, 2^28]` on first
+    /// access. The upper 4 bits are kept zero to leave headroom for
+    /// wrap-safe monotonic growth.
+    pub(crate) fn get_or_init_global_group_data_ctr<C: Crypto>(
+        &mut self,
+        crypto: C,
+    ) -> Result<u32, Error> {
+        if self.global_group_data_ctr == 0 {
+            let mut rand = crypto.rand()?;
+            loop {
+                let candidate = rand.next_u32() & MATTER_MSG_CTR_RANGE;
+                if candidate != 0 {
+                    self.global_group_data_ctr = candidate;
+                    break;
+                }
+            }
+        }
+        Ok(self.global_group_data_ctr)
+    }
+
+    /// Attempt to decrypt and accept a group-encrypted message.
     ///
-    /// Derives group operational keys on-the-fly from `FabricMgr`, matching
-    /// the packet's `(session_id, group_id)`, tries to decrypt with each,
-    /// validates the group message counter, and creates an ephemeral group
-    /// session on success.
+    /// Handles two flavors of incoming group-encrypted packet:
     ///
-    /// Returns the created session and payload range, mirroring how unicast
-    /// uses `get_for_rx()` + `decode_remaining()`.
+    /// * Multicast group data message (groupcast destination Node ID):
+    ///   match `(session_id, group_id)` against the fabric's group key
+    ///   map, try each candidate operational key, and validate the
+    ///   group data message counter (trust-first).
+    /// * Unicast group-encrypted control message (unicast destination
+    ///   Node ID equal to one of our fabric identities), e.g. an
+    ///   MCSP `MsgCounterSyncReq`. There is no `group_id` filter here;
+    ///   every group key mapped for the matching fabric is tried.
+    ///
+    /// On success the derived operational key is copied onto the newly
+    /// created session (both `enc_key` and `dec_key`) so downstream
+    /// handlers — in particular the MCSP responder — can encrypt their
+    /// reply with the same key.
+    ///
+    /// Returns the created session and payload range, mirroring how
+    /// unicast uses `get_for_rx()` + `decode_remaining()`.
     pub(crate) fn get_or_create_for_group_rx<const N: usize, C: Crypto>(
         &mut self,
         crypto: C,
@@ -901,17 +985,26 @@ impl Sessions {
             .plain
             .get_src_nodeid()
             .ok_or(ErrorCode::InvalidData)?;
-        let group_id = packet
-            .header
-            .plain
-            .get_dst_groupcast_nodeid()
-            .ok_or(ErrorCode::InvalidData)?;
+        // Either DSIZ = 2 (groupcast) or DSIZ = 1 (unicast to us, MCSP-style).
+        // Anything else is malformed.
+        let dst_group_id = packet.header.plain.get_dst_groupcast_nodeid();
+        let dst_unicast_nodeid = packet.header.plain.get_dst_unicast_nodeid();
+        if dst_group_id.is_none() && dst_unicast_nodeid.is_none() {
+            return Err(ErrorCode::InvalidData.into());
+        }
         let expected_sess_id = packet.header.plain.sess_id;
         let msg_ctr = packet.header.plain.ctr;
+        let is_control = packet.header.plain.is_control_msg();
 
         debug!(
-            "Group: Attempting decrypt for PEER={:?} SID=0x{:04x}, GRP=0x{:04x}, SRC=0x{:016x}, CTR={}",
-            packet.peer, expected_sess_id, group_id, src_nodeid, msg_ctr
+            "Group: Attempting decrypt for PEER={:?} SID=0x{:04x}, GRP={:?}, DSTU={:?}, SRC=0x{:016x}, CTR={}, C={}",
+            packet.peer,
+            expected_sess_id,
+            dst_group_id,
+            dst_unicast_nodeid,
+            src_nodeid,
+            msg_ctr,
+            is_control
         );
 
         // Parse the plain header to determine encrypted portion offset
@@ -927,16 +1020,49 @@ impl Sessions {
         }
         saved_encrypted[..encrypted_len].copy_from_slice(pb.as_slice());
 
-        // Derive keys on-the-fly and try each one
-        let mut group_key_found: Option<(NonZeroU8, (usize, usize))> = None;
+        // Derive keys on-the-fly and try each one. When a key decrypts,
+        // we remember its operational key material so we can copy it
+        // onto the created session (needed by the MCSP responder to
+        // encrypt its reply with the same key).
+        //
+        // `effective_group_id` is:
+        //   * the incoming groupcast id for the multicast flow, or
+        //   * for the unicast/MCSP flow, the first group_id that maps to
+        //     the matching key set (or 0 when the key set has no
+        //     mapping) — MCSP itself is bound to a key, not a group, so
+        //     any value is acceptable here.
+        struct GroupKeyFound {
+            fab_idx: NonZeroU8,
+            group_id: u16,
+            fabric_node_id: u64,
+            op_key: CanonAeadKey,
+            payload_range: (usize, usize),
+        }
+        let mut group_key_found: Option<GroupKeyFound> = None;
 
         'outer: for fabric in fabrics.iter() {
+            // For unicast (MCSP) messages the destination Node ID must
+            // match one of our fabric identities; skip fabrics whose
+            // node id doesn't match, to avoid pointlessly trying keys
+            // that could not have secured a reply to us.
+            if let Some(dst_node) = dst_unicast_nodeid {
+                if fabric.node_id() != dst_node {
+                    continue;
+                }
+            }
+
             let fab_idx = fabric.fab_idx();
             let compressed_fabric_id = fabric.compressed_fabric_id();
+            let fabric_node_id = fabric.node_id();
 
             for map_entry in fabric.groups().key_map_iter() {
-                if map_entry.group_id != group_id {
-                    continue;
+                // Multicast: restrict to the target group. Unicast MCSP:
+                // any mapping is a candidate — the request is bound to
+                // a key, not a group.
+                if let Some(gid) = dst_group_id {
+                    if map_entry.group_id != gid {
+                        continue;
+                    }
                 }
 
                 let Some(key_set_entry) = fabric.groups().key_set_get(map_entry.group_key_set_id)
@@ -974,7 +1100,17 @@ impl Sessions {
                         op_key_ref,
                         src_nodeid,
                     ) {
-                        group_key_found = Some((fab_idx, payload_range));
+                        // Copy the op key so it survives past `temp_key_set`.
+                        let mut op_key_owned = crate::crypto::AEAD_KEY_ZEROED;
+                        op_key_owned.load(op_key_ref);
+                        let effective_group_id = dst_group_id.unwrap_or(map_entry.group_id);
+                        group_key_found = Some(GroupKeyFound {
+                            fab_idx,
+                            group_id: effective_group_id,
+                            fabric_node_id,
+                            op_key: op_key_owned,
+                            payload_range,
+                        });
                         break 'outer;
                     }
                 }
@@ -983,17 +1119,26 @@ impl Sessions {
 
         if group_key_found.is_none() {
             debug!(
-                "Group: No key could decrypt the message (SID=0x{:04x}, GRP=0x{:04x})",
-                expected_sess_id, group_id
+                "Group: No key could decrypt the message (SID=0x{:04x}, GRP={:?}, DSTU={:?})",
+                expected_sess_id, dst_group_id, dst_unicast_nodeid
             );
         }
 
-        let (fab_idx, payload_range) = group_key_found.ok_or(ErrorCode::NoSession)?;
+        let GroupKeyFound {
+            fab_idx,
+            group_id,
+            fabric_node_id,
+            op_key,
+            payload_range,
+        } = group_key_found.ok_or(ErrorCode::NoSession)?;
 
-        // Validate group message counter before creating the session
-        if !self
-            .group_ctr_store
-            .post_recv(fab_idx.get(), src_nodeid, msg_ctr)
+        // Only data messages participate in this dedup: control
+        // messages (`C = 1`) live on a separate control-counter space
+        // that we don't track yet, and are trust-first regardless.
+        if !is_control
+            && !self
+                .group_ctr_store
+                .post_recv(fab_idx.get(), src_nodeid, msg_ctr)
         {
             debug!(
                 "Group: Duplicate message counter {} from node 0x{:016x} fab_idx={}",
@@ -1020,6 +1165,17 @@ impl Sessions {
         };
         session.set_session_mode(SessionMode::Group { fab_idx, group_id });
         session.local_sess_id = expected_sess_id;
+        // Mirror the group session id onto the peer side so `pre_send`
+        // emits the correct value when we reply.
+        session.peer_sess_id = expected_sess_id;
+        // Group sessions always emit their Source Node ID, so `pre_send`
+        // needs this set to our identity for the matching fabric.
+        session.set_local_nodeid(fabric_node_id);
+        // Keep the operational key on the session so downstream
+        // handlers (e.g. MCSP responder) can encrypt the reply with the
+        // same key that decrypted the request.
+        session.dec_key.load(op_key.reference());
+        session.enc_key.load(op_key.reference());
 
         debug!(
             "Group: Created group session for fab_idx={}, group_id=0x{:04x}, src_nodeid=0x{:016x}",
