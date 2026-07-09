@@ -46,7 +46,7 @@ fn event(e: &Event, entities: &EntityContext, context: &IdlGenerateContext) -> T
     let krate = context.rs_matter_crate.clone();
 
     let name = ident(&e.id);
-    let name_builder = ident(&format!("{}Builder", &e.id));
+    let name_builder = ident(&format!("{}Builder", e.id));
 
     let priority = ident(match e.priority {
         EventPriority::Debug => "Debug",

@@ -260,17 +260,17 @@ impl FailSafe {
         if matches!(self.state, State::Idle) {
             if matches!(session_mode, SessionMode::PlainText) {
                 // Only PASE and CASE sessions supported
-                return Err(ErrorCode::GennCommInvalidAuthentication)?;
+                return Err(ErrorCode::GennCommInvalidAuthentication.into());
             }
 
             if pase.comm_window().is_some() && matches!(session_mode, SessionMode::Case { .. }) {
                 // Cannot arm via CASE while there's an active window
-                return Err(ErrorCode::Busy)?;
+                return Err(ErrorCode::Busy.into());
             }
 
             // if pase.comm_window().is_none() && !matches!(session_mode, SessionMode::Case { .. }) {
             //     // Cannot arm via PASE if there is no active commissioning window
-            //     return Err(ErrorCode::GennCommInvalidAuthentication)?;
+            //     return Err(ErrorCode::GennCommInvalidAuthentication.into());
             // }
 
             self.state = State::Armed(ArmedCtx {
@@ -318,7 +318,7 @@ impl FailSafe {
     ) -> Result<&'a mut Fabric, Error> {
         if matches!(self.state, State::Idle) {
             error!("Received Fail-Safe Disarm without it being armed");
-            return Err(ErrorCode::FailSafeRequired)?;
+            return Err(ErrorCode::FailSafeRequired.into());
         }
 
         // Has to be a CASE session

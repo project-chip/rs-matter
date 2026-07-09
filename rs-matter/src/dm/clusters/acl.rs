@@ -103,7 +103,7 @@ impl AclHandler {
                 for entry in &list {
                     count += 1;
                     if count > MAX_ACL_ENTRIES_PER_FABRIC {
-                        return Err(ErrorCode::ResourceExhausted)?;
+                        return Err(ErrorCode::ResourceExhausted.into());
                     }
                     let entry = entry?;
                     // Init a dummy to propagate failures for bad inputs
