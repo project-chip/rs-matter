@@ -251,6 +251,15 @@ impl PlainHdr {
         self.sec_flags.contains(SecFlags::GROUP_SESSION)
     }
 
+    /// Set or clear the Group Session bit on the outgoing message.
+    pub fn set_group_session(&mut self, group: bool) {
+        if group {
+            self.sec_flags |= SecFlags::GROUP_SESSION;
+        } else {
+            self.sec_flags.remove(SecFlags::GROUP_SESSION);
+        }
+    }
+
     /// Whether the message is a control message (Security Flags `C` bit).
     pub fn is_control_msg(&self) -> bool {
         self.sec_flags.contains(SecFlags::CONTROL_MSG)
