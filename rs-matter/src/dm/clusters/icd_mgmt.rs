@@ -540,12 +540,17 @@ impl<'a> IcdMgmtHandler<'a> {
 }
 
 impl ClusterHandler for IcdMgmtHandler<'_> {
-    // Advertise the mandatory attributes plus the Check-In Protocol optionals we
-    // serve; the other optionals stay hidden.
-    const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required;
-        AttributeId::RegisteredClients
-            | AttributeId::ICDCounter
-            | AttributeId::ClientsSupportedPerFabric));
+    // We implement the Check-In Protocol, so claim its feature bit; the
+    // registration attributes/commands and MaximumCheckInBackoff are all
+    // mandatory once it is claimed. The User-Active-Mode-Trigger and
+    // Long-Idle-Time optionals stay hidden.
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER
+        .with_features(Feature::CHECK_IN_PROTOCOL_SUPPORT.bits())
+        .with_attrs(with!(required;
+            AttributeId::RegisteredClients
+                | AttributeId::ICDCounter
+                | AttributeId::ClientsSupportedPerFabric
+                | AttributeId::MaximumCheckInBackOff));
 
     fn dataver(&self) -> u32 {
         self.dataver.get()
@@ -569,6 +574,12 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
 
     fn clients_supported_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(CLIENTS_PER_FABRIC as u16)
+    }
+
+    // The lower bound of the allowed range: this device does not back its
+    // Check-Ins off, so its maximum equals its idle-mode duration.
+    fn maximum_check_in_back_off(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
+        Ok(self.icd.mode.idle_mode_duration_s)
     }
 
     fn icd_counter(&self, _ctx: impl ReadContext) -> Result<u32, Error> {

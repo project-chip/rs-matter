@@ -83,7 +83,12 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestUserLabelCluster",
     "TestUserLabelClusterConstraints",
     // "TestTimeSynchronization", // Skipped: TimeSynchronization cluster not implemented by rs-matter (optional, Matter spec §11.16).
-    // "TestIcdManagementCluster", // Skipped: ICD Management cluster not implemented (rs-matter doesn't ship Intermittently Connected Device support).
+    // "TestIcdManagementCluster", // Skipped: the YAML expects chip-tool to have
+    //   auto-registered itself as a Check-In client during commissioning, then
+    //   reboots the DUT and checks ICDCounter persistence. rs-matter serves the
+    //   Check-In Protocol but is not a commissioning-time-registering ICD, and
+    //   the harness can't reboot the DUT — so this one stays off (see TC_ICDM_2_1
+    //   for the attribute-conformance coverage we do run).
     "TestUnitTestingClusterMei",
     //
     // Python tests — Interaction Data Model (general Matter protocol)
@@ -295,13 +300,29 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — ICD Management (optional system cluster)
     //
-    // "TC_ICDM_2_1", // Skipped: ICD Management cluster not implemented by rs-matter (Intermittently Connected Devices, optional, Matter spec §9.17).
-    // "TC_ICDM_3_1", // Skipped: ICD Management cluster not implemented by rs-matter.
-    // "TC_ICDM_3_2", // Skipped: ICD Management cluster not implemented by rs-matter.
-    // "TC_ICDM_3_3", // Skipped: ICD Management cluster not implemented by rs-matter.
-    // "TC_ICDM_3_4", // Skipped: ICD Management cluster not implemented by rs-matter.
-    // "TC_ICDM_5_1", // Skipped: ICD Management cluster not implemented by rs-matter.
-    // "TC_ICDManagementCluster", // Skipped: ICD Management cluster not implemented by rs-matter.
+    // rs-matter implements the Check-In Protocol (CIP feature): the
+    // RegisterClient / UnregisterClient / StayActiveRequest commands and the
+    // RegisteredClients / ICDCounter / ClientsSupportedPerFabric /
+    // MaximumCheckInBackOff attributes. It is not a Long-Idle-Time ICD (no LITS
+    // feature, no OperatingMode) and does not register clients at commissioning
+    // time. TC_ICDM_2_1 reads and range-checks the attribute surface — it passes
+    // with the PICS claiming only F00.
+    "TC_ICDM_2_1",
+    // "TC_ICDM_3_1", // Skipped: the register/unregister behaviour it checks is
+    //                // implemented (ResourceExhausted on overflow, NotFound on
+    //                // unknown unregister), but steps 2a/2b hard-require the
+    //                // GeneralDiagnostics TestEventTrigger machinery (the
+    //                // `kAddActiveModeReq` ICD trigger), which rs-matter doesn't
+    //                // wire, so the test fails before reaching the register steps.
+    // "TC_ICDM_3_2", // Skipped: gated on F00 but needs verification-key access
+    //                // control and a DUT reboot with RegisteredClients surviving it.
+    // "TC_ICDM_3_3", // Skipped: needs privilege-dependent verification-key
+    //                // rejection (Status.Failure at Manage) — not yet implemented.
+    // "TC_ICDM_3_4", // Skipped: needs a scripted DUT reboot and ICDCounter
+    //                // persistence across it; the harness can't reboot the DUT.
+    // "TC_ICDM_5_1", // Skipped: gated on F02 (LITS) — OperatingMode attribute and
+    //                // the SIT/LIT mDNS TXT record, which rs-matter doesn't advertise.
+    // "TC_ICDManagementCluster", // Skipped: see the YAML entry above.
 
     //
     // Python tests — Localization clusters (optional)
