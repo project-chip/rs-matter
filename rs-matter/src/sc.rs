@@ -35,6 +35,7 @@ use pase::PaseResponder;
 
 pub mod busy;
 pub mod case;
+pub mod checkin;
 pub mod mcsp;
 pub mod pase;
 
@@ -57,6 +58,7 @@ pub enum OpCode {
     CASESigma3 = 0x32,
     CASESigma2Resume = 0x33,
     StatusReport = 0x40,
+    CheckIn = 0x50,
 }
 
 impl OpCode {
@@ -75,6 +77,7 @@ impl OpCode {
                 | Self::StatusReport
                 | Self::MsgCounterSyncReq
                 | Self::MsgCounterSyncResp
+                | Self::CheckIn
         )
     }
 }
