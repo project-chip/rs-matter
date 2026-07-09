@@ -15,16 +15,23 @@
  *    limitations under the License.
  */
 
-//! Codec for the Check-In message payload.
+//! The Check-In message: its payload codec and the low-level per-message send.
 //!
-//! Just the message codec (crypto and byte layout). The Check-In Counter, the
-//! registration/key store and the sender live elsewhere.
+//! The codec ([`CheckIn::generate`]/[`CheckIn::parse`]) is just crypto and byte
+//! layout; [`CheckIn::send_to`] delivers a single message sessionlessly. The
+//! Check-In Counter and the registration/key store live elsewhere.
+
+use core::num::NonZeroU8;
 
 use crate::crypto::{
     Aead, AeadNonce, CanonAeadKeyRef, Crypto, Digest, HmacHash, AEAD_CANON_KEY_LEN, AEAD_NONCE_LEN,
     AEAD_TAG_LEN,
 };
+use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
+use crate::sc::OpCode;
+use crate::transport::exchange::Exchange;
+use crate::Matter;
 
 /// The Check-In Counter, carried on the wire as a little-endian value inside the
 /// encrypted section.
@@ -169,6 +176,40 @@ impl<'k> CheckIn<'k> {
             .copy_from_slice(&hash.access()[..AEAD_NONCE_LEN]);
 
         Ok(nonce)
+    }
+
+    /// Build a Check-In message and send it to the node `(fab_idx, node_id)`,
+    /// resolving its operational address over mDNS and sending sessionlessly
+    /// (Secure Channel opcode `CheckIn`, no MRP).
+    ///
+    /// The low-level per-message primitive: it takes the exact `counter` and
+    /// `app_data` to use, and depends on nothing but this codec's key. The
+    /// caller owns the counter (a batch of messages can share one value) and the
+    /// application data.
+    ///
+    /// Requires a running mDNS responder to service the address resolve.
+    pub async fn send_to<C: Crypto>(
+        &self,
+        matter: &Matter<'_>,
+        crypto: C,
+        fab_idx: NonZeroU8,
+        node_id: NodeId,
+        counter: u32,
+        app_data: &[u8],
+    ) -> Result<(), Error> {
+        let mut buf = [0u8; payload_len(2)];
+        if app_data.len() > buf.len() - MIN_PAYLOAD_LEN {
+            Err(ErrorCode::NoSpace)?;
+        }
+
+        let payload = self.generate(&crypto, counter, app_data, &mut buf)?;
+        let len = payload.len();
+
+        let mut exchange =
+            Exchange::initiate_unsecured_operational(matter, &crypto, fab_idx, node_id.into())
+                .await?;
+
+        exchange.send(OpCode::CheckIn, &buf[..len]).await
     }
 }
 

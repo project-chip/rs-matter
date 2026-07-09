@@ -180,6 +180,18 @@ impl<const N: usize> Subscriptions<N> {
         self.notification.notify();
     }
 
+    /// Whether an active subscription exists on `fab_idx` whose subscriber node
+    /// matches `node_id`.
+    pub fn has_subscription_for(&self, fab_idx: NonZeroU8, node_id: NodeId) -> bool {
+        self.state.lock(|internal| {
+            internal
+                .borrow()
+                .subscriptions
+                .iter()
+                .any(|s| s.ids.fab_idx == fab_idx && s.ids.peer_node_id == node_id)
+        })
+    }
+
     /// Record a fully-global change. Every attribute on every cluster on
     /// every endpoint is treated as changed for the purposes of subscription
     /// reporting. Intended for coarse-grained reset / restart scenarios.
