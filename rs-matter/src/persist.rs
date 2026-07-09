@@ -115,6 +115,11 @@ pub const OTA_PROVIDERS_KEY: u16 = SCENES_KEY + 1;
 /// successful registration change.
 pub const ICD_REGISTERED_CLIENTS_KEY: u16 = OTA_PROVIDERS_KEY + 1;
 
+/// The key used for storing the ICD Check-In counter's epoch boundary (a 4-byte
+/// little-endian value). Written only when a new epoch is crossed, so a restart
+/// resumes past every counter value the previous run may have used.
+pub const ICD_CHECK_IN_COUNTER_KEY: u16 = ICD_REGISTERED_CLIENTS_KEY + 1;
+
 /// A trait representing a key-value BLOB storage.
 ///
 /// NOTE: For now, the trait is deliberately modeled as non-async, so that it can be used from

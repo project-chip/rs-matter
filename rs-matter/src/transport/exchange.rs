@@ -1158,6 +1158,30 @@ impl<'a> Exchange<'a> {
             .await
     }
 
+    /// Open an exchange over a fresh **unsecured** session to an already-
+    /// commissioned node, resolving its operational address over mDNS.
+    ///
+    /// Like [`initiate_unsecured`](Self::initiate_unsecured) but it discovers the
+    /// peer address itself (as [`initiate`](Self::initiate) does for CASE), rather
+    /// than taking a known one. For sessionless protocols that carry their own
+    /// security and must not establish a CASE session — e.g. sending an ICD
+    /// Check-In message to a registered client.
+    ///
+    /// Requires a running mDNS responder to service the resolve; without one the
+    /// resolve times out and this returns [`ErrorCode::NotFound`].
+    #[inline(always)]
+    pub async fn initiate_unsecured_operational<C: Crypto>(
+        matter: &'a Matter<'a>,
+        crypto: C,
+        fabric_idx: NonZeroU8,
+        peer_node_id: NodeId,
+    ) -> Result<Self, Error> {
+        matter
+            .transport
+            .initiate_plaintext_operational(matter, crypto, fabric_idx, peer_node_id)
+            .await
+    }
+
     /// Accepts a new responder exchange pending on the provided Matter stack.
     ///
     /// If there is no new pending responder exchange, the method will wait indefinitely until one appears.

@@ -66,7 +66,9 @@ impl OpCode {
         MessageMeta {
             proto_id: PROTO_ID_SECURE_CHANNEL,
             proto_opcode: *self as u8,
-            reliable: !matches!(self, Self::MRPStandAloneAck),
+            // Check-In is a fire-and-forget notification sent without MRP, like
+            // the standalone ack.
+            reliable: !matches!(self, Self::MRPStandAloneAck | Self::CheckIn),
         }
     }
 

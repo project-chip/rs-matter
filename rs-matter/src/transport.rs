@@ -720,6 +720,37 @@ impl Transport {
         self.initiate_for_session(matter, session_id)
     }
 
+    /// Open an exchange over a fresh **unsecured** session to an already-
+    /// commissioned node, resolving its operational address over mDNS.
+    ///
+    /// Unlike [`initiate`](Self::initiate) this establishes no secure session; it
+    /// is for sessionless protocols that carry their own security (e.g. the
+    /// Check-In message), and it never reuses or creates a CASE session.
+    ///
+    /// Requires a running mDNS responder to service the resolve; without one the
+    /// resolve times out and this returns [`ErrorCode::NotFound`].
+    pub(crate) async fn initiate_plaintext_operational<'a, C: Crypto>(
+        &self,
+        matter: &'a Matter<'a>,
+        crypto: C,
+        fabric_idx: NonZeroU8,
+        peer_node_id: NodeId,
+    ) -> Result<Exchange<'a>, Error> {
+        let compressed_fabric_id = matter.with_state(|state| {
+            Ok::<_, Error>(state.fabrics.fabric(fabric_idx)?.compressed_fabric_id())
+        })?;
+
+        let service = MatterRemoteService::Operational {
+            compressed_fabric_id,
+            node_id: peer_node_id,
+        };
+
+        let resolved = self.resolve(service, Self::RESOLVE_TIMEOUT_MS).await?;
+
+        self.initiate_plaintext(matter, crypto, Address::Udp(resolved.addr))
+            .await
+    }
+
     /// Open an exchange over a PASE session to a not-yet-commissioned node at the
     /// given peer address.
     ///

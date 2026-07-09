@@ -15,28 +15,37 @@
  *    limitations under the License.
  */
 
-//! The ICD Management cluster.
+//! The ICD Management cluster and Check-In sender.
 //!
 //! An Intermittently Connected Device (ICD) hosts this cluster so clients can
 //! register to receive Check-In notifications when their subscription is lost.
-//! This module currently provides the persistent registration store
-//! ([`RegisteredClients`]); the cluster handler is layered on top of it.
+//!
+//! - [`Icd`] is the shared state: the persistent registration store
+//!   ([`RegisteredClients`]) plus the Check-In counter.
+//! - [`IcdMgmtHandler`] is the cluster handler (registration commands + the
+//!   Check-In-relevant attributes), layered on an [`Icd`].
+//! - [`Icd::send_check_in`] sends a Check-In message to a registered client,
+//!   resolving its address over mDNS and sending sessionlessly. The application
+//!   drives it when it decides a client should be nudged.
 
 use core::num::NonZeroU8;
 
-use crate::crypto::CanonAeadKey;
+use crate::crypto::{CanonAeadKey, Crypto};
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, HandlerContext, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
 use crate::persist::{KvBlobStore, Persist, ICD_REGISTERED_CLIENTS_KEY};
-use crate::sc::checkin::CheckInCounter;
+use crate::sc::checkin::{self, CheckIn, CheckInCounter};
+use crate::sc::OpCode;
 use crate::tlv::{FromTLV, TLVBuilderParent, TLVElement, ToTLV};
+use crate::transport::exchange::Exchange;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
 use crate::with;
+use crate::Matter;
 
 pub use crate::dm::clusters::decl::icd_management::*;
 
@@ -289,36 +298,146 @@ pub struct IcdModeConfig {
     pub active_mode_threshold_ms: u16,
 }
 
-/// The server-side handler for the ICD Management cluster.
+/// The shared ICD state: the client registration store and the Check-In counter,
+/// plus the advertised mode timings.
 ///
-/// Backed by the shared [`RegisteredClients`] store and [`CheckInCounter`]: the
-/// registration commands mutate the store, and the ICD Counter reported to
-/// clients comes from the counter. Only the Check-In Protocol subset is
-/// implemented — the mode-duration / threshold attributes plus the
-/// `RegisteredClients` / `ICDCounter` / `ClientsSupportedPerFabric` attributes
-/// and the `RegisterClient` / `UnregisterClient` / `StayActiveRequest` commands.
-pub struct IcdMgmtHandler<'a> {
-    dataver: Dataver,
-    clients: &'a RegisteredClients,
-    counter: &'a CheckInCounter,
+/// Both the cluster handler ([`IcdMgmtHandler`]) and the Check-In sender operate
+/// on the same instance: the handler mutates the registrations and reads the
+/// counter; the sender reads the registrations and advances the counter. The
+/// application owns one `Icd` and lends it to both.
+pub struct Icd {
+    /// The registered Check-In clients.
+    pub clients: RegisteredClients,
+    /// The Check-In counter, behind interior mutability because the sender
+    /// advances it (`&mut`) while the rest of the API only borrows shared.
+    counter: Mutex<RefCell<CheckInCounter>>,
+    /// The advertised mode timings; `active_mode_threshold_ms` is also the
+    /// Check-In application data.
     mode: IcdModeConfig,
 }
 
-impl<'a> IcdMgmtHandler<'a> {
-    /// Create a handler backed by the shared registration store and Check-In
-    /// counter, advertising the given mode timings.
-    pub const fn new(
-        dataver: Dataver,
-        clients: &'a RegisteredClients,
-        counter: &'a CheckInCounter,
-        mode: IcdModeConfig,
-    ) -> Self {
+impl Icd {
+    /// Create the ICD state from a starting Check-In counter and mode timings.
+    ///
+    /// `counter` should be constructed from the persisted counter value (or a
+    /// random one on first use); persist [`CheckInCounter::persist_value`] right
+    /// after, as its docs describe.
+    pub const fn new(counter: CheckInCounter, mode: IcdModeConfig) -> Self {
         Self {
-            dataver,
-            clients,
-            counter,
+            clients: RegisteredClients::new(),
+            counter: Mutex::new(RefCell::new(counter)),
             mode,
         }
+    }
+
+    /// The mode timings this ICD advertises.
+    pub fn mode(&self) -> IcdModeConfig {
+        self.mode
+    }
+
+    /// The counter value the next Check-In message will use (a peek).
+    pub fn next_counter(&self) -> u32 {
+        self.counter.lock(|c| c.borrow().next())
+    }
+
+    /// Send a Check-In message to the registered client `(fab_idx, node_id)`,
+    /// resolving its operational address over mDNS and sending sessionlessly.
+    ///
+    /// The application calls this when it decides a client should be nudged
+    /// (typically after detecting the client's subscription is lost). Advancing
+    /// and persisting the counter is the caller's responsibility via
+    /// [`advance_counter`](Self::advance_counter) once the batch is sent, so a
+    /// batch of Check-Ins to several clients can share one counter value.
+    ///
+    /// Requires a running mDNS responder to service the address resolve.
+    pub async fn send_check_in<C: Crypto>(
+        &self,
+        matter: &Matter<'_>,
+        crypto: C,
+        fab_idx: NonZeroU8,
+        node_id: u64,
+    ) -> Result<(), Error> {
+        let counter = self.next_counter();
+        let app_data = self.mode.active_mode_threshold_ms.to_le_bytes();
+
+        // Build the message under the store lock (the key lives in the entry),
+        // then send it outside the lock.
+        let mut buf = [0u8; checkin::payload_len(2)];
+        let len = self
+            .clients
+            .with(fab_idx, node_id, |reg| {
+                CheckIn::new(reg.key.reference())
+                    .generate(&crypto, counter, &app_data, &mut buf)
+                    .map(<[u8]>::len)
+            })
+            .ok_or(ErrorCode::NotFound)??;
+
+        let mut exchange =
+            Exchange::initiate_unsecured_operational(matter, &crypto, fab_idx, node_id.into())
+                .await?;
+
+        exchange.send(OpCode::CheckIn, &buf[..len]).await?;
+
+        Ok(())
+    }
+
+    /// Advance the Check-In counter after sending, persisting to `kv` when a new
+    /// epoch boundary is crossed.
+    ///
+    /// Call once per Check-In *batch* (all messages in the batch used the same
+    /// [`next_counter`](Self::next_counter) value).
+    pub fn advance_counter<S: KvBlobStore>(&self, mut kv: S, buf: &mut [u8]) -> Result<(), Error> {
+        let to_persist = self.counter.lock(|c| c.borrow_mut().advance());
+
+        if let Some(value) = to_persist {
+            kv.store(
+                crate::persist::ICD_CHECK_IN_COUNTER_KEY,
+                &value.to_le_bytes(),
+                buf,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Load the persisted Check-In counter epoch and reset the counter to resume
+    /// from it. Call once at startup, before any Check-In is sent.
+    pub fn load_counter<S: KvBlobStore>(
+        &self,
+        mut kv: S,
+        epoch: u32,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        let start = match kv.load(crate::persist::ICD_CHECK_IN_COUNTER_KEY, buf)? {
+            Some(data) => u32::from_le_bytes(data.try_into().map_err(|_| ErrorCode::Invalid)?),
+            // No persisted value yet: the caller's initial (random) counter stands.
+            None => return Ok(()),
+        };
+
+        self.counter
+            .lock(|c| *c.borrow_mut() = CheckInCounter::new(start, epoch));
+
+        Ok(())
+    }
+}
+
+/// The server-side handler for the ICD Management cluster.
+///
+/// Backed by the shared [`Icd`] state: the registration commands mutate its
+/// store, and the ICD Counter reported to clients comes from its counter. Only
+/// the Check-In Protocol subset is implemented — the mode-duration / threshold
+/// attributes plus the `RegisteredClients` / `ICDCounter` /
+/// `ClientsSupportedPerFabric` attributes and the `RegisterClient` /
+/// `UnregisterClient` / `StayActiveRequest` commands.
+pub struct IcdMgmtHandler<'a> {
+    dataver: Dataver,
+    icd: &'a Icd,
+}
+
+impl<'a> IcdMgmtHandler<'a> {
+    /// Create a handler backed by the shared [`Icd`] state.
+    pub const fn new(dataver: Dataver, icd: &'a Icd) -> Self {
+        Self { dataver, icd }
     }
 
     /// Adapt this handler to the generic `rs-matter` `Handler` trait.
@@ -349,15 +468,15 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
     }
 
     fn idle_mode_duration(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
-        Ok(self.mode.idle_mode_duration_s)
+        Ok(self.icd.mode.idle_mode_duration_s)
     }
 
     fn active_mode_duration(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
-        Ok(self.mode.active_mode_duration_ms)
+        Ok(self.icd.mode.active_mode_duration_ms)
     }
 
     fn active_mode_threshold(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(self.mode.active_mode_threshold_ms)
+        Ok(self.icd.mode.active_mode_threshold_ms)
     }
 
     fn clients_supported_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
@@ -365,7 +484,7 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
     }
 
     fn icd_counter(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
-        Ok(self.counter.next())
+        Ok(self.icd.next_counter())
     }
 
     fn registered_clients<P: TLVBuilderParent>(
@@ -382,7 +501,7 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
             .then(|| NonZeroU8::new(attr.fab_idx).ok_or(ErrorCode::UnsupportedAccess))
             .transpose()?;
 
-        self.clients.clients.lock(|cell| {
+        self.icd.clients.clients.lock(|cell| {
             let clients = cell.borrow();
             let mut iter = clients
                 .iter()
@@ -428,7 +547,7 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
         let mut icd_key = CanonAeadKey::new();
         icd_key.try_load_from_slice(key.0)?;
 
-        self.clients.set(MonitoringRegistration {
+        self.icd.clients.set(MonitoringRegistration {
             fab_idx,
             check_in_node_id: request.check_in_node_id()?,
             monitored_subject: request.monitored_subject()?,
@@ -436,11 +555,11 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
             key: icd_key,
         })?;
 
-        self.clients.store_persist(&ctx)?;
+        self.icd.clients.store_persist(&ctx)?;
         ctx.notify_own_cluster_changed();
 
         // The client stores this as its starting Check-In counter reference.
-        response.icd_counter(self.counter.next())?.end()
+        response.icd_counter(self.icd.next_counter())?.end()
     }
 
     fn handle_unregister_client(
@@ -450,9 +569,11 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
     ) -> Result<(), Error> {
         let fab_idx = Self::cmd_fabric(&ctx)?;
 
-        self.clients.remove(fab_idx, request.check_in_node_id()?)?;
+        self.icd
+            .clients
+            .remove(fab_idx, request.check_in_node_id()?)?;
 
-        self.clients.store_persist(&ctx)?;
+        self.icd.clients.store_persist(&ctx)?;
         ctx.notify_own_cluster_changed();
 
         Ok(())
@@ -567,5 +688,68 @@ mod tests {
             })
             .unwrap();
         assert_eq!(only_fab1, [100]);
+    }
+
+    /// A minimal in-memory single-key store, enough to test the counter
+    /// persist/reload roundtrip.
+    #[derive(Default)]
+    struct MemKv {
+        value: Option<alloc::vec::Vec<u8>>,
+    }
+
+    impl KvBlobStore for &mut MemKv {
+        fn load<'a>(&mut self, _key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+            Ok(self.value.as_ref().map(|v| {
+                buf[..v.len()].copy_from_slice(v);
+                &buf[..v.len()]
+            }))
+        }
+
+        fn store(&mut self, _key: u16, data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
+            self.value = Some(data.to_vec());
+            Ok(())
+        }
+
+        fn remove(&mut self, _key: u16, _buf: &mut [u8]) -> Result<(), Error> {
+            self.value = None;
+            Ok(())
+        }
+    }
+
+    fn mode() -> IcdModeConfig {
+        IcdModeConfig {
+            idle_mode_duration_s: 60,
+            active_mode_duration_ms: 300,
+            active_mode_threshold_ms: 500,
+        }
+    }
+
+    #[test]
+    fn counter_persists_at_boundary_and_resumes_across_restart() {
+        const EPOCH: u32 = 10;
+        let mut kv = MemKv::default();
+        let mut buf = [0u8; 16];
+
+        // Session 1: counter starts at 100, boundary at 110.
+        let icd = Icd::new(CheckInCounter::new(100, EPOCH), mode());
+
+        // Peeks are stable; advancing before the boundary writes nothing.
+        assert_eq!(icd.next_counter(), 101);
+        for _ in 0..9 {
+            icd.advance_counter(&mut kv, &mut buf).unwrap();
+        }
+        assert_eq!(kv.value, None, "no persist before the boundary");
+
+        // Crossing the boundary persists the next one (120).
+        let last_used = icd.next_counter();
+        icd.advance_counter(&mut kv, &mut buf).unwrap();
+        assert_eq!(last_used, 110);
+        assert!(kv.value.is_some(), "boundary crossing must persist");
+
+        // Session 2 (a restart): a fresh Icd whose counter resumes from the
+        // persisted boundary. Every value it hands out is past session 1's.
+        let icd2 = Icd::new(CheckInCounter::new(0, EPOCH), mode());
+        icd2.load_counter(&mut kv, EPOCH, &mut buf).unwrap();
+        assert!(icd2.next_counter() > last_used);
     }
 }
