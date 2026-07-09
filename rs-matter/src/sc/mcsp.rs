@@ -35,6 +35,7 @@
 
 use crate::crypto::Crypto;
 use crate::error::{Error, ErrorCode};
+use crate::fmt::Bytes;
 use crate::sc::{check_opcode, OpCode};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::SessionMode;
@@ -147,8 +148,8 @@ pub async fn respond<C: Crypto>(crypto: C, mut exchange: Exchange<'_>) -> Result
     };
 
     debug!(
-        "MCSP: Received MsgCounterSyncReq (challenge={:x?})",
-        req.challenge
+        "MCSP: Received MsgCounterSyncReq (challenge={})",
+        Bytes(&req.challenge)
     );
 
     let synchronized_counter =
@@ -160,8 +161,9 @@ pub async fn respond<C: Crypto>(crypto: C, mut exchange: Exchange<'_>) -> Result
     };
 
     debug!(
-        "MCSP: Sending MsgCounterSyncRsp (sync_ctr={}, response={:x?})",
-        synchronized_counter, rsp.response
+        "MCSP: Sending MsgCounterSyncRsp (sync_ctr={}, response={})",
+        synchronized_counter,
+        Bytes(&rsp.response)
     );
 
     exchange
