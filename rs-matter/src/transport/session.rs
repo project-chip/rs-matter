@@ -941,14 +941,11 @@ impl Sessions {
         crypto: C,
     ) -> Result<u32, Error> {
         if self.global_group_data_ctr == 0 {
-            let mut rand = crypto.rand()?;
-            loop {
-                let candidate = rand.next_u32() & MATTER_MSG_CTR_RANGE;
-                if candidate != 0 {
-                    self.global_group_data_ctr = candidate;
-                    break;
-                }
-            }
+            // Draw once and fall back to 1 in the (astronomically
+            // unlikely) all-zero case; peers ignore a `MsgCounterSyncRsp`
+            // whose Synchronized Counter is 0.
+            let candidate = crypto.rand()?.next_u32() & MATTER_MSG_CTR_RANGE;
+            self.global_group_data_ctr = if candidate == 0 { 1 } else { candidate };
         }
         Ok(self.global_group_data_ctr)
     }

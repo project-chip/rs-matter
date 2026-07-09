@@ -152,7 +152,7 @@ pub async fn respond<C: Crypto>(crypto: C, mut exchange: Exchange<'_>) -> Result
     );
 
     let synchronized_counter =
-        exchange.with_state(|state| state.sessions.get_or_init_global_group_data_ctr(&crypto))?;
+        exchange.with_state(|state| state.sessions.get_or_init_global_group_data_ctr(crypto))?;
 
     let rsp = MsgCounterSyncRsp {
         synchronized_counter,
