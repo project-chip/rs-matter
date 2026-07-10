@@ -42,13 +42,7 @@ const COUNTER_LEN: usize = core::mem::size_of::<Counter>();
 
 /// The minimum size of a Check-In payload: nonce + counter + MIC, i.e. a payload
 /// carrying no application data.
-pub const MIN_PAYLOAD_LEN: usize = AEAD_NONCE_LEN + COUNTER_LEN + AEAD_TAG_LEN;
-
-/// Return the size of a Check-In payload carrying `app_data_len` bytes of
-/// application data.
-pub const fn payload_len(app_data_len: usize) -> usize {
-    MIN_PAYLOAD_LEN + app_data_len
-}
+const MIN_PAYLOAD_LEN: usize = AEAD_NONCE_LEN + COUNTER_LEN + AEAD_TAG_LEN;
 
 /// The decrypted content of a Check-In message.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -93,9 +87,9 @@ impl<'k> CheckIn<'k> {
         app_data: &[u8],
         payload: &'p mut [u8],
     ) -> Result<&'p [u8], Error> {
-        let total = payload_len(app_data.len());
+        let total = Self::payload_len(app_data.len());
         if payload.len() < total {
-            Err(ErrorCode::NoSpace)?;
+            Err(ErrorCode::BufferTooSmall)?;
         }
 
         let nonce = self.generate_nonce(&crypto, counter)?;
@@ -162,6 +156,12 @@ impl<'k> CheckIn<'k> {
         })
     }
 
+    /// Return the size of a Check-In payload carrying `app_data_len` bytes of
+    /// application data.
+    pub const fn payload_len(app_data_len: usize) -> usize {
+        MIN_PAYLOAD_LEN + app_data_len
+    }
+
     /// Derive the per-message nonce: the leading bytes of `HMAC(key, counter)`.
     fn generate_nonce<C: Crypto>(&self, crypto: C, counter: Counter) -> Result<AeadNonce, Error> {
         let mut mac = crypto.hmac::<AEAD_CANON_KEY_LEN>(self.key)?;
@@ -188,6 +188,7 @@ impl<'k> CheckIn<'k> {
     /// application data.
     ///
     /// Requires a running mDNS responder to service the address resolve.
+    #[allow(clippy::too_many_arguments)]
     pub async fn send_to<C: Crypto>(
         &self,
         matter: &Matter<'_>,
@@ -196,13 +197,9 @@ impl<'k> CheckIn<'k> {
         node_id: NodeId,
         counter: u32,
         app_data: &[u8],
+        buf: &mut [u8],
     ) -> Result<(), Error> {
-        let mut buf = [0u8; payload_len(2)];
-        if app_data.len() > buf.len() - MIN_PAYLOAD_LEN {
-            Err(ErrorCode::NoSpace)?;
-        }
-
-        let payload = self.generate(&crypto, counter, app_data, &mut buf)?;
+        let payload = self.generate(&crypto, counter, app_data, buf)?;
         let len = payload.len();
 
         let mut exchange =
@@ -322,7 +319,7 @@ impl CheckInCounter {
 mod tests {
     use crate::crypto::{test_only_crypto, CanonAeadKeyRef};
 
-    use super::{payload_len, CheckIn, CheckInCounter};
+    use super::{CheckIn, CheckInCounter};
 
     /// A known-answer Check-In message test vector (shared with the reference
     /// implementation's fixtures); matching it byte-for-byte proves interop of
@@ -509,7 +506,7 @@ mod tests {
         let key_bytes = [0x22u8; 16];
         let checkin = CheckIn::new(CanonAeadKeyRef::new(&key_bytes));
 
-        let mut buf = [0u8; payload_len(0) - 1];
+        let mut buf = [0u8; CheckIn::payload_len(0) - 1];
         assert!(checkin.generate(&crypto, 1, &[], &mut buf).is_err());
     }
 
@@ -569,7 +566,7 @@ mod tests {
         // A restart (power loss) reads back only the persisted boundary — not the
         // live value — and resumes from there. Every value the next session
         // hands out must be strictly greater than anything session 1 used.
-        let mut ctr = CheckInCounter::new(persisted, epoch);
+        let ctr = CheckInCounter::new(persisted, epoch);
         assert!(ctr.next() > last_used);
     }
 

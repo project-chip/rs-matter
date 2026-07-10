@@ -6,8 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+* (Breaking) ICD support: Check-In Protocol, ICD cluster handler, mDNS advertisements (#501)
 * Warn on packet retransmission (#500)
-  * Breaking: rename feature `debug-tlv-payload` to `log-tlv-payload`
+  * (Breaking) Rename feature `debug-tlv-payload` to `log-tlv-payload`
 * MCSP Protocol Implementation (#499)
 * BTP: handle no-preference handshake MTU of 0 (#497)
 

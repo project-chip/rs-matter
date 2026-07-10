@@ -524,6 +524,7 @@ impl Icd {
         fab_idx: NonZeroU8,
         node_id: u64,
         counter: u32,
+        buf: &mut [u8],
     ) -> Result<(), Error> {
         // Copy the key out under the lock, then send outside it (sending is
         // `async`; the lock is not held across the `await`).
@@ -541,7 +542,7 @@ impl Icd {
         let app_data = self.mode.active_mode_threshold_ms.to_le_bytes();
 
         CheckIn::new(key.reference())
-            .send_to(matter, crypto, fab_idx, node_id, counter, &app_data)
+            .send_to(matter, crypto, fab_idx, node_id, counter, &app_data, buf)
             .await
     }
 
@@ -592,7 +593,7 @@ impl Icd {
         for (fab_idx, node_id, key) in &targets {
             // Best-effort: keep sending to the rest even if one fails to resolve.
             let _ = CheckIn::new(key.reference())
-                .send_to(matter, &crypto, *fab_idx, *node_id, counter, &app_data)
+                .send_to(matter, &crypto, *fab_idx, *node_id, counter, &app_data, buf)
                 .await;
         }
 
