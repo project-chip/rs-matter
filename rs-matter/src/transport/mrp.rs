@@ -22,6 +22,36 @@ use crate::error::{Error, ErrorCode};
 
 use super::{plain_hdr::PlainHdr, proto_hdr::ProtoHdr};
 
+/// Emit an MRP-diagnostic log message.
+///
+/// A number of log call sites in the transport layer fire in normal
+/// operation on lossy channels — packet retransmissions, duplicate
+/// packet drops, retrans / ACK mismatches, orphaned or late packets.
+/// They are useful when investigating packet loss on Thread or Wi-Fi
+/// but are noise otherwise.
+///
+/// This macro:
+/// - expands to [`debug!`] by default — keeping this noise out of a
+///   typical `info`-level log,
+/// - expands to [`warn!`] when the `log-mrp` Cargo feature is
+///   enabled — making these events visible under any reasonable log
+///   filter (including the compile-time filters used by `defmt` and
+///   `esp-println` in MCU firmwares).
+///
+/// Terminal / genuinely-erroneous conditions caused by noise (e.g.
+/// "Too many retransmissions. Giving up") intentionally stay at
+/// [`error!`] and are not routed through this macro.
+macro_rules! mrp_log {
+    ($s:literal $(, $x:expr)* $(,)?) => {{
+        #[cfg(feature = "log-mrp")]
+        { warn!($s $(, $x)*); }
+        #[cfg(not(feature = "log-mrp"))]
+        { debug!($s $(, $x)*); }
+    }};
+}
+
+pub(crate) use mrp_log;
+
 //const MRP_STANDALONE_ACK_TIMEOUT_MS: u64 = 200;   // TODO: Use to pro-actively send ACKs
 const MRP_BASE_RETRY_INTERVAL_MS: u32 = 300;
 const MRP_MAX_TRANSMISSIONS: u16 = 10;
@@ -247,7 +277,7 @@ impl ReliableMessage {
             // Handle received Acks
             if let Some(entry) = &self.retrans {
                 if entry.get_msg_ctr() != ack_msg_ctr {
-                    warn!("Mismatch in retrans-table's msg counter and received msg counter: received {:x}, expected {:x}.", ack_msg_ctr, entry.msg_ctr);
+                    mrp_log!("Mismatch in retrans-table's msg counter and received msg counter: received {:x}, expected {:x}.", ack_msg_ctr, entry.msg_ctr);
 
                     // This can actually happen on a noisy channel, where we've just sent a reply to a message
                     // - yet - the other side is still retransmitting the original message and thus acknowledging

@@ -8,7 +8,14 @@ inputs:
 runs:
   using: "composite"
   steps:
-  - run: pip install numpy pandas humanfriendly pyelftools cxxfilt tabulate fastcore ghapi
+  # NOTE: `ghapi` is pinned to `<2` because 2.0.0 turned `ghapi.all.paged()`
+  # into an async generator, which breaks the sync `for i in ghapi.all.paged(...)`
+  # loops in `.github/scripts/memory/memdf/util/github.py`.
+  # `fastcore` is pinned to `<2` because 2.0.0 removed `L.starmap`, which
+  # `ghapi` 1.x still uses in `GhApi.__init__`.
+  # Upstream connectedhomeip pins `ghapi==1.0.3` and `fastcore==1.5.28`
+  # via `scripts/setup/constraints.txt`.
+  - run: pip install numpy pandas humanfriendly pyelftools cxxfilt tabulate 'fastcore<2' 'ghapi<2'
     shell: bash
   - name: Set up environment for size reports
     shell: bash

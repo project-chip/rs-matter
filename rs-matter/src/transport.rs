@@ -59,6 +59,8 @@ use packet::PacketHdr;
 use proto_hdr::ProtoHdr;
 use session::{Session, Sessions};
 
+use self::mrp::mrp_log;
+
 mod dedup;
 
 pub mod exchange;
@@ -1246,14 +1248,14 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
             Err(e) if matches!(e.code(), ErrorCode::Duplicate) => {
                 if packet.header.plain.is_group_session() {
                     // Group messages are multicast and don't use MRP; silently discard duplicates
-                    debug!(
+                    mrp_log!(
                         "\n>>RCV {}\n      => Duplicate group message, discarding",
                         packet
                     );
                 } else if !packet.peer.is_reliable()
                     && !MessageMeta::from(&packet.header.proto).is_standalone_ack()
                 {
-                    debug!("\n>>RCV {}\n      => Duplicate, sending ACK", packet);
+                    mrp_log!("\n>>RCV {}\n      => Duplicate, sending ACK", packet);
 
                     self.matter.with_state(|state| {
                         // `unwrap` is safe because we know we have a session.
@@ -1278,7 +1280,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
                         .await?;
                 } else {
-                    debug!("\n>>RCV {}\n      => Duplicate, discarding", packet);
+                    mrp_log!("\n>>RCV {}\n      => Duplicate, discarding", packet);
                 }
             }
             Err(e) if matches!(e.code(), ErrorCode::NoSpaceSessions) => {
@@ -1357,7 +1359,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     .await?;
             }
             Err(e) if matches!(e.code(), ErrorCode::NoExchange) => {
-                warn!(
+                mrp_log!(
                     "\n>>RCV {}\n      => No valid exchange found, dropping",
                     packet
                 );
@@ -1432,7 +1434,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                         if new_exchange { " (new exchange)" } else { "" }
                     );
 
-                    #[cfg(feature = "debug-tlv-payload")]
+                    #[cfg(feature = "log-tlv-payload")]
                     debug!(
                         "{}",
                         Packet::<0>::display_payload(
@@ -1441,7 +1443,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                         )
                     );
 
-                    #[cfg(not(feature = "debug-tlv-payload"))]
+                    #[cfg(not(feature = "log-tlv-payload"))]
                     trace!(
                         "{}",
                         Packet::<0>::display_payload(
@@ -1486,7 +1488,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 return false;
             }
 
-            warn!(
+            mrp_log!(
                 "\n>>RCV {}\n => Accept timeout, marking exchange as dropped",
                 packet
             );
@@ -1509,14 +1511,14 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 .sessions
                 .get_for_rx(&packet.peer, &packet.header.plain)
             else {
-                warn!("\n>>RCV {}\n => No session, dropping", packet);
+                mrp_log!("\n>>RCV {}\n => No session, dropping", packet);
 
                 packet.buf.clear();
                 return true;
             };
 
             let Some(exch_index) = session.get_exch_for_rx(&packet.header.proto) else {
-                warn!("\n>>RCV {}\n => No exchange, dropping", packet);
+                mrp_log!("\n>>RCV {}\n => No exchange, dropping", packet);
 
                 packet.buf.clear();
                 return true;
@@ -1526,7 +1528,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
             let exchange = unwrap!(session.exchanges[exch_index].as_mut());
 
             if exchange.role.is_dropped_state() {
-                warn!(
+                mrp_log!(
                     "\n>>RCV {}\n => Owned by orphaned dropped {}, dropping packet",
                     packet,
                     ExchangeId::new(session.id, exch_index)
@@ -1708,17 +1710,19 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
 
         let payload_end = packet.buf.len();
 
-        debug!(
-            "\n<<SND {}\n      => {}",
-            Packet::<0>::display(&packet.peer, &packet.header),
-            if packet.tx_info.retransmission {
-                "Re-sending"
-            } else {
-                "Sending"
-            }
-        );
+        if packet.tx_info.retransmission {
+            mrp_log!(
+                "\n<<SND {}\n      => Re-sending",
+                Packet::<0>::display(&packet.peer, &packet.header),
+            );
+        } else {
+            debug!(
+                "\n<<SND {}\n      => Sending",
+                Packet::<0>::display(&packet.peer, &packet.header),
+            );
+        }
 
-        #[cfg(feature = "debug-tlv-payload")]
+        #[cfg(feature = "log-tlv-payload")]
         debug!(
             "{}",
             Packet::<0>::display_payload(
@@ -1727,7 +1731,7 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
             )
         );
 
-        #[cfg(not(feature = "debug-tlv-payload"))]
+        #[cfg(not(feature = "log-tlv-payload"))]
         trace!(
             "{}",
             Packet::<0>::display_payload(

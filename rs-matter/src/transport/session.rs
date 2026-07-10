@@ -38,7 +38,7 @@ use crate::{Matter, MatterState};
 
 use super::dedup::{GroupCtrStore, RxCtrState};
 use super::exchange::{ExchangeState, MessageMeta, Role};
-use super::mrp::RetransEntry;
+use super::mrp::{mrp_log, RetransEntry};
 use super::network::Address;
 use super::packet::PacketHdr;
 use super::plain_hdr::PlainHdr;
@@ -628,7 +628,7 @@ impl Session {
             false
         } else if exchange.mrp.is_ack_pending() {
             exchange.role.set_dropped_state();
-            warn!(
+            mrp_log!(
                 "Exchange {}: Pending ACK. Marking as dropped",
                 exchange_id.display(self)
             );
