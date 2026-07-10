@@ -335,7 +335,6 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // exactly half / all of the u32 range. The DUT applies the jump in place and
     // persists the new boundary (see `app_args_override` for the enable-key).
     "TC_ICDManagementCluster",
-
     //
     // Python tests — Localization clusters (optional)
     //
@@ -1543,11 +1542,7 @@ impl ITests {
     fn needs_target_pics(test_name: &str) -> bool {
         matches!(
             test_name,
-            "TC_ICDM_2_1"
-                | "TC_ICDM_3_2"
-                | "TC_ICDM_3_3"
-                | "TC_ICDM_3_4"
-                | "TC_ICDM_5_1"
+            "TC_ICDM_2_1" | "TC_ICDM_3_2" | "TC_ICDM_3_3" | "TC_ICDM_3_4" | "TC_ICDM_5_1"
         )
     }
 
