@@ -230,16 +230,76 @@ impl<'a> StatusReport<'a> {
     }
 }
 
-/// Handle messages related to the Secure Channel
-pub struct SecureChannel<'a, C> {
-    crypto: C,
-    notify: &'a dyn AttrChangeNotifier,
+/// An extension point for the [`SecureChannel`] handler, letting a controller
+/// react to the Secure Channel messages that the accessory role only drops:
+/// incoming Check-In notifications and unsolicited Message Counter Sync
+/// responses.
+///
+/// Both methods default to dropping the message (matching the accessory role),
+/// so `()` is a valid no-op handler. A controller overrides the verb(s) it cares
+/// about; the handler receives the [`Exchange`] to read the message from.
+pub trait AsyncScHandler {
+    /// Handle an incoming Check-In message (Secure Channel opcode `CheckIn`).
+    async fn check_in(&self, _exchange: Exchange<'_>) -> Result<(), Error> {
+        warn!("Check-In: Unexpected Check-In message received; dropping");
+        Ok(())
+    }
+
+    /// Handle an unsolicited Message Counter Sync response
+    /// (opcode `MsgCounterSyncResp`).
+    async fn mcsp_resp(&self, _exchange: Exchange<'_>) -> Result<(), Error> {
+        warn!("MCSP: Unsolicited MsgCounterSyncResp received; dropping");
+        Ok(())
+    }
 }
 
-impl<'a, C: Crypto> SecureChannel<'a, C> {
+impl AsyncScHandler for () {}
+
+impl<T> AsyncScHandler for &T
+where
+    T: AsyncScHandler,
+{
+    async fn check_in(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        T::check_in(self, exchange).await
+    }
+
+    async fn mcsp_resp(&self, exchange: Exchange<'_>) -> Result<(), Error> {
+        T::mcsp_resp(self, exchange).await
+    }
+}
+
+/// Handle messages related to the Secure Channel
+pub struct SecureChannel<'a, C, H = ()> {
+    crypto: C,
+    notify: &'a dyn AttrChangeNotifier,
+    handler: H,
+}
+
+impl<'a, C: Crypto> SecureChannel<'a, C, ()> {
     #[inline(always)]
     pub const fn new(crypto: C, notify: &'a dyn AttrChangeNotifier) -> Self {
-        Self { crypto, notify }
+        Self {
+            crypto,
+            notify,
+            handler: (),
+        }
+    }
+}
+
+impl<'a, C: Crypto, H: AsyncScHandler> SecureChannel<'a, C, H> {
+    /// Like [`new`](Self::new) but with a controller-side [`AsyncScHandler`] that
+    /// receives incoming Check-In / MCSP-response messages instead of dropping them.
+    #[inline(always)]
+    pub const fn new_with_handler(
+        crypto: C,
+        notify: &'a dyn AttrChangeNotifier,
+        handler: H,
+    ) -> Self {
+        Self {
+            crypto,
+            notify,
+            handler,
+        }
     }
 
     pub async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
@@ -272,10 +332,13 @@ impl<'a, C: Crypto> SecureChannel<'a, C> {
                 mcsp::respond(&self.crypto, exchange).await
             }
             OpCode::MsgCounterSyncResp => {
-                // We never initiate MCSP, so any incoming response is
-                // unsolicited and must be silently dropped.
-                warn!("MCSP: Unsolicited MsgCounterSyncResp received; dropping");
-                Ok(())
+                // Unsolicited in the accessory role; a controller may hook it.
+                self.handler.mcsp_resp(exchange).await
+            }
+            OpCode::CheckIn => {
+                // Unexpected in the accessory role (we are a Check-In *server*);
+                // a controller may hook it to receive Check-In notifications.
+                self.handler.check_in(exchange).await
             }
             opcode => {
                 error!("Invalid opcode: {:?}", opcode);
@@ -285,7 +348,7 @@ impl<'a, C: Crypto> SecureChannel<'a, C> {
     }
 }
 
-impl<C: Crypto> ExchangeHandler for SecureChannel<'_, C> {
+impl<C: Crypto, H: AsyncScHandler> ExchangeHandler for SecureChannel<'_, C, H> {
     fn handle(&self, exchange: Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
         SecureChannel::handle(self, exchange)
     }
