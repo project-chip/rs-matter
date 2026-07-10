@@ -21,9 +21,11 @@ use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use domain::base::name::{Label, ToLabelIter};
 
 use crate::dm::clusters::basic_info::BasicInfoConfig;
+use crate::dm::clusters::icd_mgmt::OperatingModeEnum;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::EitherIter;
 use crate::utils::storage::{write_split, Vec, WriteBuf};
+use crate::Matter;
 
 use super::{MatterLocalService, MatterRemoteService};
 
@@ -53,11 +55,37 @@ pub const MDNS_SOCKET_DEFAULT_BIND_ADDR: SocketAddr =
 impl MatterLocalService {
     /// Build a full mDNS service description for this Matter service, including
     /// the service name, type, protocol, port, subtypes, and TXT records.
+    ///
+    /// Pulls everything it needs (device details, port, ICD operating mode) from
+    /// `matter`, so callers don't have to keep their argument lists in sync as
+    /// the advertised record grows.
     #[allow(clippy::type_complexity)]
     pub fn service<'a>(
         &self,
+        matter: &Matter<'_>,
+        buf: &'a mut [u8],
+    ) -> Result<
+        (
+            MdnsLocalService<
+                'a,
+                impl Iterator<Item = &'a str> + Clone,
+                impl Iterator<Item = (&'a str, &'a str)> + Clone,
+            >,
+            &'a mut [u8],
+        ),
+        Error,
+    > {
+        self.service_internal(matter.dev_det(), matter.port(), matter.icd_mode(), buf)
+    }
+
+    /// The implementation behind [`Self::service`], taking the advertised inputs
+    /// explicitly.
+    #[allow(clippy::type_complexity)]
+    fn service_internal<'a>(
+        &self,
         dev_det: &BasicInfoConfig<'_>,
         matter_port: u16,
+        icd_mode: Option<OperatingModeEnum>,
         buf: &'a mut [u8],
     ) -> Result<
         (
@@ -96,12 +124,22 @@ impl MatterLocalService {
                     ("", wb)
                 };
 
+                // The `ICD` key is advertised only by Long-Idle-Time-capable
+                // devices: "0" while operating as SIT, "1" as LIT. A non-ICD
+                // device omits it (empty value, dropped by the filter below).
+                let txt_icd = match icd_mode {
+                    Some(OperatingModeEnum::LIT) => "1",
+                    Some(OperatingModeEnum::SIT) => "0",
+                    None => "",
+                };
+
                 // Per Matter Core Spec, T is a bitmap:
                 // bit 1 (value 2) = TCP client, bit 2 (value 4) = TCP server
                 let txt_kvs = [
                     ("SAI", txt_sai),
                     ("SII", txt_sii),
                     ("T", if dev_det.tcp_supported { "6" } else { "" }),
+                    ("ICD", txt_icd),
                     // Some mDNS responders do not accept empty TXT records
                     ("DUMMY", "DUMMY"),
                 ]
@@ -179,6 +217,15 @@ impl MatterLocalService {
                     ("", wb)
                 };
 
+                // As on the operational service, a Long-Idle-Time-capable device
+                // advertises its current mode here too ("0"=SIT, "1"=LIT); a
+                // non-ICD device omits the key.
+                let txt_icd = match icd_mode {
+                    Some(OperatingModeEnum::LIT) => "1",
+                    Some(OperatingModeEnum::SIT) => "0",
+                    None => "",
+                };
+
                 let txt_kvs = [
                     ("D", txt_discr),
                     ("CM", if *enhanced { "2" } else { "1" }),
@@ -190,6 +237,7 @@ impl MatterLocalService {
                     ("PH", txt_ph),
                     ("DT", txt_dt),
                     ("T", txt_tcp),
+                    ("ICD", txt_icd),
                 ]
                 .into_iter()
                 .filter(|(_, v)| !v.is_empty());

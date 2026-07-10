@@ -303,7 +303,7 @@ impl SendableZeroconfMdnsService {
         // Scratch buffer for expanding `MatterLocalService` into a `MdnsLocalService` view —
         // the strings (name, subtypes, TXT values) are formatted into this buffer.
         let mut buf = [0u8; 512];
-        let (service, _) = mdns_service.service(matter.dev_det(), matter.port(), &mut buf)?;
+        let (service, _) = mdns_service.service(matter, &mut buf)?;
 
         let service_name = service.service.strip_prefix('_').unwrap_or(service.service);
 

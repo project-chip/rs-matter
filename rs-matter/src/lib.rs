@@ -34,6 +34,7 @@ use crate::dm::clusters::basic_info::{
     self, BasicInfoConfig, BasicInfoSettings, FULL_CLUSTER as BASIC_INFO_CLUSTER,
 };
 use crate::dm::clusters::dev_att::DeviceAttestation;
+use crate::dm::clusters::icd_mgmt::OperatingModeEnum;
 use crate::dm::clusters::time_sync::Rtc;
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::AttrChangeNotifier;
@@ -223,6 +224,26 @@ impl<'a> Matter<'a> {
 
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    /// The ICD operating mode to advertise in the operational `ICD` DNS-SD TXT
+    /// key, or `None` when the device is not a Long-Idle-Time ICD.
+    pub fn icd_mode(&self) -> Option<OperatingModeEnum> {
+        self.with_state(|state| state.icd_mode)
+    }
+
+    /// Set the ICD operating mode advertised in mDNS and, if it changed, signal
+    /// the mDNS layer to re-publish.
+    pub fn set_icd_mode(&self, mode: Option<OperatingModeEnum>) {
+        let changed = self.with_state(|state| {
+            let changed = state.icd_mode != mode;
+            state.icd_mode = mode;
+            changed
+        });
+
+        if changed {
+            self.transport.notify_mdns_changed();
+        }
     }
 
     /// Combine a user-provided raw [`KvBlobStore`] with the scratch buffer owned
@@ -642,6 +663,10 @@ pub struct MatterState {
     basic_info_settings: BasicInfoSettings,
     /// Real Time Clock state and Last-Known-Good UTC Time tracking (Matter Core spec).
     rtc: Rtc,
+    /// The ICD operating mode advertised in the operational `ICD` DNS-SD TXT
+    /// key, or `None` when the device is not a Long-Idle-Time ICD (key omitted).
+    /// The ICD Management handler keeps this in sync with its registration set.
+    icd_mode: Option<OperatingModeEnum>,
 }
 
 impl MatterState {
@@ -655,6 +680,7 @@ impl MatterState {
             failsafe: FailSafe::new(),
             basic_info_settings: BasicInfoSettings::new(),
             rtc: Rtc::new(),
+            icd_mode: None,
         }
     }
 
@@ -667,6 +693,7 @@ impl MatterState {
             failsafe <- FailSafe::init(),
             basic_info_settings <- BasicInfoSettings::init(),
             rtc <- Rtc::init(),
+            icd_mode: None,
         })
     }
 }

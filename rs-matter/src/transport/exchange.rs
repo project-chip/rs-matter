@@ -1135,7 +1135,7 @@ impl<'a> Exchange<'a> {
         matter.transport().initiate_for_session(matter, session_id)
     }
 
-    /// Create a new initiator exchange on a new unsecured (plain-text) session to
+    /// Create a new initiator exchange on a new plaintext session to
     /// the given peer address.
     ///
     /// Low-level primitive below the three high-level entry points
@@ -1147,7 +1147,7 @@ impl<'a> Exchange<'a> {
     /// `initiate` (CASE). If there is no space for a new session, an existing
     /// session is evicted and the operation retried.
     #[inline(always)]
-    pub async fn initiate_unsecured<C: Crypto>(
+    pub async fn initiate_plaintext<C: Crypto>(
         matter: &'a Matter<'a>,
         crypto: C,
         peer_addr: network::Address,
@@ -1155,6 +1155,30 @@ impl<'a> Exchange<'a> {
         matter
             .transport
             .initiate_plaintext(matter, crypto, peer_addr)
+            .await
+    }
+
+    /// Open an exchange over a fresh plaintext session to an already-
+    /// commissioned node, resolving its operational address over mDNS.
+    ///
+    /// Like [`initiate_plaintext`](Self::initiate_plaintext) but it discovers the
+    /// peer address itself (as [`initiate`](Self::initiate) does for CASE), rather
+    /// than taking a known one. For sessionless protocols that carry their own
+    /// security and must not establish a CASE session — e.g. sending an ICD
+    /// Check-In message to a registered client.
+    ///
+    /// Requires a running mDNS responder to service the resolve; without one the
+    /// resolve times out and this returns [`ErrorCode::NotFound`].
+    #[inline(always)]
+    pub async fn initiate_plaintext_operational<C: Crypto>(
+        matter: &'a Matter<'a>,
+        crypto: C,
+        fabric_idx: NonZeroU8,
+        peer_node_id: NodeId,
+    ) -> Result<Self, Error> {
+        matter
+            .transport
+            .initiate_plaintext_operational(matter, crypto, fabric_idx, peer_node_id)
             .await
     }
 
@@ -1539,12 +1563,12 @@ mod tests {
     }
 
     #[test]
-    fn test_initiate_unsecured_creates_initiator_exchange() {
+    fn test_initiate_plaintext_creates_initiator_exchange() {
         let matter = test_matter();
         let crypto = test_only_crypto();
         let peer = network::Address::new();
 
-        let exchange = block_on(Exchange::initiate_unsecured(&matter, &crypto, peer)).unwrap();
+        let exchange = block_on(Exchange::initiate_plaintext(&matter, &crypto, peer)).unwrap();
 
         exchange
             .with_state(|state| {
@@ -1562,14 +1586,14 @@ mod tests {
     }
 
     #[test]
-    fn test_initiate_unsecured_retries_after_eviction() {
+    fn test_initiate_plaintext_retries_after_eviction() {
         let matter = test_matter();
         let crypto = test_only_crypto();
         let peer = network::Address::new();
 
         fill_sessions(&matter, false);
 
-        let exchange = block_on(Exchange::initiate_unsecured(&matter, &crypto, peer)).unwrap();
+        let exchange = block_on(Exchange::initiate_plaintext(&matter, &crypto, peer)).unwrap();
 
         exchange
             .with_state(|state| {
@@ -1587,14 +1611,14 @@ mod tests {
     }
 
     #[test]
-    fn test_initiate_unsecured_fails_when_no_session_can_be_evicted() {
+    fn test_initiate_plaintext_fails_when_no_session_can_be_evicted() {
         let matter = test_matter();
         let crypto = test_only_crypto();
         let peer = network::Address::new();
 
         fill_sessions(&matter, true);
 
-        let result = block_on(Exchange::initiate_unsecured(&matter, &crypto, peer));
+        let result = block_on(Exchange::initiate_plaintext(&matter, &crypto, peer));
 
         match result {
             Err(err) => assert!(matches!(err.code(), ErrorCode::NoSpaceSessions)),

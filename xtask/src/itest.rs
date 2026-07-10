@@ -83,7 +83,13 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestUserLabelCluster",
     "TestUserLabelClusterConstraints",
     // "TestTimeSynchronization", // Skipped: TimeSynchronization cluster not implemented by rs-matter (optional, Matter spec §11.16).
-    // "TestIcdManagementCluster", // Skipped: ICD Management cluster not implemented (rs-matter doesn't ship Intermittently Connected Device support).
+    // End-to-end LIT-ICD lifecycle: the runner commissions with
+    // `--icd-registration true` (this DUT is routed into the `--lit-icd-app`
+    // slot, see `yaml_test_command`), so the commissioner registers itself as a
+    // Check-In client; the test then reboots the DUT and verifies the registered
+    // client and the ICDCounter survive (counter resumes one epoch ahead). Also
+    // checks OperatingMode flips LIT→SIT on UnregisterClient.
+    "TestIcdManagementCluster",
     "TestUnitTestingClusterMei",
     //
     // Python tests — Interaction Data Model (general Matter protocol)
@@ -295,14 +301,40 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — ICD Management (optional system cluster)
     //
-    // "TC_ICDM_2_1", // Skipped: ICD Management cluster not implemented by rs-matter (Intermittently Connected Devices, optional, Matter spec §9.17).
-    // "TC_ICDM_3_1", // Skipped: ICD Management cluster not implemented by rs-matter.
-    // "TC_ICDM_3_2", // Skipped: ICD Management cluster not implemented by rs-matter.
-    // "TC_ICDM_3_3", // Skipped: ICD Management cluster not implemented by rs-matter.
-    // "TC_ICDM_3_4", // Skipped: ICD Management cluster not implemented by rs-matter.
-    // "TC_ICDM_5_1", // Skipped: ICD Management cluster not implemented by rs-matter.
-    // "TC_ICDManagementCluster", // Skipped: ICD Management cluster not implemented by rs-matter.
-
+    // rs-matter implements the Check-In Protocol (CIP feature): the
+    // RegisterClient / UnregisterClient / StayActiveRequest commands and the
+    // RegisteredClients / ICDCounter / ClientsSupportedPerFabric /
+    // MaximumCheckInBackOff attributes. It is not a Long-Idle-Time ICD (no LITS
+    // feature, no OperatingMode) and does not register clients at commissioning
+    // time. TC_ICDM_2_1 reads and range-checks the attribute surface — it passes
+    // with the PICS claiming only F00.
+    "TC_ICDM_2_1",
+    // Exercises the full register/unregister flow: ResourceExhausted when a
+    // fabric's registration slot is full, NotFound on unknown unregister, and
+    // read-back of the RegisteredClients entries. Steps 2a/2b use the
+    // GeneralDiagnostics `kAddActiveModeReq` ICD trigger, accepted as a no-op by
+    // the `system_tests` DUT (see `app_args_override` for the enable-key).
+    "TC_ICDM_3_1",
+    // Verification-key access control plus a reboot check. The reboot leg is
+    // gated on `not is_ci`; our PICS carries `PICS_SDK_CI_ONLY=1`, so the CI path
+    // runs (register/read-back/verification-key) and skips the physical reboot,
+    // which the harness can't drive. RegisteredClients are still persisted.
+    "TC_ICDM_3_2",
+    "TC_ICDM_3_3",
+    // ICDCounter monotonicity across a reboot. The reboot leg is `not is_ci`;
+    // with `PICS_SDK_CI_ONLY=1` the CI path just reads the counter twice and
+    // asserts it never decreases. The counter is persisted for the real path.
+    "TC_ICDM_3_4",
+    // Operating mode (LITS): reads the OperatingMode attribute and the operational
+    // `ICD` DNS-SD TXT key, asserting both are SIT with no clients, flip to LIT
+    // after RegisterClient, and back to SIT after UnregisterClient. Needs `--PICS`
+    // (the F02 gate) and browses the DUT's operational mDNS.
+    "TC_ICDM_5_1",
+    // Drives the ICD Check-In counter-invalidation TestEventTriggers
+    // (`kInvalidateHalf/AllCounterValues`) and asserts the ICDCounter jumps by
+    // exactly half / all of the u32 range. The DUT applies the jump in place and
+    // persists the new boundary (see `app_args_override` for the enable-key).
+    "TC_ICDManagementCluster",
     //
     // Python tests — Localization clusters (optional)
     //
@@ -1135,14 +1167,26 @@ impl ITests {
             String::new()
         };
 
+        // `TestIcd*` YAML suites are classified as the `LIT_ICD` target by the
+        // runner (`target_for_name`), so it launches the DUT from the
+        // `--lit-icd-app` slot (not `--all-clusters-app`) and pairs with
+        // `--icd-registration true` — driving commissioning-time ICD client
+        // registration. Point that slot at our binary.
+        let lit_icd_app_clause = if real_name.starts_with("TestIcd") {
+            format!(" --lit-icd-app '{}'", test_exe_path.display())
+        } else {
+            String::new()
+        };
+
         format!(
-            "{} --log-level warn --target {} --runner chip_tool_python --chip-tool {} run --iterations 1 --test-timeout-seconds {} --all-clusters-app '{}'{} --pics-file {}",
+            "{} --log-level warn --target {} --runner chip_tool_python --chip-tool {} run --iterations 1 --test-timeout-seconds {} --all-clusters-app '{}'{}{} --pics-file {}",
             test_suite_path.display(),
             real_name,
             chip_tool_path.display(),
             timeout_secs,
             test_exe_path.display(),
             ota_app_clause,
+            lit_icd_app_clause,
             test_pics_path.display(),
         )
     }
@@ -1221,10 +1265,20 @@ impl ITests {
         } else {
             format!(" {extra_args}")
         };
+        // Python `MatterBaseTest` scripts don't receive the YAML runner's
+        // `--pics-file`; a script that gates its steps on `check_pics(...)`
+        // sees an empty PICS dict unless we hand it a `--PICS` file. Point the
+        // ones that need it at the target's own `.pics` (the same file the YAML
+        // runner uses), by absolute path since the runner's CWD is `chip_dir`.
+        let pics_clause = if Self::needs_target_pics(test_name) {
+            format!(" --PICS {}", self.test_pics_path(target).display())
+        } else {
+            String::new()
+        };
         let script_args = format!(
             "--storage-path /tmp/rs_matter_python_test_storage.json \
              {commissioning_method}{commissioning_args} --endpoint 1 \
-             --paa-trust-store-path credentials/development/paa-root-certs{extra_args_clause}{th_server_arg}"
+             --paa-trust-store-path credentials/development/paa-root-certs{extra_args_clause}{pics_clause}{th_server_arg}"
         );
 
         // Optional `--app-args` passed through to `system_tests`. Used by
@@ -1477,6 +1531,21 @@ impl ITests {
         matches!(test_name, "TC_SC_3_5")
     }
 
+    /// Whether this Python test must be handed the target's own `.pics` file.
+    ///
+    /// Tests that read attributes conditionally on `check_pics(...)` (and assert
+    /// that a mandatory attribute *is* in the PICS) need the DUT's real PICS
+    /// claims, not the empty default. `TC_ICDM_2_1` gates every attribute read
+    /// this way; `TC_ICDM_3_2/3_3/3_4` gate on `ICDM.S.F00`, and the target
+    /// `.pics` also carries `PICS_SDK_CI_ONLY=1` so 3_2/3_4 take their
+    /// reboot-free CI path.
+    fn needs_target_pics(test_name: &str) -> bool {
+        matches!(
+            test_name,
+            "TC_ICDM_2_1" | "TC_ICDM_3_2" | "TC_ICDM_3_3" | "TC_ICDM_3_4" | "TC_ICDM_5_1"
+        )
+    }
+
     /// Optional `--app-args` passed straight through to `system_tests`.
     ///
     /// `system_tests` recognises `--discriminator <u16>` and
@@ -1517,6 +1586,15 @@ impl ITests {
             // sequence below — wire the same value into the DUT so the
             // key check in `TestEventTriggerDiag::test_event_trigger` accepts.
             "TC_DGSW_2_2" => Some("--enable-key 000102030405060708090a0b0c0d0e0f"),
+            // TC_ICDM_3_1 drives the ICD registration flow but first sends the
+            // `kAddActiveModeReq` / `kRemoveActiveModeReq` ICD triggers via
+            // `GeneralDiagnostics::TestEventTrigger`. It defaults `enableKey` to
+            // the canonical sequence, so wire the same value into the DUT.
+            "TC_ICDM_3_1" => Some("--enable-key 000102030405060708090a0b0c0d0e0f"),
+            // TC_ICDManagementCluster invalidates the ICD Check-In counter via
+            // `GeneralDiagnostics::TestEventTrigger` with the canonical enable
+            // key; wire the same value into the DUT.
+            "TC_ICDManagementCluster" => Some("--enable-key 000102030405060708090a0b0c0d0e0f"),
             _ => None,
         }
     }
@@ -1546,6 +1624,12 @@ impl ITests {
             // ACL events. argparse keeps the last `--endpoint`, so appending
             // here wins.
             "TC_ACL_2_6" | "TC_ACL_2_7" | "TC_ACL_2_8" => "--endpoint 0",
+            // These ICDM tests read/write the AccessControl cluster (to drop the
+            // TH to Manage privilege) via `get_endpoint()`, which defaults to the
+            // `--endpoint 1` we pass for application tests. AccessControl lives on
+            // the root endpoint, so pin the default there. The ICDM helpers
+            // themselves already target endpoint 0 explicitly.
+            "TC_ICDM_3_2" | "TC_ICDM_3_3" | "TC_ICDM_3_4" => "--endpoint 0",
             // TC_CGEN_2_2 lives on the root endpoint (GeneralCommissioning /
             // OperationalCredentials clusters) and uses
             // `PIXIT.CGEN.FailsafeExpiryLengthSeconds` to bound the fail-safe

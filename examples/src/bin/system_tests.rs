@@ -56,6 +56,7 @@ use rs_matter::dm::clusters::gen_comm::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::gen_diag::{self, ClusterHandler as _, GenDiag};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::grp_key_mgmt::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::icd_mgmt::{ClusterHandler as _, Icd, IcdMgmtHandler, IcdModeConfig};
 use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
 use rs_matter::dm::clusters::net_comm;
 use rs_matter::dm::clusters::noc::{self, ClusterHandler as _};
@@ -86,6 +87,7 @@ use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::KvBlobStoreAccess;
 use rs_matter::respond::{ChainedExchangeHandler, Responder};
+use rs_matter::sc::checkin::CheckInCounter;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::sc::SecureChannel;
 use rs_matter::transport::exchange::Exchange;
@@ -111,6 +113,7 @@ static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers<20>> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 static GEN_DIAG: StaticCell<TestEventTriggerDiag> = StaticCell::new();
+static ICD: StaticCell<Icd> = StaticCell::new();
 // UserLabel registry — host endpoints and labels-per-endpoint counts
 // match `data_model`'s `UserLabelHandler<'_, E, N>` parameterisation.
 static USER_LABELS: StaticCell<UserLabels<1, 4>> = StaticCell::new();
@@ -272,9 +275,30 @@ fn main() -> Result<(), Error> {
     // to true and validates the `TestEventTrigger` invoke key against the
     // supplied bytes. Without it, the default `()` `GenDiag` impl reports
     // disabled and rejects every trigger.
+    // Shared ICD state for the ICD Management cluster. Registrations and the
+    // Check-In counter are re-hydrated from KV before the data model accepts
+    // traffic, so both survive a reboot.
+    let icd: &'static Icd = ICD.uninit().init_with(Icd::init(
+        CheckInCounter::new(0, ICD_COUNTER_EPOCH),
+        ICD_MODE,
+    ));
+    kv.access(|store, buf| icd.load_registrations(store, buf))?;
+    kv.access(|store, buf| icd.load_counter(store, ICD_COUNTER_EPOCH, buf))?;
+    // Persist the boundary the counter now resumes from, so the *next* restart
+    // resumes one epoch further on (even on first boot, where nothing was stored
+    // yet). Without this the counter would not advance across a reboot.
+    kv.access(|store, buf| icd.persist_counter(store, buf))?;
+    // Seed the advertised ICD operating mode from the (possibly reloaded)
+    // registration set, so a client registered before a reboot keeps the device
+    // advertising as LIT.
+    matter.set_icd_mode(Some(icd.operating_mode()));
+
     let gen_diag: &'static dyn GenDiag = if let Some(key) = parse_enable_key_override() {
         info!("TestEventTrigger enabled with configured 16-byte key");
-        GEN_DIAG.init(TestEventTriggerDiag { enable_key: key })
+        GEN_DIAG.init(TestEventTriggerDiag {
+            enable_key: key,
+            icd,
+        })
     } else {
         &()
     };
@@ -299,6 +323,7 @@ fn main() -> Result<(), Error> {
             &ota_state,
             dlog_buffers,
             log_provider,
+            icd,
         ),
         &kv,
         &state,
@@ -419,6 +444,10 @@ fn main() -> Result<(), Error> {
 
     let mut sw_fault_emitter = pin!(emit_software_fault_on_trigger(&im));
 
+    // Persists the ICD Check-In counter after a counter-invalidation trigger
+    // moves the boundary (`TC_ICDManagementCluster`).
+    let mut icd_counter_persist = pin!(persist_icd_counter_on_trigger(icd, &kv));
+
     // OTA Requestor role loop (active only with `--otaDownloadPath`): reacts to
     // `AnnounceOTAProvider` by downloading the image from the announced provider.
     let mut ota_job = pin!(run_ota_requestor(
@@ -438,7 +467,7 @@ fn main() -> Result<(), Error> {
         select4(
             &mut respond,
             &mut im_job,
-            &mut sw_fault_emitter,
+            select(&mut sw_fault_emitter, &mut icd_counter_persist).coalesce(),
             select(&mut term, &mut ota_job).coalesce(),
         )
         .coalesce(),
@@ -465,6 +494,10 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     pairing_hint: PairingHintFlags::PRESS_RESET_BUTTON,
     tcp_supported: cfg!(feature = "test-tcp"),
     max_paths_per_invoke: 1,
+    // Session Idle/Active Intervals (ms). Advertised as the SII/SAI DNS-SD keys;
+    // an ICD must publish them so discovery knows its polling cadence.
+    sii: Some(500),
+    sai: Some(300),
     ..TEST_DEV_DET
 };
 
@@ -548,7 +581,10 @@ const NODE: Node<'static> = Node {
                 // Diagnostic Logs (0x0032) for the `TestDiagnosticLogs` itest.
                 // Always present; serves logs only when started with the log-file
                 // flags, otherwise answers `NoLogs`.
-                DIAGNOSTIC_LOGS_CLUSTER
+                DIAGNOSTIC_LOGS_CLUSTER,
+                // ICD Management (0x0046), Check-In Protocol only, for the
+                // `TC_ICDM_*` itests.
+                ICD_MGMT_CLUSTER
             ),
             &[on_off::FULL_CLUSTER.id],
         ),
@@ -605,6 +641,27 @@ const DIAGNOSTIC_LOGS_CLUSTER: Cluster<'static> = <DiagLogsHandler<
     &MatterBuffers<2>,
     &LogFileProvider,
 > as diag_logs::ClusterAsyncHandler>::CLUSTER;
+
+/// The ICD Management cluster metadata, exactly as served by
+/// [`IcdMgmtHandler`] (so `NODE`'s declaration matches the handler).
+const ICD_MGMT_CLUSTER: Cluster<'static> = IcdMgmtHandler::CLUSTER;
+
+/// Mode config the test ICD advertises. Spec-valid for a LIT-capable device
+/// (idle within `[1, 64800]` s, `idle*1000 >= active`, `threshold >= 5000`), and
+/// matched to the reference LIT-ICD fixture the `TestIcdManagementCluster` YAML
+/// expects. The trigger hint sets a single instruction-dependent bit
+/// (`CustomInstruction`), so a non-empty instruction accompanies it.
+const ICD_MODE: IcdModeConfig = IcdModeConfig {
+    idle_mode_duration_s: 3600,
+    active_mode_duration_ms: 10000,
+    active_mode_threshold_ms: 5000,
+    user_active_mode_trigger_hint: 0x111D,
+    user_active_mode_trigger_instruction: "Press the button to wake the device",
+};
+
+/// The Check-In counter epoch — how far ahead each persisted boundary jumps, so
+/// the counter survives reboots without a flash write per message.
+const ICD_COUNTER_EPOCH: u32 = 100;
 
 /// Download protocols this requestor advertises (BDX only).
 const OTA_PROTOCOLS: &[DownloadProtocolEnum] = &[DownloadProtocolEnum::BDXSynchronous];
@@ -664,6 +721,8 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
                 OTA_REQUESTOR_CLUSTER,
                 // Diagnostic Logs present on every variant (see `NODE`).
                 DIAGNOSTIC_LOGS_CLUSTER,
+                // ICD Management present on every variant (see `NODE`).
+                ICD_MGMT_CLUSTER,
             ),
             &[on_off::FULL_CLUSTER.id],
         ),
@@ -725,6 +784,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     ota_state: &'a OtaState,
     dlog_buffers: &'a MatterBuffers<2>,
     log_provider: &'a LogFileProvider,
+    icd: &'a Icd,
 ) -> impl DataModel + 'a {
     (
         node,
@@ -854,6 +914,11 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(DIAGNOSTIC_LOGS_CLUSTER.id)),
                 DiagLogsHandler::new(Dataver::new_rand(&mut rand), dlog_buffers, log_provider)
                     .adapt(),
+            )
+            // ICD Management (Check-In Protocol) on the root endpoint.
+            .chain(
+                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(ICD_MGMT_CLUSTER.id)),
+                Async(IcdMgmtHandler::new(Dataver::new_rand(&mut rand), icd).adapt()),
             ),
     )
 }
@@ -895,7 +960,14 @@ fn parse_enable_key_override() -> Option<[u8; 16]> {
 /// `correct_key_valid_code` succeeds).
 struct TestEventTriggerDiag {
     enable_key: [u8; 16],
+    /// The shared ICD state, so the counter-invalidation triggers can jump the
+    /// Check-In counter in place.
+    icd: &'static Icd,
 }
+
+/// Fires when a counter-invalidation trigger moved the persist boundary, asking
+/// the async drainer to write it to KV.
+static ICD_COUNTER_PERSIST_NOTIFY: Notification<CriticalSectionRawMutex> = Notification::new();
 
 impl rs_matter::utils::sync::DynBase for TestEventTriggerDiag {}
 
@@ -925,10 +997,48 @@ impl GenDiag for TestEventTriggerDiag {
         // top-level async task can emit the event (the trait method
         // itself is sync and has no event-emitter context).
         const SW_FAULT_TRIGGER: u64 = 0x0034_0000_0000_0000;
+
+        // The non-ICD triggers are sent verbatim, so match them on the raw value
+        // (their high bytes are significant — masking would corrupt them).
         match trigger {
-            TC_TEST_EVENT_TRIGGER => Ok(()),
+            TC_TEST_EVENT_TRIGGER => return Ok(()),
             SW_FAULT_TRIGGER => {
                 SW_FAULT_NOTIFY.notify();
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        // The ICD triggers (only) carry the target endpoint in bits 32..48
+        // (`send_test_event_triggers`); clear them before matching, mirroring
+        // CHIP's `clearEndpointInEventTrigger`.
+        let trigger = trigger & !(0xFFFF << 32);
+        // ICD Management "add/remove active-mode requirement" triggers
+        // (`TC_ICDM_3_1`). rs-matter is not a real ICD that idles, so these are
+        // accepted as no-ops — the test only checks the command succeeds.
+        const ICD_ADD_ACTIVE_MODE_REQ: u64 = 0x0046_0000_0000_0001;
+        const ICD_REMOVE_ACTIVE_MODE_REQ: u64 = 0x0046_0000_0000_0002;
+        // ICD Check-In counter invalidation (`TC_ICDManagementCluster`): jump the
+        // counter by half / all of its range so outstanding values are voided.
+        const ICD_INVALIDATE_HALF_COUNTER: u64 = 0x0046_0000_0000_0003;
+        const ICD_INVALIDATE_ALL_COUNTER: u64 = 0x0046_0000_0000_0004;
+        // Force the maximum Check-In back-off state; rs-matter does not back off,
+        // so this is a no-op the test only expects to succeed.
+        const ICD_FORCE_MAX_CHECK_IN_BACKOFF: u64 = 0x0046_0000_0000_0005;
+        match trigger {
+            ICD_ADD_ACTIVE_MODE_REQ
+            | ICD_REMOVE_ACTIVE_MODE_REQ
+            | ICD_FORCE_MAX_CHECK_IN_BACKOFF => Ok(()),
+            ICD_INVALIDATE_HALF_COUNTER => {
+                if self.icd.invalidate_counter(u32::MAX / 2) {
+                    ICD_COUNTER_PERSIST_NOTIFY.notify();
+                }
+                Ok(())
+            }
+            ICD_INVALIDATE_ALL_COUNTER => {
+                if self.icd.invalidate_counter(u32::MAX) {
+                    ICD_COUNTER_PERSIST_NOTIFY.notify();
+                }
                 Ok(())
             }
             _ => Err(rs_matter::error::ErrorCode::InvalidCommand.into()),
@@ -965,6 +1075,20 @@ where
                 e
             ),
         }
+    }
+}
+
+/// Drains [`ICD_COUNTER_PERSIST_NOTIFY`] and persists the ICD Check-In counter
+/// boundary each time a counter-invalidation trigger moves it. The trigger
+/// itself jumps the in-RAM counter synchronously (so the immediate `ICDCounter`
+/// read is correct); only the KV write is deferred here.
+async fn persist_icd_counter_on_trigger(
+    icd: &Icd,
+    kv: &impl KvBlobStoreAccess,
+) -> Result<(), Error> {
+    loop {
+        ICD_COUNTER_PERSIST_NOTIFY.wait().await;
+        kv.access(|store, buf| icd.persist_counter(store, buf))?;
     }
 }
 

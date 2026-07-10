@@ -35,6 +35,7 @@ use pase::PaseResponder;
 
 pub mod busy;
 pub mod case;
+pub mod checkin;
 pub mod mcsp;
 pub mod pase;
 
@@ -57,6 +58,7 @@ pub enum OpCode {
     CASESigma3 = 0x32,
     CASESigma2Resume = 0x33,
     StatusReport = 0x40,
+    CheckIn = 0x50,
 }
 
 impl OpCode {
@@ -64,7 +66,9 @@ impl OpCode {
         MessageMeta {
             proto_id: PROTO_ID_SECURE_CHANNEL,
             proto_opcode: *self as u8,
-            reliable: !matches!(self, Self::MRPStandAloneAck),
+            // Check-In is a fire-and-forget notification sent without MRP, like
+            // the standalone ack.
+            reliable: !matches!(self, Self::MRPStandAloneAck | Self::CheckIn),
         }
     }
 
@@ -75,6 +79,7 @@ impl OpCode {
                 | Self::StatusReport
                 | Self::MsgCounterSyncReq
                 | Self::MsgCounterSyncResp
+                | Self::CheckIn
         )
     }
 }

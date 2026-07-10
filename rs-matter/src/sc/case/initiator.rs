@@ -70,7 +70,7 @@ struct TBEData2Decrypt<'a> {
 /// This implements the controller side of the CASE protocol.
 /// The typical flow is:
 ///
-/// 1. Create an exchange to the target device
+/// 1. Create an exchange to the target device over a plaintext session
 /// 2. Call `CaseInitiator::initiate()` with the fabric index and peer node ID
 /// 3. On success, the exchange's session is upgraded to a secure CASE session
 pub struct CaseInitiator<'a, C: Crypto + 'a> {
@@ -91,7 +91,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
         }
     }
 
-    /// Initiate a CASE handshake with a Matter device.
+    /// Perform a CASE handshake with a Matter device.
     ///
     /// This performs the complete CASE handshake:
     /// 1. Send Sigma1 (initiator_random, session_id, destination_id, eph_pub_key)
@@ -99,15 +99,15 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
     /// 3. Send Sigma3 (encrypted TBE3)
     /// 4. Receive StatusReport
     ///
-    /// On success, the session is upgraded to a secure CASE session.
+    /// On success, a new secure CASE session is established with the target device.
     ///
     /// # Arguments
-    /// - `exchange` - An exchange to the target device
+    /// - `exchange` - An exchange to the target device over a plaintext session
     /// - `crypto` - The crypto implementation
     /// - `fab_idx` - The fabric index to use for the handshake
     /// - `peer_node_id` - The node ID of the target device
-    pub async fn initiate(
-        exchange: &mut Exchange<'_>,
+    pub async fn perform(
+        mut exchange: Exchange<'_>,
         crypto: &'a C,
         fab_idx: NonZeroU8,
         peer_node_id: u64,
@@ -307,7 +307,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
             });
 
             if result.is_err() {
-                complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await?;
+                complete_with_status(&mut exchange, SCStatusCodes::InvalidParameter, &[]).await?;
             }
 
             result

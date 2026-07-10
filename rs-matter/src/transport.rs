@@ -688,13 +688,11 @@ impl Transport {
         // Establish CASE over a fresh, one-shot unsecured exchange to the
         // resolved address. On success a secure session keyed at
         // `(fabric_idx, peer_node_id)` is recorded in the stack.
-        {
-            let mut exchange = self
-                .initiate_plaintext(matter, &crypto, Address::Udp(resolved.addr))
-                .await?;
+        let exchange = self
+            .initiate_plaintext(matter, &crypto, Address::Udp(resolved.addr))
+            .await?;
 
-            CaseInitiator::initiate(&mut exchange, &crypto, fabric_idx, peer_node_id).await?;
-        }
+        CaseInitiator::perform(exchange, &crypto, fabric_idx, peer_node_id).await?;
 
         // Seed the new CASE session's peer MRP/session params from the resolve
         // TXT (rs-matter does not yet exchange these in CASE Sigma1/2) and grab
@@ -718,6 +716,37 @@ impl Transport {
         })?;
 
         self.initiate_for_session(matter, session_id)
+    }
+
+    /// Open an exchange over a fresh **unsecured** session to an already-
+    /// commissioned node, resolving its operational address over mDNS.
+    ///
+    /// Unlike [`initiate`](Self::initiate) this establishes no secure session; it
+    /// is for sessionless protocols that carry their own security (e.g. the
+    /// Check-In message), and it never reuses or creates a CASE session.
+    ///
+    /// Requires a running mDNS responder to service the resolve; without one the
+    /// resolve times out and this returns [`ErrorCode::NotFound`].
+    pub(crate) async fn initiate_plaintext_operational<'a, C: Crypto>(
+        &self,
+        matter: &'a Matter<'a>,
+        crypto: C,
+        fabric_idx: NonZeroU8,
+        peer_node_id: NodeId,
+    ) -> Result<Exchange<'a>, Error> {
+        let compressed_fabric_id = matter.with_state(|state| {
+            Ok::<_, Error>(state.fabrics.fabric(fabric_idx)?.compressed_fabric_id())
+        })?;
+
+        let service = MatterRemoteService::Operational {
+            compressed_fabric_id,
+            node_id: peer_node_id,
+        };
+
+        let resolved = self.resolve(service, Self::RESOLVE_TIMEOUT_MS).await?;
+
+        self.initiate_plaintext(matter, crypto, Address::Udp(resolved.addr))
+            .await
     }
 
     /// Open an exchange over a PASE session to a not-yet-commissioned node at the
@@ -751,12 +780,8 @@ impl Transport {
         }
 
         // Establish a new PASE session to this peer.
-        {
-            let mut handshake = self.initiate_plaintext(matter, &crypto, peer_addr).await?;
-            PaseInitiator::initiate(&mut handshake, &crypto, passcode).await?;
-            // The PASE-establishment exchange is one-shot; drop it here so the
-            // caller opens fresh exchanges on the new PASE session.
-        }
+        let exchange = self.initiate_plaintext(matter, &crypto, peer_addr).await?;
+        PaseInitiator::perform(exchange, &crypto, passcode).await?;
 
         let session_id = matter.with_state(|state| {
             state
@@ -2326,7 +2351,7 @@ mod tests {
     }
 
     #[test]
-    fn test_create_unsecured_session_creates_plaintext_session() {
+    fn test_create_plaintext_session() {
         let matter = test_matter();
         let crypto = test_only_crypto();
         let peer = Address::new();
@@ -2347,7 +2372,7 @@ mod tests {
     }
 
     #[test]
-    fn test_initiate_unsecured_now_creates_initiator_exchange() {
+    fn test_initiate_plaintext_now_creates_initiator_exchange() {
         let matter = test_matter();
         let crypto = test_only_crypto();
         let peer = Address::new();
