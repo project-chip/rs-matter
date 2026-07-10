@@ -83,12 +83,13 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestUserLabelCluster",
     "TestUserLabelClusterConstraints",
     // "TestTimeSynchronization", // Skipped: TimeSynchronization cluster not implemented by rs-matter (optional, Matter spec §11.16).
-    // "TestIcdManagementCluster", // Skipped: the YAML expects chip-tool to have
-    //   auto-registered itself as a Check-In client during commissioning, then
-    //   reboots the DUT and checks ICDCounter persistence. rs-matter serves the
-    //   Check-In Protocol but is not a commissioning-time-registering ICD, and
-    //   the harness can't reboot the DUT — so this one stays off (see TC_ICDM_2_1
-    //   for the attribute-conformance coverage we do run).
+    // End-to-end LIT-ICD lifecycle: the runner commissions with
+    // `--icd-registration true` (this DUT is routed into the `--lit-icd-app`
+    // slot, see `yaml_test_command`), so the commissioner registers itself as a
+    // Check-In client; the test then reboots the DUT and verifies the registered
+    // client and the ICDCounter survive (counter resumes one epoch ahead). Also
+    // checks OperatingMode flips LIT→SIT on UnregisterClient.
+    "TestIcdManagementCluster",
     "TestUnitTestingClusterMei",
     //
     // Python tests — Interaction Data Model (general Matter protocol)
@@ -329,7 +330,11 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // after RegisterClient, and back to SIT after UnregisterClient. Needs `--PICS`
     // (the F02 gate) and browses the DUT's operational mDNS.
     "TC_ICDM_5_1",
-    // "TC_ICDManagementCluster", // Skipped: see the YAML entry above.
+    // Drives the ICD Check-In counter-invalidation TestEventTriggers
+    // (`kInvalidateHalf/AllCounterValues`) and asserts the ICDCounter jumps by
+    // exactly half / all of the u32 range. The DUT applies the jump in place and
+    // persists the new boundary (see `app_args_override` for the enable-key).
+    "TC_ICDManagementCluster",
 
     //
     // Python tests — Localization clusters (optional)
@@ -1163,14 +1168,26 @@ impl ITests {
             String::new()
         };
 
+        // `TestIcd*` YAML suites are classified as the `LIT_ICD` target by the
+        // runner (`target_for_name`), so it launches the DUT from the
+        // `--lit-icd-app` slot (not `--all-clusters-app`) and pairs with
+        // `--icd-registration true` — driving commissioning-time ICD client
+        // registration. Point that slot at our binary.
+        let lit_icd_app_clause = if real_name.starts_with("TestIcd") {
+            format!(" --lit-icd-app '{}'", test_exe_path.display())
+        } else {
+            String::new()
+        };
+
         format!(
-            "{} --log-level warn --target {} --runner chip_tool_python --chip-tool {} run --iterations 1 --test-timeout-seconds {} --all-clusters-app '{}'{} --pics-file {}",
+            "{} --log-level warn --target {} --runner chip_tool_python --chip-tool {} run --iterations 1 --test-timeout-seconds {} --all-clusters-app '{}'{}{} --pics-file {}",
             test_suite_path.display(),
             real_name,
             chip_tool_path.display(),
             timeout_secs,
             test_exe_path.display(),
             ota_app_clause,
+            lit_icd_app_clause,
             test_pics_path.display(),
         )
     }
@@ -1579,6 +1596,10 @@ impl ITests {
             // `GeneralDiagnostics::TestEventTrigger`. It defaults `enableKey` to
             // the canonical sequence, so wire the same value into the DUT.
             "TC_ICDM_3_1" => Some("--enable-key 000102030405060708090a0b0c0d0e0f"),
+            // TC_ICDManagementCluster invalidates the ICD Check-In counter via
+            // `GeneralDiagnostics::TestEventTrigger` with the canonical enable
+            // key; wire the same value into the DUT.
+            "TC_ICDManagementCluster" => Some("--enable-key 000102030405060708090a0b0c0d0e0f"),
             _ => None,
         }
     }

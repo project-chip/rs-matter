@@ -122,6 +122,12 @@ pub struct IcdModeConfig {
     /// Minimum time (milliseconds) the device stays active after network
     /// activity. Also the ICD Check-In application data.
     pub active_mode_threshold_ms: u16,
+    /// The `UserActiveModeTriggerHint` bitmap: how a user can return the device
+    /// to active mode. `0` means no trigger advertised.
+    pub user_active_mode_trigger_hint: u32,
+    /// The `UserActiveModeTriggerInstruction` string paired with the hint (empty
+    /// when the hint needs no free-form instruction). Must be `<= 128` bytes.
+    pub user_active_mode_trigger_instruction: &'static str,
 }
 
 /// The interior, mutable ICD state guarded by a single lock: the registrations,
@@ -456,6 +462,30 @@ impl Icd {
         Ok(())
     }
 
+    /// Jump the Check-In counter forward by `delta` (wrapping). Used to
+    /// invalidate outstanding counter values in one step; the new value is
+    /// visible immediately via [`next_counter`](Self::next_counter).
+    ///
+    /// Returns `true` if the jump moved the persist boundary, in which case
+    /// [`persist_counter`](Self::persist_counter) must run before the device
+    /// restarts (defer it if the caller has no storage access here).
+    #[must_use = "a moved boundary must be persisted via persist_counter"]
+    pub fn invalidate_counter(&self, delta: u32) -> bool {
+        self.state
+            .lock(|s| s.borrow_mut().counter.advance_by(delta))
+            .is_some()
+    }
+
+    /// Persist the current Check-In counter boundary to `kv`.
+    pub fn persist_counter<S: KvBlobStore>(&self, mut kv: S, buf: &mut [u8]) -> Result<(), Error> {
+        let value = self.state.lock(|s| s.borrow().counter.persist_value());
+        kv.store(
+            crate::persist::ICD_CHECK_IN_COUNTER_KEY,
+            &value.to_le_bytes(),
+            buf,
+        )
+    }
+
     /// Load the persisted Check-In counter epoch and reset the counter to resume
     /// from it. Call once at startup, before any Check-In is sent.
     pub fn load_counter<S: KvBlobStore>(
@@ -627,15 +657,18 @@ impl<'a> IcdMgmtHandler<'a> {
 }
 
 impl ClusterHandler for IcdMgmtHandler<'_> {
-    // We implement the Check-In Protocol and Long-Idle-Time support, so claim
-    // both feature bits. CIP makes the registration attributes/commands and
-    // MaximumCheckInBackoff mandatory; LITS makes OperatingMode and the
-    // StayActiveRequest command mandatory. The User-Active-Mode-Trigger optionals
-    // stay hidden.
+    // We claim the full ICD feature set: Check-In Protocol, Long-Idle-Time,
+    // User-Active-Mode-Trigger and Dynamic-SIT-LIT. CIP makes the registration
+    // attributes/commands and MaximumCheckInBackoff mandatory; LITS makes
+    // OperatingMode and StayActiveRequest mandatory; UAT makes
+    // UserActiveModeTriggerHint mandatory; DSLS (which is exactly our
+    // registration-driven SIT/LIT switching) adds only its feature bit.
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
         .with_features(
             Feature::CHECK_IN_PROTOCOL_SUPPORT
                 .union(Feature::LONG_IDLE_TIME_SUPPORT)
+                .union(Feature::USER_ACTIVE_MODE_TRIGGER)
+                .union(Feature::DYNAMIC_SIT_LIT_SUPPORT)
                 .bits(),
         )
         .with_attrs(with!(required;
@@ -643,7 +676,9 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
                 | AttributeId::ICDCounter
                 | AttributeId::ClientsSupportedPerFabric
                 | AttributeId::MaximumCheckInBackOff
-                | AttributeId::OperatingMode));
+                | AttributeId::OperatingMode
+                | AttributeId::UserActiveModeTriggerHint
+                | AttributeId::UserActiveModeTriggerInstruction));
 
     fn dataver(&self) -> u32 {
         self.dataver.get()
@@ -677,6 +712,23 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
 
     fn operating_mode(&self, _ctx: impl ReadContext) -> Result<OperatingModeEnum, Error> {
         Ok(self.icd.operating_mode())
+    }
+
+    fn user_active_mode_trigger_hint(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> Result<UserActiveModeTriggerBitmap, Error> {
+        Ok(UserActiveModeTriggerBitmap::from_bits_truncate(
+            self.icd.mode.user_active_mode_trigger_hint,
+        ))
+    }
+
+    fn user_active_mode_trigger_instruction<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl ReadContext,
+        builder: crate::tlv::Utf8StrBuilder<P>,
+    ) -> Result<P, Error> {
+        builder.set(self.icd.mode.user_active_mode_trigger_instruction)
     }
 
     fn icd_counter(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
@@ -749,15 +801,17 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
         }
 
         let key = request.key()?;
-        let mut icd_key = CanonAeadKey::new();
-        icd_key.try_load_from_slice(key.0)?;
 
         self.icd.register(MonitoringRegistration {
             fab_idx,
             check_in_node_id: node_id,
             monitored_subject: request.monitored_subject()?,
-            client_type: request.client_type()?,
-            key: icd_key,
+            // An out-of-range client type or wrong-length key is a constraint
+            // violation, not a generic failure.
+            client_type: request
+                .client_type()
+                .map_err(|_| ErrorCode::ConstraintError)?,
+            key: key.0.try_into().map_err(|_| ErrorCode::ConstraintError)?,
         })?;
 
         self.icd.store_registrations(&ctx)?;
@@ -995,6 +1049,8 @@ mod tests {
             idle_mode_duration_s: 60,
             active_mode_duration_ms: 300,
             active_mode_threshold_ms: 500,
+            user_active_mode_trigger_hint: 0,
+            user_active_mode_trigger_instruction: "",
         }
     }
 

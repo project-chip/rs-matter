@@ -288,6 +288,27 @@ impl CheckInCounter {
         }
     }
 
+    /// Jump the counter forward by `delta` (wrapping), returning a new boundary
+    /// to persist when the jump crosses one.
+    ///
+    /// Used to invalidate outstanding Check-In counter values in one step. The
+    /// persist boundary is re-established one epoch past the new value, so a
+    /// restart still resumes past everything this run may use.
+    #[must_use = "the returned value must be persisted before sending more Check-Ins"]
+    pub fn advance_by(&mut self, delta: u32) -> Option<u32> {
+        self.value = self.value.wrapping_add(delta);
+
+        // Re-anchor the boundary one epoch past the new value, unless the jump
+        // stayed within the current epoch (then nothing new needs persisting).
+        let next_epoch = self.value.wrapping_add(self.epoch);
+        if next_epoch != self.next_epoch {
+            self.next_epoch = next_epoch;
+            Some(self.next_epoch)
+        } else {
+            None
+        }
+    }
+
     /// The boundary value that should currently be held in durable storage.
     ///
     /// Persist this right after [`new`](Self::new), so a restart resumes past
@@ -570,5 +591,26 @@ mod tests {
             [u32::MAX - 1, u32::MAX, 0, 1, 2, 3, 4, 5],
             "counter did not wrap cleanly"
         );
+    }
+
+    #[test]
+    fn advance_by_jumps_the_counter_and_re_anchors_the_boundary() {
+        let epoch = 100;
+        let mut ctr = CheckInCounter::new(5000, epoch);
+        assert_eq!(ctr.next(), 5001);
+
+        // Half-range jump: the reported counter (`next`) moves by exactly the
+        // delta, and a new boundary is persisted one epoch past the new value.
+        let half = u32::MAX / 2;
+        assert_eq!(
+            ctr.advance_by(half),
+            Some(5000u32.wrapping_add(half) + epoch)
+        );
+        assert_eq!(ctr.next(), 5001u32.wrapping_add(half));
+
+        // Full-range jump wraps the 32-bit space (N -> N-1).
+        let before = ctr.next();
+        assert_eq!(ctr.advance_by(u32::MAX), Some(ctr.persist_value()));
+        assert_eq!(ctr.next(), before.wrapping_add(u32::MAX));
     }
 }
