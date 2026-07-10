@@ -494,6 +494,10 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     pairing_hint: PairingHintFlags::PRESS_RESET_BUTTON,
     tcp_supported: cfg!(feature = "test-tcp"),
     max_paths_per_invoke: 1,
+    // Session Idle/Active Intervals (ms). Advertised as the SII/SAI DNS-SD keys;
+    // an ICD must publish them so discovery knows its polling cadence.
+    sii: Some(500),
+    sai: Some(300),
     ..TEST_DEV_DET
 };
 

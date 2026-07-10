@@ -217,6 +217,15 @@ impl MatterLocalService {
                     ("", wb)
                 };
 
+                // As on the operational service, a Long-Idle-Time-capable device
+                // advertises its current mode here too ("0"=SIT, "1"=LIT); a
+                // non-ICD device omits the key.
+                let txt_icd = match icd_mode {
+                    Some(OperatingModeEnum::LIT) => "1",
+                    Some(OperatingModeEnum::SIT) => "0",
+                    None => "",
+                };
+
                 let txt_kvs = [
                     ("D", txt_discr),
                     ("CM", if *enhanced { "2" } else { "1" }),
@@ -228,6 +237,7 @@ impl MatterLocalService {
                     ("PH", txt_ph),
                     ("DT", txt_dt),
                     ("T", txt_tcp),
+                    ("ICD", txt_icd),
                 ]
                 .into_iter()
                 .filter(|(_, v)| !v.is_empty());
