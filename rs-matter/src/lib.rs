@@ -618,10 +618,27 @@ impl<'a> Matter<'a> {
     /// to persistent storage whenever it is mutated.
     ///
     /// The task waits for a mutation event fired by the CASE handshake
-    /// paths (both full handshake and resumption), waits for a short
-    /// debounce interval so a burst of handshakes coalesces into one
+    /// paths (both full handshake and resumption), sleeps for
+    /// `min_interval` so a burst of handshakes coalesces into one
     /// write, and then serialises the current cache to `kv` under
     /// [`crate::persist::CASE_RESUMPTION_KEY`].
+    ///
+    /// `min_interval` therefore doubles as (a) a burst-coalescing
+    /// debounce and (b) a hard lower bound on the time between two
+    /// consecutive persists — a mutation‑storm cannot drive more than
+    /// one write per `min_interval` regardless of arrival rate. Pick
+    /// something appropriate for the underlying medium:
+    ///
+    /// - POSIX / dev builds: anything from a few hundred ms upwards is
+    ///   fine; `Duration::from_millis(500)` matches the pre‑existing
+    ///   hard‑coded behaviour.
+    /// - MCU firmwares writing to internal flash: prefer tens of
+    ///   seconds (e.g. `Duration::from_secs(30)`) so a
+    ///   commissioner-driven wave of CASE handshakes doesn't churn the
+    ///   flash write endurance budget. The cache is a soft cache — a
+    ///   power cut that loses the most recent entry only forces a
+    ///   full CASE handshake the next time the peer connects, which
+    ///   is the same fallback any resumption failure produces.
     ///
     /// Intended to be spawned alongside [`Matter::run`], for example
     /// via `embassy_futures::select` or a dedicated executor task. It
@@ -632,15 +649,16 @@ impl<'a> Matter<'a> {
     /// - `kv`: The key-value store access (obtained via [`Matter::kv`])
     ///   used to persist the cache. Provides both the store and the
     ///   scratch buffer.
-    pub async fn run_persist_resumption<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
-        // Small debounce so a burst of near-simultaneous handshakes
-        // (e.g. commissioner reconnecting after network flap) folds
-        // into a single flash write.
-        const DEBOUNCE: embassy_time::Duration = embassy_time::Duration::from_millis(500);
-
+    /// - `min_interval`: Minimum time between two consecutive persists
+    ///   (see above).
+    pub async fn run_persist_resumption<K: KvBlobStoreAccess>(
+        &self,
+        kv: K,
+        min_interval: embassy_time::Duration,
+    ) -> Result<(), Error> {
         loop {
             self.transport().wait_resumption_dirty().await;
-            embassy_time::Timer::after(DEBOUNCE).await;
+            embassy_time::Timer::after(min_interval).await;
 
             self.with_state(|state| {
                 kv.access(|mut store, buf| state.resumption.store_persist(&mut store, buf))
