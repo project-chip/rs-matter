@@ -480,6 +480,12 @@ impl Session {
         tx_header.plain.sess_id = self.get_peer_sess_id();
         tx_header.plain.ctr = ctr.unwrap_or_else(|| self.get_msg_ctr());
 
+        // Whether this outbound message is a control-plane message
+        // (only MCSP opcodes today). Used both to set the `C` bit and
+        // to decide DSIZ = 1 vs. leaving the caller's groupcast dst
+        // alone.
+        let is_control = is_group && MessageMeta::from(&tx_header.proto).is_control_msg();
+
         // Include the Source Node ID for:
         // - Unsecured initiator sessions (spec).
         // - Every outbound message on a group session, so receivers can
@@ -492,29 +498,21 @@ impl Session {
 
         // Destination Node ID (DSIZ):
         // - Plaintext: echo `peer_nodeid` back to the initiator.
-        // - Group session with a unicast peer (e.g. MCSP reply):
-        //   `DSIZ = 1`, destination = peer's Node ID.
-        // - Group session with a multicast peer (future group-data
-        //   send): destination = groupcast Node ID; set on the packet
-        //   header by the caller, not here.
-        // - CASE/PASE: no DSIZ field.
-        let mcsp_reply = is_group && !self.peer_addr.is_multicast();
-        let want_dst_unicast = self.mode == SessionMode::PlainText || mcsp_reply;
-        tx_header.plain.set_dst_unicast_nodeid(if want_dst_unicast {
-            self.peer_nodeid
-        } else {
-            None
-        });
+        // - Group control (MCSP reply): DSIZ = 1, destination =
+        //   originator's Node ID.
+        // - Group data (future group-data-send): destination is a
+        //   groupcast Node ID set on the packet header by the caller;
+        //   leave it alone here so we don't clobber it.
+        // - CASE/PASE: no DSIZ; clear.
+        if self.mode == SessionMode::PlainText || is_control {
+            tx_header.plain.set_dst_unicast_nodeid(self.peer_nodeid);
+        } else if !is_group {
+            tx_header.plain.set_dst_unicast_nodeid(None);
+        }
 
-        // Group sessions must always carry GROUP_SESSION; control
-        // messages must additionally carry CONTROL_MSG. Today the only
-        // control-plane opcodes we emit are MCSP responses; the flag is
-        // driven off the outgoing meta so future group-data sends stay
-        // correct without touching this code.
         if is_group {
             use super::plain_hdr::SecFlags;
             tx_header.plain.sec_flags |= SecFlags::GROUP_SESSION;
-            let is_control = MessageMeta::from(&tx_header.proto).is_control_msg();
             tx_header.plain.set_control_msg(is_control);
         }
 
@@ -933,7 +931,7 @@ impl Sessions {
     }
 
     /// Return the current Global Group Encrypted Data Message Counter,
-    /// lazily initialized to a random value in `[1, 2^28]` on first
+    /// lazily initialized to a random value in `[1, 2^28 - 1]` on first
     /// access. The upper 4 bits are kept zero to leave headroom for
     /// wrap-safe monotonic growth.
     pub(crate) fn get_or_init_global_group_data_ctr<C: Crypto>(
