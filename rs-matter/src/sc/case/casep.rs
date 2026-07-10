@@ -727,3 +727,150 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
         Ok(())
     }
 }
+
+// ============================================================================
+// CASE session resumption primitives (Matter Core spec §4.14.2.2)
+//
+// These are module-scoped helpers (not methods on `CaseP`) because the
+// resumption path is stateless with respect to the transcript-hash /
+// shared-secret / ephemeral-key state that `CaseP` carries during a full
+// handshake — everything a resumption needs comes from the cached
+// [`ResumableSession`](crate::sc::case::ResumableSession) record and
+// from the incoming `Sigma1.initiatorRandom`.
+// ============================================================================
+
+/// Nonce `NCASE_SigmaS1` (spec §4.14.2.3.4 step 7c) used for
+/// `InitiatorResume1MIC`.
+pub(super) const RESUME1_MIC_NONCE: AeadNonceRef = AeadNonceRef::new(&[
+    0x4e, 0x43, 0x41, 0x53, 0x45, 0x5f, 0x53, 0x69, 0x67, 0x6d, 0x61, 0x53, 0x31,
+]);
+
+/// Nonce `NCASE_SigmaS2` (spec §4.14.2.3.9 step 4) used for
+/// `Sigma2ResumeMIC`.
+pub(super) const RESUME2_MIC_NONCE: AeadNonceRef = AeadNonceRef::new(&[
+    0x4e, 0x43, 0x41, 0x53, 0x45, 0x5f, 0x53, 0x69, 0x67, 0x6d, 0x61, 0x53, 0x32,
+]);
+
+/// KDF info string `"Sigma1_Resume"` (spec §4.14.2.6.5).
+const S1RK_INFO: &[u8] = b"Sigma1_Resume";
+
+/// KDF info string `"Sigma2_Resume"` (spec §4.14.2.6.6).
+const S2RK_INFO: &[u8] = b"Sigma2_Resume";
+
+/// KDF info string `"SessionResumptionKeys"` (spec §4.14.2.6.7) —
+/// distinct from the regular `"SessionKeys"` info used at the end of a
+/// full handshake.
+const RESUMPTION_SEKEYS_INFO: &[u8] = b"SessionResumptionKeys";
+
+/// Which resumption AEAD key to derive.
+#[derive(Copy, Clone)]
+pub(super) enum ResumeKeyKind {
+    /// `S1RK` — protects `InitiatorResume1MIC` on Sigma1.
+    S1rk,
+    /// `S2RK` — protects `Sigma2ResumeMIC` on Sigma2_Resume.
+    S2rk,
+}
+
+impl ResumeKeyKind {
+    const fn info(self) -> &'static [u8] {
+        match self {
+            Self::S1rk => S1RK_INFO,
+            Self::S2rk => S2RK_INFO,
+        }
+    }
+}
+
+/// Derive the 128-bit `S1RK`/`S2RK` resumption AEAD key from the
+/// long-lived `shared_secret`, `initiator_random` and the
+/// `resumption_id` in effect for that side (old ID for `S1RK`, new ID
+/// for `S2RK`). Salt = `initiator_random || resumption_id` per spec.
+pub(super) fn derive_resume_key<C: Crypto>(
+    crypto: &C,
+    kind: ResumeKeyKind,
+    shared_secret: crate::crypto::CanonPkcSharedSecretRef<'_>,
+    initiator_random: CaseRandomRef<'_>,
+    resumption_id: CaseResumptionIdRef<'_>,
+    out: &mut CanonAeadKey,
+) -> Result<(), Error> {
+    let mut salt = CryptoSensitive::<{ CASE_RANDOM_LEN + CASE_RESUMPTION_ID_LEN }>::new();
+    let salt_access: &mut [u8] = salt.access_mut();
+    salt_access[..CASE_RANDOM_LEN].copy_from_slice(initiator_random.access());
+    salt_access[CASE_RANDOM_LEN..].copy_from_slice(resumption_id.access());
+
+    crypto
+        .kdf()?
+        .expand(salt.access(), shared_secret, kind.info(), out)
+        .map_err(|_| ErrorCode::InvalidData)?;
+
+    Ok(())
+}
+
+/// Compute a `Resume{1,2}MIC` — the 16-byte AES-CCM tag over empty
+/// plaintext and empty AAD (spec §4.14.2.3.4 step 7c and §4.14.2.3.9
+/// step 4). AES-CCM with a zero-length plaintext returns a ciphertext
+/// that is exactly the tag.
+pub(super) fn compute_resume_mic<C: Crypto>(
+    crypto: &C,
+    key: CanonAeadKeyRef<'_>,
+    nonce: AeadNonceRef<'_>,
+    out: &mut [u8; AEAD_TAG_LEN],
+) -> Result<(), Error> {
+    let mut buf = [0u8; AEAD_TAG_LEN];
+    let mut cypher = crypto.aead()?;
+    let ct = cypher.encrypt_in_place(key, nonce, &[], &mut buf, 0)?;
+
+    // AES-CCM(plaintext="") produces `AEAD_TAG_LEN` bytes of tag and
+    // nothing else. Guard the invariant defensively.
+    if ct.len() != AEAD_TAG_LEN {
+        return Err(ErrorCode::InvalidData.into());
+    }
+    out.copy_from_slice(ct);
+
+    Ok(())
+}
+
+/// Verify a `Resume{1,2}MIC`. Returns `Ok(())` on success and an error
+/// (from the AEAD backend) on tag mismatch.
+pub(super) fn verify_resume_mic<C: Crypto>(
+    crypto: &C,
+    key: CanonAeadKeyRef<'_>,
+    nonce: AeadNonceRef<'_>,
+    mic: &[u8; AEAD_TAG_LEN],
+) -> Result<(), Error> {
+    let mut buf = [0u8; AEAD_TAG_LEN];
+    buf.copy_from_slice(mic);
+    let mut cypher = crypto.aead()?;
+    let pt = cypher.decrypt_in_place(key, nonce, &[], &mut buf)?;
+
+    // Empty plaintext expected.
+    if !pt.is_empty() {
+        return Err(ErrorCode::InvalidData.into());
+    }
+
+    Ok(())
+}
+
+/// Derive the three resumption session keys (`I2RKey || R2IKey ||
+/// AttestationChallenge`) from the long-lived `shared_secret`,
+/// `initiator_random` and the **new** `resumption_id` (spec
+/// §4.14.2.6.7). Note the info string and salt differ from the
+/// regular `compute_session_keys` used at the end of a full handshake.
+pub(super) fn compute_resumption_session_keys<C: Crypto>(
+    crypto: &C,
+    shared_secret: crate::crypto::CanonPkcSharedSecretRef<'_>,
+    initiator_random: CaseRandomRef<'_>,
+    resumption_id: CaseResumptionIdRef<'_>,
+    keys: &mut CaseSessionKeys,
+) -> Result<(), Error> {
+    let mut salt = CryptoSensitive::<{ CASE_RANDOM_LEN + CASE_RESUMPTION_ID_LEN }>::new();
+    let salt_access: &mut [u8] = salt.access_mut();
+    salt_access[..CASE_RANDOM_LEN].copy_from_slice(initiator_random.access());
+    salt_access[CASE_RANDOM_LEN..].copy_from_slice(resumption_id.access());
+
+    crypto
+        .kdf()?
+        .expand(salt.access(), shared_secret, RESUMPTION_SEKEYS_INFO, keys)
+        .map_err(|_| ErrorCode::InvalidData)?;
+
+    Ok(())
+}

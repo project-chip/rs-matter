@@ -176,7 +176,7 @@ pub enum GeneralCode {
 
 /// Represents the session parameters
 /// that might present in a "PBKDFParamRequest"/"PBKDFParamResponse" or "CASE-Sigma1"/"CASE-Sigma2" message
-#[derive(Default, FromTLV, ToTLV, Debug)]
+#[derive(Default, Clone, FromTLV, ToTLV, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1)]
 pub(crate) struct SessionParameters {

@@ -819,7 +819,7 @@ impl<'a> ReservedSession<'a> {
         })
     }
 
-    pub fn complete(mut self) {
+    pub fn complete(&mut self) {
         self.complete = true;
     }
 }
