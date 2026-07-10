@@ -485,7 +485,7 @@ impl<'a> Qr<'a> {
             let bytes = c.encode_utf8(&mut dst).as_bytes();
 
             if offset + bytes.len() > out_buf.len() {
-                return Err(ErrorCode::BufferTooSmall)?;
+                return Err(ErrorCode::BufferTooSmall.into());
             } else {
                 out_buf[offset..offset + bytes.len()].copy_from_slice(bytes);
                 offset += bytes.len();
@@ -529,7 +529,7 @@ impl<'a> Qr<'a> {
             let bytes = c.encode_utf8(&mut dst).as_bytes();
 
             if offset + bytes.len() > out_buf.len() {
-                return Err(ErrorCode::BufferTooSmall)?;
+                return Err(ErrorCode::BufferTooSmall.into());
             } else {
                 out_buf[offset..offset + bytes.len()].copy_from_slice(bytes);
                 offset += bytes.len();
@@ -712,7 +712,7 @@ impl<'a> QrTextRenderer<'a> {
             let bytes = c.encode_utf8(&mut dst).as_bytes();
 
             if offset + bytes.len() > out_buf.len() {
-                return Err(ErrorCode::BufferTooSmall)?;
+                return Err(ErrorCode::BufferTooSmall.into());
             } else {
                 out_buf[offset..offset + bytes.len()].copy_from_slice(bytes);
                 offset += bytes.len();
@@ -754,7 +754,7 @@ impl<'a> QrTextRenderer<'a> {
             let bytes = c.encode_utf8(&mut dst).as_bytes();
 
             if offset + bytes.len() > out_buf.len() {
-                return Err(ErrorCode::BufferTooSmall)?;
+                return Err(ErrorCode::BufferTooSmall.into());
             } else {
                 out_buf[offset..offset + bytes.len()].copy_from_slice(bytes);
                 offset += bytes.len();

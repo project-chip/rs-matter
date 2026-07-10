@@ -90,18 +90,18 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         })
     }
 
-    /// Handle the CASE protocol exchange, where the other peer is the exchange initiator
+    /// Handle the CASE protocol exchange, where the other peer is the exchange initiator.
     ///
-    /// # Arguments
-    /// - `exchange` - The exchange to handle the CASE protocol on
-    pub async fn handle(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    /// Consumes the exchange: on return the CASE handshake has either
+    /// completed, been rejected, or aborted, and the exchange is dropped.
+    pub async fn handle(&mut self, mut exchange: Exchange<'_>) -> Result<(), Error> {
         let mut session = ReservedSession::reserve(exchange.matter(), self.crypto).await?;
 
-        self.handle_casesigma1(exchange, &mut session).await?;
+        self.handle_casesigma1(&mut exchange, &mut session).await?;
 
         exchange.recv_fetch().await?;
 
-        self.handle_casesigma3(exchange, session).await?;
+        self.handle_casesigma3(&mut exchange, session).await?;
 
         exchange.acknowledge().await?;
 

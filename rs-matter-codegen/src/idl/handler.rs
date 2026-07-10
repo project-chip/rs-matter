@@ -527,7 +527,7 @@ fn handler_attribute_write(
 ) -> TokenStream {
     let attr_name = ident(&format!(
         "set_{}",
-        &idl_field_name_to_rs_name(&attr.field.field.id)
+        idl_field_name_to_rs_name(&attr.field.field.id)
     ));
 
     let (pasync, sawait) = if asynch {
@@ -611,7 +611,7 @@ fn handler_command(
     entities: &EntityContext,
     krate: &Ident,
 ) -> TokenStream {
-    let cmd_name = ident(&format!("handle_{}", &idl_field_name_to_rs_name(&cmd.id)));
+    let cmd_name = ident(&format!("handle_{}", idl_field_name_to_rs_name(&cmd.id)));
 
     let (pasync, sawait) = if asynch {
         (quote!(async), quote!(.await))
@@ -948,7 +948,7 @@ fn handler_adaptor_attribute_write_match(
 
     let attr_method_name = ident(&format!(
         "set_{}",
-        &idl_field_name_to_rs_name(&attr.field.field.id)
+        idl_field_name_to_rs_name(&attr.field.field.id)
     ));
 
     let attr_type = field_type(
@@ -1013,7 +1013,7 @@ fn handler_adaptor_command_match(
     let cmd_debug_id =
         quote!(MetadataDebug((ctx.cmd().endpoint_id, self, MetadataDebug(CommandId::#cmd_name))));
 
-    let cmd_method_name = ident(&format!("handle_{}", &idl_field_name_to_rs_name(&cmd.id)));
+    let cmd_method_name = ident(&format!("handle_{}", idl_field_name_to_rs_name(&cmd.id)));
 
     let sawait = if asynch { quote!(.await) } else { quote!() };
 

@@ -237,3 +237,11 @@ embassy-time-queue-utils = { version = "0.3", features = ["generic-queue-64"] }
 trybuild = "1"
 tempfile = "3"
 async-io = "2"
+
+# The MCSP end-to-end test provisions a fabric with a live group key
+# set + key map; those tables collapse to zero-length under this crate's
+# default (feature-driven) sizing. Enable the smallest group-keys/map
+# features that give it room to run.
+[[test]]
+name = "mcsp"
+required-features = ["async-io", "max-group-keys-per-fabric-2", "max-groups-per-fabric-4"]

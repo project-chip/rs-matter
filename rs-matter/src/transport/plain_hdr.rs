@@ -32,7 +32,18 @@ bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Hash)]
     pub struct SecFlags: u8 {
+        /// Session Type is a Group Session (Session Type = 1).
         const GROUP_SESSION = 0x01;
+        /// Message Extensions present.
+        const MSG_EXT = 0x20;
+        /// Control message. Messages with this bit use the peer's control
+        /// message counter (not the data counter) for AEAD-nonce framing.
+        const CONTROL_MSG = 0x40;
+        /// Privacy-encoded message. Not currently produced or accepted by
+        /// this crate; the bit is declared so an incoming value survives
+        /// a round-trip through the bitflag rather than triggering
+        /// `from_bits`-fails.
+        const PRIVACY = 0x80;
     }
 }
 
@@ -240,6 +251,36 @@ impl PlainHdr {
         self.sec_flags.contains(SecFlags::GROUP_SESSION)
     }
 
+    /// Set or clear the Group Session bit on the outgoing message.
+    pub fn set_group_session(&mut self, group: bool) {
+        if group {
+            self.sec_flags |= SecFlags::GROUP_SESSION;
+        } else {
+            self.sec_flags.remove(SecFlags::GROUP_SESSION);
+        }
+    }
+
+    /// Whether the message is a control message (Security Flags `C` bit).
+    pub fn is_control_msg(&self) -> bool {
+        self.sec_flags.contains(SecFlags::CONTROL_MSG)
+    }
+
+    /// Set or clear the control message (`C`) bit on the outgoing message.
+    pub fn set_control_msg(&mut self, control: bool) {
+        if control {
+            self.sec_flags |= SecFlags::CONTROL_MSG;
+        } else {
+            self.sec_flags.remove(SecFlags::CONTROL_MSG);
+        }
+    }
+
+    /// Whether the message declares itself privacy-encoded (Security Flags
+    /// `P` bit). This crate does not yet produce or accept such messages;
+    /// callers may use this to log or reject them explicitly.
+    pub fn is_privacy(&self) -> bool {
+        self.sec_flags.contains(SecFlags::PRIVACY)
+    }
+
     pub fn is_encrypted(&self) -> bool {
         self.sess_id != 0 || self.is_group_session()
     }
@@ -252,6 +293,13 @@ impl fmt::Display for PlainHdr {
         }
 
         write!(f, "SID:{:x},CTR:{:x}", self.sess_id, self.ctr)?;
+
+        if self.is_control_msg() {
+            write!(f, ",C")?;
+        }
+        if self.is_privacy() {
+            write!(f, ",P")?;
+        }
 
         if let Some(src_nodeid) = self.get_src_nodeid() {
             write!(f, ",SRC:{:x}", src_nodeid)?;
@@ -277,6 +325,13 @@ impl defmt::Format for PlainHdr {
         }
 
         defmt::write!(f, "SID:{:x},CTR:{:x}", self.sess_id, self.ctr);
+
+        if self.is_control_msg() {
+            defmt::write!(f, ",C");
+        }
+        if self.is_privacy() {
+            defmt::write!(f, ",P");
+        }
 
         if let Some(src_nodeid) = self.get_src_nodeid() {
             defmt::write!(f, ",SRC:{:x}", src_nodeid);
