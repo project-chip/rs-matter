@@ -81,6 +81,13 @@ pub struct CaseP<'a, C: Crypto + 'a> {
     our_pub_key: CanonPkcPublicKey,
     /// The peer's ephemeral public key
     peer_pub_key: CanonPkcPublicKey,
+    /// The `ResumptionID` in effect for this session — minted by the
+    /// responder in [`Self::start`] and left zeroed on the initiator
+    /// side. Retained here (rather than passed through as a local
+    /// argument) so that the responder can seed the resumption cache
+    /// after `Sigma3` validates in `handle_casesigma3`, without having
+    /// to plumb the value through as an extra parameter.
+    resumption_id: CaseResumptionId,
     /// The Transcript Hash
     tt: Optional<C::Hash<'a>>,
 }
@@ -96,6 +103,7 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
             shared_secret: PKC_SHARED_SECRET_ZEROED,
             our_pub_key: PKC_PUBLIC_KEY_ZEROED,
             peer_pub_key: PKC_PUBLIC_KEY_ZEROED,
+            resumption_id: CASE_RESUMPTION_ID_ZEROED,
             tt: Optional::none(),
         }
     }
@@ -109,6 +117,7 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
             shared_secret <- CanonPkcSharedSecret::init(),
             our_pub_key <- CanonPkcPublicKey::init(),
             peer_pub_key <- CanonPkcPublicKey::init(),
+            resumption_id <- CaseResumptionId::init(),
             tt <- Optional::init_none(),
         })
     }
@@ -147,6 +156,11 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
 
         rand.fill_bytes(our_random_out.access_mut());
         rand.fill_bytes(resumption_id_out.access_mut());
+        // Mirror onto `self.resumption_id` so `handle_casesigma3`
+        // (which fires after this method returns) can seed the
+        // resumption cache without having to smuggle the value through
+        // its call graph.
+        self.resumption_id.load(resumption_id_out.reference());
 
         self.tt = Optional::some(crypto.hash()?);
         self.update_tt(request)?;
@@ -265,11 +279,17 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
     /// (responder). Preserved on the completed [`Session`](crate::transport::session::Session)
     /// so the CASE resumption cache can populate its
     /// [`ResumableSession::shared_secret`](crate::sc::case::ResumableSession::shared_secret)
-    /// field (Matter Core spec \u00a74.14.2.2.1).
+    /// field.
     pub fn shared_secret(&self) -> crate::crypto::CanonPkcSharedSecretRef<'_> {
         self.shared_secret.reference()
     }
-
+    /// The `ResumptionID` minted by the responder in [`Self::start`].
+    /// Meaningful only on the responder side; on the initiator side the
+    /// resumption id is captured directly from `TBEData2` and never
+    /// touches [`Self::start`], so this returns a zeroed value.
+    pub fn resumption_id(&self) -> CaseResumptionIdRef<'_> {
+        self.resumption_id.reference()
+    }
     pub fn our_pub_key(&self) -> CanonPkcPublicKeyRef<'_> {
         self.our_pub_key.reference()
     }
@@ -729,7 +749,7 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
 }
 
 // ============================================================================
-// CASE session resumption primitives (Matter Core spec §4.14.2.2)
+// CASE session resumption primitives.
 //
 // These are module-scoped helpers (not methods on `CaseP`) because the
 // resumption path is stateless with respect to the transcript-hash /
@@ -739,27 +759,24 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
 // from the incoming `Sigma1.initiatorRandom`.
 // ============================================================================
 
-/// Nonce `NCASE_SigmaS1` (spec §4.14.2.3.4 step 7c) used for
-/// `InitiatorResume1MIC`.
+/// Nonce `NCASE_SigmaS1` used for `InitiatorResume1MIC`.
 pub(super) const RESUME1_MIC_NONCE: AeadNonceRef = AeadNonceRef::new(&[
     0x4e, 0x43, 0x41, 0x53, 0x45, 0x5f, 0x53, 0x69, 0x67, 0x6d, 0x61, 0x53, 0x31,
 ]);
 
-/// Nonce `NCASE_SigmaS2` (spec §4.14.2.3.9 step 4) used for
-/// `Sigma2ResumeMIC`.
+/// Nonce `NCASE_SigmaS2` used for `Sigma2ResumeMIC`.
 pub(super) const RESUME2_MIC_NONCE: AeadNonceRef = AeadNonceRef::new(&[
     0x4e, 0x43, 0x41, 0x53, 0x45, 0x5f, 0x53, 0x69, 0x67, 0x6d, 0x61, 0x53, 0x32,
 ]);
 
-/// KDF info string `"Sigma1_Resume"` (spec §4.14.2.6.5).
+/// KDF info string `"Sigma1_Resume"`.
 const S1RK_INFO: &[u8] = b"Sigma1_Resume";
 
-/// KDF info string `"Sigma2_Resume"` (spec §4.14.2.6.6).
+/// KDF info string `"Sigma2_Resume"`.
 const S2RK_INFO: &[u8] = b"Sigma2_Resume";
 
-/// KDF info string `"SessionResumptionKeys"` (spec §4.14.2.6.7) —
-/// distinct from the regular `"SessionKeys"` info used at the end of a
-/// full handshake.
+/// KDF info string `"SessionResumptionKeys"` — distinct from the
+/// regular `"SessionKeys"` info used at the end of a full handshake.
 const RESUMPTION_SEKEYS_INFO: &[u8] = b"SessionResumptionKeys";
 
 /// Which resumption AEAD key to derive.
@@ -783,7 +800,7 @@ impl ResumeKeyKind {
 /// Derive the 128-bit `S1RK`/`S2RK` resumption AEAD key from the
 /// long-lived `shared_secret`, `initiator_random` and the
 /// `resumption_id` in effect for that side (old ID for `S1RK`, new ID
-/// for `S2RK`). Salt = `initiator_random || resumption_id` per spec.
+/// for `S2RK`). Salt = `initiator_random || resumption_id`.
 pub(super) fn derive_resume_key<C: Crypto>(
     crypto: &C,
     kind: ResumeKeyKind,
@@ -806,9 +823,8 @@ pub(super) fn derive_resume_key<C: Crypto>(
 }
 
 /// Compute a `Resume{1,2}MIC` — the 16-byte AES-CCM tag over empty
-/// plaintext and empty AAD (spec §4.14.2.3.4 step 7c and §4.14.2.3.9
-/// step 4). AES-CCM with a zero-length plaintext returns a ciphertext
-/// that is exactly the tag.
+/// plaintext and empty AAD. AES-CCM with a zero-length plaintext
+/// returns a ciphertext that is exactly the tag.
 pub(super) fn compute_resume_mic<C: Crypto>(
     crypto: &C,
     key: CanonAeadKeyRef<'_>,
@@ -852,9 +868,9 @@ pub(super) fn verify_resume_mic<C: Crypto>(
 
 /// Derive the three resumption session keys (`I2RKey || R2IKey ||
 /// AttestationChallenge`) from the long-lived `shared_secret`,
-/// `initiator_random` and the **new** `resumption_id` (spec
-/// §4.14.2.6.7). Note the info string and salt differ from the
-/// regular `compute_session_keys` used at the end of a full handshake.
+/// `initiator_random` and the **new** `resumption_id`. Note the info
+/// string and salt differ from the regular `compute_session_keys` used
+/// at the end of a full handshake.
 pub(super) fn compute_resumption_session_keys<C: Crypto>(
     crypto: &C,
     shared_secret: crate::crypto::CanonPkcSharedSecretRef<'_>,

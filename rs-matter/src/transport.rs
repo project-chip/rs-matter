@@ -122,6 +122,10 @@ pub struct Transport {
     session_removed: Notification,
     /// A notification that the groups have been modified
     groups_modified: Notification,
+    /// A notification that the CASE session resumption cache has been
+    /// mutated and should be re-persisted by the background persist
+    /// task (see [`crate::Matter::run_persist_resumption`]).
+    resumption_dirty: Notification,
     /// Device SAI (Secure Association Identifier)
     device_sai: Option<u32>,
     /// Device SII (Secure Identity Identifier)
@@ -142,6 +146,7 @@ impl Transport {
             mdns_browse: Signal::new(MdnsBrowseState::Idle),
             session_removed: Notification::new(),
             groups_modified: Notification::new(),
+            resumption_dirty: Notification::new(),
             device_sai: dev_det.sai,
             device_sii: dev_det.sii,
         }
@@ -159,6 +164,7 @@ impl Transport {
             mdns_browse: Signal::new(MdnsBrowseState::Idle),
             session_removed: Notification::new(),
             groups_modified: Notification::new(),
+            resumption_dirty: Notification::new(),
             device_sai: dev_det.sai,
             device_sii: dev_det.sii,
         })
@@ -229,6 +235,21 @@ impl Transport {
     /// Wait until a session has been removed (see [`Transport::notify_session_removed`]).
     pub(crate) fn wait_session_removed(&self) -> impl Future<Output = ()> + '_ {
         self.session_removed.wait()
+    }
+
+    /// Notify that the CASE session resumption cache was mutated and
+    /// should be re-persisted. Fired from every code path that inserts,
+    /// rotates or evicts a [`crate::sc::case::ResumableSession`].
+    pub(crate) fn notify_resumption_dirty(&self) {
+        self.resumption_dirty.notify();
+    }
+
+    /// Wait until the CASE session resumption cache has been mutated
+    /// (see [`Transport::notify_resumption_dirty`]). Used by the
+    /// [`crate::Matter::run_persist_resumption`] background task to
+    /// know when to flush the cache to storage.
+    pub(crate) fn wait_resumption_dirty(&self) -> impl Future<Output = ()> + '_ {
+        self.resumption_dirty.wait()
     }
 
     /// Resolve a Matter service instance's address over mDNS.

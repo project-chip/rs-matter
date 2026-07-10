@@ -71,8 +71,7 @@ struct TBEData2Decrypt<'a> {
 }
 
 /// Sigma2_Resume response, parsed from the responder's message when it
-/// accepts a Sigma1-with-Resumption. See Matter Core spec
-/// §4.14.2.3.9 for the wire format.
+/// accepts a Sigma1-with-Resumption.
 #[derive(FromTLV, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1, lifetime = "'a")]
@@ -217,8 +216,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
                 tw.str(&TLVTag::Context(4), initiator.casep.our_pub_key().access())?;
 
                 // Sigma1 with Resumption: attach the cached `resumptionID`
-                // (tag 6) and the freshly-computed `Resume1MIC` (tag 7)
-                // per Matter Core spec §4.14.2.3.4.
+                // (tag 6) and the freshly-computed `Resume1MIC` (tag 7).
                 if let (Some(rid), Some(mic)) =
                     (resume_rid_bytes.as_ref(), resume_mic_bytes.as_ref())
                 {
@@ -285,7 +283,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
         }
 
         // Step 5: Decrypt Sigma2 TBE and validate
-        let (peer_catids, _resumption_id) = {
+        let (peer_catids, peer_resumption_id) = {
             let rx = exchange.rx()?;
             let raw_sigma2_payload = rx.payload();
 
@@ -521,6 +519,25 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
 
         exchange.acknowledge().await?;
 
+        // Seed the resumption cache with this freshly-established full
+        // CASE session so a subsequent handshake with the same peer can
+        // attempt resumption. The `resumption_id` came from `TBEData2`
+        // in Sigma2 (`peer_resumption_id`); `SharedSecret`, peer id and
+        // peer CATs are what we just committed to the `Session`.
+        exchange.with_state(|state| {
+            state.resumption.insert_or_update(ResumableSession {
+                fab_idx,
+                peer_nodeid: peer_node_id,
+                peer_cat_ids: peer_catids,
+                resumption_id: peer_resumption_id,
+                shared_secret: crate::crypto::CanonPkcSharedSecret::new_from_ref(
+                    initiator.casep.shared_secret(),
+                ),
+            });
+            Ok::<_, Error>(())
+        })?;
+        exchange.matter().transport().notify_resumption_dirty();
+
         info!(
             "CASE session established: local_sessid={}, peer_sessid={}",
             initiator.casep.local_sessid(),
@@ -532,8 +549,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
 
     /// Complete a CASE resumption from the initiator side, given that
     /// we have just received a `Sigma2_Resume` in response to a Sigma1
-    /// that carried the resumption fields (Matter Core spec
-    /// §4.14.2.3.11 / §4.14.2.3.12 / §4.14.2.3.13).
+    /// that carried the resumption fields.
     ///
     /// On success:
     /// - Derives the resumption session keys.
@@ -547,8 +563,8 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
     ///   `resumption_id`.
     ///
     /// On `Resume2MIC` verification failure the initiator sends
-    /// `InvalidParameter` per spec §4.14.2.3.11 step 3 and returns an
-    /// error; the reserved session is dropped uncomitted.
+    /// `InvalidParameter` per Matter spec and returns an error; the
+    /// reserved session is dropped uncomitted.
     #[allow(clippy::too_many_arguments)]
     async fn finalize_sigma2_resume(
         exchange: &mut Exchange<'_>,
@@ -613,7 +629,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
             return Err(ErrorCode::Invalid.into());
         }
 
-        // ---- Derive resumption session keys (spec §4.14.2.6.7). --------
+        // ---- Derive resumption session keys. --------------------------
         let mut session_keys = MaybeUninit::<CaseSessionKeys>::uninit();
         let session_keys = session_keys.init_with(CaseSessionKeys::init());
         compute_resumption_session_keys(
@@ -679,6 +695,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
             });
             Ok::<_, Error>(())
         })?;
+        exchange.matter().transport().notify_resumption_dirty();
 
         info!(
             "CASE session resumed (initiator): local_sessid={}, peer_sessid={}, \

@@ -614,6 +614,42 @@ impl<'a> Matter<'a> {
         Ok(())
     }
 
+    /// Background task that flushes the CASE session resumption cache
+    /// to persistent storage whenever it is mutated.
+    ///
+    /// The task waits for a mutation event fired by the CASE handshake
+    /// paths (both full handshake and resumption), waits for a short
+    /// debounce interval so a burst of handshakes coalesces into one
+    /// write, and then serialises the current cache to `kv` under
+    /// [`crate::persist::CASE_RESUMPTION_KEY`].
+    ///
+    /// Intended to be spawned alongside [`Matter::run`], for example
+    /// via `embassy_futures::select` or a dedicated executor task. It
+    /// never returns on the happy path — a `Result` is only produced
+    /// if the KV backend errors.
+    ///
+    /// # Arguments
+    /// - `kv`: The key-value store access (obtained via [`Matter::kv`])
+    ///   used to persist the cache. Provides both the store and the
+    ///   scratch buffer.
+    pub async fn run_persist_resumption<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
+        // Small debounce so a burst of near-simultaneous handshakes
+        // (e.g. commissioner reconnecting after network flap) folds
+        // into a single flash write.
+        const DEBOUNCE: embassy_time::Duration = embassy_time::Duration::from_millis(500);
+
+        loop {
+            self.transport().wait_resumption_dirty().await;
+            embassy_time::Timer::after(DEBOUNCE).await;
+
+            self.with_state(|state| {
+                kv.access(|mut store, buf| state.resumption.store_persist(&mut store, buf))
+            })?;
+
+            debug!("CASE session resumption cache persisted");
+        }
+    }
+
     /// Invoke the given closure for each currently published Matter mDNS service.
     pub fn mdns_services<F>(&self, mut f: F) -> Result<(), Error>
     where
@@ -657,7 +693,7 @@ pub struct MatterState {
     pub fabrics: Fabrics,
     /// All sessions
     sessions: Sessions,
-    /// CASE session resumption cache (Matter Core spec §4.14.2.2).
+    /// CASE session resumption cache.
     ///
     /// Persisted as a single TLV blob so the device can resume
     /// previously-established CASE sessions across reboots.

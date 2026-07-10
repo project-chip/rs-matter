@@ -16,14 +16,14 @@
  */
 
 //! Persisted state that lets a CASE session be resumed by its peer
-//! without a full Sigma1/2/3 exchange (Matter Core spec §4.14.2.2).
+//! without a full Sigma1/2/3 exchange.
 //!
-//! One [`ResumableSession`] holds exactly the five items the spec calls
-//! "Session Resumption State" — `SharedSecret`, local fabric index,
-//! peer node ID, peer CATs and the current `ResumptionID`. A bounded
-//! LRU collection ([`ResumableSessions`]) owns these records at
-//! runtime and mirrors them to a single KV blob under
-//! [`CASE_RESUMPTION_KEY`].
+//! One [`ResumableSession`] holds exactly the five items the Matter
+//! spec calls "Session Resumption State" — `SharedSecret`, local
+//! fabric index, peer node ID, peer CATs and the current
+//! `ResumptionID`. A bounded LRU collection ([`ResumableSessions`])
+//! owns these records at runtime and mirrors them to a single KV blob
+//! under [`CASE_RESUMPTION_KEY`].
 
 use core::num::NonZeroU8;
 
@@ -58,10 +58,11 @@ pub const MAX_RESUMPTION_RECORDS: usize = min3(3 * MAX_FABRICS, MAX_SESSIONS, 16
 
 /// A single peer's CASE session resumption state.
 ///
-/// Fields match §4.14.2.2.1 of the Matter Core spec (R1.5.1):
-/// SharedSecret, Local Fabric Index, Peer Node ID, Peer CATs,
-/// ResumptionID. TLV representation is a context-tagged struct so it
-/// is forward-compatible if we ever need to add an optional field.
+/// Fields carry exactly the "Session Resumption State" items from the
+/// Matter spec: SharedSecret, Local Fabric Index, Peer Node ID, Peer
+/// CATs, ResumptionID. TLV representation is a context-tagged struct
+/// so it is forward-compatible if we ever need to add an optional
+/// field.
 #[derive(Debug, Clone, FromTLV, ToTLV)]
 pub struct ResumableSession {
     /// Local fabric index the session belongs to.
@@ -79,7 +80,7 @@ pub struct ResumableSession {
     /// The ECDH shared secret from the original full CASE handshake.
     /// Kept unchanged for the lifetime of the record — successful
     /// resumption rotates only [`Self::resumption_id`], never the
-    /// secret (Matter Core spec §4.14.2.2).
+    /// secret.
     pub shared_secret: CanonPkcSharedSecret,
 }
 

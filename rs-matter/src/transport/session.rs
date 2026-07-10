@@ -336,8 +336,8 @@ impl Session {
     /// The ECDH shared secret from the original full CASE handshake,
     /// or `None` for non-CASE sessions. Consumed by the background
     /// snapshot task to build [`crate::sc::case::ResumableSession`]
-    /// records — the value that Matter Core spec §4.14.2.2.1 lists
-    /// as "SharedSecret" in the Session Resumption State.
+    /// records — the "SharedSecret" that the Matter spec lists as
+    /// part of the Session Resumption State.
     pub fn get_shared_secret(&self) -> Option<CanonPkcSharedSecretRef<'_>> {
         match self.mode {
             SessionMode::Case { .. } => Some(self.shared_secret.reference()),

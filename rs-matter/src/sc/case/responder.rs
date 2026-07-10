@@ -112,9 +112,9 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         // Attempt session resumption first. If the peer's Sigma1 carries
         // both `resumptionID` and `initiatorResumeMIC`, we have a cached
         // record for that resumption id, and the MIC checks out, this
-        // shortcuts to Sigma2_Resume + SigmaFinished (spec §4.14.2.2).
-        // Any other case (fields absent, unknown id, MIC mismatch) falls
-        // through to the full Sigma1/2/3 flow.
+        // shortcuts to Sigma2_Resume + SigmaFinished. Any other case
+        // (fields absent, unknown id, MIC mismatch) falls through to the
+        // full Sigma1/2/3 flow.
         if self
             .try_handle_sigma1_resume(&mut exchange, &mut session)
             .await?
@@ -149,11 +149,10 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
 
         let req = Sigma1Req::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
 
-        // Matter Core spec: `resumptionID` and
-        // `initiatorResumeMIC` SHALL either both be present or both be
-        // absent. A mismatched pair is a malformed Sigma1 and the
-        // responder MUST reject it with `INVALID_PARAMETER` and stop
-        // processing (TC-SC-3.4 steps 1 and 2 cover this).
+        // Per Matter spec, `resumptionID` and `initiatorResumeMIC` must
+        // either both be present or both be absent. A mismatched pair
+        // is malformed and the responder rejects it with
+        // `INVALID_PARAMETER`.
         if req.resumption_id.is_some() != req.initiator_resume_mic.is_some() {
             error!("Sigma1 has mismatched resumptionID/initiatorResumeMIC presence; rejecting");
             complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await?;
@@ -199,12 +198,11 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         )?;
 
         // Stash the initiator's advertised MRP `session_parameters`
-        // (Matter Core spec) so the responder uses the peer's
-        // SAI as the retransmission base interval for Sigma2 and any
-        // post-handshake traffic. We apply them both to the unsecured
-        // session that the handshake currently rides on (so Sigma2
-        // retransmits use them) and to the reserved CASE session that
-        // takes over after Sigma3.
+        // so the responder uses the peer's SAI as the retransmission
+        // base interval for Sigma2 and any post-handshake traffic. We
+        // apply them both to the unsecured session that the handshake
+        // currently rides on (so Sigma2 retransmits use them) and to
+        // the reserved CASE session that takes over after Sigma3.
         if let Some(params) = req.session_parameters.as_ref() {
             exchange.with_state(|state| {
                 exchange
@@ -424,6 +422,26 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                         Some(self.casep.shared_secret()),
                     )?;
 
+                    // Seed the resumption cache with this freshly-established
+                    // full CASE session so a subsequent handshake with the
+                    // same peer can attempt resumption. `SharedSecret`,
+                    // fab_idx, peer_nodeid and peer CATs are the same as
+                    // what we just loaded into the `Session`; the
+                    // `resumption_id` was minted by the responder in
+                    // `casep.start` and is still held on `self.casep`.
+                    state.resumption.insert_or_update(ResumableSession {
+                        // Unwrap is safe: we are inside the `fabric` branch.
+                        fab_idx: unwrap!(NonZeroU8::new(self.casep.local_fabric_idx())),
+                        peer_nodeid: initiator_noc.get_node_id()?,
+                        peer_cat_ids: peer_catids,
+                        resumption_id: super::casep::CaseResumptionId::new_from_ref(
+                            self.casep.resumption_id(),
+                        ),
+                        shared_secret: crate::crypto::CanonPkcSharedSecret::new_from_ref(
+                            self.casep.shared_secret(),
+                        ),
+                    });
+
                     Ok(SCStatusCodes::SessionEstablishmentSuccess)
                 }
             } else {
@@ -440,13 +458,17 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
             // as it might start using it right after it receives the response, while it is still marked
             // as reserved.
             session.complete();
+
+            // The `state.resumption.insert_or_update` call above dirties
+            // the cache; wake the background persist task.
+            exchange.matter().transport().notify_resumption_dirty();
         }
 
         complete_with_status(exchange, status, &[]).await
     }
 
     /// Try to handle the received Sigma1 as a session-resumption
-    /// request (Matter Core spec §4.14.2.2). Returns:
+    /// request. Returns:
     ///
     /// - `Ok(true)` — the resumption path fully handled the exchange
     ///   (whether successfully or with the initiator rejecting the
@@ -456,7 +478,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
     ///   we could not honour the resumption (unknown `resumptionID`,
     ///   MIC verify failed, malformed fields). The caller must continue
     ///   with the full handshake, treating this Sigma1 as if it had no
-    ///   resumption fields (spec §4.14.2.3.5 fall-through rule).
+    ///   resumption fields (per Matter spec's fall-through rule).
     /// - `Err(_)` — a hard error unrelated to resumption (I/O,
     ///   cryptographic backend failure). The exchange is aborted.
     async fn try_handle_sigma1_resume(
@@ -624,7 +646,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
             })
             .await?;
 
-        // ---- Derive resumption session keys (spec §4.14.2.6.7). --------
+        // ---- Derive resumption session keys. --------------------------
         let mut session_keys = MaybeUninit::<CaseSessionKeys>::uninit();
         let session_keys = session_keys.init_with(CaseSessionKeys::init());
         compute_resumption_session_keys(
@@ -738,6 +760,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
             });
             Ok::<_, Error>(())
         })?;
+        exchange.matter().transport().notify_resumption_dirty();
 
         info!(
             "CASE session resumed: local_sessid={}, peer_sessid={}, fabric={}, peer_nodeid=0x{:x}",
