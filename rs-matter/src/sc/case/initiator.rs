@@ -258,12 +258,12 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
             // reject with `InvalidParameter`.
             let Some(record) = cached_record else {
                 error!("Responder sent Sigma2_Resume but we did not request resumption");
-                complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await?;
+                complete_with_status(&mut exchange, SCStatusCodes::InvalidParameter, &[]).await?;
                 return Err(ErrorCode::Invalid.into());
             };
 
             return Self::finalize_sigma2_resume(
-                exchange,
+                &mut exchange,
                 crypto,
                 session,
                 fab_idx,

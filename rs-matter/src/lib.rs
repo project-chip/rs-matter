@@ -46,6 +46,7 @@ use crate::pairing::qr::{
 };
 use crate::pairing::DiscoveryCapabilities;
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, BASIC_INFO_KEY};
+use crate::sc::case::ResumableSessions;
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
 use crate::sc::pase::Pase;
 use crate::transport::network::MatterLocalService;
@@ -711,11 +712,10 @@ pub struct MatterState {
     pub fabrics: Fabrics,
     /// All sessions
     sessions: Sessions,
-    /// CASE session resumption cache.
+    /// CASE session resumption cache
     ///
-    /// Persisted as a single TLV blob so the device can resume
-    /// previously-established CASE sessions across reboots.
-    resumption: crate::sc::case::ResumableSessions,
+    /// Public for unit tests
+    pub resumption: ResumableSessions,
     /// The PASE session state
     pase: Pase,
     /// The Failsafe state
@@ -724,8 +724,7 @@ pub struct MatterState {
     basic_info_settings: BasicInfoSettings,
     /// Real Time Clock state and Last-Known-Good UTC Time tracking (Matter Core spec).
     rtc: Rtc,
-    /// The ICD operating mode advertised in the operational `ICD` DNS-SD TXT
-    /// key, or `None` when the device is not a Long-Idle-Time ICD (key omitted).
+    /// The ICD operating mode advertised in the operational `ICD` DNS-SD TXT key.
     /// The ICD Management handler keeps this in sync with its registration set.
     icd_mode: Option<OperatingModeEnum>,
 }
@@ -737,7 +736,7 @@ impl MatterState {
         Self {
             fabrics: Fabrics::new(),
             sessions: Sessions::new(),
-            resumption: crate::sc::case::ResumableSessions::new(),
+            resumption: ResumableSessions::new(),
             pase: Pase::new(),
             failsafe: FailSafe::new(),
             basic_info_settings: BasicInfoSettings::new(),
