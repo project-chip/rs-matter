@@ -34,10 +34,14 @@ use core::num::NonZeroU8;
 
 use embassy_time::{Duration, Instant};
 
+use crate::acl::AccessReq;
 use crate::crypto::{CanonAeadKey, Crypto};
-use crate::dm::{ArrayAttributeRead, Cluster, Dataver, HandlerContext, InvokeContext, ReadContext};
+use crate::dm::{
+    Access, ArrayAttributeRead, Cluster, Dataver, HandlerContext, InvokeContext, ReadContext,
+};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
+use crate::im::encoding::GenericPath;
 use crate::persist::{KvBlobStore, Persist, ICD_REGISTERED_CLIENTS_KEY};
 use crate::sc::checkin::{CheckIn, CheckInCounter};
 use crate::tlv::{FromTLV, TLVBuilderParent, TLVElement, ToTLV};
@@ -54,10 +58,10 @@ pub use crate::dm::clusters::decl::icd_management::*;
 /// The maximum number of clients that can register per fabric — the value
 /// reported by the cluster's `ClientsSupportedPerFabric` attribute.
 ///
-/// The spec floor is 1. One entry per fabric is enough for the common case (a
-/// single controller ecosystem monitoring the device); raise it if a fabric
-/// needs several independent Check-In clients.
-pub const CLIENTS_PER_FABRIC: usize = 1;
+/// The spec floor is 1; two (matching CHIP's default) covers a fabric whose
+/// ecosystem monitors the device from more than one client. Raise it if a
+/// fabric needs still more independent Check-In clients.
+pub const CLIENTS_PER_FABRIC: usize = 2;
 
 /// The total capacity of the registration store, across all fabrics.
 pub const MAX_REGISTERED_CLIENTS: usize = CLIENTS_PER_FABRIC * MAX_FABRICS;
@@ -88,6 +92,18 @@ pub struct MonitoringRegistration {
     /// Write-only from the outside: it is provided at registration and used to
     /// build Check-In messages, but never read back as an attribute.
     pub key: CanonAeadKey,
+}
+
+/// The outcome of checking a presented verification key against a stored
+/// registration, used to gate non-administrator register/unregister requests.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum KeyVerdict {
+    /// No registration exists for the given `(fabric, node)`.
+    NotFound,
+    /// A registration exists and the presented key matches its stored key.
+    Match,
+    /// A registration exists but the presented key is absent or does not match.
+    Mismatch,
 }
 
 /// The timing parameters an ICD advertises through the cluster's mandatory
@@ -264,6 +280,35 @@ impl Icd {
         self.registrations_changed.notify();
 
         Ok(())
+    }
+
+    /// Check a presented verification `key` against the stored registration for
+    /// `(fab_idx, check_in_node_id)`.
+    ///
+    /// Non-administrator clients may only modify or remove an entry they own,
+    /// proven by re-presenting the same key the entry was registered with. A
+    /// missing or wrong key yields [`KeyVerdict::Mismatch`].
+    pub fn verify_key(
+        &self,
+        fab_idx: NonZeroU8,
+        check_in_node_id: u64,
+        key: Option<&[u8]>,
+    ) -> KeyVerdict {
+        self.state.lock(|s| {
+            let state = s.borrow();
+            let Some(entry) = state
+                .clients
+                .iter()
+                .find(|c| c.fab_idx == fab_idx && c.check_in_node_id == check_in_node_id)
+            else {
+                return KeyVerdict::NotFound;
+            };
+
+            match key {
+                Some(key) if key == entry.key.access() => KeyVerdict::Match,
+                _ => KeyVerdict::Mismatch,
+            }
+        })
     }
 
     /// Drop every registration belonging to `fab_idx`.
@@ -537,6 +582,25 @@ impl<'a> IcdMgmtHandler<'a> {
     fn cmd_fabric(ctx: &impl InvokeContext) -> Result<NonZeroU8, Error> {
         ctx.exchange().accessor()?.fab_idx()
     }
+
+    /// Whether the caller holds Administer privilege on this command's path.
+    ///
+    /// Administrators may register/unregister any client; everyone else must
+    /// prove ownership of an existing entry with its verification key.
+    fn caller_is_admin(ctx: &impl InvokeContext) -> Result<bool, Error> {
+        let accessor = ctx.exchange().accessor()?;
+        let cmd = ctx.cmd();
+        let path = GenericPath::new(
+            Some(cmd.endpoint_id),
+            Some(cmd.cluster_id),
+            Some(cmd.cmd_id),
+        );
+
+        let mut req = AccessReq::new(&accessor, path, Access::WRITE);
+        req.set_target_perms(Access::WRITE | Access::NEED_ADMIN);
+
+        Ok(req.allow())
+    }
 }
 
 impl ClusterHandler for IcdMgmtHandler<'_> {
@@ -640,6 +704,16 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
         response: RegisterClientResponseBuilder<P>,
     ) -> Result<P, Error> {
         let fab_idx = Self::cmd_fabric(&ctx)?;
+        let node_id = request.check_in_node_id()?;
+
+        // A non-administrator replacing an existing entry must present its
+        // verification key. A new entry (NotFound) needs no key.
+        if !Self::caller_is_admin(&ctx)? {
+            let presented = request.verification_key()?.map(|k| k.0);
+            if self.icd.verify_key(fab_idx, node_id, presented) == KeyVerdict::Mismatch {
+                Err(ErrorCode::Failure)?;
+            }
+        }
 
         let key = request.key()?;
         let mut icd_key = CanonAeadKey::new();
@@ -647,7 +721,7 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
 
         self.icd.register(MonitoringRegistration {
             fab_idx,
-            check_in_node_id: request.check_in_node_id()?,
+            check_in_node_id: node_id,
             monitored_subject: request.monitored_subject()?,
             client_type: request.client_type()?,
             key: icd_key,
@@ -666,8 +740,20 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
         request: UnregisterClientRequest<'_>,
     ) -> Result<(), Error> {
         let fab_idx = Self::cmd_fabric(&ctx)?;
+        let node_id = request.check_in_node_id()?;
 
-        self.icd.unregister(fab_idx, request.check_in_node_id()?)?;
+        // A non-administrator must prove ownership with the verification key
+        // before the entry is removed; a missing entry is `NotFound` regardless.
+        if !Self::caller_is_admin(&ctx)? {
+            let presented = request.verification_key()?.map(|k| k.0);
+            match self.icd.verify_key(fab_idx, node_id, presented) {
+                KeyVerdict::NotFound => Err(ErrorCode::NotFound)?,
+                KeyVerdict::Mismatch => Err(ErrorCode::Failure)?,
+                KeyVerdict::Match => {}
+            }
+        }
+
+        self.icd.unregister(fab_idx, node_id)?;
 
         self.icd.store_registrations(&ctx)?;
         ctx.notify_own_cluster_changed();
@@ -745,18 +831,25 @@ mod tests {
     fn per_fabric_limit_is_enforced_independently() {
         let icd = icd();
 
-        // One client per fabric fits (CLIENTS_PER_FABRIC == 1).
+        // Fill fabric 1 up to the per-fabric limit.
+        for i in 0..CLIENTS_PER_FABRIC {
+            icd.register(reg(1, 100 + i as u64)).unwrap();
+        }
+        assert_eq!(icd.fabric_registrations_len(fab(1)), CLIENTS_PER_FABRIC);
+
+        // One more distinct client on fabric 1 exceeds the limit...
+        assert!(icd
+            .register(reg(1, 100 + CLIENTS_PER_FABRIC as u64))
+            .is_err());
+        assert_eq!(icd.fabric_registrations_len(fab(1)), CLIENTS_PER_FABRIC);
+
+        // ...updating an existing fabric-1 client still works...
         icd.register(reg(1, 100)).unwrap();
+        assert_eq!(icd.fabric_registrations_len(fab(1)), CLIENTS_PER_FABRIC);
+
+        // ...and fabric 2 has its own independent budget.
         icd.register(reg(2, 200)).unwrap();
-        assert_eq!(icd.registrations_len(), 2);
-
-        // A *second* client on fabric 1 exceeds the per-fabric limit...
-        assert!(icd.register(reg(1, 101)).is_err());
-        assert_eq!(icd.fabric_registrations_len(fab(1)), 1);
-
-        // ...but updating the existing fabric-1 client still works.
-        icd.register(reg(1, 100)).unwrap();
-        assert_eq!(icd.fabric_registrations_len(fab(1)), 1);
+        assert_eq!(icd.fabric_registrations_len(fab(2)), 1);
     }
 
     #[test]
@@ -773,6 +866,38 @@ mod tests {
         assert!(icd.remove_fabric(fab(2)));
         assert!(icd.registrations_is_empty());
         assert!(!icd.remove_fabric(fab(2))); // nothing left
+    }
+
+    #[test]
+    fn verify_key_matches_only_the_stored_key() {
+        let icd = icd();
+
+        let mut r = reg(1, 100);
+        let stored = [7u8; 16];
+        r.key.try_load_from_slice(&stored).unwrap();
+        icd.register(r).unwrap();
+
+        // Unknown node.
+        assert_eq!(
+            icd.verify_key(fab(1), 999, Some(&stored)),
+            KeyVerdict::NotFound
+        );
+        // Right node, wrong fabric.
+        assert_eq!(
+            icd.verify_key(fab(2), 100, Some(&stored)),
+            KeyVerdict::NotFound
+        );
+        // Correct key.
+        assert_eq!(
+            icd.verify_key(fab(1), 100, Some(&stored)),
+            KeyVerdict::Match
+        );
+        // Wrong key and absent key both mismatch.
+        assert_eq!(
+            icd.verify_key(fab(1), 100, Some(&[0u8; 16])),
+            KeyVerdict::Mismatch
+        );
+        assert_eq!(icd.verify_key(fab(1), 100, None), KeyVerdict::Mismatch);
     }
 
     #[test]

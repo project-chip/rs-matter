@@ -308,18 +308,22 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // time. TC_ICDM_2_1 reads and range-checks the attribute surface — it passes
     // with the PICS claiming only F00.
     "TC_ICDM_2_1",
-    // "TC_ICDM_3_1", // Skipped: the register/unregister behaviour it checks is
-    //                // implemented (ResourceExhausted on overflow, NotFound on
-    //                // unknown unregister), but steps 2a/2b hard-require the
-    //                // GeneralDiagnostics TestEventTrigger machinery (the
-    //                // `kAddActiveModeReq` ICD trigger), which rs-matter doesn't
-    //                // wire, so the test fails before reaching the register steps.
-    // "TC_ICDM_3_2", // Skipped: gated on F00 but needs verification-key access
-    //                // control and a DUT reboot with RegisteredClients surviving it.
-    // "TC_ICDM_3_3", // Skipped: needs privilege-dependent verification-key
-    //                // rejection (Status.Failure at Manage) — not yet implemented.
-    // "TC_ICDM_3_4", // Skipped: needs a scripted DUT reboot and ICDCounter
-    //                // persistence across it; the harness can't reboot the DUT.
+    // Exercises the full register/unregister flow: ResourceExhausted when a
+    // fabric's registration slot is full, NotFound on unknown unregister, and
+    // read-back of the RegisteredClients entries. Steps 2a/2b use the
+    // GeneralDiagnostics `kAddActiveModeReq` ICD trigger, accepted as a no-op by
+    // the `system_tests` DUT (see `app_args_override` for the enable-key).
+    "TC_ICDM_3_1",
+    // Verification-key access control plus a reboot check. The reboot leg is
+    // gated on `not is_ci`; our PICS carries `PICS_SDK_CI_ONLY=1`, so the CI path
+    // runs (register/read-back/verification-key) and skips the physical reboot,
+    // which the harness can't drive. RegisteredClients are still persisted.
+    "TC_ICDM_3_2",
+    "TC_ICDM_3_3",
+    // ICDCounter monotonicity across a reboot. The reboot leg is `not is_ci`;
+    // with `PICS_SDK_CI_ONLY=1` the CI path just reads the counter twice and
+    // asserts it never decreases. The counter is persisted for the real path.
+    "TC_ICDM_3_4",
     // "TC_ICDM_5_1", // Skipped: gated on F02 (LITS) — OperatingMode attribute and
     //                // the SIT/LIT mDNS TXT record, which rs-matter doesn't advertise.
     // "TC_ICDManagementCluster", // Skipped: see the YAML entry above.
@@ -1242,10 +1246,20 @@ impl ITests {
         } else {
             format!(" {extra_args}")
         };
+        // Python `MatterBaseTest` scripts don't receive the YAML runner's
+        // `--pics-file`; a script that gates its steps on `check_pics(...)`
+        // sees an empty PICS dict unless we hand it a `--PICS` file. Point the
+        // ones that need it at the target's own `.pics` (the same file the YAML
+        // runner uses), by absolute path since the runner's CWD is `chip_dir`.
+        let pics_clause = if Self::needs_target_pics(test_name) {
+            format!(" --PICS {}", self.test_pics_path(target).display())
+        } else {
+            String::new()
+        };
         let script_args = format!(
             "--storage-path /tmp/rs_matter_python_test_storage.json \
              {commissioning_method}{commissioning_args} --endpoint 1 \
-             --paa-trust-store-path credentials/development/paa-root-certs{extra_args_clause}{th_server_arg}"
+             --paa-trust-store-path credentials/development/paa-root-certs{extra_args_clause}{pics_clause}{th_server_arg}"
         );
 
         // Optional `--app-args` passed through to `system_tests`. Used by
@@ -1498,6 +1512,21 @@ impl ITests {
         matches!(test_name, "TC_SC_3_5")
     }
 
+    /// Whether this Python test must be handed the target's own `.pics` file.
+    ///
+    /// Tests that read attributes conditionally on `check_pics(...)` (and assert
+    /// that a mandatory attribute *is* in the PICS) need the DUT's real PICS
+    /// claims, not the empty default. `TC_ICDM_2_1` gates every attribute read
+    /// this way; `TC_ICDM_3_2/3_3/3_4` gate on `ICDM.S.F00`, and the target
+    /// `.pics` also carries `PICS_SDK_CI_ONLY=1` so 3_2/3_4 take their
+    /// reboot-free CI path.
+    fn needs_target_pics(test_name: &str) -> bool {
+        matches!(
+            test_name,
+            "TC_ICDM_2_1" | "TC_ICDM_3_2" | "TC_ICDM_3_3" | "TC_ICDM_3_4"
+        )
+    }
+
     /// Optional `--app-args` passed straight through to `system_tests`.
     ///
     /// `system_tests` recognises `--discriminator <u16>` and
@@ -1538,6 +1567,11 @@ impl ITests {
             // sequence below — wire the same value into the DUT so the
             // key check in `TestEventTriggerDiag::test_event_trigger` accepts.
             "TC_DGSW_2_2" => Some("--enable-key 000102030405060708090a0b0c0d0e0f"),
+            // TC_ICDM_3_1 drives the ICD registration flow but first sends the
+            // `kAddActiveModeReq` / `kRemoveActiveModeReq` ICD triggers via
+            // `GeneralDiagnostics::TestEventTrigger`. It defaults `enableKey` to
+            // the canonical sequence, so wire the same value into the DUT.
+            "TC_ICDM_3_1" => Some("--enable-key 000102030405060708090a0b0c0d0e0f"),
             _ => None,
         }
     }
@@ -1567,6 +1601,12 @@ impl ITests {
             // ACL events. argparse keeps the last `--endpoint`, so appending
             // here wins.
             "TC_ACL_2_6" | "TC_ACL_2_7" | "TC_ACL_2_8" => "--endpoint 0",
+            // These ICDM tests read/write the AccessControl cluster (to drop the
+            // TH to Manage privilege) via `get_endpoint()`, which defaults to the
+            // `--endpoint 1` we pass for application tests. AccessControl lives on
+            // the root endpoint, so pin the default there. The ICDM helpers
+            // themselves already target endpoint 0 explicitly.
+            "TC_ICDM_3_2" | "TC_ICDM_3_3" | "TC_ICDM_3_4" => "--endpoint 0",
             // TC_CGEN_2_2 lives on the root endpoint (GeneralCommissioning /
             // OperationalCredentials clusters) and uses
             // `PIXIT.CGEN.FailsafeExpiryLengthSeconds` to bound the fail-safe

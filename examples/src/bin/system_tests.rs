@@ -56,6 +56,7 @@ use rs_matter::dm::clusters::gen_comm::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::gen_diag::{self, ClusterHandler as _, GenDiag};
 use rs_matter::dm::clusters::groups::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::grp_key_mgmt::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::icd_mgmt::{ClusterHandler as _, Icd, IcdMgmtHandler, IcdModeConfig};
 use rs_matter::dm::clusters::identify::{self, IdentifyHandler};
 use rs_matter::dm::clusters::net_comm;
 use rs_matter::dm::clusters::noc::{self, ClusterHandler as _};
@@ -86,6 +87,7 @@ use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::KvBlobStoreAccess;
 use rs_matter::respond::{ChainedExchangeHandler, Responder};
+use rs_matter::sc::checkin::CheckInCounter;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::sc::SecureChannel;
 use rs_matter::transport::exchange::Exchange;
@@ -111,6 +113,7 @@ static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<MatterBuffers<20>> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 static GEN_DIAG: StaticCell<TestEventTriggerDiag> = StaticCell::new();
+static ICD: StaticCell<Icd> = StaticCell::new();
 // UserLabel registry — host endpoints and labels-per-endpoint counts
 // match `data_model`'s `UserLabelHandler<'_, E, N>` parameterisation.
 static USER_LABELS: StaticCell<UserLabels<1, 4>> = StaticCell::new();
@@ -279,6 +282,16 @@ fn main() -> Result<(), Error> {
         &()
     };
 
+    // Shared ICD state for the ICD Management cluster. Registrations and the
+    // Check-In counter are re-hydrated from KV before the data model accepts
+    // traffic, so both survive a reboot.
+    let icd: &Icd = ICD.uninit().init_with(Icd::init(
+        CheckInCounter::new(0, ICD_COUNTER_EPOCH),
+        ICD_MODE,
+    ));
+    kv.access(|store, buf| icd.load_registrations(store, buf))?;
+    kv.access(|store, buf| icd.load_counter(store, ICD_COUNTER_EPOCH, buf))?;
+
     // Create the Data Model instance
     let im = InteractionModel::new(
         matter,
@@ -299,6 +312,7 @@ fn main() -> Result<(), Error> {
             &ota_state,
             dlog_buffers,
             log_provider,
+            icd,
         ),
         &kv,
         &state,
@@ -548,7 +562,10 @@ const NODE: Node<'static> = Node {
                 // Diagnostic Logs (0x0032) for the `TestDiagnosticLogs` itest.
                 // Always present; serves logs only when started with the log-file
                 // flags, otherwise answers `NoLogs`.
-                DIAGNOSTIC_LOGS_CLUSTER
+                DIAGNOSTIC_LOGS_CLUSTER,
+                // ICD Management (0x0046), Check-In Protocol only, for the
+                // `TC_ICDM_*` itests.
+                ICD_MGMT_CLUSTER
             ),
             &[on_off::FULL_CLUSTER.id],
         ),
@@ -605,6 +622,23 @@ const DIAGNOSTIC_LOGS_CLUSTER: Cluster<'static> = <DiagLogsHandler<
     &MatterBuffers<2>,
     &LogFileProvider,
 > as diag_logs::ClusterAsyncHandler>::CLUSTER;
+
+/// The ICD Management cluster metadata, exactly as served by
+/// [`IcdMgmtHandler`] (so `NODE`'s declaration matches the handler).
+const ICD_MGMT_CLUSTER: Cluster<'static> = IcdMgmtHandler::CLUSTER;
+
+/// Mode timings the test ICD advertises. Values are spec-valid for a
+/// short-idle device: `idle_mode_duration_s * 1000 >= active_mode_duration_ms`,
+/// idle within `[1, 64800]` seconds.
+const ICD_MODE: IcdModeConfig = IcdModeConfig {
+    idle_mode_duration_s: 300,
+    active_mode_duration_ms: 1000,
+    active_mode_threshold_ms: 300,
+};
+
+/// The Check-In counter epoch — how far ahead each persisted boundary jumps, so
+/// the counter survives reboots without a flash write per message.
+const ICD_COUNTER_EPOCH: u32 = 100;
 
 /// Download protocols this requestor advertises (BDX only).
 const OTA_PROTOCOLS: &[DownloadProtocolEnum] = &[DownloadProtocolEnum::BDXSynchronous];
@@ -664,6 +698,8 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
                 OTA_REQUESTOR_CLUSTER,
                 // Diagnostic Logs present on every variant (see `NODE`).
                 DIAGNOSTIC_LOGS_CLUSTER,
+                // ICD Management present on every variant (see `NODE`).
+                ICD_MGMT_CLUSTER,
             ),
             &[on_off::FULL_CLUSTER.id],
         ),
@@ -725,6 +761,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     ota_state: &'a OtaState,
     dlog_buffers: &'a MatterBuffers<2>,
     log_provider: &'a LogFileProvider,
+    icd: &'a Icd,
 ) -> impl DataModel + 'a {
     (
         node,
@@ -854,6 +891,11 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(DIAGNOSTIC_LOGS_CLUSTER.id)),
                 DiagLogsHandler::new(Dataver::new_rand(&mut rand), dlog_buffers, log_provider)
                     .adapt(),
+            )
+            // ICD Management (Check-In Protocol) on the root endpoint.
+            .chain(
+                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(ICD_MGMT_CLUSTER.id)),
+                Async(IcdMgmtHandler::new(Dataver::new_rand(&mut rand), icd).adapt()),
             ),
     )
 }
@@ -916,6 +958,10 @@ impl GenDiag for TestEventTriggerDiag {
         if key.iter().all(|&b| b == 0) || key != self.enable_key {
             return Err(rs_matter::error::ErrorCode::ConstraintError.into());
         }
+        // The test framework encodes the target endpoint in bits 32..48 of the
+        // trigger; clear them before matching (mirrors CHIP's
+        // `clearEndpointInEventTrigger`).
+        let trigger = trigger & !(0xFFFF << 32);
         // Mirror CHIP's `SampleTestEventTriggerDelegate`: the canonical CHIP
         // test trigger code is accepted by `TC_TestEventTrigger`.
         const TC_TEST_EVENT_TRIGGER: u64 = 0xFFFF_FFFF_FFF1_0000;
@@ -925,8 +971,14 @@ impl GenDiag for TestEventTriggerDiag {
         // top-level async task can emit the event (the trait method
         // itself is sync and has no event-emitter context).
         const SW_FAULT_TRIGGER: u64 = 0x0034_0000_0000_0000;
+        // ICD Management "add/remove active-mode requirement" triggers
+        // (`TC_ICDM_3_1`). rs-matter is not a real ICD that idles, so these are
+        // accepted as no-ops — the test only checks the command succeeds.
+        const ICD_ADD_ACTIVE_MODE_REQ: u64 = 0x0046_0000_0000_0001;
+        const ICD_REMOVE_ACTIVE_MODE_REQ: u64 = 0x0046_0000_0000_0002;
         match trigger {
             TC_TEST_EVENT_TRIGGER => Ok(()),
+            ICD_ADD_ACTIVE_MODE_REQ | ICD_REMOVE_ACTIVE_MODE_REQ => Ok(()),
             SW_FAULT_TRIGGER => {
                 SW_FAULT_NOTIFY.notify();
                 Ok(())
