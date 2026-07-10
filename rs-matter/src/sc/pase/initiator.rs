@@ -44,7 +44,7 @@ use super::{PBKDFParamReq, PBKDFParamResp, Pake1, Pake2, Pake3, SPAKE2_SESSION_K
 /// This implements the commissioner/controller side of the PASE protocol.
 /// The typical flow is:
 ///
-/// 1. Create an unsecured exchange to the target device
+/// 1. Create an exchange to the target device over a plaintext session
 /// 2. Call `PaseInitiator::initiate()` with the setup passcode
 /// 3. On success, the exchange's session is upgraded to a secure PASE session
 pub struct PaseInitiator<C: Crypto> {
@@ -71,7 +71,7 @@ impl<C: Crypto> PaseInitiator<C> {
         }
     }
 
-    /// Initiate a PASE handshake with a Matter device.
+    /// Perform a PASE handshake with a Matter device.
     ///
     /// This performs the complete PASE handshake:
     /// 1. Send PBKDFParamRequest
@@ -81,18 +81,18 @@ impl<C: Crypto> PaseInitiator<C> {
     /// 5. Send Pake3 (with cA)
     /// 6. Receive StatusReport
     ///
-    /// On success, the session is upgraded to a secure PASE session.
+    /// On success, a new secure PASE session is established with the target device.
     ///
     /// # Arguments
-    /// - `exchange` - An unsecured exchange to the target device
+    /// - `exchange` - An exchange to the target device over a plaintext session
     /// - `crypto` - The crypto implementation
     /// - `password` - The setup passcode (typically 8 digits, e.g., 20202021)
     ///
     /// # Returns
     /// - `Ok(())` on successful session establishment
     /// - `Err(Error)` on failure
-    pub async fn initiate(
-        exchange: &mut Exchange<'_>,
+    pub async fn perform(
+        mut exchange: Exchange<'_>,
         crypto: C,
         password: u32,
     ) -> Result<(), Error> {
@@ -101,31 +101,34 @@ impl<C: Crypto> PaseInitiator<C> {
         let mut initiator = Self::new(crypto);
 
         // Step 1: Send PBKDFParamRequest, receive PBKDFParamResponse
-        let (salt, salt_len, iterations) = match initiator.exchange_pbkdf_params(exchange).await {
-            Ok(result) => result,
-            Err(e) => {
-                // Send status report to notify responder of failure
-                let _ = complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await;
-                return Err(e);
-            }
-        };
+        let (salt, salt_len, iterations) =
+            match initiator.exchange_pbkdf_params(&mut exchange).await {
+                Ok(result) => result,
+                Err(e) => {
+                    // Send status report to notify responder of failure
+                    let _ =
+                        complete_with_status(&mut exchange, SCStatusCodes::InvalidParameter, &[])
+                            .await;
+                    return Err(e);
+                }
+            };
 
         // Step 2: Send Pake1, receive Pake2
         if let Err(e) = initiator
-            .exchange_pake1_pake2(exchange, password, &salt[..salt_len], iterations)
+            .exchange_pake1_pake2(&mut exchange, password, &salt[..salt_len], iterations)
             .await
         {
             // Send status report to notify responder of failure (e.g., wrong password)
-            let _ = complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await;
+            let _ = complete_with_status(&mut exchange, SCStatusCodes::InvalidParameter, &[]).await;
             return Err(e);
         }
 
         // Step 3: Send Pake3, receive StatusReport
         // Note: No need to send status report here since we're just receiving one
-        initiator.exchange_pake3_status(exchange).await?;
+        initiator.exchange_pake3_status(&mut exchange).await?;
 
         // Step 4: Complete session establishment
-        initiator.complete_session(exchange, session).await
+        initiator.complete_session(&mut exchange, session).await
     }
 
     /// Exchange PBKDFParamRequest/Response

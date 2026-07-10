@@ -242,15 +242,15 @@ async fn run_case_handshake<C: Crypto>(
     fab_idx: core::num::NonZeroU8,
     peer_node_id: u64,
 ) -> Result<(), Error> {
-    info!("Creating unsecured session and initiating CASE handshake...");
+    info!("Creating plaintext session and initiating CASE handshake...");
 
-    let mut exchange = Exchange::initiate_unsecured(matter, crypto, peer_addr).await?;
+    let exchange = Exchange::initiate_plaintext(matter, crypto, peer_addr).await?;
     info!("Exchange initiated: {}", exchange.id());
 
     info!("Starting CASE handshake...");
 
-    let mut case_fut = pin!(CaseInitiator::initiate(
-        &mut exchange,
+    let mut case_fut = pin!(CaseInitiator::perform(
+        exchange,
         crypto,
         fab_idx,
         peer_node_id,

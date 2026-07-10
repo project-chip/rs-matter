@@ -203,7 +203,7 @@ impl<'k> CheckIn<'k> {
         let len = payload.len();
 
         let mut exchange =
-            Exchange::initiate_unsecured_operational(matter, &crypto, fab_idx, node_id).await?;
+            Exchange::initiate_plaintext_operational(matter, &crypto, fab_idx, node_id).await?;
 
         exchange.send(OpCode::CheckIn, &buf[..len]).await
     }

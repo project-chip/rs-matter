@@ -688,13 +688,11 @@ impl Transport {
         // Establish CASE over a fresh, one-shot unsecured exchange to the
         // resolved address. On success a secure session keyed at
         // `(fabric_idx, peer_node_id)` is recorded in the stack.
-        {
-            let mut exchange = self
-                .initiate_plaintext(matter, &crypto, Address::Udp(resolved.addr))
-                .await?;
+        let exchange = self
+            .initiate_plaintext(matter, &crypto, Address::Udp(resolved.addr))
+            .await?;
 
-            CaseInitiator::initiate(&mut exchange, &crypto, fabric_idx, peer_node_id).await?;
-        }
+        CaseInitiator::perform(exchange, &crypto, fabric_idx, peer_node_id).await?;
 
         // Seed the new CASE session's peer MRP/session params from the resolve
         // TXT (rs-matter does not yet exchange these in CASE Sigma1/2) and grab
@@ -782,12 +780,8 @@ impl Transport {
         }
 
         // Establish a new PASE session to this peer.
-        {
-            let mut handshake = self.initiate_plaintext(matter, &crypto, peer_addr).await?;
-            PaseInitiator::initiate(&mut handshake, &crypto, passcode).await?;
-            // The PASE-establishment exchange is one-shot; drop it here so the
-            // caller opens fresh exchanges on the new PASE session.
-        }
+        let exchange = self.initiate_plaintext(matter, &crypto, peer_addr).await?;
+        PaseInitiator::perform(exchange, &crypto, passcode).await?;
 
         let session_id = matter.with_state(|state| {
             state
@@ -2357,7 +2351,7 @@ mod tests {
     }
 
     #[test]
-    fn test_create_unsecured_session_creates_plaintext_session() {
+    fn test_create_plaintext_session() {
         let matter = test_matter();
         let crypto = test_only_crypto();
         let peer = Address::new();
@@ -2378,7 +2372,7 @@ mod tests {
     }
 
     #[test]
-    fn test_initiate_unsecured_now_creates_initiator_exchange() {
+    fn test_initiate_plaintext_now_creates_initiator_exchange() {
         let matter = test_matter();
         let crypto = test_only_crypto();
         let peer = Address::new();

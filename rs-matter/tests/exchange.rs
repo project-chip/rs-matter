@@ -47,7 +47,7 @@ use crate::common::{
 /// The controller opens an unsecured exchange, sends a PBKDFParamRequest, and
 /// asserts that the device responds with a PBKDFParamResponse.
 #[test]
-fn test_unsecured_exchange_over_udp() {
+fn test_plaintext_exchange_over_udp() {
     init_env_logger();
 
     futures_lite::future::block_on(async {
@@ -98,7 +98,7 @@ async fn run_exchange_flow<C: Crypto>(
 ) -> Result<(), Error> {
     info!("Creating unsecured session and initiating exchange...");
 
-    let mut exchange = Exchange::initiate_unsecured(matter, crypto, peer_addr).await?;
+    let mut exchange = Exchange::initiate_plaintext(matter, crypto, peer_addr).await?;
 
     info!("Exchange initiated: {}", exchange.id());
     info!("Sending PBKDFParamRequest...");

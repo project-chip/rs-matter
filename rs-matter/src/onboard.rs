@@ -332,7 +332,7 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     /// the same UDP port post-AddNOC.
     ///
     /// Steps:
-    ///   1. Open a fresh **unsecured** exchange to `peer_addr` and run
+    ///   1. Open a fresh plaintext exchange to `peer_addr` and run
     ///      [`CaseInitiator::initiate`] (Sigma1 → Sigma2 → Sigma3 →
     ///      StatusReport). On success the new CASE session is keyed in
     ///      `matter.state.sessions` at `(fab_idx, device_node_id,
@@ -347,17 +347,8 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
     ) -> Result<(), Error> {
         let fab_idx = self.fab_idx;
 
-        // CASE handshake over a fresh unsecured exchange.
-        {
-            let mut exchange =
-                Exchange::initiate_unsecured(self.matter, &self.crypto, peer_addr).await?;
-
-            CaseInitiator::initiate(&mut exchange, &self.crypto, fab_idx, phase1.device_node_id)
-                .await?;
-
-            // The CASE-establishment exchange is one-shot; drop it
-            // here so we open a fresh one on the new CASE session.
-        }
+        let exchange = Exchange::initiate_plaintext(self.matter, &self.crypto, peer_addr).await?;
+        CaseInitiator::perform(exchange, &self.crypto, fab_idx, phase1.device_node_id).await?;
 
         // CommissioningComplete on the CASE session.
         self.commissioning_complete(fab_idx, phase1.device_node_id)

@@ -98,12 +98,12 @@ async fn run_pase_handshake<C: Crypto>(
 ) -> Result<(), Error> {
     info!("Creating unsecured session and initiating PASE handshake...");
 
-    let mut exchange = Exchange::initiate_unsecured(matter, crypto, peer_addr).await?;
+    let exchange = Exchange::initiate_plaintext(matter, crypto, peer_addr).await?;
     info!("Exchange initiated: {}", exchange.id());
 
     info!("Starting PASE handshake...");
 
-    let mut pase_fut = pin!(PaseInitiator::initiate(&mut exchange, crypto, 20202021));
+    let mut pase_fut = pin!(PaseInitiator::perform(exchange, crypto, 20202021));
     let mut timeout = pin!(Timer::after(Duration::from_secs(30)));
 
     let result = match select(&mut pase_fut, &mut timeout).await {
