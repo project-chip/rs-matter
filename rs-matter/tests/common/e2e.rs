@@ -292,6 +292,7 @@ impl<C: Crypto> E2eRunner<C> {
             None,
             None,
             None,
+            None,
         )?;
 
         session.complete();

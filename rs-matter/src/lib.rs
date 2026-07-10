@@ -580,6 +580,7 @@ impl<'a> Matter<'a> {
                 state.fabrics.reset_persist(&mut store, buf)?;
                 state.basic_info_settings.reset_persist(&mut store, buf)?;
                 state.rtc.reset_persist(&mut store, buf)?;
+                state.resumption.reset_persist(&mut store, buf)?;
 
                 Ok::<_, Error>(())
             })
@@ -602,6 +603,7 @@ impl<'a> Matter<'a> {
                 state.fabrics.load_persist(&mut store, buf)?;
                 state.basic_info_settings.load_persist(&mut store, buf)?;
                 state.rtc.load_persist(&mut store, buf)?;
+                state.resumption.load_persist(&mut store, buf)?;
 
                 Ok::<_, Error>(())
             })
@@ -655,6 +657,11 @@ pub struct MatterState {
     pub fabrics: Fabrics,
     /// All sessions
     sessions: Sessions,
+    /// CASE session resumption cache (Matter Core spec §4.14.2.2).
+    ///
+    /// Persisted as a single TLV blob so the device can resume
+    /// previously-established CASE sessions across reboots.
+    resumption: crate::sc::case::ResumableSessions,
     /// The PASE session state
     pase: Pase,
     /// The Failsafe state
@@ -676,6 +683,7 @@ impl MatterState {
         Self {
             fabrics: Fabrics::new(),
             sessions: Sessions::new(),
+            resumption: crate::sc::case::ResumableSessions::new(),
             pase: Pase::new(),
             failsafe: FailSafe::new(),
             basic_info_settings: BasicInfoSettings::new(),
@@ -689,6 +697,7 @@ impl MatterState {
         init!(Self {
             fabrics <- Fabrics::init(),
             sessions <- Sessions::init(),
+            resumption <- crate::sc::case::ResumableSessions::init(),
             pase <- Pase::init(),
             failsafe <- FailSafe::init(),
             basic_info_settings <- BasicInfoSettings::init(),

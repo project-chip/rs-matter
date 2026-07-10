@@ -396,6 +396,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                         Some(dec_key),
                         Some(enc_key),
                         Some(att_challenge),
+                        Some(self.casep.shared_secret()),
                     )?;
 
                     Ok(SCStatusCodes::SessionEstablishmentSuccess)

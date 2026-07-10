@@ -120,6 +120,13 @@ pub const ICD_REGISTERED_CLIENTS_KEY: u16 = OTA_PROVIDERS_KEY + 1;
 /// resumes past every counter value the previous run may have used.
 pub const ICD_CHECK_IN_COUNTER_KEY: u16 = ICD_REGISTERED_CLIENTS_KEY + 1;
 
+/// The key used for storing the CASE session resumption cache — a
+/// single TLV blob holding up to
+/// [`MAX_RESUMPTION_RECORDS`](crate::sc::case::MAX_RESUMPTION_RECORDS)
+/// entries. Re-persisted by the background snapshot task whenever the
+/// in-memory cache diverges from what was last written.
+pub const CASE_RESUMPTION_KEY: u16 = ICD_CHECK_IN_COUNTER_KEY + 1;
+
 /// A trait representing a key-value BLOB storage.
 ///
 /// NOTE: For now, the trait is deliberately modeled as non-async, so that it can be used from

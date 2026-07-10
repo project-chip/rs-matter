@@ -260,6 +260,16 @@ impl<'a, C: Crypto + 'a> CaseP<'a, C> {
         self.local_sessid
     }
 
+    /// The ECDH shared secret produced during Sigma1/2 by
+    /// [`Self::sigma2_decrypt`] (initiator) or [`Self::sigma1_decrypt`]
+    /// (responder). Preserved on the completed [`Session`](crate::transport::session::Session)
+    /// so the CASE resumption cache can populate its
+    /// [`ResumableSession::shared_secret`](crate::sc::case::ResumableSession::shared_secret)
+    /// field (Matter Core spec \u00a74.14.2.2.1).
+    pub fn shared_secret(&self) -> crate::crypto::CanonPkcSharedSecretRef<'_> {
+        self.shared_secret.reference()
+    }
+
     pub fn our_pub_key(&self) -> CanonPkcPublicKeyRef<'_> {
         self.our_pub_key.reference()
     }

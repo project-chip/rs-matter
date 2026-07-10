@@ -420,6 +420,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
                 Some(dec_key),
                 Some(enc_key),
                 Some(att_challenge),
+                Some(initiator.casep.shared_secret()),
             )?;
         }
 
