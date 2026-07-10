@@ -1712,12 +1712,12 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
 
         if packet.tx_info.retransmission {
             mrp_log!(
-                "\n<<SND Re-sending\n      => {}",
+                "\n<<SND {}\n      => Re-sending",
                 Packet::<0>::display(&packet.peer, &packet.header),
             );
         } else {
             debug!(
-                "\n<<SND Sending\n      => {}",
+                "\n<<SND {}\n      => Sending",
                 Packet::<0>::display(&packet.peer, &packet.header),
             );
         }
