@@ -261,7 +261,7 @@ impl AstroMdns {
         // Scratch buffer for expanding `MatterLocalService` into a `MdnsLocalService` view —
         // the strings (name, subtypes, TXT values) are formatted into this buffer.
         let mut buf = [0u8; 512];
-        let (service, _) = service.service(matter.dev_det(), matter.port(), &mut buf)?;
+        let (service, _) = service.service(matter, &mut buf)?;
 
         // Materialize subtypes once: we need both `is_empty` and `join`.
         let subtypes: Vec<&str> = service.service_subtypes.clone().collect();

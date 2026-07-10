@@ -324,8 +324,11 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // with `PICS_SDK_CI_ONLY=1` the CI path just reads the counter twice and
     // asserts it never decreases. The counter is persisted for the real path.
     "TC_ICDM_3_4",
-    // "TC_ICDM_5_1", // Skipped: gated on F02 (LITS) — OperatingMode attribute and
-    //                // the SIT/LIT mDNS TXT record, which rs-matter doesn't advertise.
+    // Operating mode (LITS): reads the OperatingMode attribute and the operational
+    // `ICD` DNS-SD TXT key, asserting both are SIT with no clients, flip to LIT
+    // after RegisterClient, and back to SIT after UnregisterClient. Needs `--PICS`
+    // (the F02 gate) and browses the DUT's operational mDNS.
+    "TC_ICDM_5_1",
     // "TC_ICDManagementCluster", // Skipped: see the YAML entry above.
 
     //
@@ -1523,7 +1526,11 @@ impl ITests {
     fn needs_target_pics(test_name: &str) -> bool {
         matches!(
             test_name,
-            "TC_ICDM_2_1" | "TC_ICDM_3_2" | "TC_ICDM_3_3" | "TC_ICDM_3_4"
+            "TC_ICDM_2_1"
+                | "TC_ICDM_3_2"
+                | "TC_ICDM_3_3"
+                | "TC_ICDM_3_4"
+                | "TC_ICDM_5_1"
         )
     }
 

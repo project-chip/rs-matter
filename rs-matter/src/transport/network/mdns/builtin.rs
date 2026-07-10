@@ -404,7 +404,7 @@ impl BuiltinMdns {
             let mut tx_buf = tx_buf.get().await.ok_or(ErrorCode::ResourceExhausted)?;
             let buf = &mut *tx_buf;
 
-            let (service_dns, buf) = service.service(matter.dev_det(), matter.port(), buf)?;
+            let (service_dns, buf) = service.service(matter, buf)?;
             let len = host.broadcast(&service_dns, buf, 60, ttl)?;
             if len == 0 {
                 continue;
@@ -533,7 +533,7 @@ impl BuiltinMdns {
         let mut tx_buf = tx_buf.get().await.ok_or(ErrorCode::ResourceExhausted)?;
         let buf = &mut *tx_buf;
 
-        let (service, buf) = service.service(matter.dev_det(), matter.port(), buf)?;
+        let (service, buf) = service.service(matter, buf)?;
 
         // RFC 6762 §6.7: a query whose UDP source port is not 5353 comes from
         // a legacy unicast resolver and gets a unicast reply with the legacy

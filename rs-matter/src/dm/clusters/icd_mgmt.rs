@@ -215,6 +215,22 @@ impl Icd {
         self.registrations_len() == 0
     }
 
+    /// The current operating mode: `LIT` while any client is registered,
+    /// otherwise `SIT`.
+    ///
+    /// This is the value of the `OperatingMode` attribute and of the `ICD`
+    /// operational DNS-SD TXT key. It changes only when the registration set
+    /// transitions empty↔non-empty, so
+    /// [`wait_registrations_changed`](Self::wait_registrations_changed) is the
+    /// signal to re-read it (e.g. to re-advertise mDNS).
+    pub fn operating_mode(&self) -> OperatingModeEnum {
+        if self.registrations_is_empty() {
+            OperatingModeEnum::SIT
+        } else {
+            OperatingModeEnum::LIT
+        }
+    }
+
     /// The number of registrations on `fab_idx`.
     pub fn fabric_registrations_len(&self, fab_idx: NonZeroU8) -> usize {
         self.state.lock(|s| {
@@ -601,20 +617,33 @@ impl<'a> IcdMgmtHandler<'a> {
 
         Ok(req.allow())
     }
+
+    /// Publish the current operating mode to the mDNS layer. This handler serves
+    /// the LITS feature, so the device is always ICD-capable — the mode flips
+    /// between SIT and LIT as the registration set empties and fills.
+    fn sync_icd_mode(&self, ctx: &impl InvokeContext) {
+        ctx.matter().set_icd_mode(Some(self.icd.operating_mode()));
+    }
 }
 
 impl ClusterHandler for IcdMgmtHandler<'_> {
-    // We implement the Check-In Protocol, so claim its feature bit; the
-    // registration attributes/commands and MaximumCheckInBackoff are all
-    // mandatory once it is claimed. The User-Active-Mode-Trigger and
-    // Long-Idle-Time optionals stay hidden.
+    // We implement the Check-In Protocol and Long-Idle-Time support, so claim
+    // both feature bits. CIP makes the registration attributes/commands and
+    // MaximumCheckInBackoff mandatory; LITS makes OperatingMode and the
+    // StayActiveRequest command mandatory. The User-Active-Mode-Trigger optionals
+    // stay hidden.
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
-        .with_features(Feature::CHECK_IN_PROTOCOL_SUPPORT.bits())
+        .with_features(
+            Feature::CHECK_IN_PROTOCOL_SUPPORT
+                .union(Feature::LONG_IDLE_TIME_SUPPORT)
+                .bits(),
+        )
         .with_attrs(with!(required;
             AttributeId::RegisteredClients
                 | AttributeId::ICDCounter
                 | AttributeId::ClientsSupportedPerFabric
-                | AttributeId::MaximumCheckInBackOff));
+                | AttributeId::MaximumCheckInBackOff
+                | AttributeId::OperatingMode));
 
     fn dataver(&self) -> u32 {
         self.dataver.get()
@@ -644,6 +673,10 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
     // Check-Ins off, so its maximum equals its idle-mode duration.
     fn maximum_check_in_back_off(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
         Ok(self.icd.mode.idle_mode_duration_s)
+    }
+
+    fn operating_mode(&self, _ctx: impl ReadContext) -> Result<OperatingModeEnum, Error> {
+        Ok(self.icd.operating_mode())
     }
 
     fn icd_counter(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
@@ -729,6 +762,7 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
 
         self.icd.store_registrations(&ctx)?;
         ctx.notify_own_cluster_changed();
+        self.sync_icd_mode(&ctx);
 
         // The client stores this as its starting Check-In counter reference.
         response.icd_counter(self.icd.next_counter())?.end()
@@ -757,6 +791,7 @@ impl ClusterHandler for IcdMgmtHandler<'_> {
 
         self.icd.store_registrations(&ctx)?;
         ctx.notify_own_cluster_changed();
+        self.sync_icd_mode(&ctx);
 
         Ok(())
     }
@@ -866,6 +901,22 @@ mod tests {
         assert!(icd.remove_fabric(fab(2)));
         assert!(icd.registrations_is_empty());
         assert!(!icd.remove_fabric(fab(2))); // nothing left
+    }
+
+    #[test]
+    fn operating_mode_follows_the_registration_set() {
+        let icd = icd();
+        assert_eq!(icd.operating_mode(), OperatingModeEnum::SIT);
+
+        icd.register(reg(1, 100)).unwrap();
+        assert_eq!(icd.operating_mode(), OperatingModeEnum::LIT);
+
+        icd.register(reg(1, 101)).unwrap();
+        icd.unregister(fab(1), 100).unwrap();
+        assert_eq!(icd.operating_mode(), OperatingModeEnum::LIT);
+
+        icd.unregister(fab(1), 101).unwrap();
+        assert_eq!(icd.operating_mode(), OperatingModeEnum::SIT);
     }
 
     #[test]

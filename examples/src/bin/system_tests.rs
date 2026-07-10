@@ -291,6 +291,10 @@ fn main() -> Result<(), Error> {
     ));
     kv.access(|store, buf| icd.load_registrations(store, buf))?;
     kv.access(|store, buf| icd.load_counter(store, ICD_COUNTER_EPOCH, buf))?;
+    // Seed the advertised ICD operating mode from the (possibly reloaded)
+    // registration set, so a client registered before a reboot keeps the device
+    // advertising as LIT.
+    matter.set_icd_mode(Some(icd.operating_mode()));
 
     // Create the Data Model instance
     let im = InteractionModel::new(
@@ -627,13 +631,13 @@ const DIAGNOSTIC_LOGS_CLUSTER: Cluster<'static> = <DiagLogsHandler<
 /// [`IcdMgmtHandler`] (so `NODE`'s declaration matches the handler).
 const ICD_MGMT_CLUSTER: Cluster<'static> = IcdMgmtHandler::CLUSTER;
 
-/// Mode timings the test ICD advertises. Values are spec-valid for a
-/// short-idle device: `idle_mode_duration_s * 1000 >= active_mode_duration_ms`,
-/// idle within `[1, 64800]` seconds.
+/// Mode timings the test ICD advertises. Spec-valid for a LIT-capable device:
+/// `idle_mode_duration_s * 1000 >= active_mode_duration_ms`, idle within
+/// `[1, 64800]` seconds, and `active_mode_threshold_ms >= 5000` (the LIT floor).
 const ICD_MODE: IcdModeConfig = IcdModeConfig {
     idle_mode_duration_s: 300,
     active_mode_duration_ms: 1000,
-    active_mode_threshold_ms: 300,
+    active_mode_threshold_ms: 5000,
 };
 
 /// The Check-In counter epoch — how far ahead each persisted boundary jumps, so
