@@ -247,7 +247,7 @@ impl CheckInCounter {
     ///
     /// `epoch` must be non-zero.
     pub fn new(start: u32, epoch: u32) -> Self {
-        debug_assert!(epoch != 0);
+        assert!(epoch != 0, "the Check-In counter epoch must be non-zero");
 
         Self {
             value: start,
@@ -293,13 +293,17 @@ impl CheckInCounter {
     /// restart still resumes past everything this run may use.
     #[must_use = "the returned value must be persisted before sending more Check-Ins"]
     pub fn advance_by(&mut self, delta: u32) -> Option<u32> {
+        // Forward distance (mod 2^32) from the current value to the persisted
+        // boundary, computed before the jump.
+        let dist_to_boundary = self.next_epoch.wrapping_sub(self.value);
+
         self.value = self.value.wrapping_add(delta);
 
-        // Re-anchor the boundary one epoch past the new value, unless the jump
-        // stayed within the current epoch (then nothing new needs persisting).
-        let next_epoch = self.value.wrapping_add(self.epoch);
-        if next_epoch != self.next_epoch {
-            self.next_epoch = next_epoch;
+        // If the jump reached or crossed the boundary, the old one is no longer
+        // ahead of the value: re-anchor one epoch past the new value and ask the
+        // caller to persist it. A smaller jump leaves the stored boundary valid.
+        if delta >= dist_to_boundary {
+            self.next_epoch = self.value.wrapping_add(self.epoch);
             Some(self.next_epoch)
         } else {
             None
@@ -609,5 +613,22 @@ mod tests {
         let before = ctr.next();
         assert_eq!(ctr.advance_by(u32::MAX), Some(ctr.persist_value()));
         assert_eq!(ctr.next(), before.wrapping_add(u32::MAX));
+    }
+
+    #[test]
+    fn advance_by_persists_only_when_it_crosses_the_boundary() {
+        let epoch = 100;
+        let mut ctr = CheckInCounter::new(5000, epoch);
+        let boundary = ctr.persist_value(); // 5100
+
+        // A jump that stays short of the boundary leaves the stored boundary
+        // valid, so no new persist is due.
+        assert_eq!(ctr.advance_by(30), None);
+        assert_eq!(ctr.next(), 5031);
+        assert_eq!(ctr.persist_value(), boundary);
+
+        // A jump that reaches or crosses the boundary re-anchors and persists.
+        assert_eq!(ctr.advance_by(80), Some(5110 + epoch)); // value 5030 -> 5110
+        assert_eq!(ctr.persist_value(), 5210);
     }
 }
