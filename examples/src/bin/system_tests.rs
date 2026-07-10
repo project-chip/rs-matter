@@ -988,10 +988,6 @@ impl GenDiag for TestEventTriggerDiag {
         if key.iter().all(|&b| b == 0) || key != self.enable_key {
             return Err(rs_matter::error::ErrorCode::ConstraintError.into());
         }
-        // The test framework encodes the target endpoint in bits 32..48 of the
-        // trigger; clear them before matching (mirrors CHIP's
-        // `clearEndpointInEventTrigger`).
-        let trigger = trigger & !(0xFFFF << 32);
         // Mirror CHIP's `SampleTestEventTriggerDelegate`: the canonical CHIP
         // test trigger code is accepted by `TC_TestEventTrigger`.
         const TC_TEST_EVENT_TRIGGER: u64 = 0xFFFF_FFFF_FFF1_0000;
@@ -1001,6 +997,22 @@ impl GenDiag for TestEventTriggerDiag {
         // top-level async task can emit the event (the trait method
         // itself is sync and has no event-emitter context).
         const SW_FAULT_TRIGGER: u64 = 0x0034_0000_0000_0000;
+
+        // The non-ICD triggers are sent verbatim, so match them on the raw value
+        // (their high bytes are significant — masking would corrupt them).
+        match trigger {
+            TC_TEST_EVENT_TRIGGER => return Ok(()),
+            SW_FAULT_TRIGGER => {
+                SW_FAULT_NOTIFY.notify();
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        // The ICD triggers (only) carry the target endpoint in bits 32..48
+        // (`send_test_event_triggers`); clear them before matching, mirroring
+        // CHIP's `clearEndpointInEventTrigger`.
+        let trigger = trigger & !(0xFFFF << 32);
         // ICD Management "add/remove active-mode requirement" triggers
         // (`TC_ICDM_3_1`). rs-matter is not a real ICD that idles, so these are
         // accepted as no-ops — the test only checks the command succeeds.
@@ -1014,7 +1026,6 @@ impl GenDiag for TestEventTriggerDiag {
         // so this is a no-op the test only expects to succeed.
         const ICD_FORCE_MAX_CHECK_IN_BACKOFF: u64 = 0x0046_0000_0000_0005;
         match trigger {
-            TC_TEST_EVENT_TRIGGER => Ok(()),
             ICD_ADD_ACTIVE_MODE_REQ
             | ICD_REMOVE_ACTIVE_MODE_REQ
             | ICD_FORCE_MAX_CHECK_IN_BACKOFF => Ok(()),
@@ -1028,10 +1039,6 @@ impl GenDiag for TestEventTriggerDiag {
                 if self.icd.invalidate_counter(u32::MAX) {
                     ICD_COUNTER_PERSIST_NOTIFY.notify();
                 }
-                Ok(())
-            }
-            SW_FAULT_TRIGGER => {
-                SW_FAULT_NOTIFY.notify();
                 Ok(())
             }
             _ => Err(rs_matter::error::ErrorCode::InvalidCommand.into()),
