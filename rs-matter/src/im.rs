@@ -1102,7 +1102,11 @@ where
                                 state.sessions.remove(id);
                             }
                         });
-                        rctx.set_keep();
+
+                        // Keep the subscription to retry, but do NOT advance its
+                        // watermarks: the changes/events this report was carrying
+                        // never reached the subscriber and must be re-sent.
+                        rctx.set_keep_retry();
                     }
                 }
             }

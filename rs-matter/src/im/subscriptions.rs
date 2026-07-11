@@ -439,12 +439,12 @@ impl<const N: usize> Subscriptions<N> {
 
     /// Persist the whole subscription table to `kv`, one record per key.
     ///
-    /// Each subscription is written under its own key (`PERSISTENT_SUBSCRIPTIONS_START
-    /// + slot`) so that no single value grows beyond one subscribe request, and any
-    /// keys past the current table length are removed. Rewriting the full range keeps
-    /// the on-disk set an exact mirror of the live table without a per-subscription
-    /// slot allocator; subscriptions change rarely, so the write amplification is
-    /// negligible.
+    /// Each subscription is written under its own key
+    /// (`PERSISTENT_SUBSCRIPTIONS_START + slot`) so that no single value grows
+    /// beyond one subscribe request, and any keys past the current table length
+    /// are removed. Rewriting the full range keeps the on-disk set an exact
+    /// mirror of the live table without a per-subscription slot allocator;
+    /// subscriptions change rarely, so the write amplification is negligible.
     ///
     /// Persistence is best-effort and spec-optional: a subscription whose record does
     /// not fit in `buf` is simply skipped (logged), not treated as an error.
@@ -1587,6 +1587,25 @@ where
     pub fn set_keep(&mut self) {
         self.keep = true;
     }
+
+    /// Keep the subscription in the table after a *failed* connection to the peer, so it retries,
+    /// but WITHOUT advancing its watermarks.
+    ///
+    /// [`Self::set_keep`] is only correct after a delivered report: `report()`
+    /// captured the current change/event watermarks into the context as "what this
+    /// report covers", and [`report_complete`](Subscriptions::report_complete)
+    /// commits them onto the subscription. If the report never reached the
+    /// subscriber, committing those watermarks would mark the still-unsent changes
+    /// and events as seen — they would then never be reported. This restores the
+    /// watermarks to the subscription's last actually-reported values so the
+    /// pending data is re-attempted on the next report.
+    pub fn set_keep_retry(&mut self) {
+        let sub = self.subscription();
+        let (attr, event) = (sub.max_seen_attr_change_id, sub.max_seen_event_number);
+        self.next_max_seen_attr_change_id = attr;
+        self.next_max_seen_event_number = event;
+        self.keep = true;
+    }
 }
 
 impl<'a, 's, B, const N: usize> Drop for ReportContext<'a, 's, B, N>
@@ -2274,6 +2293,82 @@ mod tests {
         // change, so only the new (1, 2, 4) is pending.
         assert!(!rctx.should_report_attr(1, 2, 3));
         assert!(rctx.should_report_attr(1, 2, 4));
+    }
+
+    /// A failed report (`set_failed`) keeps the subscription but must NOT advance
+    /// its watermark, so the changes it was carrying stay pending and are
+    /// re-attempted on the next report. Contrast with `set_keep`, which commits
+    /// the advanced watermark (correct only after a *delivered* report).
+    #[test]
+    fn failed_report_preserves_pending_changes() {
+        let subs: Subscriptions<2> = Subscriptions::new();
+        let pool = TestPool::<3>::new();
+        let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+
+        // Prime the subscription (delivered) so it is a normal, non-priming entry.
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 1, 60);
+            rctx.set_keep();
+        }
+
+        // A change becomes pending.
+        subs.notify_attr_changed(1, 2, 3);
+
+        let later = now + Duration::from_secs(2);
+
+        // First report attempt FAILS: the report was carrying (1, 2, 3) but never
+        // reached the subscriber.
+        {
+            let mut rctx = subs.report(later, 0, &subs_bufs).unwrap();
+            assert!(rctx.should_report_attr(1, 2, 3), "change is pending");
+            rctx.set_keep_retry();
+        }
+
+        // Because the failed report did not advance the watermark, (1, 2, 3) is
+        // STILL pending on the next report — no silent data loss.
+        let later2 = later + Duration::from_secs(2);
+        {
+            let rctx = subs.report(later2, 0, &subs_bufs).unwrap();
+            assert!(
+                rctx.should_report_attr(1, 2, 3),
+                "a failed report must not consume the pending change"
+            );
+        }
+    }
+
+    /// The success counterpart: `set_keep` after a delivered report DOES advance
+    /// the watermark, so the same change is not reported again.
+    #[test]
+    fn delivered_report_consumes_pending_changes() {
+        let subs: Subscriptions<2> = Subscriptions::new();
+        let pool = TestPool::<3>::new();
+        let subs_bufs: SubscriptionsBuffers<TestPool<3>, 2> = SubscriptionsBuffers::new();
+
+        let now = Instant::now();
+
+        {
+            let mut rctx = add_sub(&subs, &subs_bufs, &pool, now, 1, 10, 1, 60);
+            rctx.set_keep();
+        }
+
+        subs.notify_attr_changed(1, 2, 3);
+
+        let later = now + Duration::from_secs(2);
+        {
+            let mut rctx = subs.report(later, 0, &subs_bufs).unwrap();
+            assert!(rctx.should_report_attr(1, 2, 3));
+            rctx.set_keep(); // delivered
+        }
+
+        // The change was consumed by the delivered report and the liveness
+        // deadline is not yet reached, so there is nothing left to report.
+        let later2 = later + Duration::from_secs(2);
+        assert!(
+            subs.report(later2, 0, &subs_bufs).is_none(),
+            "a delivered report consumes the pending change"
+        );
     }
 
     // The following tests cover the public API of `Subscriptions` /
