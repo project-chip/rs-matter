@@ -951,18 +951,20 @@ where
                                     return Some("fabric removed");
                                 }
 
-                                // The session the subscription was accepted on was
-                                // torn down (eviction, explicit close, peer-side
-                                // CASE re-handshake, ...). Per Matter spec
-                                // subscriptions are scoped to the session they
-                                // were established on, and the publisher can no
-                                // longer route reports to the subscriber. Drop
-                                // immediately rather than waiting for `max_int`
-                                // to expire and time-out the send.
-                                if state.sessions.get(sub.session_id()).is_none() {
-                                    return Some("session removed");
-                                }
-
+                                // A subscription is NOT dropped merely because the
+                                // session it was accepted on is gone (eviction,
+                                // peer-side re-handshake, unreachable peer, ...):
+                                // reports route by `(fabric, node)` and a fresh
+                                // session is established on demand. It ends only
+                                // through its own lifecycle — `max_int` liveness
+                                // timeout, or the subscriber answering a report
+                                // with a non-success status.
+                                //
+                                // TODO (persistent subscriptions): a session gone
+                                // via a *received Close* is a deliberate teardown;
+                                // once subscriptions are persisted, that case must
+                                // purge the persisted record (distinct from the
+                                // die-and-resume case).
                                 None
                             })
                         });
@@ -990,11 +992,35 @@ where
                 match result {
                     Ok(true) => rctx.set_keep(),
                     Ok(false) => (),
-                    Err(e) => error!(
-                        "Error processing subscription {:?}: {:?}",
-                        rctx.subscription().ids(),
-                        e
-                    ),
+                    Err(e) => {
+                        // Reporting failed — typically because the session to the
+                        // subscriber died (peer unreachable, MRP retransmissions
+                        // exhausted). Drop that session so the next report to this
+                        // peer establishes a fresh one, and keep the subscription
+                        // so it retries rather than being torn down.
+                        let (fab_idx, peer_node_id) = {
+                            let ids = rctx.subscription().ids();
+                            (ids.fab_idx, ids.peer_node_id)
+                        };
+
+                        error!(
+                            "Error processing subscription (fab {}, node {:x}): {:?}; dropping its session, will retry",
+                            fab_idx.get(),
+                            peer_node_id,
+                            e
+                        );
+
+                        matter.with_state(|state| {
+                            if let Some(id) = state
+                                .sessions
+                                .get_for_node(fab_idx, peer_node_id)
+                                .map(|s| s.id)
+                            {
+                                state.sessions.remove(id);
+                            }
+                        });
+                        rctx.set_keep();
+                    }
                 }
             }
 
@@ -1021,8 +1047,13 @@ where
         matter: &Matter<'_>,
         rctx: &mut ReportContext<'_, '_, B, NS>,
     ) -> Result<bool, Error> {
+        // Route the report by the subscriber's `(fabric, node)` rather than a
+        // pinned session id: reuse the best live session to that peer, or (if
+        // the original one is gone) establish a fresh one. A subscription is
+        // identified by its id, not bound to the session it was accepted on.
+        let ids = rctx.subscription().ids();
         let mut exchange =
-            Exchange::initiate_for_session(matter, rctx.subscription().session_id())?;
+            Exchange::initiate(matter, self.crypto(), ids.fab_idx, ids.peer_node_id).await?;
 
         if let Some(mut tx) = self.buffers.get().await {
             // Always safe as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, which is bigger than `MAX_EXCHANGE_TX_BUF_SIZE`
