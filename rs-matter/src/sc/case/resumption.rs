@@ -30,7 +30,7 @@ use core::num::NonZeroU8;
 use crate::crypto::CanonPkcSharedSecret;
 use crate::error::Error;
 use crate::fabric::MAX_FABRICS;
-use crate::persist::{KvBlobStore, CASE_RESUMPTION_KEY};
+use crate::persist::{KvBlobStore, CASE_RESUMPTION_KEY, KV_BUF_SIZE};
 use crate::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
 use crate::transport::session::{NocCatIds, MAX_SESSIONS};
 use crate::utils::init::{init, Init};
@@ -38,23 +38,50 @@ use crate::utils::storage::{Vec, WriteBuf};
 
 use super::casep::CaseResumptionId;
 
-const fn min3(a: usize, b: usize, c: usize) -> usize {
-    let ab = if a < b { a } else { b };
-    if ab < c {
-        ab
+/// `usize::min` shim usable in `const` context (`Ord::min` is not yet
+/// const-stable; tracking rust-lang/rust#143874).
+const fn min(a: usize, b: usize) -> usize {
+    if a < b {
+        a
     } else {
-        c
+        b
     }
 }
+
+/// Defensive over-estimate of the TLV-encoded size of a single
+/// [`ResumableSession`] record. The real worst case is ~88 B; the
+/// extra headroom absorbs any future added tag or padding across
+/// backends and keeps [`MAX_RESUMPTION_RECORDS`] a compile-time
+/// constant without needing to introspect the derived TLV size.
+const RESUMPTION_RECORD_TLV_MAX: usize = 128;
+
+/// TLV overhead of the outer [`ResumableSessions`] envelope (an
+/// anonymous-tagged array header + footer). Small; the constant is
+/// generous.
+const RESUMPTION_ENVELOPE_TLV_MAX: usize = 16;
+
+/// How many records fit into the persistence scratch buffer, using the
+/// defensive per-record estimate above.
+const KV_BUDGET_CAP: usize = if KV_BUF_SIZE > RESUMPTION_ENVELOPE_TLV_MAX {
+    (KV_BUF_SIZE - RESUMPTION_ENVELOPE_TLV_MAX) / RESUMPTION_RECORD_TLV_MAX
+} else {
+    0
+};
 
 /// Capacity of the CASE session resumption cache.
 ///
 /// Matches the connectedhomeip default (`3 × MAX_FABRICS`), further
-/// capped by [`MAX_SESSIONS`] (never larger than the live-session
-/// pool) and by an absolute ceiling of 16 (so a large `max-fabrics-*`
-/// build cannot blow past the default 4 KiB KV buffer with the
-/// resumption blob alone).
-pub const MAX_RESUMPTION_RECORDS: usize = min3(3 * MAX_FABRICS, MAX_SESSIONS, 16);
+/// capped by:
+/// - [`MAX_SESSIONS`] — never larger than the live-session pool,
+/// - an absolute ceiling of 16 — belt-and-suspenders against unusual
+///   feature combos,
+/// - [`KV_BUDGET_CAP`] — so the serialized blob always fits into the
+///   [`KV_BUF_SIZE`](crate::persist::KV_BUF_SIZE) chosen by the
+///   `kv-blob-store-*` Cargo feature. Small MCUs building with
+///   `kv-blob-store-1024` therefore cap out at ~7 records regardless
+///   of `MAX_FABRICS`.
+pub const MAX_RESUMPTION_RECORDS: usize =
+    min(min(min(3 * MAX_FABRICS, MAX_SESSIONS), 16), KV_BUDGET_CAP);
 
 /// A single peer's CASE session resumption state.
 ///
@@ -211,6 +238,21 @@ impl ResumableSessions {
     /// Load the cache from `store` under [`CASE_RESUMPTION_KEY`].
     /// Missing key is not an error — the cache simply stays empty
     /// (first boot, or after [`Self::reset_persist`]).
+    ///
+    /// A blob that fails to parse is also **not** propagated as an
+    /// error. Because the resumption cache is a soft (rebuildable)
+    /// cache — losing it costs only one full CASE handshake per peer
+    /// the next time they connect — we prefer to keep the node
+    /// bootable over the theoretical safety of aborting the load.
+    /// The unparseable blob is dropped from storage so the failure
+    /// isn't sticky, and a warning is logged. Realistic causes:
+    ///
+    /// - A firmware update lowered `MAX_RESUMPTION_RECORDS` (feature
+    ///   flag change) below what's persisted, so
+    ///   `Vec::<_, N>::from_tlv` rejects "too many elements".
+    /// - The `ResumableSession` layout gains or loses a required
+    ///   field in a future release.
+    /// - The KV backend served corrupted bytes.
     pub fn load_persist<S: KvBlobStore>(
         &mut self,
         mut store: S,
@@ -218,20 +260,37 @@ impl ResumableSessions {
     ) -> Result<(), Error> {
         self.reset();
 
-        let Some(data) = store.load(CASE_RESUMPTION_KEY, buf)? else {
-            return Ok(());
+        // Scope-limit the borrow of `buf` (via `data`) so `buf` is
+        // freely reborrowable for the drop-on-error path below.
+        let parse_result: Result<Vec<ResumableSession, MAX_RESUMPTION_RECORDS>, Error> = {
+            let Some(data) = store.load(CASE_RESUMPTION_KEY, buf)? else {
+                return Ok(());
+            };
+            Vec::<ResumableSession, MAX_RESUMPTION_RECORDS>::from_tlv(&TLVElement::new(data))
         };
 
-        let loaded =
-            Vec::<ResumableSession, MAX_RESUMPTION_RECORDS>::from_tlv(&TLVElement::new(data))?;
-        self.records = loaded;
-
-        info!(
-            "Loaded {} CASE session resumption record(s) from storage",
-            self.records.len()
-        );
-
-        Ok(())
+        match parse_result {
+            Ok(records) => {
+                self.records = records;
+                info!(
+                    "Loaded {} CASE session resumption record(s) from storage",
+                    self.records.len()
+                );
+                Ok(())
+            }
+            Err(e) => {
+                warn!(
+                    "CASE session resumption cache is unparseable ({}); \
+                     dropping the persisted blob so the node can still boot",
+                    e
+                );
+                // Best-effort remove — if it also errors we've still
+                // logged the underlying cause. Next successful
+                // `store_persist` will overwrite the blob anyway.
+                let _ = store.remove(CASE_RESUMPTION_KEY, buf);
+                Ok(())
+            }
+        }
     }
 
     /// Serialise the current cache to `store` under
