@@ -29,7 +29,7 @@ use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::{DataModel, Privilege};
 use rs_matter::error::Error;
 use rs_matter::im::{InteractionModel, InteractionModelState};
-use rs_matter::persist::DummyKvBlobStore;
+use rs_matter::persist::{DummyKvBlobStore, KvBlobStore};
 use rs_matter::respond::{ExchangeHandler, Responder};
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::exchange::MatterBuffers;
@@ -164,6 +164,30 @@ impl<C: Crypto> E2eRunner<C> {
     where
         H: DataModel,
     {
+        self.run_with(handler, &self.state, DummyKvBlobStore, false)
+            .await
+    }
+
+    /// Like [`run`](Self::run), but drives the remote (tested) data model over
+    /// an explicit [`InteractionModelState`] and key-value store, and optionally
+    /// resumes persisted subscriptions before serving traffic.
+    ///
+    /// This is what makes a reboot testable: run once to establish + persist a
+    /// subscription (into a retained `kv`), then run again with a *fresh* state
+    /// and `resume = true` over the *same* `kv` to re-hydrate it — the moral
+    /// equivalent of the device restarting with its storage intact.
+    pub async fn run_with<H, S, K, const NS: usize, const NE: usize>(
+        &self,
+        handler: H,
+        state: &InteractionModelState<S, NS, NE>,
+        kv_store: K,
+        resume: bool,
+    ) -> Result<(), Error>
+    where
+        H: DataModel,
+        S: rs_matter::dm::clusters::net_comm::Networks,
+        K: KvBlobStore,
+    {
         self.init()?;
 
         let mut buf1 = [heapless::Vec::new(); 1];
@@ -177,7 +201,7 @@ impl<C: Crypto> E2eRunner<C> {
 
         let matter_client = &self.matter_client;
 
-        let kv = self.matter.kv(DummyKvBlobStore);
+        let kv = self.matter.kv(kv_store);
 
         let dm = InteractionModel::new(
             &self.matter,
@@ -185,8 +209,12 @@ impl<C: Crypto> E2eRunner<C> {
             &self.buffers,
             handler,
             &kv,
-            &self.state,
+            state,
         );
+
+        if resume {
+            dm.resume_subscriptions()?;
+        }
 
         let responder = Responder::new_default(&dm);
 

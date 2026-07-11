@@ -1433,12 +1433,17 @@ impl Sessions {
         // limits) over UDP when both are available for the same peer. This
         // is required e.g. for the WebRTC Transport Provider's outbound
         // `Answer(sdp)` invoke whose payload can easily exceed a UDP MTU.
+        //
+        // Among sessions of the same transport, prefer the most recently used
+        // one: when several CASE sessions to the same peer exist, the freshest
+        // is the one the peer is actually communicating on, so reports and other
+        // outbound traffic reach the session it is listening on.
         let idx = self
             .sessions
             .iter()
             .enumerate()
             .filter(|(_, s)| !s.expired && s.is_for_node(fabric_idx, peer_node_id))
-            .max_by_key(|(_, s)| i32::from(s.peer_addr.is_tcp()))
+            .max_by_key(|(_, s)| (s.peer_addr.is_tcp(), s.last_use))
             .map(|(i, _)| i)?;
 
         let session = &mut self.sessions[idx];

@@ -22,10 +22,51 @@ pub mod mdns;
 use core::future::Future;
 use core::pin::pin;
 
+use std::collections::HashMap;
+
 use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
 
 use rs_matter::error::Error;
+use rs_matter::persist::KvBlobStore;
+
+/// A simple in-memory multi-key [`KvBlobStore`] for tests.
+///
+/// Unlike [`rs_matter::persist::DummyKvBlobStore`] it actually retains what it
+/// stores, so a value written by one data-model incarnation can be read back by
+/// a later one — the moral equivalent of on-disk state surviving a reboot.
+#[derive(Default, Clone)]
+#[allow(unused)]
+pub struct MemKvBlobStore {
+    blobs: std::rc::Rc<std::cell::RefCell<HashMap<u16, std::vec::Vec<u8>>>>,
+}
+
+#[allow(unused)]
+impl MemKvBlobStore {
+    /// Whether a value is stored under `key`.
+    pub fn contains_key(&self, key: u16) -> bool {
+        self.blobs.borrow().contains_key(&key)
+    }
+}
+
+impl KvBlobStore for MemKvBlobStore {
+    fn load<'a>(&mut self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+        Ok(self.blobs.borrow().get(&key).map(|v| {
+            buf[..v.len()].copy_from_slice(v);
+            &buf[..v.len()]
+        }))
+    }
+
+    fn store(&mut self, key: u16, data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
+        self.blobs.borrow_mut().insert(key, data.to_vec());
+        Ok(())
+    }
+
+    fn remove(&mut self, key: u16, _buf: &mut [u8]) -> Result<(), Error> {
+        self.blobs.borrow_mut().remove(&key);
+        Ok(())
+    }
+}
 
 /// Drives a device future and a controller future concurrently.
 ///

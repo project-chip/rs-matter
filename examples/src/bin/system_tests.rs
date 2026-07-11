@@ -182,6 +182,10 @@ fn main() -> Result<(), Error> {
     let mut state: EthInteractionModelState =
         EthInteractionModelState::new(EthNetwork::new_default());
 
+    // Opt in to persistent subscriptions so a subscriber keeps its subscription
+    // across a reboot (persistence is off by default).
+    state.set_persist_subscriptions(true);
+
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
 
@@ -328,6 +332,12 @@ fn main() -> Result<(), Error> {
         &kv,
         &state,
     );
+
+    // Re-hydrate any persisted subscriptions into the reporter's table, so a
+    // subscriber that had a subscription before this reboot keeps receiving
+    // reports (over a session re-established on demand) instead of having to
+    // notice the loss and re-subscribe.
+    im.resume_subscriptions()?;
 
     // Responder = the default IM + Secure Channel handler chain, plus a BDX
     // protocol handler for the OTA Provider role. BDX is inert without OTA
