@@ -868,9 +868,10 @@ pub(super) fn verify_resume_mic<C: Crypto>(
 
 /// Derive the three resumption session keys (`I2RKey || R2IKey ||
 /// AttestationChallenge`) from the long-lived `shared_secret`,
-/// `initiator_random` and the **new** `resumption_id`. Note the info
-/// string and salt differ from the regular `compute_session_keys` used
-/// at the end of a full handshake.
+/// `initiator_random` and the Sigma1 `resumption_id` (the current
+/// pre-rotation ID). Note the info string and salt differ from the
+/// regular `compute_session_keys` used at the end of a full
+/// handshake.
 pub(super) fn compute_resumption_session_keys<C: Crypto>(
     crypto: &C,
     shared_secret: crate::crypto::CanonPkcSharedSecretRef<'_>,

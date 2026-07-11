@@ -632,11 +632,13 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
         // ---- Derive resumption session keys. --------------------------
         let mut session_keys = MaybeUninit::<CaseSessionKeys>::uninit();
         let session_keys = session_keys.init_with(CaseSessionKeys::init());
+        // Derive session traffic keys from the resumption ID we sent in
+        // Sigma1 (the current ID), not from Sigma2_Resume's rotated ID.
         compute_resumption_session_keys(
             crypto,
             record.shared_secret.reference(),
             initiator_random.reference(),
-            new_rid.reference(),
+            record.resumption_id.reference(),
             session_keys,
         )?;
 
