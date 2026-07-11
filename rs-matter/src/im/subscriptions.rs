@@ -535,12 +535,22 @@ impl<const N: usize> Subscriptions<N> {
 
             match added {
                 Some(mut rctx) => {
-                    // Commit it into the table and keep it. `add` already stamped
-                    // the report context's `reported_at` with `now`, so on commit
-                    // the subscription is a live, already-reported (non-priming)
-                    // entry: the liveness clock runs from `now` and only future
-                    // changes are reported — no priming report is emitted here (no
-                    // session exists yet at boot).
+                    // Commit it into the table as an un-primed subscription so the
+                    // reporter sends a full priming report to the subscriber right
+                    // away (establishing a session on demand), rather than staying
+                    // silent until the max-interval liveness point.
+                    //
+                    // This is essential, not cosmetic: the *subscriber* measures its
+                    // own liveness timeout from the last report IT received, not from
+                    // our reboot. If we waited toward our own max-interval deadline,
+                    // the subscriber — whose clock has been running the whole time we
+                    // were down — could already have torn the subscription down. A
+                    // prompt priming report resets the subscriber's liveness clock and
+                    // re-syncs the state it missed while we were away.
+                    //
+                    // Leaving `reported_at` at the `Instant::MAX` priming sentinel
+                    // (rather than stamping it with `now`) is what marks it un-primed.
+                    rctx.next_reported_at = Instant::MAX;
                     rctx.set_keep();
                     info!(
                         "Resumed persisted subscription {:?}",
@@ -3034,6 +3044,19 @@ mod tests {
             assert_eq!(b.ids.fab_idx, fab(2));
             assert_eq!(b.min_int_secs, 0);
             assert_eq!(b.max_int_secs, 120);
+
+            // Resumed subscriptions must be un-primed so the reporter sends a
+            // prompt priming report (resetting the subscriber's own liveness
+            // clock before it can time the subscription out), NOT wait toward
+            // our max-interval deadline.
+            for sub in s.subscriptions.iter() {
+                assert!(
+                    sub.is_report_due(now),
+                    "resumed sub {:?} should be immediately report-due (primed)",
+                    sub.ids()
+                );
+                assert!(sub.is_report_due(now + Duration::from_secs(1)));
+            }
         });
 
         // ...and the raw request bytes survived (they live in the parallel buffer
