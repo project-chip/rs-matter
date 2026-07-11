@@ -19,11 +19,14 @@ use crate::crypto::{self, CanonAeadKey, CanonAeadKeyRef, Crypto, Kdf};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, ToTLV};
 use crate::utils::init::{init, Init};
+#[cfg(feature = "groups")]
 use crate::utils::storage::Vec;
 
+#[cfg(feature = "groups")]
 pub const GROUP_MAX_EPOCH_KEYS: usize = 3;
 
 /// A stored group key set entry.
+#[cfg(feature = "groups")]
 #[derive(Debug, Clone, Default, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GroupEpochKeyEntry {
@@ -32,6 +35,7 @@ pub struct GroupEpochKeyEntry {
 }
 
 /// A stored group key set entry.
+#[cfg(feature = "groups")]
 #[derive(Debug, Clone, Default, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GroupKeySet {

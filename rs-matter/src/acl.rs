@@ -409,22 +409,34 @@ impl<'a> Accessor<'a> {
             return true;
         }
 
-        let group_id = self.subjects.0[0] as u16;
+        // Group access is only reachable with multicast group support; without
+        // it there are no group sessions, so `auth_mode` is never `Group` and
+        // this point is unreachable.
+        #[cfg(feature = "groups")]
+        {
+            let group_id = self.subjects.0[0] as u16;
 
-        let Some(fab_idx) = core::num::NonZeroU8::new(self.fab_idx) else {
-            return false;
-        };
-
-        self.matter.with_state(|state| {
-            let Some(fabric) = state.fabrics.get(fab_idx) else {
+            let Some(fab_idx) = core::num::NonZeroU8::new(self.fab_idx) else {
                 return false;
             };
 
-            fabric
-                .groups()
-                .get(group_id)
-                .is_some_and(|e| e.endpoints.contains(&endpoint_id))
-        })
+            self.matter.with_state(|state| {
+                let Some(fabric) = state.fabrics.get(fab_idx) else {
+                    return false;
+                };
+
+                fabric
+                    .groups()
+                    .get(group_id)
+                    .is_some_and(|e| e.endpoints.contains(&endpoint_id))
+            })
+        }
+
+        #[cfg(not(feature = "groups"))]
+        {
+            let _ = endpoint_id;
+            true
+        }
     }
 
     /// Return the Operational Node ID of the accessor, if any

@@ -696,14 +696,26 @@ where
         if group_id == 0 {
             return Ok(true);
         }
-        ctx.exchange().with_state(|state| {
-            let fabric = state.fabrics.fabric(fab_idx)?;
-            Ok(fabric
-                .groups()
-                .get(group_id)
-                .map(|g| g.endpoints.contains(&endpoint_id))
-                .unwrap_or(false))
-        })
+
+        #[cfg(feature = "groups")]
+        {
+            ctx.exchange().with_state(|state| {
+                let fabric = state.fabrics.fabric(fab_idx)?;
+                Ok(fabric
+                    .groups()
+                    .get(group_id)
+                    .map(|g| g.endpoints.contains(&endpoint_id))
+                    .unwrap_or(false))
+            })
+        }
+
+        // Without multicast group support a non-zero group can never be in the
+        // (empty) group table.
+        #[cfg(not(feature = "groups"))]
+        {
+            let _ = (ctx, fab_idx, endpoint_id);
+            Ok(false)
+        }
     }
 
     /// Stamp `(endpoint, group, scene)` as the recalled scene for

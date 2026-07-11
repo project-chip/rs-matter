@@ -17,19 +17,25 @@
 
 //! This module contains the implementation of the Group Key Management cluster and its handler.
 
+#[cfg(feature = "groups")]
 use core::num::NonZeroU8;
 
+#[cfg(feature = "groups")]
 use crate::crypto::AEAD_CANON_KEY_LEN;
 use crate::dm::{
     ArrayAttributeRead, ArrayAttributeWrite, Cluster, Dataver, InvokeContext, ReadContext,
     WriteContext,
 };
 use crate::error::{Error, ErrorCode};
+#[cfg(feature = "groups")]
 use crate::fabric::{
     FabricPersist, GroupKeyMapping, MAX_GROUPS_PER_FABRIC, MAX_GROUP_KEYS_PER_FABRIC,
 };
+#[cfg(feature = "groups")]
 use crate::group_keys::{GroupEpochKeyEntry, GroupKeySet};
-use crate::tlv::{Nullable, Octets, TLVArray, TLVBuilderParent};
+#[cfg(feature = "groups")]
+use crate::tlv::{Nullable, Octets};
+use crate::tlv::{TLVArray, TLVBuilderParent};
 use crate::with;
 
 pub use crate::dm::clusters::decl::group_key_management::*;
@@ -53,6 +59,9 @@ impl GrpKeyMgmtHandler {
     }
 }
 
+/// The full Group Key Management implementation, backing multicast group keys
+/// and the group→keyset map on top of the fabric's group state.
+#[cfg(feature = "groups")]
 impl ClusterHandler for GrpKeyMgmtHandler {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
 
@@ -540,5 +549,100 @@ impl ClusterHandler for GrpKeyMgmtHandler {
 
             ids.end()?.end()
         })
+    }
+}
+
+/// A spec-minimal Group Key Management implementation for builds without the
+/// `groups` feature. The Root Node device type mandates this cluster, so it is
+/// always present, but with no multicast support it stores no group keys or
+/// mappings: reads return empty, group-key writes/removes are accepted as
+/// no-ops, and `KeySetRead` reports not-found. The IPK (key set 0) is delivered
+/// out of band via `AddNOC`, so commissioning and operation are unaffected.
+#[cfg(not(feature = "groups"))]
+impl ClusterHandler for GrpKeyMgmtHandler {
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
+
+    fn dataver(&self) -> u32 {
+        self.dataver.get()
+    }
+
+    fn dataver_changed(&self) {
+        self.dataver.changed();
+    }
+
+    fn group_key_map<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl ReadContext,
+        builder: ArrayAttributeRead<GroupKeyMapStructArrayBuilder<P>, GroupKeyMapStructBuilder<P>>,
+    ) -> Result<P, Error> {
+        match builder {
+            ArrayAttributeRead::ReadAll(builder) => builder.end(),
+            ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
+        }
+    }
+
+    fn group_table<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl ReadContext,
+        builder: ArrayAttributeRead<
+            GroupInfoMapStructArrayBuilder<P>,
+            GroupInfoMapStructBuilder<P>,
+        >,
+    ) -> Result<P, Error> {
+        match builder {
+            ArrayAttributeRead::ReadAll(builder) => builder.end(),
+            ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
+        }
+    }
+
+    fn max_groups_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(1)
+    }
+
+    fn max_group_keys_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(1)
+    }
+
+    fn set_group_key_map(
+        &self,
+        _ctx: impl WriteContext,
+        _value: ArrayAttributeWrite<TLVArray<'_, GroupKeyMapStruct<'_>>, GroupKeyMapStruct<'_>>,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn handle_key_set_write(
+        &self,
+        _ctx: impl InvokeContext,
+        _request: KeySetWriteRequest<'_>,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn handle_key_set_read<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        _request: KeySetReadRequest<'_>,
+        _response: KeySetReadResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        Err(ErrorCode::NotFound.into())
+    }
+
+    fn handle_key_set_remove(
+        &self,
+        _ctx: impl InvokeContext,
+        _request: KeySetRemoveRequest<'_>,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn handle_key_set_read_all_indices<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        response: KeySetReadAllIndicesResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        response.group_key_set_i_ds()?.end()?.end()
     }
 }

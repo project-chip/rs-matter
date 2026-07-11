@@ -36,6 +36,7 @@ use pase::PaseResponder;
 pub mod busy;
 pub mod case;
 pub mod checkin;
+#[cfg(feature = "groups")]
 pub mod mcsp;
 pub mod pase;
 
@@ -325,6 +326,7 @@ impl<'a, C: Crypto, H: AsyncScHandler> SecureChannel<'a, C, H> {
                     .handle(exchange)
                     .await
             }
+            #[cfg(feature = "groups")]
             OpCode::MsgCounterSyncReq => {
                 // The receive path has already checked this landed on a
                 // group session with a destination matching one of our

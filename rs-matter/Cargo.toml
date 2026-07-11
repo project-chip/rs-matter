@@ -141,6 +141,7 @@ log = ["dep:log", "embassy-time/log"]
 log-tlv-payload = [] # Enable `debug`-level logging of TLV payloads. This is very verbose and should only be used for debugging.
 log-mrp = [] # Promote MRP-diagnostic logs from `debug` to `warn` so they are visible under a typical `info`-level filter.
 large-buffers = [] # TCP support
+groups = [] # Multicast groups support
 
 [dependencies]
 rs-matter-macros = { path = "../rs-matter-macros", version = "0.2.0" }

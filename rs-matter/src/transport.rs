@@ -23,7 +23,9 @@ use core::pin::pin;
 
 use domain::base::name::ToLabelIter;
 
-use embassy_futures::select::{select, select3, select4, Either};
+#[cfg(feature = "groups")]
+use embassy_futures::select::select4;
+use embassy_futures::select::{select, select3, Either};
 use embassy_time::{Duration, Timer};
 
 use rand_core::RngCore;
@@ -32,6 +34,7 @@ use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::dm::NodeId;
 use crate::error::{Error, ErrorCode};
+#[cfg(feature = "groups")]
 use crate::fabric::{MAX_FABRICS, MAX_GROUPS_PER_FABRIC};
 use crate::fmt::Bytes;
 use crate::sc::case::CaseInitiator;
@@ -46,6 +49,7 @@ use crate::transport::network::mdns::{
 };
 use crate::transport::network::{MatterRemoteService, NetworkMulticast};
 use crate::utils::init::{init, Init};
+#[cfg(feature = "groups")]
 use crate::utils::ipv6::compute_group_multicast_addr;
 use crate::utils::select::Coalesce;
 use crate::utils::storage::Vec;
@@ -74,7 +78,14 @@ pub mod session;
 pub const MATTER_SOCKET_BIND_ADDR: SocketAddr =
     SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MATTER_PORT, 0, 0));
 
+#[cfg(feature = "groups")]
 const MAX_GROUP_ADDRS: usize = MAX_FABRICS * MAX_GROUPS_PER_FABRIC;
+/// Without multicast group support no group addresses are ever joined, so the
+/// join-list is zero-capacity. Keeping the field (rather than gating it) avoids
+/// splitting the in-place `Transport` initializer, and a `Vec<_, 0>` costs no
+/// RAM.
+#[cfg(not(feature = "groups"))]
+const MAX_GROUP_ADDRS: usize = 0;
 
 const ACCEPT_TIMEOUT_MS: u64 = 1000;
 
@@ -107,6 +118,7 @@ pub struct Transport {
     // TODO XXX FIXME: Needs multiple wakers for work-stealing executors
     tx: IfMutex<Packet<MAX_TX_BUF_SIZE>>,
     /// List of currently joined group addresses, used for managing multicast group membership.
+    /// Zero-capacity (and thus never populated) without the `groups` feature.
     group_addrs: IfMutex<Vec<Ipv6Addr, MAX_GROUP_ADDRS>>,
     /// Notification for when an exchange is dropped.
     exchange_dropped: Notification,
@@ -120,7 +132,10 @@ pub struct Transport {
     mdns_browse: Signal<MdnsBrowseState>,
     /// A notification that a session had been removed
     session_removed: Notification,
-    /// A notification that the groups have been modified
+    /// A notification that the groups have been modified.
+    /// Unused without the `groups` feature, but kept unconditionally so the
+    /// in-place `Transport` initializer needs no feature-specific variant.
+    #[cfg_attr(not(feature = "groups"), allow(dead_code))]
     groups_modified: Notification,
     /// A notification that the CASE session resumption cache has been
     /// mutated and should be re-persisted by the background persist
@@ -218,11 +233,13 @@ impl Transport {
 
     /// Notify that groups have changed (keys, key maps, or membership) and
     /// multicast registrations need updating.
+    #[cfg(feature = "groups")]
     pub(crate) fn notify_groups_changed(&self) {
         self.groups_modified.notify();
     }
 
     /// Wait until the groups have changed (see [`Transport::notify_groups_changed`]).
+    #[cfg(feature = "groups")]
     fn wait_groups_changed(&self) -> impl Future<Output = ()> + '_ {
         self.groups_modified.wait()
     }
@@ -1037,7 +1054,15 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
     }
 
     /// Run the transport runner with the given network send, receive and multicast implementations.
-    pub async fn run<S, R, M>(&mut self, send: S, recv: R, multicast: M) -> Result<(), Error>
+    ///
+    /// The `multicast` implementation is only used to manage group (multicast)
+    /// membership, so without the `groups` feature it is accepted but never used.
+    pub async fn run<S, R, M>(
+        &mut self,
+        send: S,
+        recv: R,
+        #[cfg_attr(not(feature = "groups"), allow(unused_variables))] multicast: M,
+    ) -> Result<(), Error>
     where
         S: NetworkSend,
         R: NetworkReceive,
@@ -1049,20 +1074,29 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         // C++ E2E tests rely on this log line to determine when the tested app is ready
         debug!("APP STATUS: Starting event loop");
 
-        let mut joined = self.transport().group_addrs.lock().await;
-
         let send = IfMutex::new(send);
 
         let mut rx = pin!(self.process_rx(recv, &send));
         let mut tx = pin!(self.process_tx(&send));
         let mut orphaned = pin!(self.process_orphaned());
-        let mut groups = pin!(self.process_groups(multicast, &mut joined));
 
-        select4(&mut rx, &mut tx, &mut orphaned, &mut groups)
-            .coalesce()
-            .await
+        #[cfg(feature = "groups")]
+        {
+            let mut joined = self.transport().group_addrs.lock().await;
+            let mut groups = pin!(self.process_groups(multicast, &mut joined));
+
+            select4(&mut rx, &mut tx, &mut orphaned, &mut groups)
+                .coalesce()
+                .await
+        }
+
+        #[cfg(not(feature = "groups"))]
+        {
+            select3(&mut rx, &mut tx, &mut orphaned).coalesce().await
+        }
     }
 
+    #[cfg(feature = "groups")]
     async fn process_groups<M>(
         &self,
         mut multicast: M,
@@ -1724,18 +1758,21 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                     // Session created successfully: decode, indicate packet payload slice and process further
                     return session.post_recv(&packet.header);
                 }
-            } else if packet.header.plain.is_group_session() {
-                // Group (multicast) message — derive keys on-the-fly and decrypt
-                let (session, payload_range) = state.sessions.get_or_create_for_group_rx(
-                    &self.crypto,
-                    &state.fabrics,
-                    packet,
-                    self.matter.dev_det(),
-                )?;
-                set_payload(packet, payload_range);
-
-                return session.post_recv(&packet.header);
             } else {
+                #[cfg(feature = "groups")]
+                if packet.header.plain.is_group_session() {
+                    // Group (multicast) message — derive keys on-the-fly and decrypt
+                    let (session, payload_range) = state.sessions.get_or_create_for_group_rx(
+                        &self.crypto,
+                        &state.fabrics,
+                        packet,
+                        self.matter.dev_det(),
+                    )?;
+                    set_payload(packet, payload_range);
+
+                    return session.post_recv(&packet.header);
+                }
+
                 // Encrypted unicast packet with no matching session — cannot be decoded
                 set_payload(packet, (0, 0));
             }

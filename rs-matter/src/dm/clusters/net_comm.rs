@@ -37,7 +37,6 @@ use crate::utils::sync::{DynBase, Notification};
 use crate::with;
 
 pub use crate::dm::clusters::decl::network_commissioning::*;
-pub use crate::dm::clusters::groups;
 
 /// Network type supported by the `NetCtl` implementations
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
