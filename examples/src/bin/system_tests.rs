@@ -329,6 +329,12 @@ fn main() -> Result<(), Error> {
         &state,
     );
 
+    // Re-hydrate any persisted subscriptions into the reporter's table, so a
+    // subscriber that had a subscription before this reboot keeps receiving
+    // reports (over a session re-established on demand) instead of having to
+    // notice the loss and re-subscribe.
+    im.resume_subscriptions()?;
+
     // Responder = the default IM + Secure Channel handler chain, plus a BDX
     // protocol handler for the OTA Provider role. BDX is inert without OTA
     // traffic, so this is equivalent to `DefaultResponder` for every non-OTA

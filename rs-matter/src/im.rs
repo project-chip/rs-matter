@@ -129,7 +129,10 @@ impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
     {
         // We hold `&mut self`, so borrow the pieces directly - no locking.
         let Self {
-            events, networks, ..
+            events,
+            networks,
+            subscriptions,
+            ..
         } = self;
 
         let events = events.inner_mut();
@@ -142,6 +145,9 @@ impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
             // The network store.
             networks.reset()?;
             store.remove(NETWORKS_KEY, buf)?;
+
+            // Every persisted subscription record.
+            subscriptions.reset_persist(&mut *store, buf)?;
 
             Ok(())
         })
@@ -820,7 +826,6 @@ where
             now,
             fab_idx,
             peer_node_id,
-            exchange.id().session_id(),
             min_int_secs,
             max_int_secs,
             self.state.events.watermark(),
@@ -848,6 +853,11 @@ where
             // runs on `Drop`) and then wake the reporter so it can account for
             // the new subscription's deadline.
             drop(rctx);
+
+            // Persist the (now-committed) table so this subscription can be
+            // resumed across a reboot.
+            self.persist_subscriptions();
+
             self.state.subscriptions.notification.notify();
         }
 
@@ -909,6 +919,53 @@ where
         })
     }
 
+    /// Persist the current subscription table to `kv`, one record per key.
+    ///
+    /// A no-op when the store is a dummy (no scratch buffer). Best-effort: a
+    /// persistence failure is logged but never propagated, so it cannot break
+    /// reporting — persisting subscriptions is spec-optional.
+    fn persist_subscriptions(&self) {
+        let result = self.kv.access(|store, buf| {
+            self.state
+                .subscriptions
+                .persist_all(&self.subscriptions_buffers, store, buf)
+        });
+
+        if let Err(e) = result {
+            warn!("Failed to persist subscriptions: {:?}", e);
+        }
+    }
+
+    /// Re-hydrate the subscription table from `kv` and re-arm the reporter.
+    ///
+    /// Call once at startup, after the fabrics and events state have been
+    /// loaded and before (or right as) [`InteractionModel::run`] begins. Each
+    /// persisted subscription is replayed into the table as a live (already
+    /// primed) subscription; the reporter then reaches the subscriber on demand
+    /// by establishing a session when the next report is due. No session is
+    /// opened proactively here.
+    pub fn resume_subscriptions(&self) -> Result<(), Error> {
+        let now = Instant::now();
+        let watermark = self.state.events.watermark();
+
+        self.kv.access(|store, buf| {
+            self.state.subscriptions.load_persist(
+                self.buffers,
+                &self.subscriptions_buffers,
+                store,
+                buf,
+                now,
+                watermark,
+            )
+        })?;
+
+        // Wake the reporter so it accounts for the resumed subscriptions'
+        // liveness deadlines.
+        self.state.subscriptions.notification.notify();
+
+        Ok(())
+    }
+
     /// Process all valid subscriptions in an endless loop, checking for changes
     /// and reporting them to the peers.
     async fn process_subscriptions(&self, matter: &Matter<'_>) -> Result<(), Error> {
@@ -937,46 +994,58 @@ where
 
             // First remove all expired or no-longer valid subscriptions
 
+            let mut removed_any = false;
             loop {
-                let removed_any =
-                    self.state
-                        .subscriptions
-                        .remove(&self.subscriptions_buffers, |sub| {
-                            if sub.is_expired(now) {
-                                return Some("expired");
+                let removed = self
+                    .state
+                    .subscriptions
+                    .remove(&self.subscriptions_buffers, |sub| {
+                        if sub.is_expired(now) {
+                            return Some("expired");
+                        }
+
+                        matter.with_state(|state| {
+                            if state.fabrics.get(sub.ids().fab_idx).is_none() {
+                                return Some("fabric removed");
                             }
 
-                            matter.with_state(|state| {
-                                if state.fabrics.get(sub.ids().fab_idx).is_none() {
-                                    return Some("fabric removed");
-                                }
+                            // A subscription is NOT dropped merely because the
+                            // session it was accepted on is gone (eviction,
+                            // peer-side re-handshake, unreachable peer, a received
+                            // Close, ...): reports route by `(fabric, node)` and a
+                            // fresh session is established on demand. A session
+                            // ending is a transport event, not a subscription
+                            // teardown. It ends only through its own lifecycle —
+                            // `max_int` liveness timeout (handled above as
+                            // "expired"), or the subscriber answering a report with
+                            // a non-success status (handled in the report loop, which
+                            // then purges the persisted record).
+                            None
+                        })
+                    });
 
-                                // A subscription is NOT dropped merely because the
-                                // session it was accepted on is gone (eviction,
-                                // peer-side re-handshake, unreachable peer, ...):
-                                // reports route by `(fabric, node)` and a fresh
-                                // session is established on demand. It ends only
-                                // through its own lifecycle — `max_int` liveness
-                                // timeout, or the subscriber answering a report
-                                // with a non-success status.
-                                //
-                                // TODO (persistent subscriptions): a session gone
-                                // via a *received Close* is a deliberate teardown;
-                                // once subscriptions are persisted, that case must
-                                // purge the persisted record (distinct from the
-                                // die-and-resume case).
-                                None
-                            })
-                        });
+                removed_any |= removed;
 
-                if !removed_any {
+                if !removed {
                     break;
                 }
+            }
+
+            // Keep the persisted set an exact mirror of the (now-smaller) table:
+            // any dropped subscription's record is removed so it will not be
+            // resumed on the next reboot.
+            if removed_any {
+                self.persist_subscriptions();
             }
 
             // Now report while there are subscriptions which are due for reporting
 
             let event_numbers_watermark = self.state.events.watermark();
+
+            // Track whether any subscription left the table during reporting (the
+            // subscriber answered a report with a non-success status, i.e. a
+            // deliberate unsubscribe), so its persisted record can be purged.
+            let mut dropped_any = false;
 
             loop {
                 let Some(mut rctx) = self.state.subscriptions.report(
@@ -991,7 +1060,10 @@ where
 
                 match result {
                     Ok(true) => rctx.set_keep(),
-                    Ok(false) => (),
+                    // Not kept: the subscriber tore the subscription down (or we
+                    // could not report). Dropping it from the table on `rctx`
+                    // drop means its persisted record must be purged too.
+                    Ok(false) => dropped_any = true,
                     Err(e) => {
                         // Reporting failed — typically because the session to the
                         // subscriber died (peer unreachable, MRP retransmissions
@@ -1022,6 +1094,13 @@ where
                         rctx.set_keep();
                     }
                 }
+            }
+
+            // A subscription that was torn down during reporting is now gone from
+            // the table; re-persist so the on-disk set stays an exact mirror and
+            // the torn-down subscription is not resumed on the next reboot.
+            if dropped_any {
+                self.persist_subscriptions();
             }
 
             // Periodically trim changed-attr entries that have been reported by every

@@ -127,6 +127,16 @@ pub const ICD_CHECK_IN_COUNTER_KEY: u16 = ICD_REGISTERED_CLIENTS_KEY + 1;
 /// in-memory cache diverges from what was last written.
 pub const CASE_RESUMPTION_KEY: u16 = ICD_CHECK_IN_COUNTER_KEY + 1;
 
+/// The first key of the range reserved for persisted subscriptions.
+///
+/// Each persisted subscription occupies its own key (`PERSISTENT_SUBSCRIPTIONS_START
+/// + slot`), so that a single record never grows the value beyond one subscribe
+/// request (already bounded to one RX packet, comfortably under the ~4 KiB
+/// per-value cap that some MCU key-value backends impose). The range runs up to
+/// (but not including) [`VENDOR_KEYS_START`], which leaves room for far more slots
+/// than any practical `Subscriptions<N>` table.
+pub const PERSISTENT_SUBSCRIPTIONS_START: u16 = CASE_RESUMPTION_KEY + 1;
+
 /// A trait representing a key-value BLOB storage.
 ///
 /// NOTE: For now, the trait is deliberately modeled as non-async, so that it can be used from
