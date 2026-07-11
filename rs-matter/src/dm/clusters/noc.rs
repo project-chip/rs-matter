@@ -697,8 +697,21 @@ impl ClusterHandler for NocHandler {
                 // If `expire_sess_id` is Some, the session will be expired instead of removed.
                 state.sessions.remove_for_fabric(fab_idx, expire_sess_id);
 
+                // Drop any CASE session resumption records that were
+                // scoped to this fabric so a subsequent CASE handshake
+                // to any peer that used to belong to it starts fresh.
+                state.resumption.remove_for_fabric(fab_idx);
+
                 // Notify that a session was removed
                 ctx.exchange().matter().transport().notify_session_removed();
+
+                // The resumption cache was just mutated — wake the
+                // background persist task so the on-disk copy sheds
+                // the removed fabric's records too.
+                ctx.exchange()
+                    .matter()
+                    .transport()
+                    .notify_resumption_dirty();
 
                 // Notify that our mDNS records might have changed
                 notify_mdns();

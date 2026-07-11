@@ -46,6 +46,7 @@ use crate::pairing::qr::{
 };
 use crate::pairing::DiscoveryCapabilities;
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, BASIC_INFO_KEY};
+use crate::sc::case::ResumableSessions;
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
 use crate::sc::pase::Pase;
 use crate::transport::network::MatterLocalService;
@@ -580,6 +581,7 @@ impl<'a> Matter<'a> {
                 state.fabrics.reset_persist(&mut store, buf)?;
                 state.basic_info_settings.reset_persist(&mut store, buf)?;
                 state.rtc.reset_persist(&mut store, buf)?;
+                state.resumption.reset_persist(&mut store, buf)?;
 
                 Ok::<_, Error>(())
             })
@@ -602,6 +604,7 @@ impl<'a> Matter<'a> {
                 state.fabrics.load_persist(&mut store, buf)?;
                 state.basic_info_settings.load_persist(&mut store, buf)?;
                 state.rtc.load_persist(&mut store, buf)?;
+                state.resumption.load_persist(&mut store, buf)?;
 
                 Ok::<_, Error>(())
             })
@@ -610,6 +613,60 @@ impl<'a> Matter<'a> {
         self.transport().notify_mdns_changed();
 
         Ok(())
+    }
+
+    /// Background task that flushes the CASE session resumption cache
+    /// to persistent storage whenever it is mutated.
+    ///
+    /// The task waits for a mutation event fired by the CASE handshake
+    /// paths (both full handshake and resumption), sleeps for
+    /// `min_interval` so a burst of handshakes coalesces into one
+    /// write, and then serialises the current cache to `kv` under
+    /// [`crate::persist::CASE_RESUMPTION_KEY`].
+    ///
+    /// `min_interval` therefore doubles as (a) a burst-coalescing
+    /// debounce and (b) a hard lower bound on the time between two
+    /// consecutive persists — a mutation‑storm cannot drive more than
+    /// one write per `min_interval` regardless of arrival rate. Pick
+    /// something appropriate for the underlying medium:
+    ///
+    /// - POSIX / dev builds: anything from a few hundred ms upwards is
+    ///   fine; `Duration::from_millis(500)` matches the pre‑existing
+    ///   hard‑coded behaviour.
+    /// - MCU firmwares writing to internal flash: prefer tens of
+    ///   seconds (e.g. `Duration::from_secs(30)`) so a
+    ///   commissioner-driven wave of CASE handshakes doesn't churn the
+    ///   flash write endurance budget. The cache is a soft cache — a
+    ///   power cut that loses the most recent entry only forces a
+    ///   full CASE handshake the next time the peer connects, which
+    ///   is the same fallback any resumption failure produces.
+    ///
+    /// Intended to be spawned alongside [`Matter::run`], for example
+    /// via `embassy_futures::select` or a dedicated executor task. It
+    /// never returns on the happy path — a `Result` is only produced
+    /// if the KV backend errors.
+    ///
+    /// # Arguments
+    /// - `kv`: The key-value store access (obtained via [`Matter::kv`])
+    ///   used to persist the cache. Provides both the store and the
+    ///   scratch buffer.
+    /// - `min_interval`: Minimum time between two consecutive persists
+    ///   (see above).
+    pub async fn run_persist_resumption<K: KvBlobStoreAccess>(
+        &self,
+        kv: K,
+        min_interval: embassy_time::Duration,
+    ) -> Result<(), Error> {
+        loop {
+            self.transport().wait_resumption_dirty().await;
+            embassy_time::Timer::after(min_interval).await;
+
+            self.with_state(|state| {
+                kv.access(|mut store, buf| state.resumption.store_persist(&mut store, buf))
+            })?;
+
+            debug!("CASE session resumption cache persisted");
+        }
     }
 
     /// Invoke the given closure for each currently published Matter mDNS service.
@@ -655,6 +712,10 @@ pub struct MatterState {
     pub fabrics: Fabrics,
     /// All sessions
     sessions: Sessions,
+    /// CASE session resumption cache
+    ///
+    /// Public for unit tests
+    pub resumption: ResumableSessions,
     /// The PASE session state
     pase: Pase,
     /// The Failsafe state
@@ -663,8 +724,7 @@ pub struct MatterState {
     basic_info_settings: BasicInfoSettings,
     /// Real Time Clock state and Last-Known-Good UTC Time tracking (Matter Core spec).
     rtc: Rtc,
-    /// The ICD operating mode advertised in the operational `ICD` DNS-SD TXT
-    /// key, or `None` when the device is not a Long-Idle-Time ICD (key omitted).
+    /// The ICD operating mode advertised in the operational `ICD` DNS-SD TXT key.
     /// The ICD Management handler keeps this in sync with its registration set.
     icd_mode: Option<OperatingModeEnum>,
 }
@@ -676,6 +736,7 @@ impl MatterState {
         Self {
             fabrics: Fabrics::new(),
             sessions: Sessions::new(),
+            resumption: ResumableSessions::new(),
             pase: Pase::new(),
             failsafe: FailSafe::new(),
             basic_info_settings: BasicInfoSettings::new(),
@@ -689,6 +750,7 @@ impl MatterState {
         init!(Self {
             fabrics <- Fabrics::init(),
             sessions <- Sessions::init(),
+            resumption <- crate::sc::case::ResumableSessions::init(),
             pase <- Pase::init(),
             failsafe <- FailSafe::init(),
             basic_info_settings <- BasicInfoSettings::init(),

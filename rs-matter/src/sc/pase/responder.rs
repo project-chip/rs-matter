@@ -395,6 +395,7 @@ impl<'a, C: Crypto> PaseResponder<'a, C> {
                     Some(dec_key),
                     Some(enc_key),
                     Some(att_challenge),
+                    None,
                 )?;
 
                 // Complete the reserved session and thus make the `Session` instance

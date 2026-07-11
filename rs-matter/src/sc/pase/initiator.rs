@@ -396,6 +396,7 @@ impl<C: Crypto> PaseInitiator<C> {
             Some(dec_key),
             Some(enc_key),
             Some(att_challenge),
+            None,
         )?;
 
         // Complete the reserved session

@@ -26,7 +26,8 @@ use core::num::NonZeroU8;
 use crate::alloc;
 use crate::cert::CertRef;
 use crate::crypto::{
-    CanonPkcPublicKeyRef, CanonPkcSignature, CanonPkcSignatureRef, Crypto, Hash, AEAD_CANON_KEY_LEN,
+    CanonAeadKey, CanonPkcPublicKeyRef, CanonPkcSignature, CanonPkcSignatureRef, Crypto, Hash,
+    AEAD_CANON_KEY_LEN, AEAD_TAG_LEN,
 };
 use crate::error::{Error, ErrorCode};
 use crate::sc::{complete_with_status, GeneralCode, OpCode, SCStatusCodes, StatusReport};
@@ -36,7 +37,12 @@ use crate::transport::session::{NocCatIds, ReservedSession, SessionMode};
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::ReadBuf;
 
-use super::casep::{CaseP, CaseRandom, CaseRandomRef, CaseSessionKeys, CASE_RESUMPTION_ID_ZEROED};
+use super::casep::{
+    compute_resume_mic, compute_resumption_session_keys, derive_resume_key, verify_resume_mic,
+    CaseP, CaseRandom, CaseRandomRef, CaseSessionKeys, ResumeKeyKind, CASE_RESUMPTION_ID_LEN,
+    CASE_RESUMPTION_ID_ZEROED, RESUME1_MIC_NONCE, RESUME2_MIC_NONCE,
+};
+use super::resumption::ResumableSession;
 use super::CASE_LARGE_BUF_SIZE;
 
 /// Sigma2 Response structure, parsed from the responder's Sigma2 message.
@@ -62,6 +68,24 @@ struct TBEData2Decrypt<'a> {
     responder_icac: Option<OctetStr<'a>>,
     signature: OctetStr<'a>,
     resumption_id: OctetStr<'a>,
+}
+
+/// Sigma2_Resume response, parsed from the responder's message when it
+/// accepts a Sigma1-with-Resumption.
+#[derive(FromTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[tlvargs(start = 1, lifetime = "'a")]
+struct Sigma2ResumeMsg<'a> {
+    /// The new `ResumptionID` minted by the responder.
+    resumption_id: OctetStr<'a>,
+    /// The 16-byte AEAD tag over empty plaintext with `S2RK`.
+    sigma2_resume_mic: OctetStr<'a>,
+    /// The responder's session ID.
+    responder_sessid: u16,
+    /// Optional responder MRP session parameters. Currently ignored
+    /// by rs-matter's initiator side (parity with the non-resumption
+    /// Sigma2 path).
+    _session_parameters: Option<crate::sc::SessionParameters>,
 }
 
 /// CASE Initiator for establishing secure sessions with Matter devices using operational
@@ -117,6 +141,18 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
 
         let mut initiator = Self::new(peer_node_id);
 
+        // Step 1a: Look up any cached CASE session resumption record for
+        // this peer. If present, we'll ask the responder for resumption
+        // by populating tags 6 and 7 on Sigma1; the responder either
+        // returns Sigma2_Resume (accepted) or Sigma2 (fell back to the
+        // full handshake) — both are handled below.
+        let cached_record: Option<ResumableSession> = exchange.with_state(|state| {
+            Ok(state
+                .resumption
+                .find_by_peer(fab_idx, peer_node_id)
+                .cloned())
+        })?;
+
         let mut random = MaybeUninit::<CaseRandom>::uninit();
         let random = random.init_with(CaseRandom::init());
 
@@ -143,6 +179,32 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
             Ok(local_sessid)
         })?;
 
+        // Step 2a: If we have a cached resumption record, precompute
+        // `Resume1MIC` so it can be spliced into Sigma1 below.
+        // `initiator_random` is available now (produced by
+        // `start_initiator`), so we can already derive `S1RK`.
+        let (resume_rid_bytes, resume_mic_bytes): (
+            Option<[u8; CASE_RESUMPTION_ID_LEN]>,
+            Option<[u8; AEAD_TAG_LEN]>,
+        ) = if let Some(ref record) = cached_record {
+            let mut s1rk = CanonAeadKey::new();
+            derive_resume_key(
+                crypto,
+                ResumeKeyKind::S1rk,
+                record.shared_secret.reference(),
+                random.reference(),
+                record.resumption_id.reference(),
+                &mut s1rk,
+            )?;
+
+            let mut mic = [0u8; AEAD_TAG_LEN];
+            compute_resume_mic(crypto, s1rk.reference(), RESUME1_MIC_NONCE, &mut mic)?;
+
+            (Some(*record.resumption_id.reference().access()), Some(mic))
+        } else {
+            (None, None)
+        };
+
         // Step 3: Build and send Sigma1
         let mut tt_updated = false;
         exchange
@@ -152,6 +214,16 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
                 tw.u16(&TLVTag::Context(2), local_sessid)?;
                 tw.str(&TLVTag::Context(3), dest_id.access())?;
                 tw.str(&TLVTag::Context(4), initiator.casep.our_pub_key().access())?;
+
+                // Sigma1 with Resumption: attach the cached `resumptionID`
+                // (tag 6) and the freshly-computed `Resume1MIC` (tag 7).
+                if let (Some(rid), Some(mic)) =
+                    (resume_rid_bytes.as_ref(), resume_mic_bytes.as_ref())
+                {
+                    tw.str(&TLVTag::Context(6), rid)?;
+                    tw.str(&TLVTag::Context(7), mic)?;
+                }
+
                 tw.end_container()?;
 
                 if !tt_updated {
@@ -163,36 +235,55 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
             })
             .await?;
 
-        // Step 4: Receive Sigma2
+        // Step 4: Receive Sigma2, Sigma2_Resume, or an error StatusReport
         exchange.recv_fetch().await?;
 
-        {
+        let response_opcode = exchange.rx()?.meta().proto_opcode;
+
+        if response_opcode == OpCode::StatusReport as u8 {
             let rx = exchange.rx()?;
-            let meta = rx.meta();
+            let mut rb = ReadBuf::new(rx.payload());
+            let status = StatusReport::read(&mut rb)?;
+            error!(
+                "CASE Sigma1 failed: general={:?}, proto_code={}",
+                status.general_code, status.proto_code
+            );
+            return Err(ErrorCode::Invalid.into());
+        }
 
-            // Check for StatusReport error first
-            if meta.proto_opcode == OpCode::StatusReport as u8 {
-                let mut rb = ReadBuf::new(rx.payload());
-                let status = StatusReport::read(&mut rb)?;
-                error!(
-                    "CASE Sigma1 failed: general={:?}, proto_code={}",
-                    status.general_code, status.proto_code
-                );
+        if response_opcode == OpCode::CASESigma2Resume as u8 {
+            // Responder accepted our resumption request. Complete it
+            // via `finalize_sigma2_resume`. If we didn't request
+            // resumption, this response is a spec violation and we
+            // reject with `InvalidParameter`.
+            let Some(record) = cached_record else {
+                error!("Responder sent Sigma2_Resume but we did not request resumption");
+                complete_with_status(&mut exchange, SCStatusCodes::InvalidParameter, &[]).await?;
                 return Err(ErrorCode::Invalid.into());
-            }
+            };
 
-            // Verify opcode is CASESigma2
-            if meta.proto_opcode != OpCode::CASESigma2 as u8 {
-                error!(
-                    "Unexpected opcode: expected CASESigma2, got {}",
-                    meta.proto_opcode
-                );
-                return Err(ErrorCode::InvalidOpcode.into());
-            }
+            return Self::finalize_sigma2_resume(
+                &mut exchange,
+                crypto,
+                session,
+                fab_idx,
+                local_sessid,
+                record,
+                random,
+            )
+            .await;
+        }
+
+        if response_opcode != OpCode::CASESigma2 as u8 {
+            error!(
+                "Unexpected opcode: expected CASESigma2 or CASESigma2Resume, got {}",
+                response_opcode
+            );
+            return Err(ErrorCode::InvalidOpcode.into());
         }
 
         // Step 5: Decrypt Sigma2 TBE and validate
-        let (peer_catids, _resumption_id) = {
+        let (peer_catids, peer_resumption_id) = {
             let rx = exchange.rx()?;
             let raw_sigma2_payload = rx.payload();
 
@@ -420,6 +511,7 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
                 Some(dec_key),
                 Some(enc_key),
                 Some(att_challenge),
+                Some(initiator.casep.shared_secret()),
             )?;
         }
 
@@ -427,10 +519,193 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
 
         exchange.acknowledge().await?;
 
+        // Seed the resumption cache with this freshly-established full
+        // CASE session so a subsequent handshake with the same peer can
+        // attempt resumption. The `resumption_id` came from `TBEData2`
+        // in Sigma2 (`peer_resumption_id`); `SharedSecret`, peer id and
+        // peer CATs are what we just committed to the `Session`.
+        exchange.with_state(|state| {
+            state.resumption.insert_or_update(ResumableSession {
+                fab_idx,
+                peer_nodeid: peer_node_id,
+                peer_cat_ids: peer_catids,
+                resumption_id: peer_resumption_id,
+                shared_secret: crate::crypto::CanonPkcSharedSecret::new_from_ref(
+                    initiator.casep.shared_secret(),
+                ),
+            });
+            Ok::<_, Error>(())
+        })?;
+        exchange.matter().transport().notify_resumption_dirty();
+
         info!(
             "CASE session established: local_sessid={}, peer_sessid={}",
             initiator.casep.local_sessid(),
             initiator.casep.peer_sessid()
+        );
+
+        Ok(())
+    }
+
+    /// Complete a CASE resumption from the initiator side, given that
+    /// we have just received a `Sigma2_Resume` in response to a Sigma1
+    /// that carried the resumption fields.
+    ///
+    /// On success:
+    /// - Derives the resumption session keys.
+    /// - Populates the reserved session (rotating the `SharedSecret`
+    ///   into place along with the new keys).
+    /// - Marks the session live via `session.complete()`.
+    /// - Sends `SigmaFinished` (a StatusReport with
+    ///   `SessionEstablishmentSuccess`) which piggybacks the MRP ack
+    ///   for `Sigma2_Resume`, concluding the exchange.
+    /// - Rotates the cache entry: same peer, same `SharedSecret`, new
+    ///   `resumption_id`.
+    ///
+    /// On `Resume2MIC` verification failure the initiator sends
+    /// `InvalidParameter` per Matter spec and returns an error; the
+    /// reserved session is dropped uncomitted.
+    #[allow(clippy::too_many_arguments)]
+    async fn finalize_sigma2_resume(
+        exchange: &mut Exchange<'_>,
+        crypto: &'a C,
+        mut session: ReservedSession<'_>,
+        fab_idx: NonZeroU8,
+        local_sessid: u16,
+        record: ResumableSession,
+        initiator_random: &CaseRandom,
+    ) -> Result<(), Error> {
+        // ---- Parse Sigma2_Resume, copy out fields. ---------------------
+        //
+        // Same borrow-scoping pattern as the responder path: the parsed
+        // message borrows from the RX buffer, so we copy the small
+        // pieces out into stack storage and let the borrow drop before
+        // we send the SigmaFinished status report.
+        let (new_rid, resume2_mic, peer_sessid) = {
+            let payload = exchange.rx()?.payload();
+            let msg = Sigma2ResumeMsg::from_tlv(&get_root_node_struct(payload)?)?;
+
+            if msg.resumption_id.0.len() != CASE_RESUMPTION_ID_LEN
+                || msg.sigma2_resume_mic.0.len() != AEAD_TAG_LEN
+            {
+                error!(
+                    "Sigma2_Resume: bad field length \
+                     (resumption_id={}, sigma2_resume_mic={})",
+                    msg.resumption_id.0.len(),
+                    msg.sigma2_resume_mic.0.len()
+                );
+                complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await?;
+                return Err(ErrorCode::Invalid.into());
+            }
+
+            let rid_bytes: &[u8; CASE_RESUMPTION_ID_LEN] = msg
+                .resumption_id
+                .0
+                .try_into()
+                .map_err(|_| ErrorCode::InvalidData)?;
+            let mut new_rid = CASE_RESUMPTION_ID_ZEROED;
+            new_rid.load_from_array(rid_bytes);
+
+            let mut mic = [0u8; AEAD_TAG_LEN];
+            mic.copy_from_slice(msg.sigma2_resume_mic.0);
+
+            (new_rid, mic, msg.responder_sessid)
+        };
+
+        // ---- Derive S2RK and verify Resume2MIC. -----------------------
+        let mut s2rk = CanonAeadKey::new();
+        derive_resume_key(
+            crypto,
+            ResumeKeyKind::S2rk,
+            record.shared_secret.reference(),
+            initiator_random.reference(),
+            new_rid.reference(),
+            &mut s2rk,
+        )?;
+
+        if verify_resume_mic(crypto, s2rk.reference(), RESUME2_MIC_NONCE, &resume2_mic).is_err() {
+            error!("Sigma2_Resume: Resume2MIC verify failed");
+            complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await?;
+            return Err(ErrorCode::Invalid.into());
+        }
+
+        // ---- Derive resumption session keys. --------------------------
+        let mut session_keys = MaybeUninit::<CaseSessionKeys>::uninit();
+        let session_keys = session_keys.init_with(CaseSessionKeys::init());
+        // Derive session traffic keys from the resumption ID we sent in
+        // Sigma1 (the current ID), not from Sigma2_Resume's rotated ID.
+        compute_resumption_session_keys(
+            crypto,
+            record.shared_secret.reference(),
+            initiator_random.reference(),
+            record.resumption_id.reference(),
+            session_keys,
+        )?;
+
+        // As initiator: enc_key = I2R, dec_key = R2I (mirror of the
+        // Sigma3 path — see the fall-through branch above).
+        let (enc_key, remaining) = session_keys
+            .reference()
+            .split::<AEAD_CANON_KEY_LEN, { AEAD_CANON_KEY_LEN * 2 }>();
+        let (dec_key, att_challenge) = remaining.split::<AEAD_CANON_KEY_LEN, AEAD_CANON_KEY_LEN>();
+
+        // ---- Populate the reserved session with new keys + secret. ----
+        let (peer_addr, local_nodeid) = exchange.with_state(|state| {
+            let sess = exchange.id().session(&mut state.sessions);
+            let fabric = state.fabrics.fabric(fab_idx)?;
+            Ok((sess.get_peer_addr(), fabric.node_id()))
+        })?;
+
+        session.update(
+            local_nodeid,
+            record.peer_nodeid,
+            peer_sessid,
+            local_sessid,
+            peer_addr,
+            SessionMode::Case {
+                fab_idx: record.fab_idx,
+                cat_ids: record.peer_cat_ids,
+            },
+            Some(dec_key),
+            Some(enc_key),
+            Some(att_challenge),
+            Some(record.shared_secret.reference()),
+        )?;
+
+        // Mark the session live *before* sending SigmaFinished so that
+        // if the responder immediately reuses the session for an
+        // application message, our receive path can already route it
+        // (the responder considers the session live as soon as it
+        // receives SigmaFinished).
+        session.complete();
+
+        // ---- Send SigmaFinished (piggybacks MRP ack for Sigma2_Resume).
+        complete_with_status(exchange, SCStatusCodes::SessionEstablishmentSuccess, &[]).await?;
+
+        // ---- Rotate the cache entry. ----------------------------------
+        //
+        // `SharedSecret` and peer identity are unchanged; only
+        // `resumption_id` rotates. `insert_or_update` refreshes the
+        // existing record for this peer and moves it to the tail (MRU).
+        exchange.with_state(|state| {
+            state.resumption.insert_or_update(ResumableSession {
+                fab_idx: record.fab_idx,
+                peer_nodeid: record.peer_nodeid,
+                peer_cat_ids: record.peer_cat_ids,
+                resumption_id: new_rid,
+                shared_secret: record.shared_secret.clone(),
+            });
+            Ok::<_, Error>(())
+        })?;
+        exchange.matter().transport().notify_resumption_dirty();
+
+        info!(
+            "CASE session resumed (initiator): local_sessid={}, peer_sessid={}, \
+             fabric={}, peer_nodeid=0x{:x}",
+            local_sessid,
+            peer_sessid,
+            record.fab_idx.get(),
+            record.peer_nodeid,
         );
 
         Ok(())

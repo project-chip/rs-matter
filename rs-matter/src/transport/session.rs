@@ -23,7 +23,10 @@ use cfg_if::cfg_if;
 
 use rand_core::RngCore;
 
-use crate::crypto::{canon, CanonAeadKey, CanonAeadKeyRef, Crypto, CryptoSensitive, Kdf};
+use crate::crypto::{
+    canon, CanonAeadKey, CanonAeadKeyRef, CanonPkcSharedSecret, CanonPkcSharedSecretRef, Crypto,
+    CryptoSensitive, Kdf,
+};
 use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::Fabrics;
@@ -102,6 +105,12 @@ pub struct Session {
     // So, we might keep this as enc_key and dec_key for now
     dec_key: CanonAeadKey,
     enc_key: CanonAeadKey,
+    /// The ECDH shared secret computed during the original full CASE
+    /// handshake, retained on the session for the sole purpose of
+    /// populating [`crate::sc::case::ResumableSession`] records for
+    /// the resumption cache. Zeroed for non-CASE sessions. See
+    /// [`Self::get_shared_secret`].
+    shared_secret: CanonPkcSharedSecret,
     att_challenge: AttChallenge,
     local_sess_id: u16,
     peer_sess_id: u16,
@@ -148,6 +157,7 @@ impl Session {
             peer_nodeid,
             dec_key: CanonAeadKey::new(),
             enc_key: CanonAeadKey::new(),
+            shared_secret: CanonPkcSharedSecret::new(),
             att_challenge: AttChallenge::new(),
             peer_sess_id: 0,
             local_sess_id: 0,
@@ -182,6 +192,7 @@ impl Session {
             peer_nodeid,
             dec_key <- CanonAeadKey::init(),
             enc_key <- CanonAeadKey::init(),
+            shared_secret <- CanonPkcSharedSecret::init(),
             att_challenge <- AttChallenge::init(),
             peer_sess_id: 0,
             local_sess_id: 0,
@@ -319,6 +330,18 @@ impl Session {
                 Some(self.enc_key.reference())
             }
             SessionMode::PlainText => None,
+        }
+    }
+
+    /// The ECDH shared secret from the original full CASE handshake,
+    /// or `None` for non-CASE sessions. Consumed by the background
+    /// snapshot task to build [`crate::sc::case::ResumableSession`]
+    /// records — the "SharedSecret" that the Matter spec lists as
+    /// part of the Session Resumption State.
+    pub fn get_shared_secret(&self) -> Option<CanonPkcSharedSecretRef<'_>> {
+        match self.mode {
+            SessionMode::Case { .. } => Some(self.shared_secret.reference()),
+            SessionMode::Pase { .. } | SessionMode::Group { .. } | SessionMode::PlainText => None,
         }
     }
 
@@ -717,6 +740,7 @@ impl<'a> ReservedSession<'a> {
         dec_key: Option<CanonAeadKeyRef<'_>>,
         enc_key: Option<CanonAeadKeyRef<'_>>,
         att_challenge: Option<AttChallengeRef<'_>>,
+        shared_secret: Option<CanonPkcSharedSecretRef<'_>>,
     ) -> Result<(), Error> {
         self.matter.with_state(|state| {
             self.update_with_state(
@@ -730,6 +754,7 @@ impl<'a> ReservedSession<'a> {
                 dec_key,
                 enc_key,
                 att_challenge,
+                shared_secret,
             )
         })
     }
@@ -747,6 +772,7 @@ impl<'a> ReservedSession<'a> {
         dec_key: Option<CanonAeadKeyRef<'_>>,
         enc_key: Option<CanonAeadKeyRef<'_>>,
         att_challenge: Option<AttChallengeRef<'_>>,
+        shared_secret: Option<CanonPkcSharedSecretRef<'_>>,
     ) -> Result<(), Error> {
         let session = state.sessions.get(self.id).ok_or(ErrorCode::NoSession)?;
 
@@ -769,6 +795,10 @@ impl<'a> ReservedSession<'a> {
             session.att_challenge.load(att_challenge);
         }
 
+        if let Some(shared_secret) = shared_secret {
+            session.shared_secret.load(shared_secret);
+        }
+
         Ok(())
     }
 
@@ -789,7 +819,7 @@ impl<'a> ReservedSession<'a> {
         })
     }
 
-    pub fn complete(mut self) {
+    pub fn complete(&mut self) {
         self.complete = true;
     }
 }
