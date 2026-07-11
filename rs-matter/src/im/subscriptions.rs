@@ -1001,6 +1001,14 @@ impl Subscription {
     /// and a point infinitely in the past reads correctly as "always allowed"
     /// for every consumer (the boolean gate below and `next_report_at`).
     fn report_allowed_at(&self) -> Instant {
+        // Not yet primed: always allowed. This must be an explicit check, not a
+        // reliance on `checked_add` saturating — with `min_int_secs == 0` the add
+        // is `Instant::MAX + 0`, which does NOT overflow and would wrongly yield
+        // `Instant::MAX` ("never allowed").
+        if self.reported_at == Instant::MAX {
+            return Instant::MIN;
+        }
+
         self.reported_at
             .checked_add(embassy_time::Duration::from_secs(self.min_int_secs as _))
             .unwrap_or(Instant::MIN)
@@ -1022,6 +1030,12 @@ impl Subscription {
     /// fresh subscription is immediately due for its priming report (see
     /// [`Self::report_allowed_at`] for why `MIN` is the right sentinel).
     fn report_due_at(&self) -> Instant {
+        // Not yet primed: always due (explicit, for the same reason as
+        // `report_allowed_at`).
+        if self.reported_at == Instant::MAX {
+            return Instant::MIN;
+        }
+
         self.reported_at
             .checked_add(embassy_time::Duration::from_secs(
                 (self.max_int_secs - self.max_int_secs / 2) as _,
