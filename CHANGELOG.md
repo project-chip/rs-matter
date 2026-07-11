@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
-* Persistent subscriptions
+* Persistent subscriptions now supported
   * Fix: A subscription is no longer pinned to its establishing session which was incorrect
 * (Breaking) ICD support: Check-In Protocol, ICD cluster handler, mDNS advertisements (#501)
 * Warn on packet retransmission (#500)

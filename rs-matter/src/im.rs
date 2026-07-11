@@ -191,6 +191,17 @@ impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
         &self.subscriptions
     }
 
+    /// Enable or disable persistence of subscriptions (off by default).
+    ///
+    /// When enabled, accepted subscriptions are persisted to the key-value store
+    /// and resumed (via [`InteractionModel::resume_subscriptions`]) after a reboot,
+    /// so a subscriber keeps its subscription across a device restart instead of
+    /// having to notice the loss and re-subscribe. Persisting is spec-optional and
+    /// costs flash writes, so it is opt-in. Call once at startup.
+    pub fn set_persist_subscriptions(&self, enabled: bool) {
+        self.subscriptions.set_persist(enabled);
+    }
+
     /// The events queue.
     pub const fn events(&self) -> &Events<NE> {
         &self.events

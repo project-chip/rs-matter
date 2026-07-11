@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+use core::cell::Cell;
 use core::num::NonZeroU8;
 
 use embassy_time::Instant;
@@ -105,6 +106,12 @@ type SubscriptionsBuffersInner<'a, B, const N: usize> =
 /// Additional subscriptions are rejected by the data model with a "resource exhausted" IM status message.
 pub struct Subscriptions<const N: usize = DEFAULT_MAX_SUBSCRIPTIONS> {
     state: Mutex<RefCell<SubscriptionsInner<N>>>,
+    /// Whether accepted subscriptions are persisted to (and resumed from) the
+    /// key-value store. Off by default (opt-in): persisting subscriptions is
+    /// spec-optional and adds flash writes, so the application enables it only
+    /// when it wants subscriptions to survive a reboot (e.g. a long-idle ICD).
+    /// Set once at startup via [`Subscriptions::set_persist`].
+    persist: Mutex<Cell<bool>>,
     pub(crate) notification: Notification,
 }
 
@@ -114,6 +121,7 @@ impl<const N: usize> Subscriptions<N> {
     pub const fn new() -> Self {
         Self {
             state: Mutex::new(RefCell::new(SubscriptionsInner::new())),
+            persist: Mutex::new(Cell::new(false)),
             notification: Notification::new(),
         }
     }
@@ -122,8 +130,24 @@ impl<const N: usize> Subscriptions<N> {
     pub fn init() -> impl Init<Self> {
         init!(Self {
             state <- Mutex::init(RefCell::init(SubscriptionsInner::init())),
+            persist: Mutex::new(Cell::new(false)),
             notification: Notification::new(),
         })
+    }
+
+    /// Enable or disable persistence of subscriptions (off by default).
+    ///
+    /// When disabled, [`Self::persist_all`], [`Self::load_persist`] and
+    /// [`Self::reset_persist`] are no-ops, so accepted subscriptions live only in
+    /// memory and do not survive a reboot. Call once at startup, before the data
+    /// model starts accepting traffic.
+    pub fn set_persist(&self, enabled: bool) {
+        self.persist.lock(|p| p.set(enabled));
+    }
+
+    /// Whether subscription persistence is currently enabled.
+    pub fn persist_enabled(&self) -> bool {
+        self.persist.lock(|p| p.get())
     }
 
     /// Notify the instance that the data of a specific attribute has changed and that it should re-evaluate the subscriptions
@@ -434,6 +458,10 @@ impl<const N: usize> Subscriptions<N> {
         B: Buffers<IMBuffer> + 'a,
         S: KvBlobStore,
     {
+        if !self.persist_enabled() {
+            return Ok(());
+        }
+
         self.with(buffers, |state, buffers| {
             for (slot, (sub, rx)) in state
                 .subscriptions
@@ -483,11 +511,11 @@ impl<const N: usize> Subscriptions<N> {
     /// Re-hydrate the subscription table from `kv`, replaying each persisted record
     /// through [`Self::add`] exactly as if the subscribe request had just arrived.
     ///
-    /// The reloaded subscriptions are NOT primed here (no session exists yet at
-    /// boot): they enter the table already "reported once" so the reporter treats
-    /// them as live and either reports on the next change or drives the liveness
-    /// deadline, re-establishing a session on demand. A record that cannot be
-    /// re-added (e.g. no free buffer) is skipped.
+    /// Each reloaded subscription enters the table un-primed, so the reporter sends
+    /// it a prompt priming report (establishing a session on demand) rather than
+    /// waiting toward its max-interval deadline — see the priming note in the body
+    /// for why that timing matters. A record that cannot be re-added (e.g. no free
+    /// buffer) is skipped. A no-op when persistence is disabled.
     pub(crate) fn load_persist<'a, 's, B, S>(
         &'s self,
         pool: &'a B,
@@ -502,6 +530,10 @@ impl<const N: usize> Subscriptions<N> {
         B: Buffers<IMBuffer> + 'a,
         S: KvBlobStore,
     {
+        if !self.persist_enabled() {
+            return Ok(());
+        }
+
         for slot in 0..N {
             let key = PERSISTENT_SUBSCRIPTIONS_START + slot as u16;
 
@@ -2987,6 +3019,7 @@ mod tests {
         // --- First "boot": build a table and persist it. ---
         {
             let subs: Subscriptions<4> = Subscriptions::new();
+            subs.set_persist(true);
             let pool = TestPool::<5>::new();
             let subs_bufs: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
 
@@ -3014,6 +3047,7 @@ mod tests {
 
         // --- Second "boot": a fresh, empty table reloads from the same store. ---
         let subs2: Subscriptions<4> = Subscriptions::new();
+        subs2.set_persist(true);
         let pool2 = TestPool::<5>::new();
         let subs_bufs2: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
 
@@ -3082,6 +3116,7 @@ mod tests {
         let now = Instant::now();
 
         let subs: Subscriptions<4> = Subscriptions::new();
+        subs.set_persist(true);
         let pool = TestPool::<5>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
 
@@ -3104,6 +3139,7 @@ mod tests {
 
         // And a fresh reload sees exactly that one.
         let subs2: Subscriptions<4> = Subscriptions::new();
+        subs2.set_persist(true);
         let pool2 = TestPool::<5>::new();
         let subs_bufs2: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
         subs2
@@ -3123,6 +3159,7 @@ mod tests {
         let now = Instant::now();
 
         let subs: Subscriptions<4> = Subscriptions::new();
+        subs.set_persist(true);
         let pool = TestPool::<5>::new();
         let subs_bufs: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
 
@@ -3135,5 +3172,40 @@ mod tests {
 
         subs.reset_persist(&mut kv, &mut buf).unwrap();
         assert!(kv.blobs.is_empty());
+    }
+
+    /// With persistence disabled (the default), `persist_all` and `load_persist`
+    /// are no-ops: nothing is written and nothing is resumed.
+    #[test]
+    fn persistence_off_by_default_is_a_noop() {
+        let mut kv = MemKv::default();
+        let now = Instant::now();
+
+        let subs: Subscriptions<4> = Subscriptions::new();
+        assert!(!subs.persist_enabled(), "persistence must default to off");
+
+        let pool = TestPool::<5>::new();
+        let subs_bufs: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
+
+        add_sub_with_req(&subs, &subs_bufs, &pool, now, 1, 100, 1, 60, &[1]);
+
+        // persist_all writes nothing while disabled.
+        let mut buf = [0u8; 512];
+        subs.persist_all(&subs_bufs, &mut kv, &mut buf).unwrap();
+        assert!(kv.blobs.is_empty());
+
+        // Even with a record planted directly in the store, a disabled instance
+        // resumes nothing.
+        kv.blobs
+            .insert(PERSISTENT_SUBSCRIPTIONS_START, std::vec![0; 8]);
+        let subs2: Subscriptions<4> = Subscriptions::new();
+        let pool2 = TestPool::<5>::new();
+        let subs_bufs2: SubscriptionsBuffers<TestPool<5>, 4> = SubscriptionsBuffers::new();
+        subs2
+            .load_persist(&pool2, &subs_bufs2, &mut kv, &mut buf, now, 0)
+            .unwrap();
+        subs2
+            .state
+            .lock(|s| assert_eq!(s.borrow().subscriptions.len(), 0));
     }
 }
