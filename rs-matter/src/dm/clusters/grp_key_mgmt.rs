@@ -33,9 +33,7 @@ use crate::fabric::{
 };
 #[cfg(feature = "groups")]
 use crate::group_keys::{GroupEpochKeyEntry, GroupKeySet};
-#[cfg(feature = "groups")]
-use crate::tlv::{Nullable, Octets};
-use crate::tlv::{TLVArray, TLVBuilderParent};
+use crate::tlv::{Nullable, Octets, TLVArray, TLVBuilderParent};
 use crate::with;
 
 pub use crate::dm::clusters::decl::group_key_management::*;
@@ -616,18 +614,42 @@ impl ClusterHandler for GrpKeyMgmtHandler {
     fn handle_key_set_write(
         &self,
         _ctx: impl InvokeContext,
-        _request: KeySetWriteRequest<'_>,
+        request: KeySetWriteRequest<'_>,
     ) -> Result<(), Error> {
+        // Key set 0 (the IPK) is reserved and cannot be written via this cluster
+        // (it is delivered by `AddNOC`); reject it like the full handler. Group
+        // key sets are accepted as a no-op since there is no group storage.
+        if request.group_key_set()?.group_key_set_id()? == 0 {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
         Ok(())
     }
 
     fn handle_key_set_read<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
-        _request: KeySetReadRequest<'_>,
-        _response: KeySetReadResponseBuilder<P>,
+        request: KeySetReadRequest<'_>,
+        response: KeySetReadResponseBuilder<P>,
     ) -> Result<P, Error> {
-        Err(ErrorCode::NotFound.into())
+        // Key set 0 is the IPK: always present once the fabric is added (via
+        // `AddNOC`, independent of multicast group support), reported with its
+        // epoch keys redacted to null. Any other key set is unknown here.
+        if request.group_key_set_id()? == 0 {
+            response
+                .group_key_set()?
+                .group_key_set_id(0)?
+                .group_key_security_policy(GroupKeySecurityPolicyEnum::TrustFirst)?
+                .epoch_key_0(Nullable::<Octets<'_>>::none())?
+                .epoch_start_time_0(Nullable::some(0))?
+                .epoch_key_1(Nullable::<Octets<'_>>::none())?
+                .epoch_start_time_1(Nullable::none())?
+                .epoch_key_2(Nullable::<Octets<'_>>::none())?
+                .epoch_start_time_2(Nullable::none())?
+                .end()?
+                .end()
+        } else {
+            Err(ErrorCode::NotFound.into())
+        }
     }
 
     fn handle_key_set_remove(
@@ -643,6 +665,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         _ctx: impl InvokeContext,
         response: KeySetReadAllIndicesResponseBuilder<P>,
     ) -> Result<P, Error> {
-        response.group_key_set_i_ds()?.end()?.end()
+        // The IPK (key set 0) is always present, even without group support.
+        response.group_key_set_i_ds()?.push(&0u16)?.end()?.end()
     }
 }

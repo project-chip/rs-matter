@@ -27,6 +27,7 @@ pub use builder::*;
 pub use container::*;
 pub use maybe::*;
 pub use octets::*;
+pub use skippable::*;
 pub use slice::*;
 pub use str::*;
 
@@ -37,6 +38,7 @@ mod container;
 mod maybe;
 mod octets;
 mod primitive;
+mod skippable;
 mod slice;
 mod str;
 mod vec;

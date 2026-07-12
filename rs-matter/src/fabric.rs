@@ -31,6 +31,8 @@ use crate::dm::Privilege;
 use crate::error::{Error, ErrorCode};
 use crate::group_keys::KeySet;
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, FABRIC_KEYS_START};
+#[cfg(feature = "groups")]
+use crate::tlv::Skippable;
 use crate::tlv::{FromTLV, TLVElement, ToTLV};
 use crate::transport::network::MatterLocalService;
 use crate::utils::init::{init, Init, InitMaybeUninit, IntoFallibleInit};
@@ -54,7 +56,7 @@ mod groups {
     use crate::error::{Error, ErrorCode};
     use crate::group_keys::GroupKeySet;
     use crate::tlv::{FromTLV, ToTLV};
-    use crate::utils::init::{init, Init};
+    use crate::utils::init::{init, Init, InitDefault};
     use crate::utils::storage::Vec;
 
     cfg_if! {
@@ -161,6 +163,14 @@ mod groups {
     }
 
     impl Groups {
+        pub(crate) const fn new() -> Self {
+            Self {
+                key_sets: Vec::new(),
+                key_map: Vec::new(),
+                endpoint_mapping: Vec::new(),
+            }
+        }
+
         pub(crate) fn init() -> impl Init<Self> {
             init!(Self {
                 key_sets <- Vec::init(),
@@ -316,6 +326,18 @@ mod groups {
             removed
         }
     }
+
+    impl Default for Groups {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl InitDefault for Groups {
+        fn init_default() -> impl Init<Self> {
+            Self::init()
+        }
+    }
 }
 
 #[cfg(feature = "groups")]
@@ -371,12 +393,14 @@ pub struct Fabric {
     vid_verification_statement: Vec<u8, VID_VERIFICATION_STATEMENT_LEN>,
     /// Fabric group information.
     ///
-    /// Kept as the last field so that gating it out under `not(feature =
-    /// "groups")` does not shift the derived TLV tag of any earlier field
-    /// (tags are positional), preserving on-disk fabric compatibility across
-    /// builds with and without the `groups` feature.
+    /// Two properties keep this compatible with fabrics persisted by other
+    /// builds:
+    /// - It is the LAST field, so gating it out under `not(feature = "groups")`
+    ///   does not shift the derived (positional) TLV tag of any earlier field.
+    /// - It is `Skippable`, so a fabric persisted by a `groups`-off build (whose
+    ///   TLV has no `groups` tag at all) still deserializes here.
     #[cfg(feature = "groups")]
-    groups: Groups,
+    groups: Skippable<Groups>,
 }
 
 /// Exact length of a non-empty VID Verification Statement.
@@ -413,8 +437,9 @@ impl Fabric {
             label: String::new(),
             acl <- Vec::init(),
             vid_verification_statement <- Vec::init(),
-            groups <- Groups::init(),
+            groups <- Skippable::init_default(),
         });
+
         #[cfg(not(feature = "groups"))]
         let r = init!(Self {
             fab_idx,
@@ -645,16 +670,18 @@ impl Fabric {
         &self.ipk
     }
 
-    /// Return the fabric's groups
+    /// Return the fabric's groups, or an empty group state if this fabric was
+    /// persisted before the `groups` field existed (see [`Fabric::groups`]).
     #[cfg(feature = "groups")]
     pub fn groups(&self) -> &Groups {
-        &self.groups
+        self.groups.value()
     }
 
-    /// Return a mutable reference to the fabric's groups
+    /// Return a mutable reference to the fabric's groups, materializing empty
+    /// group state on first access if it was absent.
     #[cfg(feature = "groups")]
     pub fn groups_mut(&mut self) -> &mut Groups {
-        &mut self.groups
+        self.groups.value_mut()
     }
 
     /// Return the fabric's VVSC bytes (Matter Core spec).
@@ -1235,6 +1262,13 @@ mod tests {
     use crate::utils::init::InitMaybeUninit;
 
     use super::Fabrics;
+
+    // NOTE: the upgrade-compatibility property that lets a `Fabric` persisted by
+    // a `groups`-off build (whose TLV lacks the trailing `groups` tag) still
+    // deserialize in a `groups`-on build comes from `groups` being the last field
+    // and typed `Skippable<Groups>`. The `Skippable` mechanism — including the
+    // "missing trailing struct field reads back as default" case that mirrors
+    // this exactly — is unit-tested in `crate::tlv::traits::skippable`.
 
     /// Verify that `compute_dest_id` and `is_dest_id` agree: the hash output by
     /// `compute_dest_id` must be accepted by `is_dest_id` on the same fabric with
