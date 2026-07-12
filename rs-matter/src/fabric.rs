@@ -72,9 +72,9 @@ mod groups {
         } else if #[cfg(feature = "max-group-keys-per-fabric-2")] {
             /// Max number of group key sets per fabric (excluding IPK at index 0).
             pub const MAX_GROUP_KEYS_PER_FABRIC: usize = 2;
-        } else {
+        } else { // Matter requires a minimum of 3 group key sets per fabric
             /// Max number of group key sets per fabric (excluding IPK at index 0).
-            pub const MAX_GROUP_KEYS_PER_FABRIC: usize = 0;
+            pub const MAX_GROUP_KEYS_PER_FABRIC: usize = 3;
         }
     }
 
@@ -106,9 +106,9 @@ mod groups {
         } else if #[cfg(feature = "max-groups-per-fabric-4")] {
             /// Max number of group key map entries per fabric.
             pub const MAX_GROUPS_PER_FABRIC: usize = 4;
-        } else {
+        } else { // Matter requires a minimum of 4 group table entries per fabric
             /// Max number of group key map entries per fabric.
-            pub const MAX_GROUPS_PER_FABRIC: usize = 0;
+            pub const MAX_GROUPS_PER_FABRIC: usize = 4;
         }
     }
 
@@ -128,9 +128,9 @@ mod groups {
         } else if #[cfg(feature = "max-group-endpoints-per-fabric-1")] {
             /// Max number of endpoints per group entry.
             pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 1;
-        } else {
+        } else { // Default: 3 endpoints per group entry
             /// Max number of endpoints per group entry.
-            pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 0;
+            pub const GROUP_ENDPOINTS_PER_FABRIC: usize = 3;
         }
     }
 

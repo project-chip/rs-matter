@@ -45,18 +45,18 @@ max-groups-per-fabric-8 = []
 max-groups-per-fabric-7 = []
 max-groups-per-fabric-6 = []
 max-groups-per-fabric-5 = []
-max-groups-per-fabric-4 = []
+max-groups-per-fabric-4 = [] # default
 
 # Number of group keys per fabric
 max-group-keys-per-fabric-5 = []
 max-group-keys-per-fabric-4 = []
-max-group-keys-per-fabric-3 = []
+max-group-keys-per-fabric-3 = [] # default
 max-group-keys-per-fabric-2 = []
 
 # Number of endpoints that can be members of a group (per fabric)
 max-group-endpoints-per-fabric-5 = []
 max-group-endpoints-per-fabric-4 = []
-max-group-endpoints-per-fabric-3 = []
+max-group-endpoints-per-fabric-3 = [] # default
 max-group-endpoints-per-fabric-2 = []
 max-group-endpoints-per-fabric-1 = []
 
