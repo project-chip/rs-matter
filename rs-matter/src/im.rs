@@ -147,7 +147,10 @@ impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
             store.remove(NETWORKS_KEY, buf)?;
 
             // Every persisted subscription record.
+            #[cfg(feature = "persistent-subscriptions")]
             subscriptions.reset_persist(&mut *store, buf)?;
+            #[cfg(not(feature = "persistent-subscriptions"))]
+            let _ = &subscriptions;
 
             Ok(())
         })
@@ -189,17 +192,6 @@ impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
     /// The subscriptions table.
     pub const fn subscriptions(&self) -> &Subscriptions<NS> {
         &self.subscriptions
-    }
-
-    /// Enable or disable persistence of subscriptions (off by default).
-    ///
-    /// When enabled, accepted subscriptions are persisted to the key-value store
-    /// and resumed (via [`InteractionModel::resume_subscriptions`]) after a reboot,
-    /// so a subscriber keeps its subscription across a device restart instead of
-    /// having to notice the loss and re-subscribe. Persisting is spec-optional and
-    /// costs flash writes, so it is opt-in. Call once at startup.
-    pub fn set_persist_subscriptions(&self, enabled: bool) {
-        self.subscriptions.set_persist(enabled);
     }
 
     /// The events queue.
@@ -935,6 +927,11 @@ where
     /// A no-op when the store is a dummy (no scratch buffer). Best-effort: a
     /// persistence failure is logged but never propagated, so it cannot break
     /// reporting — persisting subscriptions is spec-optional.
+    ///
+    /// Compiled to a no-op unless the `persistent-subscriptions` feature is
+    /// enabled, so the whole persistence path (TLV serialization, the key-value
+    /// store writes) is dropped from a device that does not want it.
+    #[cfg(feature = "persistent-subscriptions")]
     fn persist_subscriptions(&self) {
         let result = self.kv.access(|store, buf| {
             self.state
@@ -947,6 +944,10 @@ where
         }
     }
 
+    #[cfg(not(feature = "persistent-subscriptions"))]
+    #[inline(always)]
+    fn persist_subscriptions(&self) {}
+
     /// Re-hydrate the subscription table from `kv` and re-arm the reporter.
     ///
     /// Call once at startup, after the fabrics and events state have been
@@ -955,6 +956,11 @@ where
     /// primed) subscription; the reporter then reaches the subscriber on demand
     /// by establishing a session when the next report is due. No session is
     /// opened proactively here.
+    ///
+    /// Compiled to a no-op (returning `Ok`) unless the `persistent-subscriptions`
+    /// feature is enabled, so it is always safe to call from the startup path
+    /// regardless of whether persistence is compiled in.
+    #[cfg(feature = "persistent-subscriptions")]
     pub fn resume_subscriptions(&self) -> Result<(), Error> {
         let now = Instant::now();
         let watermark = self.state.events.watermark();
@@ -974,6 +980,14 @@ where
         // liveness deadlines.
         self.state.subscriptions.notification.notify();
 
+        Ok(())
+    }
+
+    /// See the `persistent-subscriptions` variant above; a no-op when that
+    /// feature is off.
+    #[cfg(not(feature = "persistent-subscriptions"))]
+    #[inline(always)]
+    pub fn resume_subscriptions(&self) -> Result<(), Error> {
         Ok(())
     }
 
@@ -1076,37 +1090,9 @@ where
                     // drop means its persisted record must be purged too.
                     Ok(false) => dropped_any = true,
                     Err(e) => {
-                        // Reporting failed — typically because the session to the
-                        // subscriber died (peer unreachable, MRP retransmissions
-                        // exhausted). Drop that session so the next report to this
-                        // peer establishes a fresh one, and keep the subscription
-                        // so it retries rather than being torn down.
-                        let (fab_idx, peer_node_id) = {
-                            let ids = rctx.subscription().ids();
-                            (ids.fab_idx, ids.peer_node_id)
-                        };
-
-                        error!(
-                            "Error processing subscription (fab {}, node {:x}): {:?}; dropping its session, will retry",
-                            fab_idx.get(),
-                            peer_node_id,
-                            e
-                        );
-
-                        matter.with_state(|state| {
-                            if let Some(id) = state
-                                .sessions
-                                .get_for_node(fab_idx, peer_node_id)
-                                .map(|s| s.id)
-                            {
-                                state.sessions.remove(id);
-                            }
-                        });
-
-                        // Keep the subscription to retry, but do NOT advance its
-                        // watermarks: the changes/events this report was carrying
-                        // never reached the subscriber and must be re-sent.
-                        rctx.set_keep_retry();
+                        if self.handle_subscription_report_error(matter, &mut rctx, e) {
+                            dropped_any = true;
+                        }
                     }
                 }
             }
@@ -1124,30 +1110,131 @@ where
         }
     }
 
-    /// Process one valid subscription, reporting the data to the peer.
+    /// Handle a failed subscription report. Returns `true` if the subscription was
+    /// dropped from the table (so the caller re-persists to purge its record).
     ///
-    /// Arguments:
-    /// - `matter` - a reference to the `Matter` instance
-    /// - `fabric_idx` - the fabric index of the peer
-    /// - `peer_node_id` - the node ID of the peer
-    /// - `session_id` - the session ID of the peer, if any
-    /// - `sub` - the received and saved data for the subscription, when the subscription was primed
-    /// - `min_event_number` - the subscription's current event watermark; updated
-    ///   in place as events are emitted so the caller can persist it
-    /// - `ctx` - the report context for this subscription
-    #[allow(clippy::too_many_arguments)]
+    /// Without `sticky-primed-session` a subscription outlives the session it was
+    /// accepted on: a failed report usually means that session died, so we drop it
+    /// (forcing a fresh one on the next attempt) and keep the subscription, backing
+    /// it off and only letting it expire at its `max_int` liveness deadline.
+    #[cfg(not(feature = "sticky-primed-session"))]
+    fn handle_subscription_report_error(
+        &self,
+        matter: &Matter<'_>,
+        rctx: &mut ReportContext<'_, '_, B, NS>,
+        e: Error,
+    ) -> bool {
+        let (fab_idx, peer_node_id) = {
+            let ids = rctx.subscription().ids();
+            (ids.fab_idx, ids.peer_node_id)
+        };
+
+        error!(
+            "Error processing subscription (fab {}, node {:x}): {:?}; dropping its session, will retry",
+            fab_idx.get(),
+            peer_node_id,
+            e
+        );
+
+        matter.with_state(|state| {
+            if let Some(id) = state
+                .sessions
+                .get_for_node(fab_idx, peer_node_id)
+                .map(|s| s.id)
+            {
+                state.sessions.remove(id);
+            }
+        });
+
+        // Keep the subscription to retry, but do NOT advance its watermarks: the
+        // changes/events this report was carrying never reached the subscriber and
+        // must be re-sent.
+        rctx.set_keep_retry();
+
+        false
+    }
+
+    /// The `sticky-primed-session` variant: restore the pre-persistence behavior.
+    ///
+    /// A sticky subscription reports only over an already-established session and
+    /// never creates a new one, so a report failure it cannot recover from — the
+    /// session is gone and will not be re-established here. Retrying is pointless,
+    /// so the subscription is simply dropped (its `rctx` is left without
+    /// `set_keep`), exactly as the reporter did before subscriptions could outlive
+    /// their session.
+    #[cfg(feature = "sticky-primed-session")]
+    fn handle_subscription_report_error(
+        &self,
+        _matter: &Matter<'_>,
+        rctx: &mut ReportContext<'_, '_, B, NS>,
+        e: Error,
+    ) -> bool {
+        error!(
+            "Error processing subscription {:?}: {:?}; dropping it",
+            rctx.subscription().ids(),
+            e
+        );
+
+        // Leave `rctx` without `set_keep`: it drops out of the table on drop.
+        true
+    }
+
+    /// Open the exchange over which a subscription report is delivered to its
+    /// subscriber, routed by the subscriber's `(fabric, node)`.
+    ///
+    /// Without the `sticky-primed-session` feature this reuses the best live
+    /// session to the peer or, if none exists, establishes a fresh one via CASE
+    /// (resolving the operational address over mDNS). This is the spec-correct
+    /// behavior: a subscription is identified by its id, not bound to the session
+    /// it was accepted on, so it keeps reporting even after that session is gone.
+    #[cfg(not(feature = "sticky-primed-session"))]
+    async fn initiate_report_exchange<'m>(
+        &self,
+        matter: &'m Matter<'m>,
+        fabric_idx: NonZeroU8,
+        peer_node_id: NodeId,
+    ) -> Result<Exchange<'m>, Error> {
+        Exchange::initiate(matter, self.crypto(), fabric_idx, peer_node_id).await
+    }
+
+    /// The `sticky-primed-session` variant: report **only** over a session that
+    /// already exists to the peer, and never establish a new one.
+    ///
+    /// This trades spec-completeness for code size: because it never calls into
+    /// CASE or mDNS, the linker drops the whole CASE-initiator and mDNS-resolver
+    /// machinery from an accessory that only ever reports over its priming
+    /// session. If no live session to the peer remains, this errors — the
+    /// reporter then backs the subscription off and eventually lets it expire,
+    /// exactly as it would for any other failed report.
+    #[cfg(feature = "sticky-primed-session")]
+    async fn initiate_report_exchange<'m>(
+        &self,
+        matter: &'m Matter<'m>,
+        fabric_idx: NonZeroU8,
+        peer_node_id: NodeId,
+    ) -> Result<Exchange<'m>, Error> {
+        let session_id = matter
+            .with_state(|state| {
+                state
+                    .sessions
+                    .get_for_node(fabric_idx, peer_node_id)
+                    .map(|s| s.id)
+            })
+            .ok_or(ErrorCode::NoSession)?;
+
+        Exchange::initiate_for_session(matter, session_id)
+    }
+
+    /// Process one valid subscription, reporting the data to the peer.
     async fn process_subscription(
         &self,
         matter: &Matter<'_>,
         rctx: &mut ReportContext<'_, '_, B, NS>,
     ) -> Result<bool, Error> {
-        // Route the report by the subscriber's `(fabric, node)` rather than a
-        // pinned session id: reuse the best live session to that peer, or (if
-        // the original one is gone) establish a fresh one. A subscription is
-        // identified by its id, not bound to the session it was accepted on.
         let ids = rctx.subscription().ids();
-        let mut exchange =
-            Exchange::initiate(matter, self.crypto(), ids.fab_idx, ids.peer_node_id).await?;
+        let mut exchange = self
+            .initiate_report_exchange(matter, ids.fab_idx, ids.peer_node_id)
+            .await?;
 
         if let Some(mut tx) = self.buffers.get().await {
             // Always safe as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, which is bigger than `MAX_EXCHANGE_TX_BUF_SIZE`

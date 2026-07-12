@@ -179,12 +179,10 @@ fn main() -> Result<(), Error> {
     let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
 
     // Create the data model state (subscriptions, events, network store).
+    // Persistent subscriptions are compiled in via the `persistent-subscriptions`
+    // feature, so a subscriber keeps its subscription across a reboot.
     let mut state: EthInteractionModelState =
         EthInteractionModelState::new(EthNetwork::new_default());
-
-    // Opt in to persistent subscriptions so a subscriber keeps its subscription
-    // across a reboot (persistence is off by default).
-    state.set_persist_subscriptions(true);
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);

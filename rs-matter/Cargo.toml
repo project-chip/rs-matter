@@ -142,6 +142,8 @@ log-tlv-payload = [] # Enable `debug`-level logging of TLV payloads. This is ver
 log-mrp = [] # Promote MRP-diagnostic logs from `debug` to `warn` so they are visible under a typical `info`-level filter.
 large-buffers = [] # TCP support
 groups = [] # Multicast groups support
+persistent-subscriptions = [] # Persist accepted subscriptions and resume them across a reboot
+sticky-primed-session = [] # Report subscriptions only over their priming session (drops the CASE initiator + mDNS resolver from the reporter)
 
 [dependencies]
 rs-matter-macros = { path = "../rs-matter-macros", version = "0.2.0" }

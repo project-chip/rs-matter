@@ -7,7 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 * Persistent subscriptions now supported
-  * Subscriptions can be persisted and resumed across a reboot (opt-in via `set_persist_subscriptions`, off by default)
+  * Subscriptions can be persisted and resumed across a reboot (opt-in via the `persistent-subscriptions` Cargo feature, off by default)
+  * New `sticky-primed-session` Cargo feature (off by default): reports a subscription only over an already-established session, restoring the pre-persistence behavior and letting the linker drop the CASE initiator and mDNS resolver from a pure accessory
   * Fix: A subscription is no longer pinned to its establishing session which was incorrect
   * Fix: A not-yet-primed subscription with a `MinIntervalFloor` of 0 is now reported immediately instead of never
   * Fix: A failed report no longer advances the subscription's watermark, so the changes/events it was carrying are retried instead of silently dropped
