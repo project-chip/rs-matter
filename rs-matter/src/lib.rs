@@ -46,6 +46,7 @@ use crate::pairing::qr::{
 };
 use crate::pairing::DiscoveryCapabilities;
 use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, BASIC_INFO_KEY};
+#[cfg(feature = "case-resumption")]
 use crate::sc::case::ResumableSessions;
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
 use crate::sc::pase::Pase;
@@ -581,6 +582,7 @@ impl<'a> Matter<'a> {
                 state.fabrics.reset_persist(&mut store, buf)?;
                 state.basic_info_settings.reset_persist(&mut store, buf)?;
                 state.rtc.reset_persist(&mut store, buf)?;
+                #[cfg(feature = "case-resumption")]
                 state.resumption.reset_persist(&mut store, buf)?;
 
                 Ok::<_, Error>(())
@@ -604,6 +606,7 @@ impl<'a> Matter<'a> {
                 state.fabrics.load_persist(&mut store, buf)?;
                 state.basic_info_settings.load_persist(&mut store, buf)?;
                 state.rtc.load_persist(&mut store, buf)?;
+                #[cfg(feature = "case-resumption")]
                 state.resumption.load_persist(&mut store, buf)?;
 
                 Ok::<_, Error>(())
@@ -652,6 +655,7 @@ impl<'a> Matter<'a> {
     ///   scratch buffer.
     /// - `min_interval`: Minimum time between two consecutive persists
     ///   (see above).
+    #[cfg(feature = "case-resumption")]
     pub async fn run_persist_resumption<K: KvBlobStoreAccess>(
         &self,
         kv: K,
@@ -715,6 +719,7 @@ pub struct MatterState {
     /// CASE session resumption cache
     ///
     /// Public for unit tests
+    #[cfg(feature = "case-resumption")]
     pub resumption: ResumableSessions,
     /// The PASE session state
     pase: Pase,
@@ -736,6 +741,7 @@ impl MatterState {
         Self {
             fabrics: Fabrics::new(),
             sessions: Sessions::new(),
+            #[cfg(feature = "case-resumption")]
             resumption: ResumableSessions::new(),
             pase: Pase::new(),
             failsafe: FailSafe::new(),
@@ -746,11 +752,28 @@ impl MatterState {
     }
 
     /// Return an in-place initializer for MatterState
+    // NOTE: `init!` (pinned-init) rejects `#[cfg]` on its fields, so the
+    // `case-resumption` field forces two full variants of this initializer.
+    #[cfg(feature = "case-resumption")]
     fn init() -> impl Init<Self> {
         init!(Self {
             fabrics <- Fabrics::init(),
             sessions <- Sessions::init(),
             resumption <- crate::sc::case::ResumableSessions::init(),
+            pase <- Pase::init(),
+            failsafe <- FailSafe::init(),
+            basic_info_settings <- BasicInfoSettings::init(),
+            rtc <- Rtc::init(),
+            icd_mode: None,
+        })
+    }
+
+    /// Return an in-place initializer for MatterState
+    #[cfg(not(feature = "case-resumption"))]
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            fabrics <- Fabrics::init(),
+            sessions <- Sessions::init(),
             pase <- Pase::init(),
             failsafe <- FailSafe::init(),
             basic_info_settings <- BasicInfoSettings::init(),

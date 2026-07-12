@@ -143,6 +143,7 @@ log-mrp = [] # Promote MRP-diagnostic logs from `debug` to `warn` so they are vi
 large-buffers = [] # TCP support
 groups = [] # Multicast groups support
 persistent-subscriptions = [] # Persist accepted subscriptions and resume them across a reboot
+case-resumption = [] # CASE session resumption (Sigma2-Resume fast-path + its persisted cache). When off, CASE always runs the full Sigma1/2/3 handshake, which is spec-compliant (resumption is optional) and drops the resume crypto + cache from the build.
 case-responder-only = [] # Never initiate a new CASE session: `Exchange::initiate` only reuses an existing session (else fails), so the linker drops the CASE initiator + mDNS resolver. Suits a pure accessory that only reports over sessions its peers established.
 
 [dependencies]

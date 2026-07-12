@@ -141,6 +141,11 @@ pub struct Transport {
     /// A notification that the CASE session resumption cache has been
     /// mutated and should be re-persisted by the background persist
     /// task (see [`crate::Matter::run_persist_resumption`]).
+    ///
+    /// Kept as a field unconditionally (a zero-cost `Notification`) so the
+    /// `new`/`init` constructors need no `case-resumption`-specific variant;
+    /// only the notify/wait accessors are gated.
+    #[cfg_attr(not(feature = "case-resumption"), allow(dead_code))]
     resumption_dirty: Notification,
     /// Device SAI (Secure Association Identifier)
     device_sai: Option<u32>,
@@ -258,6 +263,7 @@ impl Transport {
     /// Notify that the CASE session resumption cache was mutated and
     /// should be re-persisted. Fired from every code path that inserts,
     /// rotates or evicts a [`crate::sc::case::ResumableSession`].
+    #[cfg(feature = "case-resumption")]
     pub(crate) fn notify_resumption_dirty(&self) {
         self.resumption_dirty.notify();
     }
@@ -266,6 +272,7 @@ impl Transport {
     /// (see [`Transport::notify_resumption_dirty`]). Used by the
     /// [`crate::Matter::run_persist_resumption`] background task to
     /// know when to flush the cache to storage.
+    #[cfg(feature = "case-resumption")]
     pub(crate) fn wait_resumption_dirty(&self) -> impl Future<Output = ()> + '_ {
         self.resumption_dirty.wait()
     }

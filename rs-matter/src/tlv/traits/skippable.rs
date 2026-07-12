@@ -31,26 +31,13 @@ pub struct Skippable<T> {
     value: T,
 }
 
-impl<T> Skippable<T>
-where
-    T: Default + InitDefault,
-{
-    /// Create a new `Skippable<T>` with the default value of `T`.
-    pub fn new_default() -> Self {
-        Self::new(T::default())
-    }
-
-    /// Create a new `Skippable<T>` with the given value.
+impl<T> Skippable<T> {
+    /// Create a new Skippable with the given value.
     pub const fn new(value: T) -> Self {
         Self { value }
     }
 
-    /// Initialize a `Skippable<T>` with the default value of `T`.
-    pub fn init_default() -> impl Init<Self> {
-        Self::init(T::init_default().into_fallible())
-    }
-
-    /// Initialize a `Skippable<T>` with the given initializer.
+    /// Initialize a Skippable with the given initializer.
     pub fn init<I: Init<T, E>, E>(value: I) -> impl Init<Self, E> {
         try_init!(Self {
             value <- value,
@@ -62,6 +49,56 @@ where
     }
 
     pub const fn value_mut(&mut self) -> &mut T {
+        &mut self.value
+    }
+}
+
+impl<T> Skippable<T>
+where
+    T: Default + InitDefault,
+{
+    /// Create a new Skippable with the default value of T.
+    pub fn new_default() -> Self {
+        Self::new(T::default())
+    }
+
+    /// Initialize a Skippable with the default value of T.
+    pub fn init_default() -> impl Init<Self> {
+        Self::init(T::init_default().into_fallible())
+    }
+}
+
+impl<T> Default for Skippable<T>
+where
+    T: Default,
+{
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
+impl<T> InitDefault for Skippable<T>
+where
+    T: InitDefault,
+{
+    fn init_default() -> impl Init<Self> {
+        // Inline the inherent initializer's body rather than call
+        // `Self::init_default()`, which would resolve back to this trait
+        // method and recurse.
+        Self::init(T::init_default().into_fallible())
+    }
+}
+
+impl<T> core::ops::Deref for Skippable<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+impl<T> core::ops::DerefMut for Skippable<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.value
     }
 }

@@ -32,7 +32,7 @@
 //! unchanged from #1 (and the `ResumptionID` did change), we know
 //! resumption happened on both sides.
 
-#![cfg(all(feature = "std", feature = "async-io"))]
+#![cfg(all(feature = "std", feature = "async-io", feature = "case-resumption"))]
 
 use core::num::NonZeroU8;
 use core::pin::pin;

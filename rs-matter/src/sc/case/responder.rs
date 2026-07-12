@@ -17,30 +17,36 @@
 
 use core::{mem::MaybeUninit, num::NonZeroU8};
 
+#[cfg(feature = "case-resumption")]
 use rand_core::RngCore;
 
+#[cfg(feature = "case-resumption")]
 use super::casep::{
     compute_resume_mic, compute_resumption_session_keys, derive_resume_key, verify_resume_mic,
-    CaseP, CaseRandom, CaseResumptionId, CaseSessionKeys, ResumeKeyKind, CASE_RANDOM_LEN,
-    CASE_RESUMPTION_ID_LEN, RESUME1_MIC_NONCE, RESUME2_MIC_NONCE,
+    ResumeKeyKind, CASE_RANDOM_LEN, CASE_RESUMPTION_ID_LEN, RESUME1_MIC_NONCE, RESUME2_MIC_NONCE,
 };
+use super::casep::{CaseP, CaseRandom, CaseResumptionId, CaseSessionKeys};
+#[cfg(feature = "case-resumption")]
 use super::resumption::ResumableSession;
 use super::CASE_LARGE_BUF_SIZE;
 use crate::alloc;
 use crate::cert::CertRef;
-use crate::crypto::{
-    CanonAeadKey, CanonPkcSignature, CanonPkcSignatureRef, Crypto, Hash, AEAD_CANON_KEY_LEN,
-    AEAD_TAG_LEN,
-};
-use crate::error::{Error, ErrorCode};
+#[cfg(feature = "case-resumption")]
+use crate::crypto::{CanonAeadKey, AEAD_TAG_LEN};
+use crate::crypto::{CanonPkcSignature, CanonPkcSignatureRef, Crypto, Hash, AEAD_CANON_KEY_LEN};
+use crate::error::Error;
+#[cfg(feature = "case-resumption")]
+use crate::error::ErrorCode;
 use crate::sc::{
-    check_opcode, complete_with_status, sc_write, GeneralCode, OpCode, SCStatusCodes,
-    SessionParameters, StatusReport,
+    check_opcode, complete_with_status, sc_write, OpCode, SCStatusCodes, SessionParameters,
 };
+#[cfg(feature = "case-resumption")]
+use crate::sc::{GeneralCode, StatusReport};
 use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::{NocCatIds, ReservedSession, SessionMode};
 use crate::utils::init::{init, Init, InitMaybeUninit};
+#[cfg(feature = "case-resumption")]
 use crate::utils::storage::ReadBuf;
 
 /// Sigma1 Request structure
@@ -115,6 +121,12 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         // shortcuts to Sigma2_Resume + SigmaFinished. Any other case
         // (fields absent, unknown id, MIC mismatch) falls through to the
         // full Sigma1/2/3 flow.
+        //
+        // Without the `case-resumption` feature there is no cache and this
+        // is skipped entirely: every Sigma1 runs the full handshake, which
+        // is spec-compliant (resumption is optional) — a peer that offered
+        // resumption fields simply gets a full Sigma2 back.
+        #[cfg(feature = "case-resumption")]
         if self
             .try_handle_sigma1_resume(&mut exchange, &mut session)
             .await?
@@ -429,6 +441,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                     // what we just loaded into the `Session`; the
                     // `resumption_id` was minted by the responder in
                     // `casep.start` and is still held on `self.casep`.
+                    #[cfg(feature = "case-resumption")]
                     state.resumption.insert_or_update(ResumableSession {
                         // Unwrap is safe: we are inside the `fabric` branch.
                         fab_idx: unwrap!(NonZeroU8::new(self.casep.local_fabric_idx())),
@@ -461,6 +474,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
 
             // The `state.resumption.insert_or_update` call above dirties
             // the cache; wake the background persist task.
+            #[cfg(feature = "case-resumption")]
             exchange.matter().transport().notify_resumption_dirty();
         }
 
@@ -469,6 +483,9 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
 
     /// Try to handle the received Sigma1 as a session-resumption
     /// request. Returns:
+    ///
+    /// (Compiled only with the `case-resumption` feature; the caller skips
+    /// the resume attempt entirely when it is off.)
     ///
     /// - `Ok(true)` — the resumption path fully handled the exchange
     ///   (whether successfully or with the initiator rejecting the
@@ -481,6 +498,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
     ///   resumption fields (per Matter spec's fall-through rule).
     /// - `Err(_)` — a hard error unrelated to resumption (I/O,
     ///   cryptographic backend failure). The exchange is aborted.
+    #[cfg(feature = "case-resumption")]
     async fn try_handle_sigma1_resume(
         &mut self,
         exchange: &mut Exchange<'_>,

@@ -113,8 +113,12 @@ pub struct Session {
     /// The ECDH shared secret computed during the original full CASE
     /// handshake, retained on the session for the sole purpose of
     /// populating [`crate::sc::case::ResumableSession`] records for
-    /// the resumption cache. Zeroed for non-CASE sessions. See
-    /// [`Self::get_shared_secret`].
+    /// the resumption cache. Zeroed for non-CASE sessions.
+    ///
+    /// Kept as a field unconditionally so the `new`/`init` constructors
+    /// need no `case-resumption`-specific variant; it is simply written
+    /// but never read when resumption is off.
+    #[cfg_attr(not(feature = "case-resumption"), allow(dead_code))]
     shared_secret: CanonPkcSharedSecret,
     att_challenge: AttChallenge,
     local_sess_id: u16,
@@ -344,6 +348,8 @@ impl Session {
     /// snapshot task to build [`crate::sc::case::ResumableSession`]
     /// records — the "SharedSecret" that the Matter spec lists as
     /// part of the Session Resumption State.
+    #[cfg(feature = "case-resumption")]
+    #[allow(dead_code)]
     pub fn get_shared_secret(&self) -> Option<CanonPkcSharedSecretRef<'_>> {
         match self.mode {
             SessionMode::Case { .. } => Some(self.shared_secret.reference()),

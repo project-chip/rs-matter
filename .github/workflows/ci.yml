@@ -90,7 +90,7 @@ jobs:
 
       - name: Test
         if: matrix.features == 'os'
-        run: cd rs-matter; cargo test --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},async-io,log,groups,max-group-keys-per-fabric-2,max-groups-per-fabric-4
+        run: cd rs-matter; cargo test --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},async-io,log,groups,case-resumption,max-group-keys-per-fabric-2,max-groups-per-fabric-4
 
       - name: Examples
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'

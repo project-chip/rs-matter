@@ -25,8 +25,10 @@ use core::num::NonZeroU8;
 
 use crate::alloc;
 use crate::cert::CertRef;
+#[cfg(feature = "case-resumption")]
+use crate::crypto::CanonAeadKey;
 use crate::crypto::{
-    CanonAeadKey, CanonPkcPublicKeyRef, CanonPkcSignature, CanonPkcSignatureRef, Crypto, Hash,
+    CanonPkcPublicKeyRef, CanonPkcSignature, CanonPkcSignatureRef, Crypto, Hash,
     AEAD_CANON_KEY_LEN, AEAD_TAG_LEN,
 };
 use crate::error::{Error, ErrorCode};
@@ -37,11 +39,16 @@ use crate::transport::session::{NocCatIds, ReservedSession, SessionMode};
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::ReadBuf;
 
+#[cfg(feature = "case-resumption")]
 use super::casep::{
     compute_resume_mic, compute_resumption_session_keys, derive_resume_key, verify_resume_mic,
-    CaseP, CaseRandom, CaseRandomRef, CaseSessionKeys, ResumeKeyKind, CASE_RESUMPTION_ID_LEN,
-    CASE_RESUMPTION_ID_ZEROED, RESUME1_MIC_NONCE, RESUME2_MIC_NONCE,
+    ResumeKeyKind, RESUME1_MIC_NONCE, RESUME2_MIC_NONCE,
 };
+use super::casep::{
+    CaseP, CaseRandom, CaseRandomRef, CaseSessionKeys, CASE_RESUMPTION_ID_LEN,
+    CASE_RESUMPTION_ID_ZEROED,
+};
+#[cfg(feature = "case-resumption")]
 use super::resumption::ResumableSession;
 use super::CASE_LARGE_BUF_SIZE;
 
@@ -72,6 +79,7 @@ struct TBEData2Decrypt<'a> {
 
 /// Sigma2_Resume response, parsed from the responder's message when it
 /// accepts a Sigma1-with-Resumption.
+#[cfg(feature = "case-resumption")]
 #[derive(FromTLV, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1, lifetime = "'a")]
@@ -146,6 +154,10 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
         // by populating tags 6 and 7 on Sigma1; the responder either
         // returns Sigma2_Resume (accepted) or Sigma2 (fell back to the
         // full handshake) — both are handled below.
+        //
+        // Without the `case-resumption` feature there is no cache, so we
+        // never offer resumption and always run the full handshake.
+        #[cfg(feature = "case-resumption")]
         let cached_record: Option<ResumableSession> = exchange.with_state(|state| {
             Ok(state
                 .resumption
@@ -183,27 +195,39 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
         // `Resume1MIC` so it can be spliced into Sigma1 below.
         // `initiator_random` is available now (produced by
         // `start_initiator`), so we can already derive `S1RK`.
+        //
+        // Without `case-resumption` these are always `(None, None)`, so the
+        // Sigma1 built below carries no resumption fields.
+        #[allow(clippy::type_complexity)]
         let (resume_rid_bytes, resume_mic_bytes): (
             Option<[u8; CASE_RESUMPTION_ID_LEN]>,
             Option<[u8; AEAD_TAG_LEN]>,
-        ) = if let Some(ref record) = cached_record {
-            let mut s1rk = CanonAeadKey::new();
-            derive_resume_key(
-                crypto,
-                ResumeKeyKind::S1rk,
-                record.shared_secret.reference(),
-                random.reference(),
-                record.resumption_id.reference(),
-                &mut s1rk,
-            )?;
+        );
+        #[cfg(feature = "case-resumption")]
+        {
+            (resume_rid_bytes, resume_mic_bytes) = if let Some(ref record) = cached_record {
+                let mut s1rk = CanonAeadKey::new();
+                derive_resume_key(
+                    crypto,
+                    ResumeKeyKind::S1rk,
+                    record.shared_secret.reference(),
+                    random.reference(),
+                    record.resumption_id.reference(),
+                    &mut s1rk,
+                )?;
 
-            let mut mic = [0u8; AEAD_TAG_LEN];
-            compute_resume_mic(crypto, s1rk.reference(), RESUME1_MIC_NONCE, &mut mic)?;
+                let mut mic = [0u8; AEAD_TAG_LEN];
+                compute_resume_mic(crypto, s1rk.reference(), RESUME1_MIC_NONCE, &mut mic)?;
 
-            (Some(*record.resumption_id.reference().access()), Some(mic))
-        } else {
-            (None, None)
-        };
+                (Some(*record.resumption_id.reference().access()), Some(mic))
+            } else {
+                (None, None)
+            };
+        }
+        #[cfg(not(feature = "case-resumption"))]
+        {
+            (resume_rid_bytes, resume_mic_bytes) = (None, None);
+        }
 
         // Step 3: Build and send Sigma1
         let mut tt_updated = false;
@@ -251,6 +275,10 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
             return Err(ErrorCode::Invalid.into());
         }
 
+        // We only ever offer resumption when `case-resumption` is on, so a
+        // spec-compliant responder never sends Sigma2_Resume otherwise; the
+        // branch (and its `finalize_sigma2_resume`) is compiled out.
+        #[cfg(feature = "case-resumption")]
         if response_opcode == OpCode::CASESigma2Resume as u8 {
             // Responder accepted our resumption request. Complete it
             // via `finalize_sigma2_resume`. If we didn't request
@@ -283,6 +311,10 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
         }
 
         // Step 5: Decrypt Sigma2 TBE and validate
+        // `peer_resumption_id` (the responder's ResumptionID from TBEData2,
+        // spec-mandated in full CASE) is only consumed to seed the resumption
+        // cache, so it is unused when `case-resumption` is off.
+        #[cfg_attr(not(feature = "case-resumption"), allow(unused_variables))]
         let (peer_catids, peer_resumption_id) = {
             let rx = exchange.rx()?;
             let raw_sigma2_payload = rx.payload();
@@ -524,19 +556,22 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
         // attempt resumption. The `resumption_id` came from `TBEData2`
         // in Sigma2 (`peer_resumption_id`); `SharedSecret`, peer id and
         // peer CATs are what we just committed to the `Session`.
-        exchange.with_state(|state| {
-            state.resumption.insert_or_update(ResumableSession {
-                fab_idx,
-                peer_nodeid: peer_node_id,
-                peer_cat_ids: peer_catids,
-                resumption_id: peer_resumption_id,
-                shared_secret: crate::crypto::CanonPkcSharedSecret::new_from_ref(
-                    initiator.casep.shared_secret(),
-                ),
-            });
-            Ok::<_, Error>(())
-        })?;
-        exchange.matter().transport().notify_resumption_dirty();
+        #[cfg(feature = "case-resumption")]
+        {
+            exchange.with_state(|state| {
+                state.resumption.insert_or_update(ResumableSession {
+                    fab_idx,
+                    peer_nodeid: peer_node_id,
+                    peer_cat_ids: peer_catids,
+                    resumption_id: peer_resumption_id,
+                    shared_secret: crate::crypto::CanonPkcSharedSecret::new_from_ref(
+                        initiator.casep.shared_secret(),
+                    ),
+                });
+                Ok::<_, Error>(())
+            })?;
+            exchange.matter().transport().notify_resumption_dirty();
+        }
 
         info!(
             "CASE session established: local_sessid={}, peer_sessid={}",
@@ -565,6 +600,9 @@ impl<'a, C: Crypto + 'a> CaseInitiator<'a, C> {
     /// On `Resume2MIC` verification failure the initiator sends
     /// `InvalidParameter` per Matter spec and returns an error; the
     /// reserved session is dropped uncomitted.
+    ///
+    /// Compiled only with the `case-resumption` feature.
+    #[cfg(feature = "case-resumption")]
     #[allow(clippy::too_many_arguments)]
     async fn finalize_sigma2_resume(
         exchange: &mut Exchange<'_>,
