@@ -39,7 +39,7 @@ embassy-futures = "0.1"
 static_cell = "1"
 critical-section = "1"
 embassy-executor = { version = "0.10", features = ["executor-thread"] }
-rs-matter = { path = "../rs-matter", default-features = false, features = ["rustcrypto"] }
+rs-matter = { path = "../rs-matter", default-features = false, features = ["rustcrypto", "case-responder-only"] }
 
 [target.'cfg(not(target_os = "none"))'.dependencies]
 log = { version = "0.4", features = ["max_level_info"] }

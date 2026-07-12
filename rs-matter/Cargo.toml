@@ -143,7 +143,7 @@ log-mrp = [] # Promote MRP-diagnostic logs from `debug` to `warn` so they are vi
 large-buffers = [] # TCP support
 groups = [] # Multicast groups support
 persistent-subscriptions = [] # Persist accepted subscriptions and resume them across a reboot
-sticky-primed-session = [] # Report subscriptions only over their priming session (drops the CASE initiator + mDNS resolver from the reporter)
+case-responder-only = [] # Never initiate a new CASE session: `Exchange::initiate` only reuses an existing session (else fails), so the linker drops the CASE initiator + mDNS resolver. Suits a pure accessory that only reports over sessions its peers established.
 
 [dependencies]
 rs-matter-macros = { path = "../rs-matter-macros", version = "0.2.0" }

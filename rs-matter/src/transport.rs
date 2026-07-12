@@ -37,11 +37,12 @@ use crate::error::{Error, ErrorCode};
 #[cfg(feature = "groups")]
 use crate::fabric::{MAX_FABRICS, MAX_GROUPS_PER_FABRIC};
 use crate::fmt::Bytes;
+#[cfg(not(feature = "case-responder-only"))]
 use crate::sc::case::CaseInitiator;
 use crate::sc::pase::PaseInitiator;
-use crate::sc::{
-    sc_write, OpCode, SCStatusCodes, SessionParameters, StatusReport, PROTO_ID_SECURE_CHANNEL,
-};
+#[cfg(not(feature = "case-responder-only"))]
+use crate::sc::SessionParameters;
+use crate::sc::{sc_write, OpCode, SCStatusCodes, StatusReport, PROTO_ID_SECURE_CHANNEL};
 use crate::tlv::TLVElement;
 use crate::transport::network::mdns::{
     commissionable_instance_id, score_ip_address, BrowseExclude, CommissionableFilter,
@@ -711,6 +712,26 @@ impl Transport {
             return self.initiate_for_session(matter, session_id);
         }
 
+        self.initiate_new_case(matter, crypto, fabric_idx, peer_node_id)
+            .await
+    }
+
+    /// Establish a fresh CASE session to an already-commissioned peer (resolving
+    /// its operational address over mDNS), then open an exchange on it. Called by
+    /// [`initiate`](Self::initiate) only when no live session to the peer exists.
+    ///
+    /// With the `case-responder-only` feature this is compiled out and replaced
+    /// by an immediate [`ErrorCode::NoSession`]: reporting (and every other
+    /// on-demand initiator) then reuses an existing session or fails, and the
+    /// linker drops the whole CASE-initiator and mDNS-resolver machinery.
+    #[cfg(not(feature = "case-responder-only"))]
+    async fn initiate_new_case<'a, C: Crypto>(
+        &self,
+        matter: &'a Matter<'a>,
+        crypto: C,
+        fabric_idx: NonZeroU8,
+        peer_node_id: NodeId,
+    ) -> Result<Exchange<'a>, Error> {
         // No CASE session: resolve the operational address and establish one.
         let compressed_fabric_id = matter.with_state(|state| {
             Ok::<_, Error>(state.fabrics.fabric(fabric_idx)?.compressed_fabric_id())
@@ -754,6 +775,23 @@ impl Transport {
         })?;
 
         self.initiate_for_session(matter, session_id)
+    }
+
+    /// The `case-responder-only` variant: never establish a new CASE session.
+    ///
+    /// See the other [`initiate_new_case`](Self::initiate_new_case) for why this
+    /// exists. Reporting (and any other on-demand initiator) reuses an existing
+    /// session or gets [`ErrorCode::NoSession`]; nothing here references the CASE
+    /// initiator or the mDNS resolver, so the linker can drop them.
+    #[cfg(feature = "case-responder-only")]
+    async fn initiate_new_case<'a, C: Crypto>(
+        &self,
+        _matter: &'a Matter<'a>,
+        _crypto: C,
+        _fabric_idx: NonZeroU8,
+        _peer_node_id: NodeId,
+    ) -> Result<Exchange<'a>, Error> {
+        Err(ErrorCode::NoSession.into())
     }
 
     /// Open an exchange over a fresh **unsecured** session to an already-

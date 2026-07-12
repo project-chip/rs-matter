@@ -409,9 +409,8 @@ impl<'a> Accessor<'a> {
             return true;
         }
 
-        // Group access is only reachable with multicast group support; without
-        // it there are no group sessions, so `auth_mode` is never `Group` and
-        // this point is unreachable.
+        // A group session reaches an endpoint only if that endpoint is a member
+        // of the session's group.
         #[cfg(feature = "groups")]
         {
             let group_id = self.subjects.0[0] as u16;
@@ -432,10 +431,14 @@ impl<'a> Accessor<'a> {
             })
         }
 
+        // Without multicast group support there are no group sessions, so
+        // `auth_mode` above is never `Group` and this point is unreachable. Deny
+        // anyway (fail closed): if a `Group` auth mode ever did reach here, it must
+        // not silently grant access to an endpoint.
         #[cfg(not(feature = "groups"))]
         {
             let _ = endpoint_id;
-            true
+            false
         }
     }
 

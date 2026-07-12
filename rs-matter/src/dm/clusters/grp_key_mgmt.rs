@@ -655,8 +655,14 @@ impl ClusterHandler for GrpKeyMgmtHandler {
     fn handle_key_set_remove(
         &self,
         _ctx: impl InvokeContext,
-        _request: KeySetRemoveRequest<'_>,
+        request: KeySetRemoveRequest<'_>,
     ) -> Result<(), Error> {
+        // KeySetRemove of ID 0 (IPK) is not allowed. This is the only key set the
+        // minimal handler knows about; there is nothing else to remove.
+        if request.group_key_set_id()? == 0 {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
+
         Ok(())
     }
 
