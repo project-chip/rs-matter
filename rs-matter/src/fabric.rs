@@ -386,21 +386,16 @@ pub struct Fabric {
     label: String<32>,
     /// Access Control List
     acl: Vec<AclEntry, { acl::MAX_ACL_ENTRIES_PER_FABRIC }>,
+    /// Fabric group information.
+    #[cfg(feature = "groups")]
+    #[tagval(13)]
+    groups: Skippable<Groups>,
     /// VID Verification Statement (Matter Core spec).
     /// Either empty (not set) or exactly `VID_VERIFICATION_STATEMENT_LEN`
     /// bytes long; the cluster XML enforces both bounds at the schema
     /// level (`length="85" minLength="85"`).
+    #[tagval(14)]
     vid_verification_statement: Vec<u8, VID_VERIFICATION_STATEMENT_LEN>,
-    /// Fabric group information.
-    ///
-    /// Two properties keep this compatible with fabrics persisted by other
-    /// builds:
-    /// - It is the LAST field, so gating it out under `not(feature = "groups")`
-    ///   does not shift the derived (positional) TLV tag of any earlier field.
-    /// - It is `Skippable`, so a fabric persisted by a `groups`-off build (whose
-    ///   TLV has no `groups` tag at all) still deserializes here.
-    #[cfg(feature = "groups")]
-    groups: Skippable<Groups>,
 }
 
 /// Exact length of a non-empty VID Verification Statement.
@@ -1261,14 +1256,60 @@ mod tests {
     };
     use crate::utils::init::InitMaybeUninit;
 
-    use super::Fabrics;
+    use core::num::NonZeroU8;
 
-    // NOTE: the upgrade-compatibility property that lets a `Fabric` persisted by
-    // a `groups`-off build (whose TLV lacks the trailing `groups` tag) still
-    // deserialize in a `groups`-on build comes from `groups` being the last field
-    // and typed `Skippable<Groups>`. The `Skippable` mechanism — including the
-    // "missing trailing struct field reads back as default" case that mirrors
-    // this exactly — is unit-tested in `crate::tlv::traits::skippable`.
+    use super::{Fabric, Fabrics};
+
+    /// Lock the on-disk TLV tag layout of the fields whose position is sensitive
+    /// to the `groups` feature. A released `rs-matter` persists `groups` at
+    /// context tag 13 and `vid_verification_statement` at 14; gating `groups` in
+    /// or out must not move either. Serializing an (empty) `Fabric` and checking
+    /// the raw tags catches any future reorder that would silently corrupt
+    /// existing persisted fabrics.
+    #[test]
+    fn fabric_tlv_tag_layout_is_stable() {
+        use crate::tlv::{TLVElement, TLVTag, ToTLV};
+        use crate::utils::init::InitMaybeUninit;
+        use crate::utils::storage::WriteBuf;
+
+        let mut fabric = core::mem::MaybeUninit::<Fabric>::uninit();
+        let fabric = fabric.init_with(Fabric::init(unwrap!(NonZeroU8::new(1))));
+
+        let mut buf = [0u8; 512];
+        let mut wb = WriteBuf::new(&mut buf);
+        fabric.to_tlv(&TLVTag::Anonymous, &mut wb).unwrap();
+        let len = wb.get_tail();
+
+        let root = TLVElement::new(&buf[..len]).structure().unwrap();
+
+        // `find_ctx` returns an EMPTY element (not an error) when the tag is
+        // absent, so presence is `!is_empty()` and absence is `is_empty()`.
+
+        // `acl` (the last always-present field before the sensitive pair) is at 12.
+        assert!(
+            !root.find_ctx(12).unwrap().is_empty(),
+            "acl must stay at TLV tag 12"
+        );
+
+        // `vid_verification_statement` must always be at context tag 14.
+        assert!(
+            !root.find_ctx(14).unwrap().is_empty(),
+            "vid_verification_statement must stay at TLV tag 14"
+        );
+
+        // With `groups` compiled in it must be at tag 13; compiled out, tag 13 is
+        // simply absent (and a reader defaults it).
+        #[cfg(feature = "groups")]
+        assert!(
+            !root.find_ctx(13).unwrap().is_empty(),
+            "groups must be at TLV tag 13 when compiled in"
+        );
+        #[cfg(not(feature = "groups"))]
+        assert!(
+            root.find_ctx(13).unwrap().is_empty(),
+            "no field should occupy tag 13 when groups is compiled out"
+        );
+    }
 
     /// Verify that `compute_dest_id` and `is_dest_id` agree: the hash output by
     /// `compute_dest_id` must be accepted by `is_dest_id` on the same fabric with
