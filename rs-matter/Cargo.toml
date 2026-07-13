@@ -16,29 +16,20 @@ default = ["os", "rustcrypto", "log"]
 
 # Sizing
 
-# Number of fabrics
+# Number of fabrics.
 max-fabrics-32 = []
 max-fabrics-16 = []
 max-fabrics-8 = []
 max-fabrics-7 = []
 max-fabrics-6 = []
+# Default number of fabrics (Matter requires a minimum of 5 fabrics).
 max-fabrics-5 = []
 max-fabrics-4 = []
-max-fabrics-3 = [] # default
+max-fabrics-3 = []
 max-fabrics-2 = []
 max-fabrics-1 = []
 
-# Size (in bytes) of the key-value persistence scratch buffer owned by `Matter`
-kv-blob-store-65536 = []
-kv-blob-store-32768 = []
-kv-blob-store-16384 = []
-kv-blob-store-8192 = []
-# Default key-value persistence scratch buffer size
-kv-blob-store-4096 = []
-kv-blob-store-2048 = []
-kv-blob-store-1024 = []
-
-# Number of groups per fabrics
+# Number of groups per fabrics.
 max-groups-per-fabric-32 = []
 max-groups-per-fabric-16 = []
 max-groups-per-fabric-12 = []
@@ -46,51 +37,51 @@ max-groups-per-fabric-8 = []
 max-groups-per-fabric-7 = []
 max-groups-per-fabric-6 = []
 max-groups-per-fabric-5 = []
-# Default number of groups per fabric (Matter requires a minimum of 4 group table entries per fabric)
+# Default number of groups per fabric (Matter requires a minimum of 4 group table entries per fabric).
 max-groups-per-fabric-4 = []
 
-# Number of group keys per fabric
+# Number of group keys per fabric.
 max-group-keys-per-fabric-5 = []
 max-group-keys-per-fabric-4 = []
-# Default number of group keys per fabric (Matter requires a minimum of 3 group keys per fabric)
+# Default number of group keys per fabric (Matter requires a minimum of 1 group keys per fabric).
 max-group-keys-per-fabric-3 = []
 max-group-keys-per-fabric-2 = []
 
-# Number of endpoints that can be members of a group (per fabric)
+# Number of endpoints that can be members of a group (per fabric).
 max-group-endpoints-per-fabric-5 = []
 max-group-endpoints-per-fabric-4 = []
-# Default number of endpoints that can be members of a group (per fabric)
+# Default number of endpoints that can be members of a group (per fabric).
 max-group-endpoints-per-fabric-3 = []
 max-group-endpoints-per-fabric-2 = []
 max-group-endpoints-per-fabric-1 = []
 
-# Number of ACL entries per fabric
+# Number of ACL entries per fabric.
 max-acls-per-fabric-32 = []
 max-acls-per-fabric-16 = []
 max-acls-per-fabric-8 = []
 max-acls-per-fabric-7 = []
 max-acls-per-fabric-6 = []
 max-acls-per-fabric-5 = []
-# Default number of ACL entries per fabric (Matter requires a minimum of 4 ACL entries per fabric)
+# Default number of ACL entries per fabric (Matter requires a minimum of 3 ACL entries per fabric).
 max-acls-per-fabric-4 = []
 max-acls-per-fabric-3 = []
 max-acls-per-fabric-2 = []
 max-acls-per-fabric-1 = []
 
-# Number of subjects per ACL entry
+# Number of subjects per ACL entry.
 max-subjects-per-acl-32 = []
 max-subjects-per-acl-16 = []
 max-subjects-per-acl-8 = []
 max-subjects-per-acl-7 = []
 max-subjects-per-acl-6 = []
 max-subjects-per-acl-5 = []
-# Default number of subjects per ACL entry (Matter requires a minimum of 4 subjects per ACL entry)
+# Default number of subjects per ACL entry (Matter requires a minimum of 4 subjects per ACL entry).
 max-subjects-per-acl-4 = []
 max-subjects-per-acl-3 = []
 max-subjects-per-acl-2 = []
 max-subjects-per-acl-1 = []
 
-# Number of targets per ACL entry
+# Number of targets per ACL entry.
 max-targets-per-acl-32 = []
 max-targets-per-acl-16 = []
 max-targets-per-acl-8 = []
@@ -98,15 +89,15 @@ max-targets-per-acl-7 = []
 max-targets-per-acl-6 = []
 max-targets-per-acl-5 = []
 max-targets-per-acl-4 = []
-# Default number of targets per ACL entry (Matter requires a minimum of 3 targets per ACL entry)
+# Default number of targets per ACL entry (Matter requires a minimum of 3 targets per ACL entry).
 max-targets-per-acl-3 = []
 max-targets-per-acl-2 = []
 max-targets-per-acl-1 = []
 
-# Number of sessions
+# Number of sessions.
 max-sessions-64 = []
 max-sessions-32 = []
-# Default number of sessions (Matter requires a minimum of 3 sessions per fabric)
+# Default number of sessions (Matter requires a minimum of 3 sessions per fabric).
 max-sessions-16 = []
 max-sessions-8 = []
 max-sessions-7 = []
@@ -115,75 +106,88 @@ max-sessions-5 = []
 max-sessions-4 = []
 max-sessions-3 = []
 
-# Number of exchanges per session
+# Number of exchanges per session.
 max-exchanges-per-session-16 = []
 max-exchanges-per-session-8 = []
 max-exchanges-per-session-7 = []
 max-exchanges-per-session-6 = []
-# Default number of exchanges per session (Matter requires a minimum of 5 exchanges per session)
+# Default number of exchanges per session (Matter requires a minimum of 5 exchanges per session).
 max-exchanges-per-session-5 = []
 max-exchanges-per-session-4 = []
 max-exchanges-per-session-3 = []
 
-# Number of BTP sessions
+# Number of BTP sessions.
 max-btp-sessions-8 = []
 max-btp-sessions-4 = []
 max-btp-sessions-2 = []
-# Default number of BTP sessions (Matter accessories typically need just 1 BTP session)
+# Default number of BTP sessions (Matter accessories typically need just 1 BTP session).
 max-btp-sessions-1 = []
+
+# Size (in bytes) of the key-value persistence scratch buffer owned by `Matter`.
+kv-blob-store-65536 = []
+kv-blob-store-32768 = []
+kv-blob-store-16384 = []
+kv-blob-store-8192 = []
+# Default key-value persistence scratch buffer size.
+kv-blob-store-4096 = []
+kv-blob-store-2048 = []
+kv-blob-store-1024 = []
 
 # General
 
-# mDNS support for MacOSX
+# mDNS support for MacOSX.
 astro-dnssd = ["os", "dep:astro-dnssd"]
-# mDNS support for Linux and Windows (via Avahi or Bonjour)
-# Prefer the Avahi and Resolved mDNS implementations over Zeroconf for production deployments, via `zbus`
+# mDNS support for Linux and Windows (via Avahi or Bonjour).
+# Prefer the Avahi and Resolved mDNS implementations over Zeroconf for production deployments, via `zbus`.
 zeroconf = ["os", "dep:zeroconf"]
-# Enable the zBus proxies for a range of Linux dBus services used by `rs-matter` (off by default due to slow compilation)
+# Enable the zBus proxies for a range of Linux dBus services used by `rs-matter` (off by default due to slow compilation).
 zbus = ["dep:zbus", "dep:serde", "os", "futures-lite", "libc", "uuid", "async-channel"]
-# BLE suppport for Linux (via BlueZ)
-# Prefer the BlueZ implementation over Bluer for production deployments, via `zbus`
+# BLE suppport for Linux (via BlueZ).
+# Prefer the BlueZ implementation over Bluer for production deployments, via `zbus`.
 bluer = ["dep:bluer", "os"]
-# Umbrella set of features for typical OS-based non-baremetal deployments
+# Umbrella set of features for typical OS-based non-baremetal deployments.
 os = ["std", "backtrace", "async-io", "critical-section/std", "embassy-sync/std", "embassy-time/std", "dep:if-addrs"]
-# Minimal set of features for targets with support for Rust STD (narrower than `os` above)
+# Minimal set of features for targets with support for Rust STD (narrower than `os` above).
 std = ["alloc", "rand"]
-# Enable backtrace capturing (useful for debugging)
+# Enable backtrace capturing (useful for debugging).
 backtrace = []
-# Enable the alloc feature for targets that support it
-# In general, `rs-matter` does not use heap, so this feature enables only a few convenience features
+# Enable the alloc feature for targets that support it.
+# In general, `rs-matter` does not use heap, so this feature enables only a few convenience features.
 alloc = ["defmt?/alloc"]
-# Crypto backend: Rust Crypto
+# Crypto backend: Rust Crypto.
 rustcrypto = ["alloc", "digest", "cipher", "ccm", "elliptic-curve", "primeorder", "ecdsa", "sec1", "signature", "hmac", "hkdf", "pbkdf2", "crypto-bigint", "sha1", "sha2", "aes", "p256", "x509-cert"]
-# Crypto backend: OpenSSL (not usable for baremetal targets, only for OS targets with OpenSSL installed)
+# Crypto backend: OpenSSL (not usable for baremetal targets, only for OS targets with OpenSSL installed).
 openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
-# Crypto backend: mbedTLS
+# Crypto backend: mbedTLS.
 mbedtls = ["alloc", "dep:mbedtls-rs-sys"]
 # Build `rs-matter` with support for work-stealing executors, like the default Tokio executor.
 # This is a WIP feature and not yet fully supported.
 sync-mutex = []
-# Enable a small OTA DCL client
-# TODO: We likely don't need this hidden behind a feature
+# Enable a small OTA DCL client.
+# TODO: We likely don't need this hidden behind a feature.
 ota-dcl = ["dep:serde", "dep:serde-json-core", "heapless/serde"]
-# Enable support for `defmt` logging (for embedded targets)
+# Enable support for `defmt` logging (for embedded targets).
 defmt = ["dep:defmt", "heapless/defmt", "embassy-time/defmt", "mbedtls-rs-sys?/defmt"]
-# Enable support for `log` logging (for embedded and OS targets)
+# Enable support for `log` logging (for embedded and OS targets).
 log = ["dep:log", "embassy-time/log"]
-# Enable `debug`-level logging of TLV payloads. This is very verbose and should only be used for debugging.
+# Enable `debug`-level logging of TLV payloads.
+# This is very verbose and should only be used for debugging.
 log-tlv-payload = []
 # Promote MRP-diagnostic logs from `debug` to `warn` so they are visible under a typical `info`-level filter.
 log-mrp = []
-# Typically enabled when TCP is used
+# Typically enabled when TCP is used.
 # When enabled, this feature extends the Transport layer packet buffers, as well as the ones
-# served by `MatterBuffers` to 1MB (from 1500 B)
+# served by `MatterBuffers` to 1MB (from 1500 B).
 large-buffers = [] 
-# Multicast groups support
+# Multicast groups support.
 groups = []
-# Persist accepted subscriptions and resume them across a reboot
+# Persist accepted subscriptions and resume them across a reboot.
 persistent-subscriptions = []
-# CASE session resumption (Sigma2-Resume fast-path + its persisted cache). When off, CASE always runs the full Sigma1/2/3 handshake, which is spec-compliant (resumption is optional) and drops the resume crypto + cache from the build
+# CASE session resumption (Sigma2-Resume fast-path + its persisted cache).
+# When off, CASE always runs the full Sigma1/2/3 handshake, which is spec-compliant (resumption is optional) and drops the resume crypto + cache from the build.
 case-resumption = []
-# Never initiate a new CASE session: `Exchange::initiate` only reuses an existing session (else fails), so the linker drops the CASE initiator + mDNS resolver. Suits a pure accessory that only reports over sessions its peers established
+# Never initiate a new CASE session: `Exchange::initiate` only reuses an existing session (else fails), so the linker drops the CASE initiator + mDNS resolver.
+# Suits a pure accessory that only reports over sessions its peers established.
 case-responder-only = []
 
 [dependencies]
