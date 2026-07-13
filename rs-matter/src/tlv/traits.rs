@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2022-2025 Project CHIP Authors
+ *    Copyright (c) 2022-2026 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ pub use builder::*;
 pub use container::*;
 pub use maybe::*;
 pub use octets::*;
+pub use skippable::*;
 pub use slice::*;
 pub use str::*;
 
@@ -37,6 +38,7 @@ mod container;
 mod maybe;
 mod octets;
 mod primitive;
+mod skippable;
 mod slice;
 mod str;
 mod vec;

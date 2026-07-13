@@ -700,6 +700,7 @@ impl ClusterHandler for NocHandler {
                 // Drop any CASE session resumption records that were
                 // scoped to this fabric so a subsequent CASE handshake
                 // to any peer that used to belong to it starts fresh.
+                #[cfg(feature = "case-resumption")]
                 state.resumption.remove_for_fabric(fab_idx);
 
                 // Notify that a session was removed
@@ -708,6 +709,7 @@ impl ClusterHandler for NocHandler {
                 // The resumption cache was just mutated — wake the
                 // background persist task so the on-disk copy sheds
                 // the removed fabric's records too.
+                #[cfg(feature = "case-resumption")]
                 ctx.exchange()
                     .matter()
                     .transport()

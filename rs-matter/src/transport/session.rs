@@ -29,7 +29,9 @@ use crate::crypto::{
 };
 use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
+#[cfg(feature = "groups")]
 use crate::fabric::Fabrics;
+#[cfg(feature = "groups")]
 use crate::group_keys::KeySet;
 use crate::sc::SessionParameters;
 use crate::transport::exchange::ExchangeId;
@@ -39,13 +41,16 @@ use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::storage::{ParseBuf, Vec, WriteBuf};
 use crate::{Matter, MatterState};
 
-use super::dedup::{GroupCtrStore, RxCtrState};
+#[cfg(feature = "groups")]
+use super::dedup::GroupCtrStore;
+use super::dedup::RxCtrState;
 use super::exchange::{ExchangeState, MessageMeta, Role};
 use super::mrp::{mrp_log, RetransEntry};
 use super::network::Address;
 use super::packet::PacketHdr;
 use super::plain_hdr::PlainHdr;
 use super::proto_hdr::ProtoHdr;
+#[cfg(feature = "groups")]
 use super::Packet;
 
 pub const MAX_CAT_IDS_PER_NOC: usize = 3;
@@ -108,8 +113,12 @@ pub struct Session {
     /// The ECDH shared secret computed during the original full CASE
     /// handshake, retained on the session for the sole purpose of
     /// populating [`crate::sc::case::ResumableSession`] records for
-    /// the resumption cache. Zeroed for non-CASE sessions. See
-    /// [`Self::get_shared_secret`].
+    /// the resumption cache. Zeroed for non-CASE sessions.
+    ///
+    /// Kept as a field unconditionally so the `new`/`init` constructors
+    /// need no `case-resumption`-specific variant; it is simply written
+    /// but never read when resumption is off.
+    #[cfg_attr(not(feature = "case-resumption"), allow(dead_code))]
     shared_secret: CanonPkcSharedSecret,
     att_challenge: AttChallenge,
     local_sess_id: u16,
@@ -254,6 +263,7 @@ impl Session {
         &self.mode
     }
 
+    #[cfg(feature = "groups")]
     pub(crate) fn set_session_mode(&mut self, mode: SessionMode) {
         self.mode = mode;
     }
@@ -338,6 +348,8 @@ impl Session {
     /// snapshot task to build [`crate::sc::case::ResumableSession`]
     /// records — the "SharedSecret" that the Matter spec lists as
     /// part of the Session Resumption State.
+    #[cfg(feature = "case-resumption")]
+    #[allow(dead_code)]
     pub fn get_shared_secret(&self) -> Option<CanonPkcSharedSecretRef<'_>> {
         match self.mode {
             SessionMode::Case { .. } => Some(self.shared_secret.reference()),
@@ -907,6 +919,7 @@ pub struct Sessions {
     next_sess_id: u16,
     next_exch_id: u16,
     sessions: Vec<Session, MAX_SESSIONS>,
+    #[cfg(feature = "groups")]
     group_ctr_store: GroupCtrStore,
     /// The current Global Group Encrypted Data Message Counter reported
     /// to peers as the "Synchronized Counter" in `MsgCounterSyncRsp` and
@@ -921,6 +934,7 @@ pub struct Sessions {
     /// start. Peers will observe a fresh trust-first sync on their next
     /// MCSP exchange after we restart, which matches the fallback for
     /// any lost-sync-state scenario.
+    #[cfg(feature = "groups")]
     global_group_data_ctr: u32,
 }
 
@@ -930,36 +944,58 @@ impl Sessions {
     pub const fn new() -> Self {
         Self {
             sessions: Vec::new(),
+            #[cfg(feature = "groups")]
             group_ctr_store: GroupCtrStore::new(),
             next_sess_unique_id: 0,
             next_sess_id: 1,
             next_exch_id: 1,
+            #[cfg(feature = "groups")]
             global_group_data_ctr: 0,
         }
     }
 
     /// Create an in-place initializer for a new Sessions instance.
     pub fn init() -> impl Init<Self> {
-        init!(Self {
+        // The `init!` macro does not accept `#[cfg]` on fields, so the two
+        // group-only fields force two variants that differ only by them.
+        #[cfg(feature = "groups")]
+        let r = init!(Self {
             sessions <- Vec::init(),
             group_ctr_store: GroupCtrStore::new(),
             next_sess_unique_id: 0,
             next_sess_id: 1,
             next_exch_id: 1,
             global_group_data_ctr: 0,
-        })
+        });
+        #[cfg(not(feature = "groups"))]
+        let r = init!(Self {
+            sessions <- Vec::init(),
+            next_sess_unique_id: 0,
+            next_sess_id: 1,
+            next_exch_id: 1,
+        });
+        r
     }
 
     pub fn reset(&mut self) {
         self.sessions.clear();
-        self.group_ctr_store = GroupCtrStore::new();
+        #[cfg(feature = "groups")]
+        {
+            self.group_ctr_store = GroupCtrStore::new();
+        }
         self.next_sess_id = 1;
         self.next_exch_id = 1;
         // Deliberately keep `global_group_data_ctr`: a `reset` isn't a
         // factory reset, and rolling it back would break peers that
         // just learned it via MCSP.
     }
+}
 
+/// Group (multicast) session handling: on-the-fly key derivation for received
+/// group-encrypted messages, and the global group data-message counter. Behind
+/// the `groups` feature — a unicast-only device never creates group sessions.
+#[cfg(feature = "groups")]
+impl Sessions {
     /// Return the current Global Group Encrypted Data Message Counter,
     /// lazily initialized to a random value in `[1, 2^28 - 1]` on first
     /// access. The upper 4 bits are kept zero to leave headroom for
@@ -1248,7 +1284,9 @@ impl Sessions {
             None
         }
     }
+}
 
+impl Sessions {
     pub fn get_next_sess_id(&mut self) -> u16 {
         let mut next_sess_id: u16;
         loop {

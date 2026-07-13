@@ -55,9 +55,6 @@ fn test_subscription_survives_reboot() {
     // what the first boot persists is what the second boot reads back.
     let kv = MemKvBlobStore::default();
 
-    // Persistence is opt-in; enable it on the (first-boot) state.
-    im.state.set_persist_subscriptions(true);
-
     let path = AttrPath::from_gp(&GenericPath::new(
         Some(0),
         Some(echo_cluster::ID),
@@ -120,7 +117,6 @@ fn test_subscription_survives_reboot() {
     // ---- Boot 2: a fresh subscription table, the same store. ----
     let state2: InteractionModelState<DummyNetworks, 3, E2E_EVENTS_BUF_SIZE> =
         InteractionModelState::new(DummyNetworks);
-    state2.set_persist_subscriptions(true);
 
     // The resumed subscription is primed, so the server initiates a `ReportData`
     // to the client on its own. We accept that server-initiated exchange and

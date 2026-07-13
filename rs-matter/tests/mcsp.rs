@@ -24,7 +24,7 @@
 //! DSIZ=1) and the group-session TX path (`pre_send` GROUP_SESSION +
 //! CONTROL_MSG framing, group op key encryption) in one shot.
 
-#![cfg(all(feature = "std", feature = "async-io"))]
+#![cfg(all(feature = "std", feature = "async-io", feature = "groups"))]
 
 #[allow(dead_code)]
 mod common;

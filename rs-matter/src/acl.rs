@@ -409,22 +409,37 @@ impl<'a> Accessor<'a> {
             return true;
         }
 
-        let group_id = self.subjects.0[0] as u16;
+        // A group session reaches an endpoint only if that endpoint is a member
+        // of the session's group.
+        #[cfg(feature = "groups")]
+        {
+            let group_id = self.subjects.0[0] as u16;
 
-        let Some(fab_idx) = core::num::NonZeroU8::new(self.fab_idx) else {
-            return false;
-        };
-
-        self.matter.with_state(|state| {
-            let Some(fabric) = state.fabrics.get(fab_idx) else {
+            let Some(fab_idx) = core::num::NonZeroU8::new(self.fab_idx) else {
                 return false;
             };
 
-            fabric
-                .groups()
-                .get(group_id)
-                .is_some_and(|e| e.endpoints.contains(&endpoint_id))
-        })
+            self.matter.with_state(|state| {
+                let Some(fabric) = state.fabrics.get(fab_idx) else {
+                    return false;
+                };
+
+                fabric
+                    .groups()
+                    .get(group_id)
+                    .is_some_and(|e| e.endpoints.contains(&endpoint_id))
+            })
+        }
+
+        // Without multicast group support there are no group sessions, so
+        // `auth_mode` above is never `Group` and this point is unreachable. Deny
+        // anyway (fail closed): if a `Group` auth mode ever did reach here, it must
+        // not silently grant access to an endpoint.
+        #[cfg(not(feature = "groups"))]
+        {
+            let _ = endpoint_id;
+            false
+        }
     }
 
     /// Return the Operational Node ID of the accessor, if any

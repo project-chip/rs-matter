@@ -1084,6 +1084,13 @@ impl<'a> Exchange<'a> {
     /// Establishing requires a running mDNS responder (e.g.
     /// `BuiltinMdns::run`) to service the resolve; without one the
     /// resolve times out and this returns [`ErrorCode::NotFound`].
+    ///
+    /// With the `case-responder-only` feature the establish path is compiled
+    /// out: only an existing session is reused, and if none exists this returns
+    /// [`ErrorCode::NoSession`] instead of opening a new one. This lets the linker
+    /// drop the CASE initiator and mDNS resolver from a node that never needs to
+    /// initiate CASE (a pure accessory that only reports over sessions its peers
+    /// established).
     #[inline(always)]
     pub async fn initiate<C: Crypto>(
         matter: &'a Matter<'a>,

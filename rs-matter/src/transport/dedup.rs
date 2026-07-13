@@ -103,9 +103,11 @@ impl RxCtrState {
 }
 
 /// Max number of unique group message senders tracked for replay protection.
+#[cfg(feature = "groups")]
 pub const MAX_GROUP_CTR_ENTRIES: usize = 16;
 
 /// A per-(fabric_idx, source_node_id) message counter entry for group messages.
+#[cfg(feature = "groups")]
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct GroupCtrEntry {
@@ -120,6 +122,7 @@ struct GroupCtrEntry {
 /// group session lifetimes, preventing replay attacks.
 ///
 /// When the store is full, the least-recently-used entry is evicted.
+#[cfg(feature = "groups")]
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GroupCtrStore {
@@ -127,6 +130,7 @@ pub struct GroupCtrStore {
     clock: u32,
 }
 
+#[cfg(feature = "groups")]
 impl GroupCtrStore {
     pub const fn new() -> Self {
         Self {
@@ -309,6 +313,7 @@ mod tests {
         assert_ndup(s.post_recv(0, NOT_ENCRYPTED, false));
     }
 
+    #[cfg(feature = "groups")]
     mod group_ctr {
         use super::super::GroupCtrStore;
 

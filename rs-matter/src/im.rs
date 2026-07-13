@@ -147,7 +147,10 @@ impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
             store.remove(NETWORKS_KEY, buf)?;
 
             // Every persisted subscription record.
+            #[cfg(feature = "persistent-subscriptions")]
             subscriptions.reset_persist(&mut *store, buf)?;
+            #[cfg(not(feature = "persistent-subscriptions"))]
+            let _ = &subscriptions;
 
             Ok(())
         })
@@ -189,17 +192,6 @@ impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
     /// The subscriptions table.
     pub const fn subscriptions(&self) -> &Subscriptions<NS> {
         &self.subscriptions
-    }
-
-    /// Enable or disable persistence of subscriptions (off by default).
-    ///
-    /// When enabled, accepted subscriptions are persisted to the key-value store
-    /// and resumed (via [`InteractionModel::resume_subscriptions`]) after a reboot,
-    /// so a subscriber keeps its subscription across a device restart instead of
-    /// having to notice the loss and re-subscribe. Persisting is spec-optional and
-    /// costs flash writes, so it is opt-in. Call once at startup.
-    pub fn set_persist_subscriptions(&self, enabled: bool) {
-        self.subscriptions.set_persist(enabled);
     }
 
     /// The events queue.
@@ -935,6 +927,11 @@ where
     /// A no-op when the store is a dummy (no scratch buffer). Best-effort: a
     /// persistence failure is logged but never propagated, so it cannot break
     /// reporting — persisting subscriptions is spec-optional.
+    ///
+    /// Compiled to a no-op unless the `persistent-subscriptions` feature is
+    /// enabled, so the whole persistence path (TLV serialization, the key-value
+    /// store writes) is dropped from a device that does not want it.
+    #[cfg(feature = "persistent-subscriptions")]
     fn persist_subscriptions(&self) {
         let result = self.kv.access(|store, buf| {
             self.state
@@ -947,6 +944,10 @@ where
         }
     }
 
+    #[cfg(not(feature = "persistent-subscriptions"))]
+    #[inline(always)]
+    fn persist_subscriptions(&self) {}
+
     /// Re-hydrate the subscription table from `kv` and re-arm the reporter.
     ///
     /// Call once at startup, after the fabrics and events state have been
@@ -955,6 +956,11 @@ where
     /// primed) subscription; the reporter then reaches the subscriber on demand
     /// by establishing a session when the next report is due. No session is
     /// opened proactively here.
+    ///
+    /// Compiled to a no-op (returning `Ok`) unless the `persistent-subscriptions`
+    /// feature is enabled, so it is always safe to call from the startup path
+    /// regardless of whether persistence is compiled in.
+    #[cfg(feature = "persistent-subscriptions")]
     pub fn resume_subscriptions(&self) -> Result<(), Error> {
         let now = Instant::now();
         let watermark = self.state.events.watermark();
@@ -974,6 +980,14 @@ where
         // liveness deadlines.
         self.state.subscriptions.notification.notify();
 
+        Ok(())
+    }
+
+    /// See the `persistent-subscriptions` variant above; a no-op when that
+    /// feature is off.
+    #[cfg(not(feature = "persistent-subscriptions"))]
+    #[inline(always)]
+    pub fn resume_subscriptions(&self) -> Result<(), Error> {
         Ok(())
     }
 
@@ -1086,7 +1100,7 @@ where
                             (ids.fab_idx, ids.peer_node_id)
                         };
 
-                        error!(
+                        warn!(
                             "Error processing subscription (fab {}, node {:x}): {:?}; dropping its session, will retry",
                             fab_idx.get(),
                             peer_node_id,
@@ -1125,26 +1139,15 @@ where
     }
 
     /// Process one valid subscription, reporting the data to the peer.
-    ///
-    /// Arguments:
-    /// - `matter` - a reference to the `Matter` instance
-    /// - `fabric_idx` - the fabric index of the peer
-    /// - `peer_node_id` - the node ID of the peer
-    /// - `session_id` - the session ID of the peer, if any
-    /// - `sub` - the received and saved data for the subscription, when the subscription was primed
-    /// - `min_event_number` - the subscription's current event watermark; updated
-    ///   in place as events are emitted so the caller can persist it
-    /// - `ctx` - the report context for this subscription
-    #[allow(clippy::too_many_arguments)]
     async fn process_subscription(
         &self,
         matter: &Matter<'_>,
         rctx: &mut ReportContext<'_, '_, B, NS>,
     ) -> Result<bool, Error> {
-        // Route the report by the subscriber's `(fabric, node)` rather than a
-        // pinned session id: reuse the best live session to that peer, or (if
-        // the original one is gone) establish a fresh one. A subscription is
-        // identified by its id, not bound to the session it was accepted on.
+        // Route the report by the subscriber's `(fabric, node)`: reuse the best
+        // live session to that peer, or (with the `case-responder-only` feature
+        // off) establish a fresh one on demand. A subscription is identified by
+        // its id, not bound to the session it was accepted on.
         let ids = rctx.subscription().ids();
         let mut exchange =
             Exchange::initiate(matter, self.crypto(), ids.fab_idx, ids.peer_node_id).await?;
