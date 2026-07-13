@@ -282,7 +282,8 @@ mod groups {
                     .push(GroupEndpointMapping {
                         group_id,
                         endpoints: Vec::new(),
-                        group_name: unwrap!(String::from_str(group_name)),
+                        group_name: String::from_str(group_name)
+                            .map_err(|_| ErrorCode::ConstraintError)?,
                     })
                     .map_err(|_| ErrorCode::ResourceExhausted)?;
                 unwrap!(self.endpoint_mapping.last_mut())
@@ -290,7 +291,10 @@ mod groups {
 
             // Update group name
             entry.group_name.clear();
-            unwrap!(entry.group_name.push_str(group_name));
+            entry
+                .group_name
+                .push_str(group_name)
+                .map_err(|_| ErrorCode::ConstraintError)?;
 
             if entry.endpoints.contains(&endpoint_id) {
                 return Ok(true);
