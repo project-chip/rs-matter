@@ -24,7 +24,7 @@ use embassy_futures::select::{select, select_slice};
 use crate::crypto::Crypto;
 use crate::dm::clusters::net_comm;
 use crate::dm::networks::wireless::NoopWirelessNetCtl;
-use crate::dm::DataModel;
+use crate::dm::{DataModel, ReportDataHandler};
 use crate::error::Error;
 use crate::im::busy::BusyInteractionModel;
 use crate::im::events::DEFAULT_MAX_EVENTS_BUF_SIZE;
@@ -272,15 +272,16 @@ pub type DefaultExchangeHandler<
     K,
     N,
     NC = NoopWirelessNetCtl,
+    R = (),
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
 > = ChainedExchangeHandler<
-    &'d InteractionModel<'a, C, B, T, K, N, NC, NS, NE>,
+    &'d InteractionModel<'a, C, B, T, K, N, NC, R, NS, NE>,
     SecureChannel<'d, &'d C>,
 >;
 
-impl<'d, 'a, C, B, T, K, N, NC, const NS: usize, const NE: usize>
-    Responder<'a, DefaultExchangeHandler<'d, 'a, C, B, T, K, N, NC, NS, NE>>
+impl<'d, 'a, C, B, T, K, N, NC, R, const NS: usize, const NE: usize>
+    Responder<'a, DefaultExchangeHandler<'d, 'a, C, B, T, K, N, NC, R, NS, NE>>
 where
     B: Buffers<IMBuffer>,
 {
@@ -288,13 +289,14 @@ where
     /// (`SecureChannel` and `InteractionModel`) for handling the Secure Channel protocol and the Interaction Model protocol.
     #[inline(always)]
     pub const fn new_default(
-        data_model: &'d InteractionModel<'a, C, B, T, K, N, NC, NS, NE>,
+        data_model: &'d InteractionModel<'a, C, B, T, K, N, NC, R, NS, NE>,
     ) -> Self
     where
         C: Crypto,
         T: DataModel,
         K: KvBlobStoreAccess,
         N: net_comm::Networks,
+        R: ReportDataHandler,
     {
         Self::new(
             "Responder",
@@ -344,27 +346,29 @@ pub struct DefaultResponder<
     K,
     N,
     NC = NoopWirelessNetCtl,
+    R = (),
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
 > where
     B: Buffers<IMBuffer>,
 {
-    responder: Responder<'a, DefaultExchangeHandler<'d, 'a, C, B, T, K, N, NC, NS, NE>>,
+    responder: Responder<'a, DefaultExchangeHandler<'d, 'a, C, B, T, K, N, NC, R, NS, NE>>,
     busy_responder: Responder<'a, BusyExchangeHandler>,
 }
 
-impl<'d, 'a, C, B, T, K, N, NC, const NS: usize, const NE: usize>
-    DefaultResponder<'d, 'a, C, B, T, K, N, NC, NS, NE>
+impl<'d, 'a, C, B, T, K, N, NC, R, const NS: usize, const NE: usize>
+    DefaultResponder<'d, 'a, C, B, T, K, N, NC, R, NS, NE>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
     T: DataModel,
     K: KvBlobStoreAccess,
     N: net_comm::Networks,
+    R: ReportDataHandler,
 {
     /// Creates the responder composition.
     #[inline(always)]
-    pub const fn new(data_model: &'d InteractionModel<'a, C, B, T, K, N, NC, NS, NE>) -> Self {
+    pub const fn new(data_model: &'d InteractionModel<'a, C, B, T, K, N, NC, R, NS, NE>) -> Self {
         Self {
             responder: Responder::new_default(data_model),
             busy_responder: Responder::new_busy(data_model.matter(), RESPOND_BUSY_MS),
@@ -388,7 +392,7 @@ where
     ) -> &Responder<
         'a,
         ChainedExchangeHandler<
-            &'d InteractionModel<'a, C, B, T, K, N, NC, NS, NE>,
+            &'d InteractionModel<'a, C, B, T, K, N, NC, R, NS, NE>,
             SecureChannel<'d, &'d C>,
         >,
     > {

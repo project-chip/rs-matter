@@ -41,7 +41,7 @@ use crate::dm::networks::wireless::{NoopWirelessNetCtl, WirelessMgr, MAX_CREDS_S
 use crate::dm::networks::NetChangeNotif;
 use crate::dm::{
     AsyncHandler, AttrChangeNotifier, AttrDetails, Attribute, DataModel, EventEmitter,
-    HandlerContext, MatchContextInstance, Metadata,
+    HandlerContext, MatchContextInstance, Metadata, ReportDataHandler,
 };
 use crate::error::{Error, ErrorCode};
 use crate::im::events::{EventReader, EventTLVWrite, Events, DEFAULT_MAX_EVENTS_BUF_SIZE};
@@ -220,6 +220,7 @@ pub struct InteractionModel<
     K,
     N,
     NC = NoopWirelessNetCtl,
+    R = (),
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
 > where
@@ -233,6 +234,10 @@ pub struct InteractionModel<
     subscriptions_buffers: SubscriptionsBuffers<'a, B, NS>,
     state: &'a InteractionModelState<N, NS, NE>,
     handler: T,
+    /// The controller-side `ReportData` consumer. Defaults to `()`, which
+    /// disowns every inbound report (the accessory role). A controller injects a
+    /// real one via [`InteractionModel::new_with_reports`].
+    report_handler: R,
 }
 
 /// A [`InteractionModelState`] for an Ethernet device: its network store is a fixed
@@ -252,9 +257,10 @@ pub type EthInteractionModel<
     T,
     K,
     NC = NoopWirelessNetCtl,
+    R = (),
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
-> = InteractionModel<'a, C, B, T, K, EthNetwork<'static>, NC, NS, NE>;
+> = InteractionModel<'a, C, B, T, K, EthNetwork<'static>, NC, R, NS, NE>;
 
 /// A [`InteractionModelState`] for a wireless device, parameterized by the concrete
 /// wireless network store `N` (e.g. `WifiNetworks<3>` or a Thread store). Pairs
@@ -275,12 +281,13 @@ pub type WirelessInteractionModel<
     K,
     N,
     NC,
+    R = (),
     const NS: usize = DEFAULT_MAX_SUBSCRIPTIONS,
     const NE: usize = DEFAULT_MAX_EVENTS_BUF_SIZE,
-> = InteractionModel<'a, C, B, T, K, N, NC, NS, NE>;
+> = InteractionModel<'a, C, B, T, K, N, NC, R, NS, NE>;
 
 impl<'a, C, B, T, K, N, const NS: usize, const NE: usize>
-    InteractionModel<'a, C, B, T, K, N, NoopWirelessNetCtl, NS, NE>
+    InteractionModel<'a, C, B, T, K, N, NoopWirelessNetCtl, (), NS, NE>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
@@ -328,7 +335,7 @@ where
 }
 
 impl<'a, C, B, T, K, N, NC, const NS: usize, const NE: usize>
-    InteractionModel<'a, C, B, T, K, N, NC, NS, NE>
+    InteractionModel<'a, C, B, T, K, N, NC, (), NS, NE>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
@@ -377,6 +384,59 @@ where
             subscriptions_buffers: SubscriptionsBuffers::new(),
             state,
             handler,
+            report_handler: (),
+        }
+    }
+}
+
+impl<'a, C, B, T, K, N, NC, R, const NS: usize, const NE: usize>
+    InteractionModel<'a, C, B, T, K, N, NC, R, NS, NE>
+where
+    C: Crypto,
+    B: Buffers<IMBuffer>,
+    T: DataModel,
+    K: KvBlobStoreAccess,
+    N: Networks,
+    R: ReportDataHandler,
+{
+    /// Create the data model with an explicit network controller `net_ctl` and a
+    /// [`ReportDataHandler`] `report_handler` — the controller / subscriber role.
+    ///
+    /// This is [`InteractionModel::new_with_net_ctl`] plus a report consumer:
+    /// after this node establishes subscriptions (via the IM client), the
+    /// publishers push `ReportData` on fresh inbound exchanges, which the
+    /// `InteractionModel` routes to `report_handler`. The default
+    /// (`new`/`new_with_net_ctl`) constructors leave the report handler as `()`,
+    /// which disowns every report — correct for a pure accessory.
+    ///
+    /// # Arguments
+    /// Same as [`InteractionModel::new_with_net_ctl`], plus:
+    /// - `report_handler` - an instance of type `R` implementing
+    ///   [`ReportDataHandler`], invoked once per received `ReportData` chunk.
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_reports(
+        matter: &'a Matter<'a>,
+        crypto: C,
+        buffers: &'a B,
+        handler: T,
+        kv: K,
+        net_ctl: NC,
+        report_handler: R,
+        state: &'a InteractionModelState<N, NS, NE>,
+    ) -> Self {
+        state.subscriptions.clear();
+
+        Self {
+            matter,
+            crypto,
+            buffers,
+            kv,
+            net_ctl,
+            subscriptions_buffers: SubscriptionsBuffers::new(),
+            state,
+            handler,
+            report_handler,
         }
     }
 
@@ -591,6 +651,10 @@ where
                 error!("Received a groupcast message for opcode: SubscribeRequest")
             }
             OpCode::SubscribeRequest if !is_groupcast => self.subscribe(exchange).await?,
+            OpCode::ReportData if is_groupcast => {
+                error!("Received a groupcast message for opcode: ReportData")
+            }
+            OpCode::ReportData if !is_groupcast => self.handle_report_data(exchange).await?,
             OpCode::TimedRequest if !is_groupcast => {
                 Self::send_status(exchange, IMStatusCode::InvalidAction).await?
             }
@@ -862,6 +926,92 @@ where
             self.persist_subscriptions();
 
             self.state.subscriptions.notification.notify();
+        }
+
+        Ok(())
+    }
+
+    /// Handle a server-initiated `ReportData` message — the controller /
+    /// subscriber side of a subscription.
+    ///
+    /// After a controller establishes a subscription (via the IM client), the
+    /// publisher pushes `ReportData` messages on fresh inbound exchanges for the
+    /// life of the subscription. Those exchanges land here (the `InteractionModel`
+    /// owns all inbound IM traffic); we parse each chunk, hand it to the
+    /// `DataModel`'s [`ReportDataHandler`](crate::dm::ReportDataHandler) side, and
+    /// reply `StatusResponse` — `Success` when the handler accepts, or the
+    /// handler's chosen status (e.g. `InvalidSubscription`) when it disowns the
+    /// report. A pure accessory's handler always disowns reports, so this is inert
+    /// for the accessory role.
+    ///
+    /// Mirrors the priming-chunk loop the IM client walks during subscribe
+    /// establishment: for each chunk we ack with `StatusResponse(Success)` and
+    /// fetch the next until `more_chunks` clears. The terminal MRP ack is left to
+    /// the caller's `exchange.acknowledge()` (idempotent after our `send_status`).
+    async fn handle_report_data(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+        // The peer identity is a property of the (secure) session, constant
+        // across every chunk of this report.
+        let (fabric_idx, peer_node_id) = exchange.with_state(|state| {
+            let sess = exchange.id().session(&mut state.sessions);
+
+            let fabric_idx =
+                NonZeroU8::new(sess.get_local_fabric_idx()).ok_or(ErrorCode::Invalid)?;
+            let peer_node_id = sess.get_peer_node_id().ok_or(ErrorCode::Invalid)?;
+
+            Ok((fabric_idx, peer_node_id))
+        })?;
+
+        loop {
+            let (result, more_chunks, suppress_response) = {
+                let rx = exchange.rx()?;
+                let report = ReportDataResp::from_tlv(&TLVElement::new(rx.payload()))?;
+
+                let subscription = crate::dm::SubscriptionCtx {
+                    fabric_idx,
+                    peer_node_id,
+                    subscription_id: report.subscription_id,
+                };
+
+                // The report context is a `HandlerContext` (matter/crypto/kv/…)
+                // over a shared borrow of the exchange, valid only for the
+                // duration of this handler call — after which we resume the
+                // mutable ack/fetch loop below.
+                let ctx = crate::dm::ReportContextInstance::new(&*exchange, self, subscription);
+
+                let result = self.report_handler.handle_report(ctx, &report).await;
+
+                (
+                    result,
+                    report.more_chunks.unwrap_or(false),
+                    report.suppress_response.unwrap_or(false),
+                )
+            };
+
+            // Spec forbids `suppress_response=true` alongside `more_chunks=true`.
+            if more_chunks && suppress_response {
+                return Self::send_status(exchange, IMStatusCode::InvalidAction).await;
+            }
+
+            // A non-Success handler result disowns the (sub)report; report the
+            // status and stop — no point ack-ing further chunks of a report we
+            // rejected.
+            if let Err(status) = result {
+                if !suppress_response {
+                    return Self::send_status(exchange, status).await;
+                }
+                return Ok(());
+            }
+
+            if !suppress_response {
+                Self::send_status(exchange, IMStatusCode::Success).await?;
+            }
+
+            if !more_chunks {
+                break;
+            }
+
+            // Next chunk rides in on the same exchange.
+            exchange.recv_fetch().await?;
         }
 
         Ok(())
@@ -1389,22 +1539,23 @@ where
     }
 }
 
-impl<C, B, T, K, N, NC, const NS: usize, const NE: usize> ExchangeHandler
-    for InteractionModel<'_, C, B, T, K, N, NC, NS, NE>
+impl<C, B, T, K, N, NC, R, const NS: usize, const NE: usize> ExchangeHandler
+    for InteractionModel<'_, C, B, T, K, N, NC, R, NS, NE>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
     T: DataModel,
     K: KvBlobStoreAccess,
     N: Networks,
+    R: ReportDataHandler,
 {
     async fn handle(&self, mut exchange: Exchange<'_>) -> Result<(), Error> {
         InteractionModel::handle(self, &mut exchange).await
     }
 }
 
-impl<C, B, T, K, N, NC, const NS: usize, const NE: usize> HandlerContext
-    for InteractionModel<'_, C, B, T, K, N, NC, NS, NE>
+impl<C, B, T, K, N, NC, R, const NS: usize, const NE: usize> HandlerContext
+    for InteractionModel<'_, C, B, T, K, N, NC, R, NS, NE>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
@@ -1441,8 +1592,8 @@ where
     }
 }
 
-impl<C, B, T, K, N, NC, const NS: usize, const NE: usize> AttrChangeNotifier
-    for InteractionModel<'_, C, B, T, K, N, NC, NS, NE>
+impl<C, B, T, K, N, NC, R, const NS: usize, const NE: usize> AttrChangeNotifier
+    for InteractionModel<'_, C, B, T, K, N, NC, R, NS, NE>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
@@ -1485,8 +1636,8 @@ where
     }
 }
 
-impl<C, B, T, K, N, NC, const NS: usize, const NE: usize> EventEmitter
-    for InteractionModel<'_, C, B, T, K, N, NC, NS, NE>
+impl<C, B, T, K, N, NC, R, const NS: usize, const NE: usize> EventEmitter
+    for InteractionModel<'_, C, B, T, K, N, NC, R, NS, NE>
 where
     C: Crypto,
     B: Buffers<IMBuffer>,
