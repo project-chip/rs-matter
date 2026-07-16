@@ -117,6 +117,29 @@ impl Btp {
             .lock(|inner| inner.borrow_mut().set_relaxed_mtu_nego(relaxed_mtu_nego));
     }
 
+    /// Set the BTP role.
+    ///
+    /// - `false` (the default) - the GATT Peripheral role, i.e. rs-matter is the Accessory/Device.
+    ///   The peer (Commissioner) initiates the BTP handshake by writing a Handshake Request on `C1`;
+    ///   we respond with a Handshake Response indicated on `C2`.
+    /// - `true` - the GATT Central role, i.e. rs-matter is the Controller/Commissioner.
+    ///   We initiate the BTP handshake ourselves by writing a Handshake Request on the peer's `C1`
+    ///   characteristic (surfaced via `process_outgoing`), and the peer responds with a Handshake
+    ///   Response, which we consume via `process_incoming` on the peer's `C2` indications.
+    ///
+    /// This must be called (with `true`) *before* the first `process_outgoing`/`process_incoming`
+    /// when acting as a Central, so that the pending initial handshake is emitted.
+    ///
+    /// See the [`Btp`] type documentation for the full Peripheral vs Central contract.
+    pub fn set_initiator(&self, initiator: bool) {
+        self.inner.lock(|inner| {
+            inner.borrow_mut().session.set_initiator(initiator);
+
+            // A freshly-flagged initiator has a handshake pending to emit.
+            self.outg_notif.notify();
+        });
+    }
+
     /// Set the BTP timeouts, by configuring the ACK timeout and the connection idle timeout.
     ///
     /// Only used by the unit tests.
@@ -412,7 +435,18 @@ impl BtpInner {
 
                     return Ok(len);
                 }
-            } else {
+            } else if self.session.is_established() {
+                // The queued SDU is addressed to a *different* peer than the
+                // current session - it is stale, drop it.
+                //
+                // We must only do this once the session is established. As an
+                // initiator (GATT Central), an SDU (e.g. the PASE
+                // PBKDFParamRequest) can be queued *before* the BTP handshake
+                // completes, i.e. while the session address is still unset
+                // (all-zero). Dropping it then would silently lose the first
+                // Matter message and stall commissioning; instead we keep it
+                // queued until the handshake response establishes the session,
+                // and send it afterwards.
                 self.outgoing_sdu.reset();
             }
         }
@@ -753,5 +787,83 @@ mod test {
 
         // BTP should - in X seconds - ACK again
         expect_outgoing(&btp, &[8, 1, 2]);
+    }
+
+    /// Pump any pending outgoing frame from `from` into `to`. Returns whether a
+    /// frame was moved.
+    fn pump(from: &Btp, from_addr: BtAddr, to: &Btp, gatt_mtu: Option<u16>) -> bool {
+        let mut buf = [0u8; 512];
+        let len = from.process_outgoing(gatt_mtu, &mut buf).unwrap();
+        if len == 0 {
+            return false;
+        }
+        to.process_incoming(gatt_mtu, from_addr, &buf[..len]).unwrap();
+        true
+    }
+
+    /// End-to-end BTP handshake + first data packet between an **initiator**
+    /// (GATT Central) and a **responder** (GATT Peripheral), both in-process.
+    ///
+    /// This is the regression test for the controller-side (initiator) BTP path:
+    /// the initiator queues a Matter SDU *before* the handshake has completed
+    /// (exactly as a commissioner does when it sends the PASE PBKDFParamRequest),
+    /// and that SDU must survive the handshake and be delivered to the responder.
+    #[test]
+    fn test_initiator_handshake_then_data() {
+        const INITIATOR_ADDR: BtAddr = BtAddr([0xaa; 6]);
+        const RESPONDER_ADDR: BtAddr = BtAddr([0xbb; 6]);
+
+        let gatt_mtu = Some(0xc8);
+
+        let initiator = Btp::new();
+        initiator.set_initiator(true);
+
+        let responder = Btp::new();
+
+        // The commissioner queues its first Matter message (a PASE
+        // PBKDFParamRequest, here stubbed) *before* the BTP handshake completes.
+        let sdu: &[u8] = &[1, 2, 3, 4, 5];
+        send_to(&initiator, RESPONDER_ADDR, sdu);
+
+        // Handshake: initiator -> request -> responder.
+        assert!(pump(&initiator, INITIATOR_ADDR, &responder, gatt_mtu));
+        // Responder -> response -> initiator.
+        assert!(pump(&responder, RESPONDER_ADDR, &initiator, gatt_mtu));
+
+        // Now the initiator's queued SDU must flow to the responder. Pump every
+        // frame the initiator has to send (data segments + acks) into the
+        // responder until the responder can deliver the full SDU.
+        for _ in 0..8 {
+            if !pump(&initiator, INITIATOR_ADDR, &responder, gatt_mtu) {
+                break;
+            }
+        }
+
+        let mut buf = [0u8; 512];
+        let (len, addr) = embassy_futures::block_on(responder.recv(&mut buf)).unwrap();
+        assert_eq!(addr, INITIATOR_ADDR);
+        assert_eq!(&buf[..len], sdu);
+
+        // Now the reverse direction: the responder replies with its own SDU (as a
+        // device would with the PASE PBKDFParamResponse). This exercises the
+        // initiator's receive-sequence handling - the responder's Handshake
+        // Response was its seq 0, so its first data segment is seq 1, and the
+        // initiator must accept it rather than rejecting it as out-of-sequence.
+        let reply: &[u8] = &[9, 8, 7, 6];
+        send_to(&responder, INITIATOR_ADDR, reply);
+
+        for _ in 0..8 {
+            if !pump(&responder, RESPONDER_ADDR, &initiator, gatt_mtu) {
+                break;
+            }
+        }
+
+        let (len, addr) = embassy_futures::block_on(initiator.recv(&mut buf)).unwrap();
+        assert_eq!(addr, RESPONDER_ADDR);
+        assert_eq!(&buf[..len], reply);
+    }
+
+    fn send_to(btp: &Btp, addr: BtAddr, data: &[u8]) {
+        embassy_futures::block_on(btp.send(data, addr)).unwrap();
     }
 }

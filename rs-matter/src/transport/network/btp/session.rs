@@ -429,7 +429,11 @@ impl Session {
         self.version = 0;
         self.mtu = 0;
         self.window_size = 0;
-        self.handshake_pending = false;
+        // Preserve the role across a reset. An initiator (GATT Central) must
+        // re-arm its pending handshake so that the next connection starts with
+        // us sending the Handshake Request; a responder (Peripheral) waits for
+        // the peer's request, so it stays `false`.
+        self.handshake_pending = self.initiator;
         self.recv_window.reset();
         self.send_window.reset();
     }
@@ -438,7 +442,6 @@ impl Session {
         self.relaxed_mtu_nego = relaxed_mtu_nego;
     }
 
-    #[allow(unused)]
     pub fn set_initiator(&mut self, initiator: bool) {
         self.initiator = initiator;
         self.handshake_pending = initiator;
@@ -458,11 +461,35 @@ impl Session {
         self.recv_window.level = window_size;
         self.send_window.window_size = window_size;
         self.send_window.level = window_size;
+
+        if self.initiator {
+            // As the initiator (GATT Central), the peer's Handshake *Response* is,
+            // per the Matter Core spec, the peer's implicit BTP sequence number 0.
+            // So the peer's first *data* segment is seq 1, and we must record that
+            // we've "received" seq 0 - otherwise the sequence-integrity check
+            // rejects the peer's first data packet (it expects seq 0, gets 1).
+            //
+            // (The responder side has no matching adjustment: our Handshake
+            // *Request* carries no sequence number, so the responder correctly
+            // expects our first data segment at seq 0.)
+            self.recv_window.ack_seq = 0;
+        }
     }
 
     /// Return the address of the remote peer.
     pub fn address(&self) -> BtAddr {
         self.address
+    }
+
+    /// Whether the session has been established (its BTP handshake has completed
+    /// and a window has been negotiated).
+    ///
+    /// Until this is true - notably in the window between an initiator sending
+    /// its Handshake Request and receiving the Response - the session has no
+    /// negotiated address/window yet, and outgoing SDUs must be held rather than
+    /// sent or discarded.
+    pub fn is_established(&self) -> bool {
+        self.address != BtAddr([0; 6])
     }
 
     #[allow(unused)]
@@ -655,10 +682,20 @@ impl Session {
         gatt_mtu: Option<u16>,
         buf: &mut [u8],
     ) -> Result<usize, Error> {
+        // Propose our best MTU and a window size derived from it (the same
+        // computation the responder uses to bound the window). The initiator's
+        // proposed window is the ceiling the responder clamps against, so it must
+        // be a sensible non-zero value - `self.window_size` is still 0 here (the
+        // window is only established once the response arrives), so we must NOT
+        // use it, or we would propose a window of 0 and the peer would reject the
+        // handshake and disconnect.
+        let mtu = gatt_mtu.unwrap_or(MIN_MTU);
+        let window_size = Self::initial_window_size(mtu.saturating_sub(GATT_HEADER_SIZE as u16));
+
         let req = HandshakeReq {
             versions: 4,
-            mtu: gatt_mtu.unwrap_or(MIN_MTU),
-            window_size: self.window_size, // TODO
+            mtu,
+            window_size,
         };
 
         let mut wb = WriteBuf::new(buf);
@@ -675,7 +712,13 @@ impl Session {
         hdr.encode(&mut wb)?;
         req.encode(&mut wb)?;
 
-        self.send_window.post_send();
+        // NOTE: unlike the Handshake *Response* (and unlike regular data), we do
+        // NOT `post_send()` here. As the initiator, the send window does not exist
+        // yet at request time - it is established from the peer's Handshake
+        // Response in `process_rx_handshake_resp` -> `setup()`. A `post_send()` on
+        // the still-zero window would underflow `level` (0 - 1). The handshake
+        // request is a pre-window control frame; flow control begins only once the
+        // window is negotiated.
 
         Ok(wb.get_tail())
     }

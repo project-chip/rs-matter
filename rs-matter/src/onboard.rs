@@ -355,6 +355,40 @@ impl<'a, C: Crypto> Commissioner<'a, C> {
             .await
     }
 
+    /// Phase 2, resolving the device's operational address via mDNS.
+    ///
+    /// Identical to [`Self::complete_via_case`] except that, instead of being
+    /// handed a fixed `peer_addr`, it looks up the device's operational endpoint
+    /// via `_matter._tcp` mDNS from `(fabric, device_node_id)` (using
+    /// [`Exchange::initiate_plaintext_operational`]).
+    ///
+    /// This is the production phase-2 path: after phase 1 the device may only be
+    /// reachable at a *different* address than PASE used - most notably when the
+    /// device was commissioned over BLE and has since joined its operational
+    /// (Wi-Fi / Thread) network, where its operational IP is not known until it
+    /// announces itself. It requires the mDNS backend to be running (so the
+    /// resolve request is answered), and the device to have joined the network
+    /// and started announcing operationally.
+    pub async fn complete_via_case_operational(
+        &mut self,
+        phase1: &CommissionResult,
+    ) -> Result<(), Error> {
+        let fab_idx = self.fab_idx;
+
+        let exchange = Exchange::initiate_plaintext_operational(
+            self.matter,
+            &self.crypto,
+            fab_idx,
+            phase1.device_node_id,
+        )
+        .await?;
+        CaseInitiator::perform(exchange, &self.crypto, fab_idx, phase1.device_node_id).await?;
+
+        // CommissioningComplete on the CASE session.
+        self.commissioning_complete(fab_idx, phase1.device_node_id)
+            .await
+    }
+
     /// `GeneralCommissioning::ArmFailSafe(expiry, breadcrumb=0)`.
     pub(crate) async fn arm_fail_safe(
         &self,
