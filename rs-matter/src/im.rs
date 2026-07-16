@@ -995,11 +995,13 @@ where
             // A non-Success handler result disowns the (sub)report; report the
             // status and stop — no point ack-ing further chunks of a report we
             // rejected.
+            //
+            // `SuppressResponse` only suppresses the *Success* StatusResponse: a
+            // failure status MUST always be sent (Matter Core spec), so the
+            // publisher can tear down a subscription we no longer track (e.g. our
+            // `InvalidSubscription`). Sending it regardless of `suppress_response`.
             if let Err(status) = result {
-                if !suppress_response {
-                    return Self::send_status(exchange, status).await;
-                }
-                return Ok(());
+                return Self::send_status(exchange, status).await;
             }
 
             if !suppress_response {
