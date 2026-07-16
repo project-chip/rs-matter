@@ -215,7 +215,10 @@ pub async fn run_central(
     // `<adapter_path>/dev_AA_BB_CC_DD_EE_FF`.
     let device_path = device_path_for(&adapter_path, addr)?;
 
-    info!("Connecting to commissionable device {} ({})", device_path, addr);
+    info!(
+        "Connecting to commissionable device {} ({})",
+        device_path, addr
+    );
 
     let device = device_proxy(connection, &device_path).await?;
 
@@ -230,7 +233,10 @@ pub async fn run_central(
     // on older BlueZ; in that case the BTP handshake falls back to the minimum MTU.
     let gatt_mtu = c1.mtu().await.ok().filter(|mtu| *mtu > 0);
 
-    debug!("Discovered Matter GATT characteristics C1/C2, ATT MTU: {:?}", gatt_mtu);
+    debug!(
+        "Discovered Matter GATT characteristics C1/C2, ATT MTU: {:?}",
+        gatt_mtu
+    );
 
     // Subscribe to C2 indications before we start the handshake, so we don't miss the peer's
     // Handshake Response.
@@ -329,14 +335,16 @@ where
     // `PropertiesChanged` on an existing device, are both handled uniformly.
     let om = ObjectManagerProxy::new(connection, "org.bluez", "/").await?;
 
-    let deadline = Instant::now() + Duration::from_secs(scan_timeout.unwrap_or(DEFAULT_SCAN_TIMEOUT_SECS) as u64);
+    let deadline = Instant::now()
+        + Duration::from_secs(scan_timeout.unwrap_or(DEFAULT_SCAN_TIMEOUT_SECS) as u64);
 
     // Devices already reported to `on_found`, so we report each at most once.
     let mut reported: heapless::Vec<BtAddr, 16> = heapless::Vec::new();
 
     let outcome = loop {
         if let Some(result) =
-            report_matching_devices(&om, &adapter_path, filter, &mut reported, &mut on_found).await?
+            report_matching_devices(&om, &adapter_path, filter, &mut reported, &mut on_found)
+                .await?
         {
             break Some(result);
         }
@@ -352,7 +360,9 @@ where
     let _ = adapter.stop_discovery().await;
 
     outcome.ok_or_else(|| {
-        warn!("No commissionable Matter device matching the filter was found within the scan timeout");
+        warn!(
+            "No commissionable Matter device matching the filter was found within the scan timeout"
+        );
         ErrorCode::NoNetworkInterface.into()
     })
 }
@@ -376,7 +386,11 @@ async fn process_c2_indications(
             continue;
         }
 
-        trace!("Received C2 indication from peer {}: {:?}", peer_addr, value);
+        trace!(
+            "Received C2 indication from peer {}: {:?}",
+            peer_addr,
+            value
+        );
 
         btp.process_incoming(gatt_mtu, peer_addr, &value)?;
     }
@@ -512,7 +526,10 @@ where
         // an actual match on the floor.
         let _ = reported.push(addr);
 
-        debug!("Matched commissionable device {} ({}) (adv: {:?})", path, addr, adv);
+        debug!(
+            "Matched commissionable device {} ({}) (adv: {:?})",
+            path, addr, adv
+        );
 
         if let Some(result) = on_found(addr, &adv) {
             return Ok(Some(result));

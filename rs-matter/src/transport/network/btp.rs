@@ -797,7 +797,8 @@ mod test {
         if len == 0 {
             return false;
         }
-        to.process_incoming(gatt_mtu, from_addr, &buf[..len]).unwrap();
+        to.process_incoming(gatt_mtu, from_addr, &buf[..len])
+            .unwrap();
         true
     }
 

@@ -43,9 +43,7 @@ use crate::transport::network::mdns::CommissionableFilter;
 use crate::transport::network::BtAddr;
 use crate::utils::select::Coalesce;
 
-use super::{
-    AdvData, C1_CHARACTERISTIC_UUID, C2_CHARACTERISTIC_UUID, MATTER_BLE_SERVICE_UUID,
-};
+use super::{AdvData, C1_CHARACTERISTIC_UUID, C2_CHARACTERISTIC_UUID, MATTER_BLE_SERVICE_UUID};
 
 /// The default amount of time [`scan`] will scan for a matching commissionable
 /// advertisement before giving up.
@@ -286,7 +284,9 @@ where
     };
 
     outcome.ok_or_else(|| {
-        warn!("No commissionable Matter device matching the filter was found within the scan timeout");
+        warn!(
+            "No commissionable Matter device matching the filter was found within the scan timeout"
+        );
         ErrorCode::NoNetworkInterface.into()
     })
 }
@@ -365,11 +365,7 @@ where
 ///   be the same adapter the device was discovered on.
 /// - `addr`: The Bluetooth address of the device to connect to (from [`scan`]).
 /// - `btp`: The BTP session to drive.
-pub async fn run_central(
-    adapter_name: Option<&str>,
-    addr: BtAddr,
-    btp: &Btp,
-) -> Result<(), Error> {
+pub async fn run_central(adapter_name: Option<&str>, addr: BtAddr, btp: &Btp) -> Result<(), Error> {
     let session = bluer::Session::new().await?;
 
     // Register a "NoInputNoOutput" agent that will accept all incoming requests.
@@ -424,7 +420,11 @@ async fn process_c2_indications(
     c2_notify: &mut (impl StreamExt<Item = Vec<u8>> + Unpin),
 ) -> Result<(), Error> {
     while let Some(value) = c2_notify.next().await {
-        trace!("Received C2 indication from peer {}: {:?}", peer_addr, value);
+        trace!(
+            "Received C2 indication from peer {}: {:?}",
+            peer_addr,
+            value
+        );
 
         btp.process_incoming(gatt_mtu, peer_addr, &value)?;
     }
@@ -521,7 +521,10 @@ async fn discover_matter_characteristics(
 }
 
 /// Open the Bluetooth adapter designated by `adapter_name`, or the default adapter if `None`.
-async fn open_adapter(session: &bluer::Session, adapter_name: Option<&str>) -> Result<Adapter, Error> {
+async fn open_adapter(
+    session: &bluer::Session,
+    adapter_name: Option<&str>,
+) -> Result<Adapter, Error> {
     let adapter = if let Some(adapter_name) = adapter_name {
         session.adapter(adapter_name)?
     } else {
