@@ -58,7 +58,9 @@ extern crate alloc;
 /// - [`ErrorCode::InvalidData`] if `luma` is too small for `width * height`.
 /// - [`ErrorCode::NotFound`] if the image contains no readable Matter QR code.
 pub fn scan_luma(width: usize, height: usize, luma: &[u8]) -> Result<String, Error> {
-    if luma.len() < width * height {
+    let pixels = width.checked_mul(height).ok_or(ErrorCode::InvalidData)?;
+
+    if luma.len() < pixels {
         return Err(ErrorCode::InvalidData.into());
     }
 

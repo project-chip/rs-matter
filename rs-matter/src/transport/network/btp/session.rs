@@ -682,15 +682,10 @@ impl Session {
         gatt_mtu: Option<u16>,
         buf: &mut [u8],
     ) -> Result<usize, Error> {
-        // Propose our best MTU and a window size derived from it (the same
-        // computation the responder uses to bound the window). The initiator's
-        // proposed window is the ceiling the responder clamps against, so it must
-        // be a sensible non-zero value - `self.window_size` is still 0 here (the
-        // window is only established once the response arrives), so we must NOT
-        // use it, or we would propose a window of 0 and the peer would reject the
-        // handshake and disconnect.
-        let mtu = gatt_mtu.unwrap_or(MIN_MTU);
-        let window_size = Self::initial_window_size(mtu.saturating_sub(GATT_HEADER_SIZE as u16));
+        let mtu = gatt_mtu
+            .map(|g| g.clamp(MIN_MTU, MAX_MTU))
+            .unwrap_or(MIN_MTU);
+        let window_size = Self::initial_window_size(mtu - GATT_HEADER_SIZE as u16);
 
         let req = HandshakeReq {
             versions: 4,

@@ -420,6 +420,18 @@ async fn process_c2_indications(
     c2_notify: &mut (impl StreamExt<Item = Vec<u8>> + Unpin),
 ) -> Result<(), Error> {
     while let Some(value) = c2_notify.next().await {
+        // An empty payload is never a valid BTP frame, and handing one to the BTP
+        // layer would fail the whole session rather than ignore a stray indication.
+        //
+        // The `zbus` backend *must* filter these, as BlueZ delivers the
+        // characteristic's initial (empty) `Value` as a property change right after
+        // subscribing. `bluer` hands us a real notification stream instead, so here
+        // this is belt-and-braces - but it costs one comparison, and what it guards
+        // against is a dropped connection.
+        if value.is_empty() {
+            continue;
+        }
+
         trace!(
             "Received C2 indication from peer {}: {:?}",
             peer_addr,

@@ -867,4 +867,25 @@ mod test {
     fn send_to(btp: &Btp, addr: BtAddr, data: &[u8]) {
         embassy_futures::block_on(btp.send(data, addr)).unwrap();
     }
+
+    /// An initiator must survive a peer/stack reporting a nonsensically small GATT
+    /// MTU. BlueZ hands us whatever it has in `GattCharacteristic1.MTU`, and an MTU
+    /// below the BTP header size once left the proposed window size dividing by
+    /// zero - a panic on external input.
+    #[test]
+    fn test_initiator_handshake_tolerates_a_tiny_gatt_mtu() {
+        for gatt_mtu in [Some(0), Some(1), Some(3), Some(20), Some(0xFFFF), None] {
+            let btp = Btp::new();
+            btp.set_initiator(true);
+
+            let mut buf = [0u8; 512];
+            let len = btp
+                .process_outgoing(gatt_mtu, &mut buf)
+                .unwrap_or_else(|e| panic!("gatt_mtu {gatt_mtu:?} failed: {e:?}"));
+
+            // Whatever the peer claimed, we must emit a well-formed handshake
+            // request proposing a usable (non-zero) window.
+            assert!(len > 0, "gatt_mtu {gatt_mtu:?} produced no handshake");
+        }
+    }
 }

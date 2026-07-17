@@ -341,23 +341,33 @@ where
     // Devices already reported to `on_found`, so we report each at most once.
     let mut reported: heapless::Vec<BtAddr, 16> = heapless::Vec::new();
 
-    let outcome = loop {
-        if let Some(result) =
-            report_matching_devices(&om, &adapter_path, filter, &mut reported, &mut on_found)
-                .await?
-        {
-            break Some(result);
-        }
+    // NOTE: the polling loop is wrapped so that discovery is stopped on *every* way
+    // out, errors included. A leaked discovery does more than waste power: BlueZ
+    // fails a connect that races an active discovery with
+    // `le-connection-abort-by-local`, so it would break the very next
+    // `run_central`.
+    let outcome: Result<Option<R>, Error> = async {
+        loop {
+            if let Some(result) =
+                report_matching_devices(&om, &adapter_path, filter, &mut reported, &mut on_found)
+                    .await?
+            {
+                return Ok(Some(result));
+            }
 
-        if Instant::now() >= deadline {
-            break None;
-        }
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
 
-        Timer::after(Duration::from_millis(250)).await;
-    };
+            Timer::after(Duration::from_millis(250)).await;
+        }
+    }
+    .await;
 
     // Stop discovery (best-effort) before returning.
     let _ = adapter.stop_discovery().await;
+
+    let outcome = outcome?;
 
     outcome.ok_or_else(|| {
         warn!(
