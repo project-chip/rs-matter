@@ -188,13 +188,20 @@ impl AdvData {
     /// the `0xFFF6` service-data value directly.
     pub fn parse_adv(adv: &[u8]) -> Option<Self> {
         for (ad_type, ad_payload) in AdStructures::new(adv) {
-            if ad_type == AD_TYPE_SERVICE_DATA_UUID16 {
-                // The service-data payload starts with the 2-byte (LE) UUID16.
-                let (uuid16, service_data) = ad_payload.split_first_chunk::<2>()?;
+            if ad_type != AD_TYPE_SERVICE_DATA_UUID16 {
+                continue;
+            }
 
-                if u16::from_le_bytes(*uuid16) == MATTER_BLE_SERVICE_UUID16 {
-                    return Self::parse_service_data(service_data);
-                }
+            // The service-data payload starts with the 2-byte (LE) UUID16. A
+            // structure too short to hold one is malformed - skip it and keep
+            // looking, rather than giving up on the whole advertisement: the Matter
+            // record may well be further along.
+            let Some((uuid16, service_data)) = ad_payload.split_first_chunk::<2>() else {
+                continue;
+            };
+
+            if u16::from_le_bytes(*uuid16) == MATTER_BLE_SERVICE_UUID16 {
+                return Self::parse_service_data(service_data);
             }
         }
 
@@ -408,6 +415,22 @@ mod test {
         blob.extend(adv.service_iter());
 
         let parsed = AdvData::parse_adv(&blob).unwrap();
+        assert_eq!(parsed.discriminator(), adv.discriminator());
+    }
+
+    #[test]
+    fn parse_adv_skips_a_malformed_service_data_record() {
+        // A service-data record too short to even hold its UUID16, *before* the
+        // Matter one. It must be skipped rather than abandoning the whole scan.
+        let adv = sample();
+
+        let mut blob: heapless::Vec<u8, 64> = heapless::Vec::new();
+        // Service Data - UUID16 with a 1-byte payload: not even a full UUID.
+        blob.extend([0x02, 0x16, 0x34]);
+        // The Matter one.
+        blob.extend(adv.service_iter());
+
+        let parsed = unwrap!(AdvData::parse_adv(&blob), "Failed to parse");
         assert_eq!(parsed.discriminator(), adv.discriminator());
     }
 

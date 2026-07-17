@@ -244,23 +244,27 @@ where
     };
     adapter.set_discovery_filter(discovery_filter).await?;
 
-    let device_events = adapter.discover_devices().await?;
+    // `discover_devices_with_changes`, not `discover_devices`: both include the
+    // devices BlueZ already knows about, but only this one re-emits `DeviceAdded`
+    // *every time a device's properties change*.
+    //
+    // That matters, and is easy to get wrong. BlueZ populates a device's properties
+    // asynchronously, so the advertised service data we match on is routinely absent
+    // at the moment the device first shows up - and a device BlueZ already knows
+    // never "appears" again at all. With plain `discover_devices` we would look at
+    // each device exactly once, quite possibly before its service data landed, and
+    // then wait forever. (This is the same trap the `zbus` backend sidesteps by
+    // re-reading the object tree on a timer; `bluer` just gives us a better tool.)
+    let device_events = adapter.discover_devices_with_changes().await?;
     let mut device_events = pin!(device_events);
 
     // Devices already reported to `on_found`, so we report each at most once.
+    // Note this only suppresses re-reporting a device we already *matched*: one that
+    // does not match yet (e.g. no service data so far) is left out, so a later
+    // `DeviceAdded` for it gets another look.
     let mut reported: heapless::Vec<BtAddr, 16> = heapless::Vec::new();
 
     let scan_fut = async {
-        // First, sweep devices BlueZ already knows about (they won't generate `DeviceAdded`).
-        for addr in adapter.device_addresses().await? {
-            if let Some(result) =
-                try_match_device(&adapter, addr, filter, &mut reported, &mut on_found).await?
-            {
-                return Ok(Some(result));
-            }
-        }
-
-        // Then follow the discovery event stream.
         while let Some(event) = device_events.next().await {
             if let AdapterEvent::DeviceAdded(addr) = event {
                 if let Some(result) =
