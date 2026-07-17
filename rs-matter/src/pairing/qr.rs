@@ -19,8 +19,10 @@ use core::iter::Empty;
 
 use qrcodegen_no_heap::{QrCode, QrCodeEcc, Version};
 
+use verhoeff::Verhoeff;
+
 use crate::error::ErrorCode;
-use crate::tlv::{EitherIter, TLVTag, TLV};
+use crate::tlv::{EitherIter, TLVElement, TLVTag, TLV};
 use crate::utils::codec::base38;
 use crate::utils::storage::WriteBuf;
 
@@ -400,6 +402,396 @@ where
                         .flat_map(TLV::result_into_bytes_iter),
                 ),
         )
+    }
+}
+
+impl<'a> QrPayload<'a, &'a [u8]> {
+    /// Parse a Matter onboarding QR-code text (an `MT:` payload) into a [`QrPayload`].
+    ///
+    /// This is the inverse of the [`QrPayload::as_str`] / [`QrPayload::emit_chars`]
+    /// encoding path, and the entry point a commissioner uses to turn a scanned QR
+    /// string into the discriminator, passcode, VID/PID etc. it needs to commission
+    /// the device.
+    ///
+    /// `buf` is a scratch buffer that the parsed payload borrows from: the trailing
+    /// optional-TLV data (and hence any serial number decoded out of it) points into
+    /// it, so `buf` must outlive the returned payload. A buffer of
+    /// [`TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES`] plus the optional-data length is enough;
+    /// the base38 body never decodes to more bytes than the input string.
+    ///
+    /// The returned payload's `optional_data` is the raw optional-TLV byte slice (an
+    /// anonymous TLV structure), which is empty when the QR carries no optional data.
+    ///
+    /// # Errors
+    /// Returns [`ErrorCode::InvalidData`] if the string is not a well-formed `MT:`
+    /// payload (missing prefix, invalid base38, too short, or an out-of-range field).
+    pub fn parse(qr: &str, buf: &'a mut [u8]) -> Result<Self, Error> {
+        // Strip the `MT:` prefix.
+        let body = qr
+            .strip_prefix(Self::qr_prefix())
+            .ok_or(ErrorCode::InvalidData)?;
+
+        // Base38-decode the body into `buf`.
+        let mut len = 0;
+        for byte in base38::decode(body) {
+            let byte = byte?;
+            *buf.get_mut(len).ok_or(ErrorCode::BufferTooSmall)? = byte;
+            len += 1;
+        }
+        let decoded = &buf[..len];
+
+        // The fixed part of the payload is `TOTAL_PAYLOAD_DATA_SIZE_IN_BITS` bits
+        // (`TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES` bytes); anything beyond it is the
+        // optional-TLV data.
+        if decoded.len() < TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        let mut reader = BitReader::new(decoded);
+
+        // Read the fixed fields in the same order (and LSB-first bit order) as
+        // `emit_all_bits` writes them.
+        let version = reader.read(VERSION_FIELD_LENGTH_IN_BITS)? as u8;
+        let vid = reader.read(VENDOR_IDFIELD_LENGTH_IN_BITS)? as u16;
+        let pid = reader.read(PRODUCT_IDFIELD_LENGTH_IN_BITS)? as u16;
+        let comm_flow =
+            CommFlowType::from_bits(reader.read(COMMISSIONING_FLOW_FIELD_LENGTH_IN_BITS)? as u8)?;
+        let discovery_capabilities = DiscoveryCapabilities::from_bits_truncate(
+            reader.read(RENDEZVOUS_INFO_FIELD_LENGTH_IN_BITS)? as u8,
+        );
+        let discriminator = reader.read(PAYLOAD_DISCRIMINATOR_FIELD_LENGTH_IN_BITS)? as u16;
+        let passcode = reader.read(SETUP_PINCODE_FIELD_LENGTH_IN_BITS)?;
+        // Padding bits (must be present but are ignored).
+        let _ = reader.read(PADDING_FIELD_LENGTH_IN_BITS)?;
+
+        // The remaining whole bytes are the optional-TLV data.
+        let optional_data = &decoded[TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES..];
+
+        // If present, the serial number is a context-`SERIAL_NUMBER_TAG` UTF-8 string
+        // in the anonymous optional-TLV structure. Borrow it out of the blob.
+        let serial_no = Self::parse_serial_no(optional_data).unwrap_or("");
+
+        let payload = Self {
+            version,
+            discovery_capabilities,
+            comm_flow,
+            comm_data: BasicCommData {
+                password: passcode.to_le_bytes().into(),
+                discriminator,
+            },
+            vid,
+            pid,
+            serial_no,
+            optional_data,
+        };
+
+        Ok(payload)
+    }
+
+    /// Extract the serial number (context tag [`SERIAL_NUMBER_TAG`]) from the
+    /// optional-TLV structure, if present.
+    fn parse_serial_no(optional_data: &'a [u8]) -> Option<&'a str> {
+        if optional_data.is_empty() {
+            return None;
+        }
+
+        let root = TLVElement::new(optional_data);
+        let serial = root.structure().ok()?.find_ctx(SERIAL_NUMBER_TAG).ok()?;
+
+        serial.utf8().ok()
+    }
+
+    /// The payload version (always 0 for v1 QR codes).
+    pub const fn version(&self) -> u8 {
+        self.version
+    }
+
+    /// The device's advertised discovery capabilities.
+    pub const fn discovery_capabilities(&self) -> DiscoveryCapabilities {
+        self.discovery_capabilities
+    }
+
+    /// The commissioning flow type.
+    pub const fn comm_flow(&self) -> CommFlowType {
+        self.comm_flow
+    }
+
+    /// The 12-bit discriminator.
+    pub const fn discriminator(&self) -> u16 {
+        self.comm_data.discriminator
+    }
+
+    /// The setup passcode (PIN).
+    pub fn passcode(&self) -> u32 {
+        u32::from_le_bytes(*self.comm_data.password.access())
+    }
+
+    /// The Vendor ID.
+    pub const fn vid(&self) -> u16 {
+        self.vid
+    }
+
+    /// The Product ID.
+    pub const fn pid(&self) -> u16 {
+        self.pid
+    }
+
+    /// The serial number, or an empty string if the QR carries none.
+    pub const fn serial_no(&self) -> &'a str {
+        self.serial_no
+    }
+
+    /// The raw optional-TLV data (an anonymous TLV structure), empty if absent.
+    pub const fn optional_data(&self) -> &'a [u8] {
+        self.optional_data
+    }
+}
+
+impl<'a> QrPayload<'a, ()> {
+    /// Parse a Matter **manual pairing code** (the 11- or 21-digit decimal string
+    /// printed on a device, e.g. `34970112332` / `3497-0112-332`) into a
+    /// [`QrPayload`].
+    ///
+    /// This is the "typed by a human" onboarding format, and it is the counterpart
+    /// of [`BasicCommData::compute_pairing_code`]. It is deliberately a *different*
+    /// `T` from [`QrPayload::parse`] (`()` rather than `&[u8]`), because a manual
+    /// pairing code carries strictly less information than a QR code, and the
+    /// resulting payload must not be mistaken for one:
+    ///
+    /// - Only the **upper 4 bits** of the discriminator are carried (the "short
+    ///   discriminator"). Per the Matter Core spec: *"For machine-readable formats,
+    ///   the full 12-bit Discriminator is used. For the Manual Pairing Code, only
+    ///   the upper 4 bits out of the 12-bit Discriminator are used."* Read it via
+    ///   [`Self::short_discriminator`] - there is deliberately no `discriminator()`
+    ///   accessor on this `T`, so a 4-bit value can never be mistaken for a 12-bit
+    ///   one.
+    /// - **No discovery capabilities** are carried, so a commissioner cannot know
+    ///   whether to look for the device over BLE, SoftAP or IP, and must try all of
+    ///   them.
+    /// - **No serial number and no optional TLV data** are carried (hence `T = ()`).
+    /// - The commissioning flow is only *implied* - see [`Self::comm_flow`].
+    ///
+    /// The Verhoeff check digit is verified. Separators (`-` and spaces) are
+    /// ignored, so both the compact and the "pretty" printed forms are accepted.
+    ///
+    /// # Errors
+    /// Returns [`ErrorCode::InvalidData`] if the code is not a well-formed v1 manual
+    /// pairing code: wrong length, a non-digit, a bad check digit, a first digit of
+    /// 8 or 9 (which per spec indicates a future format version), a VID/PID-present
+    /// flag inconsistent with the length, or an out-of-range digit group.
+    pub fn parse_pairing_code(code: &str) -> Result<Self, Error> {
+        /// Length of the manual pairing code without vendor/product IDs.
+        const SHORT_CODE_LEN: usize = 11;
+        /// Length of the manual pairing code with vendor/product IDs.
+        const LONG_CODE_LEN: usize = 21;
+
+        // Strip the separators of the "pretty" form (e.g. `3497-0112-332`).
+        let mut digits: heapless::String<LONG_CODE_LEN> = heapless::String::new();
+        for ch in code.chars() {
+            if matches!(ch, '-' | ' ') {
+                continue;
+            }
+
+            if !ch.is_ascii_digit() {
+                return Err(ErrorCode::InvalidData.into());
+            }
+
+            digits
+                .push(ch)
+                .map_err(|_| Error::from(ErrorCode::InvalidData))?;
+        }
+
+        let long_form = match digits.len() {
+            SHORT_CODE_LEN => false,
+            LONG_CODE_LEN => true,
+            _ => return Err(ErrorCode::InvalidData.into()),
+        };
+
+        // The trailing check digit protects against typos and transpositions.
+        if !digits.validate_verhoeff_check_digit() {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        // DIGIT[1] := (VID_PID_PRESENT << 2) | (DISCRIMINATOR >> 10)
+        //
+        // A leading digit of 8 or 9 is invalid for v1 and would indicate a future
+        // payload version.
+        let digit1 = Self::digits_at(&digits, 0, 1)?;
+        if digit1 > 7 {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        let vid_pid_present = digit1 >> 2 == 1;
+        // The flag and the code length must agree.
+        if vid_pid_present != long_form {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        // The two most significant bits (11..10) of the discriminator.
+        let disc_bits_11_10 = (digit1 & 0x3) as u16;
+
+        // DIGIT[2..6] := ((DISCRIMINATOR & 0x300) << 6) | (PASSCODE & 0x3FFF)
+        let group = Self::digits_at(&digits, 1, 5)?;
+        if group > 0xFFFF {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        // Bits 9..8 of the discriminator, and the low 14 bits of the passcode.
+        let disc_bits_9_8 = ((group >> 14) & 0x3) as u16;
+        let passcode_low = group & 0x3FFF;
+
+        // DIGIT[7..10] := (PASSCODE >> 14)
+        let passcode_high = Self::digits_at(&digits, 6, 4)?;
+        if passcode_high > 0x1FFF {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        let passcode = (passcode_high << 14) | passcode_low;
+
+        // The short discriminator is exactly the upper 4 bits (11..8) of the full
+        // 12-bit discriminator.
+        let short_discriminator = (disc_bits_11_10 << 2) | disc_bits_9_8;
+
+        // DIGIT[11..15] := VENDOR_ID, DIGIT[16..20] := PRODUCT_ID (long form only)
+        let (vid, pid) = if long_form {
+            let vid = Self::digits_at(&digits, 10, 5)?;
+            let pid = Self::digits_at(&digits, 15, 5)?;
+
+            if vid > 0xFFFF || pid > 0xFFFF {
+                return Err(ErrorCode::InvalidData.into());
+            }
+
+            (vid as u16, pid as u16)
+        } else {
+            (0, 0)
+        };
+
+        Ok(Self {
+            // Not carried; a valid v1 code is version 0 by construction (a leading
+            // digit of 8 or 9 - i.e. a future version - is rejected above).
+            version: 0,
+            // Not carried at all. Empty means "unknown - try every transport",
+            // rather than "the device supports none".
+            discovery_capabilities: DiscoveryCapabilities::empty(),
+            // Not carried directly; per spec the *variant* implies it, and doubles as
+            // our short/long-form discriminant. See `Self::comm_flow`.
+            comm_flow: if long_form {
+                CommFlowType::Custom
+            } else {
+                CommFlowType::Standard
+            },
+            comm_data: BasicCommData {
+                password: passcode.to_le_bytes().into(),
+                // NOTE: this 12-bit field holds the 4-bit *short* discriminator for a
+                // manual pairing code. Only `short_discriminator()` exposes it.
+                discriminator: short_discriminator,
+            },
+            vid,
+            pid,
+            // Not carried.
+            serial_no: "",
+            // A manual pairing code has no optional data - hence `T = ()`.
+            optional_data: (),
+        })
+    }
+
+    /// Parse `len` decimal digits starting at `offset`.
+    fn digits_at(digits: &str, offset: usize, len: usize) -> Result<u32, Error> {
+        digits
+            .get(offset..offset + len)
+            .ok_or(ErrorCode::InvalidData)?
+            .parse()
+            .map_err(|_| ErrorCode::InvalidData.into())
+    }
+
+    /// The **short** (4-bit) discriminator - the upper 4 bits of the device's full
+    /// 12-bit discriminator.
+    ///
+    /// This is all a manual pairing code carries, so it can only narrow discovery to
+    /// 1-in-16 devices. Feed it to
+    /// [`CommissionableFilter::short_discriminator`](crate::transport::network::mdns::CommissionableFilter),
+    /// *not* to the full-discriminator filter.
+    pub const fn short_discriminator(&self) -> u8 {
+        self.comm_data.discriminator as u8
+    }
+
+    /// The setup passcode (PIN). Carried in full (27 bits).
+    pub fn passcode(&self) -> u32 {
+        u32::from_le_bytes(*self.comm_data.password.access())
+    }
+
+    /// The Vendor and Product IDs, if this is the 21-digit variant that carries them
+    /// (`None` for the 11-digit variant).
+    pub fn vid_pid(&self) -> Option<(u16, u16)> {
+        (!matches!(self.comm_flow, CommFlowType::Standard)).then_some((self.vid, self.pid))
+    }
+
+    /// The commissioning flow, as far as the code determines it.
+    ///
+    /// A manual pairing code has no dedicated commissioning-flow field; per the
+    /// Matter Core spec the *variant* implies it:
+    /// - The 11-digit variant (no VID/PID) means the commissioner *"SHALL assume it
+    ///   is a standard flow device"* - so this returns `Some(CommFlowType::Standard)`.
+    /// - The 21-digit variant (with VID/PID) is used for **both** the User-intent and
+    ///   the Custom flow, and the code alone cannot distinguish them - so this
+    ///   returns `None`. To resolve it, look the VID/PID up in the Distributed
+    ///   Compliance Ledger (see [`Self::vid_pid`]).
+    pub fn comm_flow(&self) -> Option<CommFlowType> {
+        matches!(self.comm_flow, CommFlowType::Standard).then_some(CommFlowType::Standard)
+    }
+}
+
+/// The `MT:` prefix shared by the encode and decode paths.
+impl<'a, T> QrPayload<'a, T> {
+    const fn qr_prefix() -> &'static str {
+        "MT:"
+    }
+}
+
+impl CommFlowType {
+    /// Decode a 2-bit commissioning-flow field.
+    fn from_bits(bits: u8) -> Result<Self, Error> {
+        match bits {
+            0 => Ok(Self::Standard),
+            1 => Ok(Self::UserIntent),
+            2 => Ok(Self::Custom),
+            _ => Err(ErrorCode::InvalidData.into()),
+        }
+    }
+}
+
+/// A little-endian, LSB-first bit reader over a byte slice - the inverse of the
+/// `emit_bits` bit order used by the QR encoder (`(input >> i) & 1`).
+struct BitReader<'a> {
+    data: &'a [u8],
+    /// Absolute bit position of the next bit to read.
+    pos: usize,
+}
+
+impl<'a> BitReader<'a> {
+    const fn new(data: &'a [u8]) -> Self {
+        Self { data, pos: 0 }
+    }
+
+    /// Read `len` bits (0..=32) as a little-endian value, LSB-first.
+    fn read(&mut self, len: usize) -> Result<u32, Error> {
+        debug_assert!(len <= 32);
+
+        if self.pos + len > self.data.len() * 8 {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        let mut value = 0u32;
+        for i in 0..len {
+            let bit_pos = self.pos + i;
+            let byte = self.data[bit_pos / 8];
+            let bit = (byte >> (bit_pos % 8)) & 1;
+            value |= (bit as u32) << i;
+        }
+
+        self.pos += len;
+
+        Ok(value)
     }
 }
 
@@ -1003,5 +1395,133 @@ mod tests {
         let mut buf = [0; 1024];
         let data_str = unwrap!(qr_code_data.as_str(&mut buf), "Failed to encode").0;
         assert_eq!(data_str, QR_CODE)
+    }
+
+    #[test]
+    fn parse_qr_basic() {
+        // Same vector as `can_base38_encode` (BLE, no optional data).
+        const QR_CODE: &str = "MT:YNJV7VSC00CMVH7SR00";
+
+        let mut buf = [0; 128];
+        let payload = unwrap!(QrPayload::parse(QR_CODE, &mut buf), "Failed to parse");
+
+        assert_eq!(payload.version(), 0);
+        assert_eq!(payload.vid(), 9050);
+        assert_eq!(payload.pid(), 65279);
+        assert_eq!(payload.comm_flow(), CommFlowType::Standard);
+        assert_eq!(payload.discovery_capabilities(), DiscoveryCapabilities::BLE);
+        assert_eq!(payload.discriminator(), 2976);
+        assert_eq!(payload.passcode(), 34567890);
+        assert_eq!(payload.serial_no(), "");
+        assert!(payload.optional_data().is_empty());
+    }
+
+    #[test]
+    fn parse_qr_with_serial_no() {
+        // Same vector as `can_base38_encode_with_vendor_data` (IP, serial number).
+        const QR_CODE: &str = "MT:-24J0AFN00KA064IJ3P0IXZB0DK5N1K8SQ1RYCU1-A40";
+
+        let mut buf = [0; 128];
+        let payload = unwrap!(QrPayload::parse(QR_CODE, &mut buf), "Failed to parse");
+
+        assert_eq!(payload.vid(), 65521);
+        assert_eq!(payload.pid(), 32769);
+        assert_eq!(payload.discovery_capabilities(), DiscoveryCapabilities::IP);
+        assert_eq!(payload.discriminator(), 3840);
+        assert_eq!(payload.passcode(), 20202021);
+        assert_eq!(payload.serial_no(), "1234567890");
+        assert!(!payload.optional_data().is_empty());
+    }
+
+    #[test]
+    fn parse_qr_round_trips_through_encode() {
+        // Parse a QR, then re-encode from the parsed *fields* and expect the same
+        // string. (We rebuild via the fields rather than replaying the raw optional
+        // blob, since the encoder re-wraps the serial number into the optional-TLV
+        // structure itself - here the serial is the only optional content.)
+        const QR_CODE: &str = "MT:-24J0AFN00KA064IJ3P0IXZB0DK5N1K8SQ1RYCU1-A40";
+
+        let mut buf = [0; 128];
+        let payload = unwrap!(QrPayload::parse(QR_CODE, &mut buf), "Failed to parse");
+
+        let reencoded = QrPayload::new(
+            payload.discovery_capabilities(),
+            payload.comm_flow(),
+            payload.comm_data.clone(),
+            payload.vid(),
+            payload.pid(),
+            payload.serial_no(),
+            no_optional_data,
+        );
+
+        let mut out = [0; 256];
+        let s = unwrap!(reencoded.as_str(&mut out), "Failed to encode").0;
+        assert_eq!(s, QR_CODE);
+    }
+
+    #[test]
+    fn parse_pairing_code_round_trips_with_encoder() {
+        // The two vectors from `code.rs`'s `can_compute_pairing_code`, parsed back.
+        for (code, passcode, discriminator) in [
+            ("00876800071", 123456_u32, 250_u16),
+            ("26318621095", 34567890, 2976),
+        ] {
+            let payload = unwrap!(QrPayload::parse_pairing_code(code), "Failed to parse");
+
+            assert_eq!(payload.passcode(), passcode);
+            // Only the upper 4 bits of the discriminator survive a manual code.
+            assert_eq!(payload.short_discriminator(), (discriminator >> 8) as u8);
+            // The 11-digit variant implies the standard flow and carries no VID/PID.
+            assert_eq!(payload.comm_flow(), Some(CommFlowType::Standard));
+            assert_eq!(payload.vid_pid(), None);
+            // Nothing tells us how to reach the device.
+            assert!(payload.discovery_capabilities.is_empty());
+
+            // And the code we parsed re-computes from the parsed passcode + a
+            // discriminator whose upper 4 bits match.
+            let comm_data = BasicCommData {
+                password: payload.passcode().to_le_bytes().into(),
+                discriminator,
+            };
+            assert_eq!(comm_data.compute_pairing_code(), code);
+        }
+    }
+
+    #[test]
+    fn parse_pairing_code_accepts_pretty_form() {
+        // The canonical CHIP test device: discriminator 3840, passcode 20202021.
+        let compact = unwrap!(QrPayload::parse_pairing_code("34970112332"), "compact");
+        let pretty = unwrap!(QrPayload::parse_pairing_code("3497-0112-332"), "pretty");
+
+        assert_eq!(compact.passcode(), 20202021);
+        assert_eq!(compact.short_discriminator(), 15); // 3840 >> 8
+        assert_eq!(pretty.passcode(), compact.passcode());
+        assert_eq!(pretty.short_discriminator(), compact.short_discriminator());
+    }
+
+    #[test]
+    fn parse_pairing_code_rejects_bad_input() {
+        // Bad Verhoeff check digit (last digit of the valid code bumped).
+        assert!(QrPayload::parse_pairing_code("34970112333").is_err());
+        // Not a digit.
+        assert!(QrPayload::parse_pairing_code("3497011233X").is_err());
+        // Wrong length (neither 11 nor 21).
+        assert!(QrPayload::parse_pairing_code("3497011233").is_err());
+        // A leading digit of 8/9 indicates a future payload version, not v1.
+        assert!(QrPayload::parse_pairing_code("94970112332").is_err());
+        // VID/PID-present flag set (leading digit >= 4) but only 11 digits.
+        assert!(QrPayload::parse_pairing_code("74970112332").is_err());
+    }
+
+    #[test]
+    fn parse_qr_rejects_bad_input() {
+        let mut buf = [0; 128];
+
+        // Missing `MT:` prefix.
+        assert!(QrPayload::parse("YNJV7VSC00CMVH7SR00", &mut buf).is_err());
+        // Invalid base38 character (`!`).
+        assert!(QrPayload::parse("MT:YNJV7VSC00CMVH7SR0!", &mut buf).is_err());
+        // Too short to hold the fixed payload.
+        assert!(QrPayload::parse("MT:00", &mut buf).is_err());
     }
 }
