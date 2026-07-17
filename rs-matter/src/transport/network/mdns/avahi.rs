@@ -41,6 +41,48 @@ use crate::utils::zbus_proxies::avahi::server2::Server2Proxy;
 use crate::utils::zbus_proxies::avahi::service_browser::ServiceBrowserProxy;
 use crate::Matter;
 
+/// Frees an Avahi `ServiceBrowser` even if the future that owns it is cancelled
+/// (dropped) mid-loop - otherwise the browser leaks on the daemon.
+///
+/// The normal path calls [`BrowserGuard::free`], releasing the browser
+/// asynchronously and disarming the guard. Only a cancellation leaves it armed, in
+/// which case `Drop` frees it with a **blocking** call - safe here because zbus
+/// drives the D-Bus connection's I/O on its own task, independently of the future
+/// being torn down, so `block_on` can complete rather than deadlock. (The same
+/// `block_on`-in-`Drop` idiom is used for D-Bus cleanup elsewhere in the crate, e.g.
+/// the NetworkManager and wpa_supplicant controllers.)
+struct BrowserGuard<'b, 'a> {
+    browser: &'b ServiceBrowserProxy<'a>,
+    armed: bool,
+}
+
+impl<'b, 'a> BrowserGuard<'b, 'a> {
+    fn new(browser: &'b ServiceBrowserProxy<'a>) -> Self {
+        Self {
+            browser,
+            armed: true,
+        }
+    }
+
+    /// Free the browser asynchronously (the non-cancelled path) and disarm the
+    /// blocking `Drop` fallback.
+    async fn free(mut self) {
+        self.armed = false;
+        if let Err(e) = self.browser.free().await {
+            warn!("Failed to free Avahi browser: {:?}", e);
+        }
+    }
+}
+
+impl Drop for BrowserGuard<'_, '_> {
+    fn drop(&mut self) {
+        if self.armed {
+            // Reached only if the future was cancelled before `free` was called.
+            let _ = futures_lite::future::block_on(self.browser.free());
+        }
+    }
+}
+
 /// Avahi constant for "any interface"
 const AVAHI_IF_UNSPEC: i32 = -1;
 /// Avahi constant for "any protocol" (IPv4 or IPv6)
@@ -153,6 +195,9 @@ impl AvahiMdns {
             let mut item_new_stream = browser.receive_item_new().await?;
             browser.start().await?;
 
+            // Frees the browser on cancellation too (see `BrowserGuard`).
+            let guard = BrowserGuard::new(&browser);
+
             while matter.transport().mdns_resolve_in_flight() {
                 let item = pin!(item_new_stream.next());
                 let tick = pin!(Timer::after(Duration::from_millis(BROWSE_POLL_INTERVAL_MS)));
@@ -198,9 +243,7 @@ impl AvahiMdns {
                 }
             }
 
-            if let Err(e) = browser.free().await {
-                warn!("Failed to free Avahi browser: {:?}", e);
-            }
+            guard.free().await;
         }
     }
 
@@ -228,6 +271,9 @@ impl AvahiMdns {
                 .await?;
             let mut item_new_stream = browser.receive_item_new().await?;
             browser.start().await?;
+
+            // Frees the browser on cancellation too (see `BrowserGuard`).
+            let guard = BrowserGuard::new(&browser);
 
             while matter.transport().mdns_browse_in_flight() {
                 let item = pin!(item_new_stream.next());
@@ -268,9 +314,7 @@ impl AvahiMdns {
                 }
             }
 
-            if let Err(e) = browser.free().await {
-                warn!("Failed to free Avahi browser: {:?}", e);
-            }
+            guard.free().await;
         }
     }
 
