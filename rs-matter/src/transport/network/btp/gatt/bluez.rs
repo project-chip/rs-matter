@@ -38,6 +38,7 @@ use futures_lite::StreamExt;
 use uuid::Uuid;
 
 use zbus::fdo::{ObjectManager, ObjectManagerProxy};
+use zbus::names::OwnedInterfaceName;
 use zbus::object_server::Interface;
 use zbus::zvariant::{ObjectPath, OwnedFd, OwnedObjectPath, OwnedValue, Value};
 use zbus::{interface, Connection};
@@ -51,7 +52,6 @@ use crate::utils::zbus_proxies::bluez::adapter::AdapterProxy;
 use crate::utils::zbus_proxies::bluez::device::DeviceProxy;
 use crate::utils::zbus_proxies::bluez::gatt_characteristic::GattCharacteristicProxy;
 use crate::utils::zbus_proxies::bluez::gatt_manager::GattManagerProxy;
-use crate::utils::zbus_proxies::bluez::gatt_service::GattServiceProxy;
 use crate::utils::zbus_proxies::bluez::le_advertising_manager::LEAdvertisingManagerProxy;
 
 use super::{AdvData, C1_CHARACTERISTIC_UUID, C2_CHARACTERISTIC_UUID, MATTER_BLE_SERVICE_UUID};
@@ -64,6 +64,10 @@ const BLUEZ_PATH_PREFIX: &str = "/org/projectchip/rs_matter/bluez";
 /// The default amount of time [`run_central`] will scan for a matching
 /// commissionable advertisement before giving up.
 pub const DEFAULT_SCAN_TIMEOUT_SECS: u16 = 60;
+
+/// How often [`scan`] re-reads BlueZ's object tree looking for a matching device.
+/// See the note in [`scan`] on why this polls, and on the cost per tick.
+const SCAN_POLL_INTERVAL_MS: u64 = 1000;
 
 /// Build a `Device1` proxy bound to a specific device object path.
 ///
@@ -84,16 +88,19 @@ async fn device_proxy<'a>(
         .await?)
 }
 
-/// Build a `GattService1` proxy bound to a specific object path.
-async fn gatt_service_proxy<'a>(
-    connection: &'a Connection,
-    path: &OwnedObjectPath,
-) -> Result<GattServiceProxy<'a>, Error> {
-    Ok(GattServiceProxy::builder(connection)
-        .destination("org.bluez")?
-        .path(path.clone())?
-        .build()
-        .await?)
+/// Read an interface's `UUID` property straight out of a `GetManagedObjects` reply.
+///
+/// That reply already carries every property of every interface, so asking BlueZ
+/// again - a proxy plus a D-Bus round-trip per object - would be pure overhead when
+/// all we want is to find the objects we care about. Returns `None` if the object
+/// does not implement `iface`, or has no readable `UUID`.
+fn iface_uuid(
+    interfaces: &HashMap<OwnedInterfaceName, HashMap<String, OwnedValue>>,
+    iface: &str,
+) -> Option<String> {
+    let uuid = interfaces.get(iface)?.get("UUID")?;
+
+    String::try_from(uuid.clone()).ok()
 }
 
 /// Build a `GattCharacteristic1` proxy bound to a specific object path.
@@ -330,9 +337,20 @@ where
     adapter.set_discovery_filter(discovery_filter).await?;
     adapter.start_discovery().await?;
 
-    // Poll the object tree for matching devices. We poll (rather than only relying on
-    // `InterfacesAdded`) so that devices already known to BlueZ, and service-data that arrives via
-    // `PropertiesChanged` on an existing device, are both handled uniformly.
+    // Poll the object tree for matching devices.
+    //
+    // Polling - rather than subscribing to `InterfacesAdded` - is a deliberate
+    // simplification: a device that BlueZ *already* knows about emits no
+    // `InterfacesAdded` at all, and its advertised service data arrives later as a
+    // `PropertiesChanged` on the existing object, so a signal-driven scanner has to
+    // merge both streams to be correct. Re-reading the tree handles all of it
+    // uniformly.
+    //
+    // The cost is a `GetManagedObjects` per tick, which serializes BlueZ's whole
+    // object tree (~13 KB / ~6 ms on a typical desktop, but it grows with the number
+    // of known devices). Hence `SCAN_POLL_INTERVAL_MS` is a compromise: frequent
+    // enough that discovery still feels instant next to a multi-second commissioning
+    // flow, infrequent enough not to churn D-Bus for the length of the scan.
     let om = ObjectManagerProxy::new(connection, "org.bluez", "/").await?;
 
     let deadline = Instant::now()
@@ -359,7 +377,7 @@ where
                 return Ok(None);
             }
 
-            Timer::after(Duration::from_millis(250)).await;
+            Timer::after(Duration::from_millis(SCAN_POLL_INTERVAL_MS)).await;
         }
     }
     .await;
@@ -593,6 +611,8 @@ async fn discover_matter_characteristics<'a>(
     let om = ObjectManagerProxy::new(connection, "org.bluez", "/").await?;
     let objects = om.get_managed_objects().await?;
 
+    let matter_service_uuid = BLUEZ_MATTER_BLE_SERVICE_UUID.to_string();
+
     // Find the Matter GATT service under this device.
     let mut service_path: Option<OwnedObjectPath> = None;
     for (path, interfaces) in &objects {
@@ -600,17 +620,13 @@ async fn discover_matter_characteristics<'a>(
             continue;
         }
 
-        if interfaces.contains_key("org.bluez.GattService1") {
-            let service = gatt_service_proxy(connection, path).await?;
-            if service
-                .uuid()
-                .await
-                .map(|uuid| uuid.eq_ignore_ascii_case(&BLUEZ_MATTER_BLE_SERVICE_UUID.to_string()))
-                .unwrap_or(false)
-            {
-                service_path = Some(path.clone());
-                break;
-            }
+        let Some(uuid) = iface_uuid(interfaces, "org.bluez.GattService1") else {
+            continue;
+        };
+
+        if uuid.eq_ignore_ascii_case(&matter_service_uuid) {
+            service_path = Some(path.clone());
+            break;
         }
     }
 
@@ -623,24 +639,23 @@ async fn discover_matter_characteristics<'a>(
     let mut c1: Option<GattCharacteristicProxy<'a>> = None;
     let mut c2: Option<GattCharacteristicProxy<'a>> = None;
 
+    let c1_uuid = BLUEZ_MATTER_C1_CHARACTERISTIC_UUID.to_string();
+    let c2_uuid = BLUEZ_MATTER_C2_CHARACTERISTIC_UUID.to_string();
+
     for (path, interfaces) in &objects {
         if !path.as_str().starts_with(service_path.as_str()) {
             continue;
         }
 
-        if !interfaces.contains_key("org.bluez.GattCharacteristic1") {
-            continue;
-        }
-
-        let chr = gatt_characteristic_proxy(connection, path).await?;
-        let Ok(uuid) = chr.uuid().await else {
+        let Some(uuid) = iface_uuid(interfaces, "org.bluez.GattCharacteristic1") else {
             continue;
         };
 
-        if uuid.eq_ignore_ascii_case(&BLUEZ_MATTER_C1_CHARACTERISTIC_UUID.to_string()) {
-            c1 = Some(chr);
-        } else if uuid.eq_ignore_ascii_case(&BLUEZ_MATTER_C2_CHARACTERISTIC_UUID.to_string()) {
-            c2 = Some(chr);
+        // Only the two characteristics we actually use are worth a proxy.
+        if uuid.eq_ignore_ascii_case(&c1_uuid) {
+            c1 = Some(gatt_characteristic_proxy(connection, path).await?);
+        } else if uuid.eq_ignore_ascii_case(&c2_uuid) {
+            c2 = Some(gatt_characteristic_proxy(connection, path).await?);
         }
     }
 
