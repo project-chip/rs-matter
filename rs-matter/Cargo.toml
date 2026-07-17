@@ -145,6 +145,11 @@ zbus = ["dep:zbus", "dep:serde", "os", "futures-lite", "libc", "uuid", "async-ch
 # BLE suppport for Linux (via BlueZ).
 # Prefer the BlueZ implementation over Bluer for production deployments, via `zbus`.
 bluer = ["dep:bluer", "os"]
+# Recognizing Matter onboarding QR codes in images (via `rqrr`), for commissioners
+# that scan a device's QR code rather than being handed its payload text.
+# Requires `std`; the image *decoding* (PNG/JPEG/camera/...) is the caller's job -
+# this only consumes 8-bit greyscale pixels. See `pairing::qr::scan`.
+qr-scan = ["std", "dep:rqrr"]
 # Umbrella set of features for typical OS-based non-baremetal deployments.
 os = ["std", "backtrace", "async-io", "critical-section/std", "embassy-sync/std", "embassy-time/std", "dep:if-addrs"]
 # Minimal set of features for targets with support for Rust STD (narrower than `os` above).
@@ -214,6 +219,7 @@ either = { version = "1", default-features = false }
 critical-section = "1.1"
 domain = { version = "0.12", default-features = false, features = ["heapless"] }
 qrcodegen-no-heap = "1.8"
+rqrr = { version = "0.10", default-features = false, optional = true }
 scopeguard = { version = "1", default-features = false }
 pinned-init = { version = "0.0.8", default-features = false }
 
