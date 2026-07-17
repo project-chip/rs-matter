@@ -69,6 +69,17 @@ pub const DEFAULT_SCAN_TIMEOUT_SECS: u16 = 60;
 /// See the note in [`scan`] on why this polls, and on the cost per tick.
 const SCAN_POLL_INTERVAL_MS: u64 = 1000;
 
+/// How many times [`run_central`] will attempt the initial GATT connection before
+/// giving up, and how long it waits between attempts.
+///
+/// A connect issued right after discovery has stopped can lose a race with BlueZ
+/// still tearing the scan down, which surfaces as
+/// `org.bluez.Error.Failed: le-connection-abort-by-local`. The device was just seen
+/// advertising, so a connect failure here is almost always transient - a short,
+/// bounded retry turns it into a non-event instead of a failed commission.
+const CONNECT_ATTEMPTS: u8 = 4;
+const CONNECT_RETRY_DELAY_MS: u64 = 500;
+
 /// Build a `Device1` proxy bound to a specific device object path.
 ///
 /// The BlueZ proxies are declared with `assume_defaults = true`, so their
@@ -229,7 +240,7 @@ pub async fn run_central(
 
     let device = device_proxy(connection, &device_path).await?;
 
-    device.connect().await?;
+    connect_with_retry(&device).await?;
 
     wait_services_resolved(&device).await?;
 
@@ -583,6 +594,27 @@ fn device_path_for(adapter_path: &OwnedObjectPath, addr: BtAddr) -> Result<Owned
     );
 
     Ok(path.try_into()?)
+}
+
+/// Connect to the device, retrying a bounded number of times on transient failures
+/// (notably `le-connection-abort-by-local`; see [`CONNECT_ATTEMPTS`]).
+async fn connect_with_retry(device: &DeviceProxy<'_>) -> Result<(), Error> {
+    for attempt in 1..=CONNECT_ATTEMPTS {
+        match device.connect().await {
+            Ok(()) => return Ok(()),
+            Err(e) if attempt < CONNECT_ATTEMPTS => {
+                warn!(
+                    "Connect attempt {}/{} failed ({:?}); retrying",
+                    attempt, CONNECT_ATTEMPTS, e
+                );
+                Timer::after(Duration::from_millis(CONNECT_RETRY_DELAY_MS)).await;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    // Unreachable: the last attempt either returns `Ok` or the `Err` arm above.
+    Err(ErrorCode::NoNetworkInterface.into())
 }
 
 /// Wait until the device reports that its GATT services have been resolved.

@@ -49,6 +49,16 @@ use super::{AdvData, C1_CHARACTERISTIC_UUID, C2_CHARACTERISTIC_UUID, MATTER_BLE_
 /// advertisement before giving up.
 pub const DEFAULT_SCAN_TIMEOUT_SECS: u16 = 60;
 
+/// How many times [`run_central`] will attempt the initial GATT connection before
+/// giving up, and how long it waits between attempts.
+///
+/// A connect issued right after discovery has stopped can lose a race with the
+/// stack still tearing the scan down (surfacing as `le-connection-abort-by-local`).
+/// The device was just seen advertising, so a connect failure here is almost always
+/// transient - a short, bounded retry turns it into a non-event.
+const CONNECT_ATTEMPTS: u8 = 4;
+const CONNECT_RETRY_DELAY_MS: u64 = 500;
+
 /// Run the GATT peripheral service.
 ///
 /// What this means in details:
@@ -382,7 +392,7 @@ pub async fn run_central(adapter_name: Option<&str>, addr: BtAddr, btp: &Btp) ->
 
     info!("Connecting to commissionable device {}", addr);
 
-    device.connect().await?;
+    connect_with_retry(&device).await?;
 
     // Discover the Matter GATT service and its C1/C2 characteristics. `Device::services()`
     // internally waits for the remote GATT services to be resolved first.
@@ -492,6 +502,27 @@ async fn wait_central_complete(btp: &Btp, _device: &bluer::Device) -> Result<(),
     info!("Timeout while waiting for data from the peer");
 
     Ok(())
+}
+
+/// Connect to the device, retrying a bounded number of times on transient failures
+/// (notably `le-connection-abort-by-local`; see [`CONNECT_ATTEMPTS`]).
+async fn connect_with_retry(device: &bluer::Device) -> Result<(), Error> {
+    for attempt in 1..=CONNECT_ATTEMPTS {
+        match device.connect().await {
+            Ok(()) => return Ok(()),
+            Err(e) if attempt < CONNECT_ATTEMPTS => {
+                warn!(
+                    "Connect attempt {}/{} failed ({:?}); retrying",
+                    attempt, CONNECT_ATTEMPTS, e
+                );
+                Timer::after(Duration::from_millis(CONNECT_RETRY_DELAY_MS)).await;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    // Unreachable: the last attempt either returns `Ok` or the `Err` arm above.
+    Err(ErrorCode::NoNetworkInterface.into())
 }
 
 /// Find the `C1` (write) and `C2` (indicate) characteristics of the Matter GATT service on the
