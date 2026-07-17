@@ -28,6 +28,12 @@ use crate::utils::storage::WriteBuf;
 
 use super::*;
 
+#[cfg(feature = "qr-scan")]
+pub mod scan;
+
+/// The prefix of a Matter onboarding QR-code text payload.
+pub const QR_PREFIX: &str = "MT:";
+
 // See the spec. QR Code in the Matter specification
 const LONG_BITS: usize = 12;
 const VERSION_FIELD_LENGTH_IN_BITS: usize = 3;
@@ -427,9 +433,7 @@ impl<'a> QrPayload<'a, &'a [u8]> {
     /// payload (missing prefix, invalid base38, too short, or an out-of-range field).
     pub fn parse(qr: &str, buf: &'a mut [u8]) -> Result<Self, Error> {
         // Strip the `MT:` prefix.
-        let body = qr
-            .strip_prefix(Self::qr_prefix())
-            .ok_or(ErrorCode::InvalidData)?;
+        let body = qr.strip_prefix(QR_PREFIX).ok_or(ErrorCode::InvalidData)?;
 
         // Base38-decode the body into `buf`.
         let mut len = 0;
@@ -738,13 +742,6 @@ impl<'a> QrPayload<'a, ()> {
     ///   Compliance Ledger (see [`Self::vid_pid`]).
     pub fn comm_flow(&self) -> Option<CommFlowType> {
         matches!(self.comm_flow, CommFlowType::Standard).then_some(CommFlowType::Standard)
-    }
-}
-
-/// The `MT:` prefix shared by the encode and decode paths.
-impl<'a, T> QrPayload<'a, T> {
-    const fn qr_prefix() -> &'static str {
-        "MT:"
     }
 }
 
