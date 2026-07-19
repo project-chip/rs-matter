@@ -49,3 +49,45 @@ pub struct DeviceType {
     pub dtype: u16,
     pub drev: u16,
 }
+
+/// A semantic tag describing an endpoint, as reported by
+/// `Descriptor::TagList`.
+///
+/// Matter Core spec 9.5 requires these to disambiguate endpoints that would
+/// otherwise be indistinguishable: when a node exposes two or more endpoints
+/// with the *same* device type under the same parent, each of them must carry a
+/// non-empty `TagList`, and no two of those lists may be identical. A
+/// certification harness enforces exactly that (`TC_DESC_2_2`).
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct SemanticTag<'a> {
+    /// The manufacturer code scoping `namespace_id`, or `None` when the tag
+    /// comes from a standard (CSA-defined) namespace.
+    pub mfg_code: Option<u16>,
+    /// The namespace `tag` is drawn from.
+    pub namespace_id: u8,
+    /// The tag value within `namespace_id`.
+    pub tag: u8,
+    /// An optional human-readable label for the tag.
+    pub label: Option<&'a str>,
+}
+
+impl<'a> SemanticTag<'a> {
+    /// Create a tag in a standard (CSA-defined) namespace, with no label.
+    pub const fn new(namespace_id: u8, tag: u8) -> Self {
+        Self {
+            mfg_code: None,
+            namespace_id,
+            tag,
+            label: None,
+        }
+    }
+
+    /// Attach a human-readable label to this tag.
+    pub const fn with_label(self, label: &'a str) -> Self {
+        Self {
+            label: Some(label),
+            ..self
+        }
+    }
+}

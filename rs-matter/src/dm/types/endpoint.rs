@@ -17,7 +17,7 @@
 
 use core::fmt;
 
-use super::{Cluster, ClusterId, DeviceType, EndptId};
+use super::{Cluster, ClusterId, DeviceType, EndptId, SemanticTag};
 
 /// A type modeling the endpoint meta-data in the Matter data model.
 #[derive(Debug, Clone)]
@@ -43,6 +43,16 @@ pub struct Endpoint<'a> {
     /// surface of its own — see Matter Core spec for the
     /// `Descriptor::ClientList` semantics.
     pub client_clusters: &'a [ClusterId],
+    /// The semantic tags describing this endpoint, advertised via
+    /// `Descriptor::TagList`. Empty by default.
+    ///
+    /// These are only *required* when the node exposes several endpoints with
+    /// the same device type under one parent: Matter Core spec 9.5 then demands
+    /// that each carries a non-empty, mutually distinct `TagList` so the
+    /// endpoints can be told apart. Populating this also requires the endpoint's
+    /// `Descriptor` metadata to advertise the `TagList` feature and attribute -
+    /// see [`crate::dm::clusters::desc::CLUSTER_TAG_LIST`].
+    pub semantic_tags: &'a [SemanticTag<'a>],
 }
 
 impl<'a> Endpoint<'a> {
@@ -60,6 +70,7 @@ impl<'a> Endpoint<'a> {
             device_types,
             clusters,
             client_clusters: &[],
+            semantic_tags: &[],
         }
     }
 
@@ -76,6 +87,24 @@ impl<'a> Endpoint<'a> {
             device_types,
             clusters,
             client_clusters,
+            semantic_tags: &[],
+        }
+    }
+
+    /// Return this endpoint with the given semantic tags attached, to be
+    /// advertised via `Descriptor::TagList`.
+    ///
+    /// The endpoint's `Descriptor` cluster metadata must also advertise the
+    /// attribute and feature - use
+    /// [`crate::dm::clusters::desc::CLUSTER_TAG_LIST`] in place of the default
+    /// `DescHandler::CLUSTER`, otherwise the tags are never reported.
+    pub const fn with_tags(self, semantic_tags: &'a [SemanticTag<'a>]) -> Self {
+        Self {
+            id: self.id,
+            device_types: self.device_types,
+            clusters: self.clusters,
+            client_clusters: self.client_clusters,
+            semantic_tags,
         }
     }
 

@@ -79,6 +79,7 @@ use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
     Async, AttrChangeNotifier, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, Node,
+    SemanticTag,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::PROTO_ID_INTERACTION_MODEL;
@@ -555,6 +556,21 @@ const FIXED_LABELS_EP1: &[FixedLabelEntry<'static>] = &[
     },
 ];
 
+/// The "Common Number" standard semantic tag namespace (Matter Standard
+/// Namespaces spec, chapter 8).
+const NS_COMMON_NUMBER: u8 = 0x07;
+
+/// Semantic tags distinguishing endpoint 1 from endpoint 2.
+///
+/// Both endpoints carry the same device type (`DEV_TYPE_ON_OFF_LIGHT`) under
+/// the same parent, which Matter Core spec 9.5 only permits when each reports a
+/// non-empty and mutually distinct `Descriptor::TagList`. `TC_DESC_2_2` checks
+/// exactly that. "One"/"Two" from the Common Number namespace is the least
+/// presumptuous way to tell two otherwise-identical lights apart - a positional
+/// namespace would assert a physical arrangement this fixture does not have.
+const TAGS_EP1: &[SemanticTag<'static>] = &[SemanticTag::new(NS_COMMON_NUMBER, 0x01)];
+const TAGS_EP2: &[SemanticTag<'static>] = &[SemanticTag::new(NS_COMMON_NUMBER, 0x02)];
+
 const NODE: Node<'static> = Node {
     endpoints: &[
         // `Binding` (cluster ID 0x001E) is wired on EP0 too because
@@ -610,7 +626,7 @@ const NODE: Node<'static> = Node {
             1,
             devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters!(
-                desc::DescHandler::CLUSTER,
+                desc::CLUSTER_TAG_LIST,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 fixed_label::CLUSTER,
@@ -619,17 +635,19 @@ const NODE: Node<'static> = Node {
                 UnitTestingHandler::CLUSTER
             ),
             &[on_off::FULL_CLUSTER.id],
-        ),
+        )
+        .with_tags(TAGS_EP1),
         Endpoint::new(
             2,
             devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters!(
-                desc::DescHandler::CLUSTER,
+                desc::CLUSTER_TAG_LIST,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER
             ),
-        ),
+        )
+        .with_tags(TAGS_EP2),
     ],
 };
 
@@ -761,7 +779,7 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
             1,
             devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters!(
-                desc::DescHandler::CLUSTER,
+                desc::CLUSTER_TAG_LIST,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 fixed_label::CLUSTER,
@@ -770,17 +788,19 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
                 UnitTestingHandler::CLUSTER
             ),
             &[on_off::FULL_CLUSTER.id],
-        ),
+        )
+        .with_tags(TAGS_EP1),
         Endpoint::new(
             2,
             devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters!(
-                desc::DescHandler::CLUSTER,
+                desc::CLUSTER_TAG_LIST,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER
             ),
-        ),
+        )
+        .with_tags(TAGS_EP2),
     ],
 };
 

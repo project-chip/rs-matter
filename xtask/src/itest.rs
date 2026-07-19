@@ -393,32 +393,19 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Device Composition / Conformance (general)
     //
-    // "TC_DeviceBasicComposition",
-    //   // Bundles several MatterBaseTests run after a single wildcard read.
-    //   // The `BasicCompositionTests.setup_class_helper()` PASE blocker that
-    //   // hits TC_AccessChecker is already worked around for this test too
-    //   // (added to `Self::needs_no_pase_shim` — re-enable here when the
-    //   // gaps below are closed and the PASE shim already routes setup
-    //   // through `xtask/scripts/no_pase_setup_class_helper.py`). The
-    //   // remaining independent gaps:
-    //   //
-    //   // 1. `test_TC_DESC_2_2` — checks `Descriptor::TagList` /
-    //   //    `EndpointUniqueID` semantic-tag attributes per Matter Core
-    //   //    spec §9.5 to validate tree-composition tagging on every
-    //   //    endpoint. rs-matter's `DescHandler` doesn't yet expose these.
-    //   //
-    //   // 2. `test_TC_IDM_10_1` — performs a wildcard *event* subscribe
-    //   //    across all endpoints/clusters and asserts no failures. Needs
-    //   //    a triage pass over rs-matter's event-subscription surface.
-    //   //
-    //   // 3. The wildcard read also pulls
-    //   //    `UnitTesting::GeneralErrorBoolean` (attr 0x31, returns
-    //   //    `InvalidDataType`) and `UnitTesting::ClusterErrorBoolean`
-    //   //    (0x32, returns `Invalid`) — see `unit_testing.rs:1042-1048`.
-    //   //    They're spec-mandated to error out (test fixtures for cluster
-    //   //    error handling), but `TC_IDM_12_1`'s JSON dump records them as
-    //   //    `49:ERROR` / `50:ERROR` and the surrounding tests treat the
-    //   //    decode failures as device problems.
+    // Bundles several `MatterBaseTest`s run after a single wildcard read.
+    // `BasicCompositionTests.setup_class_helper()`'s PASE leg is routed through
+    // `xtask/scripts/no_pase_setup_class_helper.py` (see
+    // `Self::needs_no_pase_shim`), and the test is handed the target `.pics`
+    // (see `Self::needs_target_pics`) because `test_TC_IDM_10_1` only tolerates
+    // the test-vendor identifiers the example fixtures use when
+    // `PICS_SDK_CI_ONLY` is set.
+    //
+    // `test_TC_SM_1_1`'s Groupcast conformance block is skipped because the
+    // device declares `SpecificationVersion` 1.6.0 - see
+    // `basic_info::DEFAULT_MATTER_SPEC_VERSION`, which documents why, and what
+    // has to be implemented before that can be raised to 1.6.1.
+    "TC_DeviceBasicComposition",
     //
     // "TC_DeviceConformance",
     //   // Runs the upstream device-conformance suite (six sub-tests:
@@ -1611,6 +1598,16 @@ impl ITests {
         matches!(
             test_name,
             "TC_ICDM_2_1" | "TC_ICDM_3_2" | "TC_ICDM_3_3" | "TC_ICDM_3_4" | "TC_ICDM_5_1"
+            // `TC_IDM_10_1` (a sub-test of `TC_DeviceBasicComposition`) rejects
+            // identifiers carrying a *test* vendor prefix (0xFFF1..=0xFFF4)
+            // unless `PICS_SDK_CI_ONLY` is set, in which case it only rejects
+            // 0xFFF5 and above. The example fixtures legitimately use test
+            // vendor IDs - the `UnitTesting` cluster is 0xFFF1FC05 and carries
+            // MEI attributes/commands under the 0xFFF2 prefix - exactly as
+            // CHIP's own example apps do. The target `.pics` sets
+            // `PICS_SDK_CI_ONLY=1`, so handing it over is what makes the check
+            // apply the SDK-example rule rather than the shipping-product one.
+            | "TC_DeviceBasicComposition"
         )
     }
 

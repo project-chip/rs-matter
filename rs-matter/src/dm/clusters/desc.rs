@@ -19,13 +19,20 @@
 
 use core::fmt::Debug;
 
-use crate::dm::{ArrayAttributeRead, Cluster, Dataver, Endpoint, EndptId, Metadata, ReadContext};
+use crate::dm::{
+    ArrayAttributeRead, Cluster, Dataver, Endpoint, EndptId, Metadata, ReadContext, SemanticTag,
+};
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{TLVBuilderParent, ToTLVArrayBuilder, ToTLVBuilder};
+use crate::tlv::{Nullable, TLVBuilderParent, ToTLVArrayBuilder, ToTLVBuilder};
 use crate::utils::sync::DynBase;
 use crate::with;
 
 pub use crate::dm::clusters::decl::descriptor::*;
+// `SemanticTagStruct` is a global IDL struct rather than a Descriptor-local
+// one, so its builders live in the generated `globals` module.
+pub use crate::dm::clusters::decl::globals::{
+    SemanticTagStructArrayBuilder, SemanticTagStructBuilder,
+};
 
 /// A parts matcher suitable for regular Matter devices
 #[derive(Debug)]
@@ -116,6 +123,19 @@ impl<'a> DescHandler<'a> {
         HandlerAdaptor(self)
     }
 
+    /// Emit a single `SemanticTagStruct` into `builder`.
+    fn push_tag<P: TLVBuilderParent>(
+        builder: SemanticTagStructBuilder<P>,
+        tag: &SemanticTag<'_>,
+    ) -> Result<P, Error> {
+        builder
+            .mfg_code(Nullable::new(tag.mfg_code))?
+            .namespace_id(tag.namespace_id)?
+            .tag(tag.tag)?
+            .label(tag.label.map(Nullable::some))?
+            .end()
+    }
+
     fn with_endpoint<F, R>(ctx: impl ReadContext, f: F) -> Result<R, Error>
     where
         F: FnOnce(&Endpoint) -> Result<R, Error>,
@@ -131,6 +151,25 @@ impl<'a> DescHandler<'a> {
         })
     }
 }
+
+/// `Descriptor` cluster metadata that additionally advertises the optional
+/// `TagList` attribute and the `TagList` feature.
+///
+/// Use this in place of [`DescHandler::CLUSTER`] on endpoints carrying
+/// [`Endpoint::semantic_tags`]. It is required whenever a node exposes two or
+/// more endpoints with the same device type under one parent: Matter Core spec
+/// 9.5 then demands each of them report a non-empty, mutually distinct
+/// `TagList`, and `TC_DESC_2_2` checks precisely that (it fails an endpoint
+/// whose `TagList` is absent *or* empty, and separately flags a missing
+/// feature bit).
+///
+/// It is deliberately not the default: on a node with no duplicated device
+/// types the attribute is optional, and advertising an always-empty `TagList`
+/// would be worse than not advertising it at all.
+pub const CLUSTER_TAG_LIST: Cluster<'static> = FULL_CLUSTER
+    .with_attrs(with!(required; AttributeId::TagList))
+    .with_cmds(with!())
+    .with_features(Feature::TAG_LIST.bits());
 
 impl ClusterHandler for DescHandler<'_> {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required)).with_cmds(with!());
@@ -215,6 +254,30 @@ impl ClusterHandler for DescHandler<'_> {
                     return Err(ErrorCode::ConstraintError.into());
                 };
                 builder.set(client_id)
+            }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
+        })
+    }
+
+    fn tag_list<P: TLVBuilderParent>(
+        &self,
+        ctx: impl ReadContext,
+        builder: ArrayAttributeRead<SemanticTagStructArrayBuilder<P>, SemanticTagStructBuilder<P>>,
+    ) -> Result<P, Error> {
+        Self::with_endpoint(ctx, |endpoint| match builder {
+            ArrayAttributeRead::ReadAll(mut builder) => {
+                for tag in endpoint.semantic_tags {
+                    builder = Self::push_tag(builder.push()?, tag)?;
+                }
+
+                builder.end()
+            }
+            ArrayAttributeRead::ReadOne(index, builder) => {
+                let Some(tag) = endpoint.semantic_tags.get(index as usize) else {
+                    return Err(ErrorCode::ConstraintError.into());
+                };
+
+                Self::push_tag(builder, tag)
             }
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
         })

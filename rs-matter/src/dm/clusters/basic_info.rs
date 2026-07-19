@@ -35,8 +35,30 @@ pub use crate::dm::clusters::decl::general_commissioning::RegulatoryLocationType
 
 /// The default Matter App Clusters specification version
 ///
-/// Currently set to V1.6.1.0
-pub const DEFAULT_MATTER_SPEC_VERSION: u32 = 0x01060100;
+/// Currently set to V1.6.0.0, deliberately, even though the data model is
+/// generated from the V1.6.1.0 IDL.
+///
+/// The two are independent: the IDL drives the cluster/attribute/command
+/// surface and the cluster revisions, while this constant is only what
+/// `BasicInformation::SpecificationVersion` reports. For every cluster
+/// `rs-matter` implements they agree anyway - 1.6.0 and 1.6.1 differ almost
+/// entirely in Distributed Compliance Ledger schemas and editorial text, and
+/// the cluster revisions are identical in both.
+///
+/// Declaring 1.6.0 rather than 1.6.1 is what keeps certification tractable.
+/// `TC_SM_1_1` gates the whole Groupcast conformance block on
+/// `SpecificationVersion > 0x01060000`, with an upstream note that it "was
+/// provisional in 1.6.0, but ... punted to a later release to reduce friction".
+/// Claiming anything above 1.6.0 therefore opts a node into requirements that
+/// cascade well beyond one cluster: a `Groups` server on any non-root endpoint
+/// demands Groupcast with the `Listener` feature on EP0, a `Binding` server
+/// demands `Sender`, and `Listener` in turn pulls in the Auxiliary ACL feature -
+/// all for a cluster the IDL itself still marks `provisional`.
+///
+/// Raise this to `0x01060100` once Groupcast (Listener + Sender) and Auxiliary
+/// ACL are implemented. Note also that 1.6.1 is at present a *draft* spec with
+/// no tagged CHIP SDK release, so 1.6.0 is the more defensible public claim.
+pub const DEFAULT_MATTER_SPEC_VERSION: u32 = 0x01060000;
 
 /// The default Matter Data Model revision
 ///

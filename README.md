@@ -44,7 +44,7 @@ as well as controllers and commissioners.
 With that said, the API is not stable and is likely to still see some backwards-incompatible changes,
 though the blast radius should be more limited now.
 
-The currently supported Matter Specification version is **1.6.1**.
+The currently supported Matter Specification version is **1.6**.
 
 Provisioning and operating under the major Smart Home controllers should work just fine. Following are tested to work:
 - Google Home
