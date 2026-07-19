@@ -675,11 +675,24 @@ const ICD_COUNTER_EPOCH: u32 = 100;
 const OTA_PROTOCOLS: &[DownloadProtocolEnum] = &[DownloadProtocolEnum::BDXSynchronous];
 
 /// `BasicInformation` cluster metadata that exposes the provisional
-/// `ConfigurationVersion` attribute (only `Reachable` is excluded). Used by
-/// `NODE_BINFO_CV_EXPOSED` when the test runner wires the device up for
-/// `TC_BINFO_3_2` (signalled by the presence of `--app-pipe`).
+/// `ConfigurationVersion` attribute. Used by `NODE_BINFO_CV_EXPOSED` when the
+/// test runner wires the device up for `TC_BINFO_3_2` (signalled by the
+/// presence of `--app-pipe`).
+///
+/// `DeviceLocation` must be excluded alongside `Reachable`: it is new in Matter
+/// 1.6 and has no implementation, so the generated handler answers reads of it
+/// with `AttributeNotFound`. Advertising it here would put an unreadable
+/// attribute in `AttributeList`.
+///
+/// NOTE: since `BasicInfoHandler::CLUSTER` now exposes `ConfigurationVersion`
+/// by default too (mandatory from cluster revision 5 - see the comment there),
+/// this alternate metadata is identical to the default one, and the
+/// `--app-pipe`-gated node swap below is arguably redundant. It is kept for now
+/// so the 1.6 migration does not also change how `TC_BINFO_3_2` is wired up.
 const BASIC_INFO_CLUSTER_CV_EXPOSED: Cluster<'static> = BASIC_INFO_FULL_CLUSTER
-    .with_attrs(rs_matter::except!(BasicInfoAttributeId::Reachable))
+    .with_attrs(rs_matter::except!(
+        BasicInfoAttributeId::Reachable | BasicInfoAttributeId::DeviceLocation
+    ))
     .with_cmds(rs_matter::with!());
 
 /// Alternate Node metadata used when the test framework signals it intends
