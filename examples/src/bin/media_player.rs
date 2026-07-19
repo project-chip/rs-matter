@@ -15,8 +15,8 @@
  *    limitations under the License.
  */
 
-//! An example Matter device that implements a MediaPlayback device over Ethernet.
-//! Demonstrates how to make use of the `rs_matter::import` macro.
+//! An example Matter accessory that implements a MediaPlayback device over Ethernet.
+//! Demonstrates how to make use of the pre-generated media handlers `rs-matter` provides.
 //!
 //! Note that - unfortunately - the `ContentLauncher` (and `KeypadInput`) clusters
 //! don't seem to be supported by the Google / Apple / Alexa controllers yet,
