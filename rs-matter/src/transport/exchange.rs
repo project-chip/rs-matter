@@ -1138,8 +1138,14 @@ impl<'a> Exchange<'a> {
 
     /// Create a new initiator exchange on the provided Matter stack for the provided session ID.
     #[inline(always)]
-    pub fn initiate_for_session(matter: &'a Matter<'a>, session_id: u32) -> Result<Self, Error> {
-        matter.transport().initiate_for_session(matter, session_id)
+    pub fn initiate_for_session<C: Crypto>(
+        matter: &'a Matter<'a>,
+        crypto: C,
+        session_id: u32,
+    ) -> Result<Self, Error> {
+        matter
+            .transport()
+            .initiate_for_session(matter, crypto, session_id)
     }
 
     /// Create a new initiator exchange on a new plaintext session to

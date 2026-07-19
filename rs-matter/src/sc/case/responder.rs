@@ -38,7 +38,8 @@ use crate::error::Error;
 #[cfg(feature = "case-resumption")]
 use crate::error::ErrorCode;
 use crate::sc::{
-    check_opcode, complete_with_status, sc_write, OpCode, SCStatusCodes, SessionParameters,
+    check_opcode, complete_with_status, expect_opcode, sc_write, OpCode, SCStatusCodes,
+    SessionParameters,
 };
 #[cfg(feature = "case-resumption")]
 use crate::sc::{GeneralCode, StatusReport};
@@ -304,7 +305,7 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
         exchange: &mut Exchange<'_>,
         mut session: ReservedSession<'_>,
     ) -> Result<(), Error> {
-        check_opcode(exchange, OpCode::CASESigma3)?;
+        expect_opcode(exchange, OpCode::CASESigma3).await?;
 
         let status = exchange.with_state(|state| {
             let sess = exchange.id().session(&mut state.sessions);
