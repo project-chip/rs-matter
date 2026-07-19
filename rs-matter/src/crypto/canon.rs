@@ -226,9 +226,9 @@ impl<const N: usize> CryptoSensitive<N> {
 
     /// Zeroizes the cryptographic material held by this instance.
     pub fn zeroize(&mut self) {
-        for b in &mut self.data {
-            *b = 0;
-        }
+        // TODO: Depend on the `zeroize` crate to ensure that the compiler does not optimize this out.
+        // TODO: Implement some sort of pinning to ensure that the compiler does move this type when on-stack.
+        self.data.fill(0);
     }
 
     /// Get a reference to this cryptographic material.

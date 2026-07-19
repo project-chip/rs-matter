@@ -716,7 +716,7 @@ impl Transport {
         })?;
 
         if let Some(session_id) = existing {
-            return self.initiate_for_session(matter, &crypto, session_id);
+            return self.initiate_for_session(matter, crypto, session_id);
         }
 
         self.initiate_new_case(matter, crypto, fabric_idx, peer_node_id)
@@ -781,7 +781,7 @@ impl Transport {
             Ok::<_, Error>(session.id)
         })?;
 
-        self.initiate_for_session(matter, &crypto, session_id)
+        self.initiate_for_session(matter, crypto, session_id)
     }
 
     /// The `case-responder-only` variant: never establish a new CASE session.
@@ -859,7 +859,7 @@ impl Transport {
         })?;
 
         if let Some(session_id) = existing {
-            return self.initiate_for_session(matter, &crypto, session_id);
+            return self.initiate_for_session(matter, crypto, session_id);
         }
 
         // Establish a new PASE session to this peer.
@@ -874,7 +874,7 @@ impl Transport {
                 .ok_or_else(|| Error::from(ErrorCode::NoSession))
         })?;
 
-        self.initiate_for_session(matter, &crypto, session_id)
+        self.initiate_for_session(matter, crypto, session_id)
     }
 
     pub(crate) fn initiate_for_session<'a, C: Crypto>(
@@ -891,7 +891,7 @@ impl Transport {
                 .filter(|sess| !sess.is_expired())
                 .ok_or(ErrorCode::NoSession)?;
 
-            let exch_id = state.sessions.get_next_exch_id(&crypto)?;
+            let exch_id = state.sessions.get_next_exch_id(crypto)?;
 
             // `unwrap` is safe because we know we have a session or else the early return from above would've triggered
             // The reason why we call `get_for_node` twice is to ensure that we don't waste an `exch_id` in case
@@ -950,7 +950,7 @@ impl Transport {
     ) -> Result<Exchange<'a>, Error> {
         let session_id = self.create_plaintext_session(matter, &crypto, peer_addr)?;
 
-        self.initiate_for_session(matter, &crypto, session_id)
+        self.initiate_for_session(matter, crypto, session_id)
     }
 
     /// Create a new unsecured (plain-text) session to a given peer address.
