@@ -24,7 +24,7 @@ The SDK supports all clusters in this way and does not require any further imple
 
 ### Usage
 
-1. Import the auto-generated cluster data types and traits from the `rs_matter::dm::clusters::decl::*` namespace
+1. Import the auto-generated cluster data types and traits from the `rs_matter::dm::clusters::decl::*` sub-modules.
 2. Implement the `<cluster>::ClusterHandler` trait on a `<Cluster>Handler` struct or the `<cluster>::AsyncClusterHandler` trait on a `<Cluster>Handler` for handlers that need asynchrony. See code snippet below.
 3. Instantiate the `<Cluster>Handler` struct and chain it to the endpoint handler.
 
