@@ -35,13 +35,13 @@ pub use crate::dm::clusters::decl::general_commissioning::RegulatoryLocationType
 
 /// The default Matter App Clusters specification version
 ///
-/// Currently set to V1.5.1.0
-pub const DEFAULT_MATTER_SPEC_VERSION: u32 = 0x01050100;
+/// Currently set to V1.6.1.0
+pub const DEFAULT_MATTER_SPEC_VERSION: u32 = 0x01060100;
 
 /// The default Matter Data Model revision
 ///
-/// Currently set to V19, which was released with Matter Core spec V1.4.2
-pub const DEFAULT_DATA_MODEL_REVISION: u16 = 19;
+/// Currently set to V21, which was released with Matter Core spec V1.6
+pub const DEFAULT_DATA_MODEL_REVISION: u16 = 21;
 
 /// The default maximum number of paths that can be included in an Invoke request
 ///
@@ -261,6 +261,17 @@ pub struct CapabilityMinima {
     pub case_sessions_per_fabric: u16,
     /// Maximum subscriptions per fabric
     pub subscriptions_per_fabric: u16,
+    /// Maximum concurrent Invoke interactions processed before the node may
+    /// start answering with `BUSY`
+    pub simultaneous_invocations_supported: u16,
+    /// Minimum concurrent Write interactions the node can process
+    pub simultaneous_writes_supported: u16,
+    /// Maximum number of read paths (`AttributePathIB` + `EventPathIB`) the
+    /// node guarantees to process in a single Read Request
+    pub read_paths_supported: u16,
+    /// Maximum number of subscribe paths (`AttributePathIB` + `EventPathIB`)
+    /// the node guarantees to process in a single Subscribe Request
+    pub subscribe_paths_supported: u16,
 }
 
 /// The Matter spec mandates `CapabilityMinima.SubscriptionsPerFabric >= 3`.
@@ -268,6 +279,26 @@ pub struct CapabilityMinima {
 /// [`DEFAULT_MAX_SUBSCRIPTIONS`](crate::im::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS)),
 /// so this per-fabric minimum is what the device guarantees.
 const SUBSCRIPTIONS_PER_FABRIC: u16 = 3;
+
+// The four fields below were added to `CapabilityMinimaStruct` in Matter 1.6.
+// They carry a `Rev >= v6` conformance, which per Core spec 7.3.13 means
+// MANDATORY once the cluster reports revision 6 - as `BasicInformation` now
+// does. They are therefore always emitted; omitting them is a conformance
+// violation even though the IDL renders them as `optional` (the IDL has no way
+// to express a revision-conditional conformance).
+//
+// The defaults are the spec-minimum values from each field's constraint. They
+// are deliberately conservative - a node that can genuinely do better should
+// override them via `BasicInfoConfig`.
+
+/// Constraint is `1 to 10000`.
+const SIMULTANEOUS_INVOCATIONS_SUPPORTED: u16 = 1;
+/// Constraint is `1 to 10000`.
+const SIMULTANEOUS_WRITES_SUPPORTED: u16 = 1;
+/// Constraint is `9 to 10000`; see Core spec 2.11.2.1 "Read Interaction Limits".
+const READ_PATHS_SUPPORTED: u16 = 9;
+/// Constraint is `3 to 10000`; see Core spec 2.11.2.2 "Subscribe Interaction Limits".
+const SUBSCRIBE_PATHS_SUPPORTED: u16 = 3;
 
 impl CapabilityMinima {
     /// Create a default instance of `CapabilityMinima`, with CASE sessions per
@@ -277,6 +308,10 @@ impl CapabilityMinima {
         Self {
             case_sessions_per_fabric: (MAX_SESSIONS / MAX_FABRICS) as _,
             subscriptions_per_fabric: SUBSCRIPTIONS_PER_FABRIC,
+            simultaneous_invocations_supported: SIMULTANEOUS_INVOCATIONS_SUPPORTED,
+            simultaneous_writes_supported: SIMULTANEOUS_WRITES_SUPPORTED,
+            read_paths_supported: READ_PATHS_SUPPORTED,
+            subscribe_paths_supported: SUBSCRIBE_PATHS_SUPPORTED,
         }
     }
 }
@@ -480,19 +515,30 @@ impl BasicInfoHandler {
 
 impl ClusterHandler for BasicInfoHandler {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
-        // Hide `Reachable` (TODO) and `ConfigurationVersion` from the default
-        // metadata. `ConfigurationVersion` is provisional in Matter 1.5 and
-        // upstream's 1.5 dataset (CHIP commit faf4d09ad1, "Remove
-        // configuration version from 1.5 branch") explicitly excludes it from
-        // `BasicInformation`'s `AttributeList`. The
+        // Hide `Reachable` (TODO), `ConfigurationVersion` and `DeviceLocation`
+        // from the default metadata. `ConfigurationVersion` is provisional in
+        // Matter 1.5 and upstream's 1.5 dataset (CHIP commit faf4d09ad1,
+        // "Remove configuration version from 1.5 branch") explicitly excludes
+        // it from `BasicInformation`'s `AttributeList`. The
         // `BasicInformation`/`BasicInfoSettings` plumbing for it stays in
         // place — read handler, persisted settings field, and the
         // `Matter::bump_configuration_version` / `InteractionModel::bump_configuration_version`
         // entry points — so a user that supplies their own cluster metadata
         // (i.e. one that drops `ConfigurationVersion` from `except!`) gets a
         // working implementation out of the box.
+        //
+        // `DeviceLocation` is new in Matter 1.6 and is both provisional and
+        // optional. Unlike the two above it has no implementation here at all
+        // (the generated trait method defaults to `AttributeNotFound`), so it
+        // must be kept out of the `AttributeList` — advertising an attribute
+        // that then fails to read is a conformance violation. Note this
+        // `except!` is a deny-list: every attribute the IDL grows lands in the
+        // metadata by default, so new optional attributes have to be excluded
+        // here explicitly.
         .with_attrs(except!(
-            AttributeId::Reachable | AttributeId::ConfigurationVersion
+            AttributeId::Reachable
+                | AttributeId::ConfigurationVersion
+                | AttributeId::DeviceLocation
         ))
         .with_cmds(with!());
 
@@ -622,6 +668,10 @@ impl ClusterHandler for BasicInfoHandler {
         builder
             .case_sessions_per_fabric(cm.case_sessions_per_fabric)?
             .subscriptions_per_fabric(cm.subscriptions_per_fabric)?
+            .simultaneous_invocations_supported(Some(cm.simultaneous_invocations_supported))?
+            .simultaneous_writes_supported(Some(cm.simultaneous_writes_supported))?
+            .read_paths_supported(Some(cm.read_paths_supported))?
+            .subscribe_paths_supported(Some(cm.subscribe_paths_supported))?
             .end()
     }
 

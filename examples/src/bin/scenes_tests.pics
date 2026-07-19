@@ -39,10 +39,13 @@ G.C.C05.Tx=0
 # WriteGroupKeyMap, which the Scenes tests' Step 0b/0c rely on.
 GRPKEY.S=1
 GRPKEY.S.F00=0
+# Groupcast (Matter 1.6) - not implemented; see `system_tests.pics`
+GRPKEY.S.F01=0
 GRPKEY.S.A0000=1
 GRPKEY.S.A0001=1
 GRPKEY.S.A0002=1
 GRPKEY.S.A0003=1
+GRPKEY.S.A0004=0
 GRPKEY.S.C00.Rsp=1
 GRPKEY.S.C01.Rsp=1
 GRPKEY.S.C02.Tx=1

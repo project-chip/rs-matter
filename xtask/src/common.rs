@@ -28,7 +28,20 @@ use anyhow::{self, Context};
 use log::{debug, info, warn};
 
 /// The default Git reference to use for the Chip repository
-pub const CHIP_DEFAULT_GITREF: &str = "v1.5-branch"; //"master";
+///
+/// Pinned to an exact commit rather than a branch, because the Matter 1.6.1
+/// data model this crate generates against only exists on `master`: upstream
+/// has cut no `v1.6.x` tag (the newest release tag is still `v1.5.1.0`), and
+/// `v1.6-branch` carries the *1.6.0* data model, which differs from ours in
+/// ways that matter for conformance (e.g. it still has the deprecated
+/// `GroupKeySetStruct.GroupKeyMulticastPolicy` field, and keeps `QueryIdentity`
+/// on `NetworkCommissioning` rather than `NetworkIdentityManagement`).
+///
+/// This is the newest commit whose `controller-clusters.matter` is byte-for-byte
+/// the IDL vendored at `rs-matter-codegen/src/idl/parser/`, so the test harness
+/// and the device under test agree on the data model. Bump this in lockstep
+/// with that file - and prefer a real `v1.6.x` tag once upstream cuts one.
+pub const CHIP_DEFAULT_GITREF: &str = "613037c118ac1851c99b2b7d076a121e64685821"; //"v1.6-branch";
 
 /// The tooling that is checked for presence in the command line
 const REQUIRED_TOOLING: &[&str] = &[
@@ -69,6 +82,12 @@ const REQUIRED_PACKAGES: &[&str] = &[
     // Required by `pyscard` (built as part of the CHIP Python wheel):
     // provides `libpcsclite.pc` and `<winscard.h>` (in /usr/include/PCSC/).
     "libpcsclite-dev",
+    // Required by `ot-commissioner`, which `chip-tool` pulls in transitively
+    // for Thread commissioning: provides `<event2/event.h>`. Note the runtime
+    // `libevent-2.1` is usually present already — it is the `-dev` headers that
+    // are missing, and without them the failure appears deep inside the ninja
+    // build of `chip-tool` rather than at dependency-check time.
+    "libevent-dev",
 ];
 
 /// Execute command with stderr always surpressed
@@ -482,6 +501,13 @@ impl ChipBuilder {
             // (e.g. `v1.5-branch`) is followed rather than pinned to whatever
             // commit was first cloned. Best-effort — an offline fetch failure
             // just leaves the existing checkout in place.
+            //
+            // A raw commit SHA (see `CHIP_DEFAULT_GITREF`) works here too:
+            // GitHub serves reachable SHAs, so `FETCH_HEAD` becomes that commit
+            // and the `reset --hard` below is a no-op re-pin rather than a
+            // fast-forward. It also makes the fetch necessary rather than merely
+            // an optimisation, since a shallow-ish or stale clone may not have
+            // the object yet.
             let mut fetch = Command::new("git");
             fetch
                 .current_dir(chip_dir)

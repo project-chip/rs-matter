@@ -1351,14 +1351,21 @@ impl ITests {
     /// via the vendored monkey-patching wrapper at
     /// `xtask/scripts/no_pase_setup_class_helper.py`. Each of these tests
     /// inherits from `BasicCompositionTests` and calls the helper with the
-    /// default `allow_pase=True`, which on `v1.5-branch` triggers a fresh
-    /// `EstablishPASESession` against a closed-window DUT and either hangs
-    /// 25 s on BlueZ activation or leaks a stale "in-progress PASE" entry
-    /// in the controller. Upstream fix `b180d46945` (PR #41712) on `master`
-    /// switches to `FindOrEstablishPASESession`; once that lands on
-    /// `v1.5-branch` (or we move to a newer chip gitref), this shim and
-    /// the entire `xtask/scripts/no_pase_setup_class_helper.py` wrapper
-    /// can be retired. See the script's docstring for the full diagnosis.
+    /// default `allow_pase=True`, which on `v1.5-branch` triggered a fresh
+    /// `EstablishPASESession` against a closed-window DUT and either hung
+    /// 25 s on BlueZ activation or leaked a stale "in-progress PASE" entry
+    /// in the controller. See the script's docstring for the full diagnosis.
+    ///
+    /// RETIRABLE: the upstream fix (`b180d46945`, PR #41712) *is* present at
+    /// the commit `CHIP_DEFAULT_GITREF` now pins - `basic_composition.py` there
+    /// calls `FindOrEstablishPASESession`, so the session is reused instead of
+    /// re-established and the race this works around is gone. The shim is kept
+    /// for now only so that the Matter 1.6 bump and this cleanup can be
+    /// bisected apart: removing it changes how three certification tests set
+    /// up, and that is only observable in a full `cargo xtask itest` run. Drop
+    /// this function, the branch in `yaml_test_command`, and
+    /// `xtask/scripts/no_pase_setup_class_helper.py` once a cert run has gone
+    /// green with the 1.6 data model.
     fn needs_no_pase_shim(test_name: &str) -> bool {
         matches!(
             test_name,

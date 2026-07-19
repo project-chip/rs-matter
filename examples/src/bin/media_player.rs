@@ -40,16 +40,16 @@ use rs_matter::crypto::{default_crypto, Crypto};
 use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::decl::content_launcher::{
-    self, ClusterAsyncHandler as _, LaunchContentRequest, LaunchURLRequest,
-    LauncherResponseBuilder, SupportedProtocolsBitmap,
+    self, ClusterAsyncHandler as _, ContentReplicationResponseBuilder, LaunchContentRequest,
+    LaunchURLRequest, LauncherResponseBuilder, PlayPresetRequest, SupportedProtocolsBitmap,
 };
 use rs_matter::dm::clusters::decl::keypad_input::{
     self, ClusterAsyncHandler as _, SendKeyRequest, SendKeyResponseBuilder,
 };
 use rs_matter::dm::clusters::decl::media_playback::{
     self, ActivateAudioTrackRequest, ActivateTextTrackRequest, ClusterAsyncHandler as _,
-    FastForwardRequest, PlaybackResponseBuilder, PlaybackStateEnum, RewindRequest, SeekRequest,
-    SkipBackwardRequest, SkipForwardRequest, StatusEnum,
+    ContentInfoStructBuilder, FastForwardRequest, PlaybackResponseBuilder, PlaybackStateEnum,
+    RewindRequest, SeekRequest, SkipBackwardRequest, SkipForwardRequest, StatusEnum,
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
@@ -68,7 +68,10 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::DirKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
-use rs_matter::tlv::{TLVBuilderParent, Utf8StrArrayBuilder, Utf8StrBuilder};
+use rs_matter::tlv::{
+    NullableBuilder, TLVBuilderParent, ToTLVArrayBuilder, ToTLVBuilder, Utf8StrArrayBuilder,
+    Utf8StrBuilder,
+};
 use rs_matter::transport::exchange::MatterBuffers;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
@@ -265,6 +268,36 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
         _ctx: impl ReadContext,
     ) -> Result<media_playback::PlaybackStateEnum, Error> {
         Ok(self.state.get())
+    }
+
+    /// New (and mandatory) in Matter 1.6. This example accepts a fixed set of
+    /// commands that never varies with the playback state, so there is no
+    /// dynamic list to report and the attribute reads as null.
+    async fn available_commands<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl ReadContext,
+        builder: ArrayAttributeRead<
+            NullableBuilder<P, ToTLVArrayBuilder<P, u32>>,
+            ToTLVBuilder<P, u32>,
+        >,
+    ) -> Result<P, Error> {
+        match builder {
+            ArrayAttributeRead::ReadAll(builder) | ArrayAttributeRead::ReadNone(builder) => {
+                builder.null()
+            }
+            // A null list has no elements to index into
+            ArrayAttributeRead::ReadOne(..) => Err(ErrorCode::ConstraintError.into()),
+        }
+    }
+
+    /// New (and mandatory) in Matter 1.6. This example tracks no metadata about
+    /// what is playing, so the attribute reads as null.
+    async fn content_info<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl ReadContext,
+        builder: NullableBuilder<P, ContentInfoStructBuilder<P>>,
+    ) -> Result<P, Error> {
+        builder.null()
     }
 
     async fn handle_play<P: TLVBuilderParent>(
@@ -512,6 +545,26 @@ impl content_launcher::ClusterAsyncHandler for ContentHandler {
             .status(content_launcher::StatusEnum::Success)?
             .data(None)?
             .end()
+    }
+
+    /// New in Matter 1.6. Not listed in `CLUSTER`'s `with_cmds(..)` above, so it
+    /// is never dispatched to this handler; the trait still requires the method
+    /// to exist.
+    async fn handle_content_replication_request<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        _response: ContentReplicationResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        Err(ErrorCode::CommandNotFound.into())
+    }
+
+    /// New in Matter 1.6. Not advertised either - see above.
+    async fn handle_play_preset(
+        &self,
+        _ctx: impl InvokeContext,
+        _request: PlayPresetRequest<'_>,
+    ) -> Result<(), Error> {
+        Err(ErrorCode::CommandNotFound.into())
     }
 }
 

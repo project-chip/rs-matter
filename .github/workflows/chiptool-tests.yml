@@ -15,7 +15,8 @@ on:
         description: 'Chip repository reference (branch/tag/commit)'
         required: false
 #        default: 'master'
-        default: 'v1.5-branch'
+        # Keep in sync with `CHIP_DEFAULT_GITREF` in `xtask/src/common.rs`
+        default: '613037c118ac1851c99b2b7d076a121e64685821'
         type: string
 
 env:
@@ -92,7 +93,7 @@ jobs:
 
       - name: Setup Chip environment
         run: |
-          cargo xtask itest-setup --gitref "${{ inputs.chip_ref || 'v1.5-branch' }}"
+          cargo xtask itest-setup --gitref "${{ inputs.chip_ref || '613037c118ac1851c99b2b7d076a121e64685821' }}"
 
       - name: Run System integration tests with RustCrypto
         run: |
