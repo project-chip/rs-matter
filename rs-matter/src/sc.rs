@@ -356,6 +356,26 @@ impl<C: Crypto, H: AsyncScHandler> ExchangeHandler for SecureChannel<'_, C, H> {
     }
 }
 
+/// Check the opcode of the received message like [`check_opcode`], additionally
+/// reporting a mismatch to the peer with a `StatusReport(FAILURE, INVALID_PARAMETER)`
+/// before bailing out with an error.
+async fn expect_opcode(exchange: &mut Exchange<'_>, opcode: OpCode) -> Result<(), Error> {
+    let result = check_opcode(exchange, opcode);
+
+    if let Err(err) = result {
+        if !exchange.rx()?.meta().is_sc_status() {
+            // Best-effort: the handshake has failed regardless of whether the
+            // report makes it to the peer, and the opcode mismatch is the more
+            // informative error to propagate.
+            let _ = complete_with_status(exchange, SCStatusCodes::InvalidParameter, &[]).await;
+        }
+
+        Err(err)
+    } else {
+        Ok(())
+    }
+}
+
 /// Check that the opcode of the received message matches the expected one.
 /// Logs an error if that's not the case, and if the opcode is `StatusReport`,
 /// it also logs the details of the status report.

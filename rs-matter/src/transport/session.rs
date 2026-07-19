@@ -948,7 +948,7 @@ impl Sessions {
             group_ctr_store: GroupCtrStore::new(),
             next_sess_unique_id: 0,
             next_sess_id: 1,
-            next_exch_id: 1,
+            next_exch_id: 0,
             #[cfg(feature = "groups")]
             global_group_data_ctr: 0,
         }
@@ -964,7 +964,7 @@ impl Sessions {
             group_ctr_store: GroupCtrStore::new(),
             next_sess_unique_id: 0,
             next_sess_id: 1,
-            next_exch_id: 1,
+            next_exch_id: 0,
             global_group_data_ctr: 0,
         });
         #[cfg(not(feature = "groups"))]
@@ -972,7 +972,7 @@ impl Sessions {
             sessions <- Vec::init(),
             next_sess_unique_id: 0,
             next_sess_id: 1,
-            next_exch_id: 1,
+            next_exch_id: 0,
         });
         r
     }
@@ -984,7 +984,7 @@ impl Sessions {
             self.group_ctr_store = GroupCtrStore::new();
         }
         self.next_sess_id = 1;
-        self.next_exch_id = 1;
+        self.next_exch_id = 0;
         // Deliberately keep `global_group_data_ctr`: a `reset` isn't a
         // factory reset, and rolling it back would break peers that
         // just learned it via MCSP.
@@ -1310,7 +1310,19 @@ impl Sessions {
         next_sess_id
     }
 
-    pub fn get_next_exch_id(&mut self) -> u16 {
+    pub fn get_next_exch_id<C: Crypto>(&mut self, crypto: C) -> Result<u16, Error> {
+        if self.next_exch_id == 0 {
+            // Per the Matter Core spec, the first exchange ID of an initiator
+            // node must be a random integer, with all subsequent ones
+            // incrementing by one. Seeding is lazy because the constructors
+            // have no access to an RNG (`Sessions::new` is `const`).
+            //
+            // `0` is unambiguous as the "not seeded yet" sentinel, because the
+            // counter below never assumes that value.
+            let candidate = crypto.rand()?.next_u32() as u16;
+            self.next_exch_id = if candidate == 0 { 1 } else { candidate };
+        }
+
         let mut next_exch_id: u16;
         loop {
             next_exch_id = self.next_exch_id;
@@ -1334,7 +1346,8 @@ impl Sessions {
                 break;
             }
         }
-        next_exch_id
+
+        Ok(next_exch_id)
     }
 
     pub fn get_session_for_eviction(&mut self) -> Option<&mut Session> {
