@@ -515,30 +515,33 @@ impl BasicInfoHandler {
 
 impl ClusterHandler for BasicInfoHandler {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
-        // Hide `Reachable` (TODO), `ConfigurationVersion` and `DeviceLocation`
-        // from the default metadata. `ConfigurationVersion` is provisional in
-        // Matter 1.5 and upstream's 1.5 dataset (CHIP commit faf4d09ad1,
-        // "Remove configuration version from 1.5 branch") explicitly excludes
-        // it from `BasicInformation`'s `AttributeList`. The
-        // `BasicInformation`/`BasicInfoSettings` plumbing for it stays in
-        // place — read handler, persisted settings field, and the
-        // `Matter::bump_configuration_version` / `InteractionModel::bump_configuration_version`
-        // entry points — so a user that supplies their own cluster metadata
-        // (i.e. one that drops `ConfigurationVersion` from `except!`) gets a
-        // working implementation out of the box.
+        // Hide `Reachable` (TODO) and `DeviceLocation` from the default
+        // metadata.
+        //
+        // `ConfigurationVersion` used to be excluded here too: it is
+        // provisional, and upstream's Matter 1.5 dataset (CHIP commit
+        // faf4d09ad1, "Remove configuration version from 1.5 branch")
+        // explicitly dropped it from `BasicInformation`'s `AttributeList`.
+        // Matter 1.6 puts it back — its conformance is `P, Rev >= v5`, i.e.
+        // mandatory from cluster revision 5 onwards, and this cluster is now
+        // revision 6. `TestBasicInformation` step 6 constrains the
+        // `AttributeList` to an exact set that includes attribute 24, so
+        // omitting it now fails certification. The read handler, the persisted
+        // `BasicInfoSettings` field and the
+        // `Matter::bump_configuration_version` /
+        // `InteractionModel::bump_configuration_version` entry points were
+        // always in place, so exposing it needs nothing further.
         //
         // `DeviceLocation` is new in Matter 1.6 and is both provisional and
-        // optional. Unlike the two above it has no implementation here at all
+        // optional. Unlike the above it has no implementation here at all
         // (the generated trait method defaults to `AttributeNotFound`), so it
         // must be kept out of the `AttributeList` — advertising an attribute
-        // that then fails to read is a conformance violation. Note this
-        // `except!` is a deny-list: every attribute the IDL grows lands in the
-        // metadata by default, so new optional attributes have to be excluded
-        // here explicitly.
+        // that then fails to read is a conformance violation, and the same
+        // test's expected set omits attribute 23. Note this `except!` is a
+        // deny-list: every attribute the IDL grows lands in the metadata by
+        // default, so new optional attributes have to be excluded explicitly.
         .with_attrs(except!(
-            AttributeId::Reachable
-                | AttributeId::ConfigurationVersion
-                | AttributeId::DeviceLocation
+            AttributeId::Reachable | AttributeId::DeviceLocation
         ))
         .with_cmds(with!());
 

@@ -21,6 +21,7 @@ use core::iter::once;
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::{env, fs};
 
 use clap::ValueEnum;
 
@@ -902,12 +903,64 @@ impl ITests {
             .arg(&test_command);
 
         match run_command(&mut cmd, self.print_cmd_output) {
-            Ok(()) => info!("Test `{test_name}` completed successfully"),
+            Ok(()) => {
+                // A zero exit status is NOT sufficient for the YAML suites:
+                // `run_test_suite.py` has been observed to exit 0 while
+                // individual tests were marked failed, so a failing YAML test
+                // would silently pass the whole run (and CI with it). Consult
+                // the JSON run summary it wrote instead - that is the
+                // authoritative per-test verdict.
+                Self::assert_yaml_summary_clean(test_name)?;
+
+                info!("Test `{test_name}` completed successfully")
+            }
             Err(err) => {
                 info!("Command failed: {}", test_command);
                 return Err(err);
             }
         };
+
+        Ok(())
+    }
+
+    /// Path of the JSON run summary that `run_test_suite.py` is asked to write
+    /// for `test_name` (see `--summary-file` in [`Self::yaml_test_command`]).
+    fn yaml_summary_path(test_name: &str) -> PathBuf {
+        env::temp_dir().join(format!("xtask-yaml-summary-{test_name}.json"))
+    }
+
+    /// Fail if the YAML run summary for `test_name` records any failed test.
+    ///
+    /// Python (`TC_*`) tests propagate their failures through the process exit
+    /// status, so they are left alone; only the YAML suites need this.
+    fn assert_yaml_summary_clean(test_name: &str) -> anyhow::Result<()> {
+        if Self::is_python_test(test_name) {
+            return Ok(());
+        }
+
+        let path = Self::yaml_summary_path(test_name);
+
+        let Ok(summary) = fs::read_to_string(&path) else {
+            // No summary: an older `run_test_suite.py` without `--summary-file`,
+            // or a run that died before writing it. Don't turn that into a
+            // failure - the exit status already passed - but make the loss of
+            // coverage visible rather than silently trusting the exit code.
+            warn!(
+                "Test `{test_name}`: no run summary at {} - cannot verify per-test results",
+                path.display()
+            );
+            return Ok(());
+        };
+
+        // `TestStatus` is a `StrEnum`, so statuses serialize as lowercase
+        // strings ("passed" / "failed" / "cancelled" / "dry_run").
+        if summary.contains("\"status\": \"failed\"") {
+            anyhow::bail!(
+                "Test `{test_name}` reported a FAILED result in its run summary ({}), \
+                 even though the runner exited successfully",
+                path.display()
+            );
+        }
 
         Ok(())
     }
@@ -1178,8 +1231,15 @@ impl ITests {
             String::new()
         };
 
+        // Ask for a JSON run summary and drop any stale one first: a zero exit
+        // status from `run_test_suite.py` does not imply the tests passed (see
+        // `Self::assert_yaml_summary_clean`), so this file is what we actually
+        // judge the run by.
+        let summary_path = Self::yaml_summary_path(test_name);
+        _ = fs::remove_file(&summary_path);
+
         format!(
-            "{} --log-level warn --target {} --runner chip_tool_python --chip-tool {} run --iterations 1 --test-timeout-seconds {} --all-clusters-app '{}'{}{} --pics-file {}",
+            "{} --log-level warn --target {} --runner chip_tool_python --chip-tool {} run --iterations 1 --test-timeout-seconds {} --all-clusters-app '{}'{}{} --pics-file {} --summary-file '{}'",
             test_suite_path.display(),
             real_name,
             chip_tool_path.display(),
@@ -1188,6 +1248,7 @@ impl ITests {
             ota_app_clause,
             lit_icd_app_clause,
             test_pics_path.display(),
+            summary_path.display(),
         )
     }
 

@@ -93,7 +93,14 @@ async-io = "2"
 async-compat = "0.2"
 blocking = "1"
 futures-lite = "2"
-rs-matter = { path = "../rs-matter", features = ["async-io", "groups", "persistent-subscriptions", "max-groups-per-fabric-12", "max-group-keys-per-fabric-2", "max-group-endpoints-per-fabric-3", "max-sessions-32"] }
+# `max-group-keys-per-fabric-3` matches CHIP's own
+# `CHIP_CONFIG_MAX_GROUP_KEYS_PER_FABRIC (3 + 1)` default ("3 KeySets + IPK";
+# rs-matter's count excludes the IPK, so 3 here == CHIP's 3+1). Matter 1.6's
+# `TestGroupKeyManagementCluster` gained an extra "Write additional KeySets to
+# reach fabric 1 capacity" step before the one that expects RESOURCE_EXHAUSTED,
+# and upstream notes the step count is hardcoded to that CHIP default - so with
+# only 2 the DUT exhausts one write too early and the test fails.
+rs-matter = { path = "../rs-matter", features = ["async-io", "groups", "persistent-subscriptions", "max-groups-per-fabric-12", "max-group-keys-per-fabric-3", "max-group-endpoints-per-fabric-3", "max-sessions-32"] }
 rand = { version = "0.8", features = ["std", "std_rng"] }
 async-signal = "0.2"
 socket2 = "0.5"
