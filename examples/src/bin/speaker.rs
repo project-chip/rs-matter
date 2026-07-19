@@ -15,8 +15,9 @@
  *    limitations under the License.
  */
 
-//! An example Matter device that implements a Speaker device over Ethernet.
-//! Demonstrates how to make use of the `rs_matter::import` macro for `LevelControl`.
+//! An example Matter accessory that implements a Speaker device over Ethernet.
+//! Demonstrates how to make use of the `LevelControl` and `OnOff` cluster handlers,
+//! and how to run a Matter device over Ethernet with mDNS discovery.
 
 use core::pin::pin;
 
@@ -100,7 +101,7 @@ fn main() -> Result<(), Error> {
         TestLevelControlDeviceLogic::new(),
         AttributeDefaults {
             on_level: Nullable::some(42),
-            options: OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
+            options: OptionsBitmap::EXECUTE_IF_OFF,
             on_off_transition_time: 0,
             on_transition_time: Nullable::none(),
             off_transition_time: Nullable::none(),
