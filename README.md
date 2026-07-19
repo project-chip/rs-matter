@@ -13,10 +13,11 @@ Scales from bare-metal MCUs with 1MB flash and 256KB RAM to ARM embedded Linux a
 
 Rather than a shrink-wrapped solution, it is first and formeost - a **toolkit**.
 Users are free to consume all of the APIs, including the provided system clusters, or only pick up bits and pieces. As in:
-* ... custom IP network implementation and BLE GATT device implementation;
+* ... switch on or off various bits via the available features, including sizing of basic `rs-matter` structures for small or big devices;
+* ... pluggable IP network implementation and BLE GATT peripheral/central implementation;
 * ... custom Exchange responders;
 * ... custom mDNS provider;
-* ... re-using the transport layer and Secure Channel, but implementing their own Data Model;
+* ... re-using the transport layer and Secure Channel, but implementing their own Interaction Model;
 * ... flexible polling of the `rs-matter` futures as e.g. separate tasks in their async executor of choice;
 * ... or just using the shrink-wrapped [`rs-matter-stack`](https://github.com/sysgrok/rs-matter-stack) arrangement and its down-stream crates;
 * ... and so on.
@@ -28,6 +29,7 @@ Users are free to consume all of the APIs, including the provided system cluster
   *  Nordic NRF52840
   *  RP2040 Pico and RP2040 Pico W
 * To run `rs-matter` on top of the [ESP-IDF](https://github.com/esp-rs/esp-idf-svc) with Espressif MCUs, look at [`esp-idf-matter`](https://github.com/sysgrok/esp-idf-matter)
+* To run `rs-matter` on top of any other vendor SDK which is not supported out of the box, you'll have to implement the `rs-matter` platform traits, as [`rs-matter-embassy`](https://github.com/sysgrok/rs-matter-embassy) and [`esp-idf-matter`](https://github.com/sysgrok/esp-idf-matter) do.
 
 ## Documentation
 
