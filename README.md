@@ -42,6 +42,8 @@ as well as controllers and commissioners.
 With that said, the API is not stable and is likely to still see some backwards-incompatible changes,
 though the blast radius should be more limited now.
 
+The currently supported Matter Specification version is 1.5.1, with update to 1.6 to happen soon.
+
 Provisioning and operating under the major Smart Home controllers should work just fine. Following are tested to work:
 - Google Home
 - Apple HomeKit
@@ -199,7 +201,7 @@ fn main() -> Result<(), Error> {
         TestLevelControlDeviceLogic::new(),
         AttributeDefaults {
             on_level: Nullable::some(42),
-            options: OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
+            options: OptionsBitmap::EXECUTE_IF_OFF,
             on_off_transition_time: 0,
             on_transition_time: Nullable::none(),
             off_transition_time: Nullable::none(),
@@ -328,7 +330,7 @@ The TL;DR is, rather than building with `--features zeroconf` everywhere, you ca
 cargo test -- --test-threads 1
 ```
 
-### E2E/acceptance tests form the C++ SDK
+### E2E/acceptance tests from the C++ SDK
 ```sh
 cargo xtask itest
 ```

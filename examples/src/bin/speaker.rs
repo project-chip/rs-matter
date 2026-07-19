@@ -101,7 +101,7 @@ fn main() -> Result<(), Error> {
         TestLevelControlDeviceLogic::new(),
         AttributeDefaults {
             on_level: Nullable::some(42),
-            options: OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
+            options: OptionsBitmap::EXECUTE_IF_OFF,
             on_off_transition_time: 0,
             on_transition_time: Nullable::none(),
             off_transition_time: Nullable::none(),

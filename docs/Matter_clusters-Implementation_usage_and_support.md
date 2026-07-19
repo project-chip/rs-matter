@@ -24,13 +24,13 @@ The SDK supports all clusters in this way and does not require any further imple
 
 ### Usage
 
-1. Import the auto-generated cluster data types and trait using the `rs_matter::import!(<ClusterName>)` macro.
+1. Import the auto-generated cluster data types and traits from the `rs_matter::dm::clusters::decl::*` namespace
 2. Implement the `<cluster>::ClusterHandler` trait on a `<Cluster>Handler` struct or the `<cluster>::AsyncClusterHandler` trait on a `<Cluster>Handler` for handlers that need asynchrony. See code snippet below.
 3. Instantiate the `<Cluster>Handler` struct and chain it to the endpoint handler.
 
 ```rust
-use rs_matter::{self, import};
-import!(AirQuality);
+use rs_matter;
+use rs_matter::dm::clusters::decl::air_quality::*;
 
 struct AirQualityHandler {
     sensor: SensorInterface, // Mock interface
@@ -78,8 +78,7 @@ The Simple Handler pattern works for all clusters, however, some clusters define
 
 ### Implementation
 
-1. Add the cluster to the `import!` macro call in `rs-matter/src/dm/clusters.rs`.
-2. Implement the cluster in `rs-matter/src/dm/clusters`, similar to the usage instructions in **A**.
+1. Implement the cluster in `rs-matter/src/dm/clusters`, similar to the usage instructions in **A**.
 
 ![Pattern B](assets/pattern_B.png)
 
@@ -91,7 +90,7 @@ _Fig 1: Representative UML diagram for Pattern B_
 2. Instantiate the `<Cluster>Handler` struct and chain it to the endpoint handler.
 
 ```rust
-use rs_matter::dm::clusters::desc::{DescHandler}
+use rs_matter::dm::clusters::desc::DescHandler;
 
 fn main() {
 	// Instantiate cluster handler
@@ -209,7 +208,6 @@ _Fig 3: Representative UML diagram for Pattern C_
 // Implement device logic similar to pattern B.
 
 fn main() {
-
 	// Instantiate device logic handlers
 	let on_off_logic = OnOffDeviceLogic::new();
 	let level_control_logic = LevelControlDeviceLogic::new();
@@ -248,51 +246,51 @@ Blank entries indicate that an assessment has not yet been made to identify if t
 |                                                       |    |    |    |    |       |
 | **9. System Model Specification**                     |    |    |    |    |       |
 | Descriptor                                            | ✅ | ✅ | ✅ | ⚫ |       |
-| Binding                                               | ✅ |    |    |    |       |
-| FixedLabel                                            | ✅ |    |    |    |       |
-| UserLabel                                             | ✅ |    |    |    |       |
+| Binding                                               | ✅ | ✅ | ✅ | ⚫ |       |
+| FixedLabel                                            | ✅ | ✅ | ⚫ | ⚫ |       |
+| UserLabel                                             | ✅ | ✅ | ⚫ | ⚫ |       |
 | AccessControl                                         | ✅ | ✅ | ⚫ | ⚫ |       |
 | BridgedDeviceBasicInformation                         | ✅ | ✅ | ⚫ | ⚫ |       |
 | Actions                                               | ✅ |    |    |    |       |
 | ProxyDiscovery                                        | ✅ |    |    |    |       |
 | ProxyConfiguration                                    | ✅ |    |    |    |       |
 | ProxyValid                                            | ✅ |    |    |    |       |
-| IcdManagement                                         | ✅ |    |    |    |       |
+| IcdManagement                                         | ✅ | ✅ | ⚫ | ⚫ |       |
 |                                                       |    |    |    |    |       |
 | **11. Service and Device Management**                 |    |    |    |    |       |
 | BasicInformation                                      | ✅ | ✅ | ⚫ | ⚫ |       |
-| GroupKeyManagement                                    | ✅ |    |    |    |       |
-| LocalizationConfiguration                             | ✅ |    |    |    |       |
+| GroupKeyManagement                                    | ✅ | ✅ | ⚫ | ⚫ |       |
+| Groups                                                | ✅ | ✅ | ⚫ | ⚫ |       |
+| Identify                                              | ✅ | ⚫ | ✅ | ⚫ |       |
+| LocalizationConfiguration                             | ✅ | ✅ |    |    |       |
 | TimeFormatLocalization                                | ✅ |    |    |    |       |
 | UnitLocalization                                      | ✅ |    |    |    |       |
 | PowerSourceConfiguration                              | ✅ | ⚫ | ⚫ | ⚫ |       |
 | PowerSource                                           | ✅ | ⚫ | ⚫ | ⚫ |       |
 | NetworkCommissioning                                  | ✅ | ⚫ | ✅ | ⚫ |       |
 | GeneralCommissioning                                  | ✅ | ⚫ | ✅ | ⚫ |       |
-| DiagnosticLogs                                        | ✅ |    |    |    |       |
+| DiagnosticLogs                                        | ✅ | ⚫ | ✅ | ⚫ |       |
 | GeneralDiagnostics                                    | ✅ | ⚫ | ✅ | ⚫ |       |
-| SoftwareDiagnostics                                   | ✅ |    |    |    |       |
+| SoftwareDiagnostics                                   | ✅ | ⚫ | ✅ | ⚫ |       |
 | ThreadNetworkDiagnostics                              | ✅ | ⚫ | ✅ | ⚫ |       |
 | WiFiNetworkDiagnostics                                | ✅ | ⚫ | ✅ | ⚫ |       |
 | EthernetNetworkDiagnostics                            | ✅ | ⚫ | ✅ | ⚫ |       |
-| TimeSynchronization                                   | ✅ |    |    |    |       |
+| TimeSynchronization                                   | ✅ | ✅*| ⚫*| ⚫ |       |
 | OperationalCredentials                                | ✅ | ✅ | ⚫ | ⚫ |       |
 | AdministratorCommissioning                            | ✅ | ✅ | ⚫ | ⚫ |       |
-| OtaSoftwareUpdateProvider                             | ✅ |    |    |    |       |
-| OtaSoftwareUpdateRequestor                            | ✅ |    |    |    |       |
+| OtaSoftwareUpdateProvider                             | ✅ | ⚫ | ✅ | ⚫ |       |
+| OtaSoftwareUpdateRequestor                            | ✅ | ✅ | ⚫ | ⚫ |       |
 |                                                       |    |    |    |    |       |
-| **Application Clusters** Matter Application Clusters v1.3.0.1 | | |  |    |       |
+| **Application Clusters** (incomplete list) | | |  |    |       |
 |                                                       |    |    |    |    |       |
 | **1. General**                                        |    |    |    |    |       |
-| Identify                                              | ✅ | ⚫ | ⚫ | ⚫ |       |
-| Groups                                                | ✅ |    |    |    |       |
+| Switch                                                | ✅ | ⚫ | ⚫ | ⚫ |       |
 | OnOff                                                 | ✅ | ⚫ | ✅ | ✅ |       |
 | LevelControl                                          | ✅ | ⚫ | ✅ | ✅ |       |
 | BooleanState                                          | ✅ |    |    |    |       |
 | ModeSelect                                            | ✅ |    |    |    |       |
 | LowPower                                              | ✅ |    |    |    |       |
 | WakeOnLan                                             | ✅ |    |    |    |       |
-| Switch                                                | ✅ |    |    |    |       |
 | OperationalState                                      | ✅ |    |    |    |       |
 |                                                       |    |    |    |    |       |
 | **2. Measurement and Sensing**                        |    |    |    |    |       |
