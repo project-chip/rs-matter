@@ -92,32 +92,11 @@ impl NetifInfo<'_> {
     }
 }
 
-/// Resource-utilisation metrics reported via
-/// `GeneralDiagnostics::DeviceLoadStatus`.
-///
-/// Mandatory from cluster revision 3 (Matter 1.6), whose conformance is
-/// `Rev >= v3`.
-///
-/// The subscription figures can be filled straight from
-/// [`crate::im::subscriptions::Subscriptions`], which tracks all three:
-/// [`count`](crate::im::subscriptions::Subscriptions::count),
-/// [`count_for_fabric`](crate::im::subscriptions::Subscriptions::count_for_fabric)
-/// and
-/// [`total_established`](crate::im::subscriptions::Subscriptions::total_established).
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct DeviceLoad {
-    /// Subscriptions currently established on the node, across all fabrics.
-    pub current_subscriptions: u16,
-    /// Subscriptions currently established on the fabric performing the read.
-    pub current_subscriptions_for_fabric: u16,
-    /// Subscriptions accepted since boot, including those since torn down.
-    pub total_subscriptions_established: u32,
-    /// Interaction Model messages sent since boot.
-    pub total_im_messages_sent: u32,
-    /// Interaction Model messages received since boot.
-    pub total_im_messages_received: u32,
-}
+/// Re-exported for convenience: `DeviceLoad` is owned by the Interaction Model,
+/// which is where the subscription figures come from and which assembles the
+/// whole struct, but it is reported through this cluster. The message counters
+/// within it are tracked one layer down, by the transport.
+pub use crate::im::DeviceLoad;
 
 /// A trait to which the system implementation of the General Diagnostics Matter cluster
 /// delegates for information.

@@ -70,6 +70,24 @@ pub mod expand;
 pub mod invoker;
 pub mod subscriptions;
 
+/// Resource-utilisation metrics for the node, as reported by
+/// `GeneralDiagnostics::DeviceLoadStatus`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct DeviceLoad {
+    /// Subscriptions currently established on the node, across all fabrics.
+    pub current_subscriptions: u16,
+    /// Subscriptions currently established on the fabric of the reading
+    /// subject. Zero when the figures were gathered without a fabric in scope.
+    pub current_subscriptions_for_fabric: u16,
+    /// Subscriptions accepted since boot, including those since torn down.
+    pub total_subscriptions_established: u32,
+    /// Interaction Model messages sent since boot.
+    pub total_im_messages_sent: u32,
+    /// Interaction Model messages received since boot.
+    pub total_im_messages_received: u32,
+}
+
 /// An `ExchangeHandler` implementation capable of handling responder exchanges for the Interaction Model protocol.
 /// The mutable, owned-together state a [`InteractionModel`] operates on: the
 /// subscriptions table, the events queue and the network store.
@@ -474,6 +492,21 @@ where
     /// `open_basic_comm_window` for the rationale.
     pub fn close_comm_window(&self) -> Result<bool, Error> {
         self.matter.close_comm_window(self)
+    }
+
+    /// The node's resource-utilisation metrics, for
+    /// `GeneralDiagnostics::DeviceLoadStatus`.
+    ///
+    /// `fab_idx` is the fabric of the reading subject, for
+    /// `CurrentSubscriptionsForFabric`; pass `None` when no fabric is in scope.
+    pub fn load_stats(&self, fab_idx: Option<NonZeroU8>) -> DeviceLoad {
+        let message_counters = self.matter.transport().counters();
+
+        DeviceLoad {
+            total_im_messages_sent: message_counters.im_sent,
+            total_im_messages_received: message_counters.im_received,
+            ..self.state.subscriptions().load_stats(fab_idx)
+        }
     }
 
     /// Bump `BasicInformation::ConfigurationVersion` by one, persist

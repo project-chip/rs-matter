@@ -22,7 +22,7 @@ use embassy_time::Instant;
 #[cfg(feature = "persistent-subscriptions")]
 use crate::error::Error;
 use crate::fabric::MAX_FABRICS;
-use crate::im::{AttrId, ClusterId, EndptId, EventId, EventNumber, IMBuffer, NodeId};
+use crate::im::{AttrId, ClusterId, DeviceLoad, EndptId, EventId, EventNumber, IMBuffer, NodeId};
 #[cfg(feature = "persistent-subscriptions")]
 use crate::persist::{KvBlobStore, PERSISTENT_SUBSCRIPTIONS_START};
 #[cfg(feature = "persistent-subscriptions")]
@@ -215,45 +215,36 @@ impl<const N: usize> Subscriptions<N> {
         })
     }
 
-    /// The number of subscriptions currently established, including one that
-    /// is momentarily in-flight (i.e. moved into a `ReportContext` and hence
-    /// temporarily absent from the active list).
+    /// A consistent snapshot of the subscription-related figures of
+    /// `GeneralDiagnostics::DeviceLoadStatus`.
     ///
-    /// Feeds `GeneralDiagnostics::DeviceLoadStatus::CurrentSubscriptions`.
-    pub fn count(&self) -> usize {
-        self.state
-            .lock(|internal| internal.borrow().subscriptions_count)
-    }
-
-    /// The number of currently-established subscriptions belonging to
-    /// `fab_idx`.
-    ///
-    /// Unlike [`Self::count`] this walks the active list, so a subscription
-    /// that is in-flight at this instant is not counted - there is no fabric
-    /// index to match against while it sits in the `ReportContext`.
-    ///
-    /// Feeds `GeneralDiagnostics::DeviceLoadStatus::CurrentSubscriptionsForFabric`.
-    pub fn count_for_fabric(&self, fab_idx: NonZeroU8) -> usize {
+    /// The Interaction Model message counters are left at their defaults -
+    /// this type knows nothing about them; see
+    /// [`crate::im::InteractionModel::load_stats`].
+    pub fn load_stats(&self, fab_idx: Option<NonZeroU8>) -> DeviceLoad {
         self.state.lock(|internal| {
-            internal
-                .borrow()
-                .subscriptions
-                .iter()
-                .filter(|s| s.ids.fab_idx == fab_idx)
-                .count()
-        })
-    }
+            let internal = internal.borrow();
 
-    /// The total number of subscriptions accepted since boot, including those
-    /// since torn down.
-    ///
-    /// Derived from the monotonic subscription-ID counter, whose first assigned
-    /// value is 1.
-    ///
-    /// Feeds `GeneralDiagnostics::DeviceLoadStatus::TotalSubscriptionsEstablished`.
-    pub fn total_established(&self) -> u32 {
-        self.state
-            .lock(|internal| internal.borrow().next_subscription_id.saturating_sub(1))
+            DeviceLoad {
+                // Counts the in-flight subscription too, if any.
+                current_subscriptions: internal.subscriptions_count as _,
+                // Walks the active list, so a subscription that is in-flight at
+                // this instant is not counted - it carries no fabric index
+                // while it sits in the `ReportContext`.
+                current_subscriptions_for_fabric: fab_idx
+                    .map(|fab_idx| {
+                        internal
+                            .subscriptions
+                            .iter()
+                            .filter(|s| s.ids.fab_idx == fab_idx)
+                            .count() as _
+                    })
+                    .unwrap_or(0),
+                // The ID counter is monotonic and hands out 1 first.
+                total_subscriptions_established: internal.next_subscription_id.saturating_sub(1),
+                ..Default::default()
+            }
+        })
     }
 
     /// Record a fully-global change. Every attribute on every cluster on

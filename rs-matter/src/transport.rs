@@ -37,6 +37,7 @@ use crate::error::{Error, ErrorCode};
 #[cfg(feature = "groups")]
 use crate::fabric::{MAX_FABRICS, MAX_GROUPS_PER_FABRIC};
 use crate::fmt::Bytes;
+use crate::im::PROTO_ID_INTERACTION_MODEL;
 #[cfg(not(feature = "case-responder-only"))]
 use crate::sc::case::CaseInitiator;
 use crate::sc::pase::PaseInitiator;
@@ -49,12 +50,15 @@ use crate::transport::network::mdns::{
     MdnsBrowseState, MdnsRemoteService, MdnsResolveState, ResolvedNode,
 };
 use crate::transport::network::{MatterRemoteService, NetworkMulticast};
+use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 #[cfg(feature = "groups")]
 use crate::utils::ipv6::compute_group_multicast_addr;
 use crate::utils::select::Coalesce;
 use crate::utils::storage::Vec;
 use crate::utils::storage::{pooled::Buffers, ParseBuf, WriteBuf};
+
+use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::{IfMutex, IfMutexGuard, Notification, Signal};
 use crate::{Matter, MATTER_PORT};
 
@@ -147,6 +151,8 @@ pub struct Transport {
     /// only the notify/wait accessors are gated.
     #[cfg_attr(not(feature = "case-resumption"), allow(dead_code))]
     resumption_dirty: Notification,
+    /// Counters for the messages crossing this node.
+    counters: Mutex<RefCell<MessageCounters>>,
     /// Device SAI (Secure Association Identifier)
     device_sai: Option<u32>,
     /// Device SII (Secure Identity Identifier)
@@ -168,6 +174,7 @@ impl Transport {
             session_removed: Notification::new(),
             groups_modified: Notification::new(),
             resumption_dirty: Notification::new(),
+            counters: Mutex::new(RefCell::new(MessageCounters::new())),
             device_sai: dev_det.sai,
             device_sii: dev_det.sii,
         }
@@ -186,6 +193,7 @@ impl Transport {
             session_removed: Notification::new(),
             groups_modified: Notification::new(),
             resumption_dirty: Notification::new(),
+            counters: Mutex::new(RefCell::new(MessageCounters::new())),
             device_sai: dev_det.sai,
             device_sii: dev_det.sii,
         })
@@ -248,6 +256,11 @@ impl Transport {
     #[cfg(feature = "groups")]
     fn wait_groups_changed(&self) -> impl Future<Output = ()> + '_ {
         self.groups_modified.wait()
+    }
+
+    /// The message counters of this node.
+    pub fn counters(&self) -> MessageCounters {
+        self.counters.lock(|counters| counters.borrow().clone())
     }
 
     /// Notify that a session has been removed.
@@ -1245,6 +1258,12 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
             }
 
             Self::netw_send(send, tx.peer, &tx.buf[tx.payload_start..], false).await?;
+
+            if !tx.tx_info.retransmission {
+                self.transport()
+                    .counters
+                    .lock(|counters| counters.borrow_mut().record_sent(&tx.header.proto));
+            }
         }
     }
 
@@ -1554,6 +1573,10 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                         }
                     });
                 } else {
+                    self.transport()
+                        .counters
+                        .lock(|counters| counters.borrow_mut().record_recv(&packet.header.proto));
+
                     debug!(
                         "\n>>RCV {}\n      => Processing{}",
                         packet,
@@ -2441,6 +2464,37 @@ impl<const N: usize> DerefMut for ExternalPacketBuffer<'_, N> {
 impl<const N: usize> Drop for ExternalPacketBuffer<'_, N> {
     fn drop(&mut self) {
         self.0.buf.clear();
+    }
+}
+
+/// The number of messages sent and received by the transport layer.
+#[derive(Default, Clone, Eq, PartialEq, Debug, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct MessageCounters {
+    /// The number of IM messages sent by the transport layer.
+    pub im_sent: u32,
+    /// The number of IM messages received by the transport layer.
+    pub im_received: u32,
+}
+
+impl MessageCounters {
+    const fn new() -> Self {
+        Self {
+            im_sent: 0,
+            im_received: 0,
+        }
+    }
+
+    fn record_sent(&mut self, hdr: &ProtoHdr) {
+        if hdr.proto_id == PROTO_ID_INTERACTION_MODEL {
+            self.im_sent = self.im_sent.saturating_add(1);
+        }
+    }
+
+    fn record_recv(&mut self, hdr: &ProtoHdr) {
+        if hdr.proto_id == PROTO_ID_INTERACTION_MODEL {
+            self.im_received = self.im_received.saturating_add(1);
+        }
     }
 }
 
