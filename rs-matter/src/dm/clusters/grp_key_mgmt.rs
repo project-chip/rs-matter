@@ -449,6 +449,12 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                     .epoch_start_time_1(Nullable::none())?
                     .epoch_key_2(Nullable::<Octets<'_>>::none())?
                     .epoch_start_time_2(Nullable::none())?
+                    // Present only in the Matter 1.6.0 data model, where it is
+                    // already marked deprecated (`D`); 1.6.1 drops it again.
+                    // `PerGroupID` is the historical behaviour: the group's ID
+                    // goes into the multicast address, as
+                    // `compute_group_multicast_addr` does.
+                    .group_key_multicast_policy(GroupKeyMulticastPolicyEnum::PerGroupID)?
                     .end()?
                     .end();
             }
@@ -485,6 +491,8 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                 } else {
                     Nullable::none()
                 })?
+                // 1.6.0-only, already deprecated there - see above.
+                .group_key_multicast_policy(GroupKeyMulticastPolicyEnum::PerGroupID)?
                 .end()?
                 .end()
         })
@@ -645,6 +653,9 @@ impl ClusterHandler for GrpKeyMgmtHandler {
                 .epoch_start_time_1(Nullable::none())?
                 .epoch_key_2(Nullable::<Octets<'_>>::none())?
                 .epoch_start_time_2(Nullable::none())?
+                // 1.6.0-only, already deprecated there - see the `groups`
+                // handler above.
+                .group_key_multicast_policy(GroupKeyMulticastPolicyEnum::PerGroupID)?
                 .end()?
                 .end()
         } else {

@@ -39,10 +39,18 @@ use crate::idl::parser::{Entities, Event, Struct, StructField};
 
 pub use parser::Idl;
 
-pub const CSA_STANDARD_CLUSTERS_IDL_V1_6_1_0: &str =
-    include_str!("idl/parser/controller-clusters-V1.6.1.0.matter");
-//pub const CSA_STANDARD_CLUSTERS_IDL_V1_6_0_0: &str =
-//    include_str!("idl/parser/controller-clusters-V1.6.0.0.matter");
+// NOTE: 1.6.0 rather than 1.6.1, deliberately. `BasicInformation::
+// SpecificationVersion` reports 1.6.0 (see
+// `basic_info::DEFAULT_MATTER_SPEC_VERSION` for why), and
+// `TC_DeviceConformance` checks every `ClusterRevision` against the spec for
+// the *declared* version. Two clusters differ between the two IDLs -
+// `GroupKeyManagement` (3 vs 4) and `NetworkCommissioning` (2 vs 3) - so
+// generating from 1.6.1 while declaring 1.6.0 fails that check. Keep this
+// const and `DEFAULT_MATTER_SPEC_VERSION` in step with one another.
+pub const CSA_STANDARD_CLUSTERS_IDL_V1_6_0_0: &str =
+    include_str!("idl/parser/controller-clusters-V1.6.0.0.matter");
+//pub const CSA_STANDARD_CLUSTERS_IDL_V1_6_1_0: &str =
+//    include_str!("idl/parser/controller-clusters-V1.6.1.0.matter");
 //pub const CSA_STANDARD_CLUSTERS_IDL_V1_5_1_0: &str =
 //    include_str!("idl/parser/controller-clusters-V1.5.1.0.matter");
 //pub const CSA_STANDARD_CLUSTERS_IDL_V1_5_0_1: &str =
@@ -302,7 +310,7 @@ mod tests {
     use assert_tokenstreams_eq::assert_tokenstreams_eq;
 
     use super::Idl;
-    use super::{Cluster, CSA_STANDARD_CLUSTERS_IDL_V1_6_1_0};
+    use super::{Cluster, CSA_STANDARD_CLUSTERS_IDL_V1_6_0_0};
 
     use crate::idl::IdlGenerateContext;
 
@@ -329,7 +337,7 @@ mod tests {
 
     #[test]
     fn test_unit_testing_cluster() {
-        let idl = parse_idl(CSA_STANDARD_CLUSTERS_IDL_V1_6_1_0);
+        let idl = parse_idl(CSA_STANDARD_CLUSTERS_IDL_V1_6_0_0);
 
         let cluster = get_cluster_named(&idl, "UnitTesting").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
@@ -347,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_globals() {
-        let mut idl = parse_idl(CSA_STANDARD_CLUSTERS_IDL_V1_6_1_0);
+        let mut idl = parse_idl(CSA_STANDARD_CLUSTERS_IDL_V1_6_0_0);
         let context = IdlGenerateContext::new("rs_matter_crate");
 
         // Take only the first few for testing

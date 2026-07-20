@@ -83,11 +83,17 @@ impl NetworkInfo<'_> {
         &self,
         builder: NetworkInfoStructBuilder<P>,
     ) -> Result<P, Error> {
+        // `NetworkIdentifier` / `ClientIdentifier` are not part of
+        // `NetworkInfoStruct` in the Matter 1.6.0 data model: the Wi-Fi
+        // per-device-credentials surface moved to the separate
+        // `NetworkIdentityManagement` cluster. They exist again in the 1.6.1
+        // IDL, so the two lines below are kept, commented, to be restored
+        // together with `CSA_STANDARD_CLUSTERS_IDL_V1_6_1_0`.
         builder
             .network_id(Octets::new(self.network_id))?
             .connected(self.connected)?
-            .network_identifier(None)?
-            .client_identifier(None)?
+            // .network_identifier(None)?
+            // .client_identifier(None)?
             .end()
     }
 }
@@ -370,12 +376,15 @@ impl NetworkCommissioningStatusEnum {
         index: Option<u8>,
         builder: NetworkConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
+        // As with `NetworkInfoStruct`, `ClientIdentity` / `PossessionSignature`
+        // left `NetworkConfigResponse` in the 1.6.0 data model. Kept commented
+        // for the eventual move back to 1.6.1.
         builder
             .networking_status(*self)?
             .debug_text(None)?
             .network_index(index)?
-            .client_identity(None)?
-            .possession_signature(None)?
+            // .client_identity(None)?
+            // .possession_signature(None)?
             .end()
     }
 }
@@ -1523,14 +1532,21 @@ where
         status.read_into(index, response)
     }
 
-    fn handle_query_identity<P: TLVBuilderParent>(
-        &self,
-        _ctx: impl InvokeContext,
-        _request: QueryIdentityRequest<'_>,
-        _response: QueryIdentityResponseBuilder<P>,
-    ) -> impl Future<Output = Result<P, Error>> {
-        ready(Err(ErrorCode::CommandNotFound.into()))
-    }
+    // `QueryIdentity` is not a `NetworkCommissioning` command in the Matter
+    // 1.6.0 data model - it moved to the new (provisional)
+    // `NetworkIdentityManagement` cluster, along with the rest of the Wi-Fi
+    // per-device-credentials surface. The 1.6.1 IDL has it back on this
+    // cluster, so the implementation is kept here, commented, to be restored
+    // together with `CSA_STANDARD_CLUSTERS_IDL_V1_6_1_0`.
+    //
+    // fn handle_query_identity<P: TLVBuilderParent>(
+    //     &self,
+    //     _ctx: impl InvokeContext,
+    //     _request: QueryIdentityRequest<'_>,
+    //     _response: QueryIdentityResponseBuilder<P>,
+    // ) -> impl Future<Output = Result<P, Error>> {
+    //     ready(Err(ErrorCode::CommandNotFound.into()))
+    // }
 }
 
 impl<T> Debug for NetCommHandler<T> {
