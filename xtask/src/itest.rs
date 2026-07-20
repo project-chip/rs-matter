@@ -800,6 +800,21 @@ impl ITests {
             self.chip_builder.build_chip_ota_provider_app(None, false)?;
         }
 
+        // Re-assert the CHIP Python wheel *after* the lazy app builds above.
+        //
+        // Each of them re-enters `setup_chip`, which re-provisions the pigweed
+        // virtualenv and thereby drops everything pip-installed into it from
+        // the outside - including the `matter` wheels that `run_python_test.py`
+        // imports. Installing them once during `itest-setup` is therefore not
+        // enough: a suite that pulls in a CHIP counterpart app (the commissioner
+        // suite via `chip-all-clusters-app`, the `OTA_*` tests via the OTA apps)
+        // silently unprovisions every Python test that runs after it, which
+        // surfaces as `ModuleNotFoundError: No module named 'matter.testing'`.
+        //
+        // `build_python_wheel` probes before doing any work, so this is close to
+        // free when the venv is intact.
+        self.chip_builder.build_python_wheel(false)?;
+
         // Run each test
         for test_name in tests {
             self.run_test(test_name, test_timeout_secs, profile, target)?;
