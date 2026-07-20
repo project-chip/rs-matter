@@ -27,21 +27,12 @@ use anyhow::{self, Context};
 
 use log::{debug, info, warn};
 
-/// The default Git reference to use for the Chip repository
+/// The default Git reference to use for the Chip repository.
 ///
-/// Pinned to an exact commit rather than a branch, because the Matter 1.6.1
-/// data model this crate generates against only exists on `master`: upstream
-/// has cut no `v1.6.x` tag (the newest release tag is still `v1.5.1.0`), and
-/// `v1.6-branch` carries the *1.6.0* data model, which differs from ours in
-/// ways that matter for conformance (e.g. it still has the deprecated
-/// `GroupKeySetStruct.GroupKeyMulticastPolicy` field, and keeps `QueryIdentity`
-/// on `NetworkCommissioning` rather than `NetworkIdentityManagement`).
-///
-/// This is the newest commit whose `controller-clusters.matter` is byte-for-byte
-/// the IDL vendored at `rs-matter-codegen/src/idl/parser/`, so the test harness
-/// and the device under test agree on the data model. Bump this in lockstep
-/// with that file - and prefer a real `v1.6.x` tag once upstream cuts one.
-pub const CHIP_DEFAULT_GITREF: &str = "613037c118ac1851c99b2b7d076a121e64685821"; //"v1.6-branch";
+/// Move to `v1.6.1-branch` only together with the 1.6.1 IDL *and* raising
+/// `DEFAULT_MATTER_SPEC_VERSION` - which additionally requires Groupcast, see
+/// the note on that constant.
+pub const CHIP_DEFAULT_GITREF: &str = "f3af82eb6fd1aed968e04642cb8d2ac305f5a371"; // tip of `v1.6-branch`
 
 /// The tooling that is checked for presence in the command line
 const REQUIRED_TOOLING: &[&str] = &[
@@ -369,6 +360,27 @@ impl ChipBuilder {
             self.print_cmd_output,
             !self.print_cmd_output,
         )?;
+
+        // Re-probe rather than trust the build's exit status: `build_python.sh`
+        // can return 0 while its `pip install` of the freshly built wheels
+        // silently fails, leaving a venv without `matter.testing`. That then
+        // surfaces much later as every Python test failing with
+        // `ModuleNotFoundError`, which reads like a product regression instead
+        // of a setup failure. Fail here, where the cause is obvious.
+        let verify = Command::new(venv_dir.join("bin/python3"))
+            .arg("-c")
+            .arg("import matter.testing.metadata, matter.testing.tasks, zeroconf, nest_asyncio")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+
+        if !verify.map(|s| s.success()).unwrap_or(false) {
+            anyhow::bail!(
+                "`build_python.sh` completed but the CHIP Python wheel is not importable from {}. \
+                 Re-run with `-v` to surface the build's stderr.",
+                venv_dir.display(),
+            );
+        }
 
         info!("CHIP Python wheel and test requirements installed successfully");
 

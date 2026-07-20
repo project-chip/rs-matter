@@ -85,7 +85,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestUserLabelClusterConstraints",
     // "TestTimeSynchronization", // Skipped: TimeSynchronization cluster not implemented by rs-matter (optional, Matter spec §11.16).
     // End-to-end LIT-ICD lifecycle: the runner commissions with
-    // `--icd-registration true` (this DUT is routed into the `--lit-icd-app`
+    // `--icd-registration true` (this DUT is routed into the `lit-icd` app
     // slot, see `yaml_test_command`), so the commissioner registers itself as a
     // Check-In client; the test then reboots the DUT and verifies the registered
     // client and the ICDCounter survive (counter resumes one epoch ahead). Also
@@ -407,62 +407,29 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // has to be implemented before that can be raised to 1.6.1.
     "TC_DeviceBasicComposition",
     //
-    // "TC_DeviceConformance",
-    //   // Runs the upstream device-conformance suite (six sub-tests:
-    //   // `test_TC_DESC_2_3`, `test_TC_IDM_10_2`/`_3`/`_5`/`_6`,
-    //   // `test_TC_IDM_14_1`) after a wildcard read of the full
-    //   // attribute/command surface. The PASE+CASE race in
-    //   // `BasicCompositionTests.setup_class_helper` is already worked
-    //   // around via `Self::needs_no_pase_shim` (which routes setup
-    //   // through `xtask/scripts/no_pase_setup_class_helper.py`), and
-    //   // the suite is invoked with
-    //   // `--bool-arg ignore_in_progress:True allow_provisional:True`
-    //   // plus `--PICS .../ci-pics-values` (see
-    //   // `Self::extra_python_script_args`).
-    //   //
-    //   // Current status: **5 of 6 sub-tests pass**
-    //   //   - DESC_2_3 ✓
-    //   //   - IDM_10_2 ✓ (cleared by `gen_comm.rs:220`'s
-    //   //     `with_cmds(except!(CommandId::SetTCAcknowledgements))` —
-    //   //     drops the TC-feature-gated commands from
-    //   //     `AcceptedCommandList` per Matter Core spec §11.10.5)
-    //   //   - IDM_10_3 ✓
-    //   //   - IDM_10_5 ✗ (the only remaining failure — see below)
-    //   //   - IDM_10_6 ✓ (cleared by bumping `DEV_TYPE_ROOT_NODE.drev`
-    //   //     1→4 and `DEV_TYPE_ON_OFF_LIGHT.drev` 2→3 in
-    //   //     `rs-matter/src/dm/devices.rs`; rev-4 Root Node additions
-    //   //     are all conditional/optional, rev-3 On/Off Light just
-    //   //     swaps deprecated Scenes 0x0005 for Scenes Management
-    //   //     0x0062 — see Device Library §2.1.1 / §4.1.1)
-    //   //   - IDM_14_1 ✓
-    //   //
-    //   // `test_TC_IDM_10_5` (device-type conformance) still fails on
-    //   // two problem entries:
-    //   //
-    //   //   a. **Groups on EP0** (1 problem, deliberate). The
-    //   //      `system_tests` fixture re-adds Groups at root for
-    //   //      the `TestGroupMessaging` YAML test (group-addressed
-    //   //      writes to `BasicInformation::NodeLabel` need EP0 to be
-    //   //      a member of a multicast group, which only works via
-    //   //      per-endpoint Groups membership per App Cluster §1.3).
-    //   //      Matter Core §7.16.4 explicitly permits extra clusters
-    //   //      on an endpoint, but the conformance checker takes a
-    //   //      strict view. See the `NODE` doc comment in
-    //   //      `examples/src/bin/system_tests.rs` for the full
-    //   //      rationale; the library-level `with_*_sys()` chain and
-    //   //      the `g*` macro variants no longer add Groups at root,
-    //   //      so device-type-pure compositions are the *default*.
-    //   //
-    //   //   b. **Scenes Management cluster** missing on EP1/EP2
-    //   //      (2 problems). On/Off Light at rev 3 mandates Scenes
-    //   //      Management (0x0062). This is a substantial new cluster
-    //   //      implementation (multiple commands — `AddScene`,
-    //   //      `ViewScene`, `RemoveScene`, `RemoveAllScenes`,
-    //   //      `StoreScene`, `RecallScene`, `GetSceneMembership`,
-    //   //      `CopyScene` — plus persistent scene-table storage).
-    //   //      Tracked separately as a future workstream.
-    //   //
-    //   // Re-enable once Scenes Management is implemented.
+    // Runs the upstream device-conformance suite (six sub-tests:
+    // `test_TC_DESC_2_3`, `test_TC_IDM_10_2`/`_3`/`_5`/`_6`,
+    // `test_TC_IDM_14_1`) after a wildcard read of the full
+    // attribute/command surface. The PASE+CASE race in
+    // `BasicCompositionTests.setup_class_helper` is worked around via
+    // `Self::needs_no_pase_shim`, and the suite is invoked with
+    // `--bool-arg ignore_in_progress:True allow_provisional:True
+    // fail_on_extra_clusters:False` plus the target `.pics` (see
+    // `Self::extra_python_script_args` / `Self::needs_target_pics`).
+    //
+    // `fail_on_extra_clusters:False` is what makes `test_TC_IDM_10_5`
+    // pass with `Groups` deliberately re-added at the root endpoint for
+    // `TestGroupMessaging` (group-addressed writes to
+    // `BasicInformation::NodeLabel` need EP0 to be a group member). Matter
+    // Core spec 7.16.4 permits extra clusters on an endpoint; the
+    // conformance checker takes a stricter view by default, and upstream
+    // provides this flag for exactly that reason - `all-clusters-app` puts
+    // `Groups` on EP0 too.
+    //
+    // This suite is the automated check for revision-conditional
+    // conformance (`Rev >= vN`), which the `.matter` IDL cannot express and
+    // which therefore compiles clean when wrong - keep it enabled.
+    "TC_DeviceConformance",
 ];
 
 /// Camera cluster tests — run against the `camera_tests` example.
@@ -1192,13 +1159,13 @@ impl ITests {
             let chip_provider = chip_dir.join("out/host/chip-ota-provider-app");
             if rs_is_requestor {
                 format!(
-                    " --ota-requestor-app '{}' --ota-provider-app '{}'",
+                    " --app-path 'ota-requestor:{}' --app-path 'ota-provider:{}'",
                     test_exe_path.display(),
                     chip_provider.display(),
                 )
             } else {
                 format!(
-                    " --ota-provider-app '{}' --ota-requestor-app '{}'",
+                    " --app-path 'ota-provider:{}' --app-path 'ota-requestor:{}'",
                     test_exe_path.display(),
                     chip_requestor.display(),
                 )
@@ -1209,11 +1176,11 @@ impl ITests {
 
         // `TestIcd*` YAML suites are classified as the `LIT_ICD` target by the
         // runner (`target_for_name`), so it launches the DUT from the
-        // `--lit-icd-app` slot (not `--all-clusters-app`) and pairs with
+        // `lit-icd` app slot (not `all-clusters`) and pairs with
         // `--icd-registration true` — driving commissioning-time ICD client
         // registration. Point that slot at our binary.
         let lit_icd_app_clause = if real_name.starts_with("TestIcd") {
-            format!(" --lit-icd-app '{}'", test_exe_path.display())
+            format!(" --app-path 'lit-icd:{}'", test_exe_path.display())
         } else {
             String::new()
         };
@@ -1225,12 +1192,23 @@ impl ITests {
         let summary_path = Self::yaml_summary_path(test_name);
         _ = fs::remove_file(&summary_path);
 
+        // NB: `--tool-path` / `--app-path` are options of the `run` subcommand,
+        // whereas the `--chip-tool` flag they replace was a group-level one -
+        // hence the tool path now sits *after* `run`, not before it.
+        //
+        // The DUT binary is registered under *both* the `all-clusters` and
+        // `all-devices` keys because the runner picks the slot from the test's
+        // own target (`Test_TC_OO_*` resolve to `all-devices`, the YAML suites
+        // to `all-clusters`) and errors with `KeyError: 'default'` when that
+        // slot is empty. Registering a slot no test selects is free: the
+        // runner only ever starts the app it resolved to `default`.
         format!(
-            "{} --log-level warn --target {} --runner chip_tool_python --chip-tool {} run --iterations 1 --test-timeout-seconds {} --all-clusters-app '{}'{}{} --pics-file {} --summary-file '{}'",
+            "{} --log-level warn --target {} --runner chip_tool_python run --iterations 1 --test-timeout-seconds {} --tool-path 'chip-tool:{}' --app-path 'all-clusters:{}' --app-path 'all-devices:{}'{}{} --pics-file {} --summary-file '{}'",
             test_suite_path.display(),
             real_name,
-            chip_tool_path.display(),
             timeout_secs,
+            chip_tool_path.display(),
+            test_exe_path.display(),
             test_exe_path.display(),
             ota_app_clause,
             lit_icd_app_clause,

@@ -35,6 +35,17 @@ pub const DEV_TYPE_ROOT_NODE: DeviceType = DeviceType {
     drev: 4,
 };
 
+/// A constant representing the device type for a power source endpoint in the node.
+///
+/// Utility device type, node-scoped: it is declared *alongside* the primary
+/// device type of the endpoint hosting the `PowerSource` cluster (typically the
+/// root node - see Device Library spec which lists this device type under the
+/// Root Node's requirements with `PowerSourceCond, O`).
+pub const DEV_TYPE_POWER_SOURCE: DeviceType = DeviceType {
+    dtype: 0x0011,
+    drev: 1,
+};
+
 /// A constant representing the device type for a bridged device endpoint in the node.
 pub const DEV_TYPE_BRIDGED_NODE: DeviceType = DeviceType {
     dtype: 0x0013,

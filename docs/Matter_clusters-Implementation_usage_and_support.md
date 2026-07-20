@@ -265,8 +265,8 @@ Blank entries indicate that an assessment has not yet been made to identify if t
 | LocalizationConfiguration                             | ✅ | ✅ |    |    |       |
 | TimeFormatLocalization                                | ✅ |    |    |    |       |
 | UnitLocalization                                      | ✅ |    |    |    |       |
-| PowerSourceConfiguration                              | ✅ | ⚫ | ⚫ | ⚫ |       |
-| PowerSource                                           | ✅ | ⚫ | ⚫ | ⚫ |       |
+| PowerSourceConfiguration (deprecated)                 | ✅ | ⚫ | ⚫ | ⚫ |       |
+| PowerSource                                           | ✅ | ⚫ | ✅ | ⚫ |       |
 | NetworkCommissioning                                  | ✅ | ⚫ | ✅ | ⚫ |       |
 | GeneralCommissioning                                  | ✅ | ⚫ | ✅ | ⚫ |       |
 | DiagnosticLogs                                        | ✅ | ⚫ | ✅ | ⚫ |       |

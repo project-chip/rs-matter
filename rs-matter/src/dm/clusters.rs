@@ -42,6 +42,7 @@ pub mod net_comm;
 pub mod noc;
 pub mod ota_prov;
 pub mod ota_req;
+pub mod power_source;
 pub mod scenes;
 pub mod sw_diag;
 pub mod thread_diag;
