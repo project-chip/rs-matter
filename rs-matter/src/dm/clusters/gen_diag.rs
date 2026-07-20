@@ -23,6 +23,7 @@ use core::num::NonZeroU8;
 
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
+use crate::im::ImStats;
 use crate::tlv::{Nullable, Octets, TLVBuilder, TLVBuilderParent};
 use crate::utils::epoch::MATTER_EPOCH_SECS;
 use crate::utils::sync::DynBase;
@@ -114,21 +115,6 @@ pub trait GenDiag: DynBase {
     /// Trigger a test event.
     /// Check the Matter Core spec for more info.
     fn test_event_trigger(&self, key: &[u8], trigger: u64) -> Result<(), Error>;
-
-    /// Get the node's resource-utilisation metrics.
-    ///
-    /// `fab_idx` is the fabric of the reading subject, for
-    /// `CurrentSubscriptionsForFabric`.
-    ///
-    /// Defaults to all-zeroes so existing implementations keep compiling: the
-    /// attribute is mandatory from cluster revision 3, but only the
-    /// application can see the `Subscriptions` instance and any IM message
-    /// counters it may keep. Override this to report real figures.
-    fn device_load(&self, fab_idx: Option<NonZeroU8>) -> Result<DeviceLoad, Error> {
-        let _ = fab_idx;
-
-        Ok(DeviceLoad::default())
-    }
 }
 
 impl<T> GenDiag for &T
@@ -149,10 +135,6 @@ where
 
     fn test_event_trigger(&self, key: &[u8], trigger: u64) -> Result<(), Error> {
         (**self).test_event_trigger(key, trigger)
-    }
-
-    fn device_load(&self, fab_idx: Option<NonZeroU8>) -> Result<DeviceLoad, Error> {
-        (**self).device_load(fab_idx)
     }
 }
 
@@ -306,10 +288,12 @@ impl ClusterHandler for GenDiagHandler<'_> {
         ctx: impl ReadContext,
         builder: DeviceLoadStructBuilder<P>,
     ) -> Result<P, Error> {
-        // `CurrentSubscriptionsForFabric` is relative to the reading subject,
-        // so hand its fabric down to the delegate. `fab_idx` is 0 when the read
-        // arrives over a non-fabric-scoped (e.g. PASE) session.
-        let load = self.diag.device_load(NonZeroU8::new(ctx.attr().fab_idx))?;
+        // `CurrentSubscriptionsForFabric` is relative to the reading subject, so
+        // hand its fabric down. `fab_idx` is 0 when the read arrives over a
+        // non-fabric-scoped (e.g. PASE) session.
+        let load = ctx
+            .im_stats()
+            .device_load(NonZeroU8::new(ctx.attr().fab_idx));
 
         builder
             .current_subscriptions(load.current_subscriptions)?

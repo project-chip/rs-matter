@@ -27,6 +27,7 @@ use crate::dm::{EventId, EventNumber, Metadata};
 use crate::error::{Error, ErrorCode};
 use crate::im::encoding::{EventPriority, IMBuffer, NodeId};
 use crate::im::events::EventTLVWrite;
+use crate::im::ImStats;
 use crate::persist::KvBlobStoreAccess;
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
@@ -279,6 +280,12 @@ pub trait HandlerContext: AttrChangeNotifier + EventEmitter {
     /// Useful in case e.g. a concrete cluster handler needs to invoke read/write/invoke operations on
     /// other clusters, and the TLV input/output data for those operations is non-trivial in size.
     fn buffers(&self) -> impl Buffers<IMBuffer> + '_;
+
+    /// Return the Interaction Model statistics of the node.
+    ///
+    /// Lets a handler read IM-internal figures it cannot otherwise reach - the
+    /// General Diagnostics handler uses it for `DeviceLoadStatus`.
+    fn im_stats(&self) -> impl ImStats + '_;
 }
 
 impl<T> HandlerContext for &T
@@ -311,6 +318,10 @@ where
 
     fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
         (**self).buffers()
+    }
+
+    fn im_stats(&self) -> impl ImStats + '_ {
+        (**self).im_stats()
     }
 }
 
@@ -553,6 +564,10 @@ where
     fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
         self.context.buffers()
     }
+
+    fn im_stats(&self) -> impl ImStats + '_ {
+        self.context.im_stats()
+    }
 }
 
 impl<C> AttrChangeNotifier for ReadContextInstance<'_, C>
@@ -725,6 +740,10 @@ where
     fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
         self.context.buffers()
     }
+
+    fn im_stats(&self) -> impl ImStats + '_ {
+        self.context.im_stats()
+    }
 }
 
 impl<C> AttrChangeNotifier for ReportContextInstance<'_, C>
@@ -842,6 +861,10 @@ where
 
     fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
         self.context.buffers()
+    }
+
+    fn im_stats(&self) -> impl ImStats + '_ {
+        self.context.im_stats()
     }
 }
 
@@ -1022,6 +1045,10 @@ where
 
     fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
         self.context.buffers()
+    }
+
+    fn im_stats(&self) -> impl ImStats + '_ {
+        self.context.im_stats()
     }
 }
 
