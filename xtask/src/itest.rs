@@ -1608,6 +1608,9 @@ impl ITests {
             // `PICS_SDK_CI_ONLY=1`, so handing it over is what makes the check
             // apply the SDK-example rule rather than the shipping-product one.
             | "TC_DeviceBasicComposition"
+            // `TC_DeviceConformance` likewise reads `is_pics_sdk_ci_only`
+            // (in `check_conformance`), so it needs the target `.pics` too.
+            | "TC_DeviceConformance"
         )
     }
 
@@ -1758,6 +1761,21 @@ impl ITests {
                  --PICS src/app/tests/suites/certification/ci-pics-values \
                  --app-pipe /tmp/rs_matter_bin_info_3_2_fifo"
             }
+            // `test_TC_IDM_10_5` flags every server cluster that is not part of
+            // some device type declared on its endpoint. `system_tests` hosts
+            // `Groups` on EP0 so `TestGroupMessaging` can group-address writes
+            // to `BasicInformation::NodeLabel` (group membership is
+            // per-endpoint, per App Cluster spec 1.3), and no device type grants
+            // `Groups` on a root node - so this cannot be resolved by declaring
+            // more device types, the way the OTA clusters were.
+            //
+            // Matter Core spec 7.16.4 permits extra clusters on an endpoint;
+            // the checker is strict by default and parameterised for exactly
+            // this case. CHIP's own `all-clusters-app` is in the same position
+            // (its EP0 declares only `ma_rootdevice` + `ma_powersource`, yet
+            // hosts `Groups`), which is why upstream provides the knob. With it
+            // off, such findings are recorded as warnings rather than errors.
+            "TC_DeviceConformance" => "--bool-arg fail_on_extra_clusters:false",
             // TC_OPCREDS_3_8 reads `NOCs` non-fabric-filtered with two
             // fabrics, each carrying a max-sized 400-byte VVSC; the
             // resulting payload is well past one MTU and rs-matter falls

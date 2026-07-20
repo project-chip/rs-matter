@@ -215,6 +215,47 @@ impl<const N: usize> Subscriptions<N> {
         })
     }
 
+    /// The number of subscriptions currently established, including one that
+    /// is momentarily in-flight (i.e. moved into a `ReportContext` and hence
+    /// temporarily absent from the active list).
+    ///
+    /// Feeds `GeneralDiagnostics::DeviceLoadStatus::CurrentSubscriptions`.
+    pub fn count(&self) -> usize {
+        self.state
+            .lock(|internal| internal.borrow().subscriptions_count)
+    }
+
+    /// The number of currently-established subscriptions belonging to
+    /// `fab_idx`.
+    ///
+    /// Unlike [`Self::count`] this walks the active list, so a subscription
+    /// that is in-flight at this instant is not counted - there is no fabric
+    /// index to match against while it sits in the `ReportContext`.
+    ///
+    /// Feeds `GeneralDiagnostics::DeviceLoadStatus::CurrentSubscriptionsForFabric`.
+    pub fn count_for_fabric(&self, fab_idx: NonZeroU8) -> usize {
+        self.state.lock(|internal| {
+            internal
+                .borrow()
+                .subscriptions
+                .iter()
+                .filter(|s| s.ids.fab_idx == fab_idx)
+                .count()
+        })
+    }
+
+    /// The total number of subscriptions accepted since boot, including those
+    /// since torn down.
+    ///
+    /// Derived from the monotonic subscription-ID counter, whose first assigned
+    /// value is 1.
+    ///
+    /// Feeds `GeneralDiagnostics::DeviceLoadStatus::TotalSubscriptionsEstablished`.
+    pub fn total_established(&self) -> u32 {
+        self.state
+            .lock(|internal| internal.borrow().next_subscription_id.saturating_sub(1))
+    }
+
     /// Record a fully-global change. Every attribute on every cluster on
     /// every endpoint is treated as changed for the purposes of subscription
     /// reporting. Intended for coarse-grained reset / restart scenarios.

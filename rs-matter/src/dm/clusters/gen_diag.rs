@@ -19,6 +19,7 @@
 
 use core::fmt::Debug;
 use core::net::{Ipv4Addr, Ipv6Addr};
+use core::num::NonZeroU8;
 
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
@@ -91,6 +92,33 @@ impl NetifInfo<'_> {
     }
 }
 
+/// Resource-utilisation metrics reported via
+/// `GeneralDiagnostics::DeviceLoadStatus`.
+///
+/// Mandatory from cluster revision 3 (Matter 1.6), whose conformance is
+/// `Rev >= v3`.
+///
+/// The subscription figures can be filled straight from
+/// [`crate::im::subscriptions::Subscriptions`], which tracks all three:
+/// [`count`](crate::im::subscriptions::Subscriptions::count),
+/// [`count_for_fabric`](crate::im::subscriptions::Subscriptions::count_for_fabric)
+/// and
+/// [`total_established`](crate::im::subscriptions::Subscriptions::total_established).
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct DeviceLoad {
+    /// Subscriptions currently established on the node, across all fabrics.
+    pub current_subscriptions: u16,
+    /// Subscriptions currently established on the fabric performing the read.
+    pub current_subscriptions_for_fabric: u16,
+    /// Subscriptions accepted since boot, including those since torn down.
+    pub total_subscriptions_established: u32,
+    /// Interaction Model messages sent since boot.
+    pub total_im_messages_sent: u32,
+    /// Interaction Model messages received since boot.
+    pub total_im_messages_received: u32,
+}
+
 /// A trait to which the system implementation of the General Diagnostics Matter cluster
 /// delegates for information.
 pub trait GenDiag: DynBase {
@@ -107,6 +135,21 @@ pub trait GenDiag: DynBase {
     /// Trigger a test event.
     /// Check the Matter Core spec for more info.
     fn test_event_trigger(&self, key: &[u8], trigger: u64) -> Result<(), Error>;
+
+    /// Get the node's resource-utilisation metrics.
+    ///
+    /// `fab_idx` is the fabric of the reading subject, for
+    /// `CurrentSubscriptionsForFabric`.
+    ///
+    /// Defaults to all-zeroes so existing implementations keep compiling: the
+    /// attribute is mandatory from cluster revision 3, but only the
+    /// application can see the `Subscriptions` instance and any IM message
+    /// counters it may keep. Override this to report real figures.
+    fn device_load(&self, fab_idx: Option<NonZeroU8>) -> Result<DeviceLoad, Error> {
+        let _ = fab_idx;
+
+        Ok(DeviceLoad::default())
+    }
 }
 
 impl<T> GenDiag for &T
@@ -127,6 +170,10 @@ where
 
     fn test_event_trigger(&self, key: &[u8], trigger: u64) -> Result<(), Error> {
         (**self).test_event_trigger(key, trigger)
+    }
+
+    fn device_load(&self, fab_idx: Option<NonZeroU8>) -> Result<DeviceLoad, Error> {
+        (**self).device_load(fab_idx)
     }
 }
 
@@ -211,7 +258,13 @@ impl ClusterHandler for GenDiagHandler<'_> {
         // and accept the `TimeSnapshot` command which is required by the
         // same test (returns SystemTimeMs from `GenDiag::uptime_ms` and a
         // null PosixTimeMs when no Time Synchronization cluster is present).
-        .with_attrs(with!(required; AttributeId::UpTime))
+        //
+        // `DeviceLoadStatus` is new in Matter 1.6 and its conformance is
+        // `Rev >= v3`, i.e. mandatory from cluster revision 3 - which this
+        // cluster now is - so `TC_IDM_10_2` fails if it is absent. The IDL
+        // renders it `optional` (it cannot express revision-conditional
+        // conformance), hence it has to be listed explicitly here.
+        .with_attrs(with!(required; AttributeId::UpTime | AttributeId::DeviceLoadStatus))
         .with_cmds(with!(CommandId::TestEventTrigger | CommandId::TimeSnapshot));
 
     fn dataver(&self) -> u32 {
@@ -267,6 +320,25 @@ impl ClusterHandler for GenDiagHandler<'_> {
 
     fn up_time(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
         self.diag.uptime_ms().map(|uptime| uptime / 1000)
+    }
+
+    fn device_load_status<P: TLVBuilderParent>(
+        &self,
+        ctx: impl ReadContext,
+        builder: DeviceLoadStructBuilder<P>,
+    ) -> Result<P, Error> {
+        // `CurrentSubscriptionsForFabric` is relative to the reading subject,
+        // so hand its fabric down to the delegate. `fab_idx` is 0 when the read
+        // arrives over a non-fabric-scoped (e.g. PASE) session.
+        let load = self.diag.device_load(NonZeroU8::new(ctx.attr().fab_idx))?;
+
+        builder
+            .current_subscriptions(load.current_subscriptions)?
+            .current_subscriptions_for_fabric(load.current_subscriptions_for_fabric)?
+            .total_subscriptions_established(load.total_subscriptions_established)?
+            .total_interaction_model_messages_sent(load.total_im_messages_sent)?
+            .total_interaction_model_messages_received(load.total_im_messages_received)?
+            .end()
     }
 
     fn test_event_triggers_enabled(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
