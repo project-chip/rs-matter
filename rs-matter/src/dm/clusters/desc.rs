@@ -28,8 +28,6 @@ use crate::utils::sync::DynBase;
 use crate::with;
 
 pub use crate::dm::clusters::decl::descriptor::*;
-// `SemanticTagStruct` is a global IDL struct rather than a Descriptor-local
-// one, so its builders live in the generated `globals` module.
 pub use crate::dm::clusters::decl::globals::{
     SemanticTagStructArrayBuilder, SemanticTagStructBuilder,
 };

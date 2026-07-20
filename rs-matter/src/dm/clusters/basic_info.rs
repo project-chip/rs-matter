@@ -35,29 +35,7 @@ pub use crate::dm::clusters::decl::general_commissioning::RegulatoryLocationType
 
 /// The default Matter App Clusters specification version
 ///
-/// Currently set to V1.6.0.0, deliberately, even though the data model is
-/// generated from the V1.6.1.0 IDL.
-///
-/// The two are independent: the IDL drives the cluster/attribute/command
-/// surface and the cluster revisions, while this constant is only what
-/// `BasicInformation::SpecificationVersion` reports. For every cluster
-/// `rs-matter` implements they agree anyway - 1.6.0 and 1.6.1 differ almost
-/// entirely in Distributed Compliance Ledger schemas and editorial text, and
-/// the cluster revisions are identical in both.
-///
-/// Declaring 1.6.0 rather than 1.6.1 is what keeps certification tractable.
-/// `TC_SM_1_1` gates the whole Groupcast conformance block on
-/// `SpecificationVersion > 0x01060000`, with an upstream note that it "was
-/// provisional in 1.6.0, but ... punted to a later release to reduce friction".
-/// Claiming anything above 1.6.0 therefore opts a node into requirements that
-/// cascade well beyond one cluster: a `Groups` server on any non-root endpoint
-/// demands Groupcast with the `Listener` feature on EP0, a `Binding` server
-/// demands `Sender`, and `Listener` in turn pulls in the Auxiliary ACL feature -
-/// all for a cluster the IDL itself still marks `provisional`.
-///
-/// Raise this to `0x01060100` once Groupcast (Listener + Sender) and Auxiliary
-/// ACL are implemented. Note also that 1.6.1 is at present a *draft* spec with
-/// no tagged CHIP SDK release, so 1.6.0 is the more defensible public claim.
+/// Currently set to V1.6.0.0.
 pub const DEFAULT_MATTER_SPEC_VERSION: u32 = 0x01060000;
 
 /// The default Matter Data Model revision
@@ -302,17 +280,6 @@ pub struct CapabilityMinima {
 /// so this per-fabric minimum is what the device guarantees.
 const SUBSCRIPTIONS_PER_FABRIC: u16 = 3;
 
-// The four fields below were added to `CapabilityMinimaStruct` in Matter 1.6.
-// They carry a `Rev >= v6` conformance, which per Core spec 7.3.13 means
-// MANDATORY once the cluster reports revision 6 - as `BasicInformation` now
-// does. They are therefore always emitted; omitting them is a conformance
-// violation even though the IDL renders them as `optional` (the IDL has no way
-// to express a revision-conditional conformance).
-//
-// The defaults are the spec-minimum values from each field's constraint. They
-// are deliberately conservative - a node that can genuinely do better should
-// override them via `BasicInfoConfig`.
-
 /// Constraint is `1 to 10000`.
 const SIMULTANEOUS_INVOCATIONS_SUPPORTED: u16 = 1;
 /// Constraint is `1 to 10000`.
@@ -539,29 +506,6 @@ impl ClusterHandler for BasicInfoHandler {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
         // Hide `Reachable` (TODO) and `DeviceLocation` from the default
         // metadata.
-        //
-        // `ConfigurationVersion` used to be excluded here too: it is
-        // provisional, and upstream's Matter 1.5 dataset (CHIP commit
-        // faf4d09ad1, "Remove configuration version from 1.5 branch")
-        // explicitly dropped it from `BasicInformation`'s `AttributeList`.
-        // Matter 1.6 puts it back — its conformance is `P, Rev >= v5`, i.e.
-        // mandatory from cluster revision 5 onwards, and this cluster is now
-        // revision 6. `TestBasicInformation` step 6 constrains the
-        // `AttributeList` to an exact set that includes attribute 24, so
-        // omitting it now fails certification. The read handler, the persisted
-        // `BasicInfoSettings` field and the
-        // `Matter::bump_configuration_version` /
-        // `InteractionModel::bump_configuration_version` entry points were
-        // always in place, so exposing it needs nothing further.
-        //
-        // `DeviceLocation` is new in Matter 1.6 and is both provisional and
-        // optional. Unlike the above it has no implementation here at all
-        // (the generated trait method defaults to `AttributeNotFound`), so it
-        // must be kept out of the `AttributeList` — advertising an attribute
-        // that then fails to read is a conformance violation, and the same
-        // test's expected set omits attribute 23. Note this `except!` is a
-        // deny-list: every attribute the IDL grows lands in the metadata by
-        // default, so new optional attributes have to be excluded explicitly.
         .with_attrs(except!(
             AttributeId::Reachable | AttributeId::DeviceLocation
         ))

@@ -494,8 +494,7 @@ where
         self.matter.close_comm_window(self)
     }
 
-    /// The node's resource-utilisation metrics, for
-    /// `GeneralDiagnostics::DeviceLoadStatus`.
+    /// The node's resource-utilisation metrics, for the `GeneralDiagnostics` cluster.
     ///
     /// `fab_idx` is the fabric of the reading subject, for
     /// `CurrentSubscriptionsForFabric`; pass `None` when no fabric is in scope.
