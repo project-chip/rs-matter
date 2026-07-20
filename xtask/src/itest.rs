@@ -1316,10 +1316,16 @@ impl ITests {
         } else {
             String::new()
         };
+        // Override the framework's 90s per-test `asyncio` budget for tests
+        // whose body legitimately runs longer (e.g. a 180s window-expiry wait).
+        let framework_timeout_clause = Self::per_test_framework_timeout_secs(test_name)
+            .map(|secs| format!(" --timeout {secs}"))
+            .unwrap_or_default();
+
         let script_args = format!(
             "--storage-path /tmp/rs_matter_python_test_storage.json \
              {commissioning_method}{commissioning_args} --endpoint 1 \
-             --paa-trust-store-path credentials/development/paa-root-certs{extra_args_clause}{pics_clause}{th_server_arg}"
+             --paa-trust-store-path credentials/development/paa-root-certs{framework_timeout_clause}{extra_args_clause}{pics_clause}{th_server_arg}"
         );
 
         // Optional `--app-args` passed through to `system_tests`. Used by
@@ -1471,9 +1477,13 @@ impl ITests {
         match test_name {
             // Several CADMIN tests open commissioning windows and then wait
             // for them to expire on the device side, which takes 180s+ by
-            // construction.
-            "TC_CADMIN_1_3_4" | "TC_CADMIN_1_5" | "TC_CADMIN_1_9" | "TC_CADMIN_1_11"
-            | "TC_CADMIN_1_15" | "TC_CADMIN_1_22" | "TC_CADMIN_1_25" => Some(300),
+            // construction. `TC_CADMIN_1_3_4` runs *two* such test methods
+            // (`test_TC_CADMIN_1_3` and `_1_4`) back-to-back in one process,
+            // so this whole-process ceiling must cover both, each with the
+            // per-method budget in `per_test_framework_timeout_secs`.
+            "TC_CADMIN_1_3_4" => Some(600),
+            "TC_CADMIN_1_5" | "TC_CADMIN_1_9" | "TC_CADMIN_1_11" | "TC_CADMIN_1_15"
+            | "TC_CADMIN_1_22" | "TC_CADMIN_1_25" => Some(360),
             // TC_OPCREDS_3_8 exercises the VID-Verification feature (Matter
             // 1.4): it sets a 400-byte VVSC and an 85-byte
             // VIDVerificationStatement on a fabric and then issues
@@ -1489,6 +1499,26 @@ impl ITests {
             // back-to-back; each commissioning attempt blocks for ~30 s, so
             // the wall-clock budget needs ~210 s + setup overhead.
             "TC_DA_1_9" => Some(360),
+            _ => None,
+        }
+    }
+
+    /// The Matter test framework's *per-test-method* `asyncio` budget, passed
+    /// as `--timeout`. Distinct from [`Self::per_test_timeout_secs`], which is
+    /// the process-level wall-clock kill covering the whole invocation.
+    ///
+    /// Without `--timeout` the framework uses its 90s `default_timeout`, and a
+    /// test method that waits ~180s for a commissioning window to expire is
+    /// cancelled mid-flight the instant that wait ends — surfacing as an
+    /// `asyncio` `CancelledError`/`TimeoutError`, not an rs-matter fault.
+    /// Upstream passes `--timeout` in the test's metadata `script-args` for the
+    /// same reason; we build our own script args, so we set it here.
+    fn per_test_framework_timeout_secs(test_name: &str) -> Option<u32> {
+        match test_name {
+            // Each of `test_TC_CADMIN_1_3` / `_1_4` waits ~180s for a
+            // commissioning window to expire before opening the next one.
+            "TC_CADMIN_1_3_4" | "TC_CADMIN_1_5" | "TC_CADMIN_1_9" | "TC_CADMIN_1_11"
+            | "TC_CADMIN_1_15" | "TC_CADMIN_1_22" | "TC_CADMIN_1_25" => Some(300),
             _ => None,
         }
     }
