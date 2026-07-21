@@ -61,6 +61,15 @@ pub trait TLVIter<'a>: Iterator<Item = TLVResult<'a>> + Sized {
         }
     }
 
+    /// Rename of `chain` so that it can be used without collissions with the `chain` methods of other traits.
+    fn chain_iter<I>(self, other: I) -> Chain<Self, I::IntoIter>
+    where
+        Self: Sized,
+        I: IntoIterator<Item = Self::Item>,
+    {
+        self.chain(other)
+    }
+
     /// Serialize a TLV tag and value.
     fn tlv(self, tag: TLVTag, value: TLVValue<'a>) -> ChainedTLVIter<'a, Self>
     where

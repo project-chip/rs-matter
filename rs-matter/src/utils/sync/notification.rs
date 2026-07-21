@@ -17,11 +17,15 @@
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
+use crate::utils::init::{init, Init};
+
 use super::blocking::raw::MatterRawMutex;
 use super::signal::Signal;
 
 /// A notification primitive that allows for notifying a single waiter.
-pub struct Notification<M = MatterRawMutex>(Signal<Option<()>, M>);
+pub struct Notification<M = MatterRawMutex> {
+    signal: Signal<Option<()>, M>,
+}
 
 impl<M> Default for Notification<M>
 where
@@ -38,16 +42,24 @@ where
 {
     /// Create a new `Notification`.
     pub const fn new() -> Self {
-        Self(Signal::new(None))
+        Self {
+            signal: Signal::new(None),
+        }
+    }
+
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            signal <- Signal::init(None),
+        })
     }
 
     /// Notify the waiter.
     pub fn notify(&self) {
-        self.0.signal(());
+        self.signal.signal(());
     }
 
     /// Wait for the notification.
     pub async fn wait(&self) {
-        self.0.wait_signalled().await;
+        self.signal.wait_signalled().await;
     }
 }

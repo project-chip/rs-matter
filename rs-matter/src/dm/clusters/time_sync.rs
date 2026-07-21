@@ -55,20 +55,30 @@ use core::num::NonZeroU8;
 
 use bitflags::bitflags;
 
+use heapless::String;
+
+use embassy_futures::select::select;
+
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{
     ArrayAttributeRead, AttrChangeNotifier, Attribute, Cluster, Command, Dataver, EndptId,
-    EventEmitter, InvokeContext, NodeId, Quality, ReadContext,
+    EventEmitter, Handler, HandlerContext, InvokeContext, InvokeReply, MatchContext, NodeId,
+    NonBlockingHandler, Quality, ReadContext, ReadReply, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::persist::{
-    KvBlobStore, KvBlobStoreAccess, Persist, LKG_UTC_KEY, TRUSTED_TIME_SOURCE_KEY,
+    KvBlobStore, KvBlobStoreAccess, Persist, LKG_UTC_KEY, TIME_ZONE_KEY, TRUSTED_TIME_SOURCE_KEY,
 };
 use crate::tlv::{
-    FromTLV, Nullable, NullableBuilder, TLVBuilderParent, TLVElement, ToTLV, Utf8StrBuilder,
+    FromTLV, Nullable, NullableBuilder, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV,
+    Utf8StrBuilder, TLV,
 };
+use crate::utils::cell::RefCell;
 use crate::utils::epoch::FIRMWARE_BUILD_MATTER_US;
-use crate::utils::init::{init, Init};
+use crate::utils::init::{init, into_init, try_init, Init};
+use crate::utils::storage::Vec;
+use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::Notification;
 
 pub use crate::dm::clusters::decl::time_synchronization::*;
 
@@ -494,7 +504,7 @@ pub struct TimeZoneEntry<'a> {
 
 /// One DST-offset entry yielded by [`TimeSync::dst_offset`] via the
 /// visitor callback.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, FromTLV, ToTLV)]
 pub struct DSTOffsetEntry {
     /// Offset from local standard time, in seconds, while DST is in
     /// effect.
@@ -520,8 +530,7 @@ pub struct TrustedTimeSourceData {
 }
 
 /// Pluggable data source for the feature-gated members of the Time
-/// Synchronization cluster (`TIME_ZONE` / `NTP_CLIENT` / `NTP_SERVER`
-/// / `TIME_SYNC_CLIENT`).
+/// Synchronization cluster (`TIME_ZONE` / `NTP_CLIENT` / `NTP_SERVER`).
 ///
 /// The mandatory members — `UTCTime`, `Granularity`, `TimeSource`,
 /// and the `SetUTCTime` command — are handled by [`TimeSyncHandler`] directly
@@ -530,38 +539,23 @@ pub struct TrustedTimeSourceData {
 /// The `TIME_SYNC_CLIENT` feature (if enabled) is also handled by the handler
 /// directly against the `TrustedTimeSource` entry in the built-in Matter RTC state,
 /// so it also doesn't appear here.
-pub trait TimeSync {
-    // ---- NTP_CLIENT feature
-
-    /// Hostname or IP address of the default NTP server, or `Null` if
-    /// none is configured.
-    fn default_ntp(&self) -> Result<Nullable<&str>, Error>;
-
-    /// Whether the device's NTP-client resolver supports DNS names
-    /// (vs. only literal IP addresses).
-    fn supports_dns_resolve(&self) -> Result<bool, Error>;
-
-    // ---- NTP_SERVER feature
-
-    /// Whether the device is currently serving NTP queries.
-    fn ntp_server_available(&self) -> Result<bool, Error>;
-
-    // ---- TIME_ZONE feature
-
+/// Data provider for the `TIME_ZONE` feature: the `TimeZone` / `DSTOffset`
+/// lists and their `SetTimeZone` / `SetDSTOffset` mutations.
+///
+/// Implemented by [`TimeZoneStore`], the batteries-included validated
+/// storage; custom implementors take over validation and storage themselves.
+pub trait TimeZones {
     /// Stream the active time-zone entries into `visit`.
     fn time_zone(
         &self,
-        _visit: &mut dyn FnMut(&TimeZoneEntry<'_>) -> Result<(), Error>,
+        visit: &mut dyn FnMut(&TimeZoneEntry<'_>) -> Result<(), Error>,
     ) -> Result<(), Error>;
 
     /// Stream the active DST-offset entries into `visit`.
     fn dst_offset(
         &self,
-        _visit: &mut dyn FnMut(&DSTOffsetEntry) -> Result<(), Error>,
+        visit: &mut dyn FnMut(&DSTOffsetEntry) -> Result<(), Error>,
     ) -> Result<(), Error>;
-
-    /// Current local time in Matter-epoch microseconds, or `Null`.
-    fn local_time(&self) -> Result<Nullable<u64>, Error>;
 
     /// How complete the device's IANA time-zone database is.
     fn time_zone_database(&self) -> Result<TimeZoneDatabaseEnum, Error>;
@@ -572,35 +566,18 @@ pub trait TimeSync {
     /// Maximum length of the `DSTOffset` list this device accepts.
     fn dst_offset_list_max_size(&self) -> Result<u8, Error>;
 
-    // ---- Commands (feature-gated; default to `CommandNotFound`)
+    /// Handle `SetTimeZone`. Returns the `DSTOffsetRequired` field for the
+    /// response.
+    fn set_time_zone(&self, request: &SetTimeZoneRequest<'_>) -> Result<bool, Error>;
 
-    /// Handle `SetTimeZone` — gated by `TIME_ZONE`. Returns the
-    /// `DSTOffsetRequired` field for the response.
-    fn set_time_zone(&self, _request: &SetTimeZoneRequest<'_>) -> Result<bool, Error>;
-
-    /// Handle `SetDSTOffset` — gated by `TIME_ZONE`.
-    fn set_dst_offset(&self, _request: &SetDSTOffsetRequest<'_>) -> Result<(), Error>;
-
-    /// Handle `SetDefaultNTP` — gated by `NTP_CLIENT`.
-    fn set_default_ntp(&self, _request: &SetDefaultNTPRequest<'_>) -> Result<(), Error>;
+    /// Handle `SetDSTOffset`.
+    fn set_dst_offset(&self, request: &SetDSTOffsetRequest<'_>) -> Result<(), Error>;
 }
 
-impl<T> TimeSync for &T
+impl<T> TimeZones for &T
 where
-    T: TimeSync,
+    T: TimeZones,
 {
-    fn default_ntp(&self) -> Result<Nullable<&str>, Error> {
-        (*self).default_ntp()
-    }
-
-    fn supports_dns_resolve(&self) -> Result<bool, Error> {
-        (*self).supports_dns_resolve()
-    }
-
-    fn ntp_server_available(&self) -> Result<bool, Error> {
-        (*self).ntp_server_available()
-    }
-
     fn time_zone(
         &self,
         visit: &mut dyn FnMut(&TimeZoneEntry<'_>) -> Result<(), Error>,
@@ -613,10 +590,6 @@ where
         visit: &mut dyn FnMut(&DSTOffsetEntry) -> Result<(), Error>,
     ) -> Result<(), Error> {
         (*self).dst_offset(visit)
-    }
-
-    fn local_time(&self) -> Result<Nullable<u64>, Error> {
-        (*self).local_time()
     }
 
     fn time_zone_database(&self) -> Result<TimeZoneDatabaseEnum, Error> {
@@ -638,94 +611,618 @@ where
     fn set_dst_offset(&self, request: &SetDSTOffsetRequest<'_>) -> Result<(), Error> {
         (*self).set_dst_offset(request)
     }
+}
+
+/// Data provider for the `NTP_CLIENT` feature.
+pub trait NtpClient {
+    /// Hostname or IP address of the default NTP server, or `Null` if
+    /// none is configured.
+    fn default_ntp(&self) -> Result<Nullable<&str>, Error>;
+
+    /// Whether the device's NTP-client resolver supports DNS names
+    /// (vs. only literal IP addresses).
+    fn supports_dns_resolve(&self) -> Result<bool, Error>;
+
+    /// Handle `SetDefaultNTP`.
+    fn set_default_ntp(&self, request: &SetDefaultNTPRequest<'_>) -> Result<(), Error>;
+}
+
+impl<T> NtpClient for &T
+where
+    T: NtpClient,
+{
+    fn default_ntp(&self) -> Result<Nullable<&str>, Error> {
+        (*self).default_ntp()
+    }
+
+    fn supports_dns_resolve(&self) -> Result<bool, Error> {
+        (*self).supports_dns_resolve()
+    }
 
     fn set_default_ntp(&self, request: &SetDefaultNTPRequest<'_>) -> Result<(), Error> {
         (*self).set_default_ntp(request)
     }
 }
 
-/// Default [`TimeSync`] implementation.
-///
-/// Suitable for devices that don't advertise the features
-/// `TIME_ZONE` / `NTP_CLIENT` / `NTP_SERVER`.
-impl TimeSync for () {
-    // ---- NTP_CLIENT feature
-
-    /// Hostname or IP address of the default NTP server, or `Null` if
-    /// none is configured.
-    fn default_ntp(&self) -> Result<Nullable<&str>, Error> {
-        Ok(Nullable::none())
-    }
-
-    /// Whether the device's NTP-client resolver supports DNS names
-    /// (vs. only literal IP addresses).
-    fn supports_dns_resolve(&self) -> Result<bool, Error> {
-        Ok(false)
-    }
-
-    // ---- NTP_SERVER feature
-
+/// Data provider for the `NTP_SERVER` feature.
+pub trait NtpServer {
     /// Whether the device is currently serving NTP queries.
+    fn ntp_server_available(&self) -> Result<bool, Error>;
+}
+
+impl<T> NtpServer for &T
+where
+    T: NtpServer,
+{
     fn ntp_server_available(&self) -> Result<bool, Error> {
-        Ok(false)
+        (*self).ntp_server_available()
+    }
+}
+
+/// Maximum byte length of a `TimeZoneStruct::name` (spec constraint 0..=64).
+pub const TIME_ZONE_NAME_MAX: usize = 64;
+
+/// One owned `TimeZone` entry as stored by [`TimeZoneStore`].
+#[derive(FromTLV, ToTLV)]
+struct TimeZoneOwned {
+    offset: i32,
+    valid_at: u64,
+    name: Option<String<TIME_ZONE_NAME_MAX>>,
+}
+
+/// The persisted shape of [`TimeZoneStore`]: both `nonVolatile`-quality lists
+/// as one TLV blob under [`TIME_ZONE_KEY`].
+struct TimeZoneStoreData<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize> {
+    time_zone: Vec<TimeZoneOwned, TIME_ZONE_MAX>,
+    dst_offset: Vec<DSTOffsetEntry, DST_OFFSET_MAX>,
+}
+
+impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize>
+    TimeZoneStoreData<TIME_ZONE_MAX, DST_OFFSET_MAX>
+{
+    const fn new() -> Self {
+        Self {
+            time_zone: Vec::new(),
+            dst_offset: Vec::new(),
+        }
     }
 
-    // ---- TIME_ZONE feature
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            time_zone <- Vec::init(),
+            dst_offset <- Vec::init(),
+        })
+    }
+}
 
-    /// Stream the active time-zone entries into `visit`. Default:
-    /// emit nothing (empty list on the wire).
+impl<'a, const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize> FromTLV<'a>
+    for TimeZoneStoreData<TIME_ZONE_MAX, DST_OFFSET_MAX>
+{
+    fn from_tlv(tlv: &TLVElement<'a>) -> Result<Self, Error> {
+        let tlv = tlv.structure()?;
+
+        Ok(Self {
+            time_zone: FromTLV::from_tlv(&tlv.ctx(0)?)?,
+            dst_offset: FromTLV::from_tlv(&tlv.ctx(1)?)?,
+        })
+    }
+
+    fn init_from_tlv(tlv: TLVElement<'a>) -> impl Init<Self, Error> {
+        into_init(move || {
+            let seq = tlv.structure()?;
+
+            let init = try_init!(Self {
+                time_zone <- Vec::<TimeZoneOwned, TIME_ZONE_MAX>::init_from_tlv(seq.ctx(0)?),
+                dst_offset <- Vec::<DSTOffsetEntry, DST_OFFSET_MAX>::init_from_tlv(seq.ctx(1)?),
+            }? Error);
+
+            Ok(init)
+        })
+    }
+}
+
+impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize> ToTLV
+    for TimeZoneStoreData<TIME_ZONE_MAX, DST_OFFSET_MAX>
+{
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        tw.start_struct(tag)?;
+
+        self.time_zone.to_tlv(&TLVTag::Context(0), &mut tw)?;
+        self.dst_offset.to_tlv(&TLVTag::Context(1), &mut tw)?;
+
+        tw.end_container()
+    }
+
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+        use crate::tlv::TLVIter;
+
+        core::iter::empty()
+            .start_struct(tag)
+            .chain_iter(self.time_zone.tlv_iter(TLVTag::Context(0)))
+            .chain_iter(self.dst_offset.tlv_iter(TLVTag::Context(1)))
+            .end_container()
+    }
+}
+
+/// The mutable innards of [`TimeZoneStore`].
+struct TimeZoneStoreState<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize> {
+    data: TimeZoneStoreData<TIME_ZONE_MAX, DST_OFFSET_MAX>,
+    /// Bumped on every accepted `SetTimeZone` / `SetDSTOffset`, so the
+    /// transition timer can re-evaluate its schedule.
+    generation: u32,
+}
+
+impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize>
+    TimeZoneStoreState<TIME_ZONE_MAX, DST_OFFSET_MAX>
+{
+    const fn new() -> Self {
+        Self {
+            data: TimeZoneStoreData::new(),
+            generation: 0,
+        }
+    }
+
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            data <- TimeZoneStoreData::init(),
+            generation: 0,
+        })
+    }
+}
+
+/// A concrete [`TimeSync`] provider implementing the `TIME_ZONE` feature's
+/// storage and validation: the `TimeZone` / `DSTOffset` lists with all the
+/// Matter Core spec constraint checks on `SetTimeZone` / `SetDSTOffset`.
+///
+/// Pure validated storage: event emission, persistence and `LocalTime`
+/// computation are orchestrated by [`TimeSyncHandler`], which has the
+/// contexts this store deliberately does not.
+///
+/// `TimeZoneDatabase` is reported as `None` - names are stored and echoed
+/// back verbatim, but never interpreted.
+pub struct TimeZoneStore<const TIME_ZONE_MAX: usize = 2, const DST_OFFSET_MAX: usize = 2> {
+    state: Mutex<RefCell<TimeZoneStoreState<TIME_ZONE_MAX, DST_OFFSET_MAX>>>,
+    /// Signalled on every accepted mutation (and by the handler when UTC time
+    /// is set), so the transition timer in [`TimeSyncHandler::run`] can
+    /// re-evaluate its schedule.
+    changed: Notification,
+}
+
+impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize>
+    TimeZoneStore<TIME_ZONE_MAX, DST_OFFSET_MAX>
+{
+    /// Create a store with the spec-default single `{offset: 0, valid_at: 0}`
+    /// time-zone entry and no DST offsets.
+    pub const fn new() -> Self {
+        Self {
+            state: Mutex::new(RefCell::new(TimeZoneStoreState::new())),
+            changed: Notification::new(),
+        }
+    }
+
+    /// Return an in-place initializer for `TimeZoneStore`.
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            state <- Mutex::init(RefCell::init(TimeZoneStoreState::init())),
+            changed <- Notification::init(),
+        })
+    }
+
+    /// Wait until the store's contents (or the node's UTC time) may have
+    /// changed. Used by the transition timer.
+    pub async fn wait_changed(&self) {
+        self.changed.wait().await
+    }
+
+    /// Signal [`Self::wait_changed`] waiters. Called internally on accepted
+    /// mutations; also called by the handler when UTC time is (re)set, since
+    /// that changes which entries are active.
+    pub fn note_changed(&self) {
+        self.changed.notify();
+    }
+
+    /// Re-hydrate both lists from `store` under [`TIME_ZONE_KEY`]. Call at
+    /// startup, before the store is shared with the handler. A missing key
+    /// (first boot / cleared persistence) leaves the defaults.
+    pub fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
+        let Some(data) = store.load(TIME_ZONE_KEY, buf)? else {
+            return Ok(());
+        };
+
+        // TODO: LARGE BUFFER
+        let loaded = TimeZoneStoreData::from_tlv(&TLVElement::new(data))?;
+
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+
+            state.data = loaded;
+        });
+
+        info!("Loaded TimeZone / DSTOffset lists from storage");
+
+        Ok(())
+    }
+
+    /// Serialise both lists to `kv` under [`TIME_ZONE_KEY`]. Called by the
+    /// handler after every accepted mutation (the lists are `nonVolatile`
+    /// quality per the Matter Core spec).
+    fn store_persist<S: KvBlobStoreAccess>(&self, kv: S) -> Result<(), Error> {
+        let mut persist = Persist::new(kv);
+
+        self.state.lock(|state| {
+            let state = state.borrow();
+
+            persist.store_tlv(TIME_ZONE_KEY, &state.data)
+        })?;
+
+        persist.run()
+    }
+
+    /// The current change generation; bumped on every accepted mutation.
+    pub fn generation(&self) -> u32 {
+        self.state.lock(|state| state.borrow().generation)
+    }
+
+    /// The `(offset, name)` of the currently-active time-zone entry: the last
+    /// entry whose `valid_at` has passed, or the implicit `(0, None)` default
+    /// when the list is empty.
+    pub fn active_time_zone(&self, now: u64) -> (i32, Option<String<TIME_ZONE_NAME_MAX>>) {
+        self.state.lock(|state| {
+            let state = state.borrow();
+
+            state
+                .data
+                .time_zone
+                .iter()
+                .rfind(|entry| entry.valid_at <= now)
+                .map(|entry| (entry.offset, entry.name.clone()))
+                .unwrap_or((0, None))
+        })
+    }
+
+    /// The DST offset active at `now`, if any.
+    pub fn active_dst_offset(&self, now: u64) -> Option<i32> {
+        self.state.lock(|state| {
+            let state = state.borrow();
+
+            state
+                .data
+                .dst_offset
+                .iter()
+                .find(|entry| {
+                    entry.valid_starting <= now
+                        && entry.valid_until.map(|until| now < until).unwrap_or(true)
+                })
+                .map(|entry| entry.offset)
+        })
+    }
+
+    /// Whether the DST table is empty.
+    pub fn dst_table_empty(&self) -> bool {
+        self.state
+            .lock(|state| state.borrow().data.dst_offset.is_empty())
+    }
+
+    /// Whether the DST table still carries usable information at `now`: at
+    /// least one entry is active or scheduled (its `valid_until` is Null or in
+    /// the future).
+    ///
+    /// `false` covers both "empty" (e.g. just cleared by `SetTimeZone`) and
+    /// "exhausted" (every entry expired). `DSTTableEmpty` is emitted on the
+    /// usable -> not-usable *edge* - `TC_TIMESYNC_2_10` requires it both when
+    /// `SetTimeZone` clears a non-empty table and when the last entry expires
+    /// naturally. Entries are deliberately *retained* rather than pruned:
+    /// `TestTimeSynchronization` (and chip) expect `DSTOffset` reads to return
+    /// exactly what was written.
+    pub fn dst_usable(&self, now: u64) -> bool {
+        self.state.lock(|state| {
+            let state = state.borrow();
+
+            state
+                .data
+                .dst_offset
+                .iter()
+                .any(|entry| entry.valid_until.map(|until| now < until).unwrap_or(true))
+        })
+    }
+
+    /// The next Matter-epoch-microseconds instant after `now` at which the
+    /// active time zone or DST state can change - i.e. the earliest
+    /// `valid_at` / `valid_starting` / `valid_until` still in the future.
+    /// `None` when no transition is scheduled.
+    pub fn next_transition(&self, now: u64) -> Option<u64> {
+        self.state.lock(|state| {
+            let state = state.borrow();
+
+            let tz = state
+                .data
+                .time_zone
+                .iter()
+                .map(|entry| entry.valid_at)
+                .filter(|at| *at > now)
+                .min();
+
+            let dst = state
+                .data
+                .dst_offset
+                .iter()
+                .flat_map(|entry| {
+                    [Some(entry.valid_starting), entry.valid_until]
+                        .into_iter()
+                        .flatten()
+                })
+                .filter(|at| *at > now)
+                .min();
+
+            match (tz, dst) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            }
+        })
+    }
+
+    /// The `SetDSTOffset` constraint checks, factored out so the caller can
+    /// clear the table on rejection:
+    /// - at most [`DST_OFFSET_MAX`] entries, else RESOURCE_EXHAUSTED
+    /// - sorted ascending by `validStarting`, else CONSTRAINT_ERROR
+    /// - ranges must not overlap: an entry must not start before its
+    ///   predecessor's `validUntil`, else CONSTRAINT_ERROR
+    /// - only the last entry may have a Null `validUntil`, else
+    ///   CONSTRAINT_ERROR
+    /// - `validStarting < validUntil` within an entry, else CONSTRAINT_ERROR
+    fn validate_dst_offset(&self, request: &SetDSTOffsetRequest<'_>) -> Result<(), Error> {
+        let mut prev_starting: Option<u64> = None;
+        let mut prev_until: Option<u64> = None;
+        let mut seen_null_until = false;
+
+        for (index, entry) in request.dst_offset()?.iter().enumerate() {
+            let entry = entry?;
+
+            if index == DST_OFFSET_MAX {
+                return Err(ErrorCode::ResourceExhausted.into());
+            }
+
+            // A Null `validUntil` on a previous entry means that entry was
+            // not last - reject.
+            if seen_null_until {
+                Err(ErrorCode::ConstraintError)?;
+            }
+
+            let starting = entry.valid_starting()?;
+
+            if let Some(prev) = prev_starting {
+                if starting <= prev {
+                    Err(ErrorCode::ConstraintError)?;
+                }
+            }
+
+            if let Some(until) = prev_until {
+                if starting < until {
+                    // Overlaps the predecessor's still-valid range.
+                    Err(ErrorCode::ConstraintError)?;
+                }
+            }
+
+            match entry.valid_until()?.into_option() {
+                Some(until) => {
+                    if starting >= until {
+                        Err(ErrorCode::ConstraintError)?;
+                    }
+
+                    prev_until = Some(until);
+                }
+                None => seen_null_until = true,
+            }
+
+            prev_starting = Some(starting);
+        }
+
+        Ok(())
+    }
+}
+
+impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize> Default
+    for TimeZoneStore<TIME_ZONE_MAX, DST_OFFSET_MAX>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize> TimeZones
+    for TimeZoneStore<TIME_ZONE_MAX, DST_OFFSET_MAX>
+{
     fn time_zone(
         &self,
-        _visit: &mut dyn FnMut(&TimeZoneEntry<'_>) -> Result<(), Error>,
+        visit: &mut dyn FnMut(&TimeZoneEntry<'_>) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        Ok(())
+        self.state.lock(|state| {
+            let state = state.borrow();
+
+            if state.data.time_zone.is_empty() {
+                // The spec-default entry: reported even before any
+                // `SetTimeZone`, as the `TimeZone` list has a min size of 1.
+                return visit(&TimeZoneEntry {
+                    offset: 0,
+                    valid_at: 0,
+                    name: None,
+                });
+            }
+
+            for entry in state.data.time_zone.iter() {
+                visit(&TimeZoneEntry {
+                    offset: entry.offset,
+                    valid_at: entry.valid_at,
+                    name: entry.name.as_deref(),
+                })?;
+            }
+
+            Ok(())
+        })
     }
 
-    /// Stream the active DST-offset entries into `visit`. Default:
-    /// emit nothing.
     fn dst_offset(
         &self,
-        _visit: &mut dyn FnMut(&DSTOffsetEntry) -> Result<(), Error>,
+        visit: &mut dyn FnMut(&DSTOffsetEntry) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        Ok(())
+        self.state.lock(|state| {
+            let state = state.borrow();
+
+            for entry in state.data.dst_offset.iter() {
+                visit(entry)?;
+            }
+
+            Ok(())
+        })
     }
 
-    /// Current local time in Matter-epoch microseconds, or `Null`.
-    fn local_time(&self) -> Result<Nullable<u64>, Error> {
-        Ok(Nullable::none())
-    }
-
-    /// How complete the device's IANA time-zone database is.
     fn time_zone_database(&self) -> Result<TimeZoneDatabaseEnum, Error> {
         Ok(TimeZoneDatabaseEnum::None)
     }
 
-    /// Maximum length of the `TimeZone` list this device accepts.
     fn time_zone_list_max_size(&self) -> Result<u8, Error> {
-        Ok(0)
+        Ok(TIME_ZONE_MAX as u8)
     }
 
-    /// Maximum length of the `DSTOffset` list this device accepts.
     fn dst_offset_list_max_size(&self) -> Result<u8, Error> {
-        Ok(0)
+        Ok(DST_OFFSET_MAX as u8)
     }
 
-    // ---- Commands (feature-gated; default to `CommandNotFound`)
+    fn set_time_zone(&self, request: &SetTimeZoneRequest<'_>) -> Result<bool, Error> {
+        // First pass: validate every constraint before mutating anything, so
+        // a rejected request leaves the stored list untouched.
+        //
+        // Matter Core spec (and `TestTimeSynchronization` step-for-step):
+        // - at most `TimeZoneListMaxSize` entries, else RESOURCE_EXHAUSTED
+        // - first entry `validAt` SHALL be 0, else CONSTRAINT_ERROR
+        // - subsequent entries `validAt` SHALL NOT be 0, else CONSTRAINT_ERROR
+        // - `offset` in -12h..=+14h, `name` at most 64 bytes, else
+        //   CONSTRAINT_ERROR
+        // - an *empty* list is valid and resets to the default entry
+        for (index, entry) in request.time_zone()?.iter().enumerate() {
+            let entry = entry?;
 
-    /// Handle `SetTimeZone` — gated by `TIME_ZONE`. Returns the
-    /// `DSTOffsetRequired` field for the response.
-    fn set_time_zone(&self, _request: &SetTimeZoneRequest<'_>) -> Result<bool, Error> {
-        Err(ErrorCode::CommandNotFound.into())
+            if index == TIME_ZONE_MAX {
+                return Err(ErrorCode::ResourceExhausted.into());
+            }
+
+            let valid_at = entry.valid_at()?;
+
+            if (index == 0) != (valid_at == 0) {
+                Err(ErrorCode::ConstraintError)?;
+            }
+
+            let offset = entry.offset()?;
+
+            if !(-12 * 3600..=14 * 3600).contains(&offset) {
+                Err(ErrorCode::ConstraintError)?;
+            }
+
+            if let Some(name) = entry.name()? {
+                if name.len() > TIME_ZONE_NAME_MAX {
+                    Err(ErrorCode::ConstraintError)?;
+                }
+            }
+        }
+
+        // Second pass: commit. Per the spec, an accepted `SetTimeZone` also
+        // clears the DST table (the handler emits the matching events).
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+
+            state.data.time_zone.clear();
+
+            for entry in request.time_zone()?.iter() {
+                let entry = entry?;
+
+                let name = match entry.name()? {
+                    Some(name) => {
+                        Some(String::try_from(name).map_err(|_| ErrorCode::ConstraintError)?)
+                    }
+                    None => None,
+                };
+
+                // `unwrap` is safe: the first pass bounded the count.
+                unwrap!(state
+                    .data
+                    .time_zone
+                    .push(TimeZoneOwned {
+                        offset: entry.offset()?,
+                        valid_at: entry.valid_at()?,
+                        name,
+                    })
+                    .ok());
+            }
+
+            state.data.dst_offset.clear();
+            state.generation = state.generation.wrapping_add(1);
+
+            Ok::<_, Error>(())
+        })?;
+
+        self.note_changed();
+
+        // `DSTOffsetRequired`: with `TimeZoneDatabase = None` the device can
+        // never compute DST itself, so offsets are always required.
+        Ok(true)
     }
 
-    /// Handle `SetDSTOffset` — gated by `TIME_ZONE`.
-    fn set_dst_offset(&self, _request: &SetDSTOffsetRequest<'_>) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
-    }
+    fn set_dst_offset(&self, request: &SetDSTOffsetRequest<'_>) -> Result<(), Error> {
+        // Matter Core spec (and `TestTimeSynchronization`):
+        // - at most `DSTOffsetListMaxSize` entries, else RESOURCE_EXHAUSTED
+        // - sorted ascending by `validStarting`, else CONSTRAINT_ERROR
+        // - only the last entry may have a Null `validUntil`, else
+        //   CONSTRAINT_ERROR
+        // - `validStarting < validUntil` within an entry, else
+        //   CONSTRAINT_ERROR
+        // - an empty list is valid and clears the table
+        // Per the Matter Core spec (and `TC_TIMESYNC_2_5` steps 5/7/9), a
+        // *rejected* `SetDSTOffset` still clears the stored list - the command
+        // semantically replaces the table, and a failed replacement leaves it
+        // empty rather than restoring the old contents.
+        let validated = self.validate_dst_offset(request);
 
-    /// Handle `SetDefaultNTP` — gated by `NTP_CLIENT`.
-    fn set_default_ntp(&self, _request: &SetDefaultNTPRequest<'_>) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
+        if let Err(e) = validated {
+            self.state.lock(|state| {
+                let mut state = state.borrow_mut();
+
+                state.data.dst_offset.clear();
+                state.generation = state.generation.wrapping_add(1);
+            });
+
+            self.note_changed();
+
+            return Err(e);
+        }
+
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+
+            state.data.dst_offset.clear();
+
+            for entry in request.dst_offset()?.iter() {
+                let entry = entry?;
+
+                // `unwrap` is safe: the first pass bounded the count.
+                unwrap!(state
+                    .data
+                    .dst_offset
+                    .push(DSTOffsetEntry {
+                        offset: entry.offset()?,
+                        valid_starting: entry.valid_starting()?,
+                        valid_until: entry.valid_until()?.into_option(),
+                    })
+                    .ok());
+            }
+
+            state.generation = state.generation.wrapping_add(1);
+
+            Ok::<_, Error>(())
+        })?;
+
+        self.note_changed();
+
+        Ok(())
     }
 }
 
@@ -858,20 +1355,64 @@ pub const fn cluster<const OPTS: u8>() -> Cluster<'static> {
 #[derive(Clone)]
 pub struct TimeSyncHandler<'a> {
     dataver: Dataver,
-    time_sync: &'a dyn TimeSync,
+    /// `TIME_ZONE` feature provider; `None` when the feature is not hosted.
+    time_zones: Option<&'a dyn TimeZones>,
+    /// `NTP_CLIENT` feature provider; `None` when the feature is not hosted.
+    ntp_client: Option<&'a dyn NtpClient>,
+    /// `NTP_SERVER` feature provider; `None` when the feature is not hosted.
+    ntp_server: Option<&'a dyn NtpServer>,
+    /// Set when the `TimeZones` provider is a [`TimeZoneStore`]: enables the
+    /// transition timer in the `Handler::run` impl (TimeZoneStatus /
+    /// DSTStatus / DSTTableEmpty events) and persistence of the `nonVolatile`
+    /// lists. `None` for custom [`TimeZones`] providers, which own those
+    /// concerns themselves.
+    tz_store: Option<&'a TimeZoneStore>,
 }
 
 impl<'a> TimeSyncHandler<'a> {
-    /// Create a new handler bound to `time_sync` for its lifetime.
-    /// Pass `&()` (the no-op [`TimeSync`] impl) when no real time
-    /// source is available.
-    pub const fn new(dataver: Dataver, time_sync: &'a dyn TimeSync) -> Self {
-        Self { dataver, time_sync }
+    /// Create a handler with no feature providers: only the always-mandatory
+    /// members (`UTCTime` / `Granularity` / `TimeSource` / `SetUTCTime`, plus
+    /// the `TIME_SYNC_CLIENT` state), all served from the Matter-wide RTC.
+    pub const fn new(dataver: Dataver) -> Self {
+        Self {
+            dataver,
+            time_zones: None,
+            ntp_client: None,
+            ntp_server: None,
+            tz_store: None,
+        }
     }
 
-    /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
-    pub const fn adapt(self) -> HandlerAdaptor<Self> {
-        HandlerAdaptor(self)
+    /// Create a handler backed by a [`TimeZoneStore`] - the batteries-included
+    /// `TIME_ZONE` feature shape: SetTimeZone/SetDSTOffset validation and
+    /// storage, transition events driven by the `Handler::run` impl, and
+    /// persistence of the lists under [`TIME_ZONE_KEY`].
+    pub const fn new_with_time_zone(dataver: Dataver, store: &'a TimeZoneStore) -> Self {
+        Self {
+            dataver,
+            time_zones: Some(store),
+            ntp_client: None,
+            ntp_server: None,
+            tz_store: Some(store),
+        }
+    }
+
+    /// Provide a custom [`TimeZones`] implementation.
+    pub const fn with_time_zones(mut self, time_zones: &'a dyn TimeZones) -> Self {
+        self.time_zones = Some(time_zones);
+        self
+    }
+
+    /// Provide an [`NtpClient`] implementation.
+    pub const fn with_ntp_client(mut self, ntp_client: &'a dyn NtpClient) -> Self {
+        self.ntp_client = Some(ntp_client);
+        self
+    }
+
+    /// Provide an [`NtpServer`] implementation.
+    pub const fn with_ntp_server(mut self, ntp_server: &'a dyn NtpServer) -> Self {
+        self.ntp_server = Some(ntp_server);
+        self
     }
 }
 
@@ -936,18 +1477,27 @@ impl ClusterHandler for TimeSyncHandler<'_> {
         _ctx: impl ReadContext,
         builder: NullableBuilder<P, Utf8StrBuilder<P>>,
     ) -> Result<P, Error> {
-        match self.time_sync.default_ntp()?.into_option() {
+        match self
+            .ntp_client
+            .ok_or(ErrorCode::AttributeNotFound)?
+            .default_ntp()?
+            .into_option()
+        {
             Some(s) => builder.non_null()?.set(s),
             None => builder.null(),
         }
     }
 
     fn supports_dns_resolve(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
-        self.time_sync.supports_dns_resolve()
+        self.ntp_client
+            .ok_or(ErrorCode::AttributeNotFound)?
+            .supports_dns_resolve()
     }
 
     fn ntp_server_available(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
-        self.time_sync.ntp_server_available()
+        self.ntp_server
+            .ok_or(ErrorCode::AttributeNotFound)?
+            .ntp_server_available()
     }
 
     fn time_zone<P: TLVBuilderParent>(
@@ -958,36 +1508,40 @@ impl ClusterHandler for TimeSyncHandler<'_> {
         match builder {
             ArrayAttributeRead::ReadAll(array) => {
                 let mut array_opt = Some(array);
-                self.time_sync.time_zone(&mut |entry| {
-                    let array = unwrap!(array_opt.take());
-                    let next = array
-                        .push()?
-                        .offset(entry.offset)?
-                        .valid_at(entry.valid_at)?
-                        .name(entry.name)?
-                        .end()?;
-                    array_opt = Some(next);
-                    Ok(())
-                })?;
+                self.time_zones
+                    .ok_or(ErrorCode::AttributeNotFound)?
+                    .time_zone(&mut |entry| {
+                        let array = unwrap!(array_opt.take());
+                        let next = array
+                            .push()?
+                            .offset(entry.offset)?
+                            .valid_at(entry.valid_at)?
+                            .name(entry.name)?
+                            .end()?;
+                        array_opt = Some(next);
+                        Ok(())
+                    })?;
                 unwrap!(array_opt.take()).end()
             }
             ArrayAttributeRead::ReadOne(index, item_builder) => {
                 let mut item_opt = Some(item_builder);
                 let mut returned: Option<P> = None;
                 let mut current = 0u16;
-                self.time_sync.time_zone(&mut |entry| {
-                    if returned.is_none() && current == index {
-                        let b = unwrap!(item_opt.take());
-                        returned = Some(
-                            b.offset(entry.offset)?
-                                .valid_at(entry.valid_at)?
-                                .name(entry.name)?
-                                .end()?,
-                        );
-                    }
-                    current = current.saturating_add(1);
-                    Ok(())
-                })?;
+                self.time_zones
+                    .ok_or(ErrorCode::AttributeNotFound)?
+                    .time_zone(&mut |entry| {
+                        if returned.is_none() && current == index {
+                            let b = unwrap!(item_opt.take());
+                            returned = Some(
+                                b.offset(entry.offset)?
+                                    .valid_at(entry.valid_at)?
+                                    .name(entry.name)?
+                                    .end()?,
+                            );
+                        }
+                        current = current.saturating_add(1);
+                        Ok(())
+                    })?;
                 returned.ok_or_else(|| ErrorCode::ConstraintError.into())
             }
             ArrayAttributeRead::ReadNone(array) => array.end(),
@@ -1002,56 +1556,124 @@ impl ClusterHandler for TimeSyncHandler<'_> {
         match builder {
             ArrayAttributeRead::ReadAll(array) => {
                 let mut array_opt = Some(array);
-                self.time_sync.dst_offset(&mut |entry| {
-                    let array = unwrap!(array_opt.take());
-                    let next = array
-                        .push()?
-                        .offset(entry.offset)?
-                        .valid_starting(entry.valid_starting)?
-                        .valid_until(Nullable::new(entry.valid_until))?
-                        .end()?;
-                    array_opt = Some(next);
-                    Ok(())
-                })?;
+                self.time_zones
+                    .ok_or(ErrorCode::AttributeNotFound)?
+                    .dst_offset(&mut |entry| {
+                        let array = unwrap!(array_opt.take());
+                        let next = array
+                            .push()?
+                            .offset(entry.offset)?
+                            .valid_starting(entry.valid_starting)?
+                            .valid_until(Nullable::new(entry.valid_until))?
+                            .end()?;
+                        array_opt = Some(next);
+                        Ok(())
+                    })?;
                 unwrap!(array_opt.take()).end()
             }
             ArrayAttributeRead::ReadOne(index, item_builder) => {
                 let mut item_opt = Some(item_builder);
                 let mut returned: Option<P> = None;
                 let mut current = 0u16;
-                self.time_sync.dst_offset(&mut |entry| {
-                    if returned.is_none() && current == index {
-                        let b = unwrap!(item_opt.take());
-                        returned = Some(
-                            b.offset(entry.offset)?
-                                .valid_starting(entry.valid_starting)?
-                                .valid_until(Nullable::new(entry.valid_until))?
-                                .end()?,
-                        );
-                    }
-                    current = current.saturating_add(1);
-                    Ok(())
-                })?;
+                self.time_zones
+                    .ok_or(ErrorCode::AttributeNotFound)?
+                    .dst_offset(&mut |entry| {
+                        if returned.is_none() && current == index {
+                            let b = unwrap!(item_opt.take());
+                            returned = Some(
+                                b.offset(entry.offset)?
+                                    .valid_starting(entry.valid_starting)?
+                                    .valid_until(Nullable::new(entry.valid_until))?
+                                    .end()?,
+                            );
+                        }
+                        current = current.saturating_add(1);
+                        Ok(())
+                    })?;
                 returned.ok_or_else(|| ErrorCode::ConstraintError.into())
             }
             ArrayAttributeRead::ReadNone(array) => array.end(),
         }
     }
 
-    fn local_time(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
-        self.time_sync.local_time()
+    fn local_time(&self, ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
+        // Matter Core spec: `LocalTime = UTCTime + active-TimeZone.offset +
+        // active-DSTOffset.offset`, Null whenever UTC time is unknown. Computed
+        // here - like `UTCTime`/`Granularity`, which are also handler-owned -
+        // because no provider can derive it without the RTC: the provider only
+        // owns the *lists*.
+        let Some(utc) = ctx
+            .matter()
+            .with_state(|state| state.rtc.utc_time())
+            .reliable()
+        else {
+            return Ok(Nullable::none());
+        };
+
+        let mut offset_secs: i64 = 0;
+
+        // Active time zone: the last entry whose `valid_at` has passed.
+        self.time_zones
+            .ok_or(ErrorCode::AttributeNotFound)?
+            .time_zone(&mut |entry| {
+                if entry.valid_at <= utc {
+                    offset_secs = entry.offset as i64;
+                }
+                Ok(())
+            })?;
+
+        // The DST component is *required*, not additive-when-present: per the
+        // Matter Core spec (via `TC_TIMESYNC_2_8` steps 11 and 20), `LocalTime`
+        // is Null exactly when the DST table carries no usable information -
+        // empty, or every entry expired. While the table is usable, the DST
+        // contribution is the currently-active entry's offset, or zero
+        // *between* windows (an expired entry followed by a future one).
+        let mut usable = false;
+        let mut active: Option<i32> = None;
+
+        self.time_zones
+            .ok_or(ErrorCode::AttributeNotFound)?
+            .dst_offset(&mut |entry| {
+                let unexpired = entry.valid_until.map(|u| utc < u).unwrap_or(true);
+
+                if unexpired {
+                    usable = true;
+
+                    if entry.valid_starting <= utc {
+                        active = Some(entry.offset);
+                    }
+                }
+
+                Ok(())
+            })?;
+
+        if !usable {
+            return Ok(Nullable::none());
+        }
+
+        offset_secs += active.unwrap_or(0) as i64;
+
+        Ok(Nullable::some(utc.saturating_add_signed(
+            offset_secs.saturating_mul(1_000_000),
+        )))
     }
 
     fn time_zone_database(&self, _ctx: impl ReadContext) -> Result<TimeZoneDatabaseEnum, Error> {
-        self.time_sync.time_zone_database()
+        self.time_zones
+            .ok_or(ErrorCode::AttributeNotFound)?
+            .time_zone_database()
     }
 
     fn time_zone_list_max_size(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        self.time_sync.time_zone_list_max_size()
+        self.time_zones
+            .ok_or(ErrorCode::AttributeNotFound)?
+            .time_zone_list_max_size()
     }
 
     fn dst_offset_list_max_size(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        self.time_sync.dst_offset_list_max_size()
+        self.time_zones
+            .ok_or(ErrorCode::AttributeNotFound)?
+            .dst_offset_list_max_size()
     }
 
     // ---- Commands
@@ -1071,6 +1693,12 @@ impl ClusterHandler for TimeSyncHandler<'_> {
                 .rtc
                 .set_utc_time(utc_us, granularity, TimeSourceEnum::Admin, &ctx)
         });
+
+        // A (re)set clock changes which TimeZone/DSTOffset entries are
+        // active - let the transition timer re-evaluate.
+        if let Some(store) = self.tz_store {
+            store.note_changed();
+        }
 
         Ok(())
     }
@@ -1113,20 +1741,46 @@ impl ClusterHandler for TimeSyncHandler<'_> {
 
     fn handle_set_time_zone<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: SetTimeZoneRequest<'_>,
         response: SetTimeZoneResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let dst_offset_required = self.time_sync.set_time_zone(&request)?;
+        let dst_offset_required = self
+            .time_zones
+            .ok_or(ErrorCode::CommandNotFound)?
+            .set_time_zone(&request)?;
+
+        // An accepted SetTimeZone mutates the (nonVolatile) `TimeZone` list
+        // and clears `DSTOffset`; persist and report both. The
+        // TimeZoneStatus/DSTStatus/DSTTableEmpty *events* are emitted by the
+        // transition timer in [`Self::run`], the single emission authority -
+        // it was woken by the store on commit.
+        if let Some(store) = self.tz_store {
+            store.store_persist(ctx.kv())?;
+        }
+
+        ctx.notify_own_attr_changed(AttributeId::TimeZone as _);
+        ctx.notify_own_attr_changed(AttributeId::DSTOffset as _);
+
         response.dst_offset_required(dst_offset_required)?.end()
     }
 
     fn handle_set_dst_offset(
         &self,
-        _ctx: impl InvokeContext,
+        ctx: impl InvokeContext,
         request: SetDSTOffsetRequest<'_>,
     ) -> Result<(), Error> {
-        self.time_sync.set_dst_offset(&request)
+        self.time_zones
+            .ok_or(ErrorCode::CommandNotFound)?
+            .set_dst_offset(&request)?;
+
+        if let Some(store) = self.tz_store {
+            store.store_persist(ctx.kv())?;
+        }
+
+        ctx.notify_own_attr_changed(AttributeId::DSTOffset as _);
+
+        Ok(())
     }
 
     fn handle_set_default_ntp(
@@ -1134,9 +1788,141 @@ impl ClusterHandler for TimeSyncHandler<'_> {
         _ctx: impl InvokeContext,
         request: SetDefaultNTPRequest<'_>,
     ) -> Result<(), Error> {
-        self.time_sync.set_default_ntp(&request)
+        self.ntp_client
+            .ok_or(ErrorCode::CommandNotFound)?
+            .set_default_ntp(&request)
     }
 }
+
+// Implement `Handler` directly - as `IdentifyHandler` does - so we get to
+// provide the transition-timer `run` task while the read/write/invoke /
+// bump_dataver dispatch still delegates to the generated `HandlerAdaptor`
+// over our (sync) `ClusterHandler` impl above.
+//
+// TODO: Once the sync `ClusterHandler` trait grows its own `run` hook
+// (https://github.com/project-chip/rs-matter/pull/516), collapse this back
+// to `.adapt()` and move `run` into the trait impl.
+impl Handler for TimeSyncHandler<'_> {
+    fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
+        Handler::read(&HandlerAdaptor(self), ctx, reply)
+    }
+
+    fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
+        Handler::write(&HandlerAdaptor(self), ctx)
+    }
+
+    fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
+        Handler::invoke(&HandlerAdaptor(self), ctx, reply)
+    }
+
+    fn bump_dataver(&self, ctx: impl MatchContext) {
+        Handler::bump_dataver(&HandlerAdaptor(self), ctx)
+    }
+
+    async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+        // The transition timer only exists for the batteries-included
+        // [`TimeZoneStore`] shape; custom providers drive their own events.
+        let Some(store) = self.tz_store else {
+            return core::future::pending().await;
+        };
+
+        // Change-edge state. `None` = not yet evaluated (no valid UTC time) -
+        // the first evaluation baselines silently, so a boot does not emit
+        // spurious "changed to inactive" events; every later divergence emits.
+        let mut last_tz: Option<i32> = None;
+        let mut last_dst_active: Option<bool> = None;
+        let mut last_dst_usable: Option<bool> = None;
+
+        loop {
+            let now = ctx
+                .matter()
+                .with_state(|state| state.rtc.utc_time())
+                .reliable();
+
+            let next = if let Some(now) = now {
+                // ---- TimeZoneStatus: the active offset changed.
+                let (tz_offset, tz_name) = store.active_time_zone(now);
+
+                if last_tz != Some(tz_offset) {
+                    if last_tz.is_some() {
+                        let emitted = TimeZoneStatus::emit_for(&ctx, ROOT_ENDPOINT_ID, |event| {
+                            event.offset(tz_offset)?.name(tz_name.as_deref())?.end()
+                        });
+
+                        if let Err(e) = emitted {
+                            warn!("Failed to emit TimeZoneStatus: {:?}", e);
+                        }
+                    }
+
+                    last_tz = Some(tz_offset);
+                }
+
+                // ---- DSTStatus: DST became active / inactive.
+                let dst_active = store.active_dst_offset(now).is_some();
+
+                if last_dst_active != Some(dst_active) {
+                    if last_dst_active.is_some() || dst_active {
+                        let emitted = DSTStatus::emit_for(&ctx, ROOT_ENDPOINT_ID, |event| {
+                            event.dst_offset_active(dst_active)?.end()
+                        });
+
+                        if let Err(e) = emitted {
+                            warn!("Failed to emit DSTStatus: {:?}", e);
+                        }
+                    }
+
+                    last_dst_active = Some(dst_active);
+                }
+
+                // ---- DSTTableEmpty: the table just ran out of usable DST
+                // information - cleared (e.g. by SetTimeZone) or every entry
+                // expired. Edge-triggered on usable -> not-usable; see
+                // `dst_usable`.
+                let dst_usable = store.dst_usable(now);
+
+                if last_dst_usable != Some(dst_usable) {
+                    if !dst_usable && last_dst_usable == Some(true) {
+                        let emitted =
+                            DSTTableEmpty::emit_for(&ctx, ROOT_ENDPOINT_ID, |event| event.end());
+
+                        if let Err(e) = emitted {
+                            warn!("Failed to emit DSTTableEmpty: {:?}", e);
+                        }
+                    }
+
+                    last_dst_usable = Some(dst_usable);
+                }
+
+                store.next_transition(now)
+            } else {
+                // No valid UTC time - nothing is "active"; wait for a change
+                // (SetUTCTime wakes us via `note_changed`).
+                None
+            };
+
+            // Sleep until the next scheduled boundary (with a small margin so
+            // we evaluate just *after* it), or until the store changes.
+            let boundary = async {
+                match (next, now) {
+                    (Some(at), Some(now)) => {
+                        let delta_us = at.saturating_sub(now).saturating_add(100_000);
+
+                        embassy_time::Timer::after(embassy_time::Duration::from_micros(delta_us))
+                            .await
+                    }
+                    _ => core::future::pending().await,
+                }
+            };
+
+            select(boundary, store.wait_changed()).await;
+        }
+    }
+}
+
+// Marker impl: `Handler::read`/`write`/`invoke` above are fully synchronous,
+// so the chain can compose this handler via the `Async(...)` lifter like the
+// other sync clusters.
+impl NonBlockingHandler for TimeSyncHandler<'_> {}
 
 impl core::fmt::Debug for TimeSyncHandler<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

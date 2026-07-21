@@ -866,7 +866,7 @@ impl<N> SharedNetworks<N> {
     pub fn init(networks: impl Init<N>) -> impl Init<Self> {
         init!(Self {
             state <- Mutex::init(RefCell::init(networks)),
-            state_changed: Notification::new(),
+            state_changed <- Notification::init(),
         })
     }
 

@@ -79,6 +79,10 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // `nullable_boolean` must default to `false` (not null) per the upstream
     // test-cluster XML - see the note in `unit_testing.rs`; everything else
     // passed as-is on first verification.
+    // Dedicated PowerSource attribute test. Targets the EP1 instance (the
+    // YAML's `config.endpoint: 1` is not overridable by the harness); the
+    // battery-attribute steps are skipped via the `PS.S.*=0` PICS entries.
+    "Test_TC_PS_2_1",
     "TestSaveAs",
     "TestSelfFabricRemoval",
     "TestSubscribe_AdministratorCommissioning",
@@ -91,7 +95,9 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestSystemCommands",
     "TestUserLabelCluster",
     "TestUserLabelClusterConstraints",
-    // "TestTimeSynchronization", // Skipped: every step drives `SetTimeZone` / TimeZone-list handling, i.e. the `TimeZone` (F00) feature — the same blocker as `TC_TIMESYNC_2_4`..`2_12` below. The base TimeSynchronization cluster *is* implemented (see the enabled `TC_TIMESYNC_2_1`/`2_2`/`2_13`).
+    // SetTimeZone / SetDSTOffset constraint checking against the `TimeZone`
+    // (F00) feature, served by `time_sync::TimeZoneStore`.
+    "TestTimeSynchronization",
     // End-to-end LIT-ICD lifecycle: the runner commissions with
     // `--icd-registration true` (this DUT is routed into the `lit-icd` app
     // slot, see `yaml_test_command`), so the commissioner registers itself as a
@@ -321,15 +327,21 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //   - `F01` (NTP_CLIENT):     2_6
     "TC_TIMESYNC_2_1",
     "TC_TIMESYNC_2_2",
-    // "TC_TIMESYNC_2_4",  // Skipped: needs Feature `F00` (TimeZone) — TimeZone / DSTOffset attribute set + SetTimeZone / SetDSTOffset commands.
-    // "TC_TIMESYNC_2_5",  // Skipped: needs `F00`.
+    // The `TimeZone` (F00) feature set: TimeZone/DSTOffset lists, LocalTime,
+    // SetTimeZone / SetDSTOffset - served by `time_sync::TimeZoneStore` plus
+    // the transition-event timer in the TimeSync handler's `Handler::run`.
+    "TC_TIMESYNC_2_4",
+    "TC_TIMESYNC_2_5",
     // "TC_TIMESYNC_2_6",  // Skipped: needs `F01` (NTP_CLIENT) — DefaultNTP / SupportsDNSResolve + SetDefaultNTP.
-    // "TC_TIMESYNC_2_7",  // Skipped: needs `F00`.
-    // "TC_TIMESYNC_2_8",  // Skipped: needs `F00`.
-    // "TC_TIMESYNC_2_9",  // Skipped: needs `F00`.
-    // "TC_TIMESYNC_2_10", // Skipped: needs `F00`.
-    // "TC_TIMESYNC_2_11", // Skipped: needs `F00`.
-    // "TC_TIMESYNC_2_12", // Skipped: needs `F00`.
+    "TC_TIMESYNC_2_7",
+    "TC_TIMESYNC_2_8",
+    "TC_TIMESYNC_2_9",
+    "TC_TIMESYNC_2_10",
+    // Real-time DST-transition events (DSTStatus at validStarting/validUntil
+    // boundaries, ~40s of scheduled transitions).
+    "TC_TIMESYNC_2_11",
+    // Real-time TimeZoneStatus events at `validAt` boundaries.
+    "TC_TIMESYNC_2_12",
     "TC_TIMESYNC_2_13",
     "TC_TIMESYNC_3_1",
     //
@@ -1677,6 +1689,11 @@ impl ITests {
         matches!(
             test_name,
             "TC_ICDM_2_1" | "TC_ICDM_3_2" | "TC_ICDM_3_3" | "TC_ICDM_3_4" | "TC_ICDM_5_1"
+            // `TC_BINFO_2_2` cross-checks the events it observes against the
+            // declared PICS (`BINFO.S.E02` for `Leave`): with no `--PICS`,
+            // `check_pics` answers false and an *emitted* Leave event fails
+            // the consistency assert.
+            | "TC_BINFO_2_2"
             // `TC_IDM_10_1` (a sub-test of `TC_DeviceBasicComposition`) rejects
             // identifiers carrying a *test* vendor prefix (0xFFF1..=0xFFF4)
             // unless `PICS_SDK_CI_ONLY` is set, in which case it only rejects

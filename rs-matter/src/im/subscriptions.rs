@@ -127,7 +127,7 @@ impl<const N: usize> Subscriptions<N> {
     pub fn init() -> impl Init<Self> {
         init!(Self {
             state <- Mutex::init(RefCell::init(SubscriptionsInner::init())),
-            notification: Notification::new(),
+            notification <- Notification::init(),
         })
     }
 

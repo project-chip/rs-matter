@@ -127,6 +127,12 @@ pub const ICD_CHECK_IN_COUNTER_KEY: u16 = ICD_REGISTERED_CLIENTS_KEY + 1;
 /// in-memory cache diverges from what was last written.
 pub const CASE_RESUMPTION_KEY: u16 = ICD_CHECK_IN_COUNTER_KEY + 1;
 
+/// The key used for storing the TimeSynchronization cluster's `TimeZone` +
+/// `DSTOffset` lists (both `nonVolatile` quality per the Matter Core spec) as
+/// a single TLV blob. See
+/// [`TimeZoneStore`](crate::dm::clusters::time_sync::TimeZoneStore).
+pub const TIME_ZONE_KEY: u16 = CASE_RESUMPTION_KEY + 1;
+
 /// The first key of the range reserved for persisted subscriptions.
 ///
 /// Each persisted subscription occupies its own key
@@ -135,7 +141,7 @@ pub const CASE_RESUMPTION_KEY: u16 = ICD_CHECK_IN_COUNTER_KEY + 1;
 /// comfortably under the ~4 KiB per-value cap that some MCU key-value backends
 /// impose). The range runs up to (but not including) [`VENDOR_KEYS_START`], which
 /// leaves room for far more slots than any practical `Subscriptions<N>` table.
-pub const PERSISTENT_SUBSCRIPTIONS_START: u16 = CASE_RESUMPTION_KEY + 1;
+pub const PERSISTENT_SUBSCRIPTIONS_START: u16 = TIME_ZONE_KEY + 1;
 
 /// A trait representing a key-value BLOB storage.
 ///

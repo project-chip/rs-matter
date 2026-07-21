@@ -69,8 +69,21 @@ use rs_matter::dm::clusters::ota_req::{
     parse_bdx_url, ClusterHandler as _, OtaRequestorHandler, OtaState, Provider, Providers,
 };
 use rs_matter::dm::clusters::power_source::{self, PowerSourceConfig, PowerSourceHandler};
+
+/// A second wired supply, modeled as powering EP1 specifically. Exists so the
+/// fixture mirrors upstream `all-clusters-app`'s shape of a PowerSource
+/// instance on EP1 - which `Test_TC_PS_2_1` hardcodes as its target endpoint
+/// (the YAML's `config.endpoint` is not overridable by the harness).
+/// `order: 1` keeps the per-node ordering distinct as the spec requires.
+const POWER_SOURCE_EP1: PowerSourceConfig = PowerSourceConfig {
+    order: 1,
+    description: "Auxiliary",
+    endpoint_list: &[1],
+    ..PowerSourceConfig::MAINS
+};
 use rs_matter::dm::clusters::scenes::{ScenesHandler, ScenesState};
 use rs_matter::dm::clusters::sw_diag::SoftwareFault;
+use rs_matter::dm::clusters::time_sync::{ClusterHandler as _, TimeSyncHandler, TimeZoneStore};
 use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
 };
@@ -254,6 +267,17 @@ fn main() -> Result<(), Error> {
 
     let binding_handler_ep0 =
         BindingHandler::new(Dataver::new_rand(&mut rand), ROOT_ENDPOINT_ID, bindings);
+
+    // TimeZone / DSTOffset storage for the TimeSync cluster's `TIME_ZONE`
+    // feature. Both lists are `nonVolatile` quality, so they are re-hydrated
+    // before the data model accepts traffic, like the labels and bindings
+    // above.
+    static TIME_ZONE_STORE: StaticCell<TimeZoneStore> = StaticCell::new();
+    let time_zone_store: &TimeZoneStore = TIME_ZONE_STORE.init(TimeZoneStore::new());
+    kv.access(|store, buf| time_zone_store.load_persist(store, buf))?;
+
+    let time_sync_handler =
+        TimeSyncHandler::new_with_time_zone(Dataver::new_rand(&mut rand), time_zone_store);
     let binding_handler_ep1 = BindingHandler::new(Dataver::new_rand(&mut rand), 1, bindings);
 
     // Our unit testing cluster data
@@ -351,6 +375,7 @@ fn main() -> Result<(), Error> {
             dlog_buffers,
             log_provider,
             icd,
+            &time_sync_handler,
         ),
         &kv,
         &state,
@@ -632,7 +657,7 @@ const NODE: Node<'static> = Node {
                 // `TrustedTimeSource` attribute + `SetTrustedTimeSource`
                 // command — exercised by `TC_TIMESYNC_2_13` and
                 // consumed by [`time_sync::client::TimeSyncClient`].
-                time_sync(time_sync_client);
+                time_sync(time_zone, time_sync_client);
                 groups::GroupsHandler::CLUSTER,
                 user_label::CLUSTER,
                 binding::CLUSTER,
@@ -668,7 +693,7 @@ const NODE: Node<'static> = Node {
         // truthfully advertises the intent to control OnOff bulbs.
         Endpoint::new_with_clients(
             1,
-            devices!(DEV_TYPE_ON_OFF_LIGHT),
+            devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_POWER_SOURCE),
             clusters!(
                 desc::CLUSTER_TAG_LIST,
                 identify::CLUSTER,
@@ -678,7 +703,9 @@ const NODE: Node<'static> = Node {
                 TestOnOffDeviceLogic::CLUSTER,
                 // Mandatory for the On/Off Light device type
                 SCENES_FULL_CLUSTER,
-                UnitTestingHandler::CLUSTER
+                UnitTestingHandler::CLUSTER,
+                // Second PowerSource instance (see `POWER_SOURCE_EP1`).
+                power_source::CLUSTER
             ),
             &[on_off::FULL_CLUSTER.id],
         )
@@ -833,7 +860,7 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
         // truthfully advertises the intent to control OnOff bulbs.
         Endpoint::new_with_clients(
             1,
-            devices!(DEV_TYPE_ON_OFF_LIGHT),
+            devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_POWER_SOURCE),
             clusters!(
                 desc::CLUSTER_TAG_LIST,
                 identify::CLUSTER,
@@ -843,7 +870,9 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
                 TestOnOffDeviceLogic::CLUSTER,
                 // Mandatory for the On/Off Light device type
                 SCENES_FULL_CLUSTER,
-                UnitTestingHandler::CLUSTER
+                UnitTestingHandler::CLUSTER,
+                // Second PowerSource instance (see `POWER_SOURCE_EP1`).
+                power_source::CLUSTER
             ),
             &[on_off::FULL_CLUSTER.id],
         )
@@ -888,6 +917,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     dlog_buffers: &'a MatterBuffers<2>,
     log_provider: &'a LogFileProvider,
     icd: &'a Icd,
+    time_sync_handler: &'a TimeSyncHandler<'a>,
 ) -> impl DataModel + 'a {
     (
         node,
@@ -895,6 +925,15 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             .gen_diag(gen_diag)
             .netif_diag(&SysNetifs)
             .build(rand)
+            // TimeSync with the `TIME_ZONE` feature: shadows the plain
+            // TimeSync handler inside the sys chain above (chained-later =
+            // matched-first), adding SetTimeZone/SetDSTOffset storage, the
+            // transition-event timer and list persistence. The shadowed
+            // handler's own background task is inert.
+            .chain(
+                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(TimeSyncHandler::CLUSTER.id)),
+                Async(time_sync_handler),
+            )
             // Groups handler at the root endpoint. The library-level
             // `with_*_sys()` chain in `rs-matter/src/dm/endpoints.rs`
             // intentionally does *not* bind Groups at root anymore —
@@ -1038,6 +1077,14 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                         &PowerSourceConfig::MAINS,
                     )
                     .adapt(),
+                ),
+            )
+            // Second PowerSource instance on EP1 (see `POWER_SOURCE_EP1`).
+            .chain(
+                EpClMatcher::new(Some(1), Some(power_source::CLUSTER.id)),
+                Async(
+                    PowerSourceHandler::new(Dataver::new_rand(&mut rand), &POWER_SOURCE_EP1)
+                        .adapt(),
                 ),
             ),
     )
