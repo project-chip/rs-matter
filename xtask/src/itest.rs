@@ -389,12 +389,8 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // Python tests — Basic Information (system cluster)
     //
     "TC_BINFO_2_1",
-    // "TC_BINFO_2_2", // Skipped: requires the BasicInformation `StartUp` event at boot (and `Leave` on RemoveFabric) — rs-matter has no boot-time event emission yet. The events *facility* exists (acl/time_sync emit during interactions); what is missing is emitting StartUp outside an exchange, at stack start.
+    "TC_BINFO_2_2",
     "TC_BINFO_3_1",
-    // Reads `GeneralDiagnostics::DeviceLoadStatus` before/after establishing
-    // subscriptions from two fabrics and checks `CurrentSubscriptions` /
-    // `CurrentSubscriptionsForFabric` react - end-to-end coverage of the
-    // transport IM-message counters and the `ImStats` plumbing.
     "TC_DGGEN_2_5",
     //
     // Python tests — Fixed Label (optional system cluster)
