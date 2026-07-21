@@ -27,7 +27,9 @@
 //! [`ScenesState`] holds the per-device scene table and per-fabric
 //! `CurrentScene` bookkeeping; the table is persisted as a single
 //! TLV blob under [`SCENES_KEY`] on every successful mutation, and
-//! re-hydrated on startup via [`ScenesState::load_persist`].
+//! re-hydrated on startup via [`ScenesState::load_persist`], driven by
+//! the [`LifecycleOp::Startup`] lifecycle operation the handler receives
+//! (deliver it by calling `InteractionModel::startup` once at startup).
 //!
 //! The `SceneNames` feature is not supported — scene names sent on
 //! the wire are accepted and discarded.
@@ -37,10 +39,10 @@ use core::num::NonZeroU8;
 
 use crate::dm::{
     ArrayAttributeRead, AttrId, Cluster, ClusterId, Dataver, EndptId, HandlerContext,
-    InvokeContext, ReadContext, SceneId,
+    InvokeContext, LifecycleOp, ReadContext, SceneId,
 };
 use crate::error::{Error, ErrorCode};
-use crate::persist::{KvBlobStore, Persist};
+use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist};
 use crate::tlv::{
     FromTLV, Nullable, OptionalBuilder, TLVArray, TLVBuilder, TLVBuilderParent, TLVElement,
     TLVSequence, TLVTag, TLVWrite, TLVWriteParent, ToTLV, TLV,
@@ -577,15 +579,12 @@ impl<'a, const N: usize, const M: usize> FromTLV<'a> for ScenesStateInner<N, M> 
 
 impl<const N: usize, const M: usize> ScenesState<N, M> {
     /// Re-hydrate the scene table and per-fabric `CurrentScene`
-    /// bookkeeping from `store` under [`SCENES_KEY`]. Call once at
-    /// application startup, before exposing the data model to
-    /// commissioners. A missing key (first boot or cleared
-    /// persistence) leaves the registry empty.
-    pub async fn load_persist<S: KvBlobStore>(
-        &self,
-        mut store: S,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
+    /// bookkeeping from `store` under [`SCENES_KEY`]. A missing key
+    /// (first boot or cleared persistence) leaves the registry empty.
+    ///
+    /// Called on startup via the [`LifecycleOp::Startup`] lifecycle operation
+    /// delivered to the [`ScenesHandler`] borrowing this state.
+    pub fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
         let Some(data) = store.load(SCENES_KEY, buf)? else {
             // Reset to empty so a `load_persist` after a key
             // `remove` is deterministic.
@@ -608,6 +607,21 @@ impl<const N: usize, const M: usize> ScenesState<N, M> {
         info!("Loaded Scenes state from storage ({} entries)", entries);
 
         Ok(())
+    }
+
+    /// Reset the scene table and per-fabric `CurrentScene` bookkeeping to
+    /// empty and remove the persisted blob from `store` (under [`SCENES_KEY`]).
+    ///
+    /// Called on factory reset via the [`LifecycleOp::FactoryReset`] lifecycle
+    /// operation delivered to the [`ScenesHandler`] borrowing this state.
+    pub fn reset_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
+        self.with(|inner| {
+            inner.table.clear();
+            inner.current_per_fabric.clear();
+            inner.bump_info_dataver();
+        });
+
+        store.remove(SCENES_KEY, buf)
     }
 
     /// Persist the current state under [`SCENES_KEY`]. Called from
@@ -1610,6 +1624,17 @@ where
 
     fn dataver_changed(&self) {
         self.dataver.changed();
+    }
+
+    fn lifecycle(
+        &self,
+        ctx: impl HandlerContext,
+        op: LifecycleOp,
+    ) -> impl Future<Output = Result<(), Error>> {
+        ready(ctx.kv().access(|store, buf| match op {
+            LifecycleOp::Startup => self.state.load_persist(store, buf),
+            LifecycleOp::FactoryReset => self.state.reset_persist(store, buf),
+        }))
     }
 
     fn scene_table_size(&self, _ctx: impl ReadContext) -> impl Future<Output = Result<u16, Error>> {

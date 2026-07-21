@@ -412,15 +412,13 @@ fn main() -> Result<(), Error> {
     let buffers = BUFFERS.uninit().init_with(MatterBuffers::init());
 
     // Create the data model state (subscriptions, events, network store).
-    let mut state: EthInteractionModelState =
-        EthInteractionModelState::new(EthNetwork::new_default());
+    let state: EthInteractionModelState = EthInteractionModelState::new(EthNetwork::new_default());
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
 
-    // Re-hydrate the `Matter` instance and the data model state (event-number epoch).
-    futures_lite::future::block_on(matter.load_persist(&kv))?;
-    futures_lite::future::block_on(state.load_persist(&kv))?;
+    // Re-hydrate the `Matter` instance (fabrics, basic info, RTC).
+    matter.startup(&kv)?;
 
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
     let mut rand = crypto.rand()?;
@@ -581,6 +579,10 @@ fn main() -> Result<(), Error> {
         &kv,
         &state,
     );
+
+    // Bring the Data Model to its operational state: re-hydrate its persisted
+    // state and deliver the `Startup` lifecycle op to all cluster handlers.
+    futures_lite::future::block_on(im.startup())?;
 
     let responder = DefaultResponder::new(&im);
     let mut respond = pin!(responder.run::<4, 4>());

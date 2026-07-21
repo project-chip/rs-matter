@@ -1172,6 +1172,31 @@ where
 pub trait DataModel: Metadata + AsyncHandler {}
 impl<T> DataModel for T where T: Metadata + AsyncHandler {}
 
+/// A lifecycle operation delivered to a handler via [`Handler::lifecycle`] /
+/// [`AsyncHandler::lifecycle`].
+///
+/// Unlike read/write/invoke - which are routed to the single handler matching the
+/// operation path - lifecycle operations are broadcast to every handler in the
+/// handler chain.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum LifecycleOp {
+    /// The node is starting up.
+    ///
+    /// Delivered once, after the Data Model is constructed and before it starts
+    /// serving operations.
+    ///
+    /// The typical reaction is to populate the handler's in-memory state from
+    /// persisted storage ([`HandlerContext::kv`]) - the mirror image of the
+    /// on-the-fly persistence the handler does while serving operations.
+    Startup,
+    /// The node is being factory-reset.
+    ///
+    /// The typical reaction is to reset the handler's in-memory state to factory
+    /// defaults and remove the handler's persisted data from [`HandlerContext::kv`].
+    FactoryReset,
+}
+
 /// A version of the `AsyncHandler` trait that never awaits any operation.
 ///
 /// Prefer this trait when implementing handlers that are known to be non-blocking and additionally,
@@ -1193,6 +1218,16 @@ pub trait Handler {
     /// Bump the per-cluster `Dataver` for the cluster handler matching
     /// the supplied context `endpoint_id` / `cluster_id`.
     fn bump_dataver(&self, ctx: impl MatchContext);
+
+    /// Process a lifecycle operation ([`LifecycleOp`]).
+    ///
+    /// Unlike read/write/invoke - which are routed to the single handler matching the
+    /// operation path - this method is invoked on every handler in the handler chain.
+    ///
+    /// The default implementation does nothing.
+    fn lifecycle(&self, _ctx: impl HandlerContext, _op: LifecycleOp) -> Result<(), Error> {
+        Ok(())
+    }
 
     /// A hook (a scheduling facility) for placing handler-impl-specific code that needs to run
     /// asynchronously - forever and in the "background".
@@ -1223,6 +1258,10 @@ where
         (**self).bump_dataver(ctx)
     }
 
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        (**self).lifecycle(ctx, op)
+    }
+
     fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
         (**self).run(ctx)
     }
@@ -1246,6 +1285,10 @@ where
 
     fn bump_dataver(&self, ctx: impl MatchContext) {
         (**self).bump_dataver(ctx)
+    }
+
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        (**self).lifecycle(ctx, op)
     }
 
     fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
@@ -1279,6 +1322,10 @@ where
 
     fn bump_dataver(&self, ctx: impl MatchContext) {
         self.1.bump_dataver(ctx)
+    }
+
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        self.1.lifecycle(ctx, op)
     }
 
     fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
@@ -1475,6 +1522,13 @@ where
         self.next.bump_dataver(ctx)
     }
 
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        // Lifecycle ops are a broadcast: every handler in the chain gets them,
+        // regardless of the matcher.
+        self.handler.lifecycle(&ctx, op)?;
+        self.next.lifecycle(ctx, op)
+    }
+
     async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
         let mut handler = pin!(self.handler.run(&ctx));
         let mut next = pin!(self.next.run(&ctx));
@@ -1540,8 +1594,8 @@ mod asynch {
     use crate::im::encoding::{IMStatusCode, ReportDataResp};
 
     use super::{
-        ChainedHandler, EmptyHandler, Handler, InvokeContext, NonBlockingHandler, ReadContext,
-        ReportContext, WriteContext,
+        ChainedHandler, EmptyHandler, Handler, InvokeContext, LifecycleOp, NonBlockingHandler,
+        ReadContext, ReportContext, WriteContext,
     };
 
     /// A handler for processing a single IM operation:
@@ -1622,6 +1676,20 @@ mod asynch {
         /// the supplied context `endpoint_id` / `cluster_id`.
         fn bump_dataver(&self, ctx: impl MatchContext);
 
+        /// Process a lifecycle operation ([`LifecycleOp`]).
+        ///
+        /// Unlike read/write/invoke - which are routed to the single handler matching the
+        /// operation path - this method is invoked on every handler in the handler chain.
+        ///
+        /// The default implementation does nothing.
+        fn lifecycle(
+            &self,
+            _ctx: impl HandlerContext,
+            _op: LifecycleOp,
+        ) -> impl Future<Output = Result<(), Error>> {
+            ready(Ok(()))
+        }
+
         /// A hook (a scheduling facility) for placing handler-impl-specific code that needs to run
         /// asynchronously - forever and in the "background".
         fn run(&self, _ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
@@ -1671,6 +1739,14 @@ mod asynch {
             (**self).bump_dataver(ctx)
         }
 
+        fn lifecycle(
+            &self,
+            ctx: impl HandlerContext,
+            op: LifecycleOp,
+        ) -> impl Future<Output = Result<(), Error>> {
+            (**self).lifecycle(ctx, op)
+        }
+
         fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
             (**self).run(ctx)
         }
@@ -1714,6 +1790,14 @@ mod asynch {
 
         fn bump_dataver(&self, ctx: impl MatchContext) {
             (**self).bump_dataver(ctx)
+        }
+
+        fn lifecycle(
+            &self,
+            ctx: impl HandlerContext,
+            op: LifecycleOp,
+        ) -> impl Future<Output = Result<(), Error>> {
+            (**self).lifecycle(ctx, op)
         }
 
         fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
@@ -1844,6 +1928,14 @@ mod asynch {
             self.1.bump_dataver(ctx)
         }
 
+        fn lifecycle(
+            &self,
+            ctx: impl HandlerContext,
+            op: LifecycleOp,
+        ) -> impl Future<Output = Result<(), Error>> {
+            self.1.lifecycle(ctx, op)
+        }
+
         fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
             self.1.run(ctx)
         }
@@ -1887,6 +1979,14 @@ mod asynch {
 
         fn bump_dataver(&self, ctx: impl MatchContext) {
             Handler::bump_dataver(&self.0, ctx)
+        }
+
+        fn lifecycle(
+            &self,
+            ctx: impl HandlerContext,
+            op: LifecycleOp,
+        ) -> impl Future<Output = Result<(), Error>> {
+            ready(Handler::lifecycle(&self.0, ctx, op))
         }
 
         fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
@@ -2006,6 +2106,13 @@ mod asynch {
             self.next.bump_dataver(ctx)
         }
 
+        async fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+            // Lifecycle ops are a broadcast: every handler in the chain gets them,
+            // regardless of the matcher.
+            self.handler.lifecycle(&ctx, op).await?;
+            self.next.lifecycle(ctx, op).await
+        }
+
         async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
             let mut handler = pin!(self.handler.run(&ctx));
             let mut next = pin!(self.next.run(&ctx));
@@ -2039,6 +2146,10 @@ mod asynch {
 
         fn bump_dataver(&self, ctx: impl MatchContext) {
             self.0.bump_dataver(ctx)
+        }
+
+        fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+            self.0.lifecycle(ctx, op)
         }
 
         fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {

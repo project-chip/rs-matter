@@ -91,9 +91,8 @@ fn main() -> Result<(), Error> {
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
 
-    // Re-hydrate the `Matter` instance and the data model state (event-number epoch).
-    futures_lite::future::block_on(matter.load_persist(&kv))?;
-    futures_lite::future::block_on(state.load_persist(&kv))?;
+    // Re-hydrate the `Matter` instance (fabrics, basic info, RTC).
+    matter.startup(&kv)?;
 
     // Create the crypto instance
     let crypto = &*CRYPTO.init(RustCrypto::new(FakeRng, DAC_PRIVKEY));
@@ -116,6 +115,10 @@ fn main() -> Result<(), Error> {
         &kv,
         state,
     );
+
+    // Bring the Data Model to its operational state: re-hydrate its persisted
+    // state and deliver the `Startup` lifecycle op to all cluster handlers.
+    futures_lite::future::block_on(im.startup())?;
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"

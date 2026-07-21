@@ -55,7 +55,7 @@ use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{DirKvBlobStore, KvBlobStoreAccess};
+use rs_matter::persist::DirKvBlobStore;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::Exchange;
@@ -97,8 +97,7 @@ fn main() -> Result<(), Error> {
     let buffers: MatterBuffers = MatterBuffers::new();
 
     // Create the data model state (subscriptions, events, network store).
-    let mut state: EthInteractionModelState =
-        EthInteractionModelState::new(EthNetwork::new_default());
+    let state: EthInteractionModelState = EthInteractionModelState::new(EthNetwork::new_default());
 
     // The OTA Requestor's persistent provider list, re-hydrated from storage.
     let providers = Providers::new();
@@ -107,9 +106,7 @@ fn main() -> Result<(), Error> {
     let kv = matter.kv(store);
 
     // Re-hydrate persisted state.
-    futures_lite::future::block_on(matter.load_persist(&kv))?;
-    kv.access(|store, buf| futures_lite::future::block_on(providers.load_persist(store, buf)))?;
-    futures_lite::future::block_on(state.load_persist(&kv))?;
+    matter.startup(&kv)?;
 
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
 
@@ -123,6 +120,11 @@ fn main() -> Result<(), Error> {
         &kv,
         &state,
     );
+
+    // Bring the Data Model to its operational state: re-hydrate its persisted
+    // state (events epoch, network store) and deliver the `Startup` lifecycle op
+    // to all cluster handlers (here notably: the OTA provider list).
+    futures_lite::future::block_on(im.startup())?;
 
     let responder = DefaultResponder::new(&im);
     let mut respond = pin!(responder.run::<4, 4>());

@@ -192,15 +192,13 @@ fn main() -> Result<(), Error> {
     // Create the data model state (subscriptions, events, network store).
     // Persistent subscriptions are compiled in via the `persistent-subscriptions`
     // feature, so a subscriber keeps its subscription across a reboot.
-    let mut state: EthInteractionModelState =
-        EthInteractionModelState::new(EthNetwork::new_default());
+    let state: EthInteractionModelState = EthInteractionModelState::new(EthNetwork::new_default());
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
 
-    // Re-hydrate the `Matter` instance and the data model state (event-number epoch).
-    futures_lite::future::block_on(matter.load_persist(&kv))?;
-    futures_lite::future::block_on(state.load_persist(&kv))?;
+    // Re-hydrate the `Matter` instance (fabrics, basic info, RTC).
+    matter.startup(&kv)?;
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
@@ -240,22 +238,17 @@ fn main() -> Result<(), Error> {
 
     // Shared UserLabel registry. We only host the UserLabel cluster on
     // the root endpoint here, so `E = 1` is enough (raise it if more
-    // endpoints later acquire the cluster). Loaded from
-    // KV *before* the data model accepts commissioner traffic so the
-    // post-reboot `Verify User Label List after reboot` step of the
-    // `TestUserLabelCluster` YAML test sees the labels the previous
-    // boot wrote.
+    // endpoints later acquire the cluster). Re-hydrated from KV by the
+    // `Startup` lifecycle op delivered to the data model below.
     let user_labels = USER_LABELS.uninit().init_with(UserLabels::init());
-    kv.access(|store, buf| futures_lite::future::block_on(user_labels.load_persist(store, buf)))?;
 
     let user_label_handler =
         UserLabelHandler::new(Dataver::new_rand(&mut rand), ROOT_ENDPOINT_ID, user_labels);
 
     // Binding registry — same `StaticCell` + in-place-init pattern as
-    // UserLabels. Loaded from KV before the data model accepts traffic
-    // so bindings written pre-reboot survive.
+    // UserLabels. Re-hydrated from KV by the `Startup` lifecycle op so
+    // bindings written pre-reboot survive.
     let bindings = BINDINGS.uninit().init_with(Bindings::init());
-    kv.access(|store, buf| futures_lite::future::block_on(bindings.load_persist(store, buf)))?;
 
     let binding_handler_ep0 =
         BindingHandler::new(Dataver::new_rand(&mut rand), ROOT_ENDPOINT_ID, bindings);
@@ -361,11 +354,16 @@ fn main() -> Result<(), Error> {
         &state,
     );
 
-    // Re-hydrate any persisted subscriptions into the reporter's table, so a
-    // subscriber that had a subscription before this reboot keeps receiving
-    // reports (over a session re-established on demand) instead of having to
-    // notice the loss and re-subscribe.
-    im.resume_subscriptions()?;
+    // Bring the Data Model to its operational state - before the responder
+    // starts accepting commissioner traffic. This re-hydrates the IM state
+    // (events epoch, network store), replays any persisted subscriptions into
+    // the reporter's table (so a subscriber that had a subscription before this
+    // reboot keeps receiving reports instead of having to notice the loss and
+    // re-subscribe), and delivers the `Startup` lifecycle op to all cluster
+    // handlers - so e.g. the post-reboot `Verify User Label List after reboot`
+    // step of the `TestUserLabelCluster` YAML test sees the labels the previous
+    // boot wrote.
+    futures_lite::future::block_on(im.startup())?;
 
     // Responder = the default IM + Secure Channel handler chain, plus a BDX
     // protocol handler for the OTA Provider role. BDX is inert without OTA
@@ -911,18 +909,16 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             // the same per-fixture-exception reason as Groups above:
             // `TestUserLabelClusterConstraints` and the persistence-
             // focused `TestUserLabelCluster` write / read the cluster
-            // at `endpoint: 0`. The handler is owned by `main` so we
-            // can call `load_persist` *before* the data model is
-            // exposed; we hand it in by reference here and wrap it
-            // with `user_label::HandlerAdaptor` (rather than the
+            // at `endpoint: 0`. The handler is owned by `main`; we
+            // hand it in by reference here and wrap it with
+            // `user_label::HandlerAdaptor` (rather than the
             // owning-`.adapt()`) so the chain doesn't take ownership.
             .chain(
                 EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(user_label::CLUSTER.id)),
                 Async(user_label::HandlerAdaptor(user_label_handler)),
             )
-            // Binding handler at the root endpoint — owned by main
-            // (so `load_persist` can run before commissioner
-            // traffic), borrowed by reference into the chain.
+            // Binding handler at the root endpoint — owned by main,
+            // borrowed by reference into the chain.
             // `TestBinding` exercises writes against EP0.
             .chain(
                 EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(binding::CLUSTER.id)),
@@ -935,7 +931,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             )
             .chain(
                 EpClMatcher::new(Some(1), Some(identify::CLUSTER.id)),
-                Async(IdentifyHandler::new(Dataver::new_rand(&mut rand))),
+                Async(IdentifyHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
                 EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
@@ -976,7 +972,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             )
             .chain(
                 EpClMatcher::new(Some(2), Some(identify::CLUSTER.id)),
-                Async(IdentifyHandler::new(Dataver::new_rand(&mut rand))),
+                Async(IdentifyHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
             .chain(
                 EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),

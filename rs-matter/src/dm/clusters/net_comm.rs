@@ -875,6 +875,18 @@ impl<N> SharedNetworks<N> {
         self.state.get_mut()
     }
 
+    /// Run a closure with mutable access to the raw inner `Networks`
+    /// implementation, without firing a change notification.
+    ///
+    /// Used by the startup / factory-reset persistence paths, where nothing is
+    /// subscribed to changes yet (or the notification is meaningless).
+    pub(crate) fn with_raw<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut N) -> R,
+    {
+        self.state.lock(|state| f(&mut state.borrow_mut()))
+    }
+
     /// Wait for the state to change.
     pub fn wait_state_changed(&self) -> impl Future<Output = ()> + '_ {
         self.state_changed.wait()

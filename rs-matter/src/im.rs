@@ -41,7 +41,7 @@ use crate::dm::networks::wireless::{NoopWirelessNetCtl, WirelessMgr, MAX_CREDS_S
 use crate::dm::networks::NetChangeNotif;
 use crate::dm::{
     AsyncHandler, AttrChangeNotifier, AttrDetails, Attribute, DataModel, EventEmitter,
-    HandlerContext, MatchContextInstance, Metadata, ReportDataHandler,
+    HandlerContext, LifecycleOp, MatchContextInstance, Metadata, ReportDataHandler,
 };
 use crate::error::{Error, ErrorCode};
 use crate::im::events::{EventReader, EventTLVWrite, Events, DEFAULT_MAX_EVENTS_BUF_SIZE};
@@ -157,39 +157,28 @@ impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
     }
 
     /// Reset this state's persisted contents to factory defaults - the
-    /// events-queue epoch and the network store - removing both from `kv` using
-    /// the scratch buffer provided by `kv`. Call once during a factory reset,
-    /// with exclusive (`&mut`) access (i.e. before the state is shared with a
-    /// [`InteractionModel`]).
-    pub async fn reset_persist<K>(&mut self, kv: K) -> Result<(), Error>
+    /// events-queue epoch, the network store and (if compiled in) the persisted
+    /// subscriptions - removing them from `kv` using the scratch buffer
+    /// provided by `kv`.
+    ///
+    /// Driven by [`InteractionModel::factory_reset`].
+    fn reset_persist<K>(&self, kv: K) -> Result<(), Error>
     where
         K: KvBlobStoreAccess,
         N: Networks,
     {
-        // We hold `&mut self`, so borrow the pieces directly - no locking.
-        let Self {
-            events,
-            networks,
-            subscriptions,
-            ..
-        } = self;
-
-        let events = events.inner_mut();
-        let networks = networks.get_mut().get_mut();
-
+        // The KV ops are sync, so do them all inside a single `access` closure.
         kv.access(|store, buf| {
             // The event-number epoch.
-            events.reset_persist(&mut *store, buf)?;
+            self.events.reset_persist(&mut *store, buf)?;
 
             // The network store.
-            networks.reset()?;
+            self.networks.with_raw(|networks| networks.reset())?;
             store.remove(NETWORKS_KEY, buf)?;
 
             // Every persisted subscription record.
             #[cfg(feature = "persistent-subscriptions")]
-            subscriptions.reset_persist(&mut *store, buf)?;
-            #[cfg(not(feature = "persistent-subscriptions"))]
-            let _ = &subscriptions;
+            self.subscriptions.reset_persist(&mut *store, buf)?;
 
             Ok(())
         })
@@ -197,34 +186,28 @@ impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
 
     /// Re-hydrate this state's persisted contents - the events-queue epoch (so
     /// event numbers are not reused across reboots) and the network store - using
-    /// the scratch buffer provided by `kv`. Call once at startup, before the
-    /// state is shared with a [`InteractionModel`].
-    pub async fn load_persist<K>(&mut self, kv: K) -> Result<(), Error>
+    /// the scratch buffer provided by `kv`.
+    ///
+    /// Driven by [`InteractionModel::startup`].
+    fn load_persist<K>(&self, kv: K) -> Result<(), Error>
     where
         K: KvBlobStoreAccess,
         N: Networks,
     {
-        // We hold `&mut self`, so borrow the pieces directly - no locking
-        // (the inner mutexes are only needed for shared, runtime access).
-        let Self {
-            events, networks, ..
-        } = self;
-
-        let events = events.inner_mut();
-        let networks = networks.get_mut().get_mut();
-
         // The KV ops are sync, so do them all inside a single `access` closure.
         kv.access(|store, buf| {
             // The event-number epoch.
-            events.load_persist(&mut *store, buf)?;
+            self.events.load_persist(&mut *store, buf)?;
 
             // The network store.
-            networks.reset()?;
-            if let Some(data) = store.load(NETWORKS_KEY, buf)? {
-                networks.load(data)?;
-            }
+            self.networks.with_raw(|networks| {
+                networks.reset()?;
+                if let Some(data) = store.load(NETWORKS_KEY, buf)? {
+                    networks.load(data)?;
+                }
 
-            Ok(())
+                Ok(())
+            })
         })
     }
 
@@ -538,6 +521,52 @@ where
         // too (the `Matter`-level call by itself only routes
         // subscribers and persists).
         self.matter.bump_configuration_version(&self.kv, self)
+    }
+
+    /// Bring the Data Model to its operational state after a reboot.
+    ///
+    /// Call once, after constructing the `InteractionModel` and before running
+    /// it or serving exchanges. In order:
+    /// - Re-hydrates the [`InteractionModelState`] - the events-queue epoch (so
+    ///   event numbers are not reused across reboots) and the network store;
+    /// - Replays any persisted subscriptions into the reporter's table (if the
+    ///   `persistent-subscriptions` feature is enabled), so a subscriber that
+    ///   had a subscription before this reboot keeps receiving reports instead
+    ///   of having to notice the loss and re-subscribe;
+    /// - Broadcasts [`LifecycleOp::Startup`] to every cluster handler in the
+    ///   data model, so handlers with a persistence story of their own (which
+    ///   the Interaction Model otherwise treats as opaque) can re-hydrate their
+    ///   state from [`HandlerContext::kv`].
+    ///
+    /// The `Matter`-level counterpart is [`Matter::startup`] - call that one
+    /// first.
+    pub async fn startup(&self) -> Result<(), Error> {
+        self.state.load_persist(&self.kv)?;
+
+        // Needs the events watermark loaded just above.
+        self.resume_subscriptions()?;
+
+        self.handler.lifecycle(self, LifecycleOp::Startup).await
+    }
+
+    /// Factory-reset the Data Model persistable state.
+    ///
+    /// The counterpart of [`InteractionModel::startup`]. In order:
+    /// - Resets the [`InteractionModelState`] persisted contents to factory
+    ///   defaults - the events-queue epoch, the network store and (if compiled
+    ///   in) the persisted subscriptions - removing them from the KV store;
+    /// - Broadcasts [`LifecycleOp::FactoryReset`] to every cluster handler in
+    ///   the data model, so handlers can reset their own state and remove their
+    ///   persisted data from [`HandlerContext::kv`].
+    ///
+    /// Call when the node is factory-reset, alongside the `Matter`-level
+    /// counterpart, [`Matter::factory_reset`].
+    pub async fn factory_reset(&self) -> Result<(), Error> {
+        self.state.reset_persist(&self.kv)?;
+
+        self.handler
+            .lifecycle(self, LifecycleOp::FactoryReset)
+            .await
     }
 
     /// Run the Data Model instance.
@@ -1141,18 +1170,17 @@ where
 
     /// Re-hydrate the subscription table from `kv` and re-arm the reporter.
     ///
-    /// Call once at startup, after the fabrics and events state have been
-    /// loaded and before (or right as) [`InteractionModel::run`] begins. Each
-    /// persisted subscription is replayed into the table as a live (already
-    /// primed) subscription; the reporter then reaches the subscriber on demand
-    /// by establishing a session when the next report is due. No session is
-    /// opened proactively here.
+    /// Driven by [`InteractionModel::startup`], after the events state has been
+    /// loaded (the replayed subscriptions are primed against the loaded events
+    /// watermark). Each persisted subscription is replayed into the table as a
+    /// live (already primed) subscription; the reporter then reaches the
+    /// subscriber on demand by establishing a session when the next report is
+    /// due. No session is opened proactively here.
     ///
     /// Compiled to a no-op (returning `Ok`) unless the `persistent-subscriptions`
-    /// feature is enabled, so it is always safe to call from the startup path
-    /// regardless of whether persistence is compiled in.
+    /// feature is enabled.
     #[cfg(feature = "persistent-subscriptions")]
-    pub fn resume_subscriptions(&self) -> Result<(), Error> {
+    fn resume_subscriptions(&self) -> Result<(), Error> {
         let now = Instant::now();
         let watermark = self.state.events.watermark();
 
@@ -1178,7 +1206,7 @@ where
     /// feature is off.
     #[cfg(not(feature = "persistent-subscriptions"))]
     #[inline(always)]
-    pub fn resume_subscriptions(&self) -> Result<(), Error> {
+    fn resume_subscriptions(&self) -> Result<(), Error> {
         Ok(())
     }
 

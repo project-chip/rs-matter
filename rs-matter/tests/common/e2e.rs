@@ -213,7 +213,10 @@ impl<C: Crypto> E2eRunner<C> {
         );
 
         if resume {
-            dm.resume_subscriptions()?;
+            // The moral equivalent of the device rebooting with its storage
+            // intact: re-hydrate the IM state, replay the persisted
+            // subscriptions and deliver `LifecycleOp::Startup` to the handler.
+            dm.startup().await?;
         }
 
         let responder = Responder::new_default(&dm);

@@ -131,16 +131,14 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
     let buffers: MatterBuffers = MatterBuffers::new();
 
     // Create the data model state (subscriptions, events, the Wifi network store).
-    let mut state: WirelessInteractionModelState<WifiNetworks<3>> =
+    let state: WirelessInteractionModelState<WifiNetworks<3>> =
         WirelessInteractionModelState::new(WifiNetworks::new());
 
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
 
-    // Re-hydrate persisted state: the `Matter` instance (fabrics, ACLs, basic
-    // info) and the data model state itself (event-number epoch + Wifi networks).
-    futures_lite::future::block_on(matter.load_persist(&kv))?;
-    futures_lite::future::block_on(state.load_persist(&kv))?;
+    // Re-hydrate the `Matter` instance (fabrics, ACLs, basic info).
+    matter.startup(&kv)?;
 
     // Create the crypto instance
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
@@ -171,6 +169,10 @@ fn run<N: NetCtl + WifiDiag + NetChangeNotif>(
         &net_ctl,
         &state,
     );
+
+    // Bring the Data Model to its operational state: re-hydrate its persisted
+    // state and deliver the `Startup` lifecycle op to all cluster handlers.
+    futures_lite::future::block_on(im.startup())?;
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
