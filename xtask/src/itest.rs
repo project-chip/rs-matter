@@ -59,7 +59,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestConfigVariables",
     "TestConstraints",
     "TestDelayCommands",
-    // "TestDescriptorCluster", // TODO: Assumes a Power Source device type and expects a lot of clusters to be there
+    // "TestDescriptorCluster", // Skipped: hardcodes upstream `all-clusters-app`'s exact EP0 shape. The Power Source device-type half is now satisfiable (DEV_TYPE_POWER_SOURCE + the PowerSource cluster exist), but it also requires `ServerList` to contain FaultInjection (0xFFF1FC06, a chip test cluster), `PartsList == [1,2,3,4]` (four child endpoints) and an exact EP0 `TagList` — mirroring all-clusters-app rather than testing conformance.
     "TestDiagnosticLogs",
     "TestDiscovery",
     "TestEqualities",
@@ -76,14 +76,28 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestOperationalCredentialsCluster",
     // "TestOperationalState", // TODO: Operational State cluster not yet implemented
     "TestReadNoneSubscribeNone",
-    // "TestSaveAs", // TODO: not yet verified
+    // `nullable_boolean` must default to `false` (not null) per the upstream
+    // test-cluster XML - see the note in `unit_testing.rs`; everything else
+    // passed as-is on first verification.
+    // Dedicated PowerSource attribute test. Targets the EP1 instance (the
+    // YAML's `config.endpoint: 1` is not overridable by the harness); the
+    // battery-attribute steps are skipped via the `PS.S.*=0` PICS entries.
+    "Test_TC_PS_2_1",
+    "TestSaveAs",
     "TestSelfFabricRemoval",
     "TestSubscribe_AdministratorCommissioning",
     "TestSubscribe_OnOff",
-    // "TestSystemCommands", // TODO: Error attempting to start secondary device
+    // Starts/stops/restarts the DUT via the harness's SystemCommands pseudo
+    // cluster, then spawns a *second* accessory from the `lock` app slot and
+    // commissions it. The DUT binary is registered under `lock:` as well (see
+    // `yaml_test_command`) so that second instance is just another
+    // `system_tests`.
+    "TestSystemCommands",
     "TestUserLabelCluster",
     "TestUserLabelClusterConstraints",
-    // "TestTimeSynchronization", // Skipped: TimeSynchronization cluster not implemented by rs-matter (optional, Matter spec §11.16).
+    // SetTimeZone / SetDSTOffset constraint checking against the `TimeZone`
+    // (F00) feature, served by `time_sync::TimeZoneStore`.
+    "TestTimeSynchronization",
     // End-to-end LIT-ICD lifecycle: the runner commissions with
     // `--icd-registration true` (this DUT is routed into the `lit-icd` app
     // slot, see `yaml_test_command`), so the commissioner registers itself as a
@@ -98,7 +112,21 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_IDM_1_2",
     "TC_IDM_1_4",
     "TC_IDM_2_2",
+    // Batched reads incl. `CapabilityMinima`; targets clusters on the root
+    // endpoint, hence the `--endpoint 0` extra arg.
+    "TC_IDM_2_3",
+    // Write Response Action: statuses for writes to unsupported
+    // endpoints/clusters/attributes.
+    "TC_IDM_3_2",
     "TC_IDM_4_2",
+    // Subscription reporting semantics (KeepSubscriptions, intervals,
+    // wildcards). Uses `setup_class_helper`, so it is routed through the
+    // no-PASE shim like `TC_DeviceBasicComposition` (see
+    // `Self::needs_no_pase_shim`).
+    "TC_IDM_4_3",
+    // Timed Request handling.
+    "TC_IDM_5_2",
+    "TC_IDM_9_1",
     //
     // Python tests — Access Control (system cluster)
     //
@@ -112,7 +140,11 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_ACL_2_5", // Tests the optional `AccessControlExtension` feature (Extension attribute) — `@run_if_endpoint_matches(has_attribute(AccessControl.Extension))` skips cleanly via `no_fail_on_skipped.py`.
     "TC_ACL_2_6",
     // "TC_ACL_2_7", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
-    // "TC_ACL_2_8", // Skipped: the test re-runs itself internally with legacy list encoding after the modern-encoding pass. The Python framework's between-runs controller cleanup is buggy (`object NoneType can't be used in 'await' expression`) and leaves stale fabrics on the DUT, so the second commissioning fails with `Incorrect state`. The modern-encoding pass — including fabric-scoped event filtering — is exercised end-to-end and passes.
+    // The between-runs controller-cleanup bug that used to break the second
+    // (legacy-list-encoding) pass is a chip-master regression; the
+    // `v1.6-branch` framework the harness is pinned to does not have it, and
+    // both passes run green.
+    "TC_ACL_2_8",
     "TC_ACL_2_9",
     "TC_ACL_2_10",
     // "TC_ACL_2_11", // Skipped: tests the provisional `ManagedAclRestrictions` feature (ARL attribute) and requires manufacturer-specific access restrictions to be pre-configured. rs-matter does not implement this feature.
@@ -135,7 +167,11 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // Python tests — General & Administrator Commissioning (system clusters)
     //
     "TC_CADMIN_1_3_4",
-    // "TC_CADMIN_1_5", // Hits a CHIP-framework cleanup bug we can't patch
+    // The CHIP-framework cleanup bug that used to break this test is another
+    // chip-master-only regression absent from the pinned `v1.6-branch`
+    // framework. Needs the raised timeouts in `per_test_timeout_secs` /
+    // `per_test_framework_timeout_secs` (a ~180s window-expiry wait).
+    "TC_CADMIN_1_5",
     //                  // from the device side. Step 7 (commission after the
     //                  // window has been revoked) expects exactly
     //                  // `CHIP_ERROR_TIMEOUT (0x32)`. To produce 0x32 the
@@ -160,6 +196,9 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //                  // (1_3_4, 1_9, 1_11, 1_15, 1_19, 1_22, 1_25) pass with
     //                  // the silent-drop change.
     "TC_CADMIN_1_9",
+    // Repeated OpenCommissioningWindow / PASE-attempt handling; reads
+    // `SpecificationVersion` on EP0, hence the `--endpoint 0` extra arg.
+    "TC_CADMIN_1_10",
     "TC_CADMIN_1_11",
     "TC_CADMIN_1_15",
     "TC_CADMIN_1_19",
@@ -288,15 +327,21 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //   - `F01` (NTP_CLIENT):     2_6
     "TC_TIMESYNC_2_1",
     "TC_TIMESYNC_2_2",
-    // "TC_TIMESYNC_2_4",  // Skipped: needs Feature `F00` (TimeZone) — TimeZone / DSTOffset attribute set + SetTimeZone / SetDSTOffset commands.
-    // "TC_TIMESYNC_2_5",  // Skipped: needs `F00`.
+    // The `TimeZone` (F00) feature set: TimeZone/DSTOffset lists, LocalTime,
+    // SetTimeZone / SetDSTOffset - served by `time_sync::TimeZoneStore` plus
+    // the transition-event timer in the TimeSync handler's `Handler::run`.
+    "TC_TIMESYNC_2_4",
+    "TC_TIMESYNC_2_5",
     // "TC_TIMESYNC_2_6",  // Skipped: needs `F01` (NTP_CLIENT) — DefaultNTP / SupportsDNSResolve + SetDefaultNTP.
-    // "TC_TIMESYNC_2_7",  // Skipped: needs `F00`.
-    // "TC_TIMESYNC_2_8",  // Skipped: needs `F00`.
-    // "TC_TIMESYNC_2_9",  // Skipped: needs `F00`.
-    // "TC_TIMESYNC_2_10", // Skipped: needs `F00`.
-    // "TC_TIMESYNC_2_11", // Skipped: needs `F00`.
-    // "TC_TIMESYNC_2_12", // Skipped: needs `F00`.
+    "TC_TIMESYNC_2_7",
+    "TC_TIMESYNC_2_8",
+    "TC_TIMESYNC_2_9",
+    "TC_TIMESYNC_2_10",
+    // Real-time DST-transition events (DSTStatus at validStarting/validUntil
+    // boundaries, ~40s of scheduled transitions).
+    "TC_TIMESYNC_2_11",
+    // Real-time TimeZoneStatus events at `validAt` boundaries.
+    "TC_TIMESYNC_2_12",
     "TC_TIMESYNC_2_13",
     "TC_TIMESYNC_3_1",
     //
@@ -347,8 +392,18 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Power Source (optional system cluster)
     //
-    // "TC_PS_2_3", // Skipped: PowerSource cluster not implemented by rs-matter (optional, Matter spec §11.7).
-
+    // PowerSource is hosted (featureless/wired) on EP0 of `system_tests`.
+    // The battery-attribute reporting-rate checks are vacuously satisfied on
+    // a wired source; the wildcard subscription over the cluster is the part
+    // genuinely exercised.
+    "TC_PS_2_3",
+    //
+    // Python tests — Basic Information (system cluster)
+    //
+    "TC_BINFO_2_1",
+    "TC_BINFO_2_2",
+    "TC_BINFO_3_1",
+    "TC_DGGEN_2_5",
     //
     // Python tests — Fixed Label (optional system cluster)
     //
@@ -372,6 +427,8 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_DA_1_2",
     "TC_DA_1_5",
     "TC_DA_1_7",
+    // NOC wiped on factory reset.
+    "TC_DA_1_1",
     "TC_DA_1_9",
     //
     // Python tests — Device Discovery (general)
@@ -1215,14 +1272,18 @@ impl ITests {
         // `all-devices` keys because the runner picks the slot from the test's
         // own target (`Test_TC_OO_*` resolve to `all-devices`, the YAML suites
         // to `all-clusters`) and errors with `KeyError: 'default'` when that
-        // slot is empty. Registering a slot no test selects is free: the
-        // runner only ever starts the app it resolved to `default`.
+        // slot is empty. The `lock` slot serves `TestSystemCommands`, which
+        // spawns a second accessory from it. Registering a slot no test
+        // selects is free: the runner only ever starts the app it resolved to
+        // `default` (plus, for `TestSystemCommands`, the explicitly-started
+        // second instance).
         format!(
-            "{} --log-level warn --target {} --runner chip_tool_python run --iterations 1 --test-timeout-seconds {} --tool-path 'chip-tool:{}' --app-path 'all-clusters:{}' --app-path 'all-devices:{}'{}{} --pics-file {} --summary-file '{}'",
+            "{} --log-level warn --target {} --runner chip_tool_python run --iterations 1 --test-timeout-seconds {} --tool-path 'chip-tool:{}' --app-path 'all-clusters:{}' --app-path 'all-devices:{}' --app-path 'lock:{}'{}{} --pics-file {} --summary-file '{}'",
             test_suite_path.display(),
             real_name,
             timeout_secs,
             chip_tool_path.display(),
+            test_exe_path.display(),
             test_exe_path.display(),
             test_exe_path.display(),
             ota_app_clause,
@@ -1416,7 +1477,11 @@ impl ITests {
     fn needs_no_pase_shim(test_name: &str) -> bool {
         matches!(
             test_name,
-            "TC_AccessChecker" | "TC_DeviceBasicComposition" | "TC_DeviceConformance"
+            "TC_AccessChecker"
+                | "TC_DeviceBasicComposition"
+                | "TC_DeviceConformance"
+                // Same `setup_class_helper` PASE+CASE race as the three above.
+                | "TC_IDM_4_3"
         )
     }
 
@@ -1499,6 +1564,9 @@ impl ITests {
             // back-to-back; each commissioning attempt blocks for ~30 s, so
             // the wall-clock budget needs ~210 s + setup overhead.
             "TC_DA_1_9" => Some(360),
+            // Declares its own `default_timeout = 600` (subscription-interval
+            // waits across 12+ steps); the process ceiling must exceed it.
+            "TC_IDM_4_3" => Some(700),
             _ => None,
         }
     }
@@ -1621,6 +1689,11 @@ impl ITests {
         matches!(
             test_name,
             "TC_ICDM_2_1" | "TC_ICDM_3_2" | "TC_ICDM_3_3" | "TC_ICDM_3_4" | "TC_ICDM_5_1"
+            // `TC_BINFO_2_2` cross-checks the events it observes against the
+            // declared PICS (`BINFO.S.E02` for `Leave`): with no `--PICS`,
+            // `check_pics` answers false and an *emitted* Leave event fails
+            // the consistency assert.
+            | "TC_BINFO_2_2"
             // `TC_IDM_10_1` (a sub-test of `TC_DeviceBasicComposition`) rejects
             // identifiers carrying a *test* vendor prefix (0xFFF1..=0xFFF4)
             // unless `PICS_SDK_CI_ONLY` is set, in which case it only rejects
@@ -1837,9 +1910,20 @@ impl ITests {
             | "TC_SC_3_4"
             | "TC_SC_3_6"
             | "TC_SC_4_3"
+            // IDM_2_3 batch-reads `BasicInformation` et al on the root endpoint;
+            // CADMIN_1_10 reads `SpecificationVersion` there.
+            | "TC_IDM_2_3"
+            | "TC_CADMIN_1_10"
             // DGGEN (General Diagnostics) lives on the root endpoint.
             | "TC_DGGEN_2_4"
+            | "TC_DGGEN_2_5"
             | "TC_DGGEN_3_2"
+            // BINFO (Basic Information) lives on the root endpoint.
+            | "TC_BINFO_2_1"
+            | "TC_BINFO_2_2"
+            | "TC_BINFO_3_1"
+            // PS (Power Source) is hosted on the root endpoint.
+            | "TC_PS_2_3"
             // DGSW (Software Diagnostics) lives on the root endpoint
             // — `@run_if_endpoint_matches(has_cluster(SoftwareDiagnostics))`
             // skips unless we point the runner at EP0.

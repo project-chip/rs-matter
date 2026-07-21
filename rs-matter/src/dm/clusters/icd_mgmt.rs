@@ -199,8 +199,8 @@ impl Icd {
         init!(Self {
             state <- Mutex::init(RefCell::init(IcdState::init(counter))),
             mode: mode,
-            registrations_changed: Notification::new(),
-            active_extended: Notification::new(),
+            registrations_changed <- Notification::init(),
+            active_extended <- Notification::init(),
         })
     }
 

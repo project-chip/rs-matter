@@ -10,7 +10,12 @@ on:
   workflow_dispatch:
 
 env:
-  RUST_TOOLCHAIN: stable
+  # Pinned (rather than floating `stable`) so that size reports stay
+  # comparable across runs: a compiler upgrade can move codegen by whole
+  # percents, and with a floating toolchain that delta gets attributed to
+  # whatever PR is measured after the release. Bump deliberately, in its own
+  # PR, so the size change is visible in isolation.
+  RUST_TOOLCHAIN: "1.97.1"
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   CARGO_TERM_COLOR: always
 

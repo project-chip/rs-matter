@@ -456,7 +456,10 @@ impl UnitTestingHandlerData {
             }),
             list_fabric_scoped <- Vec::init(),
             timed_write_boolean: false,
-            nullable_boolean <- Nullable::init_none(),
+            // Upstream's test-cluster XML declares `default="false"` (not
+            // null) for this one; `TestSaveAs` reads the default and asserts
+            // `false`. The write/read pairs in `TestCluster` are unaffected.
+            nullable_boolean : Nullable::some(false),
             nullable_bitmap_8 <- Nullable::init_none(),
             nullable_bitmap_16 <- Nullable::init_none(),
             nullable_bitmap_32 <- Nullable::init_none(),

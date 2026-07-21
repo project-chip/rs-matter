@@ -51,6 +51,9 @@ pub const TEST_DEV_DET: BasicInfoConfig = BasicInfoConfig {
     sw_ver: 1,
     sw_ver_str: "1",
     serial_no: "123456789",
+    // First Matter release day; `TC_BINFO_2_1` requires a valid `YYYYMMDD`
+    // (8..16 chars) that is neither in the future nor before this very date.
+    manufacturing_date: "20221004",
     product_name: "ACME Test",
     vendor_name: "ACME",
     device_name: "MyTest",

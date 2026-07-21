@@ -22,13 +22,17 @@
 //! plus a backup battery) hosts two instances on two endpoints, ordered by
 //! [`PowerSourceConfig::order`].
 //!
-//! This handler implements the featureless core of the cluster: the four
-//! attributes that are mandatory regardless of features (`Status`, `Order`,
-//! `Description`, `EndpointList`). The `WIRED` / `BATTERY` / `RECHARGEABLE` /
-//! `REPLACEABLE` feature blocks are not implemented; the generated trait
-//! defaults answer `AttributeNotFound` for them, and `FeatureMap` reads as 0,
-//! which is a spec-valid combination - every feature of this cluster is
-//! optional.
+//! This handler implements the minimal conformant *wired* shape of the
+//! cluster: the four attributes that are mandatory regardless of features
+//! (`Status`, `Order`, `Description`, `EndpointList`), plus the `WIRED`
+//! feature and its single mandatory attribute, `WiredCurrentType`.
+//!
+//! `WIRED` is not optional decoration: the `WIRED` / `BAT` features form an
+//! at-least-one-of choice conformance (`O.a` in the spec), so a `FeatureMap`
+//! of zero is non-conformant - `TC_DeviceConformance` flags it as
+//! "choice conformance .a - 0 selected". The battery-side features
+//! (`BAT` / `RECHG` / `REPLC`) are not implemented; the generated trait
+//! defaults answer `AttributeNotFound` for their attributes.
 //!
 //! That featureless shape is deliberately useful on its own: test harnesses
 //! and ecosystems probe `PowerSource` to decide whether a device is
@@ -64,7 +68,10 @@ pub use crate::dm::clusters::decl::power_source::*;
 /// Exposed as a free constant so callers can spell out
 /// `EpClMatcher::new(Some(ep), Some(power_source::CLUSTER.id))` without
 /// naming the lifetime-parameterised handler type.
-pub const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required)).with_cmds(with!());
+pub const CLUSTER: Cluster<'static> = FULL_CLUSTER
+    .with_features(Feature::WIRED.bits())
+    .with_attrs(with!(required; AttributeId::WiredCurrentType))
+    .with_cmds(with!());
 
 /// The application-supplied description of one power source.
 ///
@@ -88,6 +95,10 @@ pub struct PowerSourceConfig<'a> {
     /// The endpoints this source powers. May be empty, which per the spec
     /// means the source powers the node as a whole.
     pub endpoint_list: &'a [EndptId],
+    /// The current type delivered by this wired source (mandatory under the
+    /// `WIRED` feature, which this handler always claims - see the module
+    /// docs on the `WIRED`/`BAT` choice conformance).
+    pub wired_current_type: WiredCurrentTypeEnum,
 }
 
 impl PowerSourceConfig<'_> {
@@ -100,6 +111,7 @@ impl PowerSourceConfig<'_> {
         order: 0,
         description: "Mains",
         endpoint_list: &[],
+        wired_current_type: WiredCurrentTypeEnum::AC,
     };
 }
 
@@ -149,6 +161,10 @@ impl ClusterHandler for PowerSourceHandler<'_> {
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
         out.set(self.config.description)
+    }
+
+    fn wired_current_type(&self, _ctx: impl ReadContext) -> Result<WiredCurrentTypeEnum, Error> {
+        Ok(self.config.wired_current_type)
     }
 
     fn endpoint_list<P: TLVBuilderParent>(

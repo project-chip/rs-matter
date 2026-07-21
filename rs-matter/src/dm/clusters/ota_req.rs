@@ -278,7 +278,7 @@ impl Providers {
     pub fn init() -> impl Init<Self> {
         init!(Self {
             state <- Mutex::init(RefCell::init(ProvidersState::init())),
-            changed: Notification::new(),
+            changed <- Notification::init(),
         })
     }
 

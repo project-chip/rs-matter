@@ -24,7 +24,10 @@
 //! responder - [`busy`] - which always returns a busy status code to all
 //! incoming IM requests.
 
+use core::cell::Cell;
 use core::num::NonZeroU8;
+
+use crate::utils::sync::blocking::Mutex;
 use core::pin::pin;
 
 use embassy_futures::select::{select3, select4};
@@ -134,6 +137,7 @@ pub struct InteractionModelState<
     subscriptions: Subscriptions<NS>,
     events: Events<NE>,
     networks: SharedNetworks<N>,
+    start_up_emitted: Mutex<Cell<bool>>,
 }
 
 impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
@@ -143,6 +147,7 @@ impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
             subscriptions: Subscriptions::new(),
             events: Events::new(),
             networks: SharedNetworks::new(networks),
+            start_up_emitted: Mutex::new(Cell::new(false)),
         }
     }
 
@@ -153,7 +158,18 @@ impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
             subscriptions <- Subscriptions::init(),
             events <- Events::init(),
             networks <- SharedNetworks::init(networks),
+            start_up_emitted: Mutex::new(Cell::new(false)),
         })
+    }
+
+    /// Suppress the `BasicInformation::StartUp` event that
+    /// [`InteractionModel::run`] would otherwise emit when it first starts.
+    ///
+    /// Call before `run` when starting the stack does *not* correspond to a
+    /// device boot - e.g. a warm restart of the Matter stack within a running
+    /// process, or a test fixture that needs a deterministic events queue.
+    pub fn suppress_start_up_event(&self) {
+        self.start_up_emitted.lock(|flag| flag.set(true));
     }
 
     /// Reset this state's persisted contents to factory defaults - the
@@ -575,10 +591,40 @@ where
     /// job, the subscriptions reporting loop, and - for wireless devices - the
     /// operational connection manager (inert for Ethernet, where `net_ctl` is a
     /// [`NoopWirelessNetCtl`]).
+    /// Emit the `BasicInformation::StartUp` event, once per process lifetime.
+    ///
+    /// Matter Core spec: the node emits `StartUp` "upon completion of a boot
+    /// or reboot process"; the closest stack-observable moment is the start of
+    /// [`Self::run`], i.e. when the node becomes operational. The stack owns
+    /// this (rather than a public emit API the application must remember to
+    /// call) so every device is conformant by default. Event numbers stay
+    /// monotonic across reboots via the events store's epoch persistence, so
+    /// each boot's `StartUp` is a fresh, correctly-numbered event.
+    ///
+    /// Failure to emit (e.g. events buffer exhaustion) is logged, not fatal:
+    /// a missing diagnostic event must not take the node down.
+    fn emit_start_up_once(&self) {
+        let emit = self.state.start_up_emitted.lock(|flag| !flag.replace(true));
+
+        if emit {
+            let result = crate::dm::clusters::decl::basic_information::StartUp::emit_for(
+                self,
+                crate::dm::endpoints::ROOT_ENDPOINT_ID,
+                |event| event.software_version(self.matter.dev_det().sw_ver)?.end(),
+            );
+
+            if let Err(e) = result {
+                warn!("Failed to emit the StartUp event: {:?}", e);
+            }
+        }
+    }
+
     pub async fn run(&self) -> Result<(), Error>
     where
         NC: NetCtl + WirelessDiag + NetChangeNotif,
     {
+        self.emit_start_up_once();
+
         let mut timeouts = pin!(self.run_timeout_checks());
         let mut handler = pin!(self.handler.run(self));
         let mut subs = pin!(self.process_subscriptions(self.matter));

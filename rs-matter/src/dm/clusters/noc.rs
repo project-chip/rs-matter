@@ -756,6 +756,26 @@ impl ClusterHandler for NocHandler {
 
         persist.run()?;
 
+        if matches!(status, NodeOperationalCertStatusEnum::OK) {
+            // Matter Core spec: the node emits `BasicInformation::Leave` for a
+            // fabric that is about to be removed. Emitted through the generic
+            // cross-cluster path (this is the NOC handler, the event belongs
+            // to BasicInformation on EP0) - `TC_BINFO_2_2` step 5 reads it and
+            // checks its `fabricIndex` matches the fabric just removed.
+            //
+            // Best-effort: a missing diagnostic event must not fail the
+            // (already-committed) fabric removal.
+            let emitted = crate::dm::clusters::decl::basic_information::Leave::emit_for(
+                &ctx,
+                ROOT_ENDPOINT_ID,
+                |event| event.fabric_index(fab_idx.get())?.end(),
+            );
+
+            if let Err(e) = emitted {
+                warn!("Failed to emit the Leave event: {:?}", e);
+            }
+        }
+
         // RemoveFabric mutates NOCs, Fabrics, CommissionedFabrics, TrustedRootCerts
         ctx.notify_own_cluster_changed();
 

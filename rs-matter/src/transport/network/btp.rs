@@ -93,9 +93,9 @@ impl Btp {
     pub fn init() -> impl Init<Self> {
         init!(Self {
             inner <- Mutex::init(RefCell::init(BtpInner::init())),
-            recv_notif: Notification::new(),
-            send_notif: Notification::new(),
-            outg_notif: Notification::new(),
+            recv_notif <- Notification::init(),
+            send_notif <- Notification::init(),
+            outg_notif <- Notification::init(),
         })
     }
 
