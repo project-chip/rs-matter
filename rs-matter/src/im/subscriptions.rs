@@ -22,7 +22,7 @@ use embassy_time::Instant;
 #[cfg(feature = "persistent-subscriptions")]
 use crate::error::Error;
 use crate::fabric::MAX_FABRICS;
-use crate::im::{AttrId, ClusterId, EndptId, EventId, EventNumber, IMBuffer, NodeId};
+use crate::im::{AttrId, ClusterId, DeviceLoad, EndptId, EventId, EventNumber, IMBuffer, NodeId};
 #[cfg(feature = "persistent-subscriptions")]
 use crate::persist::{KvBlobStore, PERSISTENT_SUBSCRIPTIONS_START};
 #[cfg(feature = "persistent-subscriptions")]
@@ -212,6 +212,38 @@ impl<const N: usize> Subscriptions<N> {
                 .subscriptions
                 .iter()
                 .any(|s| s.ids.fab_idx == fab_idx && s.ids.peer_node_id == node_id)
+        })
+    }
+
+    /// A consistent snapshot of the subscription-related figures of
+    /// `GeneralDiagnostics::DeviceLoadStatus`.
+    ///
+    /// The Interaction Model message counters are left at their defaults -
+    /// this type knows nothing about them; see
+    /// [`crate::im::InteractionModel::load_stats`].
+    pub fn load_stats(&self, fab_idx: Option<NonZeroU8>) -> DeviceLoad {
+        self.state.lock(|internal| {
+            let internal = internal.borrow();
+
+            DeviceLoad {
+                // Counts the in-flight subscription too, if any.
+                current_subscriptions: internal.subscriptions_count as _,
+                // Walks the active list, so a subscription that is in-flight at
+                // this instant is not counted - it carries no fabric index
+                // while it sits in the `ReportContext`.
+                current_subscriptions_for_fabric: fab_idx
+                    .map(|fab_idx| {
+                        internal
+                            .subscriptions
+                            .iter()
+                            .filter(|s| s.ids.fab_idx == fab_idx)
+                            .count() as _
+                    })
+                    .unwrap_or(0),
+                // The ID counter is monotonic and hands out 1 first.
+                total_subscriptions_established: internal.next_subscription_id.saturating_sub(1),
+                ..Default::default()
+            }
         })
     }
 

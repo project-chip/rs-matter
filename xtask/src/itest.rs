@@ -21,6 +21,7 @@ use core::iter::once;
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::{env, fs};
 
 use clap::ValueEnum;
 
@@ -84,7 +85,7 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TestUserLabelClusterConstraints",
     // "TestTimeSynchronization", // Skipped: TimeSynchronization cluster not implemented by rs-matter (optional, Matter spec §11.16).
     // End-to-end LIT-ICD lifecycle: the runner commissions with
-    // `--icd-registration true` (this DUT is routed into the `--lit-icd-app`
+    // `--icd-registration true` (this DUT is routed into the `lit-icd` app
     // slot, see `yaml_test_command`), so the commissioner registers itself as a
     // Check-In client; the test then reboots the DUT and verifies the registered
     // client and the ICDCounter survive (counter resumes one epoch ahead). Also
@@ -392,89 +393,43 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Device Composition / Conformance (general)
     //
-    // "TC_DeviceBasicComposition",
-    //   // Bundles several MatterBaseTests run after a single wildcard read.
-    //   // The `BasicCompositionTests.setup_class_helper()` PASE blocker that
-    //   // hits TC_AccessChecker is already worked around for this test too
-    //   // (added to `Self::needs_no_pase_shim` — re-enable here when the
-    //   // gaps below are closed and the PASE shim already routes setup
-    //   // through `xtask/scripts/no_pase_setup_class_helper.py`). The
-    //   // remaining independent gaps:
-    //   //
-    //   // 1. `test_TC_DESC_2_2` — checks `Descriptor::TagList` /
-    //   //    `EndpointUniqueID` semantic-tag attributes per Matter Core
-    //   //    spec §9.5 to validate tree-composition tagging on every
-    //   //    endpoint. rs-matter's `DescHandler` doesn't yet expose these.
-    //   //
-    //   // 2. `test_TC_IDM_10_1` — performs a wildcard *event* subscribe
-    //   //    across all endpoints/clusters and asserts no failures. Needs
-    //   //    a triage pass over rs-matter's event-subscription surface.
-    //   //
-    //   // 3. The wildcard read also pulls
-    //   //    `UnitTesting::GeneralErrorBoolean` (attr 0x31, returns
-    //   //    `InvalidDataType`) and `UnitTesting::ClusterErrorBoolean`
-    //   //    (0x32, returns `Invalid`) — see `unit_testing.rs:1042-1048`.
-    //   //    They're spec-mandated to error out (test fixtures for cluster
-    //   //    error handling), but `TC_IDM_12_1`'s JSON dump records them as
-    //   //    `49:ERROR` / `50:ERROR` and the surrounding tests treat the
-    //   //    decode failures as device problems.
+    // Bundles several `MatterBaseTest`s run after a single wildcard read.
+    // `BasicCompositionTests.setup_class_helper()`'s PASE leg is routed through
+    // `xtask/scripts/no_pase_setup_class_helper.py` (see
+    // `Self::needs_no_pase_shim`), and the test is handed the target `.pics`
+    // (see `Self::needs_target_pics`) because `test_TC_IDM_10_1` only tolerates
+    // the test-vendor identifiers the example fixtures use when
+    // `PICS_SDK_CI_ONLY` is set.
     //
-    // "TC_DeviceConformance",
-    //   // Runs the upstream device-conformance suite (six sub-tests:
-    //   // `test_TC_DESC_2_3`, `test_TC_IDM_10_2`/`_3`/`_5`/`_6`,
-    //   // `test_TC_IDM_14_1`) after a wildcard read of the full
-    //   // attribute/command surface. The PASE+CASE race in
-    //   // `BasicCompositionTests.setup_class_helper` is already worked
-    //   // around via `Self::needs_no_pase_shim` (which routes setup
-    //   // through `xtask/scripts/no_pase_setup_class_helper.py`), and
-    //   // the suite is invoked with
-    //   // `--bool-arg ignore_in_progress:True allow_provisional:True`
-    //   // plus `--PICS .../ci-pics-values` (see
-    //   // `Self::extra_python_script_args`).
-    //   //
-    //   // Current status: **5 of 6 sub-tests pass**
-    //   //   - DESC_2_3 ✓
-    //   //   - IDM_10_2 ✓ (cleared by `gen_comm.rs:220`'s
-    //   //     `with_cmds(except!(CommandId::SetTCAcknowledgements))` —
-    //   //     drops the TC-feature-gated commands from
-    //   //     `AcceptedCommandList` per Matter Core spec §11.10.5)
-    //   //   - IDM_10_3 ✓
-    //   //   - IDM_10_5 ✗ (the only remaining failure — see below)
-    //   //   - IDM_10_6 ✓ (cleared by bumping `DEV_TYPE_ROOT_NODE.drev`
-    //   //     1→4 and `DEV_TYPE_ON_OFF_LIGHT.drev` 2→3 in
-    //   //     `rs-matter/src/dm/devices.rs`; rev-4 Root Node additions
-    //   //     are all conditional/optional, rev-3 On/Off Light just
-    //   //     swaps deprecated Scenes 0x0005 for Scenes Management
-    //   //     0x0062 — see Device Library §2.1.1 / §4.1.1)
-    //   //   - IDM_14_1 ✓
-    //   //
-    //   // `test_TC_IDM_10_5` (device-type conformance) still fails on
-    //   // two problem entries:
-    //   //
-    //   //   a. **Groups on EP0** (1 problem, deliberate). The
-    //   //      `system_tests` fixture re-adds Groups at root for
-    //   //      the `TestGroupMessaging` YAML test (group-addressed
-    //   //      writes to `BasicInformation::NodeLabel` need EP0 to be
-    //   //      a member of a multicast group, which only works via
-    //   //      per-endpoint Groups membership per App Cluster §1.3).
-    //   //      Matter Core §7.16.4 explicitly permits extra clusters
-    //   //      on an endpoint, but the conformance checker takes a
-    //   //      strict view. See the `NODE` doc comment in
-    //   //      `examples/src/bin/system_tests.rs` for the full
-    //   //      rationale; the library-level `with_*_sys()` chain and
-    //   //      the `g*` macro variants no longer add Groups at root,
-    //   //      so device-type-pure compositions are the *default*.
-    //   //
-    //   //   b. **Scenes Management cluster** missing on EP1/EP2
-    //   //      (2 problems). On/Off Light at rev 3 mandates Scenes
-    //   //      Management (0x0062). This is a substantial new cluster
-    //   //      implementation (multiple commands — `AddScene`,
-    //   //      `ViewScene`, `RemoveScene`, `RemoveAllScenes`,
-    //   //      `StoreScene`, `RecallScene`, `GetSceneMembership`,
-    //   //      `CopyScene` — plus persistent scene-table storage).
-    //   //      Tracked separately as a future workstream.
-    //   //
-    //   // Re-enable once Scenes Management is implemented.
+    // `test_TC_SM_1_1`'s Groupcast conformance block is skipped because the
+    // device declares `SpecificationVersion` 1.6.0 - see
+    // `basic_info::DEFAULT_MATTER_SPEC_VERSION`, which documents why, and what
+    // has to be implemented before that can be raised to 1.6.1.
+    "TC_DeviceBasicComposition",
+    //
+    // Runs the upstream device-conformance suite (six sub-tests:
+    // `test_TC_DESC_2_3`, `test_TC_IDM_10_2`/`_3`/`_5`/`_6`,
+    // `test_TC_IDM_14_1`) after a wildcard read of the full
+    // attribute/command surface. The PASE+CASE race in
+    // `BasicCompositionTests.setup_class_helper` is worked around via
+    // `Self::needs_no_pase_shim`, and the suite is invoked with
+    // `--bool-arg ignore_in_progress:True allow_provisional:True
+    // fail_on_extra_clusters:False` plus the target `.pics` (see
+    // `Self::extra_python_script_args` / `Self::needs_target_pics`).
+    //
+    // `fail_on_extra_clusters:False` is what makes `test_TC_IDM_10_5`
+    // pass with `Groups` deliberately re-added at the root endpoint for
+    // `TestGroupMessaging` (group-addressed writes to
+    // `BasicInformation::NodeLabel` need EP0 to be a group member). Matter
+    // Core spec 7.16.4 permits extra clusters on an endpoint; the
+    // conformance checker takes a stricter view by default, and upstream
+    // provides this flag for exactly that reason - `all-clusters-app` puts
+    // `Groups` on EP0 too.
+    //
+    // This suite is the automated check for revision-conditional
+    // conformance (`Rev >= vN`), which the `.matter` IDL cannot express and
+    // which therefore compiles clean when wrong - keep it enabled.
+    "TC_DeviceConformance",
 ];
 
 /// Camera cluster tests — run against the `camera_tests` example.
@@ -845,6 +800,21 @@ impl ITests {
             self.chip_builder.build_chip_ota_provider_app(None, false)?;
         }
 
+        // Re-assert the CHIP Python wheel *after* the lazy app builds above.
+        //
+        // Each of them re-enters `setup_chip`, which re-provisions the pigweed
+        // virtualenv and thereby drops everything pip-installed into it from
+        // the outside - including the `matter` wheels that `run_python_test.py`
+        // imports. Installing them once during `itest-setup` is therefore not
+        // enough: a suite that pulls in a CHIP counterpart app (the commissioner
+        // suite via `chip-all-clusters-app`, the `OTA_*` tests via the OTA apps)
+        // silently unprovisions every Python test that runs after it, which
+        // surfaces as `ModuleNotFoundError: No module named 'matter.testing'`.
+        //
+        // `build_python_wheel` probes before doing any work, so this is close to
+        // free when the venv is intact.
+        self.chip_builder.build_python_wheel(false)?;
+
         // Run each test
         for test_name in tests {
             self.run_test(test_name, test_timeout_secs, profile, target)?;
@@ -902,12 +872,64 @@ impl ITests {
             .arg(&test_command);
 
         match run_command(&mut cmd, self.print_cmd_output) {
-            Ok(()) => info!("Test `{test_name}` completed successfully"),
+            Ok(()) => {
+                // A zero exit status is NOT sufficient for the YAML suites:
+                // `run_test_suite.py` has been observed to exit 0 while
+                // individual tests were marked failed, so a failing YAML test
+                // would silently pass the whole run (and CI with it). Consult
+                // the JSON run summary it wrote instead - that is the
+                // authoritative per-test verdict.
+                Self::assert_yaml_summary_clean(test_name)?;
+
+                info!("Test `{test_name}` completed successfully")
+            }
             Err(err) => {
                 info!("Command failed: {}", test_command);
                 return Err(err);
             }
         };
+
+        Ok(())
+    }
+
+    /// Path of the JSON run summary that `run_test_suite.py` is asked to write
+    /// for `test_name` (see `--summary-file` in [`Self::yaml_test_command`]).
+    fn yaml_summary_path(test_name: &str) -> PathBuf {
+        env::temp_dir().join(format!("xtask-yaml-summary-{test_name}.json"))
+    }
+
+    /// Fail if the YAML run summary for `test_name` records any failed test.
+    ///
+    /// Python (`TC_*`) tests propagate their failures through the process exit
+    /// status, so they are left alone; only the YAML suites need this.
+    fn assert_yaml_summary_clean(test_name: &str) -> anyhow::Result<()> {
+        if Self::is_python_test(test_name) {
+            return Ok(());
+        }
+
+        let path = Self::yaml_summary_path(test_name);
+
+        let Ok(summary) = fs::read_to_string(&path) else {
+            // No summary: an older `run_test_suite.py` without `--summary-file`,
+            // or a run that died before writing it. Don't turn that into a
+            // failure - the exit status already passed - but make the loss of
+            // coverage visible rather than silently trusting the exit code.
+            warn!(
+                "Test `{test_name}`: no run summary at {} - cannot verify per-test results",
+                path.display()
+            );
+            return Ok(());
+        };
+
+        // `TestStatus` is a `StrEnum`, so statuses serialize as lowercase
+        // strings ("passed" / "failed" / "cancelled" / "dry_run").
+        if summary.contains("\"status\": \"failed\"") {
+            anyhow::bail!(
+                "Test `{test_name}` reported a FAILED result in its run summary ({}), \
+                 even though the runner exited successfully",
+                path.display()
+            );
+        }
 
         Ok(())
     }
@@ -1152,13 +1174,13 @@ impl ITests {
             let chip_provider = chip_dir.join("out/host/chip-ota-provider-app");
             if rs_is_requestor {
                 format!(
-                    " --ota-requestor-app '{}' --ota-provider-app '{}'",
+                    " --app-path 'ota-requestor:{}' --app-path 'ota-provider:{}'",
                     test_exe_path.display(),
                     chip_provider.display(),
                 )
             } else {
                 format!(
-                    " --ota-provider-app '{}' --ota-requestor-app '{}'",
+                    " --app-path 'ota-provider:{}' --app-path 'ota-requestor:{}'",
                     test_exe_path.display(),
                     chip_requestor.display(),
                 )
@@ -1169,25 +1191,44 @@ impl ITests {
 
         // `TestIcd*` YAML suites are classified as the `LIT_ICD` target by the
         // runner (`target_for_name`), so it launches the DUT from the
-        // `--lit-icd-app` slot (not `--all-clusters-app`) and pairs with
+        // `lit-icd` app slot (not `all-clusters`) and pairs with
         // `--icd-registration true` — driving commissioning-time ICD client
         // registration. Point that slot at our binary.
         let lit_icd_app_clause = if real_name.starts_with("TestIcd") {
-            format!(" --lit-icd-app '{}'", test_exe_path.display())
+            format!(" --app-path 'lit-icd:{}'", test_exe_path.display())
         } else {
             String::new()
         };
 
+        // Ask for a JSON run summary and drop any stale one first: a zero exit
+        // status from `run_test_suite.py` does not imply the tests passed (see
+        // `Self::assert_yaml_summary_clean`), so this file is what we actually
+        // judge the run by.
+        let summary_path = Self::yaml_summary_path(test_name);
+        _ = fs::remove_file(&summary_path);
+
+        // NB: `--tool-path` / `--app-path` are options of the `run` subcommand,
+        // whereas the `--chip-tool` flag they replace was a group-level one -
+        // hence the tool path now sits *after* `run`, not before it.
+        //
+        // The DUT binary is registered under *both* the `all-clusters` and
+        // `all-devices` keys because the runner picks the slot from the test's
+        // own target (`Test_TC_OO_*` resolve to `all-devices`, the YAML suites
+        // to `all-clusters`) and errors with `KeyError: 'default'` when that
+        // slot is empty. Registering a slot no test selects is free: the
+        // runner only ever starts the app it resolved to `default`.
         format!(
-            "{} --log-level warn --target {} --runner chip_tool_python --chip-tool {} run --iterations 1 --test-timeout-seconds {} --all-clusters-app '{}'{}{} --pics-file {}",
+            "{} --log-level warn --target {} --runner chip_tool_python run --iterations 1 --test-timeout-seconds {} --tool-path 'chip-tool:{}' --app-path 'all-clusters:{}' --app-path 'all-devices:{}'{}{} --pics-file {} --summary-file '{}'",
             test_suite_path.display(),
             real_name,
-            chip_tool_path.display(),
             timeout_secs,
+            chip_tool_path.display(),
+            test_exe_path.display(),
             test_exe_path.display(),
             ota_app_clause,
             lit_icd_app_clause,
             test_pics_path.display(),
+            summary_path.display(),
         )
     }
 
@@ -1275,10 +1316,16 @@ impl ITests {
         } else {
             String::new()
         };
+        // Override the framework's 90s per-test `asyncio` budget for tests
+        // whose body legitimately runs longer (e.g. a 180s window-expiry wait).
+        let framework_timeout_clause = Self::per_test_framework_timeout_secs(test_name)
+            .map(|secs| format!(" --timeout {secs}"))
+            .unwrap_or_default();
+
         let script_args = format!(
             "--storage-path /tmp/rs_matter_python_test_storage.json \
              {commissioning_method}{commissioning_args} --endpoint 1 \
-             --paa-trust-store-path credentials/development/paa-root-certs{extra_args_clause}{pics_clause}{th_server_arg}"
+             --paa-trust-store-path credentials/development/paa-root-certs{framework_timeout_clause}{extra_args_clause}{pics_clause}{th_server_arg}"
         );
 
         // Optional `--app-args` passed through to `system_tests`. Used by
@@ -1351,14 +1398,21 @@ impl ITests {
     /// via the vendored monkey-patching wrapper at
     /// `xtask/scripts/no_pase_setup_class_helper.py`. Each of these tests
     /// inherits from `BasicCompositionTests` and calls the helper with the
-    /// default `allow_pase=True`, which on `v1.5-branch` triggers a fresh
-    /// `EstablishPASESession` against a closed-window DUT and either hangs
-    /// 25 s on BlueZ activation or leaks a stale "in-progress PASE" entry
-    /// in the controller. Upstream fix `b180d46945` (PR #41712) on `master`
-    /// switches to `FindOrEstablishPASESession`; once that lands on
-    /// `v1.5-branch` (or we move to a newer chip gitref), this shim and
-    /// the entire `xtask/scripts/no_pase_setup_class_helper.py` wrapper
-    /// can be retired. See the script's docstring for the full diagnosis.
+    /// default `allow_pase=True`, which on `v1.5-branch` triggered a fresh
+    /// `EstablishPASESession` against a closed-window DUT and either hung
+    /// 25 s on BlueZ activation or leaked a stale "in-progress PASE" entry
+    /// in the controller. See the script's docstring for the full diagnosis.
+    ///
+    /// RETIRABLE: the upstream fix (`b180d46945`, PR #41712) *is* present at
+    /// the commit `CHIP_DEFAULT_GITREF` now pins - `basic_composition.py` there
+    /// calls `FindOrEstablishPASESession`, so the session is reused instead of
+    /// re-established and the race this works around is gone. The shim is kept
+    /// for now only so that the Matter 1.6 bump and this cleanup can be
+    /// bisected apart: removing it changes how three certification tests set
+    /// up, and that is only observable in a full `cargo xtask itest` run. Drop
+    /// this function, the branch in `yaml_test_command`, and
+    /// `xtask/scripts/no_pase_setup_class_helper.py` once a cert run has gone
+    /// green with the 1.6 data model.
     fn needs_no_pase_shim(test_name: &str) -> bool {
         matches!(
             test_name,
@@ -1423,9 +1477,13 @@ impl ITests {
         match test_name {
             // Several CADMIN tests open commissioning windows and then wait
             // for them to expire on the device side, which takes 180s+ by
-            // construction.
-            "TC_CADMIN_1_3_4" | "TC_CADMIN_1_5" | "TC_CADMIN_1_9" | "TC_CADMIN_1_11"
-            | "TC_CADMIN_1_15" | "TC_CADMIN_1_22" | "TC_CADMIN_1_25" => Some(300),
+            // construction. `TC_CADMIN_1_3_4` runs *two* such test methods
+            // (`test_TC_CADMIN_1_3` and `_1_4`) back-to-back in one process,
+            // so this whole-process ceiling must cover both, each with the
+            // per-method budget in `per_test_framework_timeout_secs`.
+            "TC_CADMIN_1_3_4" => Some(600),
+            "TC_CADMIN_1_5" | "TC_CADMIN_1_9" | "TC_CADMIN_1_11" | "TC_CADMIN_1_15"
+            | "TC_CADMIN_1_22" | "TC_CADMIN_1_25" => Some(360),
             // TC_OPCREDS_3_8 exercises the VID-Verification feature (Matter
             // 1.4): it sets a 400-byte VVSC and an 85-byte
             // VIDVerificationStatement on a fabric and then issues
@@ -1441,6 +1499,26 @@ impl ITests {
             // back-to-back; each commissioning attempt blocks for ~30 s, so
             // the wall-clock budget needs ~210 s + setup overhead.
             "TC_DA_1_9" => Some(360),
+            _ => None,
+        }
+    }
+
+    /// The Matter test framework's *per-test-method* `asyncio` budget, passed
+    /// as `--timeout`. Distinct from [`Self::per_test_timeout_secs`], which is
+    /// the process-level wall-clock kill covering the whole invocation.
+    ///
+    /// Without `--timeout` the framework uses its 90s `default_timeout`, and a
+    /// test method that waits ~180s for a commissioning window to expire is
+    /// cancelled mid-flight the instant that wait ends — surfacing as an
+    /// `asyncio` `CancelledError`/`TimeoutError`, not an rs-matter fault.
+    /// Upstream passes `--timeout` in the test's metadata `script-args` for the
+    /// same reason; we build our own script args, so we set it here.
+    fn per_test_framework_timeout_secs(test_name: &str) -> Option<u32> {
+        match test_name {
+            // Each of `test_TC_CADMIN_1_3` / `_1_4` waits ~180s for a
+            // commissioning window to expire before opening the next one.
+            "TC_CADMIN_1_3_4" | "TC_CADMIN_1_5" | "TC_CADMIN_1_9" | "TC_CADMIN_1_11"
+            | "TC_CADMIN_1_15" | "TC_CADMIN_1_22" | "TC_CADMIN_1_25" => Some(300),
             _ => None,
         }
     }
@@ -1543,6 +1621,19 @@ impl ITests {
         matches!(
             test_name,
             "TC_ICDM_2_1" | "TC_ICDM_3_2" | "TC_ICDM_3_3" | "TC_ICDM_3_4" | "TC_ICDM_5_1"
+            // `TC_IDM_10_1` (a sub-test of `TC_DeviceBasicComposition`) rejects
+            // identifiers carrying a *test* vendor prefix (0xFFF1..=0xFFF4)
+            // unless `PICS_SDK_CI_ONLY` is set, in which case it only rejects
+            // 0xFFF5 and above. The example fixtures legitimately use test
+            // vendor IDs - the `UnitTesting` cluster is 0xFFF1FC05 and carries
+            // MEI attributes/commands under the 0xFFF2 prefix - exactly as
+            // CHIP's own example apps do. The target `.pics` sets
+            // `PICS_SDK_CI_ONLY=1`, so handing it over is what makes the check
+            // apply the SDK-example rule rather than the shipping-product one.
+            | "TC_DeviceBasicComposition"
+            // `TC_DeviceConformance` likewise reads `is_pics_sdk_ci_only`
+            // (in `check_conformance`), so it needs the target `.pics` too.
+            | "TC_DeviceConformance"
         )
     }
 
@@ -1693,6 +1784,21 @@ impl ITests {
                  --PICS src/app/tests/suites/certification/ci-pics-values \
                  --app-pipe /tmp/rs_matter_bin_info_3_2_fifo"
             }
+            // `test_TC_IDM_10_5` flags every server cluster that is not part of
+            // some device type declared on its endpoint. `system_tests` hosts
+            // `Groups` on EP0 so `TestGroupMessaging` can group-address writes
+            // to `BasicInformation::NodeLabel` (group membership is
+            // per-endpoint, per App Cluster spec 1.3), and no device type grants
+            // `Groups` on a root node - so this cannot be resolved by declaring
+            // more device types, the way the OTA clusters were.
+            //
+            // Matter Core spec 7.16.4 permits extra clusters on an endpoint;
+            // the checker is strict by default and parameterised for exactly
+            // this case. CHIP's own `all-clusters-app` is in the same position
+            // (its EP0 declares only `ma_rootdevice` + `ma_powersource`, yet
+            // hosts `Groups`), which is why upstream provides the knob. With it
+            // off, such findings are recorded as warnings rather than errors.
+            "TC_DeviceConformance" => "--bool-arg fail_on_extra_clusters:false",
             // TC_OPCREDS_3_8 reads `NOCs` non-fabric-filtered with two
             // fabrics, each carrying a max-sized 400-byte VVSC; the
             // resulting payload is well past one MTU and rs-matter falls

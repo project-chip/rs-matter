@@ -39,8 +39,13 @@ use crate::idl::parser::{Entities, Event, Struct, StructField};
 
 pub use parser::Idl;
 
-pub const CSA_STANDARD_CLUSTERS_IDL_V1_5_1_0: &str =
-    include_str!("idl/parser/controller-clusters-V1.5.1.0.matter");
+// NOTE: 1.6.0 rather than 1.6.1, as 1.6.1 is not released yet.
+pub const CSA_STANDARD_CLUSTERS_IDL_V1_6_0_0: &str =
+    include_str!("idl/parser/controller-clusters-V1.6.0.0.matter");
+//pub const CSA_STANDARD_CLUSTERS_IDL_V1_6_1_0: &str =
+//    include_str!("idl/parser/controller-clusters-V1.6.1.0.matter");
+//pub const CSA_STANDARD_CLUSTERS_IDL_V1_5_1_0: &str =
+//    include_str!("idl/parser/controller-clusters-V1.5.1.0.matter");
 //pub const CSA_STANDARD_CLUSTERS_IDL_V1_5_0_1: &str =
 //    include_str!("idl/parser/controller-clusters-V1.5.0.1.matter");
 //pub const CSA_STANDARD_CLUSTERS_IDL_V1_5_0_0: &str =
@@ -298,7 +303,7 @@ mod tests {
     use assert_tokenstreams_eq::assert_tokenstreams_eq;
 
     use super::Idl;
-    use super::{Cluster, CSA_STANDARD_CLUSTERS_IDL_V1_5_1_0};
+    use super::{Cluster, CSA_STANDARD_CLUSTERS_IDL_V1_6_0_0};
 
     use crate::idl::IdlGenerateContext;
 
@@ -325,7 +330,7 @@ mod tests {
 
     #[test]
     fn test_unit_testing_cluster() {
-        let idl = parse_idl(CSA_STANDARD_CLUSTERS_IDL_V1_5_1_0);
+        let idl = parse_idl(CSA_STANDARD_CLUSTERS_IDL_V1_6_0_0);
 
         let cluster = get_cluster_named(&idl, "UnitTesting").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
@@ -343,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_globals() {
-        let mut idl = parse_idl(CSA_STANDARD_CLUSTERS_IDL_V1_5_1_0);
+        let mut idl = parse_idl(CSA_STANDARD_CLUSTERS_IDL_V1_6_0_0);
         let context = IdlGenerateContext::new("rs_matter_crate");
 
         // Take only the first few for testing

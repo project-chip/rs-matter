@@ -70,6 +70,45 @@ pub mod expand;
 pub mod invoker;
 pub mod subscriptions;
 
+/// Resource-utilisation metrics for the node, as reported by
+/// `GeneralDiagnostics::DeviceLoadStatus`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct DeviceLoad {
+    /// Subscriptions currently established on the node, across all fabrics.
+    pub current_subscriptions: u16,
+    /// Subscriptions currently established on the fabric of the reading
+    /// subject. Zero when the figures were gathered without a fabric in scope.
+    pub current_subscriptions_for_fabric: u16,
+    /// Subscriptions accepted since boot, including those since torn down.
+    pub total_subscriptions_established: u32,
+    /// Interaction Model messages sent since boot.
+    pub total_im_messages_sent: u32,
+    /// Interaction Model messages received since boot.
+    pub total_im_messages_received: u32,
+}
+
+/// Interaction-Model state threaded down to cluster handlers via
+/// [`HandlerContext::im_stats`](crate::dm::HandlerContext::im_stats).
+///
+pub trait ImStats {
+    /// The node's resource-utilisation metrics, for
+    /// `GeneralDiagnostics::DeviceLoadStatus`.
+    ///
+    /// `fab_idx` is the fabric of the reading subject, for
+    /// `CurrentSubscriptionsForFabric`; pass `None` when no fabric is in scope.
+    fn device_load(&self, fab_idx: Option<NonZeroU8>) -> DeviceLoad;
+}
+
+impl<T> ImStats for &T
+where
+    T: ImStats,
+{
+    fn device_load(&self, fab_idx: Option<NonZeroU8>) -> DeviceLoad {
+        (**self).device_load(fab_idx)
+    }
+}
+
 /// An `ExchangeHandler` implementation capable of handling responder exchanges for the Interaction Model protocol.
 /// The mutable, owned-together state a [`InteractionModel`] operates on: the
 /// subscriptions table, the events queue and the network store.
@@ -1556,6 +1595,53 @@ where
     }
 }
 
+impl<C, B, T, K, N, NC, R, const NS: usize, const NE: usize>
+    InteractionModel<'_, C, B, T, K, N, NC, R, NS, NE>
+where
+    C: Crypto,
+    B: Buffers<IMBuffer>,
+    T: DataModel,
+    K: KvBlobStoreAccess,
+    N: Networks,
+{
+    /// The node's resource-utilisation metrics, for the `GeneralDiagnostics`
+    /// cluster's `DeviceLoadStatus` attribute.
+    ///
+    /// `fab_idx` is the fabric of the reading subject, for
+    /// `CurrentSubscriptionsForFabric`; pass `None` when no fabric is in scope.
+    ///
+    /// Handlers reach this through [`ImStats::device_load`] rather than calling
+    /// it directly, but it is public so a controller can query its own load.
+    ///
+    /// Deliberately free of the `R: ReportDataHandler` bound the other
+    /// `InteractionModel` methods carry: the figures come from the transport and
+    /// the subscriptions table, so both the accessory and controller roles can
+    /// report them.
+    pub fn load_stats(&self, fab_idx: Option<NonZeroU8>) -> DeviceLoad {
+        let message_counters = self.matter.transport().counters();
+
+        DeviceLoad {
+            total_im_messages_sent: message_counters.im_sent,
+            total_im_messages_received: message_counters.im_received,
+            ..self.state.subscriptions().load_stats(fab_idx)
+        }
+    }
+}
+
+impl<C, B, T, K, N, NC, R, const NS: usize, const NE: usize> ImStats
+    for InteractionModel<'_, C, B, T, K, N, NC, R, NS, NE>
+where
+    C: Crypto,
+    B: Buffers<IMBuffer>,
+    T: DataModel,
+    K: KvBlobStoreAccess,
+    N: Networks,
+{
+    fn device_load(&self, fab_idx: Option<NonZeroU8>) -> DeviceLoad {
+        self.load_stats(fab_idx)
+    }
+}
+
 impl<C, B, T, K, N, NC, R, const NS: usize, const NE: usize> HandlerContext
     for InteractionModel<'_, C, B, T, K, N, NC, R, NS, NE>
 where
@@ -1591,6 +1677,10 @@ where
 
     fn buffers(&self) -> impl Buffers<IMBuffer> + '_ {
         self.buffers
+    }
+
+    fn im_stats(&self) -> impl ImStats + '_ {
+        self
     }
 }
 

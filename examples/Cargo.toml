@@ -68,8 +68,6 @@ resolve = ["rs-matter/zbus"]
 test-tcp = ["rs-matter/large-buffers"]
 # Temporary fix for unexpected cfgs lint
 defmt = []
-# Enables the `webrtc_camera` example that bridges a WebRTC peer to a
-# Matter-spec WebRTC Transport Provider cluster via `str0m`.
 webrtc = [
     "dep:str0m",
     "dep:async-channel",
@@ -93,7 +91,7 @@ async-io = "2"
 async-compat = "0.2"
 blocking = "1"
 futures-lite = "2"
-rs-matter = { path = "../rs-matter", features = ["async-io", "groups", "persistent-subscriptions", "max-groups-per-fabric-12", "max-group-keys-per-fabric-2", "max-group-endpoints-per-fabric-3", "max-sessions-32"] }
+rs-matter = { path = "../rs-matter", features = ["async-io", "groups", "persistent-subscriptions", "max-groups-per-fabric-12", "max-group-keys-per-fabric-3", "max-group-endpoints-per-fabric-3", "max-sessions-32"] }
 rand = { version = "0.8", features = ["std", "std_rng"] }
 async-signal = "0.2"
 socket2 = "0.5"

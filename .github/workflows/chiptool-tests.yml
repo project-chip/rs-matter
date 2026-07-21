@@ -12,10 +12,11 @@ on:
   workflow_dispatch:
     inputs:
       chip_ref:
-        description: 'Chip repository reference (branch/tag/commit)'
+        description: >-
+          Chip repository reference (branch/tag/commit). Leave empty to use
+          `CHIP_DEFAULT_GITREF` from `xtask/src/common.rs`, which is the pin
+          local runs use. Set this only to test against a different revision.
         required: false
-#        default: 'master'
-        default: 'v1.5-branch'
         type: string
 
 env:
@@ -92,7 +93,11 @@ jobs:
 
       - name: Setup Chip environment
         run: |
-          cargo xtask itest-setup --gitref "${{ inputs.chip_ref || 'v1.5-branch' }}"
+          if [ -n "${{ inputs.chip_ref }}" ]; then
+            cargo xtask itest-setup --gitref "${{ inputs.chip_ref }}"
+          else
+            cargo xtask itest-setup
+          fi
 
       - name: Run System integration tests with RustCrypto
         run: |

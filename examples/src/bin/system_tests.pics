@@ -642,10 +642,15 @@ G.C.C05.Tx=0
 GRPKEY.S=1
 # No support for the CacheAndSync feature so far
 GRPKEY.S.F00=0
+# Groupcast (Matter 1.6). Not implemented - the cluster metadata is built with
+# `with!(required)`, so the provisional `GroupcastAdoption` attribute is not
+# advertised either.
+GRPKEY.S.F01=0
 GRPKEY.S.A0000=1
 GRPKEY.S.A0001=1
 GRPKEY.S.A0002=1
 GRPKEY.S.A0003=1
+GRPKEY.S.A0004=0
 
 GRPKEY.S.C00.Rsp=1
 GRPKEY.S.C01.Rsp=1
@@ -938,6 +943,9 @@ DGGEN.S.A0005=1
 DGGEN.S.A0006=1
 DGGEN.S.A0007=1
 DGGEN.S.A0008=1
+# A000a (DeviceLoadStatus) is new and optional in Matter 1.6. `GenDiagHandler`
+# builds its metadata with `with!(required; UpTime)`, so it is not advertised.
+DGGEN.S.A000a=0
 DGGEN.S.C00.Rsp=1
 DGGEN.S.C03.Rsp=1
 DGGEN.S.E00=1
@@ -1703,14 +1711,28 @@ BINFO.S.A0013=1
 BINFO.S.A0014=1
 BINFO.S.A0015=1
 BINFO.S.A0016=1
-# A0018 (ConfigurationVersion) is provisional in Matter 1.5 and is not
-# exposed by the default `BasicInfoHandler` metadata — see the comment on
-# `BasicInfoHandler::CLUSTER` in `rs-matter/src/dm/clusters/basic_info.rs`.
-BINFO.S.A0018=0
+# A0017 (DeviceLocation) is new and provisional in Matter 1.6 and has no
+# implementation, so it is excluded from the default `BasicInfoHandler`
+# metadata — see the comment on `BasicInfoHandler::CLUSTER` in
+# `rs-matter/src/dm/clusters/basic_info.rs`.
+BINFO.S.A0017=0
+# A0018 (ConfigurationVersion) IS exposed by default: although provisional, its
+# conformance is `P, Rev >= v5`, i.e. mandatory from cluster revision 5 onwards,
+# and `BasicInformation` is revision 6 in Matter 1.6. `TestBasicInformation`
+# constrains `AttributeList` to an exact set that includes it.
+BINFO.S.A0018=1
 
-# Manufacturer-specific.
-# Disabled here because the default device doesn't expose `ConfigurationVersion`,
-# so `TC_BINFO_3_2` is PICS-gated off via `pics_TC_BINFO_3_2`.
+# Manufacturer-specific: whether the device can be made to change its
+# configuration and bump `ConfigurationVersion` on demand.
+#
+# Left disabled. The original rationale ("the default device doesn't expose
+# `ConfigurationVersion`") no longer holds - it is exposed by default as of
+# Matter 1.6 - and it never gated `TC_BINFO_3_2` anyway, since that test is run
+# against CHIP's own `certification/ci-pics-values` file rather than this one
+# (see `extra_python_script_args` in `xtask/src/itest.rs`). Enabling it is a
+# separate question from the 1.6 bump: it would opt this device into the
+# simulated-bump assertions of any test that reads this PICS file, which has
+# not been exercised.
 BINFO.S.M.DeviceConfigurationChange=0
 
 # Events

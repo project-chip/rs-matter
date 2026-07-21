@@ -19,9 +19,11 @@
 
 use core::fmt::Debug;
 use core::net::{Ipv4Addr, Ipv6Addr};
+use core::num::NonZeroU8;
 
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
+use crate::im::ImStats;
 use crate::tlv::{Nullable, Octets, TLVBuilder, TLVBuilderParent};
 use crate::utils::epoch::MATTER_EPOCH_SECS;
 use crate::utils::sync::DynBase;
@@ -90,6 +92,12 @@ impl NetifInfo<'_> {
             .end()
     }
 }
+
+/// Re-exported for convenience: `DeviceLoad` is owned by the Interaction Model,
+/// which is where the subscription figures come from and which assembles the
+/// whole struct, but it is reported through this cluster. The message counters
+/// within it are tracked one layer down, by the transport.
+pub use crate::im::DeviceLoad;
 
 /// A trait to which the system implementation of the General Diagnostics Matter cluster
 /// delegates for information.
@@ -211,7 +219,13 @@ impl ClusterHandler for GenDiagHandler<'_> {
         // and accept the `TimeSnapshot` command which is required by the
         // same test (returns SystemTimeMs from `GenDiag::uptime_ms` and a
         // null PosixTimeMs when no Time Synchronization cluster is present).
-        .with_attrs(with!(required; AttributeId::UpTime))
+        //
+        // `DeviceLoadStatus` is new in Matter 1.6 and its conformance is
+        // `Rev >= v3`, i.e. mandatory from cluster revision 3 - which this
+        // cluster now is - so `TC_IDM_10_2` fails if it is absent. The IDL
+        // renders it `optional` (it cannot express revision-conditional
+        // conformance), hence it has to be listed explicitly here.
+        .with_attrs(with!(required; AttributeId::UpTime | AttributeId::DeviceLoadStatus))
         .with_cmds(with!(CommandId::TestEventTrigger | CommandId::TimeSnapshot));
 
     fn dataver(&self) -> u32 {
@@ -267,6 +281,27 @@ impl ClusterHandler for GenDiagHandler<'_> {
 
     fn up_time(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
         self.diag.uptime_ms().map(|uptime| uptime / 1000)
+    }
+
+    fn device_load_status<P: TLVBuilderParent>(
+        &self,
+        ctx: impl ReadContext,
+        builder: DeviceLoadStructBuilder<P>,
+    ) -> Result<P, Error> {
+        // `CurrentSubscriptionsForFabric` is relative to the reading subject, so
+        // hand its fabric down. `fab_idx` is 0 when the read arrives over a
+        // non-fabric-scoped (e.g. PASE) session.
+        let load = ctx
+            .im_stats()
+            .device_load(NonZeroU8::new(ctx.attr().fab_idx));
+
+        builder
+            .current_subscriptions(load.current_subscriptions)?
+            .current_subscriptions_for_fabric(load.current_subscriptions_for_fabric)?
+            .total_subscriptions_established(load.total_subscriptions_established)?
+            .total_interaction_model_messages_sent(load.total_im_messages_sent)?
+            .total_interaction_model_messages_received(load.total_im_messages_received)?
+            .end()
     }
 
     fn test_event_triggers_enabled(&self, _ctx: impl ReadContext) -> Result<bool, Error> {

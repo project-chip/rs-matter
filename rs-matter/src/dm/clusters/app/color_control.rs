@@ -663,9 +663,9 @@ impl<'a, H: ColorControlHooks, OH: OnOffHooks, LH: LevelControlHooks>
     }
 
     fn validate(&self) {
-        if H::CLUSTER.revision != 7 {
+        if H::CLUSTER.revision != 9 {
             panic!(
-                "ColorControl validation: incorrect version number: expected 7 got {}",
+                "ColorControl validation: incorrect version number: expected 9 got {}",
                 H::CLUSTER.revision
             );
         }

@@ -27,8 +27,12 @@ use anyhow::{self, Context};
 
 use log::{debug, info, warn};
 
-/// The default Git reference to use for the Chip repository
-pub const CHIP_DEFAULT_GITREF: &str = "v1.5-branch"; //"master";
+/// The default Git reference to use for the Chip repository.
+///
+/// Move to `v1.6.1-branch` only together with the 1.6.1 IDL *and* raising
+/// `DEFAULT_MATTER_SPEC_VERSION` - which additionally requires Groupcast, see
+/// the note on that constant.
+pub const CHIP_DEFAULT_GITREF: &str = "f3af82eb6fd1aed968e04642cb8d2ac305f5a371"; // tip of `v1.6-branch`
 
 /// The tooling that is checked for presence in the command line
 const REQUIRED_TOOLING: &[&str] = &[
@@ -69,6 +73,12 @@ const REQUIRED_PACKAGES: &[&str] = &[
     // Required by `pyscard` (built as part of the CHIP Python wheel):
     // provides `libpcsclite.pc` and `<winscard.h>` (in /usr/include/PCSC/).
     "libpcsclite-dev",
+    // Required by `ot-commissioner`, which `chip-tool` pulls in transitively
+    // for Thread commissioning: provides `<event2/event.h>`. Note the runtime
+    // `libevent-2.1` is usually present already — it is the `-dev` headers that
+    // are missing, and without them the failure appears deep inside the ninja
+    // build of `chip-tool` rather than at dependency-check time.
+    "libevent-dev",
 ];
 
 /// Execute command with stderr always surpressed
@@ -351,6 +361,27 @@ impl ChipBuilder {
             !self.print_cmd_output,
         )?;
 
+        // Re-probe rather than trust the build's exit status: `build_python.sh`
+        // can return 0 while its `pip install` of the freshly built wheels
+        // silently fails, leaving a venv without `matter.testing`. That then
+        // surfaces much later as every Python test failing with
+        // `ModuleNotFoundError`, which reads like a product regression instead
+        // of a setup failure. Fail here, where the cause is obvious.
+        let verify = Command::new(venv_dir.join("bin/python3"))
+            .arg("-c")
+            .arg("import matter.testing.metadata, matter.testing.tasks, zeroconf, nest_asyncio")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+
+        if !verify.map(|s| s.success()).unwrap_or(false) {
+            anyhow::bail!(
+                "`build_python.sh` completed but the CHIP Python wheel is not importable from {}. \
+                 Re-run with `-v` to surface the build's stderr.",
+                venv_dir.display(),
+            );
+        }
+
         info!("CHIP Python wheel and test requirements installed successfully");
 
         Ok(())
@@ -482,6 +513,13 @@ impl ChipBuilder {
             // (e.g. `v1.5-branch`) is followed rather than pinned to whatever
             // commit was first cloned. Best-effort — an offline fetch failure
             // just leaves the existing checkout in place.
+            //
+            // A raw commit SHA (see `CHIP_DEFAULT_GITREF`) works here too:
+            // GitHub serves reachable SHAs, so `FETCH_HEAD` becomes that commit
+            // and the `reset --hard` below is a no-op re-pin rather than a
+            // fast-forward. It also makes the fetch necessary rather than merely
+            // an optimisation, since a shallow-ish or stale clone may not have
+            // the object yet.
             let mut fetch = Command::new("git");
             fetch
                 .current_dir(chip_dir)

@@ -48,6 +48,7 @@ use rs_matter::dm::clusters::basic_info::{
     ProductAppearance, ProductFinishEnum, FULL_CLUSTER as BASIC_INFO_FULL_CLUSTER,
 };
 use rs_matter::dm::clusters::binding::{self, BindingHandler, Bindings};
+use rs_matter::dm::clusters::decl::scenes_management::FULL_CLUSTER as SCENES_FULL_CLUSTER;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::diag_logs::{self, DiagLogs, DiagLogsHandler, IntentEnum};
 use rs_matter::dm::clusters::eth_diag::{self, ClusterHandler as _};
@@ -67,18 +68,22 @@ use rs_matter::dm::clusters::ota_prov::{
 use rs_matter::dm::clusters::ota_req::{
     parse_bdx_url, ClusterHandler as _, OtaRequestorHandler, OtaState, Provider, Providers,
 };
+use rs_matter::dm::clusters::scenes::{ScenesHandler, ScenesState};
 use rs_matter::dm::clusters::sw_diag::SoftwareFault;
 use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
 };
 use rs_matter::dm::clusters::user_label::{self, UserLabelHandler, UserLabels};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
-use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
+use rs_matter::dm::devices::{
+    DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_OTA_PROVIDER, DEV_TYPE_OTA_REQUESTOR, DEV_TYPE_ROOT_NODE,
+};
 use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
 use rs_matter::dm::networks::eth::EthNetwork;
 use rs_matter::dm::networks::SysNetifs;
 use rs_matter::dm::{
     Async, AttrChangeNotifier, Cluster, DataModel, Dataver, Endpoint, EpClMatcher, Node,
+    SemanticTag,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::im::PROTO_ID_INTERACTION_MODEL;
@@ -114,6 +119,12 @@ static BUFFERS: StaticCell<MatterBuffers<20>> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 static GEN_DIAG: StaticCell<TestEventTriggerDiag> = StaticCell::new();
 static ICD: StaticCell<Icd> = StaticCell::new();
+const SCENES_CAPACITY: usize = 16;
+// Scenes Management is mandatory for the On/Off Light device type, so both
+// light endpoints host it. The scene table is per-endpoint, hence one state
+// per endpoint rather than a shared one.
+static SCENES_STATE_1: StaticCell<ScenesState<SCENES_CAPACITY>> = StaticCell::new();
+static SCENES_STATE_2: StaticCell<ScenesState<SCENES_CAPACITY>> = StaticCell::new();
 // UserLabel registry — host endpoints and labels-per-endpoint counts
 // match `data_model`'s `UserLabelHandler<'_, E, N>` parameterisation.
 static USER_LABELS: StaticCell<UserLabels<1, 4>> = StaticCell::new();
@@ -208,6 +219,23 @@ fn main() -> Result<(), Error> {
         Dataver::new_rand(&mut rand),
         2,
         TestOnOffDeviceLogic::new(false),
+    );
+
+    // Scenes Management for both light endpoints. Each takes the endpoint's
+    // own On/Off handler as its single scene-aware cluster, so a stored scene
+    // captures and recalls that endpoint's OnOff state.
+    let scenes_state_1 = SCENES_STATE_1.uninit().init_with(ScenesState::init());
+    let scenes_state_2 = SCENES_STATE_2.uninit().init_with(ScenesState::init());
+
+    let scenes_handler_1 = ScenesHandler::new(
+        Dataver::new_rand(&mut rand),
+        scenes_state_1,
+        (&on_off_handler_1, ()),
+    );
+    let scenes_handler_2 = ScenesHandler::new(
+        Dataver::new_rand(&mut rand),
+        scenes_state_2,
+        (&on_off_handler_2, ()),
     );
 
     // Shared UserLabel registry. We only host the UserLabel cluster on
@@ -317,6 +345,8 @@ fn main() -> Result<(), Error> {
             unit_testing_data,
             &on_off_handler_1,
             &on_off_handler_2,
+            scenes_handler_1,
+            scenes_handler_2,
             &user_label_handler,
             &binding_handler_ep0,
             &binding_handler_ep1,
@@ -555,6 +585,21 @@ const FIXED_LABELS_EP1: &[FixedLabelEntry<'static>] = &[
     },
 ];
 
+/// The "Common Number" standard semantic tag namespace (Matter Standard
+/// Namespaces spec, chapter 8).
+const NS_COMMON_NUMBER: u8 = 0x07;
+
+/// Semantic tags distinguishing endpoint 1 from endpoint 2.
+///
+/// Both endpoints carry the same device type (`DEV_TYPE_ON_OFF_LIGHT`) under
+/// the same parent, which Matter Core spec 9.5 only permits when each reports a
+/// non-empty and mutually distinct `Descriptor::TagList`. `TC_DESC_2_2` checks
+/// exactly that. "One"/"Two" from the Common Number namespace is the least
+/// presumptuous way to tell two otherwise-identical lights apart - a positional
+/// namespace would assert a physical arrangement this fixture does not have.
+const TAGS_EP1: &[SemanticTag<'static>] = &[SemanticTag::new(NS_COMMON_NUMBER, 0x01)];
+const TAGS_EP2: &[SemanticTag<'static>] = &[SemanticTag::new(NS_COMMON_NUMBER, 0x02)];
+
 const NODE: Node<'static> = Node {
     endpoints: &[
         // `Binding` (cluster ID 0x001E) is wired on EP0 too because
@@ -567,7 +612,15 @@ const NODE: Node<'static> = Node {
         // `Descriptor::ClientList`.
         Endpoint::new_with_clients(
             ROOT_ENDPOINT_ID,
-            devices!(DEV_TYPE_ROOT_NODE),
+            // EP0 hosts the OTA Provider (0x0029) and Requestor (0x002A) clusters for
+            // the `OTA_*` itests. Declaring the matching device types alongside the
+            // Root Node makes them part of this endpoint's composition rather than
+            // "extra" clusters, which `TC_IDM_10_5` (device-type conformance) rejects.
+            devices!(
+                DEV_TYPE_ROOT_NODE,
+                DEV_TYPE_OTA_REQUESTOR,
+                DEV_TYPE_OTA_PROVIDER
+            ),
             clusters!(
                 eth,
                 // Claim `TimeSynchronization.TIME_SYNC_CLIENT`
@@ -610,26 +663,32 @@ const NODE: Node<'static> = Node {
             1,
             devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters!(
-                desc::DescHandler::CLUSTER,
+                desc::CLUSTER_TAG_LIST,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 fixed_label::CLUSTER,
                 binding::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER,
+                // Mandatory for the On/Off Light device type
+                SCENES_FULL_CLUSTER,
                 UnitTestingHandler::CLUSTER
             ),
             &[on_off::FULL_CLUSTER.id],
-        ),
+        )
+        .with_tags(TAGS_EP1),
         Endpoint::new(
             2,
             devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters!(
-                desc::DescHandler::CLUSTER,
+                desc::CLUSTER_TAG_LIST,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
-                TestOnOffDeviceLogic::CLUSTER
+                TestOnOffDeviceLogic::CLUSTER,
+                // Mandatory for the On/Off Light device type
+                SCENES_FULL_CLUSTER
             ),
-        ),
+        )
+        .with_tags(TAGS_EP2),
     ],
 };
 
@@ -675,11 +734,24 @@ const ICD_COUNTER_EPOCH: u32 = 100;
 const OTA_PROTOCOLS: &[DownloadProtocolEnum] = &[DownloadProtocolEnum::BDXSynchronous];
 
 /// `BasicInformation` cluster metadata that exposes the provisional
-/// `ConfigurationVersion` attribute (only `Reachable` is excluded). Used by
-/// `NODE_BINFO_CV_EXPOSED` when the test runner wires the device up for
-/// `TC_BINFO_3_2` (signalled by the presence of `--app-pipe`).
+/// `ConfigurationVersion` attribute. Used by `NODE_BINFO_CV_EXPOSED` when the
+/// test runner wires the device up for `TC_BINFO_3_2` (signalled by the
+/// presence of `--app-pipe`).
+///
+/// `DeviceLocation` must be excluded alongside `Reachable`: it is new in Matter
+/// 1.6 and has no implementation, so the generated handler answers reads of it
+/// with `AttributeNotFound`. Advertising it here would put an unreadable
+/// attribute in `AttributeList`.
+///
+/// NOTE: since `BasicInfoHandler::CLUSTER` now exposes `ConfigurationVersion`
+/// by default too (mandatory from cluster revision 5 - see the comment there),
+/// this alternate metadata is identical to the default one, and the
+/// `--app-pipe`-gated node swap below is arguably redundant. It is kept for now
+/// so the 1.6 migration does not also change how `TC_BINFO_3_2` is wired up.
 const BASIC_INFO_CLUSTER_CV_EXPOSED: Cluster<'static> = BASIC_INFO_FULL_CLUSTER
-    .with_attrs(rs_matter::except!(BasicInfoAttributeId::Reachable))
+    .with_attrs(rs_matter::except!(
+        BasicInfoAttributeId::Reachable | BasicInfoAttributeId::DeviceLocation
+    ))
     .with_cmds(rs_matter::with!());
 
 /// Alternate Node metadata used when the test framework signals it intends
@@ -709,7 +781,15 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
         // `TestUserLabelClusterConstraints` reasons documented on `NODE`.
         Endpoint::new_with_clients(
             ROOT_ENDPOINT_ID,
-            devices!(DEV_TYPE_ROOT_NODE),
+            // EP0 hosts the OTA Provider (0x0029) and Requestor (0x002A) clusters for
+            // the `OTA_*` itests. Declaring the matching device types alongside the
+            // Root Node makes them part of this endpoint's composition rather than
+            // "extra" clusters, which `TC_IDM_10_5` (device-type conformance) rejects.
+            devices!(
+                DEV_TYPE_ROOT_NODE,
+                DEV_TYPE_OTA_REQUESTOR,
+                DEV_TYPE_OTA_PROVIDER
+            ),
             clusters!(
                 desc::DescHandler::CLUSTER,
                 acl::AclHandler::CLUSTER,
@@ -748,26 +828,32 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
             1,
             devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters!(
-                desc::DescHandler::CLUSTER,
+                desc::CLUSTER_TAG_LIST,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 fixed_label::CLUSTER,
                 binding::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER,
+                // Mandatory for the On/Off Light device type
+                SCENES_FULL_CLUSTER,
                 UnitTestingHandler::CLUSTER
             ),
             &[on_off::FULL_CLUSTER.id],
-        ),
+        )
+        .with_tags(TAGS_EP1),
         Endpoint::new(
             2,
             devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters!(
-                desc::DescHandler::CLUSTER,
+                desc::CLUSTER_TAG_LIST,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
-                TestOnOffDeviceLogic::CLUSTER
+                TestOnOffDeviceLogic::CLUSTER,
+                // Mandatory for the On/Off Light device type
+                SCENES_FULL_CLUSTER
             ),
-        ),
+        )
+        .with_tags(TAGS_EP2),
     ],
 };
 
@@ -784,6 +870,8 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
     on_off_1: &'a OnOffHandler<'a, OH, LH>,
     on_off_2: &'a OnOffHandler<'a, OH, LH>,
+    scenes_1: ScenesHandler<'a, SCENES_CAPACITY, (&'a OnOffHandler<'a, OH, LH>, ())>,
+    scenes_2: ScenesHandler<'a, SCENES_CAPACITY, (&'a OnOffHandler<'a, OH, LH>, ())>,
     user_label_handler: &'a UserLabelHandler<'a, 1, 4>,
     binding_handler_ep0: &'a BindingHandler<'a, 16>,
     binding_handler_ep1: &'a BindingHandler<'a, 16>,
@@ -871,6 +959,10 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 on_off::HandlerAsyncAdaptor(on_off_1),
             )
             .chain(
+                EpClMatcher::new(Some(1), Some(SCENES_FULL_CLUSTER.id)),
+                scenes_1.adapt(),
+            )
+            .chain(
                 EpClMatcher::new(Some(1), Some(UnitTestingHandler::CLUSTER.id)),
                 Async(
                     UnitTestingHandler::new(Dataver::new_rand(&mut rand), unit_testing_data)
@@ -893,6 +985,10 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             .chain(
                 EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
                 on_off::HandlerAsyncAdaptor(on_off_2),
+            )
+            .chain(
+                EpClMatcher::new(Some(2), Some(SCENES_FULL_CLUSTER.id)),
+                scenes_2.adapt(),
             )
             // OTA Software Update Provider on the root endpoint (OTA role). The
             // handler is always present but only matched when `NODE` declares

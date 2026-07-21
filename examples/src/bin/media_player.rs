@@ -267,6 +267,41 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
         Ok(self.state.get())
     }
 
+    // `AvailableCommands` and `ContentInfo` are mandatory `MediaPlayback`
+    // attributes in the Matter 1.6.1 IDL but do not exist at all in 1.6.0,
+    // which is what this crate currently generates against. Kept commented, to
+    // be restored together with `CSA_STANDARD_CLUSTERS_IDL_V1_6_1_0`.
+    //
+    // /// This example accepts a fixed set of commands that never varies with
+    // /// the playback state, so there is no dynamic list to report and the
+    // /// attribute reads as null.
+    // async fn available_commands<P: TLVBuilderParent>(
+    //     &self,
+    //     _ctx: impl ReadContext,
+    //     builder: ArrayAttributeRead<
+    //         NullableBuilder<P, ToTLVArrayBuilder<P, u32>>,
+    //         ToTLVBuilder<P, u32>,
+    //     >,
+    // ) -> Result<P, Error> {
+    //     match builder {
+    //         ArrayAttributeRead::ReadAll(builder) | ArrayAttributeRead::ReadNone(builder) => {
+    //             builder.null()
+    //         }
+    //         // A null list has no elements to index into
+    //         ArrayAttributeRead::ReadOne(..) => Err(ErrorCode::ConstraintError.into()),
+    //     }
+    // }
+    //
+    // /// This example tracks no metadata about what is playing, so the
+    // /// attribute reads as null.
+    // async fn content_info<P: TLVBuilderParent>(
+    //     &self,
+    //     _ctx: impl ReadContext,
+    //     builder: NullableBuilder<P, ContentInfoStructBuilder<P>>,
+    // ) -> Result<P, Error> {
+    //     builder.null()
+    // }
+
     async fn handle_play<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
@@ -513,6 +548,28 @@ impl content_launcher::ClusterAsyncHandler for ContentHandler {
             .data(None)?
             .end()
     }
+
+    // `ContentReplicationRequest` and `PlayPreset` are `ContentLauncher`
+    // commands in the Matter 1.6.1 IDL only - 1.6.0 has neither. Neither is
+    // listed in `CLUSTER`'s `with_cmds(..)` above, so they were never
+    // dispatched; the trait merely required them to exist. Kept commented, to
+    // be restored together with `CSA_STANDARD_CLUSTERS_IDL_V1_6_1_0`.
+    //
+    // async fn handle_content_replication_request<P: TLVBuilderParent>(
+    //     &self,
+    //     _ctx: impl InvokeContext,
+    //     _response: ContentReplicationResponseBuilder<P>,
+    // ) -> Result<P, Error> {
+    //     Err(ErrorCode::CommandNotFound.into())
+    // }
+    //
+    // async fn handle_play_preset(
+    //     &self,
+    //     _ctx: impl InvokeContext,
+    //     _request: PlayPresetRequest<'_>,
+    // ) -> Result<(), Error> {
+    //     Err(ErrorCode::CommandNotFound.into())
+    // }
 }
 
 #[derive(Clone, Debug)]
