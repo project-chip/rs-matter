@@ -68,6 +68,7 @@ use rs_matter::dm::clusters::ota_prov::{
 use rs_matter::dm::clusters::ota_req::{
     parse_bdx_url, ClusterHandler as _, OtaRequestorHandler, OtaState, Provider, Providers,
 };
+use rs_matter::dm::clusters::power_source::{self, PowerSourceConfig, PowerSourceHandler};
 use rs_matter::dm::clusters::scenes::{ScenesHandler, ScenesState};
 use rs_matter::dm::clusters::sw_diag::SoftwareFault;
 use rs_matter::dm::clusters::unit_testing::{
@@ -76,7 +77,8 @@ use rs_matter::dm::clusters::unit_testing::{
 use rs_matter::dm::clusters::user_label::{self, UserLabelHandler, UserLabels};
 use rs_matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_DET};
 use rs_matter::dm::devices::{
-    DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_OTA_PROVIDER, DEV_TYPE_OTA_REQUESTOR, DEV_TYPE_ROOT_NODE,
+    DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_OTA_PROVIDER, DEV_TYPE_OTA_REQUESTOR, DEV_TYPE_POWER_SOURCE,
+    DEV_TYPE_ROOT_NODE,
 };
 use rs_matter::dm::endpoints::{self, ROOT_ENDPOINT_ID};
 use rs_matter::dm::networks::eth::EthNetwork;
@@ -617,7 +619,11 @@ const NODE: Node<'static> = Node {
             devices!(
                 DEV_TYPE_ROOT_NODE,
                 DEV_TYPE_OTA_REQUESTOR,
-                DEV_TYPE_OTA_PROVIDER
+                DEV_TYPE_OTA_PROVIDER,
+                // Declared alongside Root Node per Device Library 2.1.4; makes
+                // the `PowerSource` cluster below part of the endpoint's
+                // composition rather than an undeclared extra (`TC_IDM_10_5`).
+                DEV_TYPE_POWER_SOURCE
             ),
             clusters!(
                 eth,
@@ -643,7 +649,10 @@ const NODE: Node<'static> = Node {
                 DIAGNOSTIC_LOGS_CLUSTER,
                 // ICD Management (0x0046), Check-In Protocol only, for the
                 // `TC_ICDM_*` itests.
-                ICD_MGMT_CLUSTER
+                ICD_MGMT_CLUSTER,
+                // PowerSource (0x002F), featureless/wired, for `TC_PS_2_3` and
+                // for `is_battery_powered()`-style probes by test helpers.
+                power_source::CLUSTER
             ),
             &[on_off::FULL_CLUSTER.id],
         ),
@@ -1019,6 +1028,17 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             .chain(
                 EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(ICD_MGMT_CLUSTER.id)),
                 Async(IcdMgmtHandler::new(Dataver::new_rand(&mut rand), icd).adapt()),
+            )
+            // PowerSource on the root endpoint; the fixture is mains-powered.
+            .chain(
+                EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(power_source::CLUSTER.id)),
+                Async(
+                    PowerSourceHandler::new(
+                        Dataver::new_rand(&mut rand),
+                        &PowerSourceConfig::MAINS,
+                    )
+                    .adapt(),
+                ),
             ),
     )
 }
