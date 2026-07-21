@@ -190,6 +190,12 @@ impl<C: Crypto> E2eRunner<C> {
     {
         self.init()?;
 
+        // The e2e fixtures assert exact event queues; the boot-time
+        // `BasicInformation::StartUp` emission is covered end-to-end by the
+        // chip-tool integration tests (`TC_BINFO_2_2`), so keep it out of the
+        // deterministic unit expectations here.
+        state.suppress_start_up_event();
+
         let mut buf1 = [heapless::Vec::new(); 1];
         let mut buf2 = [heapless::Vec::new(); 1];
 

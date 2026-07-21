@@ -1096,9 +1096,21 @@ impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize> TimeZones
         // - at most `TimeZoneListMaxSize` entries, else RESOURCE_EXHAUSTED
         // - first entry `validAt` SHALL be 0, else CONSTRAINT_ERROR
         // - subsequent entries `validAt` SHALL NOT be 0, else CONSTRAINT_ERROR
+        // - strictly ascending by `validAt`, else CONSTRAINT_ERROR. NB: the
+        //   spec states no such rule explicitly - it doesn't need to: with the
+        //   spec's own cap of 2 entries (`TimeZoneListMaxSize` "may take the
+        //   value of 1 or 2") the two checks above already force
+        //   ascending order. The explicit check is defense-in-depth for
+        //   larger `TIME_ZONE_MAX` instantiations (themselves off-spec, but
+        //   expressible), where an unsorted list would silently corrupt the
+        //   active-entry resolution in `active_time_zone` /
+        //   `next_transition` / the LocalTime computation, all of which
+        //   assume ascending order.
         // - `offset` in -12h..=+14h, `name` at most 64 bytes, else
         //   CONSTRAINT_ERROR
         // - an *empty* list is valid and resets to the default entry
+        let mut prev_valid_at: Option<u64> = None;
+
         for (index, entry) in request.time_zone()?.iter().enumerate() {
             let entry = entry?;
 
@@ -1111,6 +1123,14 @@ impl<const TIME_ZONE_MAX: usize, const DST_OFFSET_MAX: usize> TimeZones
             if (index == 0) != (valid_at == 0) {
                 Err(ErrorCode::ConstraintError)?;
             }
+
+            if let Some(prev) = prev_valid_at {
+                if valid_at <= prev {
+                    Err(ErrorCode::ConstraintError)?;
+                }
+            }
+
+            prev_valid_at = Some(valid_at);
 
             let offset = entry.offset()?;
 

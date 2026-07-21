@@ -162,6 +162,16 @@ impl<N, const NS: usize, const NE: usize> InteractionModelState<N, NS, NE> {
         })
     }
 
+    /// Suppress the `BasicInformation::StartUp` event that
+    /// [`InteractionModel::run`] would otherwise emit when it first starts.
+    ///
+    /// Call before `run` when starting the stack does *not* correspond to a
+    /// device boot - e.g. a warm restart of the Matter stack within a running
+    /// process, or a test fixture that needs a deterministic events queue.
+    pub fn suppress_start_up_event(&self) {
+        self.start_up_emitted.lock(|flag| flag.set(true));
+    }
+
     /// Reset this state's persisted contents to factory defaults - the
     /// events-queue epoch, the network store and (if compiled in) the persisted
     /// subscriptions - removing them from `kv` using the scratch buffer
