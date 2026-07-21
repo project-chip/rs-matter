@@ -62,8 +62,7 @@ use embassy_futures::select::select;
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{
     ArrayAttributeRead, AttrChangeNotifier, Attribute, Cluster, Command, Dataver, EndptId,
-    EventEmitter, Handler, HandlerContext, InvokeContext, InvokeReply, MatchContext, NodeId,
-    NonBlockingHandler, Quality, ReadContext, ReadReply, WriteContext,
+    EventEmitter, HandlerContext, InvokeContext, NodeId, Quality, ReadContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::persist::{
@@ -1434,6 +1433,11 @@ impl<'a> TimeSyncHandler<'a> {
         self.ntp_server = Some(ntp_server);
         self
     }
+
+    /// Adapt the handler instance to the generic `rs-matter` `Handler` trait.
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
+    }
 }
 
 impl ClusterHandler for TimeSyncHandler<'_> {
@@ -1449,6 +1453,105 @@ impl ClusterHandler for TimeSyncHandler<'_> {
 
     // ---- Always-on reads (served from Matter-wide LKG state, not
     // from the user-supplied `TimeSync` provider).
+
+    async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+        // The transition timer only exists for the batteries-included
+        // [`TimeZoneStore`] shape; custom providers drive their own events.
+        let Some(store) = self.tz_store else {
+            return core::future::pending().await;
+        };
+
+        // Change-edge state. `None` = not yet evaluated (no valid UTC time) -
+        // the first evaluation baselines silently, so a boot does not emit
+        // spurious "changed to inactive" events; every later divergence emits.
+        let mut last_tz: Option<i32> = None;
+        let mut last_dst_active: Option<bool> = None;
+        let mut last_dst_usable: Option<bool> = None;
+
+        loop {
+            let now = ctx
+                .matter()
+                .with_state(|state| state.rtc.utc_time())
+                .reliable();
+
+            let next = if let Some(now) = now {
+                // ---- TimeZoneStatus: the active offset changed.
+                let (tz_offset, tz_name) = store.active_time_zone(now);
+
+                if last_tz != Some(tz_offset) {
+                    if last_tz.is_some() {
+                        let emitted = TimeZoneStatus::emit_for(&ctx, ROOT_ENDPOINT_ID, |event| {
+                            event.offset(tz_offset)?.name(tz_name.as_deref())?.end()
+                        });
+
+                        if let Err(e) = emitted {
+                            warn!("Failed to emit TimeZoneStatus: {:?}", e);
+                        }
+                    }
+
+                    last_tz = Some(tz_offset);
+                }
+
+                // ---- DSTStatus: DST became active / inactive.
+                let dst_active = store.active_dst_offset(now).is_some();
+
+                if last_dst_active != Some(dst_active) {
+                    if last_dst_active.is_some() || dst_active {
+                        let emitted = DSTStatus::emit_for(&ctx, ROOT_ENDPOINT_ID, |event| {
+                            event.dst_offset_active(dst_active)?.end()
+                        });
+
+                        if let Err(e) = emitted {
+                            warn!("Failed to emit DSTStatus: {:?}", e);
+                        }
+                    }
+
+                    last_dst_active = Some(dst_active);
+                }
+
+                // ---- DSTTableEmpty: the table just ran out of usable DST
+                // information - cleared (e.g. by SetTimeZone) or every entry
+                // expired. Edge-triggered on usable -> not-usable; see
+                // `dst_usable`.
+                let dst_usable = store.dst_usable(now);
+
+                if last_dst_usable != Some(dst_usable) {
+                    if !dst_usable && last_dst_usable == Some(true) {
+                        let emitted =
+                            DSTTableEmpty::emit_for(&ctx, ROOT_ENDPOINT_ID, |event| event.end());
+
+                        if let Err(e) = emitted {
+                            warn!("Failed to emit DSTTableEmpty: {:?}", e);
+                        }
+                    }
+
+                    last_dst_usable = Some(dst_usable);
+                }
+
+                store.next_transition(now)
+            } else {
+                // No valid UTC time - nothing is "active"; wait for a change
+                // (SetUTCTime wakes us via `note_changed`).
+                None
+            };
+
+            // Sleep until the next scheduled boundary (with a small margin so
+            // we evaluate just *after* it), or until the store changes.
+            let boundary = async {
+                match (next, now) {
+                    (Some(at), Some(now)) => {
+                        let delta_us = at.saturating_sub(now).saturating_add(100_000);
+
+                        embassy_time::Timer::after(embassy_time::Duration::from_micros(delta_us))
+                            .await
+                    }
+                    _ => core::future::pending().await,
+                }
+            };
+
+            select(boundary, store.wait_changed()).await;
+        }
+    }
 
     fn utc_time(&self, ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
         Ok(Nullable::new(
@@ -1813,136 +1916,6 @@ impl ClusterHandler for TimeSyncHandler<'_> {
             .set_default_ntp(&request)
     }
 }
-
-// Implement `Handler` directly - as `IdentifyHandler` does - so we get to
-// provide the transition-timer `run` task while the read/write/invoke /
-// bump_dataver dispatch still delegates to the generated `HandlerAdaptor`
-// over our (sync) `ClusterHandler` impl above.
-//
-// TODO: Once the sync `ClusterHandler` trait grows its own `run` hook
-// (https://github.com/project-chip/rs-matter/pull/516), collapse this back
-// to `.adapt()` and move `run` into the trait impl.
-impl Handler for TimeSyncHandler<'_> {
-    fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
-        Handler::read(&HandlerAdaptor(self), ctx, reply)
-    }
-
-    fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
-        Handler::write(&HandlerAdaptor(self), ctx)
-    }
-
-    fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
-        Handler::invoke(&HandlerAdaptor(self), ctx, reply)
-    }
-
-    fn bump_dataver(&self, ctx: impl MatchContext) {
-        Handler::bump_dataver(&HandlerAdaptor(self), ctx)
-    }
-
-    async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
-        // The transition timer only exists for the batteries-included
-        // [`TimeZoneStore`] shape; custom providers drive their own events.
-        let Some(store) = self.tz_store else {
-            return core::future::pending().await;
-        };
-
-        // Change-edge state. `None` = not yet evaluated (no valid UTC time) -
-        // the first evaluation baselines silently, so a boot does not emit
-        // spurious "changed to inactive" events; every later divergence emits.
-        let mut last_tz: Option<i32> = None;
-        let mut last_dst_active: Option<bool> = None;
-        let mut last_dst_usable: Option<bool> = None;
-
-        loop {
-            let now = ctx
-                .matter()
-                .with_state(|state| state.rtc.utc_time())
-                .reliable();
-
-            let next = if let Some(now) = now {
-                // ---- TimeZoneStatus: the active offset changed.
-                let (tz_offset, tz_name) = store.active_time_zone(now);
-
-                if last_tz != Some(tz_offset) {
-                    if last_tz.is_some() {
-                        let emitted = TimeZoneStatus::emit_for(&ctx, ROOT_ENDPOINT_ID, |event| {
-                            event.offset(tz_offset)?.name(tz_name.as_deref())?.end()
-                        });
-
-                        if let Err(e) = emitted {
-                            warn!("Failed to emit TimeZoneStatus: {:?}", e);
-                        }
-                    }
-
-                    last_tz = Some(tz_offset);
-                }
-
-                // ---- DSTStatus: DST became active / inactive.
-                let dst_active = store.active_dst_offset(now).is_some();
-
-                if last_dst_active != Some(dst_active) {
-                    if last_dst_active.is_some() || dst_active {
-                        let emitted = DSTStatus::emit_for(&ctx, ROOT_ENDPOINT_ID, |event| {
-                            event.dst_offset_active(dst_active)?.end()
-                        });
-
-                        if let Err(e) = emitted {
-                            warn!("Failed to emit DSTStatus: {:?}", e);
-                        }
-                    }
-
-                    last_dst_active = Some(dst_active);
-                }
-
-                // ---- DSTTableEmpty: the table just ran out of usable DST
-                // information - cleared (e.g. by SetTimeZone) or every entry
-                // expired. Edge-triggered on usable -> not-usable; see
-                // `dst_usable`.
-                let dst_usable = store.dst_usable(now);
-
-                if last_dst_usable != Some(dst_usable) {
-                    if !dst_usable && last_dst_usable == Some(true) {
-                        let emitted =
-                            DSTTableEmpty::emit_for(&ctx, ROOT_ENDPOINT_ID, |event| event.end());
-
-                        if let Err(e) = emitted {
-                            warn!("Failed to emit DSTTableEmpty: {:?}", e);
-                        }
-                    }
-
-                    last_dst_usable = Some(dst_usable);
-                }
-
-                store.next_transition(now)
-            } else {
-                // No valid UTC time - nothing is "active"; wait for a change
-                // (SetUTCTime wakes us via `note_changed`).
-                None
-            };
-
-            // Sleep until the next scheduled boundary (with a small margin so
-            // we evaluate just *after* it), or until the store changes.
-            let boundary = async {
-                match (next, now) {
-                    (Some(at), Some(now)) => {
-                        let delta_us = at.saturating_sub(now).saturating_add(100_000);
-
-                        embassy_time::Timer::after(embassy_time::Duration::from_micros(delta_us))
-                            .await
-                    }
-                    _ => core::future::pending().await,
-                }
-            };
-
-            select(boundary, store.wait_changed()).await;
-        }
-    }
-}
-
-// Marker impl: `Handler::read`/`write`/`invoke` above are fully synchronous,
-// so the chain can compose this handler via the `Async(...)` lifter like the
-// other sync clusters.
-impl NonBlockingHandler for TimeSyncHandler<'_> {}
 
 impl core::fmt::Debug for TimeSyncHandler<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

@@ -1,5 +1,11 @@
 target
 Cargo.lock
+# The bloat-check lockfile is deliberately committed: the size-tracking CI
+# resolves dependencies at build time, and an unlocked graph means a routine
+# dependency release shows up as a flash-size regression attributed to
+# whatever PR happens to be measured next. Bump it consciously (and expect
+# the size report to move when you do).
+!bloat-check/Cargo.lock
 .vscode
 .idea
 .claude
@@ -11,3 +17,7 @@ devenv.lock
 
 # Build artifacts and temporary files from Xtask
 .build/
+
+# Python bytecode caches (e.g. from running the .github/scripts/memory
+# size-report tooling locally)
+__pycache__/

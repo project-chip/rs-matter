@@ -83,7 +83,9 @@ const POWER_SOURCE_EP1: PowerSourceConfig = PowerSourceConfig {
 };
 use rs_matter::dm::clusters::scenes::{ScenesHandler, ScenesState};
 use rs_matter::dm::clusters::sw_diag::SoftwareFault;
-use rs_matter::dm::clusters::time_sync::{ClusterHandler as _, TimeSyncHandler, TimeZoneStore};
+use rs_matter::dm::clusters::time_sync::{
+    self, ClusterHandler as _, TimeSyncHandler, TimeZoneStore,
+};
 use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
 };
@@ -932,7 +934,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             // handler's own background task is inert.
             .chain(
                 EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(TimeSyncHandler::CLUSTER.id)),
-                Async(time_sync_handler),
+                Async(time_sync::HandlerAdaptor(time_sync_handler)),
             )
             // Groups handler at the root endpoint. The library-level
             // `with_*_sys()` chain in `rs-matter/src/dm/endpoints.rs`
