@@ -39,17 +39,21 @@
 //! ```ignore
 //! // One registry, sized for up to `E` endpoints, each holding up to `N` labels.
 //! let labels = UserLabels::<2, 4>::new();
-//! labels.load_persist(&mut kv, kv_buf).await?;
 //!
 //! let ep0_handler = UserLabelHandler::new(Dataver::new_rand(rand), 0, &labels);
 //! let ep1_handler = UserLabelHandler::new(Dataver::new_rand(rand), 1, &labels);
+//!
+//! // ... and once the `InteractionModel` is constructed, re-hydrate the registry
+//! // (and every other persistent cluster) by delivering the `Startup` lifecycle op:
+//! im.lifecycle(LifecycleOp::Startup).await?;
 //! ```
 
 use crate::dm::{
-    ArrayAttributeRead, ArrayAttributeWrite, Cluster, Dataver, EndptId, ReadContext, WriteContext,
+    ArrayAttributeRead, ArrayAttributeWrite, Cluster, Dataver, EndptId, HandlerContext,
+    LifecycleOp, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::persist::{KvBlobStore, Persist};
+use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, TLVArray, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -154,8 +158,9 @@ pub struct UserLabels<const E: usize, const N: usize = 4> {
 }
 
 impl<const E: usize, const N: usize> UserLabels<E, N> {
-    /// Create an empty registry. Call [`Self::load_persist`] at
-    /// application startup to populate it from KV.
+    /// Create an empty registry. It is populated from KV at startup
+    /// via [`Self::load_persist`], driven by the [`LifecycleOp::Startup`]
+    /// lifecycle operation delivered to the data model.
     ///
     /// Prefer [`Self::init`] for non-trivial `E` * `N` so the
     /// registry's storage can be initialised in-place (typically in a
@@ -183,18 +188,15 @@ impl<const E: usize, const N: usize> UserLabels<E, N> {
         })
     }
 
-    /// Re-hydrate the registry from `store` under [`USER_LABELS_KEY`].
-    /// Call once at application startup, before exposing the data
-    /// model to commissioners, so subsequent reads see the labels
-    /// written before the last reboot.
+    /// Re-hydrate the registry from `store` under [`USER_LABELS_KEY`],
+    /// so subsequent reads see the labels written before the last reboot.
+    ///
+    /// Called on startup via the [`LifecycleOp::Startup`] lifecycle operation
+    /// delivered to the [`UserLabelHandler`] instance(s) borrowing this registry.
     ///
     /// Missing key (first boot, or persistence cleared) is not an
     /// error — the registry simply stays empty.
-    pub async fn load_persist<S: KvBlobStore>(
-        &self,
-        mut store: S,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
+    pub fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
         let Some(data) = store.load(USER_LABELS_KEY, buf)? else {
             // No prior persistence — reset to empty so re-calling
             // `load_persist` after a `remove` of the key behaves
@@ -210,6 +212,18 @@ impl<const E: usize, const N: usize> UserLabels<E, N> {
         info!("Loaded UserLabel entries for all endpoints from storage");
 
         Ok(())
+    }
+
+    /// Reset the registry to empty and remove its persisted blob from `store`
+    /// (under [`USER_LABELS_KEY`]).
+    ///
+    /// Called on factory reset via the [`LifecycleOp::FactoryReset`] lifecycle
+    /// operation delivered to the [`UserLabelHandler`] instance(s) borrowing
+    /// this registry.
+    pub fn reset_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
+        self.state.lock(|cell| cell.borrow_mut().clear());
+
+        store.remove(USER_LABELS_KEY, buf)
     }
 
     /// Serialise the current registry to `ctx.kv()` under
@@ -386,6 +400,13 @@ impl<const E: usize, const N: usize> ClusterHandler for UserLabelHandler<'_, E, 
 
     fn dataver_changed(&self) {
         self.dataver.changed();
+    }
+
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        ctx.kv().access(|store, buf| match op {
+            LifecycleOp::Startup => self.labels.load_persist(store, buf),
+            LifecycleOp::FactoryReset => self.labels.reset_persist(store, buf),
+        })
     }
 
     fn label_list<P: TLVBuilderParent>(

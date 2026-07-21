@@ -35,7 +35,9 @@
 //! bit (Non-Volatile, Matter Core) — values **SHALL** survive
 //! reboots. We re-serialise the whole registry under [`BINDINGS_KEY`]
 //! after every successful write, and re-hydrate on startup via
-//! [`Bindings::load_persist`].
+//! [`Bindings::load_persist`], driven by the [`LifecycleOp::Startup`]
+//! lifecycle operation the handler receives (deliver it by calling
+//! `InteractionModel::startup` once at startup).
 //!
 //! # Fabric scoping
 //!
@@ -58,11 +60,11 @@
 use core::num::NonZeroU8;
 
 use crate::dm::{
-    ArrayAttributeRead, ArrayAttributeWrite, Cluster, ClusterId, Dataver, EndptId, ReadContext,
-    WriteContext,
+    ArrayAttributeRead, ArrayAttributeWrite, Cluster, ClusterId, Dataver, EndptId, HandlerContext,
+    LifecycleOp, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::persist::{KvBlobStore, Persist};
+use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist};
 use crate::tlv::{FromTLV, TLVArray, TLVBuilderParent, TLVElement, ToTLV};
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -145,12 +147,10 @@ impl<const N: usize> Bindings<N> {
     }
 
     /// Re-hydrate the registry from `store` under [`BINDINGS_KEY`].
-    /// Call once at startup, before exposing the data model.
-    pub async fn load_persist<S: KvBlobStore>(
-        &self,
-        mut store: S,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
+    ///
+    /// Called on startup via the [`LifecycleOp::Startup`] lifecycle operation
+    /// delivered to the [`BindingHandler`] instance(s) borrowing this registry.
+    pub fn load_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
         let Some(data) = store.load(BINDINGS_KEY, buf)? else {
             self.state.lock(|cell| cell.borrow_mut().clear());
             return Ok(());
@@ -161,6 +161,18 @@ impl<const N: usize> Bindings<N> {
 
         info!("Loaded Binding entries for all endpoints from storage");
         Ok(())
+    }
+
+    /// Reset the registry to empty and remove its persisted blob from `store`
+    /// (under [`BINDINGS_KEY`]).
+    ///
+    /// Called on factory reset via the [`LifecycleOp::FactoryReset`] lifecycle
+    /// operation delivered to the [`BindingHandler`] instance(s) borrowing this
+    /// registry.
+    pub fn reset_persist<S: KvBlobStore>(&self, mut store: S, buf: &mut [u8]) -> Result<(), Error> {
+        self.state.lock(|cell| cell.borrow_mut().clear());
+
+        store.remove(BINDINGS_KEY, buf)
     }
 
     /// Serialise the registry to `ctx.kv()` under [`BINDINGS_KEY`].
@@ -412,6 +424,13 @@ impl<const N: usize> ClusterHandler for BindingHandler<'_, N> {
 
     fn dataver_changed(&self) {
         self.dataver.changed();
+    }
+
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        ctx.kv().access(|store, buf| match op {
+            LifecycleOp::Startup => self.bindings.load_persist(store, buf),
+            LifecycleOp::FactoryReset => self.bindings.reset_persist(store, buf),
+        })
     }
 
     fn binding<P: TLVBuilderParent>(

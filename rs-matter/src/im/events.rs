@@ -82,13 +82,30 @@ impl<const N: usize> Events<N> {
         self.inner.get_mut().borrow_mut().reset();
     }
 
-    /// Borrow the inner events state mutably.
+    /// Load the persisted event-number epoch from the given key-value store,
+    /// so that event numbers are not reused across reboots.
     ///
-    /// Available only with exclusive (`&mut`) access - used by
-    /// [`InteractionModelState`](crate::im::InteractionModelState) at startup to
-    /// drive the (sync) persistence helpers without locking.
-    pub(crate) fn inner_mut(&mut self) -> &mut EventsInner<N> {
-        self.inner.get_mut().get_mut()
+    /// Driven by [`InteractionModel::startup`](crate::im::InteractionModel::startup).
+    pub(crate) fn load_persist(
+        &self,
+        kv: &mut dyn KvBlobStore,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        self.inner
+            .lock(|state| state.borrow_mut().load_persist(kv, buf))
+    }
+
+    /// Remove the persisted event-number epoch from the given key-value store
+    /// and reset the queue.
+    ///
+    /// Driven by [`InteractionModel::factory_reset`](crate::im::InteractionModel::factory_reset).
+    pub(crate) fn reset_persist(
+        &self,
+        kv: &mut dyn KvBlobStore,
+        buf: &mut [u8],
+    ) -> Result<(), Error> {
+        self.inner
+            .lock(|state| state.borrow_mut().reset_persist(kv, buf))
     }
 
     pub(crate) fn fetch<F, R>(&self, f: F) -> R

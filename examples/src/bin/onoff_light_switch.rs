@@ -64,7 +64,7 @@ use rs_matter::error::Error;
 use rs_matter::im::{EthInteractionModelState, InteractionModel};
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::{DirKvBlobStore, KvBlobStoreAccess};
+use rs_matter::persist::DirKvBlobStore;
 use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::exchange::MatterBuffers;
@@ -106,8 +106,7 @@ fn main() -> Result<(), Error> {
     // press events), so - unlike the examples that use `NoEvents` - the default
     // state carries a real (non-zero) event queue that holds them until
     // subscribers read them.
-    let mut state: EthInteractionModelState =
-        EthInteractionModelState::new(EthNetwork::new_default());
+    let state: EthInteractionModelState = EthInteractionModelState::new(EthNetwork::new_default());
 
     // The Binding registry (the switch's address book), loaded from persistence.
     let bindings = Bindings::<MAX_BINDINGS>::new();
@@ -115,10 +114,8 @@ fn main() -> Result<(), Error> {
     // Bind the KV access object (the KV scratch buffer lives in `Matter`).
     let kv = matter.kv(store);
 
-    // Re-hydrate persisted state.
-    futures_lite::future::block_on(matter.load_persist(&kv))?;
-    kv.access(|store, buf| futures_lite::future::block_on(bindings.load_persist(store, buf)))?;
-    futures_lite::future::block_on(state.load_persist(&kv))?;
+    // Re-hydrate the `Matter` instance (fabrics, ACLs, basic info).
+    matter.startup(&kv)?;
 
     let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
     let rand = crypto.rand()?;
@@ -131,6 +128,11 @@ fn main() -> Result<(), Error> {
         &kv,
         &state,
     );
+
+    // Bring the Data Model to its operational state: re-hydrate its persisted
+    // state (events epoch, network store) and deliver the `Startup` lifecycle op
+    // to all cluster handlers (here notably: the Binding registry).
+    futures_lite::future::block_on(im.startup())?;
 
     let responder = rs_matter::respond::DefaultResponder::new(&im);
     let mut respond = pin!(responder.run::<4, 4>());

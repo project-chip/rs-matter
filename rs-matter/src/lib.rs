@@ -255,8 +255,7 @@ impl<'a> Matter<'a> {
     /// raw store (sync `load`/`store`/`remove`) and gets back an access object
     /// that recombines it with `Matter`'s feature-sized scratch buffer (see
     /// [`KV_BUF_SIZE`](crate::persist::KV_BUF_SIZE)). The returned value is then
-    /// lent (by `&`) to [`Matter::load_persist`], [`Matter::reset_persist`],
-    /// [`InteractionModelState::load_persist`](crate::im::InteractionModelState::load_persist)
+    /// lent (by `&`) to [`Matter::startup`], [`Matter::factory_reset`]
     /// and [`InteractionModel::new`](crate::im::InteractionModel::new).
     ///
     /// # Arguments
@@ -570,12 +569,18 @@ impl<'a> Matter<'a> {
         })
     }
 
-    /// Reset the Matter persistable state by removing all fabrics and resetting basic info settings
+    /// Factory-reset the `Matter` persistable state by removing all fabrics and
+    /// resetting the basic info settings, the RTC state and (if compiled in) the
+    /// CASE resumption cache - both in-memory and in the provided KV store.
+    ///
+    /// The counterpart of [`Matter::startup`]. Call when the node is
+    /// factory-reset, alongside
+    /// [`InteractionModel::factory_reset`](crate::im::InteractionModel::factory_reset).
     ///
     /// Arguments:
     /// - `kv`: The key-value store access (obtained via [`Matter::kv`]) to remove the fabrics
     ///   and basic info settings from. Provides both the store and the scratch buffer.
-    pub async fn reset_persist<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
+    pub fn factory_reset<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
         self.with_state(|state| {
             // The KV ops are sync, so do them all inside a single `access` closure.
             kv.access(|mut store, buf| {
@@ -594,12 +599,18 @@ impl<'a> Matter<'a> {
         Ok(())
     }
 
-    /// Load fabrics from the given data
+    /// Re-hydrate the `Matter` persistable state - the fabrics, the basic info
+    /// settings, the RTC state and (if compiled in) the CASE resumption cache -
+    /// from the provided KV store.
+    ///
+    /// Call once at startup, before the transport starts serving traffic. The
+    /// Data-Model counterpart is
+    /// [`InteractionModel::startup`](crate::im::InteractionModel::startup).
     ///
     /// Arguments:
     /// - `kv`: The key-value store access (obtained via [`Matter::kv`]) to load the fabrics
     ///   and basic info settings from. Provides both the store and the scratch buffer.
-    pub async fn load_persist<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
+    pub fn startup<K: KvBlobStoreAccess>(&self, kv: K) -> Result<(), Error> {
         self.with_state(|state| {
             // The KV ops are sync, so do them all inside a single `access` closure.
             kv.access(|mut store, buf| {
