@@ -1259,17 +1259,32 @@ mod tests {
             let net: &TcpNetwork<2> = &tcp;
             let mut buf = [0u8; 256];
 
-            // Accept all three; pool has size 2 so oldest is evicted
-            // We should be able to receive from the surviving connections
+            // Accept all three; pool has size 2 so the oldest is evicted.
+            // Only the two *surviving* connections' messages are guaranteed to
+            // arrive: whether the evicted connection's message is read first
+            // depends on the accept/data interleaving, which the three racing
+            // client threads make nondeterministic. Time-bound each wait so
+            // the guaranteed-two case terminates instead of hanging forever on
+            // a third message that may have been dropped with its connection.
             let mut received = 0;
             for _ in 0..3 {
-                // Use wait_available + recv_from
-                if NetworkReceive::wait_available(&mut { net }).await.is_ok()
-                    && NetworkReceive::recv_from(&mut { net }, &mut buf)
-                        .await
-                        .is_ok()
-                {
-                    received += 1;
+                let outcome = select(
+                    pin!(async {
+                        NetworkReceive::wait_available(&mut { net }).await.is_ok()
+                            && NetworkReceive::recv_from(&mut { net }, &mut buf)
+                                .await
+                                .is_ok()
+                    }),
+                    pin!(Timer::after(Duration::from_secs(5))),
+                )
+                .await;
+
+                match outcome {
+                    Either::First(true) => received += 1,
+                    Either::First(false) => (),
+                    // No further message is coming - the third one was
+                    // evicted along with its connection.
+                    Either::Second(_) => break,
                 }
             }
 
