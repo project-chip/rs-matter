@@ -44,8 +44,8 @@ use rs_matter::dm::clusters::app::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::app::on_off::test::TestOnOffDeviceLogic;
 use rs_matter::dm::clusters::app::on_off::{self, OnOffHandler, OnOffHooks};
 use rs_matter::dm::clusters::basic_info::{
-    AttributeId as BasicInfoAttributeId, BasicInfoConfig, ColorEnum, PairingHintFlags,
-    ProductAppearance, ProductFinishEnum, FULL_CLUSTER as BASIC_INFO_FULL_CLUSTER,
+    BasicInfoConfig, ColorEnum, DeviceLocationConfig, PairingHintFlags, ProductAppearance,
+    ProductFinishEnum, CLUSTER_DEVICE_LOCATION as BASIC_INFO_CLUSTER_DEVICE_LOCATION,
 };
 use rs_matter::dm::clusters::binding::{self, BindingHandler, Bindings};
 use rs_matter::dm::clusters::decl::scenes_management::FULL_CLUSTER as SCENES_FULL_CLUSTER;
@@ -316,7 +316,7 @@ fn main() -> Result<(), Error> {
 
     let app_pipe = parse_app_pipe_override();
     let node: &'static Node<'static> = if app_pipe.is_some() {
-        &NODE_BINFO_CV_EXPOSED
+        &NODE_BINFO_PROVISIONAL
     } else {
         &NODE
     };
@@ -563,6 +563,15 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     // an ICD must publish them so discovery knows its polling cadence.
     sii: Some(500),
     sai: Some(300),
+    // Factory-default `DeviceLocation`. Only served when the
+    // `NODE_BINFO_PROVISIONAL` variant advertises the attribute (inert
+    // otherwise); a non-null factory value is what `TC_BINFO_2_1` step 24
+    // requires from the pre-write read.
+    device_location: Some(DeviceLocationConfig {
+        location_name: "rs-matter test rig",
+        floor_number: Some(1),
+        area_type: None,
+    }),
     ..TEST_DEV_DET
 };
 
@@ -626,6 +635,22 @@ const NS_COMMON_NUMBER: u8 = 0x07;
 /// namespace would assert a physical arrangement this fixture does not have.
 const TAGS_EP1: &[SemanticTag<'static>] = &[SemanticTag::new(NS_COMMON_NUMBER, 0x01)];
 const TAGS_EP2: &[SemanticTag<'static>] = &[SemanticTag::new(NS_COMMON_NUMBER, 0x02)];
+
+/// Manufacturer-assigned unique IDs for endpoints 1 and 2, served via
+/// `Descriptor::EndpointUniqueID` (see [`Endpoint::with_unique_id`]).
+/// `TC_DeviceBasicComposition` cross-checks node-wide uniqueness when the
+/// attribute is present.
+const UNIQUE_ID_EP1: &str = "rs-matter-test-ep1";
+const UNIQUE_ID_EP2: &str = "rs-matter-test-ep2";
+
+/// `Descriptor` metadata for endpoints 1 and 2: [`desc::CLUSTER_TAG_LIST`]
+/// (both endpoints carry semantic tags) plus the optional `EndpointUniqueID`
+/// attribute (both carry a unique ID).
+const DESC_CLUSTER_TAGS_AND_UNIQUE_ID: Cluster<'static> =
+    desc::CLUSTER_TAG_LIST.with_attrs(rs_matter::with!(
+        required;
+        desc::AttributeId::TagList | desc::AttributeId::EndpointUniqueID
+    ));
 
 const NODE: Node<'static> = Node {
     endpoints: &[
@@ -697,7 +722,7 @@ const NODE: Node<'static> = Node {
             1,
             devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_POWER_SOURCE),
             clusters!(
-                desc::CLUSTER_TAG_LIST,
+                DESC_CLUSTER_TAGS_AND_UNIQUE_ID,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 fixed_label::CLUSTER,
@@ -711,12 +736,13 @@ const NODE: Node<'static> = Node {
             ),
             &[on_off::FULL_CLUSTER.id],
         )
-        .with_tags(TAGS_EP1),
+        .with_tags(TAGS_EP1)
+        .with_unique_id(UNIQUE_ID_EP1),
         Endpoint::new(
             2,
             devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters!(
-                desc::CLUSTER_TAG_LIST,
+                DESC_CLUSTER_TAGS_AND_UNIQUE_ID,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER,
@@ -724,7 +750,8 @@ const NODE: Node<'static> = Node {
                 SCENES_FULL_CLUSTER
             ),
         )
-        .with_tags(TAGS_EP2),
+        .with_tags(TAGS_EP2)
+        .with_unique_id(UNIQUE_ID_EP2),
     ],
 };
 
@@ -769,48 +796,28 @@ const ICD_COUNTER_EPOCH: u32 = 100;
 /// Download protocols this requestor advertises (BDX only).
 const OTA_PROTOCOLS: &[DownloadProtocolEnum] = &[DownloadProtocolEnum::BDXSynchronous];
 
-/// `BasicInformation` cluster metadata that exposes the provisional
-/// `ConfigurationVersion` attribute. Used by `NODE_BINFO_CV_EXPOSED` when the
-/// test runner wires the device up for `TC_BINFO_3_2` (signalled by the
-/// presence of `--app-pipe`).
-///
-/// `DeviceLocation` must be excluded alongside `Reachable`: it is new in Matter
-/// 1.6 and has no implementation, so the generated handler answers reads of it
-/// with `AttributeNotFound`. Advertising it here would put an unreadable
-/// attribute in `AttributeList`.
-///
-/// NOTE: since `BasicInfoHandler::CLUSTER` now exposes `ConfigurationVersion`
-/// by default too (mandatory from cluster revision 5 - see the comment there),
-/// this alternate metadata is identical to the default one, and the
-/// `--app-pipe`-gated node swap below is arguably redundant. It is kept for now
-/// so the 1.6 migration does not also change how `TC_BINFO_3_2` is wired up.
-const BASIC_INFO_CLUSTER_CV_EXPOSED: Cluster<'static> = BASIC_INFO_FULL_CLUSTER
-    .with_attrs(rs_matter::except!(
-        BasicInfoAttributeId::Reachable | BasicInfoAttributeId::DeviceLocation
-    ))
-    .with_cmds(rs_matter::with!());
-
 /// Alternate Node metadata used when the test framework signals it intends
-/// to run `TC_BINFO_3_2` (via `--app-pipe`). It's identical to `NODE` except
-/// that endpoint 0's cluster list substitutes
-/// `BASIC_INFO_CLUSTER_CV_EXPOSED` for the standard `BasicInfoHandler::CLUSTER`,
-/// putting `ConfigurationVersion` in `AttributeList` and accepting reads on
-/// it. The runtime handler chain (`with_eth_sys`) is unchanged: the standard
-/// `BasicInfoHandler` already implements `configuration_version()` against
-/// `BasicInfoSettings`, so the read dispatches to it once the metadata
-/// allows the attribute through.
+/// to run a test needing the provisional `BasicInformation::DeviceLocation`
+/// attribute exposed (via `--app-pipe` - `TC_BINFO_3_2` and `TC_BINFO_2_1`).
+/// It's identical to `NODE` except that endpoint 0's cluster list substitutes
+/// `basic_info::CLUSTER_DEVICE_LOCATION` for the standard
+/// `BasicInfoHandler::CLUSTER`, putting `DeviceLocation` in `AttributeList`
+/// and accepting reads/writes on it. The runtime handler chain
+/// (`with_eth_sys`) is unchanged: the standard `BasicInfoHandler` always
+/// implements `device_location()`/`set_device_location()` against
+/// `BasicInfoSettings`, so access dispatches to it once the metadata allows
+/// the attribute through.
 ///
 /// We can't condition this at the rs-matter library level because `Cluster`'s
 /// `WithAttrs` filter is a plain `fn`-pointer with no access to runtime
 /// state, so we keep the choice in the test app and pick at startup. Other
 /// system_tests-driven YAML/Python tests (notably `TestBasicInformation`,
-/// which asserts an exact `AttributeList` from upstream's 1.5 dataset where
-/// `ConfigurationVersion` was deliberately removed in
-/// `connectedhomeip@faf4d09ad1`) keep using the default `NODE`.
-const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
+/// which pins `BasicInformation::AttributeList` to an exact set that excludes
+/// the provisional `DeviceLocation`) keep using the default `NODE`.
+const NODE_BINFO_PROVISIONAL: Node<'static> = Node {
     endpoints: &[
         // Manually expanded `clusters!(eth;)` with `BasicInfoHandler::CLUSTER`
-        // replaced by `BASIC_INFO_CLUSTER_CV_EXPOSED`. Keep this in sync
+        // replaced by `BASIC_INFO_CLUSTER_DEVICE_LOCATION`. Keep this in sync
         // with `clusters!(eth;)` in `rs-matter/src/dm/types/cluster.rs`.
         // `GroupsHandler::CLUSTER` and `user_label::CLUSTER` are
         // included for the same `TestGroupMessaging` /
@@ -829,7 +836,7 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
             clusters!(
                 desc::DescHandler::CLUSTER,
                 acl::AclHandler::CLUSTER,
-                BASIC_INFO_CLUSTER_CV_EXPOSED,
+                BASIC_INFO_CLUSTER_DEVICE_LOCATION,
                 gen_comm::GenCommHandler::CLUSTER,
                 gen_diag::GenDiagHandler::CLUSTER,
                 adm_comm::AdminCommHandler::CLUSTER,
@@ -864,7 +871,7 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
             1,
             devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_POWER_SOURCE),
             clusters!(
-                desc::CLUSTER_TAG_LIST,
+                DESC_CLUSTER_TAGS_AND_UNIQUE_ID,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 fixed_label::CLUSTER,
@@ -878,12 +885,13 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
             ),
             &[on_off::FULL_CLUSTER.id],
         )
-        .with_tags(TAGS_EP1),
+        .with_tags(TAGS_EP1)
+        .with_unique_id(UNIQUE_ID_EP1),
         Endpoint::new(
             2,
             devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters!(
-                desc::CLUSTER_TAG_LIST,
+                DESC_CLUSTER_TAGS_AND_UNIQUE_ID,
                 identify::CLUSTER,
                 groups::GroupsHandler::CLUSTER,
                 TestOnOffDeviceLogic::CLUSTER,
@@ -891,7 +899,8 @@ const NODE_BINFO_CV_EXPOSED: Node<'static> = Node {
                 SCENES_FULL_CLUSTER
             ),
         )
-        .with_tags(TAGS_EP2),
+        .with_tags(TAGS_EP2)
+        .with_unique_id(UNIQUE_ID_EP2),
     ],
 };
 
@@ -947,7 +956,7 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             // requires this endpoint to be a member of the target
             // multicast group via per-endpoint Groups membership
             // (App Cluster Spec). The matching metadata entry
-            // is in `NODE` and `NODE_BINFO_CV_EXPOSED` above.
+            // is in `NODE` and `NODE_BINFO_PROVISIONAL` above.
             .chain(
                 EpClMatcher::new(
                     Some(ROOT_ENDPOINT_ID),

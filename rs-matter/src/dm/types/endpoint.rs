@@ -43,6 +43,18 @@ pub struct Endpoint<'a> {
     /// surface of its own — see Matter Core spec for the
     /// `Descriptor::ClientList` semantics.
     pub client_clusters: &'a [ClusterId],
+    /// The endpoint's unique ID, advertised via
+    /// `Descriptor::EndpointUniqueID`. `None` by default.
+    ///
+    /// A manufacturer-assigned string (at most 32 bytes) that identifies this
+    /// endpoint uniquely within the node, so that machine-to-machine
+    /// integrations can keep addressing "the same" endpoint even if endpoint
+    /// IDs get renumbered across software updates or bridge re-compositions.
+    ///
+    /// Populating this also requires the endpoint's `Descriptor` metadata to
+    /// advertise the optional `EndpointUniqueID` attribute - see
+    /// [`crate::dm::clusters::desc::CLUSTER_ENDPOINT_UNIQUE_ID`].
+    pub unique_id: Option<&'a str>,
     /// The semantic tags describing this endpoint, advertised via
     /// `Descriptor::TagList`. Empty by default.
     ///
@@ -70,6 +82,7 @@ impl<'a> Endpoint<'a> {
             device_types,
             clusters,
             client_clusters: &[],
+            unique_id: None,
             semantic_tags: &[],
         }
     }
@@ -87,6 +100,7 @@ impl<'a> Endpoint<'a> {
             device_types,
             clusters,
             client_clusters,
+            unique_id: None,
             semantic_tags: &[],
         }
     }
@@ -104,7 +118,26 @@ impl<'a> Endpoint<'a> {
             device_types: self.device_types,
             clusters: self.clusters,
             client_clusters: self.client_clusters,
+            unique_id: self.unique_id,
             semantic_tags,
+        }
+    }
+
+    /// Return this endpoint with the given unique ID attached, to be
+    /// advertised via `Descriptor::EndpointUniqueID`.
+    ///
+    /// The endpoint's `Descriptor` cluster metadata must also advertise the
+    /// attribute - use
+    /// [`crate::dm::clusters::desc::CLUSTER_ENDPOINT_UNIQUE_ID`] in place of
+    /// the default `DescHandler::CLUSTER`, otherwise the ID is never reported.
+    pub const fn with_unique_id(self, unique_id: &'a str) -> Self {
+        Self {
+            id: self.id,
+            device_types: self.device_types,
+            clusters: self.clusters,
+            client_clusters: self.client_clusters,
+            unique_id: Some(unique_id),
+            semantic_tags: self.semantic_tags,
         }
     }
 

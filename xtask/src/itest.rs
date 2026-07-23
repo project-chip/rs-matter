@@ -267,13 +267,12 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Basic Information (system cluster)
     //
-    // The default `BasicInfoHandler` metadata excludes `ConfigurationVersion`
-    // (provisional in Matter 1.5; upstream pulled it from the 1.5 dataset in
-    // CHIP commit faf4d09ad1), so `TestBasicInformation`'s exact-set assertion
-    // on `AttributeList` keeps passing. For `TC_BINFO_3_2` the
+    // The default `BasicInfoHandler` metadata excludes the provisional
+    // `DeviceLocation` attribute, so `TestBasicInformation`'s exact-set
+    // assertion on `AttributeList` keeps passing. For `TC_BINFO_3_2` the
     // `system_tests` binary swaps in an alternate `Node` whose
-    // `BasicInformation` cluster metadata exposes `ConfigurationVersion` — see
-    // `NODE_BINFO_CV_EXPOSED` in `examples/src/bin/system_tests.rs`. The
+    // `BasicInformation` cluster metadata exposes `DeviceLocation` — see
+    // `NODE_BINFO_PROVISIONAL` in `examples/src/bin/system_tests.rs`. The
     // switch is gated on the presence of `--app-pipe` (see `app_args_override`
     // below), which only this test passes.
     "TC_BINFO_3_2",
@@ -400,6 +399,9 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     //
     // Python tests — Basic Information (system cluster)
     //
+    // `TC_BINFO_2_1`'s `DeviceLocation` steps 24-28 skip via
+    // `attribute_guard` — deliberately; see the `TC_BINFO_2_1` note in
+    // `app_args_override` for why they cannot be made to run.
     "TC_BINFO_2_1",
     "TC_BINFO_2_2",
     "TC_BINFO_3_1",
@@ -1733,6 +1735,24 @@ impl ITests {
             // `{"Name":"SimulateConfigurationVersionChange"}` to the named
             // pipe and the DUT translates that into a
             // `DataModel::bump_configuration_version` call.
+            // NOTE: do NOT route `TC_BINFO_2_1` at the `--app-pipe` app
+            // variant, even though that would let its `DeviceLocation` steps
+            // 24-28 execute (rs-matter implements the attribute — see
+            // `basic_info::CLUSTER_DEVICE_LOCATION`). Upstream's
+            // `support_modules/binfo_attributes_verification.py` cannot run
+            // those steps against ANY conformant DUT: it references a
+            // `BasicInformation.Structs.DeviceLocationStruct` class the
+            // generated cluster objects never define (the attribute is typed
+            // as the global `LocationDescriptorStruct`), its null checks
+            // compare the decoded `NullValue` sentinel against Python `None`
+            // (step 24 `is None` / step 26 `assert_equal(..., None)`), and
+            // its step-25 write passes `areaType=None`, which the cluster
+            // object encoder rejects for a nullable-but-not-optional field
+            // (`NullValue` is required). Upstream CI never notices because
+            // its reference apps do not advertise the provisional attribute,
+            // so `attribute_guard` always skips the steps. Until that module
+            // is fixed upstream, the steps skip here too, and the attribute
+            // is covered by rs-matter's own e2e test instead.
             "TC_BINFO_3_2" => Some("--app-pipe /tmp/rs_matter_bin_info_3_2_fifo"),
             // TC_TestEventTrigger validates `GeneralDiagnostics::TestEventTrigger`
             // key/trigger handling — needs the canonical CHIP enable-key
