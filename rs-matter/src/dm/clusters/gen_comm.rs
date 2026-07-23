@@ -25,7 +25,7 @@ use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::dm::{Cluster, Dataver, InvokeContext, OperationContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricPersist;
-use crate::persist::{Persist, BASIC_INFO_KEY, NETWORKS_KEY};
+use crate::persist::{Persist, NETWORKS_KEY};
 use crate::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use crate::tlv::TLVBuilderParent;
 use crate::transport::session::SessionMode;
@@ -375,7 +375,7 @@ impl ClusterHandler for GenCommHandler<'_> {
 
             state.failsafe.set_breadcrumb(breadcrumb);
 
-            persist.store_tlv(BASIC_INFO_KEY, &state.basic_info_settings)?;
+            state.basic_info_settings.store_persist(&mut persist)?;
 
             Ok(())
         }))?;

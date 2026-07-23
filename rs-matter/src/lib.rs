@@ -45,7 +45,7 @@ use crate::pairing::qr::{
     no_optional_data, CommFlowType, NoOptionalData, Qr, QrPayload, QrTextType,
 };
 use crate::pairing::DiscoveryCapabilities;
-use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, BASIC_INFO_KEY};
+use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist};
 #[cfg(feature = "case-resumption")]
 use crate::sc::case::ResumableSessions;
 use crate::sc::pase::spake2p::{Spake2pVerifierPassword, SPAKE2P_VERIFIER_SALT_ZEROED};
@@ -493,7 +493,7 @@ impl<'a> Matter<'a> {
         let new_version = self.with_state(|state| {
             let new_version = state.basic_info_settings.bump_configuration_version();
 
-            persist.store_tlv(BASIC_INFO_KEY, &state.basic_info_settings)?;
+            state.basic_info_settings.store_persist(&mut persist)?;
 
             notify.notify_attr_changed(
                 ROOT_ENDPOINT_ID,

@@ -22,7 +22,7 @@ use core::str::FromStr;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_FABRICS;
-use crate::persist::{KvBlobStore, Persist, BASIC_INFO_KEY};
+use crate::persist::{KvBlobStore, KvBlobStoreAccess, Persist, BASIC_INFO_KEY};
 use crate::tlv::{
     FromTLV, Nullable, NullableBuilder, TLVBuilderParent, TLVElement, ToTLV, Utf8StrBuilder,
 };
@@ -379,6 +379,24 @@ pub struct DeviceLocation {
     pub area_type: Option<AreaTypeTag>,
 }
 
+impl DeviceLocation {
+    /// Create an empty `DeviceLocation` (empty location name, no floor
+    /// number, no area type).
+    pub const fn new() -> Self {
+        Self {
+            location_name: heapless::String::new(),
+            floor_number: None,
+            area_type: None,
+        }
+    }
+}
+
+impl Default for DeviceLocation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Mutable basic information
 #[derive(Debug, Clone, Eq, PartialEq, Hash, ToTLV, FromTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -496,6 +514,23 @@ impl BasicInfoSettings {
         self.device_location = info.device_location;
 
         Ok(())
+    }
+
+    /// Store the basic info settings via the provided `Persist` instance
+    ///
+    /// # Arguments
+    /// - `persist`: the `Persist` instance to serialize the settings into
+    ///
+    /// Deliberately outlined (`inline(never)`): the settings' TLV
+    /// serialization is sizeable, and every runtime-mutable-attribute setter
+    /// ends with this call - sharing a single copy keeps it out of each
+    /// attribute-dispatch path (flash size).
+    #[inline(never)]
+    pub fn store_persist<S: KvBlobStoreAccess>(
+        &self,
+        persist: &mut Persist<S>,
+    ) -> Result<(), Error> {
+        persist.store_tlv(BASIC_INFO_KEY, self)
     }
 
     /// Load all basic info settings from the provided BLOB store
@@ -668,7 +703,7 @@ impl ClusterHandler for BasicInfoHandler {
                 .push_str(label)
                 .map_err(|_| ErrorCode::ConstraintError)?;
 
-            persist.store_tlv(BASIC_INFO_KEY, &*settings)
+            settings.store_persist(&mut persist)
         })?;
 
         persist.run()
@@ -705,7 +740,7 @@ impl ClusterHandler for BasicInfoHandler {
         Self::with_settings(ctx.exchange(), |settings| {
             settings.set_location(location);
 
-            persist.store_tlv(BASIC_INFO_KEY, &*settings)
+            settings.store_persist(&mut persist)
         })?;
 
         persist.run()
@@ -745,6 +780,9 @@ impl ClusterHandler for BasicInfoHandler {
         )
     }
 
+    // Deliberately outlined (`inline(never)`): inlining duplicates the
+    // builder chain in every read-dispatch instantiation (flash size)
+    #[inline(never)]
     fn device_location<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
@@ -784,30 +822,48 @@ impl ClusterHandler for BasicInfoHandler {
         })
     }
 
+    // Deliberately outlined (`inline(never)`): cold path with sizeable
+    // TLV-parsing and persistence code (flash size)
+    #[inline(never)]
     fn set_device_location(
         &self,
         ctx: impl WriteContext,
         value: Nullable<LocationDescriptorStruct<'_>>,
     ) -> Result<(), Error> {
-        let location = if let Some(value) = value.as_opt_ref() {
-            Nullable::some(DeviceLocation {
-                location_name: value
-                    .location_name()?
-                    .try_into()
-                    .map_err(|_| ErrorCode::ConstraintError)?,
-                floor_number: value.floor_number()?.into_option(),
-                area_type: value.area_type()?.into_option(),
-            })
-        } else {
-            Nullable::none()
-        };
-
         let mut persist = Persist::new(ctx.kv());
 
         Self::with_settings(ctx.exchange(), |settings| {
-            settings.device_location = Some(location);
+            if let Some(value) = value.as_opt_ref() {
+                // Parse and validate everything up-front, so that a failed
+                // write leaves the stored value intact
+                let location_name = value.location_name()?;
+                if location_name.len() > 128 {
+                    return Err(ErrorCode::ConstraintError.into());
+                }
 
-            persist.store_tlv(BASIC_INFO_KEY, &*settings)
+                let floor_number = value.floor_number()?.into_option();
+                let area_type = value.area_type()?.into_option();
+
+                // ... and then update the stored value in-place: going
+                // through an owned `DeviceLocation` temporary would move the
+                // ~150-byte value several times through the stack (flash and
+                // stack size)
+                let location = settings.device_location.get_or_insert_with(Nullable::none);
+                if location.is_none() {
+                    *location = Nullable::some(DeviceLocation::new());
+                }
+
+                let location = unwrap!(location.as_opt_mut());
+
+                location.location_name.clear();
+                unwrap!(location.location_name.push_str(location_name));
+                location.floor_number = floor_number;
+                location.area_type = area_type;
+            } else {
+                settings.device_location = Some(Nullable::none());
+            }
+
+            settings.store_persist(&mut persist)
         })?;
 
         persist.run()
@@ -870,7 +926,7 @@ impl ClusterHandler for BasicInfoHandler {
         Self::with_settings(ctx.exchange(), |settings| {
             settings.local_config_disabled = value;
 
-            persist.store_tlv(BASIC_INFO_KEY, &*settings)
+            settings.store_persist(&mut persist)
         })?;
 
         persist.run()

@@ -292,6 +292,9 @@ impl ClusterHandler for DescHandler<'_> {
         })
     }
 
+    // Deliberately outlined (`inline(never)`): inlining duplicates the body
+    // in every read-dispatch instantiation (flash size)
+    #[inline(never)]
     fn endpoint_unique_id<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
