@@ -309,6 +309,41 @@ impl GroupcastHandler {
         count + iana as u16
     }
 
+    /// The number of distinct multicast addresses that would be in use if
+    /// the given group had the given multicast-address policy (whether the
+    /// group exists yet or not) - the prospective form of
+    /// [`Self::used_mcast_addrs`], for the `JoinGroup` capacity check.
+    fn used_mcast_addrs_with(
+        fabrics: &Fabrics,
+        fab_idx: NonZeroU8,
+        group_id: u16,
+        policy: MulticastAddrPolicyEnum,
+    ) -> u16 {
+        let mut iana = false;
+        let mut count = 0;
+
+        for fabric in fabrics.iter() {
+            for entry in fabric.groups().iter() {
+                if fabric.fab_idx() == fab_idx && entry.group_id == group_id {
+                    // Replaced by the target policy below
+                    continue;
+                }
+
+                match entry.effective_mcast_policy() {
+                    MulticastAddrPolicyEnum::IanaAddr => iana = true,
+                    MulticastAddrPolicyEnum::PerGroup => count += 1,
+                }
+            }
+        }
+
+        match policy {
+            MulticastAddrPolicyEnum::IanaAddr => iana = true,
+            MulticastAddrPolicyEnum::PerGroup => count += 1,
+        }
+
+        count + iana as u16
+    }
+
     /// The number of distinct group IDs across all fabrics.
     fn total_group_count(fabrics: &Fabrics) -> usize {
         fabrics
@@ -517,7 +552,9 @@ impl ClusterHandler for GroupcastHandler {
 
             if composed && !aux_advertised {
                 error!(
-                    "The Groupcast cluster requires the Access Control cluster                      to advertise the AUXILIARY feature - compose the node's                      root-endpoint ACL metadata via `acl(aux)` or `CLUSTER_AUX`"
+                    "The Groupcast cluster requires the Access Control cluster \
+                     to advertise the AUXILIARY feature - compose the node's \
+                     root-endpoint ACL metadata via `acl(aux)` or `CLUSTER_AUX`"
                 );
 
                 return Err(ErrorCode::Invalid.into());
@@ -735,32 +772,36 @@ impl ClusterHandler for GroupcastHandler {
                 .is_none();
 
             if is_new {
-                // Capacity: per-fabric first, then node-wide
+                // Membership capacity: per-fabric first, then node-wide
                 if state.fabrics.fabric(fab_idx)?.groups().group_count() >= MAX_GROUPS_PER_FABRIC
                     || Self::total_group_count(&state.fabrics) >= MAX_MEMBERSHIP_COUNT as usize
                 {
                     return Err(ErrorCode::ResourceExhausted.into());
                 }
+            }
 
-                // Multicast address capacity: a new `PerGroup` group needs a
-                // new address; a new IANA-policy group needs one only if the
-                // IANA address is not in use yet
-                let used = Self::used_mcast_addrs(&state.fabrics);
-                let needs_addr =
-                    match mcast_addr_policy.unwrap_or(MulticastAddrPolicyEnum::IanaAddr) {
-                        MulticastAddrPolicyEnum::PerGroup => true,
-                        MulticastAddrPolicyEnum::IanaAddr => !state.fabrics.iter().any(|fabric| {
-                            fabric.groups().iter().any(|e| {
-                                matches!(
-                                    e.effective_mcast_policy(),
-                                    MulticastAddrPolicyEnum::IanaAddr
-                                )
-                            })
-                        }),
-                    };
-                if needs_addr && used >= MAX_MCAST_ADDR_COUNT {
-                    return Err(ErrorCode::ResourceExhausted.into());
-                }
+            // Multicast address capacity, computed against the policy this
+            // group would end up with - covering both new groups and policy
+            // changes of existing ones (a `PerGroup` flip of an existing
+            // IANA-policy group needs a new address too; the reference
+            // implementation misses that case, but the spec is clear that
+            // `UsedMcastAddrCount` SHALL NOT exceed `MaxMcastAddrCount`)
+            let target_policy = match mcast_addr_policy {
+                Some(policy) => policy,
+                None => state
+                    .fabrics
+                    .fabric(fab_idx)?
+                    .groups()
+                    .get(group_id)
+                    // Mirrors `groupcast_join`: an existing entry keeps its
+                    // effective policy; a new one defaults to `IanaAddr`
+                    .map(|entry| entry.effective_mcast_policy())
+                    .unwrap_or(MulticastAddrPolicyEnum::IanaAddr),
+            };
+            if Self::used_mcast_addrs_with(&state.fabrics, fab_idx, group_id, target_policy)
+                > MAX_MCAST_ADDR_COUNT
+            {
+                return Err(ErrorCode::ResourceExhausted.into());
             }
 
             let fabric = state.fabrics.fabric_mut(fab_idx)?;
@@ -884,9 +925,20 @@ impl ClusterHandler for GroupcastHandler {
                         // A membership left with no endpoints is removed
                         // entirely - unless the device is (also) a Sender,
                         // where it lives on as a sender-only membership
-                        if empty && !sender {
-                            fabric.groups_mut().groupcast_remove(group_id);
-                            fabric.groups_mut().key_map_remove_group(group_id);
+                        if empty {
+                            if sender {
+                                // A retained empty membership must be marked
+                                // Groupcast-managed: legacy Groups-cluster
+                                // entries may not exist without endpoints
+                                // (the legacy cleanup would reap them)
+                                let entry = unwrap!(fabric.groups_mut().get_mut(group_id));
+                                if entry.mcast_policy.is_none() {
+                                    entry.mcast_policy = Some(MulticastAddrPolicyEnum::PerGroup);
+                                }
+                            } else {
+                                fabric.groups_mut().groupcast_remove(group_id);
+                                fabric.groups_mut().key_map_remove_group(group_id);
+                            }
                         }
                     }
                     None => {
@@ -1008,11 +1060,6 @@ impl ClusterHandler for GroupcastHandler {
         request: GroupcastTestingRequest<'_>,
     ) -> Result<(), Error> {
         let operation = request.test_operation()?;
-        let duration_secs = request.duration_seconds()?.unwrap_or(TESTING_SECS_FALLBACK);
-
-        if !(TESTING_SECS_MIN..=TESTING_SECS_MAX).contains(&duration_secs) {
-            return Err(ErrorCode::ConstraintError.into());
-        }
 
         let bridge = ctx.exchange().matter().groupcast_testing();
 
@@ -1025,6 +1072,13 @@ impl ClusterHandler for GroupcastHandler {
                     _ => self.sender(),
                 };
                 if !feature_ok {
+                    return Err(ErrorCode::ConstraintError.into());
+                }
+
+                // Per the Matter Core spec, `DurationSeconds` is ignored
+                // (and hence not validated) for `DisableTesting`
+                let duration_secs = request.duration_seconds()?.unwrap_or(TESTING_SECS_FALLBACK);
+                if !(TESTING_SECS_MIN..=TESTING_SECS_MAX).contains(&duration_secs) {
                     return Err(ErrorCode::ConstraintError.into());
                 }
 

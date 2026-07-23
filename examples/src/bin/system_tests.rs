@@ -1017,18 +1017,6 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 EpClMatcher::new(Some(1), Some(groups::GroupsHandler::CLUSTER.id)),
                 Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
             )
-            // Groupcast at the root endpoint - the unified group-management
-            // interface over the same per-fabric group table Groups uses.
-            .chain(
-                EpClMatcher::new(
-                    Some(ROOT_ENDPOINT_ID),
-                    Some(groupcast::GroupcastHandler::CLUSTER.id),
-                ),
-                Async(
-                    GroupcastHandler::new(Dataver::new_rand(&mut rand), groupcast::Feature::all())
-                        .adapt(),
-                ),
-            )
             .chain(
                 EpClMatcher::new(Some(1), Some(fixed_label::CLUSTER.id)),
                 Async(
@@ -1069,18 +1057,6 @@ fn data_model<'a, OH: OnOffHooks, LH: LevelControlHooks>(
             .chain(
                 EpClMatcher::new(Some(2), Some(groups::GroupsHandler::CLUSTER.id)),
                 Async(groups::GroupsHandler::new(Dataver::new_rand(&mut rand)).adapt()),
-            )
-            // Groupcast at the root endpoint - the unified group-management
-            // interface over the same per-fabric group table Groups uses.
-            .chain(
-                EpClMatcher::new(
-                    Some(ROOT_ENDPOINT_ID),
-                    Some(groupcast::GroupcastHandler::CLUSTER.id),
-                ),
-                Async(
-                    GroupcastHandler::new(Dataver::new_rand(&mut rand), groupcast::Feature::all())
-                        .adapt(),
-                ),
             )
             .chain(
                 EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
