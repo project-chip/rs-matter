@@ -21,4 +21,5 @@ mod attributes;
 mod commands;
 mod events;
 mod long_reads;
+mod provisional;
 mod timed_requests;

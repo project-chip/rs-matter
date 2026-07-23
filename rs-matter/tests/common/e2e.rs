@@ -24,6 +24,7 @@ use embassy_sync::zerocopy_channel::{Channel, Receiver, Sender};
 
 use rs_matter::acl::{AclEntry, AuthMode};
 use rs_matter::crypto::{test_only_crypto, Crypto};
+use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
 use rs_matter::dm::clusters::net_comm::DummyNetworks;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::{DataModel, Privilege};
@@ -60,6 +61,20 @@ pub fn new_runner(cat_ids: NocCatIds) -> E2eRunner<impl Crypto> {
     E2eRunner::new(test_only_crypto(), cat_ids)
 }
 
+/// Create a new runner with default category IDs whose device-under-test
+/// serves the given `BasicInfoConfig` instead of `TEST_DEV_DET`.
+///
+/// For tests exercising configuration-derived behavior (e.g. the
+/// `BasicInfoConfig` factory defaults for `Location` / `DeviceLocation`).
+// The `common` module is shared by several test binaries; this helper is
+// used only by `data_model_tests`.
+#[allow(unused)]
+pub fn new_default_runner_with_dev_det(
+    dev_det: &'static BasicInfoConfig<'static>,
+) -> E2eRunner<impl Crypto> {
+    E2eRunner::new_with_dev_det(test_only_crypto(), NocCatIds::default(), dev_det)
+}
+
 // Set large enough that we can store more events than fit in an ethernet frame, so we can test "long reads"
 pub const E2E_EVENTS_BUF_SIZE: usize = 1024 * 4;
 
@@ -92,9 +107,19 @@ impl<C: Crypto> E2eRunner<C> {
 
     /// Create a new runner with the given category IDs.
     pub fn new(crypto: C, cat_ids: NocCatIds) -> E2eRunner<C> {
+        Self::new_with_dev_det(crypto, cat_ids, &TEST_DEV_DET)
+    }
+
+    /// Like [`Self::new`], but the device-under-test `Matter` instance
+    /// serves the given `BasicInfoConfig` instead of `TEST_DEV_DET`.
+    pub fn new_with_dev_det(
+        crypto: C,
+        cat_ids: NocCatIds,
+        dev_det: &'static BasicInfoConfig<'static>,
+    ) -> E2eRunner<C> {
         E2eRunner {
-            matter: Self::new_matter(),
-            matter_client: Self::new_matter(),
+            matter: Self::new_matter(dev_det),
+            matter_client: Self::new_matter(&TEST_DEV_DET),
             crypto,
             buffers: MatterBuffers::new(),
             state: InteractionModelState::new(DummyNetworks),
@@ -292,11 +317,11 @@ impl<C: Crypto> E2eRunner<C> {
         .await
     }
 
-    fn new_matter() -> Matter<'static> {
+    fn new_matter(dev_det: &'static BasicInfoConfig<'static>) -> Matter<'static> {
         #[cfg(not(feature = "std"))]
         use rs_matter::utils::rand::dummy_rand as rand;
 
-        let matter = Matter::new(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
+        let matter = Matter::new(dev_det, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
         matter.with_state(|state| {
             state.fabrics.add_with_post_init(|_| Ok(())).unwrap();

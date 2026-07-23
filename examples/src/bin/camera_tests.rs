@@ -661,6 +661,7 @@ const NODE: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_ROOT_NODE, DEV_TYPE_POWER_SOURCE),
             clusters: clusters!(eth; power_source::CLUSTER),
             client_clusters: &[],
+            unique_id: None,
             semantic_tags: &[],
         },
         Endpoint::new(

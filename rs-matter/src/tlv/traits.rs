@@ -151,7 +151,22 @@ impl ToTLV for TLVElement<'_> {
             // Useful in tests
             Ok(())
         } else {
-            tw.raw_value(tag, self.control()?.value_type, self.raw_value()?)
+            let value_type = self.control()?.value_type;
+            let payload = self.raw_value()?;
+
+            // `TLVWrite::raw_value` emits its payload right after the
+            // control + tag bytes, but for variable-size (UTF-8 / octet
+            // string) values `TLVElement::raw_value` strips the length
+            // prefix, so it has to be re-emitted - with the same size class
+            // as the source element - or the written TLV is malformed.
+            let size_len = value_type.variable_size_len();
+            if size_len > 0 {
+                let len_bytes = (payload.len() as u64).to_le_bytes();
+                tw.raw_value(tag, value_type, &len_bytes[..size_len])?;
+                tw.write_raw_data(payload.iter().copied())
+            } else {
+                tw.raw_value(tag, value_type, payload)
+            }
         }
     }
 

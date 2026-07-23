@@ -76,9 +76,6 @@ pub trait CommPolicy: DynBase {
     /// Return the maximum cumulative fail-safe time in seconds.
     fn failsafe_max_cml_secs(&self) -> u16;
 
-    /// Return the regulatory configuration of the device.
-    fn regulatory_config(&self) -> RegulatoryLocationTypeEnum;
-
     /// Return the location capability of the device.
     fn location_cap(&self) -> RegulatoryLocationTypeEnum;
 }
@@ -97,10 +94,6 @@ where
 
     fn failsafe_max_cml_secs(&self) -> u16 {
         (*self).failsafe_max_cml_secs()
-    }
-
-    fn regulatory_config(&self) -> RegulatoryLocationTypeEnum {
-        (*self).regulatory_config()
     }
 
     fn location_cap(&self) -> RegulatoryLocationTypeEnum {
@@ -127,10 +120,6 @@ impl CommPolicy for bool {
         // bounds at [180, 900] seconds; reporting 900 keeps such tests within
         // the valid range while still being a reasonable upper bound.
         MAX_COMM_WINDOW_TIMEOUT_SECS
-    }
-
-    fn regulatory_config(&self) -> RegulatoryLocationTypeEnum {
-        RegulatoryLocationTypeEnum::IndoorOutdoor
     }
 
     fn location_cap(&self) -> RegulatoryLocationTypeEnum {
@@ -257,8 +246,15 @@ impl ClusterHandler for GenCommHandler<'_> {
         &self,
         ctx: impl ReadContext,
     ) -> Result<RegulatoryLocationTypeEnum, Error> {
-        ctx.exchange()
-            .with_state(|state| Ok(state.basic_info_settings.location_type))
+        // Until `SetRegulatoryConfig` stores an explicit value, report
+        // `LocationCapability` - per the Matter Core spec that is the
+        // default of `RegulatoryConfig`.
+        ctx.exchange().with_state(|state| {
+            Ok(state
+                .basic_info_settings
+                .location_type
+                .unwrap_or(self.commissioning_policy.location_cap()))
+        })
     }
 
     fn location_capability(
@@ -375,7 +371,7 @@ impl ClusterHandler for GenCommHandler<'_> {
 
         let status = CommissioningErrorEnum::map(ctx.exchange().with_state(|state| {
             state.basic_info_settings.set_location(country_code);
-            state.basic_info_settings.location_type = location_type;
+            state.basic_info_settings.location_type = Some(location_type);
 
             state.failsafe.set_breadcrumb(breadcrumb);
 

@@ -73,6 +73,7 @@ macro_rules! root_endpoint {
                 ;
             ),
             client_clusters: &[],
+            unique_id: None,
             semantic_tags: &[],
         }
     }

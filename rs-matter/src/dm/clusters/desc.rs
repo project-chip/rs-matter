@@ -23,7 +23,7 @@ use crate::dm::{
     ArrayAttributeRead, Cluster, Dataver, Endpoint, EndptId, Metadata, ReadContext, SemanticTag,
 };
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{Nullable, TLVBuilderParent, ToTLVArrayBuilder, ToTLVBuilder};
+use crate::tlv::{Nullable, TLVBuilderParent, ToTLVArrayBuilder, ToTLVBuilder, Utf8StrBuilder};
 use crate::utils::sync::DynBase;
 use crate::with;
 
@@ -169,6 +169,17 @@ pub const CLUSTER_TAG_LIST: Cluster<'static> = FULL_CLUSTER
     .with_cmds(with!())
     .with_features(Feature::TAG_LIST.bits());
 
+/// `Descriptor` cluster metadata that additionally advertises the optional
+/// `EndpointUniqueID` attribute.
+///
+/// Use this in place of [`DescHandler::CLUSTER`] on endpoints carrying
+/// [`Endpoint::unique_id`]. It is deliberately not the default: the attribute
+/// is optional, and advertising it on an endpoint whose [`Endpoint::unique_id`]
+/// is `None` would turn every read into an error.
+pub const CLUSTER_ENDPOINT_UNIQUE_ID: Cluster<'static> = FULL_CLUSTER
+    .with_attrs(with!(required; AttributeId::EndpointUniqueID))
+    .with_cmds(with!());
+
 impl ClusterHandler for DescHandler<'_> {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required)).with_cmds(with!());
 
@@ -278,6 +289,23 @@ impl ClusterHandler for DescHandler<'_> {
                 Self::push_tag(builder, tag)
             }
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
+        })
+    }
+
+    fn endpoint_unique_id<P: TLVBuilderParent>(
+        &self,
+        ctx: impl ReadContext,
+        builder: Utf8StrBuilder<P>,
+    ) -> Result<P, Error> {
+        Self::with_endpoint(ctx, |endpoint| {
+            // Reaching here means the endpoint's `Descriptor` metadata
+            // advertises the attribute (`CLUSTER_ENDPOINT_UNIQUE_ID`), so a
+            // missing `Endpoint::unique_id` is a composition error.
+            let unique_id = endpoint
+                .unique_id
+                .ok_or_else(|| Error::new(ErrorCode::AttributeNotFound))?;
+
+            builder.set(unique_id)
         })
     }
 

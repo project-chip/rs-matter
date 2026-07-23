@@ -1711,10 +1711,13 @@ BINFO.S.A0013=1
 BINFO.S.A0014=1
 BINFO.S.A0015=1
 BINFO.S.A0016=1
-# A0017 (DeviceLocation) is new and provisional in Matter 1.6 and has no
-# implementation, so it is excluded from the default `BasicInfoHandler`
-# metadata — see the comment on `BasicInfoHandler::CLUSTER` in
-# `rs-matter/src/dm/clusters/basic_info.rs`.
+# A0017 (DeviceLocation) is implemented (admin-writable, persisted in
+# `BasicInfoSettings`) but provisional in Matter 1.6, so it is excluded from
+# the default `BasicInfoHandler` metadata (upstream's `TestBasicInformation`
+# pins `AttributeList` to an exact set without it). The `--app-pipe`-selected
+# alternate node advertises it via `basic_info::CLUSTER_DEVICE_LOCATION`, which
+# is how `TC_BINFO_2_1` exercises its steps 24-28; that test gates those steps
+# on the live `AttributeList` (`attribute_guard`), not on this PICS entry.
 BINFO.S.A0017=0
 # A0018 (ConfigurationVersion) IS exposed by default: although provisional, its
 # conformance is `P, Rev >= v5`, i.e. mandatory from cluster revision 5 onwards,
