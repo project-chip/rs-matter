@@ -1100,6 +1100,11 @@ impl Sessions {
             payload_range: (usize, usize),
         }
         let mut group_key_found: Option<GroupKeyFound> = None;
+        // Whether at least one candidate key matched the message's group
+        // session ID (and was therefore actually tried for decryption) -
+        // distinguishes "authentication failed" from "no key available"
+        // for Groupcast testing-mode diagnostics.
+        let mut key_attempted = false;
 
         'outer: for fabric in fabrics.iter() {
             // For unicast (MCSP) messages the destination Node ID must
@@ -1153,6 +1158,8 @@ impl Sessions {
                         continue;
                     }
 
+                    key_attempted = true;
+
                     if let Some(payload_range) = Self::try_group_decrypt(
                         &crypto,
                         packet,
@@ -1185,13 +1192,22 @@ impl Sessions {
             );
         }
 
+        // `NoSession` = no candidate key was available for this message;
+        // `InvalidSignature` = candidate key(s) matched the group session ID
+        // but none authenticated the message. The distinction feeds the
+        // `GroupcastTesting` event's result field (`NoAvailableKey` vs
+        // `FailedAuth`).
         let GroupKeyFound {
             fab_idx,
             group_id,
             fabric_node_id,
             op_key,
             payload_range,
-        } = group_key_found.ok_or(ErrorCode::NoSession)?;
+        } = group_key_found.ok_or(if key_attempted {
+            ErrorCode::InvalidSignature
+        } else {
+            ErrorCode::NoSession
+        })?;
 
         // Only data messages participate in this dedup: control
         // messages (`C = 1`) live on a separate control-counter space

@@ -191,11 +191,15 @@ where
             .await
     }
 
+    /// Process one expanded invoke item.
+    ///
+    /// Returns whether the item was successfully invoked on its handler
+    /// (used by the Groupcast testing mode to report group-invoke outcomes).
     pub async fn process_invoke(
         &mut self,
         item: &Result<(CmdDetails, TLVElement<'_>), CmdStatus>,
         tw: &mut WriteBuf<'_>,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         let tail = tw.get_tail();
 
         let result = self.do_process_invoke(item, &mut *tw).await;
@@ -212,8 +216,8 @@ where
         &mut self,
         item: &Result<(CmdDetails, TLVElement<'_>), CmdStatus>,
         tw: &mut WriteBuf<'_>,
-    ) -> Result<(), Error> {
-        let result = match item {
+    ) -> Result<bool, Error> {
+        let (result, invoked) = match item {
             Ok((cmd, data)) => {
                 let pos = tw.get_tail();
 
@@ -222,9 +226,9 @@ where
                 match result {
                     Ok(()) => {
                         if pos == tw.get_tail() {
-                            Ok(cmd.status(IMStatusCode::Success))
+                            (Ok(cmd.status(IMStatusCode::Success)), true)
                         } else {
-                            Ok(None)
+                            (Ok(None), true)
                         }
                     }
                     Err(err) if err.code() != ErrorCode::NoSpace => {
@@ -232,20 +236,23 @@ where
 
                         tw.rewind_to(pos);
 
-                        Ok(cmd.status(err.into()))
+                        (Ok(cmd.status(err.into())), false)
                     }
-                    Err(err) => Err(err),
+                    Err(err) => (Err(err), false),
                 }
             }
             Err(status) => {
                 error!("Error processing command: {:?}", status);
-                Ok(Some(status.clone()))
+                (Ok(Some(status.clone())), false)
             }
         };
 
         match result {
-            Ok(Some(status)) => CmdResp::Status(status).to_tlv(&TagType::Anonymous, tw),
-            Ok(None) => Ok(()),
+            Ok(Some(status)) => {
+                CmdResp::Status(status).to_tlv(&TagType::Anonymous, tw)?;
+                Ok(invoked)
+            }
+            Ok(None) => Ok(invoked),
             Err(err) => Err(err),
         }
     }

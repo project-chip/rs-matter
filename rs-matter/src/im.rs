@@ -2430,8 +2430,109 @@ where
 
         let accessor = self.invoker.exchange().accessor()?;
 
+        // When the Groupcast testing mode is armed for listener testing by
+        // this group session's fabric, record an observation per processed
+        // path (turned into `GroupcastTesting` events by the Groupcast
+        // handler): a success per invoked concrete path, or - when nothing
+        // was invocable at all (typically: access denied on every group
+        // endpoint) - a single failed-auth observation.
+        // (For invokes, `suppress_resp` is set exactly for group-addressed
+        // requests - see the `respond` callers.)
+        #[cfg(feature = "groups")]
+        let group_testing = if suppress_resp {
+            let exchange = self.invoker.exchange();
+
+            exchange
+                .matter()
+                .groupcast_testing()
+                .armed(crate::dm::clusters::groupcast::GroupcastTestingEnum::EnableListenerTesting)
+                .and_then(|mode| {
+                    exchange
+                        .with_state(|state| {
+                            let sess = exchange.id().session(&mut state.sessions);
+
+                            let crate::transport::session::SessionMode::Group {
+                                fab_idx,
+                                group_id,
+                            } = sess.get_session_mode()
+                            else {
+                                return Ok(None);
+                            };
+
+                            if *fab_idx != mode.fab_idx {
+                                return Ok(None);
+                            }
+
+                            let src_ip =
+                                crate::dm::clusters::groupcast::addr_ip(&sess.get_peer_addr());
+                            let group_id = *group_id;
+                            let fab_idx = *fab_idx;
+                            let dst_ip = crate::dm::clusters::groupcast::group_dst_ip(
+                                &state.fabrics,
+                                fab_idx,
+                                group_id,
+                            );
+
+                            Ok(Some((group_id, src_ip, dst_ip)))
+                        })
+                        .unwrap_or(None)
+                })
+        } else {
+            None
+        };
+
+        #[cfg(feature = "groups")]
+        let mut any_invoked = false;
+
         for item in expand_invoke(metadata, self.req, &accessor)? {
-            self.invoker.process_invoke(&item?, &mut *wb).await?;
+            let item = item?;
+            let invoked = self.invoker.process_invoke(&item, &mut *wb).await?;
+
+            #[cfg(feature = "groups")]
+            if invoked {
+                any_invoked = true;
+
+                if let (Some((group_id, src_ip, dst_ip)), Ok((cmd, _))) = (&group_testing, &item) {
+                    self.invoker
+                        .exchange()
+                        .matter()
+                        .groupcast_testing()
+                        .observe(crate::dm::clusters::groupcast::TestingObservation {
+                            src_ip: *src_ip,
+                            dst_ip: Some(*dst_ip),
+                            group_id: Some(*group_id),
+                            endpoint_id: Some(cmd.endpoint_id),
+                            cluster_id: Some(cmd.cluster_id),
+                            element_id: Some(cmd.cmd_id),
+                            access_allowed: Some(true),
+                            result:
+                                crate::dm::clusters::groupcast::GroupcastTestResultEnum::Success,
+                        });
+                }
+            }
+        }
+
+        #[cfg(feature = "groups")]
+        if let Some((group_id, src_ip, dst_ip)) = group_testing {
+            if !any_invoked {
+                // Nothing was invocable for this group message - report it
+                // as access-denied (the dominant cause: no ACL grant covers
+                // the group's endpoints)
+                self.invoker
+                    .exchange()
+                    .matter()
+                    .groupcast_testing()
+                    .observe(crate::dm::clusters::groupcast::TestingObservation {
+                        src_ip,
+                        dst_ip: Some(dst_ip),
+                        group_id: Some(group_id),
+                        endpoint_id: None,
+                        cluster_id: None,
+                        element_id: None,
+                        access_allowed: Some(false),
+                        result: crate::dm::clusters::groupcast::GroupcastTestResultEnum::FailedAuth,
+                    });
+            }
         }
 
         if suppress_resp {

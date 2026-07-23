@@ -145,6 +145,11 @@ pub struct Matter<'a> {
     dev_att: &'a dyn DeviceAttestation,
     /// The port number on which the Matter stack will listen for incoming connections
     port: u16,
+    /// The Groupcast testing-mode bridge - shared between the transport RX
+    /// path, the Interaction Model's invoke processing and the Groupcast
+    /// cluster handler. See `dm::clusters::groupcast::TestingBridge`.
+    #[cfg(feature = "groups")]
+    groupcast_testing: crate::dm::clusters::groupcast::TestingBridge,
     /// The scratch buffer used by the key-value persistence machinery for
     /// (de)serializing BLOBs. Behind a blocking mutex so [`Matter::kv`] can
     /// recombine it with the user's raw [`KvBlobStore`](crate::persist::KvBlobStore)
@@ -179,6 +184,8 @@ impl<'a> Matter<'a> {
             dev_comm,
             dev_att,
             port,
+            #[cfg(feature = "groups")]
+            groupcast_testing: crate::dm::clusters::groupcast::TestingBridge::new(),
             kv_buf: Mutex::new(RefCell::new([0; crate::persist::KV_BUF_SIZE])),
         }
     }
@@ -199,17 +206,38 @@ impl<'a> Matter<'a> {
         dev_att: &'a dyn DeviceAttestation,
         port: u16,
     ) -> impl Init<Self> {
-        init!(
-            Self {
-                state <- Mutex::init(RefCell::init(MatterState::init())),
-                transport <- Transport::init(dev_det),
-                dev_det,
-                dev_comm,
-                dev_att,
-                port,
-                kv_buf <- Mutex::init(RefCell::init(crate::utils::init::zeroed())),
-            }
-        )
+        // Two variants because the `init!` macro does not accept `#[cfg]`
+        // on fields
+        #[cfg(feature = "groups")]
+        {
+            init!(
+                Self {
+                    state <- Mutex::init(RefCell::init(MatterState::init())),
+                    transport <- Transport::init(dev_det),
+                    dev_det,
+                    dev_comm,
+                    dev_att,
+                    port,
+                    groupcast_testing: crate::dm::clusters::groupcast::TestingBridge::new(),
+                    kv_buf <- Mutex::init(RefCell::init(crate::utils::init::zeroed())),
+                }
+            )
+        }
+
+        #[cfg(not(feature = "groups"))]
+        {
+            init!(
+                Self {
+                    state <- Mutex::init(RefCell::init(MatterState::init())),
+                    transport <- Transport::init(dev_det),
+                    dev_det,
+                    dev_comm,
+                    dev_att,
+                    port,
+                    kv_buf <- Mutex::init(RefCell::init(crate::utils::init::zeroed())),
+                }
+            )
+        }
     }
 
     pub fn dev_det(&self) -> &BasicInfoConfig<'_> {
@@ -549,6 +577,12 @@ impl<'a> Matter<'a> {
             let mut state = state.borrow_mut();
             f(&mut state)
         })
+    }
+
+    /// Return the Groupcast testing-mode bridge.
+    #[cfg(feature = "groups")]
+    pub(crate) fn groupcast_testing(&self) -> &crate::dm::clusters::groupcast::TestingBridge {
+        &self.groupcast_testing
     }
 
     /// Access the Real-Time-clock by invoking a closure with a mutable reference to it.

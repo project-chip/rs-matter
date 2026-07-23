@@ -134,6 +134,13 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     "TC_ACE_1_3",
     "TC_ACE_1_4",
     "TC_ACE_1_5",
+    // Group-auth access enforcement over REAL multicast: the TH sends
+    // group-addressed invokes at the DUT and asserts the
+    // `Groupcast.GroupcastTesting` events the (armed) DUT emits about them
+    // — including access grants coming solely from the Groupcast-synthesized
+    // `AuxiliaryACL`. Runs against the `NODE_GROUPCAST` app composition
+    // (see `app_args_override`).
+    "TC_ACE_1_6",
     "TC_ACL_2_2",
     // "TC_ACL_2_3", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
     "TC_ACL_2_4",
@@ -1565,6 +1572,9 @@ impl ITests {
             // so this whole-process ceiling must cover both, each with the
             // per-method budget in `per_test_framework_timeout_secs`.
             "TC_CADMIN_1_3_4" => Some(600),
+            // Sends several real multicast group commands with fixed 3s
+            // settling sleeps in between, plus event-report awaits.
+            "TC_ACE_1_6" => Some(360),
             "TC_CADMIN_1_5" | "TC_CADMIN_1_9" | "TC_CADMIN_1_11" | "TC_CADMIN_1_15"
             | "TC_CADMIN_1_22" | "TC_CADMIN_1_25" => Some(360),
             // TC_OPCREDS_3_8 exercises the VID-Verification feature (Matter
@@ -1780,7 +1790,7 @@ impl ITests {
             // root-endpoint attributes - upstream likewise runs that suite
             // against a non-groupcast app variant.
             "TC_GC_2_1" | "TC_GC_2_2" | "TC_GC_2_3" | "TC_GC_2_4" | "TC_GC_2_5" | "TC_GC_2_6"
-            | "TC_GC_2_7" | "TC_GC_2_8" => Some("--groupcast"),
+            | "TC_GC_2_7" | "TC_GC_2_8" | "TC_ACE_1_6" => Some("--groupcast"),
             // TC_TestEventTrigger validates `GeneralDiagnostics::TestEventTrigger`
             // key/trigger handling — needs the canonical CHIP enable-key
             // 000102030405060708090a0b0c0d0e0f plumbed through to the device's
@@ -1868,6 +1878,9 @@ impl ITests {
                  --PICS src/app/tests/suites/certification/ci-pics-values"
             }
             "TC_CGEN_2_4" => "--endpoint 0",
+            // Gates on `MCORE.ROLE.COMMISSIONEE` + `G.S`; `--endpoint 1` is
+            // `PIXIT.G.ENDPOINT` (the default script args already carry it).
+            "TC_ACE_1_6" => "--PICS src/app/tests/suites/certification/ci-pics-values",
             // TC_CGEN_2_5..2_11 verify the General Commissioning
             // *Terms-and-Conditions* (TC, Matter 1.4+, `CGEN.S.F00`)
             // feature. rs-matter does not implement TC, and each test body
