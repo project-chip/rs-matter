@@ -16,9 +16,9 @@
  */
 
 mod acl_and_dataver;
-mod aux_acl;
 mod attribute_lists;
 mod attributes;
+mod aux_acl;
 mod commands;
 mod events;
 mod long_reads;

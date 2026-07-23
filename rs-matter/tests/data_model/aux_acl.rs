@@ -24,13 +24,13 @@
 //! The root-endpoint exclusion for wildcard-target Group-auth entries is
 //! covered by the unit tests in `rs-matter/src/acl.rs`.
 
-use rs_matter::tlv::Nullable;
 use rs_matter::dm::clusters::acl::{self, AclHandler};
 use rs_matter::dm::devices::DEV_TYPE_ROOT_NODE;
 use rs_matter::dm::{
     Async, ChainedHandler, Cluster, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
 };
 use rs_matter::im::{AttrPath, AttrStatus, GenericPath, IMStatusCode};
+use rs_matter::tlv::Nullable;
 use rs_matter::tlv::ToTLV;
 
 use crate::common::e2e::im::attributes::TestAttrData;
@@ -106,7 +106,6 @@ const PRIVILEGE_OPERATE: u8 = 3;
 const AUTH_MODE_GROUP: u8 = 3;
 const AUX_TYPE_GROUPCAST: u8 = 1;
 
-
 #[test]
 fn test_auxiliary_acl_read() {
     init_env_logger();
@@ -179,7 +178,11 @@ fn test_acl_write_rejects_auxiliary_type() {
     }][..];
     im.handle_write_reqs(
         &dm,
-        &[TestAttrData::new(None, AttrPath::from_gp(&path), &good as _)],
+        &[TestAttrData::new(
+            None,
+            AttrPath::from_gp(&path),
+            &good as _,
+        )],
         &[AttrStatus::from_gp(&path, IMStatusCode::Success, None)],
     );
 }

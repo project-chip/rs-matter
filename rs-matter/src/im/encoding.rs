@@ -108,6 +108,7 @@ pub enum IMStatusCode {
     InvalidInState = 0xcb,
     NoCommandResponse = 0xcc,
     DynamicConstraintError = 0xcf,
+    AlreadyExists = 0xd0,
 }
 
 impl From<ErrorCode> for IMStatusCode {
@@ -131,6 +132,7 @@ impl From<ErrorCode> for IMStatusCode {
             ErrorCode::ConstraintError => IMStatusCode::ConstraintError,
             ErrorCode::DynamicConstraintError => IMStatusCode::DynamicConstraintError,
             ErrorCode::NotFound => IMStatusCode::NotFound,
+            ErrorCode::AlreadyExists => IMStatusCode::AlreadyExists,
             ErrorCode::Failure => IMStatusCode::Failure,
             _ => IMStatusCode::Failure,
         }

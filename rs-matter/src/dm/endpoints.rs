@@ -45,6 +45,9 @@ use super::types::{Async, ChainedHandler, Dataver, EndptId, EpClMatcher};
 /// as the corresponding tokens on the [`crate::clusters!`] macro.
 ///
 /// Optional cluster-shape modifiers (in order):
+/// - `acl(aux)` — makes the Access Control cluster advertise the provisional
+///   `AUXILIARY` feature and `AuxiliaryACL` attribute (e.g. for nodes hosting
+///   the Groupcast cluster).
 /// - `sw_diag(heap | watermarks | thread, …)` — shapes the Software
 ///   Diagnostics cluster.
 /// - `time_sync(time_zone | ntp_client | ntp_server | time_sync_client, …)` —
@@ -60,6 +63,7 @@ use super::types::{Async, ChainedHandler, Dataver, EndptId, EpClMatcher};
 #[macro_export]
 macro_rules! root_endpoint {
     ($t:ident
+        $(, acl($($acl_opt:ident),* $(,)?))?
         $(, sw_diag($($sw_opt:ident),* $(,)?))?
         $(, time_sync($($ts_opt:ident),* $(,)?))?
     ) => {
@@ -68,6 +72,7 @@ macro_rules! root_endpoint {
             device_types: $crate::devices!($crate::dm::devices::DEV_TYPE_ROOT_NODE),
             clusters: $crate::clusters!(
                 $t
+                $(, acl($($acl_opt),*))?
                 $(, sw_diag($($sw_opt),*))?
                 $(, time_sync($($ts_opt),*))?
                 ;

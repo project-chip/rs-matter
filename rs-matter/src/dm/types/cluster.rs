@@ -609,13 +609,14 @@ impl defmt::Format for Cluster<'_> {
 #[macro_export]
 macro_rules! clusters {
     (sys
+        $(, acl($($acl_opt:ident),* $(,)?))?
         $(, sw_diag($($sw_opt:ident),* $(,)?))?
         $(, time_sync($($ts_opt:ident),* $(,)?))?
         ; $($cluster:expr $(,)?)*
     ) => {
         $crate::clusters!(
             <$crate::dm::clusters::desc::DescHandler as $crate::dm::clusters::desc::ClusterHandler>::CLUSTER,
-            <$crate::dm::clusters::acl::AclHandler as $crate::dm::clusters::acl::ClusterHandler>::CLUSTER,
+            $crate::__acl_cluster!( $($($acl_opt),*)? ),
             <$crate::dm::clusters::basic_info::BasicInfoHandler as $crate::dm::clusters::basic_info::ClusterHandler>::CLUSTER,
             <$crate::dm::clusters::gen_comm::GenCommHandler as $crate::dm::clusters::gen_comm::ClusterHandler>::CLUSTER,
             <$crate::dm::clusters::gen_diag::GenDiagHandler as $crate::dm::clusters::gen_diag::ClusterHandler>::CLUSTER,
@@ -632,12 +633,14 @@ macro_rules! clusters {
         )
     };
     (eth
+        $(, acl($($acl_opt:ident),* $(,)?))?
         $(, sw_diag($($sw_opt:ident),* $(,)?))?
         $(, time_sync($($ts_opt:ident),* $(,)?))?
         ; $($cluster:expr $(,)?)*
     ) => {
         $crate::clusters!(
             sys
+            $(, acl($($acl_opt),*))?
             $(, sw_diag($($sw_opt),*))?
             $(, time_sync($($ts_opt),*))?
             ;
@@ -647,12 +650,14 @@ macro_rules! clusters {
         )
     };
     (thread
+        $(, acl($($acl_opt:ident),* $(,)?))?
         $(, sw_diag($($sw_opt:ident),* $(,)?))?
         $(, time_sync($($ts_opt:ident),* $(,)?))?
         ; $($cluster:expr $(,)?)*
     ) => {
         $crate::clusters!(
             sys
+            $(, acl($($acl_opt),*))?
             $(, sw_diag($($sw_opt),*))?
             $(, time_sync($($ts_opt),*))?
             ;
@@ -662,12 +667,14 @@ macro_rules! clusters {
         )
     };
     (wifi
+        $(, acl($($acl_opt:ident),* $(,)?))?
         $(, sw_diag($($sw_opt:ident),* $(,)?))?
         $(, time_sync($($ts_opt:ident),* $(,)?))?
         ; $($cluster:expr $(,)?)*
     ) => {
         $crate::clusters!(
             sys
+            $(, acl($($acl_opt),*))?
             $(, sw_diag($($sw_opt),*))?
             $(, time_sync($($ts_opt),*))?
             ;
@@ -681,6 +688,24 @@ macro_rules! clusters {
             $($cluster,)*
         ]
     }
+}
+
+/// Internal helper: map the `acl(...)` option token to the matching Access
+/// Control cluster metadata: no token → the default
+/// [`crate::dm::clusters::acl::AclHandler::CLUSTER`]; `aux` →
+/// [`crate::dm::clusters::acl::CLUSTER_AUX`] (advertising the provisional
+/// `AUXILIARY` feature and `AuxiliaryACL` attribute, e.g. for nodes hosting
+/// the Groupcast cluster).
+#[allow(unused_macros)]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __acl_cluster {
+    () => {
+        <$crate::dm::clusters::acl::AclHandler as $crate::dm::clusters::acl::ClusterHandler>::CLUSTER
+    };
+    (aux) => {
+        $crate::dm::clusters::acl::CLUSTER_AUX
+    };
 }
 
 /// Internal helper: turn a comma-separated list of `sw_diag(...)` lowercase

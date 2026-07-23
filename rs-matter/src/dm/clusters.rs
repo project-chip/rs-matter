@@ -34,6 +34,8 @@ pub mod fixed_label;
 pub mod gen_comm;
 pub mod gen_diag;
 #[cfg(feature = "groups")]
+pub mod groupcast;
+#[cfg(feature = "groups")]
 pub mod groups;
 pub mod grp_key_mgmt;
 pub mod icd_mgmt;

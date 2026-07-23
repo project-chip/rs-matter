@@ -552,13 +552,55 @@ impl<'a> AccessReq<'a> {
             // entries no longer cover the root endpoint (Matter Core spec).
             //
             // NOTE: entries surfaced via the `AuxiliaryACL` attribute are
-            // *derived* state - when a producing feature (e.g. a future
-            // Groupcast cluster) exists, its grants are to be checked here
-            // against the producer's own state, NOT against a materialized
-            // entry list (rs-matter deliberately does not store synthesized
-            // ACL entries - see `dm::clusters::acl::CLUSTER_AUX`).
-            state.fabrics.allow(self, state.aux_acl_enabled)
+            // *derived* state - checked below against the producing
+            // feature's own state (the Groupcast group table), NOT against a
+            // materialized entry list (rs-matter deliberately does not store
+            // synthesized ACL entries - see `dm::clusters::acl::CLUSTER_AUX`).
+            let allow = state.fabrics.allow(self, state.aux_acl_enabled);
+
+            #[cfg(feature = "groups")]
+            let allow =
+                allow || state.aux_acl_enabled && self.allow_groupcast_auxiliary(&state.fabrics);
+
+            allow
         })
+    }
+
+    /// Check whether access is granted by an auxiliary ACL entry synthesized
+    /// from the Groupcast group table: a Group-auth accessor whose group has
+    /// `HasAuxiliaryACL` set is granted the `Operate` privilege on the
+    /// group's endpoints (see the Groupcast Auxiliary ACL Handling section of
+    /// the Matter Core spec).
+    #[cfg(feature = "groups")]
+    fn allow_groupcast_auxiliary(&self, fabrics: &crate::fabric::Fabrics) -> bool {
+        if self.accessor.auth_mode != Some(AuthMode::Group) {
+            return false;
+        }
+
+        let Ok(fab_idx) = self.accessor.fab_idx() else {
+            return false;
+        };
+
+        let Some(fabric) = fabrics.get(fab_idx) else {
+            return false;
+        };
+
+        // Synthesized entries always carry concrete endpoint targets
+        let Some(endpoint) = self.object.path.endpoint else {
+            return false;
+        };
+
+        let granted = fabric.groups().iter().any(|entry| {
+            entry.has_aux_acl()
+                && entry.endpoints.contains(&endpoint)
+                && self.accessor.subjects.matches(entry.group_id as u64)
+        });
+
+        granted
+            && self
+                .object
+                .target_perms
+                .is_some_and(|access| access.is_ok(self.object.operation, Privilege::OPERATE))
     }
 }
 
@@ -1364,6 +1406,4 @@ pub(crate) mod tests {
         req.set_target_perms(Access::WO);
         assert!(req.allow());
     }
-
 }
-

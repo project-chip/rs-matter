@@ -53,6 +53,7 @@ mod groups {
 
     use heapless::String;
 
+    use crate::dm::clusters::decl::groupcast::MulticastAddrPolicyEnum;
     use crate::error::{Error, ErrorCode};
     use crate::group_keys::GroupKeySet;
     use crate::tlv::{FromTLV, ToTLV};
@@ -141,6 +142,46 @@ mod groups {
         pub group_id: u16,
         pub endpoints: Vec<u16, GROUP_ENDPOINTS_PER_FABRIC>,
         pub group_name: String<MAX_GROUP_NAME_LEN>,
+        /// Whether the (Groupcast-managed) group has auxiliary ACL entries
+        /// generated for its endpoints - see the Groupcast cluster's
+        /// `ConfigureAuxiliaryACL` command and the `AuxiliaryACL` attribute
+        /// of the Access Control cluster.
+        ///
+        /// `None` (in blobs persisted before the field existed) means `false`.
+        ///
+        /// NOTE: keep this field and the one below *last* - the
+        /// persisted-blob TLV tags are positional, and appending preserves
+        /// compatibility with blobs written before the fields existed.
+        pub has_aux_acl: Option<bool>,
+        /// The multicast-address policy of the group, when it is managed by
+        /// the Groupcast cluster.
+        ///
+        /// `None` means the group was created via the legacy Groups cluster,
+        /// which behaves like the `PerGroup` policy (such nodes join the
+        /// fabric+group-scoped multicast address) - the `PerGroup` policy
+        /// exists precisely for interop with them.
+        pub mcast_policy: Option<MulticastAddrPolicyEnum>,
+    }
+
+    impl GroupEndpointMapping {
+        /// Whether the group has auxiliary ACL entries generated for its
+        /// endpoints.
+        pub fn has_aux_acl(&self) -> bool {
+            self.has_aux_acl.unwrap_or(false)
+        }
+
+        /// The effective multicast-address policy of the group (legacy
+        /// Groups-cluster entries behave as `PerGroup`).
+        pub fn effective_mcast_policy(&self) -> MulticastAddrPolicyEnum {
+            self.mcast_policy
+                .unwrap_or(MulticastAddrPolicyEnum::PerGroup)
+        }
+
+        /// Whether the group is managed by the Groupcast cluster (as opposed
+        /// to the legacy Groups cluster).
+        pub fn groupcast_managed(&self) -> bool {
+            self.mcast_policy.is_some()
+        }
     }
 
     /// A stored group key map entry (maps group ID to key set).
@@ -263,6 +304,13 @@ mod groups {
                 .find(|e| e.group_id == group_id)
         }
 
+        /// Look up a group by ID, mutably
+        pub fn get_mut(&mut self, group_id: u16) -> Option<&mut GroupEndpointMapping> {
+            self.endpoint_mapping
+                .iter_mut()
+                .find(|e| e.group_id == group_id)
+        }
+
         /// Add an endpoint to a group.
         /// Returns true if the endpoint was already a member (name still updated per spec).
         pub fn add(
@@ -284,6 +332,8 @@ mod groups {
                         endpoints: Vec::new(),
                         group_name: String::from_str(group_name)
                             .map_err(|_| ErrorCode::ConstraintError)?,
+                        has_aux_acl: None,
+                        mcast_policy: None,
                     })
                     .map_err(|_| ErrorCode::ResourceExhausted)?;
                 unwrap!(self.endpoint_mapping.last_mut())
@@ -324,10 +374,143 @@ mod groups {
                 }
             }
 
-            // Remove entries with no endpoints left
-            self.endpoint_mapping.retain(|e| !e.endpoints.is_empty());
+            // Remove entries with no endpoints left - except Groupcast-managed
+            // ones, which may legitimately exist with no endpoints (a
+            // sender-only membership); the Groupcast cluster removes those
+            // explicitly via its `LeaveGroup` command.
+            self.endpoint_mapping
+                .retain(|e| !e.endpoints.is_empty() || e.groupcast_managed());
 
             removed
+        }
+
+        /// Join endpoints to a group on behalf of the Groupcast cluster,
+        /// creating the membership if it does not exist.
+        ///
+        /// - `endpoints`: the endpoints to add (may be empty for a
+        ///   sender-only membership); duplicates are omitted;
+        /// - `replace`: when `true`, the given endpoints replace the
+        ///   existing list instead of being appended;
+        /// - `mcast_policy`: the multicast-address policy; applied on
+        ///   creation, or updated when `Some` on an existing membership.
+        ///
+        /// Errors with `ResourceExhausted` when the membership or endpoint
+        /// capacity is exceeded; the membership is left unchanged in that
+        /// case, except that a possibly-performed `replace` clearing is
+        /// rolled back by restoring nothing (the caller re-checks capacity
+        /// upfront via [`Self::group_count`] and the endpoint capacity).
+        pub fn groupcast_join(
+            &mut self,
+            group_id: u16,
+            endpoints: &[u16],
+            replace: bool,
+            mcast_policy: Option<MulticastAddrPolicyEnum>,
+        ) -> Result<(), Error> {
+            let entry = if let Some(entry) = self
+                .endpoint_mapping
+                .iter_mut()
+                .find(|e| e.group_id == group_id)
+            {
+                entry
+            } else {
+                self.endpoint_mapping
+                    .push(GroupEndpointMapping {
+                        group_id,
+                        endpoints: Vec::new(),
+                        group_name: String::new(),
+                        has_aux_acl: Some(false),
+                        mcast_policy: Some(
+                            mcast_policy.unwrap_or(MulticastAddrPolicyEnum::IanaAddr),
+                        ),
+                    })
+                    .map_err(|_| ErrorCode::ResourceExhausted)?;
+                unwrap!(self.endpoint_mapping.last_mut())
+            };
+
+            // Joining via Groupcast upgrades a legacy entry to
+            // Groupcast-managed (the default policy matches the legacy
+            // behavior)
+            if entry.mcast_policy.is_none() {
+                entry.mcast_policy = Some(MulticastAddrPolicyEnum::PerGroup);
+            }
+
+            if let Some(mcast_policy) = mcast_policy {
+                entry.mcast_policy = Some(mcast_policy);
+            }
+
+            if replace {
+                entry.endpoints.clear();
+            }
+
+            for endpoint in endpoints {
+                if !entry.endpoints.contains(endpoint) {
+                    entry
+                        .endpoints
+                        .push(*endpoint)
+                        .map_err(|_| ErrorCode::ResourceExhausted)?;
+                }
+            }
+
+            Ok(())
+        }
+
+        /// Remove a whole group membership. Returns `true` if it existed.
+        pub fn groupcast_remove(&mut self, group_id: u16) -> bool {
+            let before = self.endpoint_mapping.len();
+            self.endpoint_mapping.retain(|e| e.group_id != group_id);
+
+            before != self.endpoint_mapping.len()
+        }
+
+        /// Set the `has_aux_acl` flag of a group membership.
+        /// Returns `true` if the flag changed.
+        pub fn set_has_aux_acl(&mut self, group_id: u16, has_aux_acl: bool) -> bool {
+            let Some(entry) = self
+                .endpoint_mapping
+                .iter_mut()
+                .find(|e| e.group_id == group_id)
+            else {
+                return false;
+            };
+
+            let changed = entry.has_aux_acl() != has_aux_acl;
+            entry.has_aux_acl = Some(has_aux_acl);
+
+            changed
+        }
+
+        /// The number of group memberships of this fabric.
+        pub fn group_count(&self) -> usize {
+            self.endpoint_mapping.len()
+        }
+
+        /// Look up the key set ID mapped to a group, if any.
+        pub fn key_map_get(&self, group_id: u16) -> Option<u16> {
+            self.key_map
+                .iter()
+                .find(|e| e.group_id == group_id)
+                .map(|e| e.group_key_set_id)
+        }
+
+        /// Map a group to a key set, replacing any previous mapping of that
+        /// group.
+        pub fn key_map_set_group(&mut self, group_id: u16, key_set_id: u16) -> Result<(), Error> {
+            if let Some(entry) = self.key_map.iter_mut().find(|e| e.group_id == group_id) {
+                entry.group_key_set_id = key_set_id;
+                return Ok(());
+            }
+
+            self.key_map
+                .push(GroupKeyMapping {
+                    group_id,
+                    group_key_set_id: key_set_id,
+                })
+                .map_err(|_| ErrorCode::ResourceExhausted.into())
+        }
+
+        /// Remove all key-set mappings of the given group.
+        pub fn key_map_remove_group(&mut self, group_id: u16) {
+            self.key_map.retain(|e| e.group_id != group_id);
         }
     }
 

@@ -84,7 +84,7 @@ pub const MATTER_SOCKET_BIND_ADDR: SocketAddr =
     SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MATTER_PORT, 0, 0));
 
 #[cfg(feature = "groups")]
-const MAX_GROUP_ADDRS: usize = MAX_FABRICS * MAX_GROUPS_PER_FABRIC;
+const MAX_GROUP_ADDRS: usize = MAX_FABRICS * MAX_GROUPS_PER_FABRIC + 1; // +1 for the IANA-assigned Groupcast address
 /// Without multicast group support no group addresses are ever joined, so the
 /// join-list is zero-capacity. Keeping the field (rather than gating it) avoids
 /// splitting the in-place `Transport` initializer, and a `Vec<_, 0>` costs no
@@ -1171,7 +1171,23 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
                 let group_addrs = || {
                     state.fabrics.iter().flat_map(|fabric| {
                         fabric.groups().iter().map(|group| {
-                            compute_group_multicast_addr(fabric.fabric_id(), group.group_id)
+                            // Groups with the `IanaAddr` Groupcast policy all
+                            // share the IANA-assigned address; `PerGroup` ones
+                            // (and legacy Groups-cluster entries, which behave
+                            // as `PerGroup`) each use a fabric+group-scoped
+                            // address. Duplicate enumeration of the shared
+                            // address is fine - the join/leave reconciliation
+                            // below is idempotent per address.
+                            use crate::dm::clusters::decl::groupcast::MulticastAddrPolicyEnum;
+
+                            match group.effective_mcast_policy() {
+                                MulticastAddrPolicyEnum::IanaAddr => {
+                                    crate::utils::ipv6::IANA_GROUPCAST_MULTICAST_ADDR
+                                }
+                                MulticastAddrPolicyEnum::PerGroup => {
+                                    compute_group_multicast_addr(fabric.fabric_id(), group.group_id)
+                                }
+                            }
                         })
                     })
                 };
