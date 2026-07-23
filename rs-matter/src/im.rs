@@ -2486,6 +2486,7 @@ where
 
         for item in expand_invoke(metadata, self.req, &accessor)? {
             let item = item?;
+            #[cfg_attr(not(feature = "groups"), allow(unused_variables))]
             let invoked = self.invoker.process_invoke(&item, &mut *wb).await?;
 
             #[cfg(feature = "groups")]
