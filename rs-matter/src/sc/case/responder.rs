@@ -232,6 +232,13 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
             self.casep.local_fabric_idx()
         );
 
+        // `send_with` can call its closure again for an MRP retransmission.
+        // ECDSA signing may be randomized, so generate the signature only once
+        // to keep every Sigma2 byte-identical and avoid reusing the Sigma2 AEAD
+        // nonce with different plaintext.
+        let mut signature = MaybeUninit::<CanonPkcSignature>::uninit(); // TODO MEDIUM BUFFER
+        let signature = signature.init_with(CanonPkcSignature::init());
+        let mut signature_generated = false;
         let mut tt_updated = false;
         exchange
             .send_with(|exchange, tw| {
@@ -243,18 +250,19 @@ impl<'a, C: Crypto> CaseResponder<'a, C> {
                         return sc_write(tw, SCStatusCodes::NoSharedTrustRoots, &[]);
                     };
 
-                    let mut signature = MaybeUninit::<CanonPkcSignature>::uninit(); // TODO MEDIUM BUFFER
-                    let signature = signature.init_with(CanonPkcSignature::init());
+                    if !signature_generated {
+                        // Use the remainder of the TX buffer as scratch space for computing the
+                        // signature.
+                        let sign_buf = tw.empty_as_mut_slice();
 
-                    // Use the remainder of the TX buffer as scratch space for computing the signature
-                    let sign_buf = tw.empty_as_mut_slice();
-
-                    self.casep.compute_sigma2_signature(
-                        self.crypto,
-                        fabric,
-                        sign_buf,
-                        signature,
-                    )?;
+                        self.casep.compute_sigma2_signature(
+                            self.crypto,
+                            fabric,
+                            sign_buf,
+                            signature,
+                        )?;
+                        signature_generated = true;
+                    }
 
                     tw.start_struct(&TLVTag::Anonymous)?;
                     tw.str(&TLVTag::Context(1), our_random.access())?;

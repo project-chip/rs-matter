@@ -23,6 +23,7 @@ use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
 
 use log::info;
+use std::sync::Mutex;
 
 use rs_matter::cert::gen::VALID_FOREVER;
 use rs_matter::cert::MAX_CERT_TLV_AND_ASN1_LEN;
@@ -36,11 +37,13 @@ use rs_matter::onboard::cac::RcacGenerator;
 use rs_matter::onboard::noc::NocGenerator;
 use rs_matter::respond::Responder;
 use rs_matter::sc::case::CaseInitiator;
-use rs_matter::sc::SecureChannel;
+use rs_matter::sc::{OpCode, SecureChannel, PROTO_ID_SECURE_CHANNEL};
 use rs_matter::transport::exchange::Exchange;
-use rs_matter::transport::network::{Address, NoNetwork};
+use rs_matter::transport::network::{Address, NetworkSend, NoNetwork};
+use rs_matter::transport::packet::PacketHdr;
 
 use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::storage::ParseBuf;
 use rs_matter::Matter;
 
 use crate::common::{create_localhost_socket_pair, init_env_logger, run_device_controller};
@@ -51,6 +54,55 @@ mod common;
 const TEST_FABRIC_ID: u64 = 1;
 const CONTROLLER_NODE_ID: u64 = 100;
 const DEVICE_NODE_ID: u64 = 200;
+
+struct DropFirstSigma2<'a> {
+    socket: &'a async_io::Async<std::net::UdpSocket>,
+    enabled: bool,
+    first_two_packets: &'a Mutex<Vec<Vec<u8>>>,
+}
+
+impl NetworkSend for DropFirstSigma2<'_> {
+    async fn send_to(&mut self, data: &[u8], addr: Address) -> Result<(), Error> {
+        if self.enabled {
+            let mut packets = self.first_two_packets.lock().unwrap();
+
+            if packets.is_empty() && is_sigma2(data) {
+                packets.push(data.to_vec());
+
+                // Simulate loss of the initial Sigma2.
+                return Ok(());
+            } else if packets.len() == 1 {
+                if is_sigma2(data) {
+                    packets.push(data.to_vec());
+                } else {
+                    // Do not let a later standalone ACK advance the initiator's
+                    // peer message counter past the pending Sigma2 retry.
+                    return Ok(());
+                }
+            }
+        }
+
+        let mut socket = self.socket;
+        NetworkSend::send_to(&mut socket, data, addr).await
+    }
+}
+
+fn is_sigma2(data: &[u8]) -> bool {
+    let mut data = data.to_vec();
+    let mut pb = ParseBuf::new(data.as_mut_slice());
+    let mut header = PacketHdr::new();
+
+    if header.decode_plain_hdr(&mut pb).is_err()
+        || header
+            .decode_remaining(test_only_crypto(), None, 0, &mut pb)
+            .is_err()
+    {
+        return false;
+    }
+
+    header.proto.proto_id == PROTO_ID_SECURE_CHANNEL
+        && header.proto.proto_opcode == OpCode::CASESigma2 as u8
+}
 
 /// Test that a full CASE handshake succeeds between two in-process Matter instances.
 ///
@@ -69,6 +121,19 @@ const DEVICE_NODE_ID: u64 = 200;
 /// `tests/commissioning.rs`.
 #[test]
 fn test_case_handshake() {
+    run_case_handshake_test(false);
+}
+
+/// Test that retransmitting Sigma2 produces the same packet and still completes CASE.
+///
+/// `Exchange::send_with` rebuilds a packet when MRP requests a retransmission.
+/// Dropping the responder's first Sigma2 forces that path.
+#[test]
+fn test_case_handshake_with_sigma2_retransmission() {
+    run_case_handshake_test(true);
+}
+
+fn run_case_handshake_test(drop_first_sigma2: bool) {
     init_env_logger();
 
     futures_lite::future::block_on(async {
@@ -183,10 +248,20 @@ fn test_case_handshake() {
 
         let sc = SecureChannel::new(&crypto, &());
         let responder = Responder::new("device", sc, &device_matter, 0);
+        let first_two_packets = Mutex::new(Vec::new());
 
         let device_fut = async {
             select(
-                device_matter.run(&crypto, &device_socket, &device_socket, NoNetwork),
+                device_matter.run(
+                    &crypto,
+                    DropFirstSigma2 {
+                        socket: &device_socket,
+                        enabled: drop_first_sigma2,
+                        first_two_packets: &first_two_packets,
+                    },
+                    &device_socket,
+                    NoNetwork,
+                ),
                 responder.run::<4>(),
             )
             .coalesce()
@@ -229,9 +304,23 @@ fn test_case_handshake() {
 
         // ---- 7. Run device and controller concurrently ----
 
-        run_device_controller(device_fut, controller_fut)
-            .await
-            .unwrap();
+        let result = run_device_controller(device_fut, controller_fut).await;
+
+        if drop_first_sigma2 {
+            let packets = first_two_packets.lock().unwrap();
+
+            assert_eq!(
+                packets.len(),
+                2,
+                "expected the initial Sigma2 and one retransmission"
+            );
+            assert_eq!(
+                packets[0], packets[1],
+                "CASE Sigma2 must be byte-identical when retransmitted"
+            );
+        }
+
+        result.unwrap();
     });
 }
 
