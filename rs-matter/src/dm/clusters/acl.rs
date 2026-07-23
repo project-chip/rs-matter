@@ -20,9 +20,10 @@
 use core::num::NonZeroU8;
 
 use crate::acl::{self, AclEntry, AuthMode, MAX_ACL_ENTRIES_PER_FABRIC};
+use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{
-    ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, Cluster, Dataver, InvokeContext,
-    ReadContext, WriteContext,
+    ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, Cluster, Dataver, HandlerContext,
+    InvokeContext, LifecycleOp, Metadata, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, FabricPersist, Fabrics};
@@ -133,6 +134,62 @@ impl AclHandler {
 
         Ok(())
     }
+
+}
+
+/// `AccessControl` cluster metadata that additionally advertises the
+/// provisional `AUXILIARY` feature and the `AuxiliaryACL` attribute.
+///
+/// Use this in place of [`AclHandler::CLUSTER`] on nodes where features (e.g.
+/// a future Groupcast cluster) synthesize auxiliary ACL entries. At startup,
+/// `AclHandler` inspects the node metadata and - when (and only when) this
+/// feature is advertised - switches the access-control evaluation of
+/// wildcard-target Group-auth entries to exclude the root endpoint, as the
+/// Matter Core spec mandates for nodes with the feature.
+///
+/// Auxiliary entries are *derived* state, and rs-matter deliberately
+/// allocates no storage for them: a producing feature computes them on the
+/// fly from its own state, both when the `AuxiliaryACL` attribute is read
+/// and during access-control evaluation. Until such a producer exists, the
+/// attribute reads as an empty list.
+///
+/// It is deliberately not the default: the feature is provisional, and on a
+/// node with no auxiliary-entry producer an always-empty `AuxiliaryACL` would
+/// be noise.
+pub const CLUSTER_AUX: Cluster<'static> = FULL_CLUSTER
+    .with_attrs(with!(required; AttributeId::AuxiliaryACL))
+    .with_cmds(with!())
+    .with_features(Feature::AUXILIARY.bits());
+
+/// Notify the data model that the `AuxiliaryACL` attribute changed, and emit
+/// the `AuxiliaryAccessUpdated` event.
+///
+/// Producers of auxiliary ACL entries call this once per batch of
+/// [`AuxiliaryAcl::replace`] calls that reported a change (the Matter Core
+/// spec asks for the event to be generated only once per batch of changes).
+///
+/// `admin_node_id` is the node ID of the administrator whose action led to
+/// the change, or `None` (reported as `Null`) when the change is internally
+/// initiated. `fab_idx` is the fabric whose entries changed (the event is
+/// fabric-sensitive).
+pub fn notify_auxiliary_access_updated(
+    ctx: &impl HandlerContext,
+    admin_node_id: Option<u64>,
+    fab_idx: NonZeroU8,
+) -> Result<(), Error> {
+    ctx.notify_attr_changed(
+        ROOT_ENDPOINT_ID,
+        FULL_CLUSTER.id,
+        AttributeId::AuxiliaryACL as _,
+    );
+
+    AuxiliaryAccessUpdated::emit_for(ctx, ROOT_ENDPOINT_ID, |event| {
+        event
+            .admin_node_id(Nullable::new(admin_node_id))?
+            .fabric_index(Some(fab_idx.get()))?
+            .end()
+    })
+    .map(|_event_number| ())
 }
 
 impl ClusterHandler for AclHandler {
@@ -156,6 +213,49 @@ impl ClusterHandler for AclHandler {
     ) -> Result<P, Error> {
         ctx.exchange()
             .with_state(|state| self.acl(&state.fabrics, ctx.attr(), builder))
+    }
+
+    fn auxiliary_acl<P: TLVBuilderParent>(
+        &self,
+        ctx: impl ReadContext,
+        builder: ArrayAttributeRead<
+            AccessControlEntryStructArrayBuilder<P>,
+            AccessControlEntryStructBuilder<P>,
+        >,
+    ) -> Result<P, Error> {
+        // No producing feature (e.g. Groupcast) exists yet, so there are no
+        // synthesized entries to derive - the attribute is an empty list.
+        // When a producer lands, the entries are to be computed here on the
+        // fly from its state (see the note on [`CLUSTER_AUX`]).
+        let _ = ctx;
+
+        match builder {
+            ArrayAttributeRead::ReadAll(builder) => builder.end(),
+            ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
+        }
+    }
+
+    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
+        if matches!(op, LifecycleOp::Startup) {
+            // Enable the auxiliary-ACL store when (and only when) the node's
+            // Access Control cluster metadata advertises the `AUXILIARY`
+            // feature (see [`CLUSTER_AUX`]), deriving the runtime behavior
+            // from the single source of truth - the node metadata. The
+            // Access Control cluster only ever lives on the root endpoint.
+            let enabled = ctx.metadata().access(|node| {
+                node.endpoint(ROOT_ENDPOINT_ID)
+                    .and_then(|endpoint| endpoint.cluster(FULL_CLUSTER.id))
+                    .is_some_and(|cluster| {
+                        cluster.feature_map & Feature::AUXILIARY.bits() != 0
+                    })
+            });
+
+            ctx.matter()
+                .with_state(|state| state.aux_acl_enabled = enabled);
+        }
+
+        Ok(())
     }
 
     fn subjects_per_access_control_entry(&self, _ctx: impl ReadContext) -> Result<u16, Error> {

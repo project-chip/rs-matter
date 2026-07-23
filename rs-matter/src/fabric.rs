@@ -852,9 +852,11 @@ impl Fabric {
     /// Check if the fabric allows the given access request
     ///
     /// Note that the fabric index in the access request needs to be checked before that.
-    fn allow(&self, req: &AccessReq) -> bool {
+    /// `aux_feature` conveys whether the node advertises the Access Control
+    /// cluster's `AUXILIARY` feature - see `AclEntry::allow`.
+    fn allow(&self, req: &AccessReq, aux_feature: bool) -> bool {
         for e in &self.acl {
-            if e.allow(req) {
+            if e.allow(req, aux_feature) {
                 return true;
             }
         }
@@ -1174,7 +1176,10 @@ impl Fabrics {
 
     /// Check if the given access request should be allowed, based on all operational fabrics
     /// and their ACLs
-    pub fn allow(&self, req: &AccessReq) -> bool {
+    ///
+    /// `aux_feature` conveys whether the node advertises the Access Control
+    /// cluster's `AUXILIARY` feature - see `AclEntry::allow`.
+    pub fn allow(&self, req: &AccessReq, aux_feature: bool) -> bool {
         // PASE Sessions with no fabric index have implicit access grant,
         // but only as long as the ACL list is empty
         //
@@ -1208,7 +1213,7 @@ impl Fabrics {
             return false;
         };
 
-        fabric.allow(req)
+        fabric.allow(req, aux_feature)
     }
 }
 

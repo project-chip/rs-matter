@@ -546,9 +546,19 @@ impl<'a> AccessReq<'a> {
     /// _accessor_ the necessary privileges to access the target as per its
     /// permissions
     pub fn allow(&self) -> bool {
-        self.accessor
-            .matter
-            .with_state(|state| state.fabrics.allow(self))
+        self.accessor.matter.with_state(|state| {
+            // Whether the node advertises the Access Control cluster's
+            // `AUXILIARY` feature; when set, wildcard-target Group-auth
+            // entries no longer cover the root endpoint (Matter Core spec).
+            //
+            // NOTE: entries surfaced via the `AuxiliaryACL` attribute are
+            // *derived* state - when a producing feature (e.g. a future
+            // Groupcast cluster) exists, its grants are to be checked here
+            // against the producer's own state, NOT against a materialized
+            // entry list (rs-matter deliberately does not store synthesized
+            // ACL entries - see `dm::clusters::acl::CLUSTER_AUX`).
+            state.fabrics.allow(self, state.aux_acl_enabled)
+        })
     }
 }
 
@@ -646,6 +656,14 @@ impl AclEntry {
                 let targets = entry.targets().map_err(|_| ErrorCode::ConstraintError)?.ok_or(ErrorCode::ConstraintError)?;
                 let auxiliary_type = entry.auxiliary_type().map_err(|_| ErrorCode::ConstraintError)?;
 
+                // Per the Matter Core spec, the `AuxiliaryType` field SHALL
+                // NOT be present in entries in the (writable) `ACL`
+                // attribute - it is reserved for the server-generated
+                // entries in `AuxiliaryACL`.
+                if auxiliary_type.is_some() {
+                    Err(ErrorCode::ConstraintError)?;
+                }
+
                 if
                     // As per spec, PASE auth mode is reserved for future use
                     matches!(auth_mode, AccessControlEntryAuthModeEnum::PASE)
@@ -657,7 +675,6 @@ impl AclEntry {
 
                 e.privilege = privilege.into();
                 e.auth_mode = auth_mode.into();
-                e.auxiliary_type = auxiliary_type;
 
                 // Start with null subjects and targets
                 // so that we can keep those to null if we receive empty subjects' array or empty targets' array
@@ -828,8 +845,12 @@ impl AclEntry {
     }
 
     /// Check if the ACL entry allows access to the given accessor and object
-    pub fn allow(&self, req: &AccessReq) -> bool {
-        self.match_accessor(req.accessor) && self.match_access_desc(&req.object)
+    ///
+    /// `aux_feature` conveys whether the node advertises the Access Control
+    /// cluster's `AUXILIARY` feature, which changes how wildcard-target
+    /// Group-auth entries are evaluated - see [`Self::match_access_desc`].
+    pub fn allow(&self, req: &AccessReq, aux_feature: bool) -> bool {
+        self.match_accessor(req.accessor) && self.match_access_desc(&req.object, aux_feature)
     }
 
     /// Add a subject to the ACL entry
@@ -878,7 +899,23 @@ impl AclEntry {
                 .unwrap_or(false)
     }
 
-    fn match_access_desc(&self, object: &AccessDesc) -> bool {
+    fn match_access_desc(&self, object: &AccessDesc, aux_feature: bool) -> bool {
+        // Per the Matter Core spec, when the Access Control cluster's
+        // `AUXILIARY` feature is advertised, an empty (wildcard) targets
+        // list on a Group-auth entry grants access to all endpoints
+        // *except* the root endpoint; without the feature it covers the
+        // whole node. (Explicitly-listed targets are unaffected.)
+        if aux_feature
+            && matches!(self.auth_mode, AuthMode::Group)
+            && object.path.endpoint == Some(crate::dm::endpoints::ROOT_ENDPOINT_ID)
+            && self
+                .targets
+                .as_opt_ref()
+                .is_none_or(|targets| targets.is_empty())
+        {
+            return false;
+        }
+
         let allow = self.targets.as_opt_ref().is_none_or(|targets| {
             // Targets array null or empty implies allow for all targets
             // Otherwise, check if the target matches any of the ACL entry's targets
@@ -1271,4 +1308,62 @@ pub(crate) mod tests {
         assert_eq!(req1.allow(), false);
         assert_eq!(req2.allow(), true);
     }
+
+    /// With the `AUXILIARY` feature advertised, a wildcard-target Group-auth
+    /// entry no longer covers the root endpoint (but explicit targets and
+    /// other endpoints are unaffected).
+    #[test]
+    fn test_aux_wildcard_group_excludes_root_endpoint() {
+        let matter = test_matter();
+        add_fabric(&matter);
+
+        const GROUP_ID: u64 = 0x12AB;
+
+        // A regular (writable) ACL entry: Group auth, wildcard targets
+        let mut entry = AclEntry::new(None, Privilege::OPERATE, AuthMode::Group);
+        entry.add_subject(GROUP_ID).unwrap();
+        add_acl(&matter, FAB_1, entry).unwrap();
+
+        let accessor = Accessor::new(
+            FAB_1.get(),
+            AccessorSubjects::new(GROUP_ID),
+            Some(AuthMode::Group),
+            &matter,
+        );
+
+        let ep0 = GenericPath::new(Some(0), Some(1234), None);
+        let ep1 = GenericPath::new(Some(1), Some(1234), None);
+
+        // Without the feature: the wildcard covers the whole node
+        for path in [ep0.clone(), ep1.clone()] {
+            let mut req = AccessReq::new(&accessor, path, Access::WRITE);
+            req.set_target_perms(Access::WO);
+            assert!(req.allow());
+        }
+
+        matter.with_state(|state| state.aux_acl_enabled = true);
+
+        // With the feature: the root endpoint is excluded...
+        let mut req = AccessReq::new(&accessor, ep0.clone(), Access::WRITE);
+        req.set_target_perms(Access::WO);
+        assert!(!req.allow());
+
+        // ...other endpoints are unaffected...
+        let mut req = AccessReq::new(&accessor, ep1, Access::WRITE);
+        req.set_target_perms(Access::WO);
+        assert!(req.allow());
+
+        // ...and an entry explicitly targeting the root endpoint still works.
+        remove_all_acl(&matter, FAB_1);
+        let mut entry = AclEntry::new(None, Privilege::OPERATE, AuthMode::Group);
+        entry.add_subject(GROUP_ID).unwrap();
+        entry.add_target(Target::new(Some(0), None, None)).unwrap();
+        add_acl(&matter, FAB_1, entry).unwrap();
+
+        let mut req = AccessReq::new(&accessor, ep0, Access::WRITE);
+        req.set_target_perms(Access::WO);
+        assert!(req.allow());
+    }
+
 }
+
