@@ -23,7 +23,7 @@ use crate::acl::{self, AclEntry, AuthMode, MAX_ACL_ENTRIES_PER_FABRIC};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{
     ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, Cluster, Dataver, HandlerContext,
-    InvokeContext, LifecycleOp, Metadata, ReadContext, WriteContext,
+    InvokeContext, LifecycleOp, Metadata, NodeId, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, FabricPersist, Fabrics};
@@ -134,64 +134,7 @@ impl AclHandler {
 
         Ok(())
     }
-}
 
-/// `AccessControl` cluster metadata that additionally advertises the
-/// provisional `AUXILIARY` feature and the `AuxiliaryACL` attribute.
-///
-/// Use this in place of [`AclHandler::CLUSTER`] on nodes where features (e.g.
-/// a future Groupcast cluster) synthesize auxiliary ACL entries. At startup,
-/// `AclHandler` inspects the node metadata and - when (and only when) this
-/// feature is advertised - switches the access-control evaluation of
-/// wildcard-target Group-auth entries to exclude the root endpoint, as the
-/// Matter Core spec mandates for nodes with the feature.
-///
-/// Auxiliary entries are *derived* state, and rs-matter deliberately
-/// allocates no storage for them: a producing feature computes them on the
-/// fly from its own state, both when the `AuxiliaryACL` attribute is read
-/// and during access-control evaluation. Until such a producer exists, the
-/// attribute reads as an empty list.
-///
-/// It is deliberately not the default: the feature is provisional, and on a
-/// node with no auxiliary-entry producer an always-empty `AuxiliaryACL` would
-/// be noise.
-pub const CLUSTER_AUX: Cluster<'static> = FULL_CLUSTER
-    .with_attrs(with!(required; AttributeId::AuxiliaryACL))
-    .with_cmds(with!())
-    .with_features(Feature::AUXILIARY.bits());
-
-/// Notify the data model that the `AuxiliaryACL` attribute changed, and emit
-/// the `AuxiliaryAccessUpdated` event.
-///
-/// Producers of auxiliary ACL entries call this once per batch of
-/// [`AuxiliaryAcl::replace`] calls that reported a change (the Matter Core
-/// spec asks for the event to be generated only once per batch of changes).
-///
-/// `admin_node_id` is the node ID of the administrator whose action led to
-/// the change, or `None` (reported as `Null`) when the change is internally
-/// initiated. `fab_idx` is the fabric whose entries changed (the event is
-/// fabric-sensitive).
-pub fn notify_auxiliary_access_updated(
-    ctx: &impl HandlerContext,
-    admin_node_id: Option<u64>,
-    fab_idx: NonZeroU8,
-) -> Result<(), Error> {
-    ctx.notify_attr_changed(
-        ROOT_ENDPOINT_ID,
-        FULL_CLUSTER.id,
-        AttributeId::AuxiliaryACL as _,
-    );
-
-    AuxiliaryAccessUpdated::emit_for(ctx, ROOT_ENDPOINT_ID, |event| {
-        event
-            .admin_node_id(Nullable::new(admin_node_id))?
-            .fabric_index(Some(fab_idx.get()))?
-            .end()
-    })
-    .map(|_event_number| ())
-}
-
-impl AclHandler {
     /// Serialize one synthesized `AuxiliaryACL` entry, applying the same
     /// fabric-sensitive redaction as the writable-`ACL` read: entries of
     /// other fabrics expose only their fabric index.
@@ -362,7 +305,7 @@ impl ClusterHandler for AclHandler {
             });
 
             ctx.matter()
-                .with_state(|state| state.aux_acl_enabled = enabled);
+                .with_state(|state| state.fabrics.aux_acl_enabled = enabled);
         }
 
         Ok(())
@@ -527,18 +470,45 @@ impl ClusterHandler for AclHandler {
     }
 }
 
+/// `AccessControl` cluster metadata that additionally advertises the
+/// provisional `AUXILIARY` feature and the `AuxiliaryACL` attribute.
+///
+/// Use this in place of [`AclHandler::CLUSTER`] on nodes where features (e.g.
+/// a Groupcast cluster) synthesize auxiliary ACL entries.
+///
+/// At startup, `AclHandler` inspects the node metadata and - when this
+/// feature is advertised - switches the access-control evaluation of
+/// wildcard-target Group-auth entries to exclude the root endpoint, as the
+/// Matter Core spec mandates for nodes with the feature.
+pub const CLUSTER_AUX: Cluster<'static> = FULL_CLUSTER
+    .with_attrs(with!(required; AttributeId::AuxiliaryACL))
+    .with_cmds(with!())
+    .with_features(Feature::AUXILIARY.bits());
+
+/// Notify the data model that the `AuxiliaryACL` attribute changed, and emit
+/// the `AuxiliaryAccessUpdated` event.
+pub fn notify_auxiliary_access_updated(
+    ctx: &impl HandlerContext,
+    admin_node_id: Option<NodeId>,
+    fab_idx: NonZeroU8,
+) -> Result<(), Error> {
+    ctx.notify_attr_changed(
+        ROOT_ENDPOINT_ID,
+        FULL_CLUSTER.id,
+        AttributeId::AuxiliaryACL as _,
+    );
+
+    AuxiliaryAccessUpdated::emit_for(ctx, ROOT_ENDPOINT_ID, |event| {
+        event
+            .admin_node_id(Nullable::new(admin_node_id))?
+            .fabric_index(Some(fab_idx.get()))?
+            .end()
+    })
+    .map(|_event_number| ())
+}
+
 /// Emit one `AccessControlEntryChanged` event with the given change type and
 /// the entry's contents serialized into `LatestValue`.
-///
-/// Callers pass in the `admin_node_id` / `admin_passcode_id` derived from the
-/// requesting accessor (CASE → node id, PASE → passcode id 0). For changes
-/// originating from internal flows that do not have a requester (e.g. the
-/// auto-created admin entry on AddNOC, which runs over PASE), pass null/0.
-///
-/// The event is emitted on endpoint 0 (the AccessControl cluster always lives
-/// there), via `emit_for` so the helper can be used from cluster handlers
-/// other than ACL itself (e.g. from the OperationalCredentials handler when
-/// AddNOC seeds the initial admin entry).
 pub(crate) fn emit_acl_entry_changed<E>(
     emitter: E,
     admin_node_id: Nullable<u64>,

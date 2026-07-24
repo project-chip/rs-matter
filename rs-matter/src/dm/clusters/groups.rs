@@ -19,6 +19,7 @@
 
 use core::num::NonZeroU8;
 
+use crate::dm::clusters::acl::notify_auxiliary_access_updated;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricPersist;
@@ -112,9 +113,7 @@ impl GroupsHandler {
     fn notify_aux(ctx: &impl InvokeContext, fab_idx: core::num::NonZeroU8) {
         let peer_node_id = Self::peer_node_id(ctx);
 
-        if let Err(e) =
-            crate::dm::clusters::acl::notify_auxiliary_access_updated(ctx, peer_node_id, fab_idx)
-        {
+        if let Err(e) = notify_auxiliary_access_updated(ctx, peer_node_id, fab_idx) {
             warn!("Failed to notify the auxiliary ACL change: {:?}", e);
         }
     }

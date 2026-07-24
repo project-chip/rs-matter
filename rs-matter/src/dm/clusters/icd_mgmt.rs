@@ -643,7 +643,7 @@ impl<'a> IcdMgmtHandler<'a> {
             Some(cmd.cmd_id),
         );
 
-        let mut req = AccessReq::new(&accessor, path, Access::WRITE);
+        let mut req = AccessReq::new(&accessor, path, Access::WRITE, &[]);
         req.set_target_perms(Access::WRITE | Access::NEED_ADMIN);
 
         Ok(req.allow())

@@ -153,7 +153,7 @@ impl<'a> Cluster<'a> {
         write: bool,
         attr_id: AttrId,
     ) -> Result<(), IMStatusCode> {
-        let mut access_req = AccessReq::new_with_device_types(
+        let mut access_req = AccessReq::new(
             accessor,
             path,
             if write { Access::WRITE } else { Access::READ },
@@ -198,8 +198,7 @@ impl<'a> Cluster<'a> {
         device_types: &[DeviceType],
         cmd_id: CmdId,
     ) -> Result<(), IMStatusCode> {
-        let mut access_req =
-            AccessReq::new_with_device_types(accessor, path, Access::WRITE, device_types);
+        let mut access_req = AccessReq::new(accessor, path, Access::WRITE, device_types);
 
         let target_perms = self
             .commands
@@ -240,8 +239,7 @@ impl<'a> Cluster<'a> {
         device_types: &[DeviceType],
         event_id: EventId,
     ) -> Result<(), IMStatusCode> {
-        let mut access_req =
-            AccessReq::new_with_device_types(accessor, path, Access::READ, device_types);
+        let mut access_req = AccessReq::new(accessor, path, Access::READ, device_types);
 
         let target_perms = self
             .events

@@ -218,7 +218,7 @@ impl<'a> Matter<'a> {
                     dev_comm,
                     dev_att,
                     port,
-                    groupcast_testing: crate::dm::clusters::groupcast::TestingBridge::new(),
+                    groupcast_testing <- crate::dm::clusters::groupcast::TestingBridge::init(),
                     kv_buf <- Mutex::init(RefCell::init(crate::utils::init::zeroed())),
                 }
             )
@@ -759,20 +759,6 @@ pub struct MatterState {
     ///
     /// Public for unit tests
     pub fabrics: Fabrics,
-    /// Whether the node advertises the Access Control cluster's `AUXILIARY`
-    /// feature (auxiliary ACL entries, synthesized by features like a future
-    /// Groupcast cluster)
-    ///
-    /// Derived from the node metadata by `AclHandler` at startup (see
-    /// `dm::clusters::acl::CLUSTER_AUX`). When set, the access-control
-    /// evaluation of wildcard-target Group-auth entries excludes the root
-    /// endpoint, as the Matter Core spec mandates.
-    ///
-    /// Note that there is - deliberately - no accompanying storage for the
-    /// auxiliary entries themselves: they are derived state, to be computed
-    /// on the fly from the producing feature's own state, both when serving
-    /// the `AuxiliaryACL` attribute and during access-control evaluation.
-    aux_acl_enabled: bool,
     /// All sessions
     sessions: Sessions,
     /// CASE session resumption cache
@@ -799,7 +785,6 @@ impl MatterState {
     const fn new() -> Self {
         Self {
             fabrics: Fabrics::new(),
-            aux_acl_enabled: false,
             sessions: Sessions::new(),
             #[cfg(feature = "case-resumption")]
             resumption: ResumableSessions::new(),
@@ -818,7 +803,6 @@ impl MatterState {
     fn init() -> impl Init<Self> {
         init!(Self {
             fabrics <- Fabrics::init(),
-            aux_acl_enabled: false,
             sessions <- Sessions::init(),
             resumption <- crate::sc::case::ResumableSessions::init(),
             pase <- Pase::init(),
@@ -834,7 +818,6 @@ impl MatterState {
     fn init() -> impl Init<Self> {
         init!(Self {
             fabrics <- Fabrics::init(),
-            aux_acl_enabled: false,
             sessions <- Sessions::init(),
             pase <- Pase::init(),
             failsafe <- FailSafe::init(),

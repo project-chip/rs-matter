@@ -498,15 +498,8 @@ impl<'a> AccessReq<'a> {
     /// the endpoint that hosts `path`; pass an empty slice when this is not
     /// applicable (e.g. for unit tests that don't exercise `DeviceType` ACL
     /// targets).
-    pub const fn new(accessor: &'a Accessor, path: GenericPath, operation: Access) -> Self {
-        Self::new_with_device_types(accessor, path, operation, &[])
-    }
-
-    /// Create an access request object that also carries the device types of
-    /// the access target's endpoint, so that ACL entries with a `Target` of
-    /// kind `DeviceType` can be evaluated.
-    pub const fn new_with_device_types(
-        accessor: &'a Accessor,
+    pub const fn new(
+        accessor: &'a Accessor<'a>,
         path: GenericPath,
         operation: Access,
         device_types: &'a [DeviceType],
@@ -547,20 +540,11 @@ impl<'a> AccessReq<'a> {
     /// permissions
     pub fn allow(&self) -> bool {
         self.accessor.matter.with_state(|state| {
-            // Whether the node advertises the Access Control cluster's
-            // `AUXILIARY` feature; when set, wildcard-target Group-auth
-            // entries no longer cover the root endpoint (Matter Core spec).
-            //
-            // NOTE: entries surfaced via the `AuxiliaryACL` attribute are
-            // *derived* state - checked below against the producing
-            // feature's own state (the Groupcast group table), NOT against a
-            // materialized entry list (rs-matter deliberately does not store
-            // synthesized ACL entries - see `dm::clusters::acl::CLUSTER_AUX`).
-            let allow = state.fabrics.allow(self, state.aux_acl_enabled);
+            let allow = state.fabrics.allow(self);
 
             #[cfg(feature = "groups")]
-            let allow =
-                allow || state.aux_acl_enabled && self.allow_groupcast_auxiliary(&state.fabrics);
+            let allow = allow
+                || state.fabrics.aux_acl_enabled && self.allow_groupcast_auxiliary(&state.fabrics);
 
             allow
         })
@@ -1041,7 +1025,7 @@ pub(crate) mod tests {
             &matter,
         );
         let path = GenericPath::new(Some(1), Some(1234), None);
-        let mut req_pase = AccessReq::new(&accessor, path, Access::READ);
+        let mut req_pase = AccessReq::new(&accessor, path, Access::READ, &[]);
         req_pase.set_target_perms(Access::RWVA);
 
         // Always allow for PASE sessions
@@ -1054,7 +1038,7 @@ pub(crate) mod tests {
             &matter,
         );
         let path = GenericPath::new(Some(1), Some(1234), None);
-        let mut req = AccessReq::new(&accessor, path, Access::READ);
+        let mut req = AccessReq::new(&accessor, path, Access::READ, &[]);
         req.set_target_perms(Access::RWVA);
 
         // Default deny for CASE
@@ -1098,7 +1082,7 @@ pub(crate) mod tests {
             &matter,
         );
         let path = GenericPath::new(Some(1), Some(1234), None);
-        let mut req = AccessReq::new(&accessor, path, Access::READ);
+        let mut req = AccessReq::new(&accessor, path, Access::READ, &[]);
         req.set_target_perms(Access::RWVA);
 
         // Deny for subject mismatch
@@ -1131,7 +1115,7 @@ pub(crate) mod tests {
 
         let accessor = Accessor::new(1, subjects, Some(AuthMode::Case), &matter);
         let path = GenericPath::new(Some(1), Some(1234), None);
-        let mut req = AccessReq::new(&accessor, path, Access::READ);
+        let mut req = AccessReq::new(&accessor, path, Access::READ, &[]);
         req.set_target_perms(Access::RWVA);
 
         // Deny for CAT id mismatch
@@ -1171,7 +1155,7 @@ pub(crate) mod tests {
 
         let accessor = Accessor::new(1, subjects, Some(AuthMode::Case), &matter);
         let path = GenericPath::new(Some(1), Some(1234), None);
-        let mut req = AccessReq::new(&accessor, path, Access::READ);
+        let mut req = AccessReq::new(&accessor, path, Access::READ, &[]);
         req.set_target_perms(Access::RWVA);
 
         // Deny for CAT id mismatch
@@ -1202,7 +1186,7 @@ pub(crate) mod tests {
             &matter,
         );
         let path = GenericPath::new(Some(1), Some(1234), None);
-        let mut req = AccessReq::new(&accessor, path, Access::READ);
+        let mut req = AccessReq::new(&accessor, path, Access::READ, &[]);
         req.set_target_perms(Access::RWVA);
 
         // Deny for target mismatch
@@ -1284,7 +1268,7 @@ pub(crate) mod tests {
         add_acl(&matter, FAB_1, new).unwrap();
 
         // Write on an RWVA without admin access - deny
-        let mut req = AccessReq::new(&accessor, path.clone(), Access::WRITE);
+        let mut req = AccessReq::new(&accessor, path.clone(), Access::WRITE, &[]);
         req.set_target_perms(Access::RWVA);
         assert_eq!(req.allow(), false);
 
@@ -1300,7 +1284,7 @@ pub(crate) mod tests {
         add_acl(&matter, FAB_1, new).unwrap();
 
         // Write on an RWVA with admin access - allow
-        let mut req = AccessReq::new(&accessor, path, Access::WRITE);
+        let mut req = AccessReq::new(&accessor, path, Access::WRITE, &[]);
         req.set_target_perms(Access::RWVA);
         assert_eq!(req.allow(), true);
     }
@@ -1322,7 +1306,7 @@ pub(crate) mod tests {
             Some(AuthMode::Case),
             &matter,
         );
-        let mut req1 = AccessReq::new(&accessor2, path.clone(), Access::READ);
+        let mut req1 = AccessReq::new(&accessor2, path.clone(), Access::READ, &[]);
         req1.set_target_perms(Access::RWVA);
         let accessor3 = Accessor::new(
             2,
@@ -1330,7 +1314,7 @@ pub(crate) mod tests {
             Some(AuthMode::Case),
             &matter,
         );
-        let mut req2 = AccessReq::new(&accessor3, path, Access::READ);
+        let mut req2 = AccessReq::new(&accessor3, path, Access::READ, &[]);
         req2.set_target_perms(Access::RWVA);
 
         // Allow for subject match - target is wildcard - Fabric idx 2
@@ -1378,20 +1362,20 @@ pub(crate) mod tests {
 
         // Without the feature: the wildcard covers the whole node
         for path in [ep0.clone(), ep1.clone()] {
-            let mut req = AccessReq::new(&accessor, path, Access::WRITE);
+            let mut req = AccessReq::new(&accessor, path, Access::WRITE, &[]);
             req.set_target_perms(Access::WO);
             assert!(req.allow());
         }
 
-        matter.with_state(|state| state.aux_acl_enabled = true);
+        matter.with_state(|state| state.fabrics.aux_acl_enabled = true);
 
         // With the feature: the root endpoint is excluded...
-        let mut req = AccessReq::new(&accessor, ep0.clone(), Access::WRITE);
+        let mut req = AccessReq::new(&accessor, ep0.clone(), Access::WRITE, &[]);
         req.set_target_perms(Access::WO);
         assert!(!req.allow());
 
         // ...other endpoints are unaffected...
-        let mut req = AccessReq::new(&accessor, ep1, Access::WRITE);
+        let mut req = AccessReq::new(&accessor, ep1, Access::WRITE, &[]);
         req.set_target_perms(Access::WO);
         assert!(req.allow());
 
@@ -1402,7 +1386,7 @@ pub(crate) mod tests {
         entry.add_target(Target::new(Some(0), None, None)).unwrap();
         add_acl(&matter, FAB_1, entry).unwrap();
 
-        let mut req = AccessReq::new(&accessor, ep0, Access::WRITE);
+        let mut req = AccessReq::new(&accessor, ep0, Access::WRITE, &[]);
         req.set_target_perms(Access::WO);
         assert!(req.allow());
     }

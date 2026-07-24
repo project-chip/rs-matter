@@ -1195,8 +1195,12 @@ impl<'a, C: Crypto> TransportRunner<'a, C> {
         self.matter
             .groupcast_testing()
             .observe(groupcast::TestingObservation {
-                src_ip: groupcast::addr_ip(&packet.peer),
-                dst_ip: Some(groupcast::group_dst_ip(fabrics, mode.fab_idx, group_id)),
+                src_ip: groupcast::TestingObservation::addr_ip(&packet.peer),
+                dst_ip: Some(groupcast::TestingObservation::group_dst_ip(
+                    fabrics,
+                    mode.fab_idx,
+                    group_id,
+                )),
                 // Per the Matter Core spec, the `GroupID` field is filled
                 // from the request only when the message was properly
                 // authenticated for the fabric under test

@@ -49,6 +49,7 @@ use crate::group_keys::{GroupEpochKeyEntry, GroupKeySet};
 use crate::im::{FabricIndex, GenericPath};
 use crate::tlv::TLVBuilderParent;
 use crate::utils::cell::RefCell;
+use crate::utils::init::{init, Init};
 use crate::utils::storage::Vec;
 use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
@@ -86,6 +87,11 @@ const MAX_CMD_ENDPOINTS: usize = 20;
 const TESTING_SECS_MIN: u16 = 10;
 const TESTING_SECS_MAX: u16 = 1200;
 const TESTING_SECS_FALLBACK: u16 = 60;
+
+/// Max buffered testing observations; when full, new observations are
+/// dropped (the CHIP test harness tolerates missing duplicates - it re-sends
+/// and de-duplicates).
+const MAX_PENDING_OBSERVATIONS: usize = 4;
 
 /// Return the `Groupcast` cluster metadata for the given feature combination.
 ///
@@ -136,6 +142,72 @@ pub(crate) struct TestingObservation {
     pub(crate) result: GroupcastTestResultEnum,
 }
 
+impl TestingObservation {
+    /// The IPv6 octets of the multicast address the given group uses, for the
+    /// `GroupcastTesting` event's `DestinationIpAddress` field.
+    ///
+    /// The transport does not surface the actual UDP destination address of a
+    /// received datagram, so it is reconstructed from the group's multicast
+    /// address policy; for an unknown group (e.g. the no-key-available case) the
+    /// IANA-assigned address is assumed, as `IanaAddr` is the default policy.
+    pub(crate) fn group_dst_ip(fabrics: &Fabrics, fab_idx: NonZeroU8, group_id: u16) -> [u8; 16] {
+        fabrics
+            .get(fab_idx)
+            .and_then(|fabric| {
+                fabric
+                    .groups()
+                    .get(group_id)
+                    .map(|entry| match entry.effective_mcast_policy() {
+                        MulticastAddrPolicyEnum::IanaAddr => {
+                            crate::utils::ipv6::IANA_GROUPCAST_MULTICAST_ADDR.octets()
+                        }
+                        MulticastAddrPolicyEnum::PerGroup => {
+                            crate::utils::ipv6::compute_group_multicast_addr(
+                                fabric.fabric_id(),
+                                group_id,
+                            )
+                            .octets()
+                        }
+                    })
+            })
+            .unwrap_or(crate::utils::ipv6::IANA_GROUPCAST_MULTICAST_ADDR.octets())
+    }
+
+    /// The IPv6 octets of a transport [`Address`], for the `GroupcastTesting`
+    /// event's `SourceIpAddress` field (IPv4 addresses are V4-mapped).
+    pub(crate) fn addr_ip(addr: &crate::transport::network::Address) -> Option<[u8; 16]> {
+        let crate::transport::network::Address::Udp(addr) = addr else {
+            return None;
+        };
+
+        Some(match addr.ip() {
+            core::net::IpAddr::V6(ip) => ip.octets(),
+            core::net::IpAddr::V4(ip) => ip.to_ipv6_mapped().octets(),
+        })
+    }
+}
+
+struct TestingBridgeState {
+    mode: Option<TestingMode>,
+    pending: Vec<TestingObservation, MAX_PENDING_OBSERVATIONS>,
+}
+
+impl TestingBridgeState {
+    const fn new() -> Self {
+        Self {
+            mode: None,
+            pending: Vec::new(),
+        }
+    }
+
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            mode: None,
+            pending <- Vec::init(),
+        })
+    }
+}
+
 /// The bridge between the places that *observe* Groupcast test conditions
 /// (the transport RX path, the Interaction Model's invoke processing, the
 /// `GroupcastTesting` command) and the [`GroupcastHandler`], which owns the
@@ -147,26 +219,20 @@ pub(crate) struct TestingBridge {
     changed: Notification,
 }
 
-struct TestingBridgeState {
-    mode: Option<TestingMode>,
-    pending: Vec<TestingObservation, MAX_PENDING_OBSERVATIONS>,
-}
-
-/// Max buffered testing observations; when full, new observations are
-/// dropped (the CHIP test harness tolerates missing duplicates - it re-sends
-/// and de-duplicates).
-const MAX_PENDING_OBSERVATIONS: usize = 4;
-
 impl TestingBridge {
     /// Create a new bridge, with testing disabled.
     pub(crate) const fn new() -> Self {
         Self {
-            state: Mutex::new(RefCell::new(TestingBridgeState {
-                mode: None,
-                pending: Vec::new(),
-            })),
+            state: Mutex::new(RefCell::new(TestingBridgeState::new())),
             changed: Notification::new(),
         }
+    }
+
+    pub(crate) fn init() -> impl Init<Self> {
+        init!(Self {
+            state <- Mutex::init(RefCell::init(TestingBridgeState::init())),
+            changed <- Notification::init(),
+        })
     }
 
     /// Set (or clear) the testing mode; wakes [`GroupcastHandler::run`].
@@ -210,49 +276,6 @@ impl TestingBridge {
     async fn wait_changed(&self) {
         self.changed.wait().await
     }
-}
-
-/// The IPv6 octets of the multicast address the given group uses, for the
-/// `GroupcastTesting` event's `DestinationIpAddress` field.
-///
-/// The transport does not surface the actual UDP destination address of a
-/// received datagram, so it is reconstructed from the group's multicast
-/// address policy; for an unknown group (e.g. the no-key-available case) the
-/// IANA-assigned address is assumed, as `IanaAddr` is the default policy.
-pub(crate) fn group_dst_ip(fabrics: &Fabrics, fab_idx: NonZeroU8, group_id: u16) -> [u8; 16] {
-    fabrics
-        .get(fab_idx)
-        .and_then(|fabric| {
-            fabric
-                .groups()
-                .get(group_id)
-                .map(|entry| match entry.effective_mcast_policy() {
-                    MulticastAddrPolicyEnum::IanaAddr => {
-                        crate::utils::ipv6::IANA_GROUPCAST_MULTICAST_ADDR.octets()
-                    }
-                    MulticastAddrPolicyEnum::PerGroup => {
-                        crate::utils::ipv6::compute_group_multicast_addr(
-                            fabric.fabric_id(),
-                            group_id,
-                        )
-                        .octets()
-                    }
-                })
-        })
-        .unwrap_or(crate::utils::ipv6::IANA_GROUPCAST_MULTICAST_ADDR.octets())
-}
-
-/// The IPv6 octets of a transport [`Address`], for the `GroupcastTesting`
-/// event's `SourceIpAddress` field (IPv4 addresses are V4-mapped).
-pub(crate) fn addr_ip(addr: &crate::transport::network::Address) -> Option<[u8; 16]> {
-    let crate::transport::network::Address::Udp(addr) = addr else {
-        return None;
-    };
-
-    Some(match addr.ip() {
-        core::net::IpAddr::V6(ip) => ip.octets(),
-        core::net::IpAddr::V4(ip) => ip.to_ipv6_mapped().octets(),
-    })
 }
 
 /// The system implementation of a handler for the Groupcast Matter cluster.
@@ -365,7 +388,7 @@ impl GroupcastHandler {
             Some(cmd.cmd_id),
         );
 
-        let mut req = AccessReq::new(&accessor, path, Access::WRITE);
+        let mut req = AccessReq::new(&accessor, path, Access::WRITE, &[]);
         req.set_target_perms(Access::WRITE | Access::NEED_ADMIN);
 
         Ok(req.allow())
@@ -798,6 +821,7 @@ impl ClusterHandler for GroupcastHandler {
                     .map(|entry| entry.effective_mcast_policy())
                     .unwrap_or(MulticastAddrPolicyEnum::IanaAddr),
             };
+
             if Self::used_mcast_addrs_with(&state.fabrics, fab_idx, group_id, target_policy)
                 > MAX_MCAST_ADDR_COUNT
             {
@@ -819,6 +843,7 @@ impl ClusterHandler for GroupcastHandler {
             // Matter Core spec, failures here are ignored, leaving the effect
             // of the prior successful steps unchanged.
             let mut aux_changed = false;
+
             if let Some(use_auxiliary_acl) = use_auxiliary_acl {
                 let groups = fabric.groups_mut();
                 if groups.set_has_aux_acl(group_id, use_auxiliary_acl) {
@@ -853,6 +878,7 @@ impl ClusterHandler for GroupcastHandler {
         let group_id = request.group_id()?;
 
         let mut endpoints = None;
+
         if let Some(req_endpoints) = request.endpoints()? {
             let mut list = Vec::<EndptId, MAX_CMD_ENDPOINTS>::new();
             for endpoint in &req_endpoints {

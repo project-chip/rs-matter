@@ -2463,11 +2463,10 @@ where
                                 return Ok(None);
                             }
 
-                            let src_ip =
-                                crate::dm::clusters::groupcast::addr_ip(&sess.get_peer_addr());
+                            let src_ip = crate::dm::clusters::groupcast::TestingObservation::addr_ip(&sess.get_peer_addr());
                             let group_id = *group_id;
                             let fab_idx = *fab_idx;
-                            let dst_ip = crate::dm::clusters::groupcast::group_dst_ip(
+                            let dst_ip = crate::dm::clusters::groupcast::TestingObservation::group_dst_ip(
                                 &state.fabrics,
                                 fab_idx,
                                 group_id,
@@ -2516,7 +2515,7 @@ where
         #[cfg(feature = "groups")]
         if let Some((group_id, src_ip, dst_ip)) = group_testing {
             if !any_invoked {
-                // Nothing was invocable for this group message - report it
+                // Nothing was invokable for this group message - report it
                 // as access-denied (the dominant cause: no ACL grant covers
                 // the group's endpoints)
                 self.invoker

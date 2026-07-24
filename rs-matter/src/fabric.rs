@@ -148,10 +148,6 @@ mod groups {
         /// of the Access Control cluster.
         ///
         /// `None` (in blobs persisted before the field existed) means `false`.
-        ///
-        /// NOTE: keep this field and the one below *last* - the
-        /// persisted-blob TLV tags are positional, and appending preserves
-        /// compatibility with blobs written before the fields existed.
         pub has_aux_acl: Option<bool>,
         /// The multicast-address policy of the group, when it is managed by
         /// the Groupcast cluster.
@@ -1101,6 +1097,20 @@ cfg_if! {
 /// All fabrics
 pub struct Fabrics {
     fabrics: Vec<Fabric, MAX_FABRICS>,
+    /// Whether the node advertises the Access Control cluster's `AUXILIARY`
+    /// feature (auxiliary ACL entries, synthesized by features like a future
+    /// Groupcast cluster)
+    ///
+    /// Derived from the node metadata by `AclHandler` at startup (see
+    /// `dm::clusters::acl::CLUSTER_AUX`). When set, the access-control
+    /// evaluation of wildcard-target Group-auth entries excludes the root
+    /// endpoint, as the Matter Core spec mandates.
+    ///
+    /// Note that there is - deliberately - no accompanying storage for the
+    /// auxiliary entries themselves: they are derived state, to be computed
+    /// on the fly from the producing feature's own state, both when serving
+    /// the `AuxiliaryACL` attribute and during access-control evaluation.
+    pub(crate) aux_acl_enabled: bool,
 }
 
 impl Default for Fabrics {
@@ -1115,6 +1125,7 @@ impl Fabrics {
     pub const fn new() -> Self {
         Self {
             fabrics: Vec::new(),
+            aux_acl_enabled: false,
         }
     }
 
@@ -1122,6 +1133,7 @@ impl Fabrics {
     pub fn init() -> impl Init<Self> {
         init!(Self {
             fabrics <- Vec::init(),
+            aux_acl_enabled: false,
         })
     }
 
@@ -1362,7 +1374,7 @@ impl Fabrics {
     ///
     /// `aux_feature` conveys whether the node advertises the Access Control
     /// cluster's `AUXILIARY` feature - see `AclEntry::allow`.
-    pub fn allow(&self, req: &AccessReq, aux_feature: bool) -> bool {
+    pub fn allow(&self, req: &AccessReq) -> bool {
         // PASE Sessions with no fabric index have implicit access grant,
         // but only as long as the ACL list is empty
         //
@@ -1396,7 +1408,7 @@ impl Fabrics {
             return false;
         };
 
-        fabric.allow(req, aux_feature)
+        fabric.allow(req, self.aux_acl_enabled)
     }
 }
 
