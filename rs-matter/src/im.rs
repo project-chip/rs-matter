@@ -973,7 +973,7 @@ where
         let req = SubscribeReq::new(TLVElement::new(&rx));
         debug!("IM: Subscribe request: {:?}", req);
 
-        let accessor = exchange.accessor()?;
+        let accessor = exchange.accessor(&self.handler)?;
 
         if let Err(err) = self.validate_subscribe(&req, &accessor) {
             error!("Invalid subscribe request: {:?}", err);
@@ -1938,7 +1938,7 @@ where
         M: Metadata,
         F: FnMut(EndptId, ClusterId, u32) -> bool,
     {
-        let accessor = self.invoker.exchange().accessor()?;
+        let accessor = self.invoker.exchange().accessor(&metadata)?;
 
         if self.req.attr_requests()?.is_some() {
             wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))?;
@@ -1997,7 +1997,7 @@ where
     where
         M: Metadata,
     {
-        let accessor = self.invoker.exchange().accessor()?;
+        let accessor = self.invoker.exchange().accessor(&metadata)?;
 
         if let Some(event_reqs) = self.req.event_requests()? {
             wb.start_array(&TLVTag::Context(ReportDataRespTag::EventReports as _))?;
@@ -2346,7 +2346,7 @@ where
     where
         M: Metadata,
     {
-        let accessor = self.invoker.exchange().accessor()?;
+        let accessor = self.invoker.exchange().accessor(&metadata)?;
 
         wb.reset();
 
@@ -2428,7 +2428,7 @@ where
             wb.start_array(&TLVTag::Context(InvRespTag::InvokeResponses as u8))?;
         }
 
-        let accessor = self.invoker.exchange().accessor()?;
+        let accessor = self.invoker.exchange().accessor(&metadata)?;
 
         // When the Groupcast testing mode is armed for listener testing by
         // this group session's fabric, record an observation per processed

@@ -18,7 +18,8 @@
 use core::fmt;
 
 use crate::acl::Accessor;
-use crate::dm::{Cluster, Endpoint};
+use crate::dm::endpoints::ROOT_ENDPOINT_ID;
+use crate::dm::{Cluster, Endpoint, Metadata};
 use crate::im::encoding::{AttrPath, EventPath, GenericPath, IMStatusCode};
 use crate::utils::init::{init, Init};
 use crate::utils::storage::Vec;
@@ -197,6 +198,22 @@ impl<'a> Node<'a> {
 
         false
     }
+
+    /// Return true if the node metadata advertises the `AUXILIARY` feature, which
+    /// indicates that the node has a feature (e.g. a Groupcast cluster) that
+    /// synthesizes auxiliary ACL entries and requires the special access-control
+    /// behavior mandated by the Matter Core spec for nodes with the feature.
+    pub(crate) fn aux_acl_enabled(&self) -> bool {
+        self.endpoint(ROOT_ENDPOINT_ID)
+            .and_then(|endpoint| {
+                endpoint.cluster(crate::dm::clusters::decl::access_control::FULL_CLUSTER.id)
+            })
+            .is_some_and(|cluster| {
+                cluster.feature_map
+                    & crate::dm::clusters::decl::access_control::Feature::AUXILIARY.bits()
+                    != 0
+            })
+    }
 }
 
 impl core::fmt::Display for Node<'_> {
@@ -270,5 +287,22 @@ impl<const N: usize> core::fmt::Display for DynamicNode<'_, N> {
 impl<'a, const N: usize> Default for DynamicNode<'a, N> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub(crate) trait AuxAclCheck {
+    /// Return true if the metadata advertises the `AUXILIARY` feature, which
+    /// indicates that the node has a feature (e.g. a Groupcast cluster) that
+    /// synthesizes auxiliary ACL entries and requires the special access-control
+    /// behavior mandated by the Matter Core spec for nodes with the feature.
+    fn aux_acl_enabled(&self) -> bool;
+}
+
+impl<T> AuxAclCheck for T
+where
+    T: Metadata,
+{
+    fn aux_acl_enabled(&self) -> bool {
+        self.access(|node| node.aux_acl_enabled())
     }
 }

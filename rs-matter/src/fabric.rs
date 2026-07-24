@@ -1031,11 +1031,11 @@ impl Fabric {
     /// Check if the fabric allows the given access request
     ///
     /// Note that the fabric index in the access request needs to be checked before that.
-    /// `aux_feature` conveys whether the node advertises the Access Control
+    /// `aux_acl_enabled` conveys whether the node advertises the Access Control
     /// cluster's `AUXILIARY` feature - see `AclEntry::allow`.
-    fn allow(&self, req: &AccessReq, aux_feature: bool) -> bool {
+    fn allow(&self, req: &AccessReq, aux_acl_enabled: bool) -> bool {
         for e in &self.acl {
-            if e.allow(req, aux_feature) {
+            if e.allow(req, aux_acl_enabled) {
                 return true;
             }
         }
@@ -1097,20 +1097,6 @@ cfg_if! {
 /// All fabrics
 pub struct Fabrics {
     fabrics: Vec<Fabric, MAX_FABRICS>,
-    /// Whether the node advertises the Access Control cluster's `AUXILIARY`
-    /// feature (auxiliary ACL entries, synthesized by features like a future
-    /// Groupcast cluster)
-    ///
-    /// Derived from the node metadata by `AclHandler` at startup (see
-    /// `dm::clusters::acl::CLUSTER_AUX`). When set, the access-control
-    /// evaluation of wildcard-target Group-auth entries excludes the root
-    /// endpoint, as the Matter Core spec mandates.
-    ///
-    /// Note that there is - deliberately - no accompanying storage for the
-    /// auxiliary entries themselves: they are derived state, to be computed
-    /// on the fly from the producing feature's own state, both when serving
-    /// the `AuxiliaryACL` attribute and during access-control evaluation.
-    pub(crate) aux_acl_enabled: bool,
 }
 
 impl Default for Fabrics {
@@ -1125,7 +1111,6 @@ impl Fabrics {
     pub const fn new() -> Self {
         Self {
             fabrics: Vec::new(),
-            aux_acl_enabled: false,
         }
     }
 
@@ -1133,7 +1118,6 @@ impl Fabrics {
     pub fn init() -> impl Init<Self> {
         init!(Self {
             fabrics <- Vec::init(),
-            aux_acl_enabled: false,
         })
     }
 
@@ -1372,9 +1356,9 @@ impl Fabrics {
     /// Check if the given access request should be allowed, based on all operational fabrics
     /// and their ACLs
     ///
-    /// `aux_feature` conveys whether the node advertises the Access Control
+    /// `aux_acl_enabled` conveys whether the node advertises the Access Control
     /// cluster's `AUXILIARY` feature - see `AclEntry::allow`.
-    pub fn allow(&self, req: &AccessReq) -> bool {
+    pub fn allow(&self, req: &AccessReq, aux_acl_enabled: bool) -> bool {
         // PASE Sessions with no fabric index have implicit access grant,
         // but only as long as the ACL list is empty
         //
@@ -1408,7 +1392,7 @@ impl Fabrics {
             return false;
         };
 
-        fabric.allow(req, self.aux_acl_enabled)
+        fabric.allow(req, aux_acl_enabled)
     }
 }
 

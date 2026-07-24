@@ -143,7 +143,7 @@ impl ClusterHandler for GroupsHandler {
         request: AddGroupRequest<'_>,
         response: AddGroupResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
         let group_id = request.group_id()?;
         let group_name: &str = request.group_name()?;
 
@@ -210,7 +210,7 @@ impl ClusterHandler for GroupsHandler {
         request: ViewGroupRequest<'_>,
         response: ViewGroupResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
         let group_id = request.group_id()?;
 
         // Validate constraints
@@ -251,7 +251,7 @@ impl ClusterHandler for GroupsHandler {
         request: GetGroupMembershipRequest<'_>,
         response: GetGroupMembershipResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
         let request_group_list = request.group_list()?;
 
         ctx.exchange().with_state(|state| {
@@ -291,7 +291,7 @@ impl ClusterHandler for GroupsHandler {
         request: RemoveGroupRequest<'_>,
         response: RemoveGroupResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
         let group_id = request.group_id()?;
         let endpoint_id = ctx.cmd().endpoint_id;
 
@@ -339,7 +339,7 @@ impl ClusterHandler for GroupsHandler {
     }
 
     fn handle_remove_all_groups(&self, ctx: impl InvokeContext) -> Result<(), Error> {
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
         let endpoint_id = ctx.cmd().endpoint_id;
 
         let mut persist = FabricPersist::new(ctx.kv());

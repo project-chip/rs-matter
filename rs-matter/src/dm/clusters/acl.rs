@@ -23,7 +23,7 @@ use crate::acl::{self, AclEntry, AuthMode, MAX_ACL_ENTRIES_PER_FABRIC};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{
     ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, Cluster, Dataver, HandlerContext,
-    InvokeContext, LifecycleOp, Metadata, NodeId, ReadContext, WriteContext,
+    InvokeContext, NodeId, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, FabricPersist, Fabrics};
@@ -291,26 +291,6 @@ impl ClusterHandler for AclHandler {
         }
     }
 
-    fn lifecycle(&self, ctx: impl HandlerContext, op: LifecycleOp) -> Result<(), Error> {
-        if matches!(op, LifecycleOp::Startup) {
-            // Enable the auxiliary-ACL store when (and only when) the node's
-            // Access Control cluster metadata advertises the `AUXILIARY`
-            // feature (see [`CLUSTER_AUX`]), deriving the runtime behavior
-            // from the single source of truth - the node metadata. The
-            // Access Control cluster only ever lives on the root endpoint.
-            let enabled = ctx.metadata().access(|node| {
-                node.endpoint(ROOT_ENDPOINT_ID)
-                    .and_then(|endpoint| endpoint.cluster(FULL_CLUSTER.id))
-                    .is_some_and(|cluster| cluster.feature_map & Feature::AUXILIARY.bits() != 0)
-            });
-
-            ctx.matter()
-                .with_state(|state| state.fabrics.aux_acl_enabled = enabled);
-        }
-
-        Ok(())
-    }
-
     fn subjects_per_access_control_entry(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(acl::MAX_SUBJECTS_PER_ACL_ENTRY as _)
     }
@@ -333,7 +313,7 @@ impl ClusterHandler for AclHandler {
     ) -> Result<(), Error> {
         let mut persist = FabricPersist::new(ctx.kv());
 
-        let accessor = ctx.exchange().accessor()?;
+        let accessor = ctx.accessor()?;
         let admin_node_id: Nullable<u64> = match accessor.peer_node_id() {
             Some(id) => Nullable::some(id),
             None => Nullable::none(),

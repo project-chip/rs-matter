@@ -627,7 +627,7 @@ impl<'a> IcdMgmtHandler<'a> {
 
     /// The accessing fabric of the current command.
     fn cmd_fabric(ctx: &impl InvokeContext) -> Result<NonZeroU8, Error> {
-        ctx.exchange().accessor()?.fab_idx()
+        ctx.accessor()?.fab_idx()
     }
 
     /// Whether the caller holds Administer privilege on this command's path.
@@ -635,7 +635,7 @@ impl<'a> IcdMgmtHandler<'a> {
     /// Administrators may register/unregister any client; everyone else must
     /// prove ownership of an existing entry with its verification key.
     fn caller_is_admin(ctx: &impl InvokeContext) -> Result<bool, Error> {
-        let accessor = ctx.exchange().accessor()?;
+        let accessor = ctx.accessor()?;
         let cmd = ctx.cmd();
         let path = GenericPath::new(
             Some(cmd.endpoint_id),

@@ -324,6 +324,8 @@ impl defmt::Format for AccessorSubjects {
 pub struct Accessor<'a> {
     /// The fabric index of the accessor
     pub(crate) fab_idx: u8,
+    /// Whether AUX ACL was enabled at the time this accessor was instantiated
+    aux_acl_enabled: bool,
     /// Accessor's subject: could be node-id, NoC CAT, group id
     subjects: AccessorSubjects,
     /// The auth mode of this session. Might be `None` for plain-text sessions
@@ -335,7 +337,7 @@ pub struct Accessor<'a> {
 
 impl<'a> Accessor<'a> {
     /// Create a new Accessor object for the given session
-    pub fn for_session(session: &Session, matter: &'a Matter<'a>) -> Self {
+    pub fn for_session(session: &Session, matter: &'a Matter<'a>, aux_acl_enabled: bool) -> Self {
         match session.get_session_mode() {
             SessionMode::Case {
                 fab_idx, cat_ids, ..
@@ -347,21 +349,31 @@ impl<'a> Accessor<'a> {
                         let _ = subject.add_catid(i);
                     }
                 }
-                Accessor::new(fab_idx.get(), subject, Some(AuthMode::Case), matter)
+                Accessor::new(
+                    fab_idx.get(),
+                    aux_acl_enabled,
+                    subject,
+                    Some(AuthMode::Case),
+                    matter,
+                )
             }
             SessionMode::Pase { fab_idx } => Accessor::new(
                 *fab_idx,
+                aux_acl_enabled,
                 AccessorSubjects::new(1),
                 Some(AuthMode::Pase),
                 matter,
             ),
             SessionMode::Group { fab_idx, group_id } => Accessor::new(
                 fab_idx.get(),
+                aux_acl_enabled,
                 AccessorSubjects::new(*group_id as u64),
                 Some(AuthMode::Group),
                 matter,
             ),
-            SessionMode::PlainText => Accessor::new(0, AccessorSubjects::new(1), None, matter),
+            SessionMode::PlainText => {
+                Accessor::new(0, aux_acl_enabled, AccessorSubjects::new(1), None, matter)
+            }
         }
     }
 
@@ -369,17 +381,20 @@ impl<'a> Accessor<'a> {
     ///
     /// # Arguments
     /// - `fab_idx`: The fabric index of the accessor (0 means no fabric index)
+    /// - `aux_acl_enabled`: Whether AUX ACL was enabled at the time this accessor was instantiated
     /// - `subjects`: The subjects of the accessor
     /// - `auth_mode`: The auth mode of the accessor
     /// - `matter`: The Matter instance
     pub const fn new(
         fab_idx: u8,
+        aux_acl_enabled: bool,
         subjects: AccessorSubjects,
         auth_mode: Option<AuthMode>,
         matter: &'a Matter<'a>,
     ) -> Self {
         Self {
             fab_idx,
+            aux_acl_enabled,
             subjects,
             auth_mode,
             matter,
@@ -388,6 +403,11 @@ impl<'a> Accessor<'a> {
 
     pub fn fab_idx(&self) -> Result<NonZeroU8, Error> {
         NonZeroU8::new(self.fab_idx).ok_or(ErrorCode::UnsupportedAccess.into())
+    }
+
+    /// Return whether AUX ACL was enabled at the time this accessor was instantiated
+    pub const fn aux_acl_enabled(&self) -> bool {
+        self.aux_acl_enabled
     }
 
     /// Return the subjects of the accessor
@@ -474,7 +494,6 @@ pub struct AccessDesc<'a> {
     /// The target permissions
     target_perms: Option<Access>,
     // The operation being done
-    // TODO: Currently this is Access, but we need a way to represent the 'invoke' somehow too
     operation: Access,
     /// The device types of the endpoint hosting `path`. Used by ACL `Target`
     /// entries that filter by `DeviceType` (Matter Core spec).
@@ -540,11 +559,10 @@ impl<'a> AccessReq<'a> {
     /// permissions
     pub fn allow(&self) -> bool {
         self.accessor.matter.with_state(|state| {
-            let allow = state.fabrics.allow(self);
+            let allow = state.fabrics.allow(self, self.accessor.aux_acl_enabled());
 
             #[cfg(feature = "groups")]
-            let allow = allow
-                || state.fabrics.aux_acl_enabled && self.allow_groupcast_auxiliary(&state.fabrics);
+            let allow = allow || self.allow_groupcast_auxiliary(&state.fabrics);
 
             allow
         })
@@ -557,6 +575,10 @@ impl<'a> AccessReq<'a> {
     /// the Matter Core spec).
     #[cfg(feature = "groups")]
     fn allow_groupcast_auxiliary(&self, fabrics: &crate::fabric::Fabrics) -> bool {
+        if !self.accessor.aux_acl_enabled() {
+            return false;
+        }
+
         if self.accessor.auth_mode != Some(AuthMode::Group) {
             return false;
         }
@@ -872,11 +894,11 @@ impl AclEntry {
 
     /// Check if the ACL entry allows access to the given accessor and object
     ///
-    /// `aux_feature` conveys whether the node advertises the Access Control
+    /// `aux_acl_enabled` conveys whether the node advertises the Access Control
     /// cluster's `AUXILIARY` feature, which changes how wildcard-target
     /// Group-auth entries are evaluated - see [`Self::match_access_desc`].
-    pub fn allow(&self, req: &AccessReq, aux_feature: bool) -> bool {
-        self.match_accessor(req.accessor) && self.match_access_desc(&req.object, aux_feature)
+    pub fn allow(&self, req: &AccessReq, aux_acl_enabled: bool) -> bool {
+        self.match_accessor(req.accessor) && self.match_access_desc(&req.object, aux_acl_enabled)
     }
 
     /// Add a subject to the ACL entry
@@ -925,13 +947,13 @@ impl AclEntry {
                 .unwrap_or(false)
     }
 
-    fn match_access_desc(&self, object: &AccessDesc, aux_feature: bool) -> bool {
+    fn match_access_desc(&self, object: &AccessDesc, aux_acl_enabled: bool) -> bool {
         // Per the Matter Core spec, when the Access Control cluster's
         // `AUXILIARY` feature is advertised, an empty (wildcard) targets
         // list on a Group-auth entry grants access to all endpoints
         // *except* the root endpoint; without the feature it covers the
         // whole node. (Explicitly-listed targets are unaffected.)
-        if aux_feature
+        if aux_acl_enabled
             && matches!(self.auth_mode, AuthMode::Group)
             && object.path.endpoint == Some(crate::dm::endpoints::ROOT_ENDPOINT_ID)
             && self
@@ -1020,6 +1042,7 @@ pub(crate) mod tests {
         let matter = test_matter();
         let accessor = Accessor::new(
             0,
+            false,
             AccessorSubjects::new(112233),
             Some(AuthMode::Pase),
             &matter,
@@ -1033,6 +1056,7 @@ pub(crate) mod tests {
 
         let accessor = Accessor::new(
             2,
+            false,
             AccessorSubjects::new(112233),
             Some(AuthMode::Case),
             &matter,
@@ -1077,6 +1101,7 @@ pub(crate) mod tests {
 
         let accessor = Accessor::new(
             1,
+            false,
             AccessorSubjects::new(112233),
             Some(AuthMode::Case),
             &matter,
@@ -1113,7 +1138,7 @@ pub(crate) mod tests {
         let mut subjects = AccessorSubjects::new(112233);
         subjects.add_catid(gen_noc_cat(allow_cat, v2)).unwrap();
 
-        let accessor = Accessor::new(1, subjects, Some(AuthMode::Case), &matter);
+        let accessor = Accessor::new(1, false, subjects, Some(AuthMode::Case), &matter);
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, path, Access::READ, &[]);
         req.set_target_perms(Access::RWVA);
@@ -1153,7 +1178,7 @@ pub(crate) mod tests {
         let mut subjects = AccessorSubjects::new(112233);
         subjects.add_catid(gen_noc_cat(allow_cat, v3)).unwrap();
 
-        let accessor = Accessor::new(1, subjects, Some(AuthMode::Case), &matter);
+        let accessor = Accessor::new(1, false, subjects, Some(AuthMode::Case), &matter);
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, path, Access::READ, &[]);
         req.set_target_perms(Access::RWVA);
@@ -1181,6 +1206,7 @@ pub(crate) mod tests {
 
         let accessor = Accessor::new(
             1,
+            false,
             AccessorSubjects::new(112233),
             Some(AuthMode::Case),
             &matter,
@@ -1250,6 +1276,7 @@ pub(crate) mod tests {
 
         let accessor = Accessor::new(
             1,
+            false,
             AccessorSubjects::new(112233),
             Some(AuthMode::Case),
             &matter,
@@ -1302,6 +1329,7 @@ pub(crate) mod tests {
         let path = GenericPath::new(Some(1), Some(1234), None);
         let accessor2 = Accessor::new(
             1,
+            false,
             AccessorSubjects::new(112233),
             Some(AuthMode::Case),
             &matter,
@@ -1310,6 +1338,7 @@ pub(crate) mod tests {
         req1.set_target_perms(Access::RWVA);
         let accessor3 = Accessor::new(
             2,
+            false,
             AccessorSubjects::new(112233),
             Some(AuthMode::Case),
             &matter,
@@ -1352,6 +1381,7 @@ pub(crate) mod tests {
 
         let accessor = Accessor::new(
             FAB_1.get(),
+            false,
             AccessorSubjects::new(GROUP_ID),
             Some(AuthMode::Group),
             &matter,
@@ -1367,7 +1397,13 @@ pub(crate) mod tests {
             assert!(req.allow());
         }
 
-        matter.with_state(|state| state.fabrics.aux_acl_enabled = true);
+        let accessor = Accessor::new(
+            FAB_1.get(),
+            true,
+            AccessorSubjects::new(GROUP_ID),
+            Some(AuthMode::Group),
+            &matter,
+        );
 
         // With the feature: the root endpoint is excluded...
         let mut req = AccessReq::new(&accessor, ep0.clone(), Access::WRITE, &[]);

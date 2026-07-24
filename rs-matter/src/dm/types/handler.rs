@@ -21,6 +21,7 @@ use core::pin::pin;
 
 use embassy_futures::select::select;
 
+use crate::acl::Accessor;
 use crate::crypto::Crypto;
 use crate::dm::clusters::net_comm::NetworksAccess;
 use crate::dm::{EventId, EventNumber, Metadata};
@@ -377,6 +378,11 @@ pub trait OperationContext:
 {
     /// Return the exchange object that is associated with this operation.
     fn exchange(&self) -> &Exchange<'_>;
+
+    /// Return the accessor object that is associated with this operation.
+    fn accessor(&self) -> Result<Accessor<'_>, Error> {
+        self.exchange().accessor(self.metadata())
+    }
 }
 
 impl<T> OperationContext for &T
@@ -385,6 +391,10 @@ where
 {
     fn exchange(&self) -> &Exchange<'_> {
         (**self).exchange()
+    }
+
+    fn accessor(&self) -> Result<Accessor<'_>, Error> {
+        (**self).accessor()
     }
 }
 

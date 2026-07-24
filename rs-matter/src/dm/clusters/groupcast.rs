@@ -379,7 +379,7 @@ impl GroupcastHandler {
     /// privilege on this cluster (required for the `UseAuxiliaryACL` field
     /// of `JoinGroup`, which is otherwise a `Manage`-privilege command).
     fn accessor_is_admin(&self, ctx: &impl InvokeContext) -> Result<bool, Error> {
-        let accessor = ctx.exchange().accessor()?;
+        let accessor = ctx.accessor()?;
         let cmd = ctx.cmd();
 
         let path = GenericPath::new(
@@ -783,7 +783,7 @@ impl ClusterHandler for GroupcastHandler {
             return Err(ErrorCode::UnsupportedAccess.into());
         }
 
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
         let peer_node_id = Self::peer_node_id(&ctx);
 
         let aux_changed = ctx.exchange().with_state(|state| {
@@ -889,7 +889,7 @@ impl ClusterHandler for GroupcastHandler {
             endpoints = Some(list);
         }
 
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
         let peer_node_id = Self::peer_node_id(&ctx);
         let sender = self.sender();
 
@@ -1021,7 +1021,7 @@ impl ClusterHandler for GroupcastHandler {
             }
         }
 
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
 
         ctx.exchange().with_state(|state| {
             let fabric = state.fabrics.fabric_mut(fab_idx)?;
@@ -1044,7 +1044,7 @@ impl ClusterHandler for GroupcastHandler {
         let group_id = request.group_id()?;
         let use_auxiliary_acl = request.use_auxiliary_acl()?;
 
-        let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+        let fab_idx = ctx.accessor()?.fab_idx()?;
         let peer_node_id = Self::peer_node_id(&ctx);
 
         let aux_changed = ctx.exchange().with_state(|state| {
@@ -1108,7 +1108,7 @@ impl ClusterHandler for GroupcastHandler {
                     return Err(ErrorCode::ConstraintError.into());
                 }
 
-                let fab_idx = ctx.exchange().accessor()?.fab_idx()?;
+                let fab_idx = ctx.accessor()?.fab_idx()?;
                 bridge.set_mode(Some(TestingMode {
                     fab_idx,
                     operation,
