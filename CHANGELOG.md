@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+* Network Recovery data-model support - provisional in Matter 1.6 (#523)
 * Groupcast cluster handler support (Matter 1.6) - available when the `groups` feature is enabled (#521)
 * Fix CASE Sigma2 retransmissions with randomized ECDSA (#520)
 * (Breaking) Optional Time Zones support in the Time Sync Cluster Handler, trait `TimeSync` split into `TimeZones`, `NtpClient` and `NtpServer`

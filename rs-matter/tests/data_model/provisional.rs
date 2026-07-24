@@ -32,6 +32,7 @@ use rs_matter::dm::clusters::basic_info::{
     self, BasicInfoConfig, BasicInfoHandler, DeviceLocationConfig,
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
+use rs_matter::dm::clusters::gen_comm::{self, ClusterHandler as _, GenCommHandler};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::{
     Async, ChainedHandler, Cluster, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
@@ -389,4 +390,134 @@ fn test_config_factory_defaults() {
             Some(&written)
         )],
     );
+}
+
+// ---- General Commissioning: Network Recovery (provisional 1.6) -------------
+//
+// `RecoveryIdentifier` (0x000A) and `NetworkRecoveryReason` (0x000B) plus the
+// `NetworkRecovery` (`NR`) FeatureMap bit are advertised only via the opt-in
+// `gen_comm::CLUSTER_NETWORK_RECOVERY` metadata; the default
+// `GenCommHandler::CLUSTER` keeps them hidden (provisional, and no upstream
+// test references them). The runtime `GenCommHandler` always implements both
+// reads, so - as with `DeviceLocation` - the choice is purely a metadata swap.
+//
+// NOTE: `RecoveryIdentifier` is minted lazily on first read from the CSPRNG, so
+// its value is not deterministic here; its persistence and factory-reset
+// semantics are covered by the `BasicInfoSettings` unit tests. These e2e tests
+// therefore assert the deterministic surface: the feature bit, the always-null
+// `NetworkRecoveryReason`, and that both attributes are gated off by default.
+
+/// EP0 metadata exposing General Commissioning with Network Recovery enabled.
+const CLUSTERS_EP0_NR: &[Cluster<'static>] = &[gen_comm::CLUSTER_NETWORK_RECOVERY];
+
+const NODE_NR: Node<'static> = Node {
+    endpoints: &[Endpoint::new(0, &[DEV_TYPE_ROOT_NODE], CLUSTERS_EP0_NR)],
+};
+
+/// A data model over [`NODE_NR`] serving General Commissioning with the Network
+/// Recovery feature (and its two provisional attributes) exposed. `&true` is
+/// the no-op `CommPolicy` (concurrent-connection, indoor/outdoor, default
+/// fail-safe timings) - none of which the recovery reads consult.
+fn nr_dm_handler() -> impl DataModel {
+    (
+        NODE_NR,
+        ChainedHandler::new(
+            EpClMatcher::new(Some(0), Some(gen_comm::CLUSTER_NETWORK_RECOVERY.id)),
+            Async(GenCommHandler::new(Dataver::new(1), &true).adapt()),
+            EmptyHandler,
+        ),
+    )
+}
+
+/// EP0 metadata using the *default* General Commissioning cluster (Network
+/// Recovery not advertised).
+const CLUSTERS_EP0_GC: &[Cluster<'static>] = &[GenCommHandler::CLUSTER];
+
+const NODE_GC: Node<'static> = Node {
+    endpoints: &[Endpoint::new(0, &[DEV_TYPE_ROOT_NODE], CLUSTERS_EP0_GC)],
+};
+
+/// A data model over [`NODE_GC`] - the same `GenCommHandler`, but with the
+/// default metadata that hides the provisional Network Recovery attributes.
+fn gc_dm_handler() -> impl DataModel {
+    (
+        NODE_GC,
+        ChainedHandler::new(
+            EpClMatcher::new(Some(0), Some(GenCommHandler::CLUSTER.id)),
+            Async(GenCommHandler::new(Dataver::new(1), &true).adapt()),
+            EmptyHandler,
+        ),
+    )
+}
+
+fn nr_attr_path(attr: gen_comm::AttributeId) -> GenericPath {
+    GenericPath::new(
+        Some(0),
+        Some(gen_comm::CLUSTER_NETWORK_RECOVERY.id),
+        Some(attr as u32),
+    )
+}
+
+#[test]
+fn test_network_recovery_feature_and_reason() {
+    init_env_logger();
+
+    let im = new_default_runner();
+    im.add_default_acl();
+    let dm = nr_dm_handler();
+
+    // The Network Recovery feature bit (`NR` == 0x2) is advertised in FeatureMap.
+    let feature_map_path = nr_attr_path(gen_comm::AttributeId::FeatureMap);
+    im.handle_read_reqs(
+        &dm,
+        &[AttrPath::from_gp(&feature_map_path)],
+        &[attr_data!(
+            0,
+            48,
+            gen_comm::AttributeId::FeatureMap,
+            Some(&2u32)
+        )],
+    );
+
+    // `NetworkRecoveryReason` is exposed and reads as Null - the node never
+    // autonomously enters recovery mode (Matter Core Spec 11.10.6.12).
+    let reason_path = nr_attr_path(gen_comm::AttributeId::NetworkRecoveryReason);
+    let null: Nullable<u8> = Nullable::none();
+    im.handle_read_reqs(
+        &dm,
+        &[AttrPath::from_gp(&reason_path)],
+        &[attr_data!(
+            0,
+            48,
+            gen_comm::AttributeId::NetworkRecoveryReason,
+            Some(&null)
+        )],
+    );
+}
+
+#[test]
+fn test_network_recovery_attributes_gated_by_default() {
+    init_env_logger();
+
+    let im = new_default_runner();
+    im.add_default_acl();
+    let dm = gc_dm_handler();
+
+    // With the default metadata, both provisional attributes are absent from
+    // the cluster and read back `UnsupportedAttribute` - even though the same
+    // handler type implements them for a Network-Recovery-enabled node.
+    for attr in [
+        gen_comm::AttributeId::RecoveryIdentifier,
+        gen_comm::AttributeId::NetworkRecoveryReason,
+    ] {
+        let path = GenericPath::new(Some(0), Some(GenCommHandler::CLUSTER.id), Some(attr as u32));
+        im.handle_read_reqs(
+            &dm,
+            &[AttrPath::from_gp(&path)],
+            &[attr_read_status_resp!(
+                &path,
+                IMStatusCode::UnsupportedAttribute
+            )],
+        );
+    }
 }
