@@ -142,15 +142,18 @@ pub(crate) const SYS_TESTS: &[&str] = &[
     // (see `app_args_override`).
     "TC_ACE_1_6",
     "TC_ACL_2_2",
-    // "TC_ACL_2_3", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
+    // TC_ACL_2_3/2_5/2_7 test the optional `AccessControlExtension` feature
+    // (Extension attribute), which rs-matter does not implement:
+    // `@run_if_endpoint_matches(has_attribute(AccessControl.Extension))` skips
+    // them cleanly (converted to a pass via `no_fail_on_skipped.py` — see
+    // `needs_no_fail_on_skipped`). Note this is the `EXTENSION` feature, NOT
+    // the `AUXILIARY` feature (AuxiliaryACL attribute) that rs-matter *does*
+    // implement.
+    "TC_ACL_2_3",
     "TC_ACL_2_4",
-    "TC_ACL_2_5", // Tests the optional `AccessControlExtension` feature (Extension attribute) — `@run_if_endpoint_matches(has_attribute(AccessControl.Extension))` skips cleanly via `no_fail_on_skipped.py`.
+    "TC_ACL_2_5",
     "TC_ACL_2_6",
-    // "TC_ACL_2_7", // Skipped: tests the optional `AccessControlExtension` feature (Extension attribute), not implemented by rs-matter.
-    // The between-runs controller-cleanup bug that used to break the second
-    // (legacy-list-encoding) pass is a chip-master regression; the
-    // `v1.6-branch` framework the harness is pinned to does not have it, and
-    // both passes run green.
+    "TC_ACL_2_7",
     "TC_ACL_2_8",
     "TC_ACL_2_9",
     "TC_ACL_2_10",
@@ -1555,7 +1558,12 @@ impl ITests {
                 | "TC_LTIME_3_1"     // has_cluster(TimeFormatLocalization)
                 | "TC_LUNIT_3_1"     // has_cluster(UnitLocalization) and has_attribute(TemperatureUnit)
                 | "TC_SWTCH"         // 5 inner methods, each has_feature(Switch, ...)
-                | "TC_ACL_2_5" // has_attribute(AccessControl.Extension)
+                // All three test the optional `AccessControlExtension`
+                // feature (Extension attribute); rs-matter does not implement
+                // it, so `has_attribute(AccessControl.Extension)` skips cleanly.
+                | "TC_ACL_2_3"
+                | "TC_ACL_2_5"
+                | "TC_ACL_2_7"
         )
     }
 
